@@ -1,58 +1,120 @@
-# Stock Trading Strategy Alpaca API
+# Alpaca Trading Engine
 
-This project uses RSI, volume spikes, and upward direction of a given set of stocks, and executes a trading strategy based on these predictions using Alpaca API.
+A small, **layered** algorithmic-trading engine on the [Alpaca](https://alpaca.markets) API.
+It scans a universe of symbols, runs a strategy over them, and either **backtests**
+on history or **trades live** (paper by default) — with optional **parameter
+optimization** and **constraint-solver portfolio allocation**.
 
-## Stocks 
+Designed to be easy to try and easy to read:
 
-The stocks used for trading can be changed in the `main.py` file. Update the symbols array with the tickers you want to trade.
-```python
-    # Symbols to trade
-    symbols = ['NVDA', 'RIVN', 'NFLX', 'META']
+- **No TA-Lib / no native build step** — indicators are pure pandas/numpy, so
+  `uv sync` is all you need and the Docker image carries no compiler toolchain.
+- **Broker-agnostic** — everything is written against a `Broker` /
+  `MarketDataProvider` interface. Alpaca is the first implementation; dropping in
+  another venue means writing one adapter, nothing else.
+- **Strict separation of concerns** — each layer does one job (see below).
+
+> ⚠️ Educational software. Trading is risky; use paper trading. No warranty.
+
+## Quickstart
+
+```bash
+# 1. Install uv:  https://docs.astral.sh/uv/
+# 2. Add your Alpaca paper keys
+cp config_example.py config.py        # then edit config.py
+
+# 3. Install dependencies
+make install                          # uv sync
+
+# 4. Try it (preconfigured combos)
+make scan                             # which symbols are flagged right now?
+make backtest                         # scan -> volume_spike strategy -> report
+make live                             # paper-trade the scanned universe
 ```
 
-## Portfolio
+Run `make help` to see every target. Anything is overridable inline:
 
-Risk is managed using beta and a hard trade limit. You can modify the trade ammount in the main.py file
-```python
-    # Amount per trade
-    max_trade_allocation = 1500.00 // Trades will be capped at this amount
-    trade_allocation = 500.00 // Trades start at this amount before taking beta into account
+```bash
+make backtest SYMBOLS=AAPL,MSFT,NVDA START=2024-06-01 END=2024-09-01 CAPITAL=50000
 ```
 
-### Prerequisites
+Or call the CLI directly:
 
-- Docker installed on your machine
-- Alpaca API key and secret key
-    - rename `config_example.py` to `config.py`
+```bash
+uv run python main.py backtest --strategy volume_spike --scanner volume \
+    --symbols NVDA,META,TSLA --start 2024-01-02 --end 2024-04-01
+```
 
-## How to Run
+## What it does
 
-1. Clone this repository.
+| Command | What happens |
+|---------|--------------|
+| `scan` | Run the universe scanner and print flagged symbols |
+| `backtest` | Scan → run `volume_spike` over history → performance report |
+| `live` | Scan → warm up indicators → stream bars → place paper/live orders |
+| `optimize` | Search strategy parameters by backtest objective (grid / random / Bayesian) |
+| `allocate` | Weight a portfolio across scanned symbols (OR-Tools constraint solver) |
 
-2. Navigate to the directory containing the files.
+### Optional features
 
-3. Build the Docker image:
-    ```
-    docker build -t trading-strategy .
-    ```
-4. Run the Docker container:
-    ```
-    docker run -it -v $(pwd):/app -p 80:80 trading-strategy
-    ```
+Two capabilities are optional extras so the base install stays lean:
 
-Program runs in an infinite loop and does daily trading. To stop it, press ctrl+c. Stocks will manually have to be sold, and orders cancelled, via `python close_all_positions.py`
+```bash
+make install-optimize     # scikit-learn, for `optimize --method bayesian`
+make install-portfolio    # Google OR-Tools, for `allocate`
+```
 
-Please note that the program uses Alpaca API for trading, and thus requires valid API credentials. Replace `APCA_API_KEY_ID` and `APCA_API_SECRET_KEY` in the Python config.py file with your actual API key ID and secret key.
+## Architecture
 
-# Why I Built This Stock Trading Algorithm
+The codebase is organised into single-responsibility layers. Nothing above the
+broker layer imports a vendor SDK.
 
-The realm of algorithmic trading often seems like a labyrinth, melding together intricacies from diverse fields of knowledge. Whether it's coding, mathematics, finance, or strategy, every facet has its unique challenges. My ambition in creating this stock trading algorithm, utilizing the Alpaca API, was to strip away some of these complexities, rendering the process more accessible and understandable. This will not make you any money on its own!
+```
+brokers/        Broker interface + domain types  ── alpaca/ (AlpacaBroker, AlpacaMarketData)
+marketdata/     MarketDataProvider interface, Timeframe, MarketDataClient
+indicators/     Pure pandas/numpy technical indicators
+strategies/     Strategy base + signals + volume_spike (signals, sizing, risk)
+scanners/       ScannerStrategy base + volume scanner + SymbolScanner (universe)
+execution/      LiveTrader (signals -> broker orders)
+analytics/      Performance metrics + reporting
+engine/         BacktestEngine + LiveEngine (orchestration only)
+optimization/   ParameterSpace + ParameterOptimizer (tune params via backtest)
+portfolio/      PortfolioAllocator (OR-Tools MIP position weighting)
+utils/          logging, numeric, time helpers
+```
 
-I envision a trading world where the technical and mathematical intricacies aren't barriers, but rather tools that everyone can harness. And in the pursuit of this vision, collaboration is key. I genuinely welcome inputs, insights, and contributions from the community. If you have ideas, refinements, or even critiques, I encourage you to submit a Pull Request. Together, we can refine this tool into an even more powerful learning tool for traders everywhere.
+Data flows the same way in both modes:
 
+```
+marketdata → strategy.process_data → strategy.generate_signals
+           → engine (simulate fills | route to execution) → analytics
+```
 
-## Disclaimer
+See the docs site for the full engineering wiki and usage guide:
 
-This software is for educational purposes only. USE THE SOFTWARE AT YOUR OWN RISK. THE AUTHORS AND ALL AFFILIATES ASSUME NO RESPONSIBILITY FOR YOUR TRADING RESULTS. Do not risk money which you are afraid to lose. There might be bugs in the code - this software DOES NOT come with ANY warranty.
+```bash
+make docs        # serve the Docusaurus site at http://localhost:3000
+```
 
+## Docker
 
+```bash
+make docker-build
+make docker-run            # paper live-trading; mounts your config.py
+```
+
+## Tests
+
+```bash
+make test                  # offline suite — no API keys or network required
+```
+
+The whole stack is testable offline because every layer depends on the
+broker/data abstractions; tests inject in-memory fakes.
+
+## Account utilities
+
+```bash
+make cancel-orders         # cancel all open orders
+make close-positions       # liquidate all positions (and cancel orders)
+```

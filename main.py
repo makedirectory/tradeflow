@@ -1,238 +1,248 @@
-import logging
+"""Command-line entry point.
+
+Wires the layers together for four workflows and nothing more - all the real
+work lives in ``src/``:
+
+    backtest   scan universe -> BacktestEngine -> performance report
+    live       scan universe -> LiveEngine -> LiveTrader (paper/live orders)
+    scan       run the universe scanner and print flagged symbols
+    optimize   search a strategy's parameters by backtest objective
+
+Run ``python main.py <command> --help`` for options, or use the Makefile targets
+for preconfigured combos (``make backtest``, ``make live``, ...).
+"""
+
+import argparse
 import asyncio
-import config
-import websockets
-import json
-import socket
-from datetime import timedelta
+import logging
+import sys
+from datetime import datetime, timedelta
+from typing import List, Optional
 
-from alpaca.trading.client import TradingClient
-from alpaca.data.historical import StockHistoricalDataClient
+from src.utils.logging_config import setup_logging
 
-from src.api.alpaca.calender import TradingCalendar
-from src.strategy.vol_spike_trend.run_strategy import Strategy
-from src.api.alpaca.assets_api import AlpacaAssetsClient
-
-# Logging Setup
-logging.basicConfig(level=logging.INFO,
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-async def trading_paper():
-    return config.PAPER_TRADE;
+# Registry of trading strategies exposed on the CLI.
+from src.strategies.volume_spike import VolumeSpikeStrategy
 
-async def stream_account_actions():
-    websocket = None  # Initialize websocket variable to None
+STRATEGIES = {"volume_spike": VolumeSpikeStrategy}
+
+# A reasonable default candidate list for the scanner to filter.
+DEFAULT_UNIVERSE = ["NVDA", "RIVN", "NFLX", "META", "BAC", "MS", "TSLA", "GS", "AMD", "AAPL"]
+
+
+# ---------------------------------------------------------------------------- #
+# Wiring
+# ---------------------------------------------------------------------------- #
+def _load_config():
     try:
-        paper = await trading_paper()
-        url = 'wss://paper-api.alpaca.markets/stream' if paper else 'wss://api.alpaca.markets/stream'
-        async with websockets.connect(url) as websocket:
-            await websocket.send(json.dumps({
-                "action": "auth",
-                "key": config.APCA_API_KEY_ID,
-                "secret": config.APCA_API_SECRET_KEY
-            }))
-            response = await websocket.recv()
-            logger.info(f"Account actions stream response: {response}")
+        import config
+    except ModuleNotFoundError:
+        sys.exit("config.py not found. Copy config_example.py to config.py and add your Alpaca keys.")
+    return config
 
-            await websocket.send(json.dumps({
-                "action": "listen",
-                "data": {
-                    "streams": ["trade_updates"]
-                }
-            }))
-            while True:
-                message = await websocket.recv()
-                logger.info(f"Account action: {message}")
 
-    except asyncio.exceptions.CancelledError:
-        logger.info("Task for stream_account_actions was cancelled.")
-        raise  # Ensure we re-raise the exception after logging it for proper task cleanup
+def build_data_and_broker():
+    """Construct the Alpaca-backed broker and market-data client from config."""
+    from alpaca.data.historical import StockHistoricalDataClient
+    from alpaca.trading.client import TradingClient
 
-    except websockets.ConnectionClosed as e:
-        logger.error(f"WebSocket connection closed: {e}")
-    
-    except Exception as e:
-        logger.error(f"An error occurred in stream_account_actions: {e}")
-    
-    finally:
-        # Ensure WebSocket is closed if it was opened
-        if websocket is not None:
-            logger.info("Closing WebSocket connection for account actions.")
-            await websocket.close()
+    from src.brokers.alpaca.broker import AlpacaBroker
+    from src.brokers.alpaca.market_data import AlpacaMarketData
+    from src.marketdata.client import MarketDataClient
 
-async def stream_market_data(tickers):
-    websocket = None  # Initialize websocket variable to None
-    subscribed_tickers = set()  # To track currently subscribed tickers
+    config = _load_config()
+    trading_client = TradingClient(
+        api_key=config.APCA_API_KEY_ID,
+        secret_key=config.APCA_API_SECRET_KEY,
+        paper=config.PAPER_TRADE,
+    )
+    historical = StockHistoricalDataClient(config.APCA_API_KEY_ID, config.APCA_API_SECRET_KEY)
+
+    broker = AlpacaBroker(trading_client)
+    data_client = MarketDataClient(
+        AlpacaMarketData(historical, config.APCA_API_KEY_ID, config.APCA_API_SECRET_KEY)
+    )
+    return broker, data_client
+
+
+def resolve_universe(data_client, scanner_name: Optional[str], candidates: List[str]) -> List[str]:
+    """Filter ``candidates`` through the scanner, falling back to them if none flag."""
+    if not scanner_name or scanner_name == "none":
+        return candidates
+
+    from src.scanners.symbol_scanner import SymbolScanner
+
+    flagged = SymbolScanner(data_client, scanner_name).scan(candidates)
+    universe = [symbol for symbol, _ in flagged]
+    if not universe:
+        logger.warning("Scanner flagged no symbols; falling back to the candidate list")
+        return candidates
+    logger.info("Trading universe from scanner: %s", universe)
+    return universe
+
+
+# ---------------------------------------------------------------------------- #
+# Commands
+# ---------------------------------------------------------------------------- #
+def cmd_backtest(args) -> None:
+    from src.analytics.reporting import log_backtest_report
+    from src.engine.backtest import BacktestEngine
+
+    _, data_client = build_data_and_broker()
+    universe = resolve_universe(data_client, args.scanner, args.symbols)
+    strategy = STRATEGIES[args.strategy].create_with_defaults()
+
+    result = BacktestEngine(strategy, data_client).run(universe, args.start, args.end, args.capital)
+    log_backtest_report(result.metrics, result.initial_capital, result.final_capital)
+
+
+def cmd_scan(args) -> None:
+    from src.scanners.symbol_scanner import SymbolScanner
+
+    _, data_client = build_data_and_broker()
+    flagged = SymbolScanner(data_client, args.scanner).scan(args.symbols)
+    if not flagged:
+        print("No symbols flagged.")
+        return
+    print(f"{'SYMBOL':10}SIGNAL")
+    for symbol, signal in flagged:
+        print(f"{symbol:10}{signal}")
+
+
+def cmd_allocate(args) -> None:
+    from src.portfolio.allocator import Candidate, PortfolioAllocator
+    from src.scanners.symbol_scanner import SymbolScanner
+
+    _, data_client = build_data_and_broker()
+    scanner = SymbolScanner(data_client, args.scanner)
+    flagged = [symbol for symbol, _ in scanner.scan(args.symbols)]
+    if not flagged:
+        print("No symbols flagged; nothing to allocate.")
+        return
+
+    # Score each flagged name by its trailing return over the window (a simple,
+    # transparent factor; swap in momentum / inverse-vol / signal strength here).
+    end = datetime.now()
+    bars = data_client.get_bars(flagged, scanner.timeframe, end - timedelta(days=90), end)
+    candidates = []
+    for symbol in flagged:
+        frame = bars.get(symbol)
+        if frame is None or len(frame) < 2:
+            continue
+        trailing_return = frame["close"].iloc[-1] / frame["close"].iloc[0] - 1
+        candidates.append(Candidate(symbol, score=max(trailing_return, 0.0), price=frame["close"].iloc[-1]))
+
+    allocator = PortfolioAllocator(max_positions=args.max_positions, max_weight=args.max_weight)
+    allocations = allocator.allocate(candidates, args.capital)
+    if not allocations:
+        print("Solver produced no allocation (no positively-scored candidates).")
+        return
+
+    print(f"{'SYMBOL':10}{'WEIGHT':>8}{'DOLLARS':>14}{'SHARES':>10}")
+    for a in allocations:
+        print(f"{a.symbol:10}{a.weight:>7.1%}{a.dollars:>14,.2f}{a.shares:>10.0f}")
+
+
+def cmd_optimize(args) -> None:
+    from src.optimization.optimizer import ParameterOptimizer
+
+    _, data_client = build_data_and_broker()
+    universe = resolve_universe(data_client, args.scanner, args.symbols)
+    optimizer = ParameterOptimizer(STRATEGIES[args.strategy], data_client, initial_capital=args.capital)
+
+    if args.method == "grid":
+        result = optimizer.grid_search(universe, args.start, args.end, args.objective, max_evals=args.max_evals)
+    elif args.method == "random":
+        result = optimizer.random_search(universe, args.start, args.end, args.objective, n_samples=args.max_evals)
+    else:  # bayesian
+        result = optimizer.optimize_bayesian(universe, args.start, args.end, args.objective)
+
+    print(f"\nBest {result.objective}: {result.best_score:.4f}")
+    print(f"Best parameters: {result.best_params}")
+    if not result.results.empty:
+        result.results.to_csv(args.output, index=False)
+        print(f"Full results written to {args.output}")
+
+
+def cmd_live(args) -> None:
+    from src.engine.live import LiveEngine
+    from src.execution.live_trader import LiveTrader
+
+    broker, data_client = build_data_and_broker()
+    universe = resolve_universe(data_client, args.scanner, args.symbols)
+    strategy = STRATEGIES[args.strategy].create_with_defaults()
+    engine = LiveEngine(strategy, data_client, LiveTrader(broker, strategy))
+
     try:
-        paper = await trading_paper()
-        url = 'wss://stream.data.alpaca.markets/v2/test' if paper else 'wss://data.alpaca.markets/stream'
-        async with websockets.connect(url) as websocket:
-            await websocket.send(json.dumps({
-                "action": "auth",
-                "key": config.APCA_API_KEY_ID,
-                "secret": config.APCA_API_SECRET_KEY
-            }))
-            response = await websocket.recv()
-            logger.info(f"Market data stream response: {response}")
+        asyncio.run(engine.start(universe))
+    except KeyboardInterrupt:
+        logger.info("Interrupted; shutting down live engine.")
 
-            while True:
-                # Find which tickers are new and which need to be unsubscribed
-                new_tickers = set(tickers) - subscribed_tickers
-                tickers_to_remove = subscribed_tickers - set(tickers)
 
-                # Subscribe to new tickers
-                if new_tickers:
-                    await websocket.send(json.dumps({
-                        "action": "subscribe",
-                        "trades": list(new_tickers)
-                    }))
-                    subscribed_tickers.update(new_tickers)
-                    logger.info(f"Subscribed to new tickers: {new_tickers}")
+# ---------------------------------------------------------------------------- #
+# Argument parsing
+# ---------------------------------------------------------------------------- #
+def _symbols(value: str) -> List[str]:
+    return [s.strip().upper() for s in value.split(",") if s.strip()]
 
-                # Unsubscribe from removed tickers
-                if tickers_to_remove:
-                    await websocket.send(json.dumps({
-                        "action": "unsubscribe",
-                        "trades": list(tickers_to_remove)
-                    }))
-                    subscribed_tickers.difference_update(tickers_to_remove)
-                    logger.info(f"Unsubscribed from tickers: {tickers_to_remove}")
 
-                # Receive market data
-                message = await websocket.recv()
-                logger.info(f"Market data: {message}")
-    
-    except asyncio.exceptions.CancelledError:
-        logger.info("Task for market_stream was cancelled.")
-        raise  # Ensure we re-raise the exception after logging it for proper task cleanup
+def _date(value: str) -> datetime:
+    return datetime.strptime(value, "%Y-%m-%d")
 
-    except socket.gaierror as e:
-        print(f"Socket error: {e}")
-    except Exception as e:
-        print(f"An error occurred: {e}")
 
-    finally:
-        if websocket is not None:
-            logger.info("Closing WebSocket connection for market data.")
-            await websocket.close()
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Alpaca trading engine")
+    subparsers = parser.add_subparsers(dest="command", required=True)
 
-async def main(tickers):
-    # Instantiate Alpaca Trade Client
-    paper = await trading_paper()
-    trading_client = TradingClient(api_key=config.APCA_API_KEY_ID, secret_key=config.APCA_API_SECRET_KEY, paper=paper)
-    
-    # Get market availability
-    trading_schedule = TradingCalendar(trading_client)
+    def add_common(p, *, with_dates: bool) -> None:
+        p.add_argument("--strategy", choices=STRATEGIES, default="volume_spike")
+        p.add_argument("--scanner", default="volume", help="Universe scanner ('none' to skip)")
+        p.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE,
+                       help="Comma-separated candidate symbols")
+        if with_dates:
+            p.add_argument("--start", type=_date, default=datetime.now() - timedelta(days=30))
+            p.add_argument("--end", type=_date, default=datetime.now())
+            p.add_argument("--capital", type=float, default=100_000.0)
 
-    # Cadence: Time to sleep after every full loop iteration, in seconds. 3 minutes in this case.
-    cadence = 60 * 2
-    
-    assets_api = AlpacaAssetsClient(trading_client)
-    # symbols = assets_api.get_all_equities()
-    tradable_symbols = [ticker for ticker in tickers if assets_api.get_can_trade(ticker)]
+    bt = subparsers.add_parser("backtest", help="Run a historical backtest")
+    add_common(bt, with_dates=True)
+    bt.set_defaults(func=cmd_backtest)
 
-    # Amount per trade
-    max_trade_allocation = 1500.00
-    trade_allocation = 500.00
+    live = subparsers.add_parser("live", help="Run live/paper trading")
+    add_common(live, with_dates=False)
+    live.set_defaults(func=cmd_live)
 
-    # Get Data 
-    asset_hist_client = StockHistoricalDataClient(api_key=config.APCA_API_KEY_ID, secret_key=config.APCA_API_SECRET_KEY)
-    # Init the Strategy
-    strategy = Strategy(trading_client, asset_hist_client)
+    scan = subparsers.add_parser("scan", help="Run the universe scanner only")
+    scan.add_argument("--scanner", default="volume")
+    scan.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
+    scan.set_defaults(func=cmd_scan)
 
-    # Define these functions outside the main loop
-    async def market_open_tasks():
-        # Rebalance portfolio at market open
-        # TODO: Implement your function to rebalance portfolio here.
-        logger.info("Algorithm is starting in 15 seconds...")
-        await asyncio.sleep(15)
+    alloc = subparsers.add_parser("allocate", help="Weight a portfolio over scanned symbols (OR-Tools)")
+    alloc.add_argument("--scanner", default="volume")
+    alloc.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
+    alloc.add_argument("--capital", type=float, default=100_000.0)
+    alloc.add_argument("--max-positions", dest="max_positions", type=int, default=5)
+    alloc.add_argument("--max-weight", dest="max_weight", type=float, default=0.25)
+    alloc.set_defaults(func=cmd_allocate)
 
-    async def market_close_tasks():
-        # At market close calculate end-of-day statistics and pause algorithm
-        # TODO: Implement function to calculate end-of-day statistics here.
-        # Cancel any open buy orders at the end of the day.
-        # orders = order_api.list_open_orders(status="open")
-        # for order in orders:
-        #     order_api.cancel_all_orders(order.id) # Update function to cancel one at a time
-        minutes = int(cadence/60)
-        logger.info(f"Market is closed. Algorithm is paused. Will check again in {minutes} minutes")
+    opt = subparsers.add_parser("optimize", help="Tune strategy parameters via backtest")
+    add_common(opt, with_dates=True)
+    opt.add_argument("--method", choices=["grid", "random", "bayesian"], default="grid")
+    opt.add_argument("--objective", default="sharpe_ratio")
+    opt.add_argument("--max-evals", dest="max_evals", type=int, default=50)
+    opt.add_argument("--output", default="optimization_results.csv")
+    opt.set_defaults(func=cmd_optimize)
 
-    async def trading_tasks():
-        # Run the trading strategy
+    return parser
 
-        tasks = asyncio.gather(
-            *[strategy.run_strategy(symbol, trade_allocation, max_trade_allocation) for symbol in tradable_symbols]
-        )
 
-        await tasks
+def main() -> None:
+    setup_logging()
+    args = build_parser().parse_args()
+    args.func(args)
 
-    open_tasks_completed = False
-    close_tasks_completed = False
-
-    while True:
-        market_status = trading_schedule.get_market_status()
-
-        if market_status.is_market_open:
-            logger.info("Market is open.")
-
-            if not open_tasks_completed and market_status.next_open + timedelta(minutes=3) >= market_status.current_time:
-                await market_open_tasks()
-                open_tasks_completed = True
-                logger.info("Market open tasks complete. Trading begins...")
-            
-            await trading_tasks()
-
-            if not close_tasks_completed and market_status.next_close - timedelta(minutes=1) < market_status.current_time:
-                await market_close_tasks()
-                close_tasks_completed = True
-        else:
-            logger.info("Waiting for market to open...")
-            open_tasks_completed = False
-            close_tasks_completed = False
-
-        # Sleep for the specified cadence time
-        minutes = int(cadence/60)
-        logger.info(f"Sleeping for {minutes} minutes before next iteration...")
-        await asyncio.sleep(cadence)
 
 if __name__ == "__main__":
-    fmt = '%(asctime)s:%(filename)s:%(lineno)d:%(levelname)s:%(name)s:%(message)s'
-    logging.basicConfig(level=logging.INFO, format=fmt)
-    fh = logging.FileHandler('console.log')
-    fh.setLevel(logging.INFO)
-    fh.setFormatter(logging.Formatter(fmt))
-    logger.addHandler(fh)
-
-    # Symbols to trade
-    tickers = ['NVDA', 'RIVN', 'NFLX', 'META', 'BAC', 
-                 'MS', 'LM', 'TSLA', 'GS']
-
-    # Get the currently running event loop
-    loop = asyncio.get_event_loop()
-
-    # If there's no currently running event loop, create a new one
-    if loop is None:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-    try:
-        loop.run_until_complete(asyncio.gather(
-            main(tickers),
-            stream_account_actions(),
-            stream_market_data(tickers)
-        ))
-    except KeyboardInterrupt:
-        # Handle KeyboardInterrupt and cancel all tasks
-        logger.info("KeyboardInterrupt received. Canceling tasks...")
-        tasks = asyncio.all_tasks(loop)
-        for task in tasks:
-            task.cancel()
-        # Wait for all tasks to be cancelled properly
-        loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
-    except Exception as e:
-        logger.error(f"An error occurred in the main loop: {e}")
-    finally:
-        # Ensure the event loop is properly closed
-        logger.info("Closing the event loop.")
-        loop.close()
+    main()
