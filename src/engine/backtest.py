@@ -43,7 +43,9 @@ class BacktestResult:
 class BacktestEngine:
     """Runs a strategy over historical data and reports performance."""
 
-    def __init__(self, strategy: Strategy, data_client: MarketDataClient, sizer: Optional[PositionSizer] = None):
+    def __init__(
+        self, strategy: Strategy, data_client: MarketDataClient, sizer: Optional[PositionSizer] = None
+    ):
         self.strategy = strategy
         self.data_client = data_client
         # Same sizing abstraction as live execution; defaults to the strategy's
@@ -146,8 +148,10 @@ class BacktestEngine:
         # Present realised cash as an account snapshot so the same PositionSizer
         # used in live execution can size backtest entries.
         account = AccountSnapshot(
-            cash=self._available, equity=self._available,
-            buying_power=self._available, portfolio_value=self._available,
+            cash=self._available,
+            equity=self._available,
+            buying_power=self._available,
+            portfolio_value=self._available,
         )
         size = round_quantity(self.sizer.size(symbol, price, account))
         if size <= 0 or size * price > self._available:

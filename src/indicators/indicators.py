@@ -9,7 +9,6 @@ All functions are pure: they take Series/DataFrames in and return new
 Series/DataFrames out, leaving the inputs untouched.
 """
 
-import numpy as np
 import pandas as pd
 
 

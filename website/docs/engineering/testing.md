@@ -5,13 +5,41 @@ title: Testing
 
 # Testing
 
-```bash
-make test     # uv run --extra dev pytest
-```
-
 The whole suite runs **offline** — no API keys, no network, no `alpaca` import.
 That's a direct benefit of the [broker abstraction](broker-abstraction): tests
 inject in-memory fakes where production injects Alpaca.
+
+## Running the tests
+
+```bash
+make test                       # the standard way (uv run --extra dev pytest)
+```
+
+`make test` installs the `dev` extra (pytest, ruff, scikit-learn, OR-Tools) and
+runs the whole suite. To run pytest directly or narrow the run:
+
+```bash
+uv run --extra dev pytest                 # full suite, default verbosity
+uv run --extra dev pytest -q              # quiet
+uv run --extra dev pytest tests/test_backtest.py            # one file
+uv run --extra dev pytest -k beta         # tests matching "beta"
+uv run --extra dev pytest tests/test_live_trader.py::test_hold_is_noop  # one test
+```
+
+Notes:
+
+- **No setup needed** — no `config.py`, keys, or network. Tests use the fakes below.
+- The **OR-Tools** portfolio tests `skip` automatically if that optional dependency
+  isn't installed; everything else runs with just the `dev` extra.
+- CI runs the same command on every push/PR, alongside `ruff check` and
+  `ruff format --check` (see [Coding standards](coding-standards)).
+
+## Lint & format
+
+```bash
+uv run ruff check .             # lint
+uv run ruff format .            # auto-format (CI uses --check)
+```
 
 ## Test doubles (`tests/fakes.py`)
 

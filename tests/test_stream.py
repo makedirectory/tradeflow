@@ -41,8 +41,8 @@ def test_stream_reconnects_after_error_then_exits_on_cancel():
     async def behavior():
         attempts["n"] += 1
         if attempts["n"] == 1:
-            raise ConnectionError("socket dropped")   # first attempt fails -> reconnect
-        raise asyncio.CancelledError()                 # second attempt: shut down cleanly
+            raise ConnectionError("socket dropped")  # first attempt fails -> reconnect
+        raise asyncio.CancelledError()  # second attempt: shut down cleanly
 
     md._new_stream = lambda: _FakeStream(behavior)
 

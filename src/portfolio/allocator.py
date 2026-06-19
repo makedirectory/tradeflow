@@ -40,7 +40,7 @@ class Allocation:
     """A solved allocation for one symbol."""
 
     symbol: str
-    weight: float   # fraction of capital [0, 1]
+    weight: float  # fraction of capital [0, 1]
     dollars: float
     shares: float
 
@@ -113,7 +113,7 @@ class PortfolioAllocator:
             weights.append(weight)
             selected.append(select)
 
-        solver.Add(solver.Sum(weights) <= 1.0)            # invest <= 100%
+        solver.Add(solver.Sum(weights) <= 1.0)  # invest <= 100%
         solver.Add(solver.Sum(selected) <= self.max_positions)  # cardinality cap
 
         solver.Maximize(solver.Sum(c.score * w for c, w in zip(candidates, weights)))

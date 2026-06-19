@@ -83,8 +83,15 @@ class ParameterOptimizer:
         return self._evaluate_all(combos, symbols, start, end, objective)
 
     def optimize_bayesian(
-        self, symbols, start, end, objective="sharpe_ratio",
-        n_initial=8, n_iterations=20, exploration=0.1, n_candidates=512,
+        self,
+        symbols,
+        start,
+        end,
+        objective="sharpe_ratio",
+        n_initial=8,
+        n_iterations=20,
+        exploration=0.1,
+        n_candidates=512,
     ) -> OptimizationResult:
         """Bayesian optimization with a Gaussian-Process surrogate (UCB acquisition)."""
         gp = self._make_gp()  # raises a friendly error if scikit-learn is missing

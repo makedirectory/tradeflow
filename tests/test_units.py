@@ -77,17 +77,19 @@ def test_beta_neutral_on_degenerate_input():
     from src.indicators.indicators import calculate_beta
 
     flat = pd.Series([100.0] * 10)
-    assert calculate_beta(flat, flat) == 1.0          # flat benchmark -> neutral
+    assert calculate_beta(flat, flat) == 1.0  # flat benchmark -> neutral
     assert calculate_beta(pd.Series([100.0]), pd.Series([100.0])) == 1.0  # too few points
 
 
 # --- parameter space --------------------------------------------------------
 def _space():
-    return ParameterSpace({
-        "a": {"type": "int", "min": 1, "max": 3, "step": 1, "default": 1},
-        "b": {"type": "float", "min": 0.0, "max": 1.0, "step": 0.5, "default": 0.0},
-        "fixed": {"type": "float", "min": 0, "max": 1, "default": 0.5},  # no step -> not searched
-    })
+    return ParameterSpace(
+        {
+            "a": {"type": "int", "min": 1, "max": 3, "step": 1, "default": 1},
+            "b": {"type": "float", "min": 0.0, "max": 1.0, "step": 0.5, "default": 0.0},
+            "fixed": {"type": "float", "min": 0, "max": 1, "default": 0.5},  # no step -> not searched
+        }
+    )
 
 
 def test_grid_size_and_searchable():

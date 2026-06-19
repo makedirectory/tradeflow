@@ -4,9 +4,9 @@ from datetime import datetime
 
 import pytest
 
+from src.marketdata.client import MarketDataClient
 from src.optimization.optimizer import ParameterOptimizer
 from src.strategies.volume_spike import VolumeSpikeStrategy
-from src.marketdata.client import MarketDataClient
 from tests.fakes import FakeMarketData
 
 SYMBOLS = ["AAA", "BBB"]
@@ -14,8 +14,9 @@ START, END = datetime(2024, 1, 2), datetime(2024, 2, 1)
 
 
 def _optimizer():
-    return ParameterOptimizer(VolumeSpikeStrategy, MarketDataClient(FakeMarketData(SYMBOLS)),
-                              initial_capital=100_000)
+    return ParameterOptimizer(
+        VolumeSpikeStrategy, MarketDataClient(FakeMarketData(SYMBOLS)), initial_capital=100_000
+    )
 
 
 def test_random_search_returns_ranked_results():

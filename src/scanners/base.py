@@ -10,7 +10,7 @@ keeps the interface simple and avoids MultiIndex bookkeeping.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List
 
 import pandas as pd
 
@@ -80,8 +80,13 @@ class ScannerStrategy(ABC):
         Used by the optimizer to tune scanner parameters. Returns hit rate,
         average return, Sharpe and profit factor over the realised signals.
         """
-        empty = {"hit_rate": 0.0, "avg_return": 0.0, "total_signals": 0,
-                 "sharpe_ratio": 0.0, "profit_factor": 0.0}
+        empty = {
+            "hit_rate": 0.0,
+            "avg_return": 0.0,
+            "total_signals": 0,
+            "sharpe_ratio": 0.0,
+            "profit_factor": 0.0,
+        }
         if signals_df.empty or forward.empty:
             return empty
 
@@ -129,8 +134,7 @@ class ScannerStrategy(ABC):
                 value = int(value) if spec["type"] == "int" else float(value)
                 if not (spec["min"] <= value <= spec["max"]):
                     raise ValueError(
-                        f"Scanner parameter '{param}' value {value} outside "
-                        f"[{spec['min']}, {spec['max']}]"
+                        f"Scanner parameter '{param}' value {value} outside [{spec['min']}, {spec['max']}]"
                     )
                 validated[param] = value
         return validated

@@ -16,7 +16,23 @@ Designed to be easy to try and easy to read:
 
 > ⚠️ Educational software. Trading is risky; use paper trading. No warranty.
 
-## Quickstart
+## Requirements
+
+You need **either** of these — not both:
+
+- **[uv](https://docs.astral.sh/uv/getting-started/installation/)** — the Python
+  package manager used to run everything locally, **or**
+- **[Docker](https://docs.docker.com/get-docker/)** — to build and run the app in
+  a container (no local Python or uv needed).
+
+The `Makefile` targets run through **uv** (e.g. `make backtest` → `uv run …`), and
+there are separate **Docker** targets (`make docker-build`, `make docker-run`).
+Pick whichever you prefer.
+
+Either way you'll need free Alpaca **paper-trading** API keys from the
+[Alpaca dashboard](https://app.alpaca.markets/) → *Paper Account → API Keys*.
+
+## Quickstart (uv)
 
 ```bash
 # 1. Install uv:  https://docs.astral.sh/uv/
@@ -30,6 +46,20 @@ make install                          # uv sync
 make scan                             # which symbols are flagged right now?
 make backtest                         # scan -> volume_spike strategy -> report
 make live                             # paper-trade the scanned universe
+```
+
+## Quickstart (Docker)
+
+No local Python or uv required — just Docker:
+
+```bash
+cp config_example.py config.py        # add your Alpaca paper keys
+make docker-build                     # build the image (uv runs inside it)
+make docker-run                       # paper live-trading; mounts your config.py
+
+# or run any command in the container directly:
+docker run --rm -v $(pwd)/config.py:/app/config.py trading-engine \
+    uv run python main.py backtest --symbols NVDA,META --start 2024-01-02 --end 2024-04-01
 ```
 
 Run `make help` to see every target. Anything is overridable inline:
@@ -111,6 +141,19 @@ make test                  # offline suite — no API keys or network required
 
 The whole stack is testable offline because every layer depends on the
 broker/data abstractions; tests inject in-memory fakes.
+
+Lint and format with ruff (what CI runs):
+
+```bash
+uv run ruff check .          # lint
+uv run ruff format --check . # format
+```
+
+## Contributing
+
+See **[CONTRIBUTING.md](CONTRIBUTING.md)** for setup, the pre-push checks, and the
+coding standards (layering rules, separation of concerns, no vendor SDK above the
+broker layer). CI runs ruff lint + format + the test suite on every PR.
 
 ## Account utilities
 

@@ -37,6 +37,7 @@ const sidebars = {
         'engineering/optimization',
         'engineering/portfolio',
         'engineering/testing',
+        'engineering/coding-standards',
         'engineering/extending',
       ],
     },

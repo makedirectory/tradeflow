@@ -19,13 +19,12 @@ import sys
 from datetime import datetime, timedelta
 from typing import List, Optional
 
+from src.strategies.volume_spike import VolumeSpikeStrategy
 from src.utils.logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
 
 # Registry of trading strategies exposed on the CLI.
-from src.strategies.volume_spike import VolumeSpikeStrategy
-
 STRATEGIES = {"volume_spike": VolumeSpikeStrategy}
 
 # A reasonable default candidate list for the scanner to filter.
@@ -100,7 +99,9 @@ def cmd_backtest(args) -> None:
     if args.beta_sizing:
         sizer = build_beta_sizer(data_client, strategy, universe, args.benchmark, as_of=args.start)
 
-    result = BacktestEngine(strategy, data_client, sizer=sizer).run(universe, args.start, args.end, args.capital)
+    result = BacktestEngine(strategy, data_client, sizer=sizer).run(
+        universe, args.start, args.end, args.capital
+    )
     log_backtest_report(result.metrics, result.initial_capital, result.final_capital)
 
 
@@ -208,9 +209,13 @@ def cmd_optimize(args) -> None:
     optimizer = ParameterOptimizer(STRATEGIES[args.strategy], data_client, initial_capital=args.capital)
 
     if args.method == "grid":
-        result = optimizer.grid_search(universe, args.start, args.end, args.objective, max_evals=args.max_evals)
+        result = optimizer.grid_search(
+            universe, args.start, args.end, args.objective, max_evals=args.max_evals
+        )
     elif args.method == "random":
-        result = optimizer.random_search(universe, args.start, args.end, args.objective, n_samples=args.max_evals)
+        result = optimizer.random_search(
+            universe, args.start, args.end, args.objective, n_samples=args.max_evals
+        )
     else:  # bayesian
         result = optimizer.optimize_bayesian(universe, args.start, args.end, args.objective)
 
@@ -291,8 +296,9 @@ def build_parser() -> argparse.ArgumentParser:
     def add_common(p, *, with_dates: bool) -> None:
         p.add_argument("--strategy", choices=STRATEGIES, default="volume_spike")
         p.add_argument("--scanner", default="volume", help="Universe scanner ('none' to skip)")
-        p.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE,
-                       help="Comma-separated candidate symbols")
+        p.add_argument(
+            "--symbols", type=_symbols, default=DEFAULT_UNIVERSE, help="Comma-separated candidate symbols"
+        )
         if with_dates:
             p.add_argument("--start", type=_date, default=datetime.now() - timedelta(days=30))
             p.add_argument("--end", type=_date, default=datetime.now())
@@ -300,17 +306,28 @@ def build_parser() -> argparse.ArgumentParser:
 
     bt = subparsers.add_parser("backtest", help="Run a historical backtest")
     add_common(bt, with_dates=True)
-    bt.add_argument("--beta-sizing", dest="beta_sizing", action="store_true",
-                    help="Scale position sizing inversely by each symbol's beta")
+    bt.add_argument(
+        "--beta-sizing",
+        dest="beta_sizing",
+        action="store_true",
+        help="Scale position sizing inversely by each symbol's beta",
+    )
     bt.add_argument("--benchmark", default="SPY", help="Benchmark symbol for beta")
     bt.set_defaults(func=cmd_backtest)
 
     live = subparsers.add_parser("live", help="Run live/paper trading")
     add_common(live, with_dates=False)
-    live.add_argument("--portfolio", action="store_true",
-                      help="Size positions by OR-Tools portfolio weights instead of per-trade risk")
-    live.add_argument("--beta-sizing", dest="beta_sizing", action="store_true",
-                      help="Scale position sizing inversely by each symbol's beta")
+    live.add_argument(
+        "--portfolio",
+        action="store_true",
+        help="Size positions by OR-Tools portfolio weights instead of per-trade risk",
+    )
+    live.add_argument(
+        "--beta-sizing",
+        dest="beta_sizing",
+        action="store_true",
+        help="Scale position sizing inversely by each symbol's beta",
+    )
     live.add_argument("--benchmark", default="SPY", help="Benchmark symbol for beta")
     live.add_argument("--max-positions", dest="max_positions", type=int, default=5)
     live.add_argument("--max-weight", dest="max_weight", type=float, default=0.25)

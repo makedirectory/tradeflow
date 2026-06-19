@@ -18,14 +18,38 @@ class VolumeScannerStrategy(ScannerStrategy):
     TIMEFRAME = "1Day"
 
     PARAM_RANGES: ClassVar[Dict[str, Dict[str, Any]]] = {
-        "min_volume": {"type": "float", "min": 50_000, "max": 1_000_000, "step": 50_000,
-                       "default": 500_000, "description": "Minimum bar volume to consider a symbol liquid"},
-        "volume_ma_period": {"type": "int", "min": 5, "max": 50, "step": 5, "default": 10,
-                             "description": "Lookback for the volume moving-average baseline"},
-        "volume_threshold": {"type": "float", "min": 1.0, "max": 5.0, "step": 0.25, "default": 1.75,
-                             "description": "Volume / volume-MA ratio that flags unusual activity"},
-        "price_change_threshold": {"type": "float", "min": 0.5, "max": 5.0, "step": 0.25, "default": 0.5,
-                                   "description": "Minimum |intrabar price change| (%) to confirm"},
+        "min_volume": {
+            "type": "float",
+            "min": 50_000,
+            "max": 1_000_000,
+            "step": 50_000,
+            "default": 500_000,
+            "description": "Minimum bar volume to consider a symbol liquid",
+        },
+        "volume_ma_period": {
+            "type": "int",
+            "min": 5,
+            "max": 50,
+            "step": 5,
+            "default": 10,
+            "description": "Lookback for the volume moving-average baseline",
+        },
+        "volume_threshold": {
+            "type": "float",
+            "min": 1.0,
+            "max": 5.0,
+            "step": 0.25,
+            "default": 1.75,
+            "description": "Volume / volume-MA ratio that flags unusual activity",
+        },
+        "price_change_threshold": {
+            "type": "float",
+            "min": 0.5,
+            "max": 5.0,
+            "step": 0.25,
+            "default": 0.5,
+            "description": "Minimum |intrabar price change| (%) to confirm",
+        },
     }
 
     def initialize(self) -> None:  # nothing to set up
@@ -62,7 +86,9 @@ class VolumeScannerStrategy(ScannerStrategy):
 
         out.loc[bullish, "signal"] = SCANNER_BUY
         out.loc[bearish, "signal"] = SCANNER_SELL
-        out.loc[qualifies, "signal_strength"] = data.loc[qualifies, "volume_ratio"] * data.loc[qualifies, "price_change"]
+        out.loc[qualifies, "signal_strength"] = (
+            data.loc[qualifies, "volume_ratio"] * data.loc[qualifies, "price_change"]
+        )
         return out
 
     def is_hit(self, returns: float, price_change: float) -> bool:

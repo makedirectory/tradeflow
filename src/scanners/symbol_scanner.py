@@ -37,9 +37,7 @@ class SymbolScanner:
         config: Optional[dict] = None,
     ):
         if strategy_name not in self.SCANNERS:
-            raise ValueError(
-                f"Unknown scanner '{strategy_name}'. Available: {self.available()}"
-            )
+            raise ValueError(f"Unknown scanner '{strategy_name}'. Available: {self.available()}")
         scanner_cls = self.SCANNERS[strategy_name]
         defaults = {p: spec["default"] for p, spec in scanner_cls.PARAM_RANGES.items()}
         defaults.update(config or {})

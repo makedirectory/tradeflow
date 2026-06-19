@@ -56,7 +56,9 @@ def _frame(rows: List[dict]) -> pd.DataFrame:
 def _run(rows, per_bar_signals):
     strategy = ScriptedStrategy(per_bar_signals)
     data_client = MarketDataClient(DictMarketData({"AAA": _frame(rows)}))
-    return BacktestEngine(strategy, data_client).run(["AAA"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000)
+    return BacktestEngine(strategy, data_client).run(
+        ["AAA"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000
+    )
 
 
 def test_take_profit_exit():

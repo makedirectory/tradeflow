@@ -18,10 +18,17 @@ WEEK = "week"
 
 # Map the suffixes people actually type onto canonical units.
 _UNIT_ALIASES: Dict[str, str] = {
-    "min": MINUTE, "m": MINUTE, "minute": MINUTE,
-    "h": HOUR, "hr": HOUR, "hour": HOUR,
-    "d": DAY, "day": DAY,
-    "w": WEEK, "wk": WEEK, "week": WEEK,
+    "min": MINUTE,
+    "m": MINUTE,
+    "minute": MINUTE,
+    "h": HOUR,
+    "hr": HOUR,
+    "hour": HOUR,
+    "d": DAY,
+    "day": DAY,
+    "w": WEEK,
+    "wk": WEEK,
+    "week": WEEK,
 }
 
 _PATTERN = re.compile(r"^\s*(\d+)\s*([a-zA-Z]+)\s*$")

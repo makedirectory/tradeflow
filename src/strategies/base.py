@@ -20,7 +20,7 @@ The same strategy object is driven unchanged by the backtest and live engines.
 
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import pandas as pd
 
@@ -75,14 +75,11 @@ class Strategy(ABC):
                     value = float(value)
                 self.config[param] = value
             except (ValueError, TypeError):
-                raise ValueError(
-                    f"Parameter '{param}' value {value!r} cannot be converted to {param_type}"
-                )
+                raise ValueError(f"Parameter '{param}' value {value!r} cannot be converted to {param_type}")
 
             if not (spec["min"] <= value <= spec["max"]):
                 raise ValueError(
-                    f"Parameter '{param}' value {value} is outside valid range "
-                    f"[{spec['min']}, {spec['max']}]"
+                    f"Parameter '{param}' value {value} is outside valid range [{spec['min']}, {spec['max']}]"
                 )
 
     # ------------------------------------------------------------------ #
@@ -163,9 +160,8 @@ class Strategy(ABC):
             position = self.positions.get(symbol)
             if position is None:
                 return False
-            return (
-                (signal == signals.CLOSE_BUY and position["side"] == signals.BUY)
-                or (signal == signals.CLOSE_SELL and position["side"] == signals.SELL)
+            return (signal == signals.CLOSE_BUY and position["side"] == signals.BUY) or (
+                signal == signals.CLOSE_SELL and position["side"] == signals.SELL
             )
 
         # Don't stack a second position on the same side of an existing one.
@@ -177,9 +173,7 @@ class Strategy(ABC):
     # ------------------------------------------------------------------ #
     # Real-time processing (live mode)
     # ------------------------------------------------------------------ #
-    def process_bar(
-        self, symbol: str, bar: Dict[str, float], timestamp: datetime
-    ) -> Optional[str]:
+    def process_bar(self, symbol: str, bar: Dict[str, float], timestamp: datetime) -> Optional[str]:
         """Fold one streamed OHLCV bar into the rolling buffer and emit a signal.
 
         ``bar`` must contain ``open``/``high``/``low``/``close``/``volume``. Returns

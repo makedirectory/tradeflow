@@ -7,11 +7,21 @@ title: Installation
 
 ## Prerequisites
 
-- [uv](https://docs.astral.sh/uv/) (the project's package manager)
-- An Alpaca account with **paper-trading** API keys
-- Optionally Docker, and Node.js 18+ to build these docs
+You need **either** of these (not both):
 
-## Install dependencies
+- **[uv](https://docs.astral.sh/uv/getting-started/installation/)** — runs the app
+  locally, **or**
+- **[Docker](https://docs.docker.com/get-docker/)** — runs the app in a container,
+  no local Python/uv required.
+
+Plus free Alpaca **paper-trading** API keys from the
+[Alpaca dashboard](https://app.alpaca.markets/) (*Paper Account → API Keys*).
+(Node.js 18+ is only needed to build these docs.)
+
+The `Makefile` targets run through **uv**; the **Docker** path uses
+`make docker-build` / `make docker-run` (uv runs inside the image).
+
+## Option A — local with uv
 
 ```bash
 make install        # == uv sync
@@ -21,6 +31,20 @@ make install        # == uv sync
 pinned dependencies from `uv.lock`. The base install is intentionally small:
 `alpaca-py`, `pandas`, `numpy`, `pytz`. There is **no compiler step** — indicators
 are pure pandas/numpy, not TA-Lib.
+
+## Option B — Docker
+
+```bash
+make docker-build                     # build the image
+make docker-run                       # paper live-trading; mounts your config.py
+```
+
+No local Python or uv needed. Override the command to backtest/scan, e.g.:
+
+```bash
+docker run --rm -v $(pwd)/config.py:/app/config.py trading-engine \
+    uv run python main.py backtest --symbols NVDA,META --start 2024-01-02 --end 2024-04-01
+```
 
 ## Optional extras
 

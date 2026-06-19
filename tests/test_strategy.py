@@ -21,8 +21,12 @@ def test_defaults_include_timeframe_and_lookback():
 
 def test_invalid_parameter_raises():
     with pytest.raises(ValueError):
-        VolumeSpikeStrategy({**{p: spec["default"] for p, spec in VolumeSpikeStrategy.PARAM_RANGES.items()},
-                             "rsi_period": 999})  # out of range
+        VolumeSpikeStrategy(
+            {
+                **{p: spec["default"] for p, spec in VolumeSpikeStrategy.PARAM_RANGES.items()},
+                "rsi_period": 999,
+            }
+        )  # out of range
 
 
 def test_short_ema_must_be_below_long_ema():
@@ -41,11 +45,11 @@ def test_position_size_capped_by_notional_limit():
 def test_validate_signal_rejects_conflicts():
     s = _strategy()
     s.positions = {"AAA": {"side": signals.BUY, "stop_loss": 95, "take_profit": 110}}
-    assert s.validate_signal(signals.BUY, "AAA", 100) is False          # duplicate long
-    assert s.validate_signal(signals.CLOSE_BUY, "AAA", 100) is True      # matches long
-    assert s.validate_signal(signals.CLOSE_SELL, "AAA", 100) is False    # wrong side
-    assert s.validate_signal(signals.CLOSE_BUY, "BBB", 100) is False     # no position
-    assert s.validate_signal(signals.BUY, "BBB", 100) is True            # fresh entry
+    assert s.validate_signal(signals.BUY, "AAA", 100) is False  # duplicate long
+    assert s.validate_signal(signals.CLOSE_BUY, "AAA", 100) is True  # matches long
+    assert s.validate_signal(signals.CLOSE_SELL, "AAA", 100) is False  # wrong side
+    assert s.validate_signal(signals.CLOSE_BUY, "BBB", 100) is False  # no position
+    assert s.validate_signal(signals.BUY, "BBB", 100) is True  # fresh entry
 
 
 def test_check_exit_conditions_flags_stop_and_take():
@@ -86,4 +90,10 @@ def test_generate_signals_defaults_to_hold():
 
     s = _strategy()
     out = s.generate_signals(s.process_data(make_ohlcv(n=200)))
-    assert set(out.values()) <= {signals.BUY, signals.SELL, signals.CLOSE_BUY, signals.CLOSE_SELL, signals.HOLD}
+    assert set(out.values()) <= {
+        signals.BUY,
+        signals.SELL,
+        signals.CLOSE_BUY,
+        signals.CLOSE_SELL,
+        signals.HOLD,
+    }

@@ -5,7 +5,7 @@ logic lives here - not inside ``Strategy`` or the engine - so strategies stay
 about signals and the engine stays about orchestration (separation of concerns).
 """
 
-from typing import Any, Dict, List
+from typing import Dict, List
 
 import numpy as np
 import pandas as pd

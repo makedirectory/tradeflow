@@ -35,8 +35,14 @@ _UNIT_TO_ALPACA = {
 class AlpacaMarketData(MarketDataProvider):
     """Historical + live equity bars from Alpaca."""
 
-    def __init__(self, historical_client: StockHistoricalDataClient, api_key: str, api_secret: str,
-                 base_reconnect_delay: float = 5.0, max_reconnect_delay: float = 60.0):
+    def __init__(
+        self,
+        historical_client: StockHistoricalDataClient,
+        api_key: str,
+        api_secret: str,
+        base_reconnect_delay: float = 5.0,
+        max_reconnect_delay: float = 60.0,
+    ):
         self._historical = historical_client
         self._api_key = api_key
         self._api_secret = api_secret
@@ -91,16 +97,24 @@ class AlpacaMarketData(MarketDataProvider):
                 await self._safe_stop(stream)
 
         await run_with_reconnect(
-            "market-data", connect,
-            base_delay=self._base_reconnect_delay, max_delay=self._max_reconnect_delay,
+            "market-data",
+            connect,
+            base_delay=self._base_reconnect_delay,
+            max_delay=self._max_reconnect_delay,
         )
 
     def _make_bar_callback(self, handler: BarHandler):
         """Wrap a project BarHandler as an async Alpaca bar callback."""
+
         async def _on_alpaca_bar(bar) -> None:
             event = BarEvent(
-                symbol=bar.symbol, timestamp=bar.timestamp, open=bar.open,
-                high=bar.high, low=bar.low, close=bar.close, volume=bar.volume,
+                symbol=bar.symbol,
+                timestamp=bar.timestamp,
+                open=bar.open,
+                high=bar.high,
+                low=bar.low,
+                close=bar.close,
+                volume=bar.volume,
             )
             result = handler(event)
             if inspect.isawaitable(result):

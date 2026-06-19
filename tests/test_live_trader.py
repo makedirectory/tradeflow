@@ -21,8 +21,8 @@ def _account(equity=100_000.0):
 
 def test_portfolio_weight_sizer():
     sizer = PortfolioWeightSizer({"AAA": 0.25})
-    assert sizer.size("AAA", 100.0, _account()) == 250.0   # 0.25 * 100k / 100
-    assert sizer.size("BBB", 100.0, _account()) == 0.0      # unfunded symbol
+    assert sizer.size("AAA", 100.0, _account()) == 250.0  # 0.25 * 100k / 100
+    assert sizer.size("BBB", 100.0, _account()) == 0.0  # unfunded symbol
 
 
 def test_risk_based_sizer_delegates_to_strategy():
@@ -75,24 +75,27 @@ def test_entry_submits_bracket_order():
 
 
 def test_entry_skipped_when_position_exists():
-    pos = Position("AAA", qty=5, side="long", avg_entry_price=90,
-                   current_price=100, market_value=500, unrealized_pl=50)
+    pos = Position(
+        "AAA", qty=5, side="long", avg_entry_price=90, current_price=100, market_value=500, unrealized_pl=50
+    )
     broker = FakeBroker(positions=[pos])
     _trader(broker).handle_signal("AAA", signals.BUY, price=100.0)
     assert broker.orders == []
 
 
 def test_exit_closes_matching_position():
-    pos = Position("AAA", qty=5, side="long", avg_entry_price=90,
-                   current_price=100, market_value=500, unrealized_pl=50)
+    pos = Position(
+        "AAA", qty=5, side="long", avg_entry_price=90, current_price=100, market_value=500, unrealized_pl=50
+    )
     broker = FakeBroker(positions=[pos])
     _trader(broker).handle_signal("AAA", signals.CLOSE_BUY, price=100.0)
     assert broker.closed == ["AAA"]
 
 
 def test_exit_ignored_when_side_mismatches():
-    pos = Position("AAA", qty=5, side="long", avg_entry_price=90,
-                   current_price=100, market_value=500, unrealized_pl=50)
+    pos = Position(
+        "AAA", qty=5, side="long", avg_entry_price=90, current_price=100, market_value=500, unrealized_pl=50
+    )
     broker = FakeBroker(positions=[pos])
     _trader(broker).handle_signal("AAA", signals.CLOSE_SELL, price=100.0)  # closing a short
     assert broker.closed == []
@@ -118,8 +121,9 @@ def test_closed_market_blocks_orders():
 
 def test_market_hours_can_be_disabled():
     broker = FakeBroker(buying_power=100_000, market_open=False)
-    LiveTrader(broker, VolumeSpikeStrategy.create_with_defaults(),
-               respect_market_hours=False).handle_signal("AAA", signals.BUY, price=100.0)
+    LiveTrader(broker, VolumeSpikeStrategy.create_with_defaults(), respect_market_hours=False).handle_signal(
+        "AAA", signals.BUY, price=100.0
+    )
     assert len(broker.orders) == 1
 
 
@@ -127,14 +131,15 @@ def test_market_hours_can_be_disabled():
 def test_pending_order_blocks_duplicate_entry():
     broker = FakeBroker(buying_power=100_000)
     trader = _trader(broker)
-    trader.handle_signal("AAA", signals.BUY, 100.0)   # places a bracket order
-    trader.handle_signal("AAA", signals.BUY, 100.0)   # order pending -> must not double-submit
+    trader.handle_signal("AAA", signals.BUY, 100.0)  # places a bracket order
+    trader.handle_signal("AAA", signals.BUY, 100.0)  # order pending -> must not double-submit
     assert len(broker.orders) == 1
 
 
 def test_exit_cancels_resting_orders_before_closing():
-    pos = Position("AAA", qty=5, side="long", avg_entry_price=90,
-                   current_price=100, market_value=500, unrealized_pl=50)
+    pos = Position(
+        "AAA", qty=5, side="long", avg_entry_price=90, current_price=100, market_value=500, unrealized_pl=50
+    )
     broker = FakeBroker(positions=[pos])
     # Simulate a resting bracket leg for the symbol.
     broker.submit_bracket_order("AAA", 5, OrderSide.SELL, 95, 110)

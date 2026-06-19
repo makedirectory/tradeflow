@@ -109,8 +109,15 @@ class LiveTrader:
 
         side = _ENTRY_SIDE[signal]
         stop_loss, take_profit = self._stop_levels(price, side)
-        logger.info("Entering %s %s x%s @ ~$%.2f (stop $%.2f / target $%.2f)",
-                    side.value, symbol, qty, price, stop_loss, take_profit)
+        logger.info(
+            "Entering %s %s x%s @ ~$%.2f (stop $%.2f / target $%.2f)",
+            side.value,
+            symbol,
+            qty,
+            price,
+            stop_loss,
+            take_profit,
+        )
         return self._broker.submit_bracket_order(symbol, qty, side, stop_loss, take_profit)
 
     def _handle_exit(self, symbol: str, signal: str, position: Optional[Position]) -> None:

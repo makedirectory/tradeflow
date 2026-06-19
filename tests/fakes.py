@@ -74,19 +74,26 @@ class DictMarketData(MarketDataProvider):
 class FakeBroker(Broker):
     """In-memory broker that records orders for assertions."""
 
-    def __init__(self, buying_power: float = 100_000.0, positions: Optional[List[Position]] = None,
-                 tradable: bool = True, market_open: bool = True):
+    def __init__(
+        self,
+        buying_power: float = 100_000.0,
+        positions: Optional[List[Position]] = None,
+        tradable: bool = True,
+        market_open: bool = True,
+    ):
         self.account = AccountSnapshot(
-            cash=buying_power, equity=buying_power, buying_power=buying_power,
+            cash=buying_power,
+            equity=buying_power,
+            buying_power=buying_power,
             portfolio_value=buying_power,
         )
         self.positions: Dict[str, Position] = {p.symbol: p for p in (positions or [])}
         self.tradable = tradable
         self.market_open = market_open
-        self.orders: List[dict] = []           # every submitted order, as a dict
+        self.orders: List[dict] = []  # every submitted order, as a dict
         self.open_orders_list: List[OrderResult] = []  # still-open orders
-        self.closed: List[str] = []            # symbols passed to close_position
-        self.cancelled: List[str] = []         # order ids passed to cancel_order
+        self.closed: List[str] = []  # symbols passed to close_position
+        self.cancelled: List[str] = []  # order ids passed to cancel_order
 
     def get_account(self) -> Optional[AccountSnapshot]:
         return self.account
@@ -111,9 +118,17 @@ class FakeBroker(Broker):
 
     def submit_bracket_order(self, symbol, qty, side, stop_loss, take_profit) -> Optional[OrderResult]:
         return self._record(
-            {"type": "bracket", "symbol": symbol, "qty": qty, "side": side,
-             "stop_loss": stop_loss, "take_profit": take_profit},
-            symbol, qty, side,
+            {
+                "type": "bracket",
+                "symbol": symbol,
+                "qty": qty,
+                "side": side,
+                "stop_loss": stop_loss,
+                "take_profit": take_profit,
+            },
+            symbol,
+            qty,
+            side,
         )
 
     def list_open_orders(self, symbol: Optional[str] = None) -> List[OrderResult]:
@@ -159,8 +174,15 @@ class StreamingFakeMarketData(FakeMarketData):
 
         for i in range(self._bars_to_emit):
             for symbol in symbols:
-                event = BarEvent(symbol=symbol, timestamp=datetime(2024, 1, 2, 10, i % 60),
-                                 open=100, high=101, low=99, close=100, volume=1000)
+                event = BarEvent(
+                    symbol=symbol,
+                    timestamp=datetime(2024, 1, 2, 10, i % 60),
+                    open=100,
+                    high=101,
+                    low=99,
+                    close=100,
+                    volume=1000,
+                )
                 result = handler(event)
                 if asyncio.iscoroutine(result):
                     await result

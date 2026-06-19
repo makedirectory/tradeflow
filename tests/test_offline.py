@@ -7,7 +7,6 @@ abstractions rather than a concrete vendor.
 
 from datetime import datetime
 
-import numpy as np
 import pandas as pd
 import pytest
 

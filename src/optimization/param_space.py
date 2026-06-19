@@ -26,8 +26,7 @@ class ParameterSpace:
     def __init__(self, param_ranges: Dict[str, Dict[str, Any]]):
         self.param_ranges = param_ranges
         self.searchable: List[str] = [
-            name for name, spec in param_ranges.items()
-            if all(k in spec for k in ("min", "max", "step"))
+            name for name, spec in param_ranges.items() if all(k in spec for k in ("min", "max", "step"))
         ]
         self.defaults: Dict[str, Any] = {
             name: spec["default"] for name, spec in param_ranges.items() if "default" in spec
@@ -58,10 +57,7 @@ class ParameterSpace:
         check :meth:`grid_size` first and fall back to :meth:`random_samples`.
         """
         axes = [self._values_for(name) for name in self.searchable]
-        return [
-            {**self.defaults, **dict(zip(self.searchable, combo))}
-            for combo in product(*axes)
-        ]
+        return [{**self.defaults, **dict(zip(self.searchable, combo))} for combo in product(*axes)]
 
     def random_samples(self, n: int, rng: np.random.Generator) -> List[Dict[str, Any]]:
         """``n`` random step-aligned configs."""

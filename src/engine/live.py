@@ -65,7 +65,11 @@ class LiveEngine:
         """Log account/order events (fills, cancels, rejects)."""
         logger.info(
             "Trade update: %s %s (order %s, status %s, filled %s)",
-            update.event, update.symbol, update.order_id, update.status, update.filled_qty,
+            update.event,
+            update.symbol,
+            update.order_id,
+            update.status,
+            update.filled_qty,
         )
 
     def _warm_up(self, symbols: List[str]) -> None:
@@ -84,8 +88,11 @@ class LiveEngine:
     def _on_bar(self, event: BarEvent) -> None:
         """Per-bar callback: update the strategy and act on any emitted signal."""
         bar = {
-            "open": event.open, "high": event.high, "low": event.low,
-            "close": event.close, "volume": event.volume,
+            "open": event.open,
+            "high": event.high,
+            "low": event.low,
+            "close": event.close,
+            "volume": event.volume,
         }
         signal = self.strategy.process_bar(event.symbol, bar, event.timestamp)
         if signal and signal != signals.HOLD:
