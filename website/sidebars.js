@@ -12,6 +12,7 @@ const sidebars = {
       items: [
         'usage/installation',
         'usage/configuration',
+        'usage/brokers',
         'usage/scanning',
         'usage/backtesting',
         'usage/live-trading',

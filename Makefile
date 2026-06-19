@@ -78,10 +78,10 @@ docs-build:  ## Build the static documentation site
 
 # --- docker -----------------------------------------------------------------
 docker-build:  ## Build the Docker image
-	docker build -t trading-engine .
+	docker build -t tradeflow .
 
 docker-run:  ## Run the container (paper live trading; mounts your config.py)
-	docker run --rm -it -v $$(pwd)/config.py:/app/config.py trading-engine
+	docker run --rm -it -v $$(pwd)/config.py:/app/config.py tradeflow
 
 clean:  ## Remove caches, build output, and results
 	rm -rf .venv optimization_results.csv website/build website/node_modules

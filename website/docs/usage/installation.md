@@ -42,7 +42,7 @@ make docker-run                       # paper live-trading; mounts your config.p
 No local Python or uv needed. Override the command to backtest/scan, e.g.:
 
 ```bash
-docker run --rm -v $(pwd)/config.py:/app/config.py trading-engine \
+docker run --rm -v $(pwd)/config.py:/app/config.py tradeflow \
     uv run python main.py backtest --symbols NVDA,META --start 2024-01-02 --end 2024-04-01
 ```
 

@@ -1,6 +1,10 @@
-# Alpaca Trading Engine
+# TradeFlow
 
-A small, **layered** algorithmic-trading engine on the [Alpaca](https://alpaca.markets) API.
+[![CI](https://github.com/makedirectory/tradeflow/actions/workflows/ci.yml/badge.svg)](https://github.com/makedirectory/tradeflow/actions/workflows/ci.yml)
+
+A small, **layered**, **broker-agnostic** algorithmic-trading engine. It ships with
+an [Alpaca](https://alpaca.markets) adapter, but everything above the broker layer
+is vendor-neutral.
 It scans a universe of symbols, runs a strategy over them, and either **backtests**
 on history or **trades live** (paper by default) — with optional **parameter
 optimization** and **constraint-solver portfolio allocation**.
@@ -58,7 +62,7 @@ make docker-build                     # build the image (uv runs inside it)
 make docker-run                       # paper live-trading; mounts your config.py
 
 # or run any command in the container directly:
-docker run --rm -v $(pwd)/config.py:/app/config.py trading-engine \
+docker run --rm -v $(pwd)/config.py:/app/config.py tradeflow \
     uv run python main.py backtest --symbols NVDA,META --start 2024-01-02 --end 2024-04-01
 ```
 

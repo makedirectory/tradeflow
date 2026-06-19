@@ -40,50 +40,6 @@ wheels = [
 ]
 
 [[package]]
-name = "alpaca-trading-engine"
-version = "0.1.0"
-source = { virtual = "." }
-dependencies = [
-    { name = "alpaca-py" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "pandas", version = "3.0.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "pytz" },
-]
-
-[package.optional-dependencies]
-dev = [
-    { name = "ortools" },
-    { name = "pytest" },
-    { name = "ruff" },
-    { name = "scikit-learn", version = "1.7.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "scikit-learn", version = "1.9.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-]
-optimize = [
-    { name = "scikit-learn", version = "1.7.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "scikit-learn", version = "1.9.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-]
-portfolio = [
-    { name = "ortools" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "alpaca-py", specifier = ">=0.35" },
-    { name = "numpy", specifier = ">=1.26" },
-    { name = "ortools", marker = "extra == 'dev'", specifier = ">=9.8" },
-    { name = "ortools", marker = "extra == 'portfolio'", specifier = ">=9.8" },
-    { name = "pandas", specifier = ">=2.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
-    { name = "pytz", specifier = ">=2024.1" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
-    { name = "scikit-learn", marker = "extra == 'dev'", specifier = ">=1.4" },
-    { name = "scikit-learn", marker = "extra == 'optimize'", specifier = ">=1.4" },
-]
-provides-extras = ["optimize", "portfolio", "dev"]
-
-[[package]]
 name = "annotated-types"
 version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1244,6 +1200,50 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/5a/cd/e80b62269fc78fc36c9af5a6b89c835baa8af28ff5ad28c7028d60860320/tomli-2.4.1-cp314-cp314t-win_arm64.whl", hash = "sha256:eab21f45c7f66c13f2a9e0e1535309cee140182a9cdae1e041d02e47291e8396", size = 100393, upload-time = "2026-03-25T20:22:02.137Z" },
     { url = "https://files.pythonhosted.org/packages/7b/61/cceae43728b7de99d9b847560c262873a1f6c98202171fd5ed62640b494b/tomli-2.4.1-py3-none-any.whl", hash = "sha256:0d85819802132122da43cb86656f8d1f8c6587d54ae7dcaf30e90533028b49fe", size = 14583, upload-time = "2026-03-25T20:22:03.012Z" },
 ]
+
+[[package]]
+name = "tradeflow"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "alpaca-py" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "pandas", version = "3.0.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "pytz" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "ortools" },
+    { name = "pytest" },
+    { name = "ruff" },
+    { name = "scikit-learn", version = "1.7.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scikit-learn", version = "1.9.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
+optimize = [
+    { name = "scikit-learn", version = "1.7.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scikit-learn", version = "1.9.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
+portfolio = [
+    { name = "ortools" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "alpaca-py", specifier = ">=0.35" },
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "ortools", marker = "extra == 'dev'", specifier = ">=9.8" },
+    { name = "ortools", marker = "extra == 'portfolio'", specifier = ">=9.8" },
+    { name = "pandas", specifier = ">=2.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
+    { name = "pytz", specifier = ">=2024.1" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
+    { name = "scikit-learn", marker = "extra == 'dev'", specifier = ">=1.4" },
+    { name = "scikit-learn", marker = "extra == 'optimize'", specifier = ">=1.4" },
+]
+provides-extras = ["optimize", "portfolio", "dev"]
 
 [[package]]
 name = "typing-extensions"

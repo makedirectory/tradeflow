@@ -290,7 +290,7 @@ def _date(value: str) -> datetime:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Alpaca trading engine")
+    parser = argparse.ArgumentParser(description="TradeFlow — a broker-agnostic trading engine")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     def add_common(p, *, with_dates: bool) -> None:

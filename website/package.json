@@ -1,6 +1,6 @@
 {
-  "name": "trading-engine-docs",
-  "version": "0.0.0",
+  "name": "tradeflow-docs",
+  "version": "0.1.0",
   "private": true,
   "scripts": {
     "docusaurus": "docusaurus",

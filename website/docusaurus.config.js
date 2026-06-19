@@ -1,10 +1,10 @@
 // @ts-check
-// Docusaurus site for the Alpaca Trading Engine.
+// Docusaurus site for TradeFlow.
 // Docs are served at the site root; there are two sidebars: Usage and Engineering.
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
-  title: 'Alpaca Trading Engine',
+  title: 'TradeFlow',
   tagline: 'A simple, layered, broker-agnostic algorithmic trading engine',
   favicon: 'img/favicon.ico',
 
@@ -40,7 +40,7 @@ const config = {
     /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
     ({
       navbar: {
-        title: 'Alpaca Trading Engine',
+        title: 'TradeFlow',
         items: [
           { type: 'docSidebar', sidebarId: 'usage', position: 'left', label: 'Usage' },
           { type: 'docSidebar', sidebarId: 'engineering', position: 'left', label: 'Engineering' },

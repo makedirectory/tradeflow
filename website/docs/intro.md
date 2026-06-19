@@ -4,12 +4,14 @@ sidebar_position: 1
 title: Overview
 ---
 
-# Alpaca Trading Engine
+# TradeFlow
 
-A small, **layered** algorithmic-trading engine on the [Alpaca](https://alpaca.markets)
-API. It scans a universe of symbols, runs a strategy over them, and either
-**backtests** on history or **trades live** (paper by default) — with optional
-**parameter optimization** and **constraint-solver portfolio allocation**.
+A small, **layered**, **broker-agnostic** algorithmic-trading engine. It ships
+with an [Alpaca](https://alpaca.markets) adapter, but everything above the broker
+layer is vendor-neutral. It scans a universe of symbols, runs a strategy over
+them, and either **backtests** on history or **trades live** (paper by default) —
+with optional **parameter optimization** and **constraint-solver portfolio
+allocation**.
 
 It is built to be **easy to try** and **easy to read**:
 

@@ -1,7 +1,7 @@
 [project]
-name = "alpaca-trading-engine"
+name = "tradeflow"
 version = "0.1.0"
-description = "A simple, layered algorithmic trading engine on the Alpaca API (backtest + live)."
+description = "A simple, layered, broker-agnostic algorithmic trading engine (Alpaca adapter included; backtest + live)."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

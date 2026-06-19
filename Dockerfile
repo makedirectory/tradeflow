@@ -17,5 +17,5 @@ RUN uv sync --no-dev
 COPY . .
 
 # Default to paper live-trading; override at `docker run` to backtest/scan, e.g.
-#   docker run --rm trading-engine uv run python main.py backtest
+#   docker run --rm tradeflow uv run python main.py backtest
 CMD ["uv", "run", "python", "main.py", "live"]
