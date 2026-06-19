@@ -19,6 +19,8 @@ optimize = ["scikit-learn>=1.4"]
 portfolio = ["ortools>=9.8"]
 # Expose TradeFlow to an agent over MCP (Spec 003). Opt-in; base install unchanged.
 mcp = ["mcp>=1.0"]
+# Autonomous research agent (Spec 004). Opt-in; base install unchanged.
+ai = ["anthropic>=0.40"]
 dev = ["pytest>=8.0", "ruff>=0.6", "scikit-learn>=1.4", "ortools>=9.8"]
 
 [tool.uv]

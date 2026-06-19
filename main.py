@@ -308,6 +308,49 @@ def _print_walkforward(result, objective: str) -> None:
           f"DSR {agg.get('deflated_sharpe_ratio', 0):.2f}")
 
 
+def cmd_research(args) -> None:
+    """Run the autonomous research loop (opt-in; needs the ``ai`` extra).
+
+    Offline research clock only: proposes hypotheses, validates them out-of-sample
+    via walk-forward, and writes a shortlist of provenance-stamped candidate
+    configs for a human to review. Never touches live trading (Spec 004 §4).
+    """
+    import importlib.util
+
+    if importlib.util.find_spec("anthropic") is None:
+        sys.exit("The research agent needs the 'ai' extra. Install it:\n    uv sync --extra ai")
+
+    from src.research.agent import ResearchAgent, ResearchConfig
+    from src.research.proposer import AnthropicProposer
+    from src.services.data import build_data_client
+
+    data_client = build_data_client()
+    universe = resolve_universe(data_client, args.scanner, args.symbols)
+    cfg = ResearchConfig(
+        goal=args.goal, mode=args.mode, n_folds=args.folds, embargo_days=args.embargo_days,
+        holdout_days=args.holdout_days, method=args.method, objective=args.objective,
+        max_evals=args.max_evals, capital=args.capital, max_trials=args.max_trials,
+        max_dry_rounds=args.max_dry_rounds, max_tokens=args.max_tokens,
+        shortlist_size=args.shortlist_size, allow_code_gen=args.allow_code_gen,
+    )
+    proposer = AnthropicProposer(model=args.model)
+    agent = ResearchAgent(args.strategy, data_client, proposer, cfg, seed=args.seed)
+    result = agent.run(universe, args.start, args.end)
+
+    print(f"\n=== Research session {agent.session_id} ===")
+    print(f"Stopped: {result.stopped_reason} after {result.rounds} rounds, "
+          f"{result.n_trials_total} cumulative trials")
+    print(f"Holdout (scored once): {result.holdout_window}")
+    if not result.shortlist:
+        print("No candidate cleared the promotion gates.")
+    for c in result.shortlist:
+        oos = c.oos_metrics.get("sharpe_ratio", 0.0)
+        hold = (c.holdout_metrics or {}).get("sharpe_ratio", 0.0)
+        print(f"  [{c.id}] OOS Sharpe {oos:.2f} | holdout Sharpe {hold:.2f} | {c.saved_path}")
+        print(f"        hypothesis: {c.hypothesis[:100]}")
+    print(f"\nJournal: {result.journal_path}  (a human reviews and promotes; nothing is live)")
+
+
 def cmd_mcp(args) -> None:
     """Serve TradeFlow over MCP (stdio). Opt-in; requires the ``mcp`` extra.
 
@@ -482,6 +525,28 @@ def build_parser() -> argparse.ArgumentParser:
         "mcp", help="Serve TradeFlow over MCP for an agent (opt-in; needs the 'mcp' extra)"
     )
     mcp.set_defaults(func=cmd_mcp)
+
+    res = subparsers.add_parser(
+        "research", help="Autonomous research loop -> shortlist of validated configs (needs 'ai' extra)"
+    )
+    add_common(res, with_dates=True)
+    res.add_argument("--goal", default="Improve out-of-sample Sharpe without raising max drawdown")
+    res.add_argument("--mode", choices=["anchored", "rolling"], default="anchored")
+    res.add_argument("--folds", type=int, default=4)
+    res.add_argument("--embargo-days", dest="embargo_days", type=int, default=None)
+    res.add_argument("--holdout-days", dest="holdout_days", type=int, default=60)
+    res.add_argument("--method", choices=["grid", "random", "bayesian"], default="grid")
+    res.add_argument("--objective", default="sharpe_ratio")
+    res.add_argument("--max-evals", dest="max_evals", type=int, default=25)
+    res.add_argument("--max-trials", dest="max_trials", type=int, default=10)
+    res.add_argument("--max-dry-rounds", dest="max_dry_rounds", type=int, default=3)
+    res.add_argument("--max-tokens", dest="max_tokens", type=int, default=None)
+    res.add_argument("--shortlist-size", dest="shortlist_size", type=int, default=3)
+    res.add_argument("--allow-code-gen", dest="allow_code_gen", action="store_true",
+                     help="Permit agent-authored strategy code (validated in the sandbox)")
+    res.add_argument("--model", default="claude-opus-4-8")
+    res.add_argument("--seed", type=int, default=42)
+    res.set_defaults(func=cmd_research)
 
     return parser
 

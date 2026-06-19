@@ -312,6 +312,7 @@ class WalkForwardValidator:
         monte_carlo: bool = False,
         parameter_sensitivity: bool = False,
         leakage_probe: bool = False,
+        n_trials_offset: int = 0,
     ) -> WalkForwardResult:
         embargo = embargo_days if embargo_days is not None else self.default_embargo_days()
         folds, holdout = self.build_folds(
@@ -353,7 +354,10 @@ class WalkForwardValidator:
                 n_trials=len(is_result.results),
             ))
 
-        n_trials_total = sum(fr.n_trials for fr in fold_results)
+        # ``n_trials_offset`` lets a research session (Spec 004) accumulate the
+        # multiple-testing count across many walk-forward runs, so the Deflated
+        # Sharpe reflects every config tried this session, not just this run.
+        n_trials_total = sum(fr.n_trials for fr in fold_results) + n_trials_offset
         var_trial_sr = self._per_period_sr_variance(all_trial_sharpes)
 
         oos_aggregate = self._aggregate_oos(oos_trade_frames, folds, n_trials_total, var_trial_sr)
@@ -395,6 +399,95 @@ class WalkForwardValidator:
             if pbo:
                 result.pbo = self.estimate_pbo(oos_trade_frames, fold_results, objective)
         return result
+
+    def evaluate_config(
+        self,
+        symbols: List[str],
+        start: datetime,
+        end: datetime,
+        params: Dict[str, Any],
+        *,
+        mode: str = "anchored",
+        n_folds: Optional[int] = 4,
+        train_days: Optional[int] = None,
+        test_days: Optional[int] = None,
+        embargo_days: Optional[int] = None,
+        objective: str = "sharpe_ratio",
+        n_trials_offset: int = 0,
+        strategy_class: Optional[Type[Strategy]] = None,
+    ) -> WalkForwardResult:
+        """Validate a *fixed* config out-of-sample across folds (no per-fold search).
+
+        Used by the research agent (Spec 004): the agent proposes a specific
+        config, and this scores that exact config OOS, fold by fold, leakage-safe.
+        It counts as **one** trial for the multiple-testing correction; pass the
+        running session count via ``n_trials_offset`` so the Deflated Sharpe
+        reflects every config tried so far.
+        """
+        cls = strategy_class or self.strategy_class
+        embargo = embargo_days if embargo_days is not None else self.default_embargo_days()
+        folds, _ = self.build_folds(
+            start, end, mode=mode, n_folds=n_folds, train_days=train_days,
+            test_days=test_days, embargo_days=embargo, holdout_days=0,
+        )
+        warmup_days = embargo
+        frames = self.data_client.get_bars(
+            symbols, self.timeframe, start - timedelta(days=warmup_days), end
+        )
+        sliced = MarketDataClient(_PrefetchedProvider(frames))
+
+        fold_results: List[FoldResult] = []
+        oos_trade_frames: List[pd.DataFrame] = []
+        for fold in folds:
+            is_result = BacktestEngine(cls(dict(params)), sliced).run(
+                symbols, fold.is_start, fold.is_end, self.initial_capital
+            )
+            oos_metrics, oos_trades = self._oos_backtest(
+                cls(dict(params)), sliced, symbols, fold.oos_start, fold.oos_end, warmup_days, n_trials=1
+            )
+            oos_trade_frames.append(oos_trades)
+            fold_results.append(FoldResult(
+                fold=fold, is_best_params=dict(params), is_metrics=is_result.metrics,
+                oos_metrics=oos_metrics, oos_trades=int(len(oos_trades)), n_trials=1,
+            ))
+
+        n_trials_total = 1 + n_trials_offset  # one distinct config evaluated this call
+        oos_aggregate = self._aggregate_oos(oos_trade_frames, folds, n_trials_total, None)
+        return WalkForwardResult(
+            folds=fold_results,
+            oos_aggregate=oos_aggregate,
+            holdout=None,
+            holdout_params=None,
+            efficiency=self._efficiency(fold_results, objective),
+            degradation=self._degradation(fold_results),
+            n_trials_total=n_trials_total,
+            objective=objective,
+        )
+
+    def score_window(
+        self,
+        symbols: List[str],
+        window_start: datetime,
+        window_end: datetime,
+        params: Dict[str, Any],
+        *,
+        embargo_days: Optional[int] = None,
+        n_trials: int = 1,
+        var_of_trial_sr: Optional[float] = None,
+        strategy_class: Optional[Type[Strategy]] = None,
+    ) -> Dict[str, float]:
+        """Leakage-safe metrics for a fixed config over a single window (e.g. holdout)."""
+        cls = strategy_class or self.strategy_class
+        warmup_days = embargo_days if embargo_days is not None else self.default_embargo_days()
+        frames = self.data_client.get_bars(
+            symbols, self.timeframe, window_start - timedelta(days=warmup_days), window_end
+        )
+        sliced = MarketDataClient(_PrefetchedProvider(frames))
+        metrics, _ = self._oos_backtest(
+            cls(dict(params)), sliced, symbols, window_start, window_end, warmup_days,
+            n_trials=n_trials, var_of_trial_sr=var_of_trial_sr,
+        )
+        return metrics
 
     # ------------------------------------------------------------------ #
     # Per-fold helpers
