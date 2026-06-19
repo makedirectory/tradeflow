@@ -9,6 +9,7 @@ and account/position reads go through the broker.
 """
 
 import logging
+import time
 from typing import Optional
 
 from src.brokers.base import Broker, OrderResult, OrderSide, Position
@@ -22,6 +23,9 @@ logger = logging.getLogger(__name__)
 # Signal -> order side for new entries.
 _ENTRY_SIDE = {signals.BUY: OrderSide.BUY, signals.SELL: OrderSide.SELL}
 
+# Cache the market clock briefly so we don't query it on every streamed bar.
+_MARKET_STATUS_TTL = 30.0
+
 
 class LiveTrader:
     """Executes signals against a broker, sizing positions via a PositionSizer."""
@@ -32,6 +36,7 @@ class LiveTrader:
         strategy: Strategy,
         sizer: Optional[PositionSizer] = None,
         allow_fractional: bool = False,
+        respect_market_hours: bool = True,
     ):
         self._broker = broker
         self._strategy = strategy
@@ -39,10 +44,20 @@ class LiveTrader:
         # portfolio-weight sizer to let the portfolio manager drive live sizing.
         self._sizer = sizer or RiskBasedSizer(strategy)
         self._allow_fractional = allow_fractional
+        self._respect_market_hours = respect_market_hours
+        self._market_status_cache: Optional[tuple] = None  # (monotonic_ts, is_open)
+
+    @property
+    def broker(self) -> Broker:
+        return self._broker
 
     def handle_signal(self, symbol: str, signal: str, price: float) -> Optional[OrderResult]:
         """Act on a single signal. Returns the resulting order, if any."""
         if signal == signals.HOLD:
+            return None
+
+        if self._respect_market_hours and not self._market_open():
+            logger.info("Market closed; ignoring %s signal for %s", signal, symbol)
             return None
 
         position = self._broker.get_position(symbol)
@@ -65,6 +80,11 @@ class LiveTrader:
     ) -> Optional[OrderResult]:
         if position is not None:
             logger.info("Skipping %s entry for %s: position already open", signal, symbol)
+            return None
+
+        # Guard against double-submitting between order placement and fill.
+        if self._broker.list_open_orders(symbol):
+            logger.info("Skipping %s entry for %s: an order is already pending", signal, symbol)
             return None
 
         account = self._broker.get_account()
@@ -100,8 +120,28 @@ class LiveTrader:
             signal == signals.CLOSE_SELL and not position.is_long
         )
         if matches:
+            # Cancel any resting bracket legs first so closing the position can't
+            # leave an orphaned stop/take order behind (which could oversell).
+            for order in self._broker.list_open_orders(symbol):
+                self._broker.cancel_order(order.id)
             logger.info("Closing %s position for %s", position.side, symbol)
             self._broker.close_position(symbol)
+
+    def _market_open(self) -> bool:
+        """Whether the market is open, cached for a short TTL.
+
+        If the clock can't be determined, default to open (permissive): the live
+        bar stream only delivers during sessions anyway, so this is a secondary
+        guard, and a transient clock error shouldn't freeze trading.
+        """
+        now = time.monotonic()
+        if self._market_status_cache and now - self._market_status_cache[0] < _MARKET_STATUS_TTL:
+            return self._market_status_cache[1]
+
+        status = self._broker.get_market_status()
+        is_open = status.is_open if status is not None else True
+        self._market_status_cache = (now, is_open)
+        return is_open
 
     def _stop_levels(self, entry_price: float, side: OrderSide) -> tuple[float, float]:
         """Compute (stop_loss, take_profit) prices from the strategy's config."""

@@ -5,7 +5,6 @@ the project's :class:`Timeframe` into Alpaca's ``TimeFrame`` and normalises the
 returned bars into per-symbol, NY-localised OHLCV frames.
 """
 
-import asyncio
 import inspect
 import logging
 from datetime import datetime
@@ -19,6 +18,7 @@ from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 
 from src.marketdata.base import BarEvent, BarHandler, MarketDataProvider
 from src.marketdata.timeframe import DAY, HOUR, MINUTE, WEEK, Timeframe
+from src.utils.streaming import run_with_reconnect
 from src.utils.timeutils import localize_index_to_new_york
 
 logger = logging.getLogger(__name__)
@@ -77,9 +77,8 @@ class AlpacaMarketData(MarketDataProvider):
         reconnect. Cancellation (e.g. Ctrl-C) breaks out cleanly.
         """
         on_bar = self._make_bar_callback(handler)
-        delay = self._base_reconnect_delay
 
-        while True:
+        async def connect() -> None:
             stream = self._new_stream()
             try:
                 for symbol in symbols:
@@ -88,17 +87,13 @@ class AlpacaMarketData(MarketDataProvider):
                 # _run_forever is the awaitable entry point (run() wraps it in
                 # asyncio.run, which we can't use inside an existing loop).
                 await stream._run_forever()
-                logger.info("Live stream ended normally.")
-                return
-            except asyncio.CancelledError:
-                logger.info("Live stream cancelled; shutting down.")
+            finally:
                 await self._safe_stop(stream)
-                raise
-            except Exception as exc:  # noqa: BLE001 - reconnect on any stream error
-                logger.error("Live stream error (%s); reconnecting in %.0fs", exc, delay)
-                await self._safe_stop(stream)
-                await asyncio.sleep(delay)
-                delay = min(delay * 2, self._max_reconnect_delay)
+
+        await run_with_reconnect(
+            "market-data", connect,
+            base_delay=self._base_reconnect_delay, max_delay=self._max_reconnect_delay,
+        )
 
     def _make_bar_callback(self, handler: BarHandler):
         """Wrap a project BarHandler as an async Alpaca bar callback."""

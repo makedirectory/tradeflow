@@ -16,6 +16,8 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from src.analytics import performance
+from src.brokers.base import AccountSnapshot
+from src.execution.sizing import PositionSizer, RiskBasedSizer
 from src.marketdata.client import MarketDataClient
 from src.strategies import signals
 from src.strategies.base import Strategy
@@ -41,9 +43,12 @@ class BacktestResult:
 class BacktestEngine:
     """Runs a strategy over historical data and reports performance."""
 
-    def __init__(self, strategy: Strategy, data_client: MarketDataClient):
+    def __init__(self, strategy: Strategy, data_client: MarketDataClient, sizer: Optional[PositionSizer] = None):
         self.strategy = strategy
         self.data_client = data_client
+        # Same sizing abstraction as live execution; defaults to the strategy's
+        # own risk-based sizing so behaviour is unchanged unless a sizer is given.
+        self.sizer = sizer or RiskBasedSizer(strategy)
 
     def run(
         self, symbols: List[str], start: datetime, end: datetime, initial_capital: float
@@ -138,7 +143,13 @@ class BacktestEngine:
         return trades
 
     def _maybe_open(self, symbol: str, signal: str, price: float, timestamp) -> Optional[Dict[str, Any]]:
-        size = round_quantity(self.strategy.calculate_position_size(self._available, price))
+        # Present realised cash as an account snapshot so the same PositionSizer
+        # used in live execution can size backtest entries.
+        account = AccountSnapshot(
+            cash=self._available, equity=self._available,
+            buying_power=self._available, portfolio_value=self._available,
+        )
+        size = round_quantity(self.sizer.size(symbol, price, account))
         if size <= 0 or size * price > self._available:
             return None
 

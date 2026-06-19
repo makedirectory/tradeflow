@@ -1,6 +1,6 @@
 """Execution-layer tests using an in-memory FakeBroker."""
 
-from src.brokers.base import AccountSnapshot, Position
+from src.brokers.base import AccountSnapshot, OrderSide, Position
 from src.execution.live_trader import LiveTrader
 from src.execution.sizing import PortfolioWeightSizer, RiskBasedSizer
 from src.strategies import signals
@@ -80,3 +80,38 @@ def test_insufficient_buying_power_blocks_entry():
     broker = FakeBroker(buying_power=10.0)  # can't afford one $100 share
     _trader(broker).handle_signal("AAA", signals.BUY, price=100.0)
     assert broker.orders == []
+
+
+def test_closed_market_blocks_orders():
+    broker = FakeBroker(buying_power=100_000, market_open=False)
+    _trader(broker).handle_signal("AAA", signals.BUY, price=100.0)
+    assert broker.orders == []
+
+
+def test_market_hours_can_be_disabled():
+    broker = FakeBroker(buying_power=100_000, market_open=False)
+    LiveTrader(broker, VolumeSpikeStrategy.create_with_defaults(),
+               respect_market_hours=False).handle_signal("AAA", signals.BUY, price=100.0)
+    assert len(broker.orders) == 1
+
+
+# --- order management -------------------------------------------------------
+def test_pending_order_blocks_duplicate_entry():
+    broker = FakeBroker(buying_power=100_000)
+    trader = _trader(broker)
+    trader.handle_signal("AAA", signals.BUY, 100.0)   # places a bracket order
+    trader.handle_signal("AAA", signals.BUY, 100.0)   # order pending -> must not double-submit
+    assert len(broker.orders) == 1
+
+
+def test_exit_cancels_resting_orders_before_closing():
+    pos = Position("AAA", qty=5, side="long", avg_entry_price=90,
+                   current_price=100, market_value=500, unrealized_pl=50)
+    broker = FakeBroker(positions=[pos])
+    # Simulate a resting bracket leg for the symbol.
+    broker.submit_bracket_order("AAA", 5, OrderSide.SELL, 95, 110)
+    assert broker.list_open_orders("AAA")  # precondition
+
+    _trader(broker).handle_signal("AAA", signals.CLOSE_BUY, 100.0)
+    assert broker.closed == ["AAA"]
+    assert broker.list_open_orders("AAA") == []  # resting legs cancelled

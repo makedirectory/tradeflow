@@ -44,8 +44,14 @@ capital, dates, and the strategy config.
    symbol's rolling buffer via `Strategy.warm_up`, so indicators are valid on the
    very first live bar.
 2. Subscribe to the live stream through the `MarketDataClient`.
-3. `_on_bar` — feed each `BarEvent` to `process_real_time_data`; forward any
+3. `_on_bar` — feed each full streamed bar to `process_bar`; forward any
    actionable signal to the `LiveTrader`.
+4. If the broker supports it, run the **trade-update stream concurrently**
+   (`asyncio.gather`) so fills/cancels/rejects are logged alongside trading.
+
+Both live streams (market data and trade updates) auto-reconnect with capped
+backoff via a shared `run_with_reconnect` helper, and shut down cleanly on
+cancellation.
 
 The engine never calls the broker directly — it delegates to
 [execution](broker-abstraction). That boundary is exactly why the same strategy

@@ -60,7 +60,9 @@ def build_data_and_broker():
     )
     historical = StockHistoricalDataClient(config.APCA_API_KEY_ID, config.APCA_API_SECRET_KEY)
 
-    broker = AlpacaBroker(trading_client)
+    broker = AlpacaBroker(
+        trading_client, config.APCA_API_KEY_ID, config.APCA_API_SECRET_KEY, config.PAPER_TRADE
+    )
     data_client = MarketDataClient(
         AlpacaMarketData(historical, config.APCA_API_KEY_ID, config.APCA_API_SECRET_KEY)
     )

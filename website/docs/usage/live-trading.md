@@ -29,8 +29,19 @@ to `False` only when you intend to trade real money.
 4. Each streamed OHLCV bar updates the strategy, which emits a signal.
 5. Actionable signals go to the `LiveTrader`, which sizes the position and submits
    a **bracket order** (entry + stop-loss + take-profit) through the broker.
+6. In parallel, the **trade-update stream** logs fills/cancels/rejects so you can
+   see what the account is actually doing.
 
 Press `Ctrl-C` to stop.
+
+### Order safety
+
+- Entries are **skipped while an order is pending** for that symbol, so a repeated
+  signal can't double-submit before the first fills.
+- A discretionary close **cancels the resting bracket legs first**, so you're never
+  left with an orphaned stop/take order.
+- Orders are only sent during **market hours** (the clock is checked, with a short
+  cache; disable with `respect_market_hours=False` if you need extended-hours).
 
 ## Position sizing
 

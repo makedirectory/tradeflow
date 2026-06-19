@@ -106,6 +106,26 @@ def test_end_of_period_exit():
     assert trade["exit_price"] == 105 and trade["pnl"] == 50
 
 
+def test_backtest_honors_injected_sizer():
+    from src.engine.backtest import BacktestEngine
+    from src.execution.sizing import PortfolioWeightSizer
+    from src.marketdata.client import MarketDataClient
+    from tests.fakes import DictMarketData
+
+    rows = [
+        {"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1},
+        {"open": 108, "high": 112, "low": 107, "close": 111, "volume": 1},  # take-profit
+    ]
+    strategy = ScriptedStrategy([signals.BUY, signals.HOLD])
+    data_client = MarketDataClient(DictMarketData({"AAA": _frame(rows)}))
+    sizer = PortfolioWeightSizer({"AAA": 0.5})  # 0.5 * equity(=100k) / price(100) = 500 shares
+
+    result = BacktestEngine(strategy, data_client, sizer=sizer).run(
+        ["AAA"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000
+    )
+    assert result.trades.iloc[0]["size"] == 500
+
+
 def test_no_signals_means_no_trades():
     rows = [{"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1}] * 3
     result = _run(rows, [signals.HOLD, signals.HOLD, signals.HOLD])

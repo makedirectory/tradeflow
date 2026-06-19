@@ -11,7 +11,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional
+from typing import Awaitable, Callable, List, Optional, Union
 
 
 class OrderSide(str, Enum):
@@ -74,6 +74,22 @@ class MarketStatus:
     next_close: datetime
 
 
+@dataclass
+class TradeUpdate:
+    """A streamed account/order event (fill, new, canceled, rejected, ...)."""
+
+    event: str
+    symbol: str
+    order_id: str
+    status: str
+    filled_qty: float = 0.0
+    price: Optional[float] = None
+
+
+#: A trade-update handler may be sync or async.
+TradeUpdateHandler = Callable[[TradeUpdate], Union[None, Awaitable[None]]]
+
+
 class Broker(ABC):
     """Interface every brokerage adapter must implement.
 
@@ -110,6 +126,10 @@ class Broker(ABC):
         """Submit a bracket order (entry + stop-loss + take-profit)."""
 
     @abstractmethod
+    def list_open_orders(self, symbol: Optional[str] = None) -> List[OrderResult]:
+        """Return open (unfilled) orders, optionally filtered to ``symbol``."""
+
+    @abstractmethod
     def cancel_order(self, order_id: str) -> bool:
         """Cancel a single order. Returns True on success."""
 
@@ -130,3 +150,15 @@ class Broker(ABC):
     @abstractmethod
     def get_market_status(self) -> Optional[MarketStatus]:
         """Return the current market clock, or None on failure."""
+
+    # --- trade-update streaming (optional capability) ------------------------
+    def supports_trade_updates(self) -> bool:
+        """Whether this broker can stream account/order updates. Override if so."""
+        return False
+
+    async def stream_trade_updates(self, handler: TradeUpdateHandler) -> None:
+        """Stream account/order updates to ``handler`` until cancelled.
+
+        Optional: only meaningful when :meth:`supports_trade_updates` is True.
+        """
+        raise NotImplementedError("This broker does not support trade-update streaming")

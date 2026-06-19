@@ -5,13 +5,15 @@ Alpaca SDK objects to the broker-agnostic domain types in
 :mod:`src.brokers.base` so the rest of the system stays vendor-neutral.
 """
 
+import inspect
 import logging
 from typing import List, Optional
 
 from alpaca.trading.client import TradingClient
-from alpaca.trading.enums import OrderClass, OrderType, TimeInForce
+from alpaca.trading.enums import OrderClass, OrderType, QueryOrderStatus, TimeInForce
 from alpaca.trading.enums import OrderSide as AlpacaOrderSide
 from alpaca.trading.requests import (
+    GetOrdersRequest,
     MarketOrderRequest,
     OrderRequest,
     StopLossRequest,
@@ -25,8 +27,11 @@ from src.brokers.base import (
     OrderResult,
     OrderSide,
     Position,
+    TradeUpdate,
+    TradeUpdateHandler,
 )
 from src.utils.numeric import safe_float
+from src.utils.streaming import run_with_reconnect
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +42,19 @@ _SIDE_TO_ALPACA = {OrderSide.BUY: AlpacaOrderSide.BUY, OrderSide.SELL: AlpacaOrd
 class AlpacaBroker(Broker):
     """Trade and account operations backed by an Alpaca ``TradingClient``."""
 
-    def __init__(self, trading_client: TradingClient):
+    def __init__(
+        self,
+        trading_client: TradingClient,
+        api_key: Optional[str] = None,
+        api_secret: Optional[str] = None,
+        paper: bool = True,
+    ):
         self._client = trading_client
         self._tradable_cache: dict[str, bool] = {}
+        # Credentials are only needed for the trade-update WebSocket.
+        self._api_key = api_key
+        self._api_secret = api_secret
+        self._paper = paper
 
     # ------------------------------------------------------------------ #
     # Account & positions
@@ -119,6 +134,28 @@ class AlpacaBroker(Broker):
             logger.error("Bracket order failed for %s: %s", symbol, exc)
             return None
 
+    def list_open_orders(self, symbol: Optional[str] = None) -> List[OrderResult]:
+        try:
+            request = GetOrdersRequest(
+                status=QueryOrderStatus.OPEN,
+                symbols=[symbol] if symbol else None,
+            )
+            orders = self._client.get_orders(filter=request)
+            return [
+                OrderResult(
+                    id=str(o.id),
+                    symbol=o.symbol,
+                    side=OrderSide(o.side.value),
+                    qty=safe_float(o.qty),
+                    status=str(getattr(o.status, "value", o.status)),
+                    raw=o,
+                )
+                for o in orders
+            ]
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to list open orders: %s", exc)
+            return []
+
     def cancel_order(self, order_id: str) -> bool:
         try:
             self._client.cancel_order_by_id(order_id)
@@ -169,6 +206,45 @@ class AlpacaBroker(Broker):
         except Exception as exc:  # noqa: BLE001
             logger.error("Failed to fetch market clock: %s", exc)
             return None
+
+    # ------------------------------------------------------------------ #
+    # Trade-update streaming
+    # ------------------------------------------------------------------ #
+    def supports_trade_updates(self) -> bool:
+        return bool(self._api_key and self._api_secret)
+
+    async def stream_trade_updates(self, handler: TradeUpdateHandler) -> None:
+        from alpaca.trading.stream import TradingStream
+
+        async def on_alpaca_update(data) -> None:
+            order = data.order
+            update = TradeUpdate(
+                event=str(getattr(data, "event", "")),
+                symbol=getattr(order, "symbol", ""),
+                order_id=str(getattr(order, "id", "")),
+                status=str(getattr(getattr(order, "status", ""), "value", getattr(order, "status", ""))),
+                filled_qty=safe_float(getattr(order, "filled_qty", 0)),
+                price=safe_float(getattr(data, "price", None)) if getattr(data, "price", None) else None,
+            )
+            result = handler(update)
+            if inspect.isawaitable(result):
+                await result
+
+        async def connect() -> None:
+            stream = TradingStream(self._api_key, self._api_secret, paper=self._paper)
+            try:
+                stream.subscribe_trade_updates(on_alpaca_update)
+                logger.info("Subscribed to trade updates")
+                await stream._run_forever()
+            finally:
+                try:
+                    stop = stream.stop()
+                    if inspect.isawaitable(stop):
+                        await stop
+                except Exception:  # noqa: BLE001
+                    pass
+
+        await run_with_reconnect("trade-updates", connect)
 
     # ------------------------------------------------------------------ #
     # Mapping helpers

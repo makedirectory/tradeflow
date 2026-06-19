@@ -61,3 +61,37 @@ def test_stream_returns_on_normal_completion():
     md._new_stream = lambda: _FakeStream(behavior)
     # Should complete without raising or looping forever.
     asyncio.run(md.stream_bars(["AAA"], lambda event: None))
+
+
+def test_supports_trade_updates_requires_credentials():
+    from alpaca.trading.client import TradingClient
+
+    from src.brokers.alpaca.broker import AlpacaBroker
+
+    with_keys = AlpacaBroker(TradingClient("k", "s", paper=True), "k", "s", paper=True)
+    without_keys = AlpacaBroker(TradingClient("k", "s", paper=True))
+    assert with_keys.supports_trade_updates() is True
+    assert without_keys.supports_trade_updates() is False
+
+
+def test_live_engine_runs_market_and_trade_update_streams():
+    from src.brokers.base import TradeUpdate
+    from src.engine.live import LiveEngine
+    from src.execution.live_trader import LiveTrader
+    from src.marketdata.client import MarketDataClient
+    from src.strategies.volume_spike import VolumeSpikeStrategy
+    from tests.fakes import StreamingFakeMarketData, TradeUpdateFakeBroker
+
+    symbols = ["AAA"]
+    market_data = StreamingFakeMarketData(symbols, bars_to_emit=1)
+    broker = TradeUpdateFakeBroker(
+        updates=[TradeUpdate("fill", "AAA", "o1", "filled", 5, 100.0)], market_open=True
+    )
+    strategy = VolumeSpikeStrategy.create_with_defaults()
+
+    engine = LiveEngine(strategy, MarketDataClient(market_data), LiveTrader(broker, strategy))
+    received = []
+    engine._on_trade_update = received.append
+
+    asyncio.run(engine.start(symbols))
+    assert received and received[0].symbol == "AAA"

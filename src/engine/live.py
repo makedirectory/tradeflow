@@ -9,6 +9,7 @@ The engine wires the layers and owns the bar->signal->order loop; it contains no
 indicator math, no order-placement detail, and no vendor specifics.
 """
 
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from typing import List
@@ -43,12 +44,29 @@ class LiveEngine:
         self.live_trader = live_trader
 
     async def start(self, symbols: List[str]) -> None:
-        """Warm up indicators with history, then stream live bars until cancelled."""
+        """Warm up indicators with history, then stream live bars until cancelled.
+
+        When the broker supports it, the account/trade-update stream runs
+        concurrently with the market-data stream so fills are logged.
+        """
         self.strategy.initialize()
         self._warm_up(symbols)
 
+        broker = self.live_trader.broker
+        tasks = [self.data_client.stream(symbols, self._on_bar)]
+        if broker.supports_trade_updates():
+            logger.info("Also streaming trade updates for fill/account feedback")
+            tasks.append(broker.stream_trade_updates(self._on_trade_update))
+
         logger.info("Starting live stream for %d symbols", len(symbols))
-        await self.data_client.stream(symbols, self._on_bar)
+        await asyncio.gather(*tasks)
+
+    def _on_trade_update(self, update) -> None:
+        """Log account/order events (fills, cancels, rejects)."""
+        logger.info(
+            "Trade update: %s %s (order %s, status %s, filled %s)",
+            update.event, update.symbol, update.order_id, update.status, update.filled_qty,
+        )
 
     def _warm_up(self, symbols: List[str]) -> None:
         """Seed each symbol's rolling buffer so indicators are valid on bar one."""
