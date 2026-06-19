@@ -5,6 +5,7 @@ the project's :class:`Timeframe` into Alpaca's ``TimeFrame`` and normalises the
 returned bars into per-symbol, NY-localised OHLCV frames.
 """
 
+import asyncio
 import inspect
 import logging
 from datetime import datetime
@@ -34,10 +35,13 @@ _UNIT_TO_ALPACA = {
 class AlpacaMarketData(MarketDataProvider):
     """Historical + live equity bars from Alpaca."""
 
-    def __init__(self, historical_client: StockHistoricalDataClient, api_key: str, api_secret: str):
+    def __init__(self, historical_client: StockHistoricalDataClient, api_key: str, api_secret: str,
+                 base_reconnect_delay: float = 5.0, max_reconnect_delay: float = 60.0):
         self._historical = historical_client
         self._api_key = api_key
         self._api_secret = api_secret
+        self._base_reconnect_delay = base_reconnect_delay
+        self._max_reconnect_delay = max_reconnect_delay
 
     def get_bars(
         self, symbols: List[str], timeframe: Timeframe, start: datetime, end: datetime
@@ -65,29 +69,63 @@ class AlpacaMarketData(MarketDataProvider):
         return self._split_by_symbol(combined)
 
     async def stream_bars(self, symbols: List[str], handler: BarHandler) -> None:
-        stream = StockDataStream(self._api_key, self._api_secret)
+        """Stream live bars for ``symbols``, reconnecting on failure.
 
+        Live WebSockets drop. Each attempt creates a *fresh* stream (the SDK can
+        be left in a bad state after an error), subscribes the monitored symbols,
+        and runs until it errors; on error we back off (capped exponential) and
+        reconnect. Cancellation (e.g. Ctrl-C) breaks out cleanly.
+        """
+        on_bar = self._make_bar_callback(handler)
+        delay = self._base_reconnect_delay
+
+        while True:
+            stream = self._new_stream()
+            try:
+                for symbol in symbols:
+                    stream.subscribe_bars(on_bar, symbol)
+                logger.info("Subscribed to live bars for %d symbols: %s", len(symbols), symbols)
+                # _run_forever is the awaitable entry point (run() wraps it in
+                # asyncio.run, which we can't use inside an existing loop).
+                await stream._run_forever()
+                logger.info("Live stream ended normally.")
+                return
+            except asyncio.CancelledError:
+                logger.info("Live stream cancelled; shutting down.")
+                await self._safe_stop(stream)
+                raise
+            except Exception as exc:  # noqa: BLE001 - reconnect on any stream error
+                logger.error("Live stream error (%s); reconnecting in %.0fs", exc, delay)
+                await self._safe_stop(stream)
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, self._max_reconnect_delay)
+
+    def _make_bar_callback(self, handler: BarHandler):
+        """Wrap a project BarHandler as an async Alpaca bar callback."""
         async def _on_alpaca_bar(bar) -> None:
             event = BarEvent(
-                symbol=bar.symbol,
-                timestamp=bar.timestamp,
-                open=bar.open,
-                high=bar.high,
-                low=bar.low,
-                close=bar.close,
-                volume=bar.volume,
+                symbol=bar.symbol, timestamp=bar.timestamp, open=bar.open,
+                high=bar.high, low=bar.low, close=bar.close, volume=bar.volume,
             )
             result = handler(event)
             if inspect.isawaitable(result):
                 await result
 
-        for symbol in symbols:
-            stream.subscribe_bars(_on_alpaca_bar, symbol)
+        return _on_alpaca_bar
 
-        logger.info("Subscribed to live bars for %d symbols", len(symbols))
-        # _run_forever is the awaitable entry point; run() wraps it in asyncio.run
-        # which we cannot use from inside an existing event loop.
-        await stream._run_forever()
+    def _new_stream(self) -> StockDataStream:
+        """Create a fresh stream (isolated for testability)."""
+        return StockDataStream(self._api_key, self._api_secret)
+
+    @staticmethod
+    async def _safe_stop(stream) -> None:
+        """Best-effort stream shutdown; never raises."""
+        try:
+            result = stream.stop()
+            if inspect.isawaitable(result):
+                await result
+        except Exception:  # noqa: BLE001 - cleanup must not mask the real error
+            pass
 
     # ------------------------------------------------------------------ #
     # Helpers

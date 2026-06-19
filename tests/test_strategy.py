@@ -64,6 +64,23 @@ def test_process_data_adds_indicator_columns():
     assert {"rsi", "volume_spike", "trend", "atr"} <= set(processed.columns)
 
 
+def test_process_bar_preserves_full_ohlcv():
+    s = _strategy()
+    ts = pd.Timestamp("2024-01-02 09:30", tz="America/New_York")
+    s.process_bar("AAA", {"open": 100, "high": 105, "low": 95, "close": 102, "volume": 1000}, ts)
+    last = s.get_real_time_buffer("AAA").iloc[-1]
+    # Real streamed bars keep their distinct OHLC (not flattened to close).
+    assert last["high"] == 105 and last["low"] == 95 and last["open"] == 100
+
+
+def test_process_real_time_data_is_flat_bar_wrapper():
+    s = _strategy()
+    ts = pd.Timestamp("2024-01-02 09:30", tz="America/New_York")
+    s.process_real_time_data("AAA", price=101, volume=500, timestamp=ts)
+    last = s.get_real_time_buffer("AAA").iloc[-1]
+    assert last["open"] == last["high"] == last["low"] == last["close"] == 101
+
+
 def test_generate_signals_defaults_to_hold():
     from tests.fakes import make_ohlcv
 

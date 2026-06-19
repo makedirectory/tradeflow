@@ -111,8 +111,37 @@ def cmd_scan(args) -> None:
         print(f"{symbol:10}{signal}")
 
 
+def score_candidates(data_client, symbols, timeframe, lookback_days=90):
+    """Score symbols by trailing return over a recent window -> [Candidate].
+
+    Trailing return is a simple, transparent factor; swap in momentum /
+    inverse-vol / signal strength here. Shared by `allocate` and portfolio-sized
+    `live`.
+    """
+    from src.portfolio.allocator import Candidate
+
+    end = datetime.now()
+    bars = data_client.get_bars(symbols, timeframe, end - timedelta(days=lookback_days), end)
+    candidates = []
+    for symbol in symbols:
+        frame = bars.get(symbol)
+        if frame is None or len(frame) < 2:
+            continue
+        trailing_return = frame["close"].iloc[-1] / frame["close"].iloc[0] - 1
+        candidates.append(Candidate(symbol, score=max(trailing_return, 0.0), price=frame["close"].iloc[-1]))
+    return candidates
+
+
+def allocate_portfolio(data_client, symbols, timeframe, capital, max_positions, max_weight):
+    """Scan-agnostic allocation: score `symbols`, solve weights via OR-Tools."""
+    from src.portfolio.allocator import PortfolioAllocator
+
+    candidates = score_candidates(data_client, symbols, timeframe)
+    allocator = PortfolioAllocator(max_positions=max_positions, max_weight=max_weight)
+    return allocator.allocate(candidates, capital)
+
+
 def cmd_allocate(args) -> None:
-    from src.portfolio.allocator import Candidate, PortfolioAllocator
     from src.scanners.symbol_scanner import SymbolScanner
 
     _, data_client = build_data_and_broker()
@@ -122,20 +151,9 @@ def cmd_allocate(args) -> None:
         print("No symbols flagged; nothing to allocate.")
         return
 
-    # Score each flagged name by its trailing return over the window (a simple,
-    # transparent factor; swap in momentum / inverse-vol / signal strength here).
-    end = datetime.now()
-    bars = data_client.get_bars(flagged, scanner.timeframe, end - timedelta(days=90), end)
-    candidates = []
-    for symbol in flagged:
-        frame = bars.get(symbol)
-        if frame is None or len(frame) < 2:
-            continue
-        trailing_return = frame["close"].iloc[-1] / frame["close"].iloc[0] - 1
-        candidates.append(Candidate(symbol, score=max(trailing_return, 0.0), price=frame["close"].iloc[-1]))
-
-    allocator = PortfolioAllocator(max_positions=args.max_positions, max_weight=args.max_weight)
-    allocations = allocator.allocate(candidates, args.capital)
+    allocations = allocate_portfolio(
+        data_client, flagged, scanner.timeframe, args.capital, args.max_positions, args.max_weight
+    )
     if not allocations:
         print("Solver produced no allocation (no positively-scored candidates).")
         return
@@ -173,12 +191,45 @@ def cmd_live(args) -> None:
     broker, data_client = build_data_and_broker()
     universe = resolve_universe(data_client, args.scanner, args.symbols)
     strategy = STRATEGIES[args.strategy].create_with_defaults()
-    engine = LiveEngine(strategy, data_client, LiveTrader(broker, strategy))
 
+    sizer = _portfolio_sizer(broker, data_client, universe, args) if args.portfolio else None
+    if sizer is not None:
+        universe = sizer.symbols  # trade only the funded names
+
+    engine = LiveEngine(strategy, data_client, LiveTrader(broker, strategy, sizer=sizer))
     try:
         asyncio.run(engine.start(universe))
     except KeyboardInterrupt:
         logger.info("Interrupted; shutting down live engine.")
+
+
+def _portfolio_sizer(broker, data_client, universe, args):
+    """Build a PortfolioWeightSizer by allocating capital across the universe.
+
+    Returns None (so LiveTrader falls back to risk-based sizing) if OR-Tools is
+    missing or the allocator funds nothing.
+    """
+    from src.execution.sizing import PortfolioWeightSizer
+
+    account = broker.get_account()
+    capital = account.equity if account else 100_000.0
+    try:
+        allocations = allocate_portfolio(
+            data_client, universe, "1Day", capital, args.max_positions, args.max_weight
+        )
+    except RuntimeError as exc:  # OR-Tools not installed
+        logger.warning("%s\nFalling back to risk-based sizing.", exc)
+        return None
+
+    weights = {a.symbol: a.weight for a in allocations}
+    if not weights:
+        logger.warning("Portfolio allocator funded nothing; using risk-based sizing.")
+        return None
+
+    logger.info("Portfolio-weighted live sizing: %s", {s: round(w, 3) for s, w in weights.items()})
+    sizer = PortfolioWeightSizer(weights)
+    sizer.symbols = list(weights)  # convenience for the caller
+    return sizer
 
 
 # ---------------------------------------------------------------------------- #
@@ -212,6 +263,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     live = subparsers.add_parser("live", help="Run live/paper trading")
     add_common(live, with_dates=False)
+    live.add_argument("--portfolio", action="store_true",
+                      help="Size positions by OR-Tools portfolio weights instead of per-trade risk")
+    live.add_argument("--max-positions", dest="max_positions", type=int, default=5)
+    live.add_argument("--max-weight", dest="max_weight", type=float, default=0.25)
     live.set_defaults(func=cmd_live)
 
     scan = subparsers.add_parser("scan", help="Run the universe scanner only")

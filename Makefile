@@ -43,6 +43,9 @@ allocate: install-portfolio  ## Weight a portfolio over scanned symbols (OR-Tool
 live:  ## Paper-trade: volume scanner -> volume_spike strategy
 	$(PY) live --strategy volume_spike --scanner volume --symbols $(SYMBOLS)
 
+live-portfolio: install-portfolio  ## Paper-trade with OR-Tools portfolio-weighted sizing
+	$(PY) live --strategy volume_spike --scanner volume --symbols $(SYMBOLS) --portfolio
+
 # --- parameter modeling -----------------------------------------------------
 optimize:  ## Grid-search strategy params (objective: sharpe_ratio)
 	$(PY) optimize --strategy volume_spike --scanner none --symbols $(SYMBOLS) --start $(START) --end $(END) --method grid --max-evals 50

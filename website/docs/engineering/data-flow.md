@@ -36,19 +36,24 @@ dollar twice, and force-closes any open position at the final bar.
 ```
 LiveEngine.start(universe)
    ├── _warm_up: get_bars(lookback) -> process_data -> strategy.warm_up(buffer)
-   └── MarketDataClient.stream(universe, on_bar)
-            │ BarEvent per bar
+   └── MarketDataClient.stream(universe, on_bar)   # auto-reconnecting bar stream
+            │ BarEvent (full OHLCV) per bar
             ▼
-        Strategy.process_real_time_data(symbol, price, volume, ts)  # -> signal
+        Strategy.process_bar(symbol, {o,h,l,c,v}, ts)   # -> signal
             │ actionable signal
             ▼
         LiveTrader.handle_signal(symbol, signal, price)
-            ├── entry: size via Strategy.calculate_position_size -> submit_bracket_order
+            ├── entry: PositionSizer.size(...) -> submit_bracket_order
             └── exit:  Broker.close_position
             │
             ▼
         AlpacaBroker -> Alpaca SDK
 ```
+
+The stream feeds the strategy the **full streamed OHLCV bar** (not just the close),
+and the `PositionSizer` is pluggable — `RiskBasedSizer` by default, or
+`PortfolioWeightSizer` when running `live --portfolio`. See
+[Portfolio manager](portfolio).
 
 ## Why the pipeline is shared
 

@@ -118,3 +118,13 @@ broker/data abstractions; tests inject in-memory fakes.
 make cancel-orders         # cancel all open orders
 make close-positions       # liquidate all positions (and cancel orders)
 ```
+
+## ☕ Coffee?
+
+If this code somehow makes you money, I'd genuinely love to hear about it. If it
+*loses* you money — we've never met, and this is the first you're hearing of it.
+
+Either way, if it saved you some time, you can buy me a coffee:
+
+**[buy me a coffee →](https://venmo.com/u/Andrew-Schwartz-92)**
+

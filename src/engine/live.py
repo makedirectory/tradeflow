@@ -65,9 +65,11 @@ class LiveEngine:
 
     def _on_bar(self, event: BarEvent) -> None:
         """Per-bar callback: update the strategy and act on any emitted signal."""
-        signal = self.strategy.process_real_time_data(
-            event.symbol, event.close, event.volume, event.timestamp
-        )
+        bar = {
+            "open": event.open, "high": event.high, "low": event.low,
+            "close": event.close, "volume": event.volume,
+        }
+        signal = self.strategy.process_bar(event.symbol, bar, event.timestamp)
         if signal and signal != signals.HOLD:
             logger.info("Signal %s for %s @ $%.4f", signal, event.symbol, event.close)
             self.live_trader.handle_signal(event.symbol, signal, event.close)

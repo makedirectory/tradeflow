@@ -177,13 +177,14 @@ class Strategy(ABC):
     # ------------------------------------------------------------------ #
     # Real-time processing (live mode)
     # ------------------------------------------------------------------ #
-    def process_real_time_data(
-        self, symbol: str, price: float, volume: float, timestamp: datetime
+    def process_bar(
+        self, symbol: str, bar: Dict[str, float], timestamp: datetime
     ) -> Optional[str]:
-        """Fold one streamed bar into the rolling buffer and emit a signal.
+        """Fold one streamed OHLCV bar into the rolling buffer and emit a signal.
 
-        Returns the latest signal once enough history has accumulated, otherwise
-        ``None``. Never raises - real-time processing must not break the stream.
+        ``bar`` must contain ``open``/``high``/``low``/``close``/``volume``. Returns
+        the latest signal once enough history has accumulated, otherwise ``None``.
+        Never raises - real-time processing must not break the stream.
         """
         try:
             buffer = self.real_time_data.get(symbol)
@@ -191,8 +192,8 @@ class Strategy(ABC):
                 buffer = pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
                 buffer.index.name = "timestamp"
 
-            bar = {"open": price, "high": price, "low": price, "close": price, "volume": volume}
-            buffer = pd.concat([buffer, pd.DataFrame([bar], index=[timestamp])])
+            row = {key: bar[key] for key in ("open", "high", "low", "close", "volume")}
+            buffer = pd.concat([buffer, pd.DataFrame([row], index=[timestamp])])
             if len(buffer) > self.max_buffer_size:
                 buffer = buffer.tail(self.max_buffer_size)
             self.real_time_data[symbol] = buffer
@@ -204,9 +205,16 @@ class Strategy(ABC):
             self.last_processed_data[symbol] = processed
 
             latest = self._latest_signal(self.generate_signals(processed))
-            return latest if self.validate_signal(latest, symbol, price) else signals.HOLD
+            return latest if self.validate_signal(latest, symbol, bar["close"]) else signals.HOLD
         except Exception:  # noqa: BLE001 - never break the stream
             return None
+
+    def process_real_time_data(
+        self, symbol: str, price: float, volume: float, timestamp: datetime
+    ) -> Optional[str]:
+        """Tick-style convenience wrapper: treat a single price as a flat bar."""
+        flat_bar = {"open": price, "high": price, "low": price, "close": price, "volume": volume}
+        return self.process_bar(symbol, flat_bar, timestamp)
 
     def warm_up(self, symbol: str, processed_history: pd.DataFrame) -> None:
         """Seed a symbol's real-time buffer with pre-processed historical bars."""

@@ -12,6 +12,7 @@ import logging
 from typing import Optional
 
 from src.brokers.base import Broker, OrderResult, OrderSide, Position
+from src.execution.sizing import PositionSizer, RiskBasedSizer
 from src.strategies import signals
 from src.strategies.base import Strategy
 from src.utils.numeric import round_price, round_quantity
@@ -23,11 +24,20 @@ _ENTRY_SIDE = {signals.BUY: OrderSide.BUY, signals.SELL: OrderSide.SELL}
 
 
 class LiveTrader:
-    """Executes signals against a broker, sizing positions via the strategy."""
+    """Executes signals against a broker, sizing positions via a PositionSizer."""
 
-    def __init__(self, broker: Broker, strategy: Strategy, allow_fractional: bool = False):
+    def __init__(
+        self,
+        broker: Broker,
+        strategy: Strategy,
+        sizer: Optional[PositionSizer] = None,
+        allow_fractional: bool = False,
+    ):
         self._broker = broker
         self._strategy = strategy
+        # Default to the strategy's own risk-based sizing; callers can inject a
+        # portfolio-weight sizer to let the portfolio manager drive live sizing.
+        self._sizer = sizer or RiskBasedSizer(strategy)
         self._allow_fractional = allow_fractional
 
     def handle_signal(self, symbol: str, signal: str, price: float) -> Optional[OrderResult]:
@@ -63,7 +73,7 @@ class LiveTrader:
             return None
 
         qty = round_quantity(
-            self._strategy.calculate_position_size(account.buying_power, price),
+            self._sizer.size(symbol, price, account),
             allow_fractional=self._allow_fractional,
         )
         if qty <= 0:

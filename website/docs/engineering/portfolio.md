@@ -46,6 +46,21 @@ Each selected name becomes an `Allocation(symbol, weight, dollars, shares)`, wit
 fractional shares are allowed). Candidates with non-positive scores are dropped —
 they can only consume a slot without improving the objective.
 
+## Driving live sizing
+
+The allocator isn't just a reporting tool — it can size live positions. Execution
+sizing is pluggable via a `PositionSizer` (`src/execution/sizing.py`):
+
+- `RiskBasedSizer` (default) — sizes each entry from the strategy's
+  risk-per-trade / stop-loss config.
+- `PortfolioWeightSizer` — sizes to `weight × equity / price` using the
+  allocator's target weights.
+
+`main`'s `live --portfolio` path scores the universe, solves the allocation,
+builds a `PortfolioWeightSizer` from the resulting weights, and injects it into
+`LiveTrader`. The executor itself is unchanged — it just asks the sizer "how many
+units?" — another instance of keeping policy out of mechanism.
+
 ## Status & extension
 
 This is a **preliminary** manager: long-only, single-period, score-driven. Natural
