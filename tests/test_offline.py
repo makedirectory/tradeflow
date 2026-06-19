@@ -54,6 +54,42 @@ def test_backtest_produces_metrics_and_consistent_capital():
     assert result.equity_curve[0] == 100_000
 
 
+def test_backtest_metrics_complete_and_json_serializable():
+    """Every declared metric key is present and the dict survives JSON round-trip."""
+    import json
+
+    from src.analytics.performance import FLAG_KEYS, METRIC_KEYS
+
+    data_client = MarketDataClient(FakeMarketData(SYMBOLS))
+    strategy = VolumeSpikeStrategy.create_with_defaults()
+    result = BacktestEngine(strategy, data_client).run(SYMBOLS, START, END, 100_000)
+
+    for key in (*METRIC_KEYS, *FLAG_KEYS):
+        assert key in result.metrics, f"missing metric: {key}"
+
+    # JSON-serializable matters for the planned MCP server (Spec 003).
+    restored = json.loads(json.dumps(result.metrics))
+    assert restored["total_trades"] == result.metrics["total_trades"]
+
+
+def test_empty_metrics_has_all_keys():
+    from src.analytics.performance import FLAG_KEYS, METRIC_KEYS, empty_metrics
+
+    empty = empty_metrics()
+    for key in (*METRIC_KEYS, *FLAG_KEYS):
+        assert key in empty
+
+
+def test_mae_mfe_tracked_on_trades():
+    data_client = MarketDataClient(FakeMarketData(SYMBOLS))
+    strategy = VolumeSpikeStrategy.create_with_defaults()
+    result = BacktestEngine(strategy, data_client).run(SYMBOLS, START, END, 100_000)
+    if not result.trades.empty:
+        assert {"mae_pct", "mfe_pct"} <= set(result.trades.columns)
+        assert (result.trades["mae_pct"] >= 0).all()
+        assert (result.trades["mfe_pct"] >= 0).all()
+
+
 # --- scanner ----------------------------------------------------------------
 def test_scanner_returns_actionable_signals():
     data_client = MarketDataClient(FakeMarketData(SYMBOLS, freq="1D"))

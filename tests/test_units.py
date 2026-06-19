@@ -62,6 +62,93 @@ def test_sharpe_zero_for_constant_returns():
     assert metrics.sharpe_ratio([0.01, 0.01, 0.01]) == 0.0
 
 
+# --- new metric primitives (Spec 001) ---------------------------------------
+def test_cagr_known():
+    # Doubling over exactly one year -> 100% CAGR; over two years -> ~41.4%.
+    assert metrics.cagr([100, 200], years=1.0) == pytest.approx(1.0)
+    assert metrics.cagr([100, 200], years=2.0) == pytest.approx(2 ** 0.5 - 1)
+
+
+def test_cagr_degenerate():
+    assert metrics.cagr([100], years=1.0) == 0.0
+    assert metrics.cagr([100, 200], years=0.0) == 0.0
+    assert metrics.cagr([-1, 200], years=1.0) == 0.0  # non-positive start
+
+
+def test_max_drawdown_duration_known():
+    # peak at idx0(100), underwater for 3 points, recovers at the last -> 3.
+    assert metrics.max_drawdown_duration([100, 95, 90, 99, 101]) == 3
+
+
+def test_ulcer_index_zero_for_monotonic_curve():
+    assert metrics.ulcer_index([100, 101, 102, 103]) == 0.0
+    assert metrics.ulcer_index([100, 90, 100]) > 0.0
+
+
+def test_value_at_risk_and_cvar():
+    returns = [-0.10, -0.05, 0.0, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08]
+    var = metrics.value_at_risk(returns, level=0.90)
+    cvar = metrics.conditional_var(returns, level=0.90)
+    assert var > 0  # reported as a positive loss
+    assert cvar >= var  # tail loss is at least as deep as the VaR threshold
+
+
+def test_consecutive_streaks():
+    pnl = [1, 2, -1, -1, -1, 3, -1, 4, 5]
+    assert metrics.consecutive(pnl, winning=True) == 2
+    assert metrics.consecutive(pnl, winning=False) == 3
+
+
+def test_probabilistic_sharpe_in_unit_interval():
+    rng = np.random.default_rng(1)
+    good = pd.Series(rng.normal(0.01, 0.01, 250))  # clearly positive Sharpe
+    flat = pd.Series(rng.normal(0.0, 0.01, 250))   # no edge
+    psr_good = metrics.probabilistic_sharpe_ratio(good)
+    psr_flat = metrics.probabilistic_sharpe_ratio(flat)
+    assert 0.0 <= psr_flat <= psr_good <= 1.0
+    assert psr_good > 0.9  # strong, long sample -> high confidence
+
+
+def test_deflated_sharpe_drops_with_more_trials():
+    rng = np.random.default_rng(2)
+    # Modest edge (per-period Sharpe ~0.1) so deflation is visible rather than saturated.
+    returns = pd.Series(rng.normal(0.001, 0.01, 250))
+    dsr_one = metrics.deflated_sharpe_ratio(returns, n_trials=1)
+    dsr_many = metrics.deflated_sharpe_ratio(returns, n_trials=1000)
+    assert 0.0 <= dsr_many < dsr_one <= 1.0  # more trials -> harder to clear
+
+
+def test_norm_cdf_ppf_round_trip():
+    for p in (0.05, 0.5, 0.975):
+        assert metrics.norm_cdf(metrics.norm_ppf(p)) == pytest.approx(p, abs=1e-6)
+
+
+def test_alpha_beta_of_amplified_benchmark():
+    rng = np.random.default_rng(3)
+    bench = pd.Series(rng.normal(0, 0.01, 300))
+    strat = 2 * bench + 0.001  # beta 2, small constant alpha, perfect fit
+    alpha, beta, r2 = metrics.alpha_beta(strat, bench)
+    assert beta == pytest.approx(2.0, abs=0.01)
+    assert alpha == pytest.approx(0.001, abs=1e-4)
+    assert r2 == pytest.approx(1.0, abs=1e-6)
+
+
+def test_information_ratio_zero_when_tracking_benchmark():
+    bench = pd.Series([0.01, -0.02, 0.03, 0.0, 0.01])
+    assert metrics.information_ratio(bench, bench) == 0.0  # no active return
+
+
+def test_new_primitives_handle_degenerate_input():
+    assert metrics.cagr([], years=1.0) == 0.0
+    assert metrics.ulcer_index([]) == 0.0
+    assert metrics.max_drawdown_duration([]) == 0
+    assert metrics.value_at_risk([]) == 0.0
+    assert metrics.probabilistic_sharpe_ratio([0.01]) == 0.0
+    assert metrics.deflated_sharpe_ratio([0.01], n_trials=5) == 0.0
+    assert metrics.alpha_beta([0.01], [0.01]) == (0.0, 0.0, 0.0)
+    assert metrics.kelly_criterion([]) == 0.0
+
+
 # --- beta -------------------------------------------------------------------
 def test_beta_of_amplified_benchmark():
     from src.indicators.indicators import calculate_beta
