@@ -1,8 +1,10 @@
 """Execution-layer tests using an in-memory FakeBroker."""
 
+import pytest
+
 from src.brokers.base import AccountSnapshot, OrderSide, Position
 from src.execution.live_trader import LiveTrader
-from src.execution.sizing import PortfolioWeightSizer, RiskBasedSizer
+from src.execution.sizing import BetaSizer, PortfolioWeightSizer, RiskBasedSizer
 from src.strategies import signals
 from src.strategies.volume_spike import VolumeSpikeStrategy
 from tests.fakes import FakeBroker
@@ -27,6 +29,32 @@ def test_risk_based_sizer_delegates_to_strategy():
     strategy = VolumeSpikeStrategy.create_with_defaults()
     sizer = RiskBasedSizer(strategy)
     assert sizer.size("AAA", 100.0, _account()) == strategy.calculate_position_size(100_000.0, 100.0)
+
+
+def test_beta_sizer_scales_inversely_with_beta():
+    strategy = VolumeSpikeStrategy.create_with_defaults()
+    account = _account()
+    # beta 1.0 is the neutral baseline; beta 2.0 should roughly halve the size.
+    base = BetaSizer(strategy, {"AAA": 1.0}).size("AAA", 100.0, account)
+    high_beta = BetaSizer(strategy, {"AAA": 2.0}).size("AAA", 100.0, account)
+    assert high_beta == pytest.approx(base / 2.0)
+
+
+def test_beta_sizer_uses_default_for_unknown_symbol():
+    strategy = VolumeSpikeStrategy.create_with_defaults()
+    account = _account()
+    unknown = BetaSizer(strategy, {}, default_beta=1.0).size("ZZZ", 100.0, account)
+    neutral = BetaSizer(strategy, {"ZZZ": 1.0}).size("ZZZ", 100.0, account)
+    assert unknown == neutral
+
+
+def test_beta_sizer_clamps_extreme_beta():
+    strategy = VolumeSpikeStrategy.create_with_defaults()
+    account = _account()
+    # Beyond max_abs_beta, sizes should match the clamp (not keep shrinking).
+    at_cap = BetaSizer(strategy, {"AAA": 4.0}, max_abs_beta=4.0).size("AAA", 100.0, account)
+    beyond = BetaSizer(strategy, {"AAA": 99.0}, max_abs_beta=4.0).size("AAA", 100.0, account)
+    assert beyond == pytest.approx(at_cap)
 
 
 def test_live_trader_sizes_from_portfolio_weights():

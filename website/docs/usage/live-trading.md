@@ -61,6 +61,16 @@ With `--portfolio`, only the symbols the allocator funds are traded; if OR-Tools
 isn't installed or nothing is funded, it falls back to risk-based sizing. See
 [Portfolio allocation](portfolio).
 
+Or use `--beta-sizing` to scale each position inversely by its **beta** vs a
+benchmark (default `SPY`) — higher-beta names get smaller positions, evening out
+risk:
+
+```bash
+make live-beta
+# or
+uv run python main.py live --scanner volume --symbols NVDA,META,TSLA --beta-sizing --benchmark SPY
+```
+
 ## Managing the account
 
 ```bash

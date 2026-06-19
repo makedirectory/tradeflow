@@ -26,6 +26,7 @@ Pure, side-effect-free functions:
 | `calculate_rsi(series, period=14)` | RSI in `[0, 100]` |
 | `calculate_atr(df, period=14)` | average true range |
 | `calculate_volume_spike(volume, price, ...)` | boolean: volume > MA×threshold **and** price move > threshold |
+| `calculate_beta(symbol_close, benchmark_close)` | cov/var of returns vs a benchmark (used by `BetaSizer`) |
 
 Each takes Series/DataFrames and returns new ones, leaving inputs untouched.
 

@@ -55,6 +55,11 @@ sizing is pluggable via a `PositionSizer` (`src/execution/sizing.py`):
   risk-per-trade / stop-loss config.
 - `PortfolioWeightSizer` — sizes to `weight × equity / price` using the
   allocator's target weights.
+- `BetaSizer` — takes the risk-based size and divides it by the symbol's
+  (clamped) beta vs a benchmark, so higher-beta names get smaller positions.
+  Betas are pure pandas/numpy (`indicators.calculate_beta`); enable with
+  `--beta-sizing` on `live` or `backtest`. Works in **both** backtest and live,
+  since the backtest engine accepts the same `PositionSizer`.
 
 `main`'s `live --portfolio` path scores the universe, solves the allocation,
 builds a `PortfolioWeightSizer` from the resulting weights, and injects it into

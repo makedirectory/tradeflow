@@ -34,6 +34,9 @@ backtest:  ## Backtest: volume scanner -> volume_spike strategy
 backtest-no-scan:  ## Backtest the fixed symbol list (skip the scanner)
 	$(PY) backtest --strategy volume_spike --scanner none --symbols $(SYMBOLS) --start $(START) --end $(END) --capital $(CAPITAL)
 
+backtest-beta:  ## Backtest with beta-scaled position sizing
+	$(PY) backtest --strategy volume_spike --scanner volume --symbols $(SYMBOLS) --start $(START) --end $(END) --capital $(CAPITAL) --beta-sizing
+
 scan:  ## Run the universe scanner and print flagged symbols
 	$(PY) scan --scanner volume --symbols $(SYMBOLS)
 
@@ -45,6 +48,9 @@ live:  ## Paper-trade: volume scanner -> volume_spike strategy
 
 live-portfolio: install-portfolio  ## Paper-trade with OR-Tools portfolio-weighted sizing
 	$(PY) live --strategy volume_spike --scanner volume --symbols $(SYMBOLS) --portfolio
+
+live-beta:  ## Paper-trade with beta-scaled position sizing
+	$(PY) live --strategy volume_spike --scanner volume --symbols $(SYMBOLS) --beta-sizing
 
 # --- parameter modeling -----------------------------------------------------
 optimize:  ## Grid-search strategy params (objective: sharpe_ratio)

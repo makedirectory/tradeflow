@@ -59,6 +59,33 @@ def calculate_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
     return true_range.rolling(window=period).mean()
 
 
+def calculate_beta(symbol_close: pd.Series, benchmark_close: pd.Series) -> float:
+    """Beta of a symbol's returns against a benchmark's returns.
+
+    Beta = cov(symbol, benchmark) / var(benchmark), computed on aligned
+    period-over-period returns. Returns 1.0 (market-neutral) for degenerate input
+    (too few overlapping points, or a flat benchmark).
+
+    Args:
+        symbol_close: Close-price series for the symbol.
+        benchmark_close: Close-price series for the benchmark (e.g. SPY).
+
+    Returns:
+        The beta coefficient.
+    """
+    prices = pd.concat([symbol_close, benchmark_close], axis=1, keys=["symbol", "benchmark"]).dropna()
+    if len(prices) < 3:
+        return 1.0
+
+    returns = prices.pct_change().dropna()
+    benchmark_var = returns["benchmark"].var()
+    if benchmark_var == 0 or returns.empty:
+        return 1.0
+
+    covariance = returns["symbol"].cov(returns["benchmark"])
+    return float(covariance / benchmark_var)
+
+
 def calculate_volume_spike(
     volume: pd.Series,
     price: pd.Series,

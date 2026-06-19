@@ -62,6 +62,25 @@ def test_sharpe_zero_for_constant_returns():
     assert metrics.sharpe_ratio([0.01, 0.01, 0.01]) == 0.0
 
 
+# --- beta -------------------------------------------------------------------
+def test_beta_of_amplified_benchmark():
+    from src.indicators.indicators import calculate_beta
+
+    rng = np.random.default_rng(0)
+    benchmark_ret = rng.normal(0, 0.01, 300)
+    benchmark = pd.Series(100 * np.cumprod(1 + benchmark_ret))
+    symbol = pd.Series(100 * np.cumprod(1 + 2 * benchmark_ret))  # moves ~2x the benchmark
+    assert calculate_beta(symbol, benchmark) == pytest.approx(2.0, abs=0.05)
+
+
+def test_beta_neutral_on_degenerate_input():
+    from src.indicators.indicators import calculate_beta
+
+    flat = pd.Series([100.0] * 10)
+    assert calculate_beta(flat, flat) == 1.0          # flat benchmark -> neutral
+    assert calculate_beta(pd.Series([100.0]), pd.Series([100.0])) == 1.0  # too few points
+
+
 # --- parameter space --------------------------------------------------------
 def _space():
     return ParameterSpace({

@@ -39,6 +39,43 @@ class RiskBasedSizer(PositionSizer):
         return self._strategy.calculate_position_size(account.buying_power, price)
 
 
+class BetaSizer(PositionSizer):
+    """Risk-based sizing scaled inversely by each symbol's beta.
+
+    Higher beta (more volatile relative to the benchmark) -> smaller position, so
+    risk is more even across names. Betas are precomputed per symbol (sizing has
+    no data access); unknown symbols fall back to ``default_beta``. The effective
+    beta is clamped to ``[min_abs_beta, max_abs_beta]`` to avoid blow-ups near
+    zero and to bound leverage for tiny betas; the sign is ignored (a strongly
+    negative beta is still volatile).
+
+    It takes the strategy's normally-sized position (which already respects
+    risk-per-trade and position limits) and divides it by the effective beta, so
+    the scaling always applies - even when a position-limit cap is the binding
+    constraint.
+    """
+
+    def __init__(
+        self,
+        strategy: Strategy,
+        betas: Dict[str, float],
+        default_beta: float = 1.0,
+        min_abs_beta: float = 0.25,
+        max_abs_beta: float = 4.0,
+    ):
+        self._strategy = strategy
+        self._betas = betas
+        self._default_beta = default_beta
+        self._min_abs_beta = min_abs_beta
+        self._max_abs_beta = max_abs_beta
+
+    def size(self, symbol: str, price: float, account: AccountSnapshot) -> float:
+        beta = self._betas.get(symbol, self._default_beta)
+        effective = min(max(abs(beta), self._min_abs_beta), self._max_abs_beta)
+        base_size = self._strategy.calculate_position_size(account.buying_power, price)
+        return base_size / effective
+
+
 class PortfolioWeightSizer(PositionSizer):
     """Size to a target portfolio weight per symbol (weight x equity / price).
 

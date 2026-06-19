@@ -96,7 +96,11 @@ def cmd_backtest(args) -> None:
     universe = resolve_universe(data_client, args.scanner, args.symbols)
     strategy = STRATEGIES[args.strategy].create_with_defaults()
 
-    result = BacktestEngine(strategy, data_client).run(universe, args.start, args.end, args.capital)
+    sizer = None
+    if args.beta_sizing:
+        sizer = build_beta_sizer(data_client, strategy, universe, args.benchmark, as_of=args.start)
+
+    result = BacktestEngine(strategy, data_client, sizer=sizer).run(universe, args.start, args.end, args.capital)
     log_backtest_report(result.metrics, result.initial_capital, result.final_capital)
 
 
@@ -141,6 +145,37 @@ def allocate_portfolio(data_client, symbols, timeframe, capital, max_positions, 
     candidates = score_candidates(data_client, symbols, timeframe)
     allocator = PortfolioAllocator(max_positions=max_positions, max_weight=max_weight)
     return allocator.allocate(candidates, capital)
+
+
+def compute_betas(data_client, symbols, benchmark="SPY", lookback_days=90, as_of=None):
+    """Beta of each symbol vs a benchmark over a trailing daily window.
+
+    For backtests, pass ``as_of=start`` so betas use only data *before* the
+    backtest window (no look-ahead).
+    """
+    from src.indicators.indicators import calculate_beta
+
+    end = as_of or datetime.now()
+    bars = data_client.get_bars([benchmark, *symbols], "1Day", end - timedelta(days=lookback_days), end)
+    benchmark_bars = bars.get(benchmark)
+    if benchmark_bars is None or benchmark_bars.empty:
+        logger.warning("No %s data; beta sizing will fall back to neutral beta", benchmark)
+        return {}
+    return {
+        symbol: calculate_beta(bars[symbol]["close"], benchmark_bars["close"])
+        for symbol in symbols
+        if symbol in bars and not bars[symbol].empty
+    }
+
+
+def build_beta_sizer(data_client, strategy, symbols, benchmark, as_of=None):
+    """Construct a BetaSizer (neutral for any symbol whose beta can't be computed)."""
+    from src.execution.sizing import BetaSizer
+
+    betas = compute_betas(data_client, symbols, benchmark, as_of=as_of)
+    if betas:
+        logger.info("Beta sizing: %s", {s: round(b, 2) for s, b in betas.items()})
+    return BetaSizer(strategy, betas)
 
 
 def cmd_allocate(args) -> None:
@@ -194,9 +229,13 @@ def cmd_live(args) -> None:
     universe = resolve_universe(data_client, args.scanner, args.symbols)
     strategy = STRATEGIES[args.strategy].create_with_defaults()
 
-    sizer = _portfolio_sizer(broker, data_client, universe, args) if args.portfolio else None
-    if sizer is not None:
-        universe = sizer.symbols  # trade only the funded names
+    sizer = None
+    if args.portfolio:
+        sizer = _portfolio_sizer(broker, data_client, universe, args)
+        if sizer is not None:
+            universe = sizer.symbols  # trade only the funded names
+    elif args.beta_sizing:
+        sizer = build_beta_sizer(data_client, strategy, universe, args.benchmark)
 
     engine = LiveEngine(strategy, data_client, LiveTrader(broker, strategy, sizer=sizer))
     try:
@@ -261,12 +300,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     bt = subparsers.add_parser("backtest", help="Run a historical backtest")
     add_common(bt, with_dates=True)
+    bt.add_argument("--beta-sizing", dest="beta_sizing", action="store_true",
+                    help="Scale position sizing inversely by each symbol's beta")
+    bt.add_argument("--benchmark", default="SPY", help="Benchmark symbol for beta")
     bt.set_defaults(func=cmd_backtest)
 
     live = subparsers.add_parser("live", help="Run live/paper trading")
     add_common(live, with_dates=False)
     live.add_argument("--portfolio", action="store_true",
                       help="Size positions by OR-Tools portfolio weights instead of per-trade risk")
+    live.add_argument("--beta-sizing", dest="beta_sizing", action="store_true",
+                      help="Scale position sizing inversely by each symbol's beta")
+    live.add_argument("--benchmark", default="SPY", help="Benchmark symbol for beta")
     live.add_argument("--max-positions", dest="max_positions", type=int, default=5)
     live.add_argument("--max-weight", dest="max_weight", type=float, default=0.25)
     live.set_defaults(func=cmd_live)
