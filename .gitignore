@@ -1,6 +1,14 @@
 # Keys
 config.py
 
+# Generated artifacts
+optimization_results.csv
+
+# Docs site (Docusaurus)
+website/node_modules/
+website/build/
+website/.docusaurus/
+
 # Mongo Data
 /data/db
 
@@ -142,4 +150,11 @@ dmypy.json
 # Cython debug symbols
 cython_debug/
 
+# macOS
 .DS_Store
+
+# VS Code settings
+.vscode/
+
+# Ruff
+.ruff_cache/
