@@ -226,6 +226,97 @@ def cmd_optimize(args) -> None:
         print(f"Full results written to {args.output}")
 
 
+def cmd_walkforward(args) -> None:
+    from src.optimization.config_store import build_provenance, save_config
+    from src.optimization.walk_forward import WalkForwardValidator
+
+    _, data_client = build_data_and_broker()
+    universe = resolve_universe(data_client, args.scanner, args.symbols)
+    validator = WalkForwardValidator(
+        STRATEGIES[args.strategy], data_client, initial_capital=args.capital, seed=args.seed
+    )
+    result = validator.run(
+        universe, args.start, args.end,
+        mode=args.mode,
+        n_folds=args.folds,
+        train_days=args.train_days,
+        test_days=args.test_days,
+        embargo_days=args.embargo_days,
+        holdout_days=args.holdout_days,
+        method=args.method,
+        objective=args.objective,
+        max_evals=args.max_evals,
+        pbo=args.pbo,
+        monte_carlo=args.monte_carlo,
+        parameter_sensitivity=args.param_sensitivity,
+        leakage_probe=args.leakage_probe,
+    )
+    _print_walkforward(result, args.objective)
+
+    if args.results_csv:
+        rows = [{"fold": fr.fold.index, **{f"is_{k}": v for k, v in fr.is_metrics.items()},
+                 **{f"oos_{k}": v for k, v in fr.oos_metrics.items()}, "oos_trades": fr.oos_trades}
+                for fr in result.folds]
+        import pandas as pd
+
+        pd.DataFrame(rows).to_csv(args.results_csv, index=False)
+        print(f"\nPer-fold results written to {args.results_csv}")
+
+    if args.save_config and result.folds:
+        chosen = result.holdout_params or result.folds[-1].is_best_params
+        provenance = build_provenance(
+            method=args.method, objective=args.objective,
+            windows={"start": args.start, "end": args.end, "mode": args.mode,
+                     "folds": len(result.folds), "holdout_days": args.holdout_days,
+                     "embargo_days": args.embargo_days},
+            oos_metrics=result.oos_aggregate, n_trials=result.n_trials_total, seed=args.seed,
+        )
+        path = save_config(args.save_config, strategy=args.strategy, scanner=args.scanner,
+                           params=chosen, provenance=provenance)
+        print(f"Chosen config saved to {path} (a human promotes it to live; nothing auto-flips)")
+
+
+def _print_walkforward(result, objective: str) -> None:
+    print("\n=== Walk-Forward Validation ===")
+    print(f"{'FOLD':>4} {'IS '+objective:>16} {'OOS '+objective:>16} {'OOS Sharpe':>12} "
+          f"{'OOS PF':>8} {'OOS trades':>11}")
+    for fr in result.folds:
+        print(f"{fr.fold.index:>4} {fr.is_metrics.get(objective, 0):>16.3f} "
+              f"{fr.oos_metrics.get(objective, 0):>16.3f} {fr.oos_metrics.get('sharpe_ratio', 0):>12.3f} "
+              f"{fr.oos_metrics.get('profit_factor', 0):>8.2f} {fr.oos_trades:>11}")
+
+    agg = result.oos_aggregate
+    print("\n--- OOS aggregate (concatenated trades) ---")
+    print(f"  Sharpe {agg.get('sharpe_ratio', 0):.3f}  CAGR {agg.get('cagr', 0):.2f}%  "
+          f"MaxDD {agg.get('max_drawdown', 0):.2f}%  PF {agg.get('profit_factor', 0):.2f}  "
+          f"DSR {agg.get('deflated_sharpe_ratio', 0):.3f}  trades {agg.get('total_trades', 0)}")
+    print(f"  Efficiency (OOS/IS {objective}): {result.efficiency:.3f}  "
+          f"trials total: {result.n_trials_total}")
+    if result.degradation:
+        deg = "  ".join(f"{k} {v:+.3f}" for k, v in result.degradation.items())
+        print(f"  Degradation (IS-OOS): {deg}")
+    if result.holdout is not None:
+        print(f"\n--- Holdout (scored once) ---")
+        print(f"  Sharpe {result.holdout.get('sharpe_ratio', 0):.3f}  "
+              f"CAGR {result.holdout.get('cagr', 0):.2f}%  trades {result.holdout.get('total_trades', 0)}")
+    if result.pbo is not None:
+        print(f"\nPBO (prob. of backtest overfitting): {result.pbo:.2f}")
+    if result.monte_carlo:
+        mc = result.monte_carlo
+        print(f"Monte Carlo OOS Sharpe p05/p50: {mc.get('sharpe_p05', 0):.3f} / {mc.get('sharpe_p50', 0):.3f}")
+
+    report = result.gate_report()
+    print("\n--- Promotion gates ---")
+    for name, check in report["checks"].items():
+        mark = "PASS" if check["passed"] else "FAIL"
+        print(f"  [{mark}] {name}: {check['value']} (threshold {check['threshold']})")
+    verdict = "PROMOTABLE" if report["promotable"] else "NOT promotable"
+    median_sharpe = result.median_oos("sharpe_ratio")
+    print(f"\nVerdict: {verdict} — OOS Sharpe {median_sharpe:.2f}, efficiency "
+          f"{result.median_efficiency():.2f}, {result.total_oos_trades()} OOS trades, "
+          f"DSR {agg.get('deflated_sharpe_ratio', 0):.2f}")
+
+
 def cmd_live(args) -> None:
     from src.engine.live import LiveEngine
     from src.execution.live_trader import LiveTrader
@@ -353,6 +444,35 @@ def build_parser() -> argparse.ArgumentParser:
     opt.add_argument("--max-evals", dest="max_evals", type=int, default=50)
     opt.add_argument("--output", default="optimization_results.csv")
     opt.set_defaults(func=cmd_optimize)
+
+    wf = subparsers.add_parser(
+        "walkforward", help="Out-of-sample validation: optimize IS, score OOS, across folds"
+    )
+    add_common(wf, with_dates=True)
+    wf.add_argument("--mode", choices=["anchored", "rolling"], default="anchored")
+    wf.add_argument("--folds", type=int, default=None, help="Number of folds (or use --train/--test-days)")
+    wf.add_argument("--train-days", dest="train_days", type=int, default=None)
+    wf.add_argument("--test-days", dest="test_days", type=int, default=None)
+    wf.add_argument(
+        "--embargo-days", dest="embargo_days", type=int, default=None,
+        help="IS->OOS gap; defaults to required lookback in calendar days",
+    )
+    wf.add_argument("--holdout-days", dest="holdout_days", type=int, default=0)
+    wf.add_argument("--method", choices=["grid", "random", "bayesian"], default="grid")
+    wf.add_argument("--objective", default="sharpe_ratio")
+    wf.add_argument("--max-evals", dest="max_evals", type=int, default=50)
+    wf.add_argument("--seed", type=int, default=42)
+    wf.add_argument("--pbo", action="store_true", help="Estimate probability of backtest overfitting")
+    wf.add_argument("--monte-carlo", dest="monte_carlo", action="store_true",
+                    help="Block-bootstrap the OOS trade sequence")
+    wf.add_argument("--param-sensitivity", dest="param_sensitivity", action="store_true",
+                    help="Perturb chosen params +-10% and re-test")
+    wf.add_argument("--leakage-probe", dest="leakage_probe", action="store_true",
+                    help="Shift the data feed forward to detect future-data leakage")
+    wf.add_argument("--results-csv", dest="results_csv", default=None, help="Write per-fold table to CSV")
+    wf.add_argument("--save-config", dest="save_config", default=None,
+                    help="Save the chosen config (with provenance) to this path")
+    wf.set_defaults(func=cmd_walkforward)
 
     return parser
 
