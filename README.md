@@ -88,14 +88,41 @@ uv run python main.py backtest --strategy volume_spike --scanner volume \
 | `live` | Scan → warm up indicators → stream bars → place paper/live orders |
 | `optimize` | Search strategy parameters by backtest objective (grid / random / Bayesian) |
 | `allocate` | Weight a portfolio across scanned symbols (OR-Tools constraint solver) |
+| `walkforward` | Out-of-sample validation: optimize in-sample, score out-of-sample across folds, with a sacred holdout and promotion gates |
+| `mcp` | Serve TradeFlow over MCP so an agent (Claude Code / Desktop) can drive scan/backtest/optimize/walk-forward — read-only, no live trading |
 
 ### Optional features
 
-Two capabilities are optional extras so the base install stays lean:
+Capabilities are optional extras so the base install stays lean:
 
 ```bash
 make install-optimize     # scikit-learn, for `optimize --method bayesian`
 make install-portfolio    # Google OR-Tools, for `allocate`
+uv sync --extra mcp       # the MCP SDK, for `python main.py mcp`
+```
+
+## Agent integration (MCP)
+
+`python main.py mcp` exposes TradeFlow's deterministic capabilities to any MCP
+client (Claude Code / Claude Desktop) as tools: discovery, `run_scan`,
+`run_backtest`, `run_optimization`, `run_walk_forward`, `get_metrics_glossary`,
+`summarize_bars`, and `save_config`/`load_config`/`list_configs`. Every call is
+logged to `logs/mcp_audit.jsonl` for replay.
+
+**The safety model is structural.** The server constructs only a *data* client —
+no trading client, no broker — so it is incapable of placing an order. There is
+no `place_order`, `start_live`, `cancel`, or `set_paper_trade` tool; promoting a
+config to live is a manual human step outside MCP. The capability simply isn't
+wired in, so it can't be prompt-injected around. The agent works on the
+*research clock* (offline, exploratory); the live order path stays LLM-free.
+
+Register it with a client (Claude Desktop / Claude Code `mcpServers`):
+
+```json
+{ "mcpServers": { "tradeflow": {
+    "command": "uv",
+    "args": ["run", "--extra", "mcp", "python", "main.py", "mcp"],
+    "cwd": "/path/to/tradeflow" } } }
 ```
 
 ## Architecture

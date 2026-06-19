@@ -8,6 +8,9 @@ walkforward_results.csv
 # Saved strategy configs (a human promotes these; never auto-applied)
 configs/
 
+# MCP audit log, research journal, and run artifacts (Spec 003/004)
+logs/
+
 # Docs site (Docusaurus)
 website/node_modules/
 website/build/

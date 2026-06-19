@@ -17,6 +17,8 @@ dependencies = [
 optimize = ["scikit-learn>=1.4"]
 # Constraint-solver portfolio allocation (Google OR-Tools).
 portfolio = ["ortools>=9.8"]
+# Expose TradeFlow to an agent over MCP (Spec 003). Opt-in; base install unchanged.
+mcp = ["mcp>=1.0"]
 dev = ["pytest>=8.0", "ruff>=0.6", "scikit-learn>=1.4", "ortools>=9.8"]
 
 [tool.uv]

@@ -19,13 +19,10 @@ import sys
 from datetime import datetime, timedelta
 from typing import List, Optional
 
-from src.strategies.volume_spike import VolumeSpikeStrategy
+from src.services.registry import STRATEGIES
 from src.utils.logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
-
-# Registry of trading strategies exposed on the CLI.
-STRATEGIES = {"volume_spike": VolumeSpikeStrategy}
 
 # A reasonable default candidate list for the scanner to filter.
 DEFAULT_UNIVERSE = ["NVDA", "RIVN", "NFLX", "META", "BAC", "MS", "TSLA", "GS", "AMD", "AAPL"]
@@ -69,19 +66,13 @@ def build_data_and_broker():
 
 
 def resolve_universe(data_client, scanner_name: Optional[str], candidates: List[str]) -> List[str]:
-    """Filter ``candidates`` through the scanner, falling back to them if none flag."""
-    if not scanner_name or scanner_name == "none":
-        return candidates
+    """Filter ``candidates`` through the scanner, falling back to them if none flag.
 
-    from src.scanners.symbol_scanner import SymbolScanner
+    Delegates to the shared service core so the CLI and MCP server use one path.
+    """
+    from src.services.data import resolve_universe as _resolve
 
-    flagged = SymbolScanner(data_client, scanner_name).scan(candidates)
-    universe = [symbol for symbol, _ in flagged]
-    if not universe:
-        logger.warning("Scanner flagged no symbols; falling back to the candidate list")
-        return candidates
-    logger.info("Trading universe from scanner: %s", universe)
-    return universe
+    return _resolve(data_client, scanner_name, candidates)
 
 
 # ---------------------------------------------------------------------------- #
@@ -317,6 +308,19 @@ def _print_walkforward(result, objective: str) -> None:
           f"DSR {agg.get('deflated_sharpe_ratio', 0):.2f}")
 
 
+def cmd_mcp(args) -> None:
+    """Serve TradeFlow over MCP (stdio). Opt-in; requires the ``mcp`` extra.
+
+    Live trading is intentionally not exposed (Spec 003 §4): the server builds
+    only a data client, so it cannot place orders.
+    """
+    try:
+        from src.mcp.server import serve
+    except ImportError:
+        sys.exit("The MCP server needs the 'mcp' extra. Install it:\n    uv sync --extra mcp")
+    serve()
+
+
 def cmd_live(args) -> None:
     from src.engine.live import LiveEngine
     from src.execution.live_trader import LiveTrader
@@ -473,6 +477,11 @@ def build_parser() -> argparse.ArgumentParser:
     wf.add_argument("--save-config", dest="save_config", default=None,
                     help="Save the chosen config (with provenance) to this path")
     wf.set_defaults(func=cmd_walkforward)
+
+    mcp = subparsers.add_parser(
+        "mcp", help="Serve TradeFlow over MCP for an agent (opt-in; needs the 'mcp' extra)"
+    )
+    mcp.set_defaults(func=cmd_mcp)
 
     return parser
 
