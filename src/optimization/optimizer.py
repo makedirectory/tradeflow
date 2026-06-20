@@ -1,4 +1,6 @@
-"""Parameter optimization for strategies.
+"""Parameter optimization for strategies - excellent at finding the config that
+would have made you rich last year. Whether it works *next* year is what
+walk-forward validation is for.
 
 Tunes a strategy's parameters by backtesting candidate configs and ranking them
 by an objective metric. Three search methods, increasing in sophistication:

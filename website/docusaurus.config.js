@@ -8,7 +8,13 @@ const config = {
   tagline: 'A simple, layered, broker-agnostic algorithmic trading engine',
   favicon: 'img/favicon.ico',
 
-  url: 'https://example.com',
+  // Served as its own site at the docs subdomain. `baseUrl` stays '/' because the
+  // docs own the whole (sub)domain root; it would only change if these were ever
+  // hosted under a path like mk-dir.com/docs.
+  // Note: on S3 + CloudFront set `trailingSlash: true` and add a CloudFront
+  // Function to append `index.html` for directory URLs; Vercel/Cloudflare Pages
+  // handle clean URLs with the default.
+  url: 'https://tradeflow.mk-dir.com',
   baseUrl: '/',
 
   onBrokenLinks: 'warn',

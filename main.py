@@ -19,13 +19,10 @@ import sys
 from datetime import datetime, timedelta
 from typing import List, Optional
 
-from src.strategies.volume_spike import VolumeSpikeStrategy
+from src.services.registry import STRATEGIES
 from src.utils.logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
-
-# Registry of trading strategies exposed on the CLI.
-STRATEGIES = {"volume_spike": VolumeSpikeStrategy}
 
 # A reasonable default candidate list for the scanner to filter.
 DEFAULT_UNIVERSE = ["NVDA", "RIVN", "NFLX", "META", "BAC", "MS", "TSLA", "GS", "AMD", "AAPL"]
@@ -69,19 +66,13 @@ def build_data_and_broker():
 
 
 def resolve_universe(data_client, scanner_name: Optional[str], candidates: List[str]) -> List[str]:
-    """Filter ``candidates`` through the scanner, falling back to them if none flag."""
-    if not scanner_name or scanner_name == "none":
-        return candidates
+    """Filter ``candidates`` through the scanner, falling back to them if none flag.
 
-    from src.scanners.symbol_scanner import SymbolScanner
+    Delegates to the shared service core so the CLI and MCP server use one path.
+    """
+    from src.services.data import resolve_universe as _resolve
 
-    flagged = SymbolScanner(data_client, scanner_name).scan(candidates)
-    universe = [symbol for symbol, _ in flagged]
-    if not universe:
-        logger.warning("Scanner flagged no symbols; falling back to the candidate list")
-        return candidates
-    logger.info("Trading universe from scanner: %s", universe)
-    return universe
+    return _resolve(data_client, scanner_name, candidates)
 
 
 # ---------------------------------------------------------------------------- #
@@ -226,6 +217,203 @@ def cmd_optimize(args) -> None:
         print(f"Full results written to {args.output}")
 
 
+def cmd_walkforward(args) -> None:
+    from src.optimization.config_store import build_provenance, save_config
+    from src.optimization.walk_forward import WalkForwardValidator
+
+    _, data_client = build_data_and_broker()
+    universe = resolve_universe(data_client, args.scanner, args.symbols)
+    validator = WalkForwardValidator(
+        STRATEGIES[args.strategy], data_client, initial_capital=args.capital, seed=args.seed
+    )
+    result = validator.run(
+        universe,
+        args.start,
+        args.end,
+        mode=args.mode,
+        n_folds=args.folds,
+        train_days=args.train_days,
+        test_days=args.test_days,
+        embargo_days=args.embargo_days,
+        holdout_days=args.holdout_days,
+        method=args.method,
+        objective=args.objective,
+        max_evals=args.max_evals,
+        pbo=args.pbo,
+        monte_carlo=args.monte_carlo,
+        parameter_sensitivity=args.param_sensitivity,
+        leakage_probe=args.leakage_probe,
+    )
+    _print_walkforward(result, args.objective)
+
+    if args.results_csv:
+        rows = [
+            {
+                "fold": fr.fold.index,
+                **{f"is_{k}": v for k, v in fr.is_metrics.items()},
+                **{f"oos_{k}": v for k, v in fr.oos_metrics.items()},
+                "oos_trades": fr.oos_trades,
+            }
+            for fr in result.folds
+        ]
+        import pandas as pd
+
+        pd.DataFrame(rows).to_csv(args.results_csv, index=False)
+        print(f"\nPer-fold results written to {args.results_csv}")
+
+    if args.save_config and result.folds:
+        chosen = result.holdout_params or result.folds[-1].is_best_params
+        provenance = build_provenance(
+            method=args.method,
+            objective=args.objective,
+            windows={
+                "start": args.start,
+                "end": args.end,
+                "mode": args.mode,
+                "folds": len(result.folds),
+                "holdout_days": args.holdout_days,
+                "embargo_days": args.embargo_days,
+            },
+            oos_metrics=result.oos_aggregate,
+            n_trials=result.n_trials_total,
+            seed=args.seed,
+        )
+        path = save_config(
+            args.save_config,
+            strategy=args.strategy,
+            scanner=args.scanner,
+            params=chosen,
+            provenance=provenance,
+        )
+        print(f"Chosen config saved to {path} (a human promotes it to live; nothing auto-flips)")
+
+
+def _print_walkforward(result, objective: str) -> None:
+    print("\n=== Walk-Forward Validation ===")
+    print(
+        f"{'FOLD':>4} {'IS ' + objective:>16} {'OOS ' + objective:>16} {'OOS Sharpe':>12} "
+        f"{'OOS PF':>8} {'OOS trades':>11}"
+    )
+    for fr in result.folds:
+        print(
+            f"{fr.fold.index:>4} {fr.is_metrics.get(objective, 0):>16.3f} "
+            f"{fr.oos_metrics.get(objective, 0):>16.3f} {fr.oos_metrics.get('sharpe_ratio', 0):>12.3f} "
+            f"{fr.oos_metrics.get('profit_factor', 0):>8.2f} {fr.oos_trades:>11}"
+        )
+
+    agg = result.oos_aggregate
+    print("\n--- OOS aggregate (concatenated trades) ---")
+    print(
+        f"  Sharpe {agg.get('sharpe_ratio', 0):.3f}  CAGR {agg.get('cagr', 0):.2f}%  "
+        f"MaxDD {agg.get('max_drawdown', 0):.2f}%  PF {agg.get('profit_factor', 0):.2f}  "
+        f"DSR {agg.get('deflated_sharpe_ratio', 0):.3f}  trades {agg.get('total_trades', 0)}"
+    )
+    print(
+        f"  Efficiency (OOS/IS {objective}): {result.efficiency:.3f}  trials total: {result.n_trials_total}"
+    )
+    if result.degradation:
+        deg = "  ".join(f"{k} {v:+.3f}" for k, v in result.degradation.items())
+        print(f"  Degradation (IS-OOS): {deg}")
+    if result.holdout is not None:
+        print("\n--- Holdout (scored once) ---")
+        print(
+            f"  Sharpe {result.holdout.get('sharpe_ratio', 0):.3f}  "
+            f"CAGR {result.holdout.get('cagr', 0):.2f}%  trades {result.holdout.get('total_trades', 0)}"
+        )
+    if result.pbo is not None:
+        print(f"\nPBO (prob. of backtest overfitting): {result.pbo:.2f}")
+    if result.monte_carlo:
+        mc = result.monte_carlo
+        print(
+            f"Monte Carlo OOS Sharpe p05/p50: {mc.get('sharpe_p05', 0):.3f} / {mc.get('sharpe_p50', 0):.3f}"
+        )
+
+    report = result.gate_report()
+    print("\n--- Promotion gates ---")
+    for name, check in report["checks"].items():
+        mark = "PASS" if check["passed"] else "FAIL"
+        print(f"  [{mark}] {name}: {check['value']} (threshold {check['threshold']})")
+    verdict = "PROMOTABLE" if report["promotable"] else "NOT promotable"
+    median_sharpe = result.median_oos("sharpe_ratio")
+    print(
+        f"\nVerdict: {verdict} — OOS Sharpe {median_sharpe:.2f}, efficiency "
+        f"{result.median_efficiency():.2f}, {result.total_oos_trades()} OOS trades, "
+        f"DSR {agg.get('deflated_sharpe_ratio', 0):.2f}"
+    )
+
+
+def cmd_research(args) -> None:
+    """Run the autonomous research loop (opt-in; needs the ``ai`` extra).
+
+    Offline research clock only: proposes hypotheses, validates them out-of-sample
+    via walk-forward, and writes a shortlist of provenance-stamped candidate
+    configs for a human to review. Never touches live trading.
+    """
+    import importlib.util
+
+    # Each provider pulls in a different optional dependency (Ollama needs none).
+    required = {"anthropic": "anthropic", "openai": "openai"}.get(args.provider)
+    if required and importlib.util.find_spec(required) is None:
+        extra = {"anthropic": "ai", "openai": "openai"}[args.provider]
+        sys.exit(
+            f"Provider '{args.provider}' needs the '{extra}' extra. Install it:\n    uv sync --extra {extra}"
+        )
+
+    from src.research.agent import ResearchAgent, ResearchConfig
+    from src.research.proposer import build_proposer
+    from src.services.data import build_data_client
+
+    data_client = build_data_client()
+    universe = resolve_universe(data_client, args.scanner, args.symbols)
+    cfg = ResearchConfig(
+        goal=args.goal,
+        mode=args.mode,
+        n_folds=args.folds,
+        embargo_days=args.embargo_days,
+        holdout_days=args.holdout_days,
+        method=args.method,
+        objective=args.objective,
+        max_evals=args.max_evals,
+        capital=args.capital,
+        max_trials=args.max_trials,
+        max_dry_rounds=args.max_dry_rounds,
+        max_tokens=args.max_tokens,
+        shortlist_size=args.shortlist_size,
+        allow_code_gen=args.allow_code_gen,
+    )
+    proposer = build_proposer(args.provider, args.model)
+    agent = ResearchAgent(args.strategy, data_client, proposer, cfg, seed=args.seed)
+    result = agent.run(universe, args.start, args.end)
+
+    print(f"\n=== Research session {agent.session_id} ===")
+    print(
+        f"Stopped: {result.stopped_reason} after {result.rounds} rounds, "
+        f"{result.n_trials_total} cumulative trials"
+    )
+    print(f"Holdout (scored once): {result.holdout_window}")
+    if not result.shortlist:
+        print("No candidate cleared the promotion gates.")
+    for c in result.shortlist:
+        oos = c.oos_metrics.get("sharpe_ratio", 0.0)
+        hold = (c.holdout_metrics or {}).get("sharpe_ratio", 0.0)
+        print(f"  [{c.id}] OOS Sharpe {oos:.2f} | holdout Sharpe {hold:.2f} | {c.saved_path}")
+        print(f"        hypothesis: {c.hypothesis[:100]}")
+    print(f"\nJournal: {result.journal_path}  (a human reviews and promotes; nothing is live)")
+
+
+def cmd_mcp(args) -> None:
+    """Serve TradeFlow over MCP (stdio). Opt-in; requires the ``mcp`` extra.
+
+    Live trading is intentionally not exposed: the server builds
+    only a data client, so it cannot place orders.
+    """
+    try:
+        from src.mcp.server import serve
+    except ImportError:
+        sys.exit("The MCP server needs the 'mcp' extra. Install it:\n    uv sync --extra mcp")
+    serve()
+
+
 def cmd_live(args) -> None:
     from src.engine.live import LiveEngine
     from src.execution.live_trader import LiveTrader
@@ -290,7 +478,10 @@ def _date(value: str) -> datetime:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="TradeFlow — a broker-agnostic trading engine")
+    parser = argparse.ArgumentParser(
+        description="TradeFlow — a broker-agnostic trading engine that's refreshingly "
+        "honest about how hard making money actually is"
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     def add_common(p, *, with_dates: bool) -> None:
@@ -304,7 +495,7 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument("--end", type=_date, default=datetime.now())
             p.add_argument("--capital", type=float, default=100_000.0)
 
-    bt = subparsers.add_parser("backtest", help="Run a historical backtest")
+    bt = subparsers.add_parser("backtest", help="Run a historical backtest (did the idea ever work?)")
     add_common(bt, with_dates=True)
     bt.add_argument(
         "--beta-sizing",
@@ -315,7 +506,7 @@ def build_parser() -> argparse.ArgumentParser:
     bt.add_argument("--benchmark", default="SPY", help="Benchmark symbol for beta")
     bt.set_defaults(func=cmd_backtest)
 
-    live = subparsers.add_parser("live", help="Run live/paper trading")
+    live = subparsers.add_parser("live", help="Run live/paper trading (paper by default, for your own good)")
     add_common(live, with_dates=False)
     live.add_argument(
         "--portfolio",
@@ -346,13 +537,105 @@ def build_parser() -> argparse.ArgumentParser:
     alloc.add_argument("--max-weight", dest="max_weight", type=float, default=0.25)
     alloc.set_defaults(func=cmd_allocate)
 
-    opt = subparsers.add_parser("optimize", help="Tune strategy parameters via backtest")
+    opt = subparsers.add_parser(
+        "optimize", help="Tune strategy parameters via backtest (in-sample — trust nothing yet)"
+    )
     add_common(opt, with_dates=True)
     opt.add_argument("--method", choices=["grid", "random", "bayesian"], default="grid")
     opt.add_argument("--objective", default="sharpe_ratio")
     opt.add_argument("--max-evals", dest="max_evals", type=int, default=50)
     opt.add_argument("--output", default="optimization_results.csv")
     opt.set_defaults(func=cmd_optimize)
+
+    wf = subparsers.add_parser(
+        "walkforward",
+        help="Out-of-sample validation: optimize IS, score OOS, across folds (the honest scorecard)",
+    )
+    add_common(wf, with_dates=True)
+    wf.add_argument("--mode", choices=["anchored", "rolling"], default="anchored")
+    wf.add_argument("--folds", type=int, default=None, help="Number of folds (or use --train/--test-days)")
+    wf.add_argument("--train-days", dest="train_days", type=int, default=None)
+    wf.add_argument("--test-days", dest="test_days", type=int, default=None)
+    wf.add_argument(
+        "--embargo-days",
+        dest="embargo_days",
+        type=int,
+        default=None,
+        help="IS->OOS gap; defaults to required lookback in calendar days",
+    )
+    wf.add_argument("--holdout-days", dest="holdout_days", type=int, default=0)
+    wf.add_argument("--method", choices=["grid", "random", "bayesian"], default="grid")
+    wf.add_argument("--objective", default="sharpe_ratio")
+    wf.add_argument("--max-evals", dest="max_evals", type=int, default=50)
+    wf.add_argument("--seed", type=int, default=42)
+    wf.add_argument("--pbo", action="store_true", help="Estimate probability of backtest overfitting")
+    wf.add_argument(
+        "--monte-carlo",
+        dest="monte_carlo",
+        action="store_true",
+        help="Block-bootstrap the OOS trade sequence",
+    )
+    wf.add_argument(
+        "--param-sensitivity",
+        dest="param_sensitivity",
+        action="store_true",
+        help="Perturb chosen params +-10% and re-test",
+    )
+    wf.add_argument(
+        "--leakage-probe",
+        dest="leakage_probe",
+        action="store_true",
+        help="Shift the data feed forward to detect future-data leakage",
+    )
+    wf.add_argument("--results-csv", dest="results_csv", default=None, help="Write per-fold table to CSV")
+    wf.add_argument(
+        "--save-config",
+        dest="save_config",
+        default=None,
+        help="Save the chosen config (with provenance) to this path",
+    )
+    wf.set_defaults(func=cmd_walkforward)
+
+    mcp = subparsers.add_parser(
+        "mcp", help="Serve TradeFlow over MCP for an agent (opt-in; needs the 'mcp' extra)"
+    )
+    mcp.set_defaults(func=cmd_mcp)
+
+    res = subparsers.add_parser(
+        "research", help="Autonomous research loop -> shortlist of validated configs (needs 'ai' extra)"
+    )
+    add_common(res, with_dates=True)
+    res.add_argument("--goal", default="Improve out-of-sample Sharpe without raising max drawdown")
+    res.add_argument("--mode", choices=["anchored", "rolling"], default="anchored")
+    res.add_argument("--folds", type=int, default=4)
+    res.add_argument("--embargo-days", dest="embargo_days", type=int, default=None)
+    res.add_argument("--holdout-days", dest="holdout_days", type=int, default=60)
+    res.add_argument("--method", choices=["grid", "random", "bayesian"], default="grid")
+    res.add_argument("--objective", default="sharpe_ratio")
+    res.add_argument("--max-evals", dest="max_evals", type=int, default=25)
+    res.add_argument("--max-trials", dest="max_trials", type=int, default=10)
+    res.add_argument("--max-dry-rounds", dest="max_dry_rounds", type=int, default=3)
+    res.add_argument("--max-tokens", dest="max_tokens", type=int, default=None)
+    res.add_argument("--shortlist-size", dest="shortlist_size", type=int, default=3)
+    res.add_argument(
+        "--allow-code-gen",
+        dest="allow_code_gen",
+        action="store_true",
+        help="Permit agent-authored strategy code (validated in the sandbox)",
+    )
+    res.add_argument(
+        "--provider",
+        choices=["anthropic", "openai", "ollama"],
+        default="anthropic",
+        help="LLM provider for the proposer ('ollama' runs locally, no API key)",
+    )
+    res.add_argument(
+        "--model",
+        default=None,
+        help="Model id (defaults per provider, e.g. claude-opus-4-8 / gpt-4o / llama3.1)",
+    )
+    res.add_argument("--seed", type=int, default=42)
+    res.set_defaults(func=cmd_research)
 
     return parser
 

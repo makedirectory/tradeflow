@@ -1,4 +1,5 @@
-"""Constraint-solver portfolio allocation.
+"""Constraint-solver portfolio allocation - because "put it all on the one with the
+highest score" is a strategy, just not a good one.
 
 Given a set of candidate symbols, each with a *score* (a higher score = more
 attractive, however the caller chooses to define it - expected return, signal

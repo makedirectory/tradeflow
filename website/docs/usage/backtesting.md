@@ -6,7 +6,8 @@ title: Backtesting
 # Backtesting
 
 A backtest replays historical bars through a strategy, simulates fills, and
-reports performance.
+reports performance. It answers "would this have worked?" — a useful question, as
+long as you remember it's not the same as "will this work?"
 
 ```bash
 make backtest

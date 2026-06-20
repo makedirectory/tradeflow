@@ -44,6 +44,11 @@ class Timeframe:
     #: pandas resample/offset aliases per canonical unit.
     _PANDAS_OFFSET: ClassVar[Dict[str, str]] = {MINUTE: "min", HOUR: "h", DAY: "D", WEEK: "W"}
 
+    #: US regular-session trading hours per day (09:30-16:00 ET).
+    _TRADING_HOURS_PER_DAY: ClassVar[float] = 6.5
+    #: US trading days per year.
+    _TRADING_DAYS_PER_YEAR: ClassVar[int] = 252
+
     @classmethod
     def parse(cls, text: str) -> "Timeframe":
         """Parse a string like ``"5Min"`` / ``"1Hour"`` / ``"1Day"``."""
@@ -62,6 +67,24 @@ class Timeframe:
     def to_pandas_offset(self) -> str:
         """Return the pandas offset alias, e.g. ``"5min"``, ``"1D"``."""
         return f"{self.amount}{self._PANDAS_OFFSET[self.unit]}"
+
+    def periods_per_year(self) -> float:
+        """How many bars of this timeframe occur in a trading year.
+
+        Used to annualise ratios computed on a *per-bar* return series (a 5-minute
+        bar is **not** 1/252 of a year). Note the backtest equity curve is daily-
+        resampled, so its metrics use ``TRADING_DAYS_PER_YEAR`` directly; this is
+        for callers that work on bar-frequency returns.
+        """
+        days = self._TRADING_DAYS_PER_YEAR
+        if self.unit == DAY:
+            return days / self.amount
+        if self.unit == WEEK:
+            return 52.0 / self.amount
+        if self.unit == HOUR:
+            return days * self._TRADING_HOURS_PER_DAY / self.amount
+        # minutes
+        return days * self._TRADING_HOURS_PER_DAY * 60.0 / self.amount
 
     def __str__(self) -> str:
         return f"{self.amount}{self.unit}"

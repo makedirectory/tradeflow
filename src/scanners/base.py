@@ -1,4 +1,5 @@
-"""Base class for universe scanners.
+"""Base class for universe scanners - the bouncers deciding which symbols are even
+worth a strategy's attention today.
 
 A scanner answers a different question than a strategy: *which symbols are worth
 trading right now?* It scores each symbol's recent bars and emits a per-symbol

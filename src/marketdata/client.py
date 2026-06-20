@@ -1,4 +1,5 @@
-"""High-level market-data access.
+"""High-level market-data access - the one part of the pipeline that, mercifully,
+just returns bars and doesn't have opinions about whether you'll make money.
 
 A thin orchestration layer over a :class:`MarketDataProvider`. It owns the
 friendly timeframe-string API and the live-stream entry point, and is the object

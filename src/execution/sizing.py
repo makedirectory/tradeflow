@@ -1,4 +1,5 @@
-"""Pluggable position sizing for live execution.
+"""Pluggable position sizing for live execution - i.e. how much to bet, which is at
+least as important as what to bet on and far easier to get catastrophically wrong.
 
 `LiveTrader` asks a :class:`PositionSizer` "how many units of this symbol should I
 buy at this price?" - it doesn't care *how* the answer is reached. Two strategies
