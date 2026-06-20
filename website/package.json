@@ -7,7 +7,9 @@
     "start": "docusaurus start",
     "build": "docusaurus build",
     "serve": "docusaurus serve",
-    "clear": "docusaurus clear"
+    "clear": "docusaurus clear",
+    "deploy": "npm run build && wrangler deploy",
+    "preview": "npm run build && wrangler dev"
   },
   "dependencies": {
     "@docusaurus/core": "^3.6.0",
@@ -17,5 +19,8 @@
   },
   "engines": {
     "node": ">=18.0"
+  },
+  "devDependencies": {
+    "wrangler": "^4.103.0"
   }
 }
