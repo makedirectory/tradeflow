@@ -1,4 +1,5 @@
-"""Technical indicators implemented with pure pandas/numpy.
+"""Technical indicators implemented with pure pandas/numpy - the squiggly lines we
+all pretend predict the future.
 
 This module is the single source of truth for indicator math in the project.
 It deliberately uses **no compiled dependencies** (no TA-Lib, no tulipy): every

@@ -17,6 +17,13 @@ dependencies = [
 optimize = ["scikit-learn>=1.4"]
 # Constraint-solver portfolio allocation (Google OR-Tools).
 portfolio = ["ortools>=9.8"]
+# Expose TradeFlow to an agent over MCP. Opt-in; base install unchanged.
+mcp = ["mcp>=1.0"]
+# Autonomous research agent with Claude as the default proposer. Opt-in.
+ai = ["anthropic>=0.40"]
+# Use OpenAI models as the research proposer instead of Claude. Opt-in.
+openai = ["openai>=1.40"]
+# (Ollama needs no dependency - the research agent talks to its local HTTP API.)
 dev = ["pytest>=8.0", "ruff>=0.6", "scikit-learn>=1.4", "ortools>=9.8"]
 
 [tool.uv]

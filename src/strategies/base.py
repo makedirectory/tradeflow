@@ -1,4 +1,5 @@
-"""Base class for trading strategies.
+"""Base class for trading strategies - the part where you encode your beautiful
+theory about the market, which the backtester then evaluates without mercy.
 
 A :class:`Strategy` is responsible for exactly three things:
 

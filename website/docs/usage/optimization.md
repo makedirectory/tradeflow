@@ -9,6 +9,12 @@ Optimization searches a strategy's parameter space for the configuration that
 maximises a chosen backtest objective (Sharpe ratio, total return, ...). Each
 candidate configuration is scored by running a full backtest.
 
+A warning that bears repeating: optimization is *very* good at finding the
+settings that would have printed money on this exact slice of history. That's not
+the same as edge — it's often just a flattering fit to noise. Treat the result as
+a hypothesis and put it through [walk-forward validation](walk-forward) before
+believing a word of it.
+
 ```bash
 make optimize
 # or

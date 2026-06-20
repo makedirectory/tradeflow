@@ -1,4 +1,5 @@
-"""Live trading engine.
+"""Live trading engine - same pipeline as the backtest, but now the money is real
+and the bugs are expensive.
 
 Mirrors the backtest pipeline for real time:
 

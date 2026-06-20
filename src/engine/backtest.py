@@ -1,4 +1,4 @@
-"""Backtest engine.
+"""Backtest engine - where strategies go to find out the truth about themselves.
 
 Orchestrates a vectorised-fetch / bar-by-bar-simulate / aggregate pipeline:
 
@@ -84,7 +84,13 @@ class BacktestEngine:
         final_capital = initial_capital + (trades_df["pnl"].sum() if not trades_df.empty else 0.0)
         equity_curve = performance.build_equity_curve(trades_df, initial_capital)
         metrics = performance.compute_backtest_metrics(
-            trades_df, equity_curve, initial_capital, final_capital, market_data
+            trades_df,
+            equity_curve,
+            initial_capital,
+            final_capital,
+            market_data,
+            start=start,
+            end=end,
         )
 
         return BacktestResult(
@@ -127,6 +133,9 @@ class BacktestEngine:
             signal = bar_signals[i]
 
             if position is not None:
+                # Track the worst/best price seen while open, for MAE/MFE.
+                position["lowest"] = min(position["lowest"], lows[i])
+                position["highest"] = max(position["highest"], highs[i])
                 closed = self._maybe_close(position, signal, opens[i], highs[i], lows[i], timestamps[i])
                 if closed is not None:
                     trades.append(closed)
@@ -172,6 +181,9 @@ class BacktestEngine:
             "entry_time": timestamp,
             "stop_loss": stop,
             "take_profit": take,
+            # Running extremes while the position is open, seeded at entry.
+            "lowest": price,
+            "highest": price,
         }
 
     def _maybe_close(
@@ -197,15 +209,26 @@ class BacktestEngine:
     @staticmethod
     def _close(position: Dict[str, Any], exit_price: float, timestamp, reason: str) -> Dict[str, Any]:
         direction = 1 if position["side"] == signals.BUY else -1
-        pnl = (exit_price - position["entry_price"]) * position["size"] * direction
+        entry = position["entry_price"]
+        pnl = (exit_price - entry) * position["size"] * direction
+        # Max adverse / favorable excursion as fractions of entry price. For a long
+        # the adverse extreme is the low and the favorable extreme is the high; for
+        # a short the roles swap.
+        low, high = position.get("lowest", entry), position.get("highest", entry)
+        if direction == 1:
+            mae_pct, mfe_pct = (entry - low) / entry, (high - entry) / entry
+        else:
+            mae_pct, mfe_pct = (high - entry) / entry, (entry - low) / entry
         return {
             "symbol": position["symbol"],
             "side": position["side"],
             "entry_time": position["entry_time"],
             "exit_time": timestamp,
-            "entry_price": position["entry_price"],
+            "entry_price": entry,
             "exit_price": exit_price,
             "size": position["size"],
             "pnl": pnl,
             "exit_reason": reason,
+            "mae_pct": float(max(mae_pct, 0.0)) * 100.0,
+            "mfe_pct": float(max(mfe_pct, 0.0)) * 100.0,
         }
