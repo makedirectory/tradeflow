@@ -1,19 +1,25 @@
-"""Proposers: where the *creativity* enters the loop (Spec 004 §1).
+"""Proposers: where the *creativity* enters the research loop.
 
 A :class:`Proposer` turns a goal + the history so far into the next
 :class:`Proposal` - either a parameter config to try ("tune") or new strategy
 *code* to author ("code"). The agent loop and all guardrails are proposer-agnostic,
-so the real :class:`AnthropicProposer` and a deterministic test double share one
+so the LLM-backed :class:`LLMProposer` and a deterministic test double share one
 contract.
 
 Each proposal must carry a one-paragraph **hypothesis** (the economic/behavioural
-rationale). No rationale -> the agent rejects it unevaluated (research hygiene,
-Spec 004 §4.8).
+rationale). No rationale -> the agent rejects it unevaluated (a research-hygiene
+rule; see the research-agent guide in the engineering docs).
+
+:class:`LLMProposer` is provider-agnostic - it drives any
+:class:`~src.research.llm.LLMClient` (Claude, GPT, or a local Ollama model), so
+the same loop runs against a hosted frontier model or one on your laptop.
 """
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+
+from src.research.llm import LLMClient, build_llm_client
 
 
 @dataclass
@@ -62,67 +68,67 @@ class FixedProposer(Proposer):
         return self._proposals[context.round_index]
 
 
-class AnthropicProposer(Proposer):
-    """LLM-backed proposer using the Anthropic SDK (opt-in ``ai`` extra).
+class LLMProposer(Proposer):
+    """Proposer backed by any :class:`~src.research.llm.LLMClient`.
 
     Asks the model for a JSON proposal: a hypothesis plus param overrides within
-    the supplied ``PARAM_RANGES``. Model ids are pinned and logged (guardrail §6);
-    consult the ``claude-api`` skill for current ids / tool-use details before
-    changing them.
+    the supplied ``PARAM_RANGES``. The model id is pinned on the client and logged
+    by the agent's audit journal, so every proposal is replayable.
     """
 
-    def __init__(self, model: str = "claude-opus-4-8", max_tokens: int = 1024,
-                 client: Any = None):
-        self.model = model
+    def __init__(self, client: LLMClient, max_tokens: int = 1024):
+        self.client = client
         self.max_tokens = max_tokens
-        self._client = client  # injectable for testing; else built lazily
-
-    def _ensure_client(self):
-        if self._client is None:
-            import anthropic  # lazy: only needed when actually proposing via the API
-            self._client = anthropic.Anthropic()
-        return self._client
 
     def propose(self, context: ProposalContext) -> Optional[Proposal]:
         import json
 
-        client = self._ensure_client()
-        prompt = self._build_prompt(context)
-        response = client.messages.create(
-            model=self.model,
-            max_tokens=self.max_tokens,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        text = "".join(getattr(block, "text", "") for block in response.content)
-        usage = getattr(response, "usage", None)
-        tokens = (getattr(usage, "input_tokens", 0) + getattr(usage, "output_tokens", 0)) if usage else 0
+        response = self.client.complete(_SYSTEM_PROMPT, _build_user_prompt(context), self.max_tokens)
         try:
-            payload = json.loads(_extract_json(text))
+            payload = json.loads(_extract_json(response.text))
         except (ValueError, KeyError):
             return None
+        params = payload.get("params", {})
         return Proposal(
             hypothesis=payload.get("hypothesis", ""),
             kind="tune",
             strategy=context.strategy,
-            params=payload.get("params", {}),
-            tuned_params=list(payload.get("params", {})),
-            tokens_used=tokens,
+            params=params,
+            tuned_params=list(params),
+            tokens_used=response.tokens,
         )
 
-    @staticmethod
-    def _build_prompt(context: ProposalContext) -> str:
-        import json
 
-        return (
-            "You are a quantitative research assistant proposing the next experiment.\n"
-            f"GOAL: {context.goal}\n"
-            f"STRATEGY: {context.strategy}\n"
-            f"TUNABLE PARAM_RANGES (stay within bounds):\n{json.dumps(context.param_ranges, default=str)}\n"
-            f"HISTORY (prior out-of-sample results):\n{json.dumps(context.history, default=str)}\n\n"
-            "Rules: change at most 5 parameters; give a one-paragraph hypothesis of WHY it should "
-            "improve OUT-OF-SAMPLE performance (in-sample gains don't count). "
-            'Respond ONLY with JSON: {"hypothesis": "...", "params": {"name": value, ...}}.'
-        )
+def build_proposer(
+    provider: str = "anthropic",
+    model: Optional[str] = None,
+    *,
+    client: Optional[LLMClient] = None,
+    max_tokens: int = 1024,
+    **kwargs,
+) -> LLMProposer:
+    """Build an :class:`LLMProposer` for a provider (anthropic | openai | ollama)."""
+    llm = client or build_llm_client(provider, model, **kwargs)
+    return LLMProposer(llm, max_tokens=max_tokens)
+
+
+_SYSTEM_PROMPT = (
+    "You are a quantitative research assistant proposing the next backtest experiment. "
+    "Change at most 5 parameters. Give a one-paragraph hypothesis of WHY the change should "
+    "improve OUT-OF-SAMPLE performance - in-sample gains do not count. "
+    'Respond ONLY with JSON: {"hypothesis": "...", "params": {"name": value, ...}}.'
+)
+
+
+def _build_user_prompt(context: ProposalContext) -> str:
+    import json
+
+    return (
+        f"GOAL: {context.goal}\n"
+        f"STRATEGY: {context.strategy}\n"
+        f"TUNABLE PARAM_RANGES (stay within bounds):\n{json.dumps(context.param_ranges, default=str)}\n"
+        f"HISTORY (prior out-of-sample results):\n{json.dumps(context.history, default=str)}\n"
+    )
 
 
 def _extract_json(text: str) -> str:

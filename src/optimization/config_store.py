@@ -1,6 +1,6 @@
-"""Shared config persistence with provenance (Spec 002 §6).
+"""Shared config persistence with provenance.
 
-Walk-forward (and, later, the MCP server in Spec 003) produces a *chosen config*
+Walk-forward (and, later, the MCP server) produces a *chosen config*
 worth saving. This is the one serialization layer both use: plain JSON, with a
 ``provenance`` block recording exactly how the config was produced so a human can
 audit it before promoting it to live trading.

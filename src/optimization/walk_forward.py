@@ -1,4 +1,4 @@
-"""Walk-forward / out-of-sample validation (Spec 002).
+"""Walk-forward / out-of-sample validation.
 
 The honest fitness function for the whole automation effort. The optimizer
 (:class:`~src.optimization.optimizer.ParameterOptimizer`) tunes parameters on an
@@ -10,16 +10,16 @@ Why it matters: the moment an agent can run hundreds of optimizations and read
 the resulting Sharpe, it becomes a machine for *discovering noise*. Optimizing on
 one slice and measuring on another is the structural defense (see the spec).
 
-Key correctness properties (Spec 002 §4):
+Key correctness properties:
 * **No fold-boundary leakage.** Each OOS backtest fetches ``warmup`` bars before
   ``oos_start`` so indicators are valid, but only trades entered at/after
   ``oos_start`` are counted. The embargo (>= lookback) separates IS from OOS.
-* **Variable-length folds ⇒ CAGR/annualised metrics** (Spec 001), never raw
+* **Variable-length folds ⇒ CAGR/annualised metrics**, never raw
   total return.
 * **The holdout is sacred** - computed first, subtracted from the fold region,
   never passed to any optimizer call.
 * **Determinism** - the optimizer seed is threaded so a run is reproducible.
-* **Prefetch once, slice per fold** (§4e) - the full window is fetched a single
+* **Prefetch once, slice per fold** - the full window is fetched a single
   time and sliced in memory for every fold/OOS run.
 """
 
@@ -43,7 +43,7 @@ from src.strategies.base import Strategy
 
 logger = logging.getLogger(__name__)
 
-#: Promotion gates (Spec 002 §4b). Config-driven so thresholds are tunable
+#: Promotion gates. Config-driven so thresholds are tunable
 #: without code changes; uses *median* (not mean) for WFE/Sharpe so one lucky
 #: fold can't inflate the verdict.
 DEFAULT_GATES: Dict[str, float] = {
@@ -159,7 +159,7 @@ def _check(value: float, op: str, threshold: float) -> Dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- #
-# Prefetch+slice data provider (Spec 002 §4e)
+# Prefetch+slice data provider
 # --------------------------------------------------------------------------- #
 class _PrefetchedProvider(MarketDataProvider):
     """Serves slices of an in-memory ``{symbol: DataFrame}`` prefetched once."""
@@ -276,7 +276,7 @@ class WalkForwardValidator:
         return folds, holdout
 
     def default_embargo_days(self) -> int:
-        """Lookback expressed in calendar days (Spec 002 §4.1 embargo default)."""
+        """Lookback expressed in calendar days."""
         bars_per_day = self._bars_per_day()
         return max(math.ceil(self.lookback_bars / bars_per_day), 1)
 
@@ -321,7 +321,7 @@ class WalkForwardValidator:
         )
         warmup_days = embargo  # warmup buffer == embargo, by construction >= lookback
 
-        # Prefetch the whole window once (plus warmup) and slice per fold (§4e).
+        # Prefetch the whole window once (plus warmup) and slice per fold.
         fetch_start = start - timedelta(days=warmup_days)
         frames = self.data_client.get_bars(symbols, self.timeframe, fetch_start, end)
         sliced = MarketDataClient(_PrefetchedProvider(frames))
@@ -354,7 +354,7 @@ class WalkForwardValidator:
                 n_trials=len(is_result.results),
             ))
 
-        # ``n_trials_offset`` lets a research session (Spec 004) accumulate the
+        # ``n_trials_offset`` lets a research session accumulate the
         # multiple-testing count across many walk-forward runs, so the Deflated
         # Sharpe reflects every config tried this session, not just this run.
         n_trials_total = sum(fr.n_trials for fr in fold_results) + n_trials_offset
@@ -418,7 +418,7 @@ class WalkForwardValidator:
     ) -> WalkForwardResult:
         """Validate a *fixed* config out-of-sample across folds (no per-fold search).
 
-        Used by the research agent (Spec 004): the agent proposes a specific
+        Used by the research agent: the agent proposes a specific
         config, and this scores that exact config OOS, fold by fold, leakage-safe.
         It counts as **one** trial for the multiple-testing correction; pass the
         running session count via ``n_trials_offset`` so the Deflated Sharpe
@@ -585,7 +585,7 @@ class WalkForwardValidator:
         return out
 
     # ------------------------------------------------------------------ #
-    # Optional robustness diagnostics (Spec 002 §4c/§4d)
+    # Optional robustness diagnostics
     # ------------------------------------------------------------------ #
     def parameter_sensitivity(self, client, symbols, best_params, fold, warmup_days,
                               perturbation: float = 0.10) -> Dict[str, float]:
@@ -620,7 +620,7 @@ class WalkForwardValidator:
     def leakage_probe(self, client, frames, symbols, best_params, fold, warmup_days) -> Dict[str, Any]:
         """Re-run the OOS with bars shifted forward; identical results => leakage.
 
-        Operationalises Spec 002 §4.1: if the strategy reads future data, shifting
+        Operationalises the fold-boundary leakage check: if the strategy reads future data, shifting
         the feed forward leaves results unchanged. A *clean* strategy's results
         change materially, so we **fail** when they don't.
         """
@@ -651,7 +651,7 @@ class WalkForwardValidator:
 
     def monte_carlo(self, oos_trade_frames, n_resamples: int = 1000, block: int = 20,
                     seed: int = 0) -> Dict[str, float]:
-        """Block-bootstrap the OOS trade sequence -> distribution of outcomes (§4d).
+        """Block-bootstrap the OOS trade sequence -> distribution of outcomes.
 
         Reports the 5th-percentile Sharpe ("how bad is a plausibly unlucky run").
         """

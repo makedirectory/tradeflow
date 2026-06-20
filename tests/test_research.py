@@ -1,8 +1,9 @@
-"""Autonomous research agent tests (Spec 004), all offline with a fixed proposer.
+"""Autonomous research agent tests, all offline with a fixed proposer.
 
 Exercises the guardrails that make autonomy safe: research hygiene, the code
 sandbox, OOS-only selection, cumulative multiple-testing count, the sacred
-holdout scored exactly once, the dryness/budget stops, and full journaling.
+holdout scored exactly once, the dryness/budget stops, full journaling, and the
+provider-agnostic LLM proposer.
 """
 
 import json
@@ -199,3 +200,64 @@ def test_proposer_context_excludes_holdout(tmp_path):
     _agent(tmp_path, SpyProposer([_tune(3), _tune(5)])).run(SYMBOLS, START, END)
     # History summaries carry only round/params/score fields - no raw holdout data.
     assert "holdout" not in seen.get("history_keys", set())
+
+
+# --- provider-agnostic LLM layer --------------------------------------------
+def test_build_llm_client_defaults_per_provider():
+    from src.research.llm import build_llm_client
+
+    assert build_llm_client("anthropic").model == "claude-opus-4-8"
+    assert build_llm_client("openai").model == "gpt-4o"
+    assert build_llm_client("ollama").model == "llama3.1"
+    assert build_llm_client("ollama", "mistral").model == "mistral"
+    with pytest.raises(ValueError):
+        build_llm_client("nope")
+
+
+def test_llm_proposer_parses_json_from_any_client():
+    from src.research.llm import LLMResponse
+    from src.research.proposer import LLMProposer
+
+    class StubClient:
+        model = "stub"
+
+        def complete(self, system, user, max_tokens=1024):
+            # Models often wrap JSON in prose; the proposer must still extract it.
+            return LLMResponse('Sure!\n{"hypothesis": "vol clusters", "params": {"buy_every": 7}}', tokens=11)
+
+    proposer = LLMProposer(StubClient())
+    ctx = ProposalContext(goal="g", strategy="periodic", param_ranges={}, history=[], incumbent=None, round_index=0)
+    proposal = proposer.propose(ctx)
+    assert proposal.hypothesis == "vol clusters"
+    assert proposal.params == {"buy_every": 7}
+    assert proposal.tuned_params == ["buy_every"]
+    assert proposal.tokens_used == 11
+
+
+def test_llm_proposer_returns_none_on_unparseable_output():
+    from src.research.llm import LLMResponse
+    from src.research.proposer import LLMProposer
+
+    class JunkClient:
+        model = "stub"
+
+        def complete(self, system, user, max_tokens=1024):
+            return LLMResponse("I cannot help with that.", tokens=3)
+
+    ctx = ProposalContext(goal="g", strategy="periodic", param_ranges={}, history=[], incumbent=None, round_index=0)
+    assert LLMProposer(JunkClient()).propose(ctx) is None
+
+
+def test_build_proposer_accepts_injected_client():
+    from src.research.llm import LLMResponse
+    from src.research.proposer import build_proposer
+
+    class StubClient:
+        model = "stub"
+
+        def complete(self, system, user, max_tokens=1024):
+            return LLMResponse('{"hypothesis": "x", "params": {}}', tokens=1)
+
+    proposer = build_proposer(client=StubClient())
+    ctx = ProposalContext(goal="g", strategy="periodic", param_ranges={}, history=[], incumbent=None, round_index=0)
+    assert proposer.propose(ctx).hypothesis == "x"

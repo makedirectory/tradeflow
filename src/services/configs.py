@@ -1,4 +1,4 @@
-"""Config persistence service (Spec 003 §4 "Propose" tools, Spec 002 §6).
+"""Config persistence service.
 
 Thin wrappers over :mod:`src.optimization.config_store` that return JSON-able
 results. Saving a config writes a file a human chooses to use; it **never**

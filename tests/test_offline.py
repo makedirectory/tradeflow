@@ -67,7 +67,7 @@ def test_backtest_metrics_complete_and_json_serializable():
     for key in (*METRIC_KEYS, *FLAG_KEYS):
         assert key in result.metrics, f"missing metric: {key}"
 
-    # JSON-serializable matters for the planned MCP server (Spec 003).
+    # JSON-serializable matters for the planned MCP server.
     restored = json.loads(json.dumps(result.metrics))
     assert restored["total_trades"] == result.metrics["total_trades"]
 

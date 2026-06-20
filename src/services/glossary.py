@@ -1,8 +1,8 @@
-"""Metric glossary (Spec 003 §4 ``get_metrics_glossary``).
+"""Metric glossary.
 
 Definitions + pitfalls for every metric the analytics layer reports, written for
 an LLM reader so it doesn't over-trust in-sample numbers. Surfaces the two traps
-that matter most: the equity-curve fidelity caveat (Spec 001 §6) and the
+that matter most: the equity-curve fidelity caveat and the
 multiple-testing correction the Deflated Sharpe applies.
 """
 
@@ -12,7 +12,7 @@ from src.analytics.performance import FLAG_KEYS, METRIC_KEYS
 
 #: Cross-cutting caveats the agent should keep in mind for *all* metrics.
 GLOBAL_CAVEATS = [
-    "Equity curve is built from CLOSED-trade P&L resampled to daily (Spec 001 §6): "
+    "Equity curve is built from CLOSED-trade P&L resampled to daily: "
     "intra-trade (mark-to-market) drawdown is invisible, so max_drawdown / ulcer_index / "
     "volatility UNDERSTATE true risk during long holds.",
     "In-sample metrics from run_optimization are NOT evidence of edge - they are the "

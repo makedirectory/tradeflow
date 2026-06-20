@@ -1,11 +1,11 @@
-"""Validation sandbox for proposals (Spec 004 §4.7, §4.8).
+"""Validation sandbox for proposals.
 
 Two jobs:
 
 1. **Research-hygiene gates** on every proposal: a rationale must be present, and
    no more than :data:`MAX_TUNABLE_PARAMS` parameters may be varied. These are the
    cheap, load-bearing rules that stop the loop manufacturing overfit garbage at
-   scale (Spec 004 §4.8).
+   scale.
 2. **Contract validation** of agent-authored strategy *code*: it must define a
    concrete :class:`~src.strategies.base.Strategy` subclass that implements the
    abstract hooks, declares a valid ``PARAM_RANGES`` (<= 5 searchable), carries a
@@ -14,7 +14,7 @@ Two jobs:
 Isolation note: generated code is validated and executed with a restricted global
 namespace (no ``os``/``sys``/network imports, limited builtins). This is a
 *proposal artifact*, never auto-merged. True OS-level isolation (separate process,
-no network, resource limits) is the production hardening called for in §4.7 and is
+no network, resource limits) is the production hardening called for in  and is
 left as a deliberate follow-up; :func:`load_strategy_from_code` is the single
 choke point where that would be enforced.
 """

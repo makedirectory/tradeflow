@@ -1,4 +1,4 @@
-"""Service-layer + MCP-server tests (Spec 003).
+"""Service-layer + MCP-server tests.
 
 All offline against FakeMarketData. Covers: discovery, the analysis services
 (JSON-serializable, trades not inlined, top-N capped), the metric glossary, the
@@ -104,7 +104,7 @@ def test_audit_log_appends_one_record(tmp_path):
     assert "timestamp" in record and "git_sha" in record
 
 
-# --- the safety wall (Spec 003 §4) -----------------------------------------
+# --- the safety wall -----------------------------------------
 def test_no_live_or_order_tool_is_exposed():
     from src.mcp import server
 

@@ -2,13 +2,12 @@
 
 One definition each for the ratios and risk measures used in the project, shared
 by the backtest analytics (:mod:`src.analytics.performance`) and the scanner base
-class - so "Sharpe" or "max drawdown" mean the same thing everywhere (Spec 001
-§5: one canonical definition per metric).
+class - so "Sharpe" or "max drawdown" mean the same thing everywhere.
 
 Every function is pure and defensive: empty/degenerate inputs yield 0.0 (or inf
 for ratios with a zero denominator) rather than raising.
 
-A note on annualisation (Spec 001 §3/§4): the headline ratios take a
+A note on annualisation: the headline ratios take a
 ``periods_per_year`` so they annualise to the *sampling frequency of the series
 passed in*. The backtest equity curve is resampled to daily P&L
 (:func:`src.analytics.performance.build_equity_curve`), so its returns are daily
@@ -36,7 +35,7 @@ def _as_series(values: Numbers) -> pd.Series:
 
 
 # --------------------------------------------------------------------------- #
-# Gaussian helpers (hand-rolled so the base install needs no scipy - Spec 001 §9)
+# Gaussian helpers (hand-rolled so the base install needs no scipy)
 # --------------------------------------------------------------------------- #
 def norm_cdf(x: float) -> float:
     """Standard-normal CDF via the error function (exact, stdlib only)."""
@@ -141,7 +140,7 @@ def sortino_ratio(returns: Numbers, periods_per_year: int = TRADING_DAYS_PER_YEA
 
 
 def calmar_ratio(cagr_value: float, max_drawdown_value: float) -> float:
-    """CAGR / max drawdown (Spec 001 §3: annualised, not raw total return).
+    """CAGR / max drawdown.
 
     Both arguments are fractions. ``inf`` when drawdown is zero.
     """
@@ -422,7 +421,7 @@ def consecutive(pnl: Numbers, *, winning: bool) -> int:
 
 
 # --------------------------------------------------------------------------- #
-# Benchmark-relative (Spec 001 §3 Tier 2)
+# Benchmark-relative
 # --------------------------------------------------------------------------- #
 def _align(returns: Numbers, benchmark_returns: Numbers) -> pd.DataFrame:
     paired = pd.concat(

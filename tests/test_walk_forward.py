@@ -1,4 +1,4 @@
-"""Walk-forward validation tests (Spec 002).
+"""Walk-forward validation tests.
 
 Cover the properties that make a walk-forward implementation honest: exact,
 deterministic fold geometry; a provably-disjoint holdout; leakage-safe OOS trade

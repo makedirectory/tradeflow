@@ -1,4 +1,4 @@
-"""The autonomous research loop (Spec 004 §3) and its non-negotiable guardrails.
+"""The autonomous research loop and its non-negotiable guardrails.
 
 ```
 goal -> propose (Proposer) -> hygiene gate -> validate OUT-OF-SAMPLE (walk-forward)
@@ -57,7 +57,7 @@ class ResearchConfig:
     objective: str = "sharpe_ratio"
     max_evals: int = 25
     capital: float = 100_000.0
-    # Loop budgets / stopping (guardrail §4).
+    # Loop budgets / stopping (guardrail).
     max_trials: int = 10
     max_dry_rounds: int = 3
     max_tokens: Optional[int] = None
@@ -120,7 +120,7 @@ class ResearchAgent:
 
     def run(self, symbols: List[str], start: datetime, end: datetime) -> ResearchResult:
         cfg = self.config
-        # Reserve the sacred holdout up front; the search never sees it (guardrail §3).
+        # Reserve the sacred holdout up front; the search never sees it (guardrail).
         research_end = end - timedelta(days=cfg.holdout_days)
         holdout_window = {"start": research_end.isoformat(), "end": end.isoformat()}
         if research_end <= start:
@@ -203,7 +203,7 @@ class ResearchAgent:
             else:
                 dry += 1
 
-        # Final exam: score the shortlist ONCE on the sacred holdout (guardrail §3).
+        # Final exam: score the shortlist ONCE on the sacred holdout (guardrail).
         saved = self._finalize(shortlist, symbols, research_end, end, n_trials_cumulative)
 
         self._journal("session_end", {

@@ -313,15 +313,19 @@ def cmd_research(args) -> None:
 
     Offline research clock only: proposes hypotheses, validates them out-of-sample
     via walk-forward, and writes a shortlist of provenance-stamped candidate
-    configs for a human to review. Never touches live trading (Spec 004 §4).
+    configs for a human to review. Never touches live trading.
     """
     import importlib.util
 
-    if importlib.util.find_spec("anthropic") is None:
-        sys.exit("The research agent needs the 'ai' extra. Install it:\n    uv sync --extra ai")
+    # Each provider pulls in a different optional dependency (Ollama needs none).
+    required = {"anthropic": "anthropic", "openai": "openai"}.get(args.provider)
+    if required and importlib.util.find_spec(required) is None:
+        extra = {"anthropic": "ai", "openai": "openai"}[args.provider]
+        sys.exit(f"Provider '{args.provider}' needs the '{extra}' extra. Install it:\n"
+                 f"    uv sync --extra {extra}")
 
     from src.research.agent import ResearchAgent, ResearchConfig
-    from src.research.proposer import AnthropicProposer
+    from src.research.proposer import build_proposer
     from src.services.data import build_data_client
 
     data_client = build_data_client()
@@ -333,7 +337,7 @@ def cmd_research(args) -> None:
         max_dry_rounds=args.max_dry_rounds, max_tokens=args.max_tokens,
         shortlist_size=args.shortlist_size, allow_code_gen=args.allow_code_gen,
     )
-    proposer = AnthropicProposer(model=args.model)
+    proposer = build_proposer(args.provider, args.model)
     agent = ResearchAgent(args.strategy, data_client, proposer, cfg, seed=args.seed)
     result = agent.run(universe, args.start, args.end)
 
@@ -354,7 +358,7 @@ def cmd_research(args) -> None:
 def cmd_mcp(args) -> None:
     """Serve TradeFlow over MCP (stdio). Opt-in; requires the ``mcp`` extra.
 
-    Live trading is intentionally not exposed (Spec 003 §4): the server builds
+    Live trading is intentionally not exposed: the server builds
     only a data client, so it cannot place orders.
     """
     try:
@@ -544,7 +548,10 @@ def build_parser() -> argparse.ArgumentParser:
     res.add_argument("--shortlist-size", dest="shortlist_size", type=int, default=3)
     res.add_argument("--allow-code-gen", dest="allow_code_gen", action="store_true",
                      help="Permit agent-authored strategy code (validated in the sandbox)")
-    res.add_argument("--model", default="claude-opus-4-8")
+    res.add_argument("--provider", choices=["anthropic", "openai", "ollama"], default="anthropic",
+                     help="LLM provider for the proposer ('ollama' runs locally, no API key)")
+    res.add_argument("--model", default=None,
+                     help="Model id (defaults per provider, e.g. claude-opus-4-8 / gpt-4o / llama3.1)")
     res.add_argument("--seed", type=int, default=42)
     res.set_defaults(func=cmd_research)
 

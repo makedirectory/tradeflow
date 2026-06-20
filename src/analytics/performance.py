@@ -4,14 +4,13 @@ Turns a table of completed trades plus an equity curve into a metrics dict. This
 logic lives here - not inside ``Strategy`` or the engine - so strategies stay
 about signals and the engine stays about orchestration (separation of concerns).
 
-The metric *formulas* all live in :mod:`src.analytics.metrics` (Spec 001 §5: one
-canonical definition each); this module only composes them over the trade table
+The metric *formulas* all live in :mod:`src.analytics.metrics`; this module only composes them over the trade table
 and equity curve.
 
-Caveat (Spec 001 §6): ``build_equity_curve`` accumulates *closed-trade* P&L
+Caveat: ``build_equity_curve`` accumulates *closed-trade* P&L
 resampled to calendar-daily, so intra-trade (mark-to-market) drawdown is not
 captured. ``max_drawdown``/``ulcer_index``/volatility therefore understate true
-risk during long holds. Consumers (and the Spec 003 glossary) must not over-trust
+risk during long holds. Consumers (and the metrics glossary) must not over-trust
 these as mark-to-market figures.
 """
 
@@ -23,7 +22,7 @@ import pandas as pd
 
 from src.analytics import metrics as m
 
-#: Below this many trades a result is statistically low-power (Spec 001 §3).
+#: Below this many trades a result is statistically low-power.
 LOW_SAMPLE_TRADES = 30
 
 #: The metric keys always present in a results dict (handy for optimizers/reports).

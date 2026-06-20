@@ -128,7 +128,7 @@ class BacktestEngine:
             signal = bar_signals[i]
 
             if position is not None:
-                # Track the worst/best price seen while open, for MAE/MFE (Spec 001).
+                # Track the worst/best price seen while open, for MAE/MFE.
                 position["lowest"] = min(position["lowest"], lows[i])
                 position["highest"] = max(position["highest"], highs[i])
                 closed = self._maybe_close(position, signal, opens[i], highs[i], lows[i], timestamps[i])

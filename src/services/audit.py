@@ -1,4 +1,4 @@
-"""Append-only audit logging (Spec 003 §5.2).
+"""Append-only audit logging.
 
 Every tool/service call can be logged with its inputs, the exact resolved config,
 a ``run_id``, the git SHA, and a server-side timestamp - so any decision an agent

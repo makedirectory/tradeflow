@@ -3,7 +3,7 @@
 No business logic lives here - every tool calls a function in :mod:`src.services`
 and logs the call to the audit trail. The server constructs **only** a data
 client (never a broker/trading client), so it is structurally incapable of
-placing an order. The hard wall (Spec 003 §4) is the *absence* of any
+placing an order. The hard wall is the *absence* of any
 order/live/account-mutation tool; it cannot be prompt-injected around because the
 capability is not wired in.
 
@@ -37,7 +37,7 @@ EXPOSED_TOOLS = (
     "list_configs",
 )
 
-#: Capabilities that must NEVER be exposed over MCP (the safety model, §4).
+#: Capabilities that must NEVER be exposed over MCP (the safety model).
 FORBIDDEN_TOOLS = frozenset({
     "place_order", "submit_order", "submit_market_order", "submit_bracket_order",
     "start_live", "run_live", "cancel_order", "cancel_all_orders",
@@ -111,7 +111,7 @@ def build_server(data_client=None):
     ) -> Dict[str, Any]:
         """Backtest `strategy` on `symbols` over [start, end] (YYYY-MM-DD).
 
-        Returns the full Spec-001 metrics dict, trade count, and a path to the
+        Returns the full  metrics dict, trade count, and a path to the
         trades CSV (trades are not inlined). `config` overrides default params.
         """
         inputs = {"strategy": strategy, "symbols": symbols, "start": start, "end": end,
@@ -224,7 +224,7 @@ def serve() -> None:
 
 
 def _assert_no_trading_client(data_client) -> None:
-    """Guardrail (§5.6): the MCP process must hold only a data client."""
+    """Guardrail: the MCP process must hold only a data client."""
     from src.marketdata.client import MarketDataClient
 
     if not isinstance(data_client, MarketDataClient):

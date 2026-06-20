@@ -125,6 +125,34 @@ Register it with a client (Claude Desktop / Claude Code `mcpServers`):
     "cwd": "/path/to/tradeflow" } } }
 ```
 
+## Research agent (optional)
+
+`python main.py research` runs a bounded, offline loop that proposes hypotheses,
+validates them out-of-sample with walk-forward, and writes a shortlist of
+provenance-stamped candidate configs to `configs/` for a human to review. It never
+promotes anything to live trading.
+
+The proposer is **provider-agnostic** — choose with `--provider`:
+
+| Provider | Install | Default model | Credential |
+|----------|---------|---------------|------------|
+| `anthropic` (default) | `uv sync --extra ai` | `claude-opus-4-8` | `ANTHROPIC_API_KEY` |
+| `openai` | `uv sync --extra openai` | `gpt-4o` | `OPENAI_API_KEY` |
+| `ollama` (local) | none | `llama3.1` | none |
+
+Set the credential either in `config.py` (alongside your Alpaca keys — see
+`config_example.py`) or as the standard environment variable; the agent checks
+`config.py` first, then the environment. Ollama runs locally and needs no key.
+
+```bash
+uv run python main.py research --provider ollama --model llama3.1 \
+  --symbols NVDA,AAPL --start 2024-01-01 --end 2025-12-31 \
+  --goal "improve OOS Sharpe without raising max drawdown" --holdout-days 60
+```
+
+See the docs (Usage → *AI agents*) for the full tool surface, guardrails, and
+provider setup.
+
 ## Architecture
 
 The codebase is organised into single-responsibility layers. Nothing above the
@@ -181,6 +209,15 @@ uv run ruff format --check . # format
 ```
 
 ## Contributing
+
+**Contributions and ideas are very welcome** — whether it's a bug fix, a new
+strategy or scanner, an additional broker/data adapter, an LLM provider, docs, or
+just a feature request or suggestion. If you have an idea, open an issue to start
+the conversation; if you have a fix, open a PR. No contribution is too small, and
+feedback on what would make TradeFlow more useful is always appreciated.
+
+And hey — don't be greedy: share your algos, let's make money together. 📈 (Worst
+case, we lose money together, which is basically friendship.)
 
 See **[CONTRIBUTING.md](CONTRIBUTING.md)** for setup, the pre-push checks, and the
 coding standards (layering rules, separation of concerns, no vendor SDK above the

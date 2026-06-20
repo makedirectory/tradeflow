@@ -1,6 +1,6 @@
 """Data-client construction and universe resolution (the read-only data path).
 
-The MCP server (Spec 003 §4) and research agent must be *structurally* incapable
+The MCP server and research agent must be *structurally* incapable
 of trading, so this builds **only** a :class:`MarketDataClient` over Alpaca's
 historical-data client - never a ``TradingClient`` or broker. That absence is the
 safety model.
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 def build_data_client() -> MarketDataClient:
     """Construct the Alpaca-backed historical data client from ``config.py``.
 
-    Deliberately constructs no trading client / broker (Spec 003 §5.6): the
+    Deliberately constructs no trading client / broker: the
     process that calls this cannot place orders.
     """
     import sys

@@ -62,7 +62,7 @@ def test_sharpe_zero_for_constant_returns():
     assert metrics.sharpe_ratio([0.01, 0.01, 0.01]) == 0.0
 
 
-# --- new metric primitives (Spec 001) ---------------------------------------
+# --- new metric primitives ---------------------------------------
 def test_cagr_known():
     # Doubling over exactly one year -> 100% CAGR; over two years -> ~41.4%.
     assert metrics.cagr([100, 200], years=1.0) == pytest.approx(1.0)

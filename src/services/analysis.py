@@ -3,7 +3,7 @@
 Each function takes a data-only :class:`MarketDataClient`, runs an existing
 engine/optimizer/walk-forward path, and returns a compact, JSON-serializable
 dict. Large outputs (trade tables, full optimization grids) are written to an
-artifact file and referenced by path - never inlined (Spec 003 §5.1).
+artifact file and referenced by path - never inlined.
 """
 
 import logging
@@ -183,7 +183,7 @@ def run_walk_forward(
     This is the advancement criterion - returns the OOS aggregate, efficiency,
     degradation, per-fold summary, holdout (if requested), the Deflated Sharpe
     (with n_trials across all folds), and the promotion-gate pass/fail + overall
-    ``promotable``. ``include_pbo`` is expensive and defaults off (Spec 003 §9).
+    ``promotable``. ``include_pbo`` is expensive and defaults off.
     """
     run_id = new_run_id()
     cls = resolve_strategy_class(strategy)
@@ -245,7 +245,7 @@ def summarize_bars(
 
     Descriptive only. NOTE for the caller: choosing symbols by their realised
     stats here and then backtesting them is look-ahead - universe selection is a
-    research decision, not a metric to optimize (Spec 003 §5.4).
+    research decision, not a metric to optimize.
     """
     end = datetime.now()
     start = end - timedelta(days=lookback_days)
