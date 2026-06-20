@@ -150,7 +150,7 @@ def run_optimization(
         "results_csv": results_csv,
         "seed": seed,
         "note": "IN-SAMPLE. Selecting the best of many configs inflates these. "
-                "Validate out-of-sample with run_walk_forward (it applies the Deflated Sharpe).",
+        "Validate out-of-sample with run_walk_forward (it applies the Deflated Sharpe).",
     }
 
 
@@ -189,25 +189,39 @@ def run_walk_forward(
     cls = resolve_strategy_class(strategy)
     validator = WalkForwardValidator(cls, data_client, initial_capital=capital, seed=seed, gates=gates)
     result = validator.run(
-        symbols, start, end, mode=mode, n_folds=n_folds, train_days=train_days,
-        test_days=test_days, embargo_days=embargo_days, holdout_days=holdout_days,
-        method=method, objective=objective, max_evals=max_evals,
-        pbo=include_pbo, monte_carlo=include_monte_carlo,
-        parameter_sensitivity=parameter_sensitivity, leakage_probe=leakage_probe,
+        symbols,
+        start,
+        end,
+        mode=mode,
+        n_folds=n_folds,
+        train_days=train_days,
+        test_days=test_days,
+        embargo_days=embargo_days,
+        holdout_days=holdout_days,
+        method=method,
+        objective=objective,
+        max_evals=max_evals,
+        pbo=include_pbo,
+        monte_carlo=include_monte_carlo,
+        parameter_sensitivity=parameter_sensitivity,
+        leakage_probe=leakage_probe,
         n_trials_offset=n_trials_offset,
     )
 
-    folds = [{
-        "index": fr.fold.index,
-        "is_window": {"start": fr.fold.is_start.isoformat(), "end": fr.fold.is_end.isoformat()},
-        "oos_window": {"start": fr.fold.oos_start.isoformat(), "end": fr.fold.oos_end.isoformat()},
-        "is_best_params": _jsonable(fr.is_best_params),
-        "is_sharpe": fr.is_metrics.get("sharpe_ratio", 0.0),
-        "oos_sharpe": fr.oos_metrics.get("sharpe_ratio", 0.0),
-        "oos_profit_factor": fr.oos_metrics.get("profit_factor", 0.0),
-        "oos_trades": fr.oos_trades,
-        "n_trials": fr.n_trials,
-    } for fr in result.folds]
+    folds = [
+        {
+            "index": fr.fold.index,
+            "is_window": {"start": fr.fold.is_start.isoformat(), "end": fr.fold.is_end.isoformat()},
+            "oos_window": {"start": fr.fold.oos_start.isoformat(), "end": fr.fold.oos_end.isoformat()},
+            "is_best_params": _jsonable(fr.is_best_params),
+            "is_sharpe": fr.is_metrics.get("sharpe_ratio", 0.0),
+            "oos_sharpe": fr.oos_metrics.get("sharpe_ratio", 0.0),
+            "oos_profit_factor": fr.oos_metrics.get("profit_factor", 0.0),
+            "oos_trades": fr.oos_trades,
+            "n_trials": fr.n_trials,
+        }
+        for fr in result.folds
+    ]
 
     return {
         "run_id": run_id,
@@ -292,7 +306,8 @@ def _beta_sizer(data_client, strategy, symbols, benchmark, as_of=None):
     if benchmark_bars is not None and not benchmark_bars.empty:
         betas = {
             s: calculate_beta(bars[s]["close"], benchmark_bars["close"])
-            for s in symbols if s in bars and not bars[s].empty
+            for s in symbols
+            if s in bars and not bars[s].empty
         }
     return BetaSizer(strategy, betas)
 

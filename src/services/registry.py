@@ -22,8 +22,10 @@ SCANNERS: Dict[str, Type[ScannerStrategy]] = dict(SymbolScanner.SCANNERS)
 
 def list_strategies() -> List[Dict[str, str]]:
     """Names + one-line descriptions for every registered strategy."""
-    return [{"name": name, "description": _first_line(cls.__doc__), "timeframe": getattr(cls, "TIMEFRAME", "")}
-            for name, cls in STRATEGIES.items()]
+    return [
+        {"name": name, "description": _first_line(cls.__doc__), "timeframe": getattr(cls, "TIMEFRAME", "")}
+        for name, cls in STRATEGIES.items()
+    ]
 
 
 def list_scanners() -> List[Dict[str, str]]:

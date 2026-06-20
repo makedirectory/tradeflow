@@ -227,7 +227,9 @@ def cmd_walkforward(args) -> None:
         STRATEGIES[args.strategy], data_client, initial_capital=args.capital, seed=args.seed
     )
     result = validator.run(
-        universe, args.start, args.end,
+        universe,
+        args.start,
+        args.end,
         mode=args.mode,
         n_folds=args.folds,
         train_days=args.train_days,
@@ -245,9 +247,15 @@ def cmd_walkforward(args) -> None:
     _print_walkforward(result, args.objective)
 
     if args.results_csv:
-        rows = [{"fold": fr.fold.index, **{f"is_{k}": v for k, v in fr.is_metrics.items()},
-                 **{f"oos_{k}": v for k, v in fr.oos_metrics.items()}, "oos_trades": fr.oos_trades}
-                for fr in result.folds]
+        rows = [
+            {
+                "fold": fr.fold.index,
+                **{f"is_{k}": v for k, v in fr.is_metrics.items()},
+                **{f"oos_{k}": v for k, v in fr.oos_metrics.items()},
+                "oos_trades": fr.oos_trades,
+            }
+            for fr in result.folds
+        ]
         import pandas as pd
 
         pd.DataFrame(rows).to_csv(args.results_csv, index=False)
@@ -256,45 +264,69 @@ def cmd_walkforward(args) -> None:
     if args.save_config and result.folds:
         chosen = result.holdout_params or result.folds[-1].is_best_params
         provenance = build_provenance(
-            method=args.method, objective=args.objective,
-            windows={"start": args.start, "end": args.end, "mode": args.mode,
-                     "folds": len(result.folds), "holdout_days": args.holdout_days,
-                     "embargo_days": args.embargo_days},
-            oos_metrics=result.oos_aggregate, n_trials=result.n_trials_total, seed=args.seed,
+            method=args.method,
+            objective=args.objective,
+            windows={
+                "start": args.start,
+                "end": args.end,
+                "mode": args.mode,
+                "folds": len(result.folds),
+                "holdout_days": args.holdout_days,
+                "embargo_days": args.embargo_days,
+            },
+            oos_metrics=result.oos_aggregate,
+            n_trials=result.n_trials_total,
+            seed=args.seed,
         )
-        path = save_config(args.save_config, strategy=args.strategy, scanner=args.scanner,
-                           params=chosen, provenance=provenance)
+        path = save_config(
+            args.save_config,
+            strategy=args.strategy,
+            scanner=args.scanner,
+            params=chosen,
+            provenance=provenance,
+        )
         print(f"Chosen config saved to {path} (a human promotes it to live; nothing auto-flips)")
 
 
 def _print_walkforward(result, objective: str) -> None:
     print("\n=== Walk-Forward Validation ===")
-    print(f"{'FOLD':>4} {'IS '+objective:>16} {'OOS '+objective:>16} {'OOS Sharpe':>12} "
-          f"{'OOS PF':>8} {'OOS trades':>11}")
+    print(
+        f"{'FOLD':>4} {'IS ' + objective:>16} {'OOS ' + objective:>16} {'OOS Sharpe':>12} "
+        f"{'OOS PF':>8} {'OOS trades':>11}"
+    )
     for fr in result.folds:
-        print(f"{fr.fold.index:>4} {fr.is_metrics.get(objective, 0):>16.3f} "
-              f"{fr.oos_metrics.get(objective, 0):>16.3f} {fr.oos_metrics.get('sharpe_ratio', 0):>12.3f} "
-              f"{fr.oos_metrics.get('profit_factor', 0):>8.2f} {fr.oos_trades:>11}")
+        print(
+            f"{fr.fold.index:>4} {fr.is_metrics.get(objective, 0):>16.3f} "
+            f"{fr.oos_metrics.get(objective, 0):>16.3f} {fr.oos_metrics.get('sharpe_ratio', 0):>12.3f} "
+            f"{fr.oos_metrics.get('profit_factor', 0):>8.2f} {fr.oos_trades:>11}"
+        )
 
     agg = result.oos_aggregate
     print("\n--- OOS aggregate (concatenated trades) ---")
-    print(f"  Sharpe {agg.get('sharpe_ratio', 0):.3f}  CAGR {agg.get('cagr', 0):.2f}%  "
-          f"MaxDD {agg.get('max_drawdown', 0):.2f}%  PF {agg.get('profit_factor', 0):.2f}  "
-          f"DSR {agg.get('deflated_sharpe_ratio', 0):.3f}  trades {agg.get('total_trades', 0)}")
-    print(f"  Efficiency (OOS/IS {objective}): {result.efficiency:.3f}  "
-          f"trials total: {result.n_trials_total}")
+    print(
+        f"  Sharpe {agg.get('sharpe_ratio', 0):.3f}  CAGR {agg.get('cagr', 0):.2f}%  "
+        f"MaxDD {agg.get('max_drawdown', 0):.2f}%  PF {agg.get('profit_factor', 0):.2f}  "
+        f"DSR {agg.get('deflated_sharpe_ratio', 0):.3f}  trades {agg.get('total_trades', 0)}"
+    )
+    print(
+        f"  Efficiency (OOS/IS {objective}): {result.efficiency:.3f}  trials total: {result.n_trials_total}"
+    )
     if result.degradation:
         deg = "  ".join(f"{k} {v:+.3f}" for k, v in result.degradation.items())
         print(f"  Degradation (IS-OOS): {deg}")
     if result.holdout is not None:
-        print(f"\n--- Holdout (scored once) ---")
-        print(f"  Sharpe {result.holdout.get('sharpe_ratio', 0):.3f}  "
-              f"CAGR {result.holdout.get('cagr', 0):.2f}%  trades {result.holdout.get('total_trades', 0)}")
+        print("\n--- Holdout (scored once) ---")
+        print(
+            f"  Sharpe {result.holdout.get('sharpe_ratio', 0):.3f}  "
+            f"CAGR {result.holdout.get('cagr', 0):.2f}%  trades {result.holdout.get('total_trades', 0)}"
+        )
     if result.pbo is not None:
         print(f"\nPBO (prob. of backtest overfitting): {result.pbo:.2f}")
     if result.monte_carlo:
         mc = result.monte_carlo
-        print(f"Monte Carlo OOS Sharpe p05/p50: {mc.get('sharpe_p05', 0):.3f} / {mc.get('sharpe_p50', 0):.3f}")
+        print(
+            f"Monte Carlo OOS Sharpe p05/p50: {mc.get('sharpe_p05', 0):.3f} / {mc.get('sharpe_p50', 0):.3f}"
+        )
 
     report = result.gate_report()
     print("\n--- Promotion gates ---")
@@ -303,9 +335,11 @@ def _print_walkforward(result, objective: str) -> None:
         print(f"  [{mark}] {name}: {check['value']} (threshold {check['threshold']})")
     verdict = "PROMOTABLE" if report["promotable"] else "NOT promotable"
     median_sharpe = result.median_oos("sharpe_ratio")
-    print(f"\nVerdict: {verdict} — OOS Sharpe {median_sharpe:.2f}, efficiency "
-          f"{result.median_efficiency():.2f}, {result.total_oos_trades()} OOS trades, "
-          f"DSR {agg.get('deflated_sharpe_ratio', 0):.2f}")
+    print(
+        f"\nVerdict: {verdict} — OOS Sharpe {median_sharpe:.2f}, efficiency "
+        f"{result.median_efficiency():.2f}, {result.total_oos_trades()} OOS trades, "
+        f"DSR {agg.get('deflated_sharpe_ratio', 0):.2f}"
+    )
 
 
 def cmd_research(args) -> None:
@@ -321,8 +355,9 @@ def cmd_research(args) -> None:
     required = {"anthropic": "anthropic", "openai": "openai"}.get(args.provider)
     if required and importlib.util.find_spec(required) is None:
         extra = {"anthropic": "ai", "openai": "openai"}[args.provider]
-        sys.exit(f"Provider '{args.provider}' needs the '{extra}' extra. Install it:\n"
-                 f"    uv sync --extra {extra}")
+        sys.exit(
+            f"Provider '{args.provider}' needs the '{extra}' extra. Install it:\n    uv sync --extra {extra}"
+        )
 
     from src.research.agent import ResearchAgent, ResearchConfig
     from src.research.proposer import build_proposer
@@ -331,19 +366,30 @@ def cmd_research(args) -> None:
     data_client = build_data_client()
     universe = resolve_universe(data_client, args.scanner, args.symbols)
     cfg = ResearchConfig(
-        goal=args.goal, mode=args.mode, n_folds=args.folds, embargo_days=args.embargo_days,
-        holdout_days=args.holdout_days, method=args.method, objective=args.objective,
-        max_evals=args.max_evals, capital=args.capital, max_trials=args.max_trials,
-        max_dry_rounds=args.max_dry_rounds, max_tokens=args.max_tokens,
-        shortlist_size=args.shortlist_size, allow_code_gen=args.allow_code_gen,
+        goal=args.goal,
+        mode=args.mode,
+        n_folds=args.folds,
+        embargo_days=args.embargo_days,
+        holdout_days=args.holdout_days,
+        method=args.method,
+        objective=args.objective,
+        max_evals=args.max_evals,
+        capital=args.capital,
+        max_trials=args.max_trials,
+        max_dry_rounds=args.max_dry_rounds,
+        max_tokens=args.max_tokens,
+        shortlist_size=args.shortlist_size,
+        allow_code_gen=args.allow_code_gen,
     )
     proposer = build_proposer(args.provider, args.model)
     agent = ResearchAgent(args.strategy, data_client, proposer, cfg, seed=args.seed)
     result = agent.run(universe, args.start, args.end)
 
     print(f"\n=== Research session {agent.session_id} ===")
-    print(f"Stopped: {result.stopped_reason} after {result.rounds} rounds, "
-          f"{result.n_trials_total} cumulative trials")
+    print(
+        f"Stopped: {result.stopped_reason} after {result.rounds} rounds, "
+        f"{result.n_trials_total} cumulative trials"
+    )
     print(f"Holdout (scored once): {result.holdout_window}")
     if not result.shortlist:
         print("No candidate cleared the promotion gates.")
@@ -511,7 +557,10 @@ def build_parser() -> argparse.ArgumentParser:
     wf.add_argument("--train-days", dest="train_days", type=int, default=None)
     wf.add_argument("--test-days", dest="test_days", type=int, default=None)
     wf.add_argument(
-        "--embargo-days", dest="embargo_days", type=int, default=None,
+        "--embargo-days",
+        dest="embargo_days",
+        type=int,
+        default=None,
         help="IS->OOS gap; defaults to required lookback in calendar days",
     )
     wf.add_argument("--holdout-days", dest="holdout_days", type=int, default=0)
@@ -520,15 +569,31 @@ def build_parser() -> argparse.ArgumentParser:
     wf.add_argument("--max-evals", dest="max_evals", type=int, default=50)
     wf.add_argument("--seed", type=int, default=42)
     wf.add_argument("--pbo", action="store_true", help="Estimate probability of backtest overfitting")
-    wf.add_argument("--monte-carlo", dest="monte_carlo", action="store_true",
-                    help="Block-bootstrap the OOS trade sequence")
-    wf.add_argument("--param-sensitivity", dest="param_sensitivity", action="store_true",
-                    help="Perturb chosen params +-10% and re-test")
-    wf.add_argument("--leakage-probe", dest="leakage_probe", action="store_true",
-                    help="Shift the data feed forward to detect future-data leakage")
+    wf.add_argument(
+        "--monte-carlo",
+        dest="monte_carlo",
+        action="store_true",
+        help="Block-bootstrap the OOS trade sequence",
+    )
+    wf.add_argument(
+        "--param-sensitivity",
+        dest="param_sensitivity",
+        action="store_true",
+        help="Perturb chosen params +-10% and re-test",
+    )
+    wf.add_argument(
+        "--leakage-probe",
+        dest="leakage_probe",
+        action="store_true",
+        help="Shift the data feed forward to detect future-data leakage",
+    )
     wf.add_argument("--results-csv", dest="results_csv", default=None, help="Write per-fold table to CSV")
-    wf.add_argument("--save-config", dest="save_config", default=None,
-                    help="Save the chosen config (with provenance) to this path")
+    wf.add_argument(
+        "--save-config",
+        dest="save_config",
+        default=None,
+        help="Save the chosen config (with provenance) to this path",
+    )
     wf.set_defaults(func=cmd_walkforward)
 
     mcp = subparsers.add_parser(
@@ -552,12 +617,23 @@ def build_parser() -> argparse.ArgumentParser:
     res.add_argument("--max-dry-rounds", dest="max_dry_rounds", type=int, default=3)
     res.add_argument("--max-tokens", dest="max_tokens", type=int, default=None)
     res.add_argument("--shortlist-size", dest="shortlist_size", type=int, default=3)
-    res.add_argument("--allow-code-gen", dest="allow_code_gen", action="store_true",
-                     help="Permit agent-authored strategy code (validated in the sandbox)")
-    res.add_argument("--provider", choices=["anthropic", "openai", "ollama"], default="anthropic",
-                     help="LLM provider for the proposer ('ollama' runs locally, no API key)")
-    res.add_argument("--model", default=None,
-                     help="Model id (defaults per provider, e.g. claude-opus-4-8 / gpt-4o / llama3.1)")
+    res.add_argument(
+        "--allow-code-gen",
+        dest="allow_code_gen",
+        action="store_true",
+        help="Permit agent-authored strategy code (validated in the sandbox)",
+    )
+    res.add_argument(
+        "--provider",
+        choices=["anthropic", "openai", "ollama"],
+        default="anthropic",
+        help="LLM provider for the proposer ('ollama' runs locally, no API key)",
+    )
+    res.add_argument(
+        "--model",
+        default=None,
+        help="Model id (defaults per provider, e.g. claude-opus-4-8 / gpt-4o / llama3.1)",
+    )
     res.add_argument("--seed", type=int, default=42)
     res.set_defaults(func=cmd_research)
 

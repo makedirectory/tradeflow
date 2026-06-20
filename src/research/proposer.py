@@ -26,14 +26,14 @@ from src.research.llm import LLMClient, build_llm_client
 class Proposal:
     """One experiment the agent should try next."""
 
-    hypothesis: str                       # WHY this should work (required by hygiene)
-    kind: str = "tune"                    # "tune" (config) | "code" (new subclass)
-    strategy: Optional[str] = None        # registered strategy to tune (kind == "tune")
+    hypothesis: str  # WHY this should work (required by hygiene)
+    kind: str = "tune"  # "tune" (config) | "code" (new subclass)
+    strategy: Optional[str] = None  # registered strategy to tune (kind == "tune")
     params: Dict[str, Any] = field(default_factory=dict)  # config overrides (kind == "tune")
-    code: Optional[str] = None            # source of a new Strategy subclass (kind == "code")
+    code: Optional[str] = None  # source of a new Strategy subclass (kind == "code")
     tuned_params: List[str] = field(default_factory=list)  # which params this varies (hygiene cap)
-    parent_id: Optional[str] = None       # lineage: the candidate this mutates, if any
-    tokens_used: int = 0                  # reported LLM token cost, for the budget
+    parent_id: Optional[str] = None  # lineage: the candidate this mutates, if any
+    tokens_used: int = 0  # reported LLM token cost, for the budget
 
 
 @dataclass
@@ -43,8 +43,8 @@ class ProposalContext:
     goal: str
     strategy: str
     param_ranges: Dict[str, Any]
-    history: List[Dict[str, Any]]         # compact summary of prior trials + OOS scores
-    incumbent: Optional[Dict[str, Any]]   # current best candidate, if any
+    history: List[Dict[str, Any]]  # compact summary of prior trials + OOS scores
+    incumbent: Optional[Dict[str, Any]]  # current best candidate, if any
     round_index: int
 
 
@@ -136,4 +136,4 @@ def _extract_json(text: str) -> str:
     start, end = text.find("{"), text.rfind("}")
     if start == -1 or end == -1 or end < start:
         raise ValueError("no JSON object in response")
-    return text[start:end + 1]
+    return text[start : end + 1]

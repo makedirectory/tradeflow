@@ -31,15 +31,28 @@ MAX_TUNABLE_PARAMS = 5
 
 #: Import names a generated strategy is allowed to use.
 _ALLOWED_IMPORTS = {
-    "pandas", "numpy", "math",
-    "src.indicators.indicators", "src.indicators",
-    "src.strategies.base", "src.strategies.signals", "src.strategies",
+    "pandas",
+    "numpy",
+    "math",
+    "src.indicators.indicators",
+    "src.indicators",
+    "src.strategies.base",
+    "src.strategies.signals",
+    "src.strategies",
 }
 
 #: Builtins denied to generated code (no filesystem / process / eval surface).
 _DENIED_BUILTINS = {
-    "open", "exec", "eval", "compile", "__import__", "input",
-    "globals", "locals", "vars", "memoryview",
+    "open",
+    "exec",
+    "eval",
+    "compile",
+    "__import__",
+    "input",
+    "globals",
+    "locals",
+    "vars",
+    "memoryview",
 }
 
 
@@ -94,7 +107,8 @@ def load_strategy_from_code(code: str, *, class_name: Optional[str] = None) -> T
         raise HygieneError(f"generated code failed to import: {exc}") from exc
 
     candidates = [
-        obj for obj in namespace.values()
+        obj
+        for obj in namespace.values()
         if isinstance(obj, type) and issubclass(obj, Strategy) and obj is not Strategy
     ]
     if class_name:
@@ -109,16 +123,18 @@ def load_strategy_from_code(code: str, *, class_name: Optional[str] = None) -> T
 
 def _validate_contract(cls: Type[Strategy]) -> None:
     if getattr(cls, "__abstractmethods__", None):
-        raise HygieneError(f"{cls.__name__} leaves abstract methods unimplemented: "
-                           f"{sorted(cls.__abstractmethods__)}")
+        raise HygieneError(
+            f"{cls.__name__} leaves abstract methods unimplemented: {sorted(cls.__abstractmethods__)}"
+        )
     if not (cls.__doc__ or "").strip():
         raise HygieneError(f"{cls.__name__} has no docstring (the hypothesis is required)")
     if not isinstance(getattr(cls, "PARAM_RANGES", None), dict):
         raise HygieneError(f"{cls.__name__} must declare a PARAM_RANGES dict")
     space = ParameterSpace(cls.PARAM_RANGES)
     if len(space.searchable) > MAX_TUNABLE_PARAMS:
-        raise HygieneError(f"{cls.__name__} has {len(space.searchable)} searchable params "
-                           f"(cap {MAX_TUNABLE_PARAMS})")
+        raise HygieneError(
+            f"{cls.__name__} has {len(space.searchable)} searchable params (cap {MAX_TUNABLE_PARAMS})"
+        )
     # Must construct from its own defaults.
     defaults = {name: spec["default"] for name, spec in cls.PARAM_RANGES.items() if "default" in spec}
     defaults.setdefault("timeframe", getattr(cls, "TIMEFRAME", "1Day"))

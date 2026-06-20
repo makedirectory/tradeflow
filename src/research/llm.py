@@ -77,6 +77,7 @@ class AnthropicClient(LLMClient):
     def _ensure(self):
         if self._client is None:
             import anthropic  # lazy: only needed when actually calling Claude
+
             key = _resolve("ANTHROPIC_API_KEY")
             self._client = anthropic.Anthropic(api_key=key) if key else anthropic.Anthropic()
         return self._client
@@ -108,6 +109,7 @@ class OpenAIClient(LLMClient):
     def _ensure(self):
         if self._client is None:
             import openai  # lazy
+
             key = _resolve("OPENAI_API_KEY")
             self._client = openai.OpenAI(api_key=key) if key else openai.OpenAI()
         return self._client

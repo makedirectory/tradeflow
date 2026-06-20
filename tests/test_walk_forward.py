@@ -9,7 +9,6 @@ from datetime import datetime
 from typing import Any, ClassVar, Dict
 
 import pandas as pd
-import pytest
 
 from src.marketdata.client import MarketDataClient
 from src.optimization import config_store
@@ -68,8 +67,10 @@ class PeriodicStrategy(Strategy):
 
 def _validator():
     return WalkForwardValidator(
-        PeriodicStrategy, MarketDataClient(FakeMarketData(SYMBOLS, n=600, freq="1D")),
-        initial_capital=100_000, seed=42,
+        PeriodicStrategy,
+        MarketDataClient(FakeMarketData(SYMBOLS, n=600, freq="1D")),
+        initial_capital=100_000,
+        seed=42,
     )
 
 
@@ -121,8 +122,15 @@ def test_filter_trades_drops_entries_before_oos_start():
 # --- end-to-end run ---------------------------------------------------------
 def test_run_produces_folds_and_no_oos_leakage():
     result = _validator().run(
-        SYMBOLS, START, END, mode="anchored", n_folds=3, embargo_days=2,
-        holdout_days=30, method="grid", objective="sharpe_ratio",
+        SYMBOLS,
+        START,
+        END,
+        mode="anchored",
+        n_folds=3,
+        embargo_days=2,
+        holdout_days=30,
+        method="grid",
+        objective="sharpe_ratio",
     )
     assert result.folds
     assert result.n_trials_total == sum(fr.n_trials for fr in result.folds)
@@ -138,8 +146,9 @@ def test_run_is_reproducible_under_fixed_seed():
     a = _validator().run(SYMBOLS, START, END, n_folds=3, embargo_days=2, method="grid")
     b = _validator().run(SYMBOLS, START, END, n_folds=3, embargo_days=2, method="grid")
     assert [fr.is_best_params for fr in a.folds] == [fr.is_best_params for fr in b.folds]
-    assert [fr.oos_metrics["sharpe_ratio"] for fr in a.folds] == \
-           [fr.oos_metrics["sharpe_ratio"] for fr in b.folds]
+    assert [fr.oos_metrics["sharpe_ratio"] for fr in a.folds] == [
+        fr.oos_metrics["sharpe_ratio"] for fr in b.folds
+    ]
 
 
 def test_oos_trades_are_counted():
@@ -151,13 +160,19 @@ def test_oos_trades_are_counted():
 # --- config persistence -----------------------------------------------------
 def test_save_and_load_config_round_trip(tmp_path):
     provenance = config_store.build_provenance(
-        method="grid", objective="sharpe_ratio",
-        windows={"start": START, "end": END}, oos_metrics={"sharpe_ratio": 1.23},
-        n_trials=12, seed=42,
+        method="grid",
+        objective="sharpe_ratio",
+        windows={"start": START, "end": END},
+        oos_metrics={"sharpe_ratio": 1.23},
+        n_trials=12,
+        seed=42,
     )
     path = config_store.save_config(
-        tmp_path / "candidate.json", strategy="periodic", scanner="volume",
-        params={"buy_every": 5}, provenance=provenance,
+        tmp_path / "candidate.json",
+        strategy="periodic",
+        scanner="volume",
+        params={"buy_every": 5},
+        provenance=provenance,
     )
     loaded = config_store.load_config(path)
     assert loaded["strategy"] == "periodic"

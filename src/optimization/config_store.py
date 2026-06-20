@@ -44,7 +44,10 @@ def current_git_sha() -> Optional[str]:
     try:
         out = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
-            capture_output=True, text=True, timeout=5, check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
         )
         return out.stdout.strip() or None
     except (subprocess.SubprocessError, OSError):

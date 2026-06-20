@@ -49,14 +49,16 @@ def list_configs(directory: Optional[str] = None) -> List[Dict[str, Any]]:
         except (ValueError, OSError):
             continue
         prov = doc.get("provenance", {})
-        out.append({
-            "name": path.stem,
-            "strategy": doc.get("strategy"),
-            "scanner": doc.get("scanner"),
-            "objective": prov.get("objective"),
-            "oos_metrics": prov.get("oos_metrics", {}),
-            "timestamp": prov.get("timestamp"),
-        })
+        out.append(
+            {
+                "name": path.stem,
+                "strategy": doc.get("strategy"),
+                "scanner": doc.get("scanner"),
+                "objective": prov.get("objective"),
+                "oos_metrics": prov.get("oos_metrics", {}),
+                "timestamp": prov.get("timestamp"),
+            }
+        )
     return out
 
 

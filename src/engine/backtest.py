@@ -84,8 +84,13 @@ class BacktestEngine:
         final_capital = initial_capital + (trades_df["pnl"].sum() if not trades_df.empty else 0.0)
         equity_curve = performance.build_equity_curve(trades_df, initial_capital)
         metrics = performance.compute_backtest_metrics(
-            trades_df, equity_curve, initial_capital, final_capital, market_data,
-            start=start, end=end,
+            trades_df,
+            equity_curve,
+            initial_capital,
+            final_capital,
+            market_data,
+            start=start,
+            end=end,
         )
 
         return BacktestResult(

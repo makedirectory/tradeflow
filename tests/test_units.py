@@ -66,7 +66,7 @@ def test_sharpe_zero_for_constant_returns():
 def test_cagr_known():
     # Doubling over exactly one year -> 100% CAGR; over two years -> ~41.4%.
     assert metrics.cagr([100, 200], years=1.0) == pytest.approx(1.0)
-    assert metrics.cagr([100, 200], years=2.0) == pytest.approx(2 ** 0.5 - 1)
+    assert metrics.cagr([100, 200], years=2.0) == pytest.approx(2**0.5 - 1)
 
 
 def test_cagr_degenerate():
@@ -102,7 +102,7 @@ def test_consecutive_streaks():
 def test_probabilistic_sharpe_in_unit_interval():
     rng = np.random.default_rng(1)
     good = pd.Series(rng.normal(0.01, 0.01, 250))  # clearly positive Sharpe
-    flat = pd.Series(rng.normal(0.0, 0.01, 250))   # no edge
+    flat = pd.Series(rng.normal(0.0, 0.01, 250))  # no edge
     psr_good = metrics.probabilistic_sharpe_ratio(good)
     psr_flat = metrics.probabilistic_sharpe_ratio(flat)
     assert 0.0 <= psr_flat <= psr_good <= 1.0

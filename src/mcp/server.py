@@ -39,12 +39,24 @@ EXPOSED_TOOLS = (
 )
 
 #: Capabilities that must NEVER be exposed over MCP (the safety model).
-FORBIDDEN_TOOLS = frozenset({
-    "place_order", "submit_order", "submit_market_order", "submit_bracket_order",
-    "start_live", "run_live", "cancel_order", "cancel_all_orders",
-    "close_position", "close_all_positions", "set_paper_trade", "set_config",
-    "get_account", "list_positions",
-})
+FORBIDDEN_TOOLS = frozenset(
+    {
+        "place_order",
+        "submit_order",
+        "submit_market_order",
+        "submit_bracket_order",
+        "start_live",
+        "run_live",
+        "cancel_order",
+        "cancel_all_orders",
+        "close_position",
+        "close_all_positions",
+        "set_paper_trade",
+        "set_config",
+        "get_account",
+        "list_positions",
+    }
+)
 
 
 def _parse_date(value: str) -> datetime:
@@ -66,6 +78,7 @@ def build_server(data_client=None):
 
     if data_client is None:
         from src.services.data import build_data_client
+
         data_client = build_data_client()
     _assert_no_trading_client(data_client)
 
@@ -74,8 +87,7 @@ def build_server(data_client=None):
 
     def _logged(tool: str, inputs: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any]:
         run_id = result.get("run_id") if isinstance(result, dict) else None
-        audit_log(tool, inputs, run_id=run_id or new_run_id(),
-                  result_summary=_summary(result))
+        audit_log(tool, inputs, run_id=run_id or new_run_id(), result_summary=_summary(result))
         return result
 
     # ---------------- Discovery (safe) ---------------- #
@@ -95,8 +107,9 @@ def build_server(data_client=None):
 
         kind: "strategy" or "scanner". This is your map of what can be optimized.
         """
-        return _logged("get_param_ranges", {"kind": kind, "name": name},
-                       registry.get_param_ranges(kind, name))
+        return _logged(
+            "get_param_ranges", {"kind": kind, "name": name}, registry.get_param_ranges(kind, name)
+        )
 
     # ---------------- Read / analyze (safe) ---------------- #
     @server.tool()
@@ -107,24 +120,53 @@ def build_server(data_client=None):
 
     @server.tool()
     def run_backtest(
-        strategy: str, symbols: List[str], start: str, end: str, capital: float = 100_000.0,
-        config: Optional[Dict[str, Any]] = None, beta_sizing: bool = False, benchmark: str = "SPY",
+        strategy: str,
+        symbols: List[str],
+        start: str,
+        end: str,
+        capital: float = 100_000.0,
+        config: Optional[Dict[str, Any]] = None,
+        beta_sizing: bool = False,
+        benchmark: str = "SPY",
     ) -> Dict[str, Any]:
         """Backtest `strategy` on `symbols` over [start, end] (YYYY-MM-DD).
 
         Returns the full  metrics dict, trade count, and a path to the
         trades CSV (trades are not inlined). `config` overrides default params.
         """
-        inputs = {"strategy": strategy, "symbols": symbols, "start": start, "end": end,
-                  "capital": capital, "config": config, "beta_sizing": beta_sizing}
-        result = analysis.run_backtest(dc, strategy, symbols, _parse_date(start), _parse_date(end),
-                                       capital, config, beta_sizing, benchmark)
+        inputs = {
+            "strategy": strategy,
+            "symbols": symbols,
+            "start": start,
+            "end": end,
+            "capital": capital,
+            "config": config,
+            "beta_sizing": beta_sizing,
+        }
+        result = analysis.run_backtest(
+            dc,
+            strategy,
+            symbols,
+            _parse_date(start),
+            _parse_date(end),
+            capital,
+            config,
+            beta_sizing,
+            benchmark,
+        )
         return _logged("run_backtest", inputs, result)
 
     @server.tool()
     def run_optimization(
-        strategy: str, symbols: List[str], start: str, end: str, method: str = "grid",
-        objective: str = "sharpe_ratio", max_evals: int = 50, seed: int = 42, capital: float = 100_000.0,
+        strategy: str,
+        symbols: List[str],
+        start: str,
+        end: str,
+        method: str = "grid",
+        objective: str = "sharpe_ratio",
+        max_evals: int = 50,
+        seed: int = 42,
+        capital: float = 100_000.0,
     ) -> Dict[str, Any]:
         """Search a strategy's parameters IN-SAMPLE (grid|random|bayesian).
 
@@ -133,18 +175,47 @@ def build_server(data_client=None):
         inflated and are NOT evidence of edge. Always validate with
         run_walk_forward before trusting them.
         """
-        inputs = {"strategy": strategy, "symbols": symbols, "start": start, "end": end,
-                  "method": method, "objective": objective, "max_evals": max_evals, "seed": seed}
-        result = analysis.run_optimization(dc, strategy, symbols, _parse_date(start), _parse_date(end),
-                                           method, objective, max_evals, seed, capital)
+        inputs = {
+            "strategy": strategy,
+            "symbols": symbols,
+            "start": start,
+            "end": end,
+            "method": method,
+            "objective": objective,
+            "max_evals": max_evals,
+            "seed": seed,
+        }
+        result = analysis.run_optimization(
+            dc,
+            strategy,
+            symbols,
+            _parse_date(start),
+            _parse_date(end),
+            method,
+            objective,
+            max_evals,
+            seed,
+            capital,
+        )
         return _logged("run_optimization", inputs, result)
 
     @server.tool()
     def run_walk_forward(
-        strategy: str, symbols: List[str], start: str, end: str, mode: str = "anchored",
-        n_folds: int = 4, embargo_days: Optional[int] = None, holdout_days: int = 0,
-        method: str = "grid", objective: str = "sharpe_ratio", max_evals: int = 50, seed: int = 42,
-        capital: float = 100_000.0, include_pbo: bool = False, parameter_sensitivity: bool = False,
+        strategy: str,
+        symbols: List[str],
+        start: str,
+        end: str,
+        mode: str = "anchored",
+        n_folds: int = 4,
+        embargo_days: Optional[int] = None,
+        holdout_days: int = 0,
+        method: str = "grid",
+        objective: str = "sharpe_ratio",
+        max_evals: int = 50,
+        seed: int = 42,
+        capital: float = 100_000.0,
+        include_pbo: bool = False,
+        parameter_sensitivity: bool = False,
         leakage_probe: bool = False,
     ) -> Dict[str, Any]:
         """Honest out-of-sample evaluation across folds - your advancement criterion.
@@ -156,15 +227,39 @@ def build_server(data_client=None):
         overall "promotable"). A config advances only if it is promotable - never
         on in-sample Sharpe. include_pbo is expensive; leave it off unless needed.
         """
-        inputs = {"strategy": strategy, "symbols": symbols, "start": start, "end": end, "mode": mode,
-                  "n_folds": n_folds, "embargo_days": embargo_days, "holdout_days": holdout_days,
-                  "method": method, "objective": objective, "max_evals": max_evals, "seed": seed,
-                  "include_pbo": include_pbo}
+        inputs = {
+            "strategy": strategy,
+            "symbols": symbols,
+            "start": start,
+            "end": end,
+            "mode": mode,
+            "n_folds": n_folds,
+            "embargo_days": embargo_days,
+            "holdout_days": holdout_days,
+            "method": method,
+            "objective": objective,
+            "max_evals": max_evals,
+            "seed": seed,
+            "include_pbo": include_pbo,
+        }
         result = analysis.run_walk_forward(
-            dc, strategy, symbols, _parse_date(start), _parse_date(end), mode=mode, n_folds=n_folds,
-            embargo_days=embargo_days, holdout_days=holdout_days, method=method, objective=objective,
-            max_evals=max_evals, seed=seed, capital=capital, include_pbo=include_pbo,
-            parameter_sensitivity=parameter_sensitivity, leakage_probe=leakage_probe,
+            dc,
+            strategy,
+            symbols,
+            _parse_date(start),
+            _parse_date(end),
+            mode=mode,
+            n_folds=n_folds,
+            embargo_days=embargo_days,
+            holdout_days=holdout_days,
+            method=method,
+            objective=objective,
+            max_evals=max_evals,
+            seed=seed,
+            capital=capital,
+            include_pbo=include_pbo,
+            parameter_sensitivity=parameter_sensitivity,
+            leakage_probe=leakage_probe,
         )
         return _logged("run_walk_forward", inputs, result)
 
@@ -179,7 +274,9 @@ def build_server(data_client=None):
         return _logged("get_metrics_glossary", {}, glossary.metrics_glossary())
 
     @server.tool()
-    def summarize_bars(symbols: List[str], timeframe: str = "1Day", lookback_days: int = 90) -> Dict[str, Any]:
+    def summarize_bars(
+        symbols: List[str], timeframe: str = "1Day", lookback_days: int = 90
+    ) -> Dict[str, Any]:
         """Compact OHLCV stats per symbol (return, vol, trend, volume) - no raw bars.
 
         Descriptive only. Picking symbols by these stats then backtesting them is
@@ -187,12 +284,17 @@ def build_server(data_client=None):
         optimize.
         """
         inputs = {"symbols": symbols, "timeframe": timeframe, "lookback_days": lookback_days}
-        return _logged("summarize_bars", inputs, analysis.summarize_bars(dc, symbols, timeframe, lookback_days))
+        return _logged(
+            "summarize_bars", inputs, analysis.summarize_bars(dc, symbols, timeframe, lookback_days)
+        )
 
     # ---------------- Propose (writes a file, never live state) ---------------- #
     @server.tool()
     def save_config(
-        name: str, strategy: str, params: Dict[str, Any], scanner: Optional[str] = None,
+        name: str,
+        strategy: str,
+        params: Dict[str, Any],
+        scanner: Optional[str] = None,
         provenance: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Save a candidate config to configs/<name>.json (with provenance).
@@ -201,8 +303,9 @@ def build_server(data_client=None):
         any running process and cannot enable live trading.
         """
         inputs = {"name": name, "strategy": strategy, "params": params, "scanner": scanner}
-        result = configs.save_config(name, strategy=strategy, params=params, scanner=scanner,
-                                     provenance=provenance)
+        result = configs.save_config(
+            name, strategy=strategy, params=params, scanner=scanner, provenance=provenance
+        )
         return _logged("save_config", inputs, result)
 
     @server.tool()

@@ -48,14 +48,14 @@ logger = logging.getLogger(__name__)
 #: without code changes; uses *median* (not mean) for WFE/Sharpe so one lucky
 #: fold can't inflate the verdict.
 DEFAULT_GATES: Dict[str, float] = {
-    "min_oos_sharpe": 1.0,         # median OOS Sharpe across folds
+    "min_oos_sharpe": 1.0,  # median OOS Sharpe across folds
     "min_oos_profit_factor": 1.3,  # median OOS profit factor
-    "min_wfe": 0.4,                # median walk-forward efficiency ...
-    "wfe_relaxed": 0.3,            # ... or this if OOS Sharpe also clears target
-    "max_dd_ratio": 1.5,           # OOS max drawdown <= this x IS max drawdown
-    "min_oos_trades": 100,         # statistical-power floor (total OOS trades)
+    "min_wfe": 0.4,  # median walk-forward efficiency ...
+    "wfe_relaxed": 0.3,  # ... or this if OOS Sharpe also clears target
+    "max_dd_ratio": 1.5,  # OOS max drawdown <= this x IS max drawdown
+    "min_oos_trades": 100,  # statistical-power floor (total OOS trades)
     "max_param_sensitivity_loss": 0.25,  # <=25% Sharpe loss under +-10% perturbation
-    "min_deflated_sharpe": 0.5,    # DSR with n_trials_total
+    "min_deflated_sharpe": 0.5,  # DSR with n_trials_total
 }
 
 
@@ -147,8 +147,11 @@ class WalkForwardResult:
             checks["parameter_sensitivity"] = _check(loss, "<=", g["max_param_sensitivity_loss"])
         leakage = self.diagnostics.get("leakage_probe")
         if leakage is not None:
-            checks["leakage_probe"] = {"value": leakage.get("passed"), "threshold": True,
-                                       "passed": bool(leakage.get("passed"))}
+            checks["leakage_probe"] = {
+                "value": leakage.get("passed"),
+                "threshold": True,
+                "passed": bool(leakage.get("passed")),
+            }
 
         promotable = all(c["passed"] for c in checks.values())
         return {"promotable": promotable, "checks": checks}
@@ -215,8 +218,9 @@ class WalkForwardValidator:
         self.gates = gates
 
         # Read timeframe + lookback from a default instance (drives warmup/embargo).
-        defaults = {name: spec["default"] for name, spec in strategy_class.PARAM_RANGES.items()
-                    if "default" in spec}
+        defaults = {
+            name: spec["default"] for name, spec in strategy_class.PARAM_RANGES.items() if "default" in spec
+        }
         probe = strategy_class(dict(defaults))
         self.timeframe = Timeframe.parse(probe.config["timeframe"])
         self.lookback_bars = int(probe.config.get("required_lookback_periods", 20))
@@ -317,8 +321,14 @@ class WalkForwardValidator:
     ) -> WalkForwardResult:
         embargo = embargo_days if embargo_days is not None else self.default_embargo_days()
         folds, holdout = self.build_folds(
-            start, end, mode=mode, n_folds=n_folds, train_days=train_days,
-            test_days=test_days, embargo_days=embargo, holdout_days=holdout_days,
+            start,
+            end,
+            mode=mode,
+            n_folds=n_folds,
+            train_days=train_days,
+            test_days=test_days,
+            embargo_days=embargo,
+            holdout_days=holdout_days,
         )
         warmup_days = embargo  # warmup buffer == embargo, by construction >= lookback
 
@@ -343,17 +353,25 @@ class WalkForwardValidator:
 
             strategy = self.strategy_class(dict(is_result.best_params))
             oos_metrics, oos_trades = self._oos_backtest(
-                strategy, sliced, symbols, fold.oos_start, fold.oos_end, warmup_days, n_trials=len(is_result.results)
+                strategy,
+                sliced,
+                symbols,
+                fold.oos_start,
+                fold.oos_end,
+                warmup_days,
+                n_trials=len(is_result.results),
             )
             oos_trade_frames.append(oos_trades)
-            fold_results.append(FoldResult(
-                fold=fold,
-                is_best_params=dict(is_result.best_params),
-                is_metrics=is_metrics,
-                oos_metrics=oos_metrics,
-                oos_trades=int(len(oos_trades)),
-                n_trials=len(is_result.results),
-            ))
+            fold_results.append(
+                FoldResult(
+                    fold=fold,
+                    is_best_params=dict(is_result.best_params),
+                    is_metrics=is_metrics,
+                    oos_metrics=oos_metrics,
+                    oos_trades=int(len(oos_trades)),
+                    n_trials=len(is_result.results),
+                )
+            )
 
         # ``n_trials_offset`` lets a research session accumulate the
         # multiple-testing count across many walk-forward runs, so the Deflated
@@ -428,13 +446,17 @@ class WalkForwardValidator:
         cls = strategy_class or self.strategy_class
         embargo = embargo_days if embargo_days is not None else self.default_embargo_days()
         folds, _ = self.build_folds(
-            start, end, mode=mode, n_folds=n_folds, train_days=train_days,
-            test_days=test_days, embargo_days=embargo, holdout_days=0,
+            start,
+            end,
+            mode=mode,
+            n_folds=n_folds,
+            train_days=train_days,
+            test_days=test_days,
+            embargo_days=embargo,
+            holdout_days=0,
         )
         warmup_days = embargo
-        frames = self.data_client.get_bars(
-            symbols, self.timeframe, start - timedelta(days=warmup_days), end
-        )
+        frames = self.data_client.get_bars(symbols, self.timeframe, start - timedelta(days=warmup_days), end)
         sliced = MarketDataClient(_PrefetchedProvider(frames))
 
         fold_results: List[FoldResult] = []
@@ -447,10 +469,16 @@ class WalkForwardValidator:
                 cls(dict(params)), sliced, symbols, fold.oos_start, fold.oos_end, warmup_days, n_trials=1
             )
             oos_trade_frames.append(oos_trades)
-            fold_results.append(FoldResult(
-                fold=fold, is_best_params=dict(params), is_metrics=is_result.metrics,
-                oos_metrics=oos_metrics, oos_trades=int(len(oos_trades)), n_trials=1,
-            ))
+            fold_results.append(
+                FoldResult(
+                    fold=fold,
+                    is_best_params=dict(params),
+                    is_metrics=is_result.metrics,
+                    oos_metrics=oos_metrics,
+                    oos_trades=int(len(oos_trades)),
+                    n_trials=1,
+                )
+            )
 
         n_trials_total = 1 + n_trials_offset  # one distinct config evaluated this call
         oos_aggregate = self._aggregate_oos(oos_trade_frames, folds, n_trials_total, None)
@@ -485,8 +513,14 @@ class WalkForwardValidator:
         )
         sliced = MarketDataClient(_PrefetchedProvider(frames))
         metrics, _ = self._oos_backtest(
-            cls(dict(params)), sliced, symbols, window_start, window_end, warmup_days,
-            n_trials=n_trials, var_of_trial_sr=var_of_trial_sr,
+            cls(dict(params)),
+            sliced,
+            symbols,
+            window_start,
+            window_end,
+            warmup_days,
+            n_trials=n_trials,
+            var_of_trial_sr=var_of_trial_sr,
         )
         return metrics
 
@@ -500,8 +534,9 @@ class WalkForwardValidator:
             return opt.random_search(symbols, is_start, is_end, objective, n_samples=max_evals)
         return opt.optimize_bayesian(symbols, is_start, is_end, objective)
 
-    def _oos_backtest(self, strategy, client, symbols, oos_start, oos_end, warmup_days, n_trials,
-                      var_of_trial_sr=None):
+    def _oos_backtest(
+        self, strategy, client, symbols, oos_start, oos_end, warmup_days, n_trials, var_of_trial_sr=None
+    ):
         """Backtest with warmup, then keep only trades entered at/after ``oos_start``."""
         fetch_start = oos_start - timedelta(days=warmup_days)
         result = BacktestEngine(strategy, client).run(symbols, fetch_start, oos_end, self.initial_capital)
@@ -513,8 +548,15 @@ class WalkForwardValidator:
         equity = performance.build_equity_curve(trades, self.initial_capital)
         final = self.initial_capital + (trades["pnl"].sum() if not trades.empty else 0.0)
         return performance.compute_backtest_metrics(
-            trades, equity, self.initial_capital, final, {},
-            start=start, end=end, n_trials=n_trials, var_of_trial_sr=var_of_trial_sr,
+            trades,
+            equity,
+            self.initial_capital,
+            final,
+            {},
+            start=start,
+            end=end,
+            n_trials=n_trials,
+            var_of_trial_sr=var_of_trial_sr,
         )
 
     def _aggregate_oos(self, oos_trade_frames, folds, n_trials_total, var_trial_sr):
@@ -544,14 +586,16 @@ class WalkForwardValidator:
         if is_result.results.empty:
             return {}
         row = is_result.results.iloc[0]
-        return {k: (float(v) if isinstance(v, (int, float, np.floating, np.integer)) else v)
-                for k, v in row.items() if k in performance.METRIC_KEYS}
+        return {
+            k: (float(v) if isinstance(v, (int, float, np.floating, np.integer)) else v)
+            for k, v in row.items()
+            if k in performance.METRIC_KEYS
+        }
 
     @staticmethod
     def _trial_sharpes(is_result) -> List[float]:
         if "sharpe_ratio" in is_result.results.columns:
-            return [float(v) for v in is_result.results["sharpe_ratio"].to_numpy()
-                    if np.isfinite(v)]
+            return [float(v) for v in is_result.results["sharpe_ratio"].to_numpy() if np.isfinite(v)]
         return []
 
     @staticmethod
@@ -588,8 +632,9 @@ class WalkForwardValidator:
     # ------------------------------------------------------------------ #
     # Optional robustness diagnostics
     # ------------------------------------------------------------------ #
-    def parameter_sensitivity(self, client, symbols, best_params, fold, warmup_days,
-                              perturbation: float = 0.10) -> Dict[str, float]:
+    def parameter_sensitivity(
+        self, client, symbols, best_params, fold, warmup_days, perturbation: float = 0.10
+    ) -> Dict[str, float]:
         """Perturb each searched param +-``perturbation`` and re-backtest the OOS.
 
         A robust optimum loses little Sharpe; a config perched on a spike is
@@ -614,8 +659,9 @@ class WalkForwardValidator:
 
     def _oos_sharpe(self, client, symbols, params, fold, warmup_days) -> float:
         strategy = self.strategy_class(dict(params))
-        metrics, _ = self._oos_backtest(strategy, client, symbols, fold.oos_start, fold.oos_end,
-                                        warmup_days, n_trials=1)
+        metrics, _ = self._oos_backtest(
+            strategy, client, symbols, fold.oos_start, fold.oos_end, warmup_days, n_trials=1
+        )
         return metrics.get("sharpe_ratio", 0.0)
 
     def leakage_probe(self, client, frames, symbols, best_params, fold, warmup_days) -> Dict[str, Any]:
@@ -626,8 +672,9 @@ class WalkForwardValidator:
         change materially, so we **fail** when they don't.
         """
         strategy = self.strategy_class(dict(best_params))
-        _, base_trades = self._oos_backtest(strategy, client, symbols, fold.oos_start, fold.oos_end,
-                                            warmup_days, n_trials=1)
+        _, base_trades = self._oos_backtest(
+            strategy, client, symbols, fold.oos_start, fold.oos_end, warmup_days, n_trials=1
+        )
 
         shifted = {s: df.copy() for s, df in frames.items()}
         for df in shifted.values():
@@ -638,20 +685,24 @@ class WalkForwardValidator:
             df.dropna(inplace=True)
         shifted_client = MarketDataClient(_PrefetchedProvider(shifted))
         strategy2 = self.strategy_class(dict(best_params))
-        _, shifted_trades = self._oos_backtest(strategy2, shifted_client, symbols, fold.oos_start,
-                                               fold.oos_end, warmup_days, n_trials=1)
+        _, shifted_trades = self._oos_backtest(
+            strategy2, shifted_client, symbols, fold.oos_start, fold.oos_end, warmup_days, n_trials=1
+        )
 
         same_count = len(base_trades) == len(shifted_trades)
         # If both empty we can't conclude; treat as pass (nothing traded).
         if base_trades.empty and shifted_trades.empty:
             return {"passed": True, "reason": "no OOS trades to probe"}
         identical = same_count and _pnl_close(base_trades, shifted_trades)
-        return {"passed": not identical,
-                "base_trades": int(len(base_trades)),
-                "shifted_trades": int(len(shifted_trades))}
+        return {
+            "passed": not identical,
+            "base_trades": int(len(base_trades)),
+            "shifted_trades": int(len(shifted_trades)),
+        }
 
-    def monte_carlo(self, oos_trade_frames, n_resamples: int = 1000, block: int = 20,
-                    seed: int = 0) -> Dict[str, float]:
+    def monte_carlo(
+        self, oos_trade_frames, n_resamples: int = 1000, block: int = 20, seed: int = 0
+    ) -> Dict[str, float]:
         """Block-bootstrap the OOS trade sequence -> distribution of outcomes.
 
         Reports the 5th-percentile Sharpe ("how bad is a plausibly unlucky run").
@@ -665,7 +716,7 @@ class WalkForwardValidator:
         n_blocks = math.ceil(len(pnl) / block)
         for _ in range(n_resamples):
             starts = rng.integers(0, len(pnl) - block + 1, size=n_blocks)
-            sample = np.concatenate([pnl[s:s + block] for s in starts])[: len(pnl)]
+            sample = np.concatenate([pnl[s : s + block] for s in starts])[: len(pnl)]
             std = sample.std()
             sharpes.append(math.sqrt(len(sample)) * sample.mean() / std if std > 0 else 0.0)
             returns.append(sample.sum())
@@ -717,8 +768,11 @@ def _filter_trades_from(trades: pd.DataFrame, oos_start: datetime) -> pd.DataFra
     entry = pd.to_datetime(trades["entry_time"])
     if getattr(entry.dt, "tz", None) is not None:
         entry = entry.dt.tz_localize(None)
-    mask = entry >= pd.Timestamp(oos_start).tz_localize(None) if pd.Timestamp(oos_start).tzinfo \
+    mask = (
+        entry >= pd.Timestamp(oos_start).tz_localize(None)
+        if pd.Timestamp(oos_start).tzinfo
         else entry >= pd.Timestamp(oos_start)
+    )
     return trades[mask.to_numpy()].reset_index(drop=True)
 
 

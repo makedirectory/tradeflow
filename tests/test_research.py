@@ -25,8 +25,13 @@ START, END = datetime(2024, 1, 2), datetime(2025, 6, 1)
 
 # Gates relaxed so the loop's *mechanics* are observable in a tiny synthetic test.
 RELAXED_GATES = {
-    "min_oos_sharpe": -99, "min_oos_profit_factor": 0, "min_wfe": -99, "wfe_relaxed": -99,
-    "max_dd_ratio": 1e9, "min_oos_trades": 0, "min_deflated_sharpe": -1,
+    "min_oos_sharpe": -99,
+    "min_oos_profit_factor": 0,
+    "min_wfe": -99,
+    "wfe_relaxed": -99,
+    "max_dd_ratio": 1e9,
+    "min_oos_trades": 0,
+    "min_deflated_sharpe": -1,
     "max_param_sensitivity_loss": 1e9,
 }
 
@@ -41,18 +46,29 @@ def _isolate(tmp_path, monkeypatch):
 
 def _agent(tmp_path, proposer, **overrides):
     cfg = ResearchConfig(
-        goal="test", n_folds=3, embargo_days=2, holdout_days=60, method="grid",
-        max_trials=overrides.pop("max_trials", 10), max_dry_rounds=overrides.pop("max_dry_rounds", 5),
-        shortlist_size=3, gates=overrides.pop("gates", RELAXED_GATES), **overrides,
+        goal="test",
+        n_folds=3,
+        embargo_days=2,
+        holdout_days=60,
+        method="grid",
+        max_trials=overrides.pop("max_trials", 10),
+        max_dry_rounds=overrides.pop("max_dry_rounds", 5),
+        shortlist_size=3,
+        gates=overrides.pop("gates", RELAXED_GATES),
+        **overrides,
     )
     dc = MarketDataClient(FakeMarketData(SYMBOLS, n=600, freq="1D"))
-    return ResearchAgent("periodic", dc, proposer, cfg, seed=42,
-                         journal_path=str(tmp_path / "journal.jsonl"))
+    return ResearchAgent("periodic", dc, proposer, cfg, seed=42, journal_path=str(tmp_path / "journal.jsonl"))
 
 
 def _tune(buy_every, hypothesis="cycle captures swings"):
-    return Proposal(hypothesis=hypothesis, kind="tune", strategy="periodic",
-                    params={"buy_every": buy_every}, tuned_params=["buy_every"])
+    return Proposal(
+        hypothesis=hypothesis,
+        kind="tune",
+        strategy="periodic",
+        params={"buy_every": buy_every},
+        tuned_params=["buy_every"],
+    )
 
 
 # --- research hygiene -------------------------------------------------------
@@ -63,12 +79,22 @@ def test_hygiene_rejects_missing_hypothesis_and_too_many_params():
     no_rationale = Proposal(hypothesis="  ", kind="tune", strategy="periodic", params={"buy_every": 3})
     assert sandbox.validate_hygiene(no_rationale, PeriodicStrategy)[0] is False
 
-    many = Proposal(hypothesis="x", kind="tune", strategy="periodic",
-                    params={f"p{i}": 1 for i in range(6)}, tuned_params=[f"p{i}" for i in range(6)])
+    many = Proposal(
+        hypothesis="x",
+        kind="tune",
+        strategy="periodic",
+        params={f"p{i}": 1 for i in range(6)},
+        tuned_params=[f"p{i}" for i in range(6)],
+    )
     assert sandbox.validate_hygiene(many, PeriodicStrategy)[0] is False
 
-    out_of_bounds = Proposal(hypothesis="x", kind="tune", strategy="periodic",
-                             params={"buy_every": 999}, tuned_params=["buy_every"])
+    out_of_bounds = Proposal(
+        hypothesis="x",
+        kind="tune",
+        strategy="periodic",
+        params={"buy_every": 999},
+        tuned_params=["buy_every"],
+    )
     assert sandbox.validate_hygiene(out_of_bounds, PeriodicStrategy)[0] is False
 
 
@@ -128,8 +154,13 @@ def test_loop_rejects_bad_proposals_and_counts_only_valid_trials(tmp_path):
     proposals = [
         _tune(3),
         _tune(5),
-        Proposal(hypothesis="too many knobs", kind="tune", strategy="periodic",
-                 params={f"p{i}": 1 for i in range(6)}, tuned_params=[f"p{i}" for i in range(6)]),
+        Proposal(
+            hypothesis="too many knobs",
+            kind="tune",
+            strategy="periodic",
+            params={f"p{i}": 1 for i in range(6)},
+            tuned_params=[f"p{i}" for i in range(6)],
+        ),
         Proposal(hypothesis="", kind="tune", strategy="periodic", params={"buy_every": 9}),
     ]
     result = _agent(tmp_path, FixedProposer(proposals)).run(SYMBOLS, START, END)
@@ -194,7 +225,9 @@ def test_proposer_context_excludes_holdout(tmp_path):
 
     class SpyProposer(FixedProposer):
         def propose(self, context: ProposalContext):
-            seen["history_keys"] = set().union(*[set(h) for h in context.history]) if context.history else set()
+            seen["history_keys"] = (
+                set().union(*[set(h) for h in context.history]) if context.history else set()
+            )
             return super().propose(context)
 
     _agent(tmp_path, SpyProposer([_tune(3), _tune(5)])).run(SYMBOLS, START, END)
@@ -226,7 +259,9 @@ def test_llm_proposer_parses_json_from_any_client():
             return LLMResponse('Sure!\n{"hypothesis": "vol clusters", "params": {"buy_every": 7}}', tokens=11)
 
     proposer = LLMProposer(StubClient())
-    ctx = ProposalContext(goal="g", strategy="periodic", param_ranges={}, history=[], incumbent=None, round_index=0)
+    ctx = ProposalContext(
+        goal="g", strategy="periodic", param_ranges={}, history=[], incumbent=None, round_index=0
+    )
     proposal = proposer.propose(ctx)
     assert proposal.hypothesis == "vol clusters"
     assert proposal.params == {"buy_every": 7}
@@ -244,7 +279,9 @@ def test_llm_proposer_returns_none_on_unparseable_output():
         def complete(self, system, user, max_tokens=1024):
             return LLMResponse("I cannot help with that.", tokens=3)
 
-    ctx = ProposalContext(goal="g", strategy="periodic", param_ranges={}, history=[], incumbent=None, round_index=0)
+    ctx = ProposalContext(
+        goal="g", strategy="periodic", param_ranges={}, history=[], incumbent=None, round_index=0
+    )
     assert LLMProposer(JunkClient()).propose(ctx) is None
 
 
@@ -259,5 +296,7 @@ def test_build_proposer_accepts_injected_client():
             return LLMResponse('{"hypothesis": "x", "params": {}}', tokens=1)
 
     proposer = build_proposer(client=StubClient())
-    ctx = ProposalContext(goal="g", strategy="periodic", param_ranges={}, history=[], incumbent=None, round_index=0)
+    ctx = ProposalContext(
+        goal="g", strategy="periodic", param_ranges={}, history=[], incumbent=None, round_index=0
+    )
     assert proposer.propose(ctx).hypothesis == "x"

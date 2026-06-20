@@ -128,13 +128,23 @@ class ResearchAgent:
         if research_end <= start:
             raise ValueError("holdout_days leaves no research window; widen the date range")
 
-        self._journal("session_start", {
-            "session_id": self.session_id, "goal": cfg.goal, "strategy": self.strategy_name,
-            "symbols": symbols, "research_window": {"start": start.isoformat(), "end": research_end.isoformat()},
-            "holdout_window": holdout_window, "budgets": {
-                "max_trials": cfg.max_trials, "max_dry_rounds": cfg.max_dry_rounds,
-                "max_tokens": cfg.max_tokens}, "seed": self.seed,
-        })
+        self._journal(
+            "session_start",
+            {
+                "session_id": self.session_id,
+                "goal": cfg.goal,
+                "strategy": self.strategy_name,
+                "symbols": symbols,
+                "research_window": {"start": start.isoformat(), "end": research_end.isoformat()},
+                "holdout_window": holdout_window,
+                "budgets": {
+                    "max_trials": cfg.max_trials,
+                    "max_dry_rounds": cfg.max_dry_rounds,
+                    "max_tokens": cfg.max_tokens,
+                },
+                "seed": self.seed,
+            },
+        )
 
         param_ranges = resolve_strategy_class(self.strategy_name).PARAM_RANGES
         shortlist: List[Candidate] = []
@@ -155,8 +165,12 @@ class ResearchAgent:
                 break
 
             context = ProposalContext(
-                goal=cfg.goal, strategy=self.strategy_name, param_ranges=param_ranges,
-                history=history[-10:], incumbent=self._incumbent_summary(incumbent), round_index=rounds,
+                goal=cfg.goal,
+                strategy=self.strategy_name,
+                param_ranges=param_ranges,
+                history=history[-10:],
+                incumbent=self._incumbent_summary(incumbent),
+                round_index=rounds,
             )
             proposal = self.proposer.propose(context)
             if proposal is None:
@@ -179,27 +193,49 @@ class ResearchAgent:
             promotable = gate_report["promotable"]
             advanced = promotable and self._beats_incumbent(oos_sharpe, oos_dd, incumbent)
 
-            self._journal("trial", {
-                "session_id": self.session_id, "round": rounds, "kind": proposal.kind,
-                "hypothesis": proposal.hypothesis, "params": full_params,
-                "oos_sharpe": oos_sharpe, "oos_max_drawdown": oos_dd,
-                "oos_aggregate": result.oos_aggregate, "promotable": promotable,
-                "advanced": advanced, "n_trials_cumulative": n_trials_cumulative,
-                "tokens_used": tokens_used,
-            })
-            history.append({"round": rounds, "params": full_params, "oos_sharpe": oos_sharpe,
-                            "promotable": promotable, "advanced": advanced})
+            self._journal(
+                "trial",
+                {
+                    "session_id": self.session_id,
+                    "round": rounds,
+                    "kind": proposal.kind,
+                    "hypothesis": proposal.hypothesis,
+                    "params": full_params,
+                    "oos_sharpe": oos_sharpe,
+                    "oos_max_drawdown": oos_dd,
+                    "oos_aggregate": result.oos_aggregate,
+                    "promotable": promotable,
+                    "advanced": advanced,
+                    "n_trials_cumulative": n_trials_cumulative,
+                    "tokens_used": tokens_used,
+                },
+            )
+            history.append(
+                {
+                    "round": rounds,
+                    "params": full_params,
+                    "oos_sharpe": oos_sharpe,
+                    "promotable": promotable,
+                    "advanced": advanced,
+                }
+            )
 
             if advanced:
                 candidate = Candidate(
-                    id=new_run_id(), lineage=self._lineage(proposal, incumbent),
-                    hypothesis=proposal.hypothesis, kind=proposal.kind, strategy=self.strategy_name,
-                    params=full_params, oos_metrics=result.oos_aggregate, gate_report=gate_report,
-                    n_trials_at_selection=n_trials_cumulative, strategy_cls=cls,
+                    id=new_run_id(),
+                    lineage=self._lineage(proposal, incumbent),
+                    hypothesis=proposal.hypothesis,
+                    kind=proposal.kind,
+                    strategy=self.strategy_name,
+                    params=full_params,
+                    oos_metrics=result.oos_aggregate,
+                    gate_report=gate_report,
+                    n_trials_at_selection=n_trials_cumulative,
+                    strategy_cls=cls,
                 )
                 shortlist.append(candidate)
                 shortlist.sort(key=lambda c: c.oos_metrics.get("sharpe_ratio", 0.0), reverse=True)
-                del shortlist[cfg.shortlist_size:]
+                del shortlist[cfg.shortlist_size :]
                 incumbent = shortlist[0]
                 dry = 0
             else:
@@ -208,14 +244,24 @@ class ResearchAgent:
         # Final exam: score the shortlist ONCE on the sacred holdout (guardrail).
         saved = self._finalize(shortlist, symbols, research_end, end, n_trials_cumulative)
 
-        self._journal("session_end", {
-            "session_id": self.session_id, "stopped_reason": stopped, "rounds": rounds,
-            "n_trials_total": n_trials_cumulative, "shortlist": [c.id for c in shortlist],
-            "saved_configs": saved,
-        })
+        self._journal(
+            "session_end",
+            {
+                "session_id": self.session_id,
+                "stopped_reason": stopped,
+                "rounds": rounds,
+                "n_trials_total": n_trials_cumulative,
+                "shortlist": [c.id for c in shortlist],
+                "saved_configs": saved,
+            },
+        )
         return ResearchResult(
-            shortlist=shortlist, n_trials_total=n_trials_cumulative, rounds=rounds,
-            stopped_reason=stopped, journal_path=self.journal_path, holdout_window=holdout_window,
+            shortlist=shortlist,
+            n_trials_total=n_trials_cumulative,
+            rounds=rounds,
+            stopped_reason=stopped,
+            journal_path=self.journal_path,
+            holdout_window=holdout_window,
             saved_configs=saved,
         )
 
@@ -240,24 +286,40 @@ class ResearchAgent:
             ok, reason = validate_hygiene(proposal, cls)
 
         if not ok:
-            self._journal("reject", {"reason": reason, "hypothesis": proposal.hypothesis,
-                                     "params": proposal.params})
+            self._journal(
+                "reject", {"reason": reason, "hypothesis": proposal.hypothesis, "params": proposal.params}
+            )
             return None
 
         validator = WalkForwardValidator(cls, self.data_client, cfg.capital, self.seed, cfg.gates)
         if proposal.kind == "code":
             # A new mechanism: let the optimizer search its PARAM_RANGES OOS.
             result = validator.run(
-                symbols, start, research_end, mode=cfg.mode, n_folds=cfg.n_folds,
-                embargo_days=cfg.embargo_days, holdout_days=0, method=cfg.method,
-                objective=cfg.objective, max_evals=cfg.max_evals, n_trials_offset=n_trials_offset,
+                symbols,
+                start,
+                research_end,
+                mode=cfg.mode,
+                n_folds=cfg.n_folds,
+                embargo_days=cfg.embargo_days,
+                holdout_days=0,
+                method=cfg.method,
+                objective=cfg.objective,
+                max_evals=cfg.max_evals,
+                n_trials_offset=n_trials_offset,
             )
             full_params = result.folds[-1].is_best_params if result.folds else {}
         else:
             full_params = self._full_params(cls, proposal.params)
             result = validator.evaluate_config(
-                symbols, start, research_end, full_params, mode=cfg.mode, n_folds=cfg.n_folds,
-                embargo_days=cfg.embargo_days, objective=cfg.objective, n_trials_offset=n_trials_offset,
+                symbols,
+                start,
+                research_end,
+                full_params,
+                mode=cfg.mode,
+                n_folds=cfg.n_folds,
+                embargo_days=cfg.embargo_days,
+                objective=cfg.objective,
+                n_trials_offset=n_trials_offset,
             )
         if not result.folds:
             self._journal("reject", {"reason": "no folds evaluable", "params": full_params})
@@ -270,29 +332,51 @@ class ResearchAgent:
         for candidate in shortlist:
             cls = candidate.strategy_cls or resolve_strategy_class(candidate.strategy)
             validator = WalkForwardValidator(
-                cls, self.data_client, self.config.capital, self.seed, self.config.gates,
+                cls,
+                self.data_client,
+                self.config.capital,
+                self.seed,
+                self.config.gates,
             )
             candidate.holdout_metrics = validator.score_window(
-                symbols, holdout_start, holdout_end, candidate.params,
-                embargo_days=self.config.embargo_days, n_trials=n_trials_total,
+                symbols,
+                holdout_start,
+                holdout_end,
+                candidate.params,
+                embargo_days=self.config.embargo_days,
+                n_trials=n_trials_total,
             )
             provenance = config_store.build_provenance(
-                method=self.config.method, objective=self.config.objective,
-                windows={"holdout_start": holdout_start.isoformat(), "holdout_end": holdout_end.isoformat(),
-                         "mode": self.config.mode, "n_folds": self.config.n_folds},
-                oos_metrics=candidate.oos_metrics, n_trials=n_trials_total, seed=self.seed,
+                method=self.config.method,
+                objective=self.config.objective,
+                windows={
+                    "holdout_start": holdout_start.isoformat(),
+                    "holdout_end": holdout_end.isoformat(),
+                    "mode": self.config.mode,
+                    "n_folds": self.config.n_folds,
+                },
+                oos_metrics=candidate.oos_metrics,
+                n_trials=n_trials_total,
+                seed=self.seed,
                 notes=f"Research session {self.session_id}. Hypothesis: {candidate.hypothesis}",
             )
             path = config_store.save_config(
-                f"research_{self.session_id}_{candidate.id}.json", strategy=candidate.strategy,
-                params=candidate.params, provenance=provenance,
+                f"research_{self.session_id}_{candidate.id}.json",
+                strategy=candidate.strategy,
+                params=candidate.params,
+                provenance=provenance,
             )
             candidate.saved_path = str(path)
             saved.append(str(path))
-            self._journal("holdout_score", {
-                "session_id": self.session_id, "candidate": candidate.id,
-                "holdout_metrics": candidate.holdout_metrics, "saved": str(path),
-            })
+            self._journal(
+                "holdout_score",
+                {
+                    "session_id": self.session_id,
+                    "candidate": candidate.id,
+                    "holdout_metrics": candidate.holdout_metrics,
+                    "saved": str(path),
+                },
+            )
         return saved
 
     # ------------------------------------------------------------------ #

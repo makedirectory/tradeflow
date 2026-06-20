@@ -32,9 +32,7 @@ def build_data_client() -> MarketDataClient:
     from src.brokers.alpaca.market_data import AlpacaMarketData
 
     historical = StockHistoricalDataClient(config.APCA_API_KEY_ID, config.APCA_API_SECRET_KEY)
-    return MarketDataClient(
-        AlpacaMarketData(historical, config.APCA_API_KEY_ID, config.APCA_API_SECRET_KEY)
-    )
+    return MarketDataClient(AlpacaMarketData(historical, config.APCA_API_KEY_ID, config.APCA_API_SECRET_KEY))
 
 
 def resolve_universe(

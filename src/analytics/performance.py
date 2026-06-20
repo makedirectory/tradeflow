@@ -252,8 +252,7 @@ def _exposure(trades_df: pd.DataFrame, start: Optional[datetime], end: Optional[
         return 0.0
 
     intervals = sorted(
-        (pd.Timestamp(a), pd.Timestamp(b))
-        for a, b in zip(trades_df["entry_time"], trades_df["exit_time"])
+        (pd.Timestamp(a), pd.Timestamp(b)) for a, b in zip(trades_df["entry_time"], trades_df["exit_time"])
     )
     # Normalise timezone so subtraction against tz-naive start/end is valid.
     covered = 0.0

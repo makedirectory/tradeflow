@@ -65,8 +65,16 @@ def test_run_optimization_caps_top_n_and_writes_csv():
 
 def test_run_walk_forward_returns_gate_verdict():
     result = analysis.run_walk_forward(
-        _client(), "volume_spike", SYMBOLS, START, END, n_folds=3, embargo_days=2,
-        holdout_days=30, method="grid", max_evals=8,
+        _client(),
+        "volume_spike",
+        SYMBOLS,
+        START,
+        END,
+        n_folds=3,
+        embargo_days=2,
+        holdout_days=30,
+        method="grid",
+        max_evals=8,
     )
     assert "promotable" in result["gate_report"]
     assert result["folds"] and result["n_trials_total"] > 0
@@ -94,8 +102,9 @@ def test_glossary_covers_every_metric():
 # --- audit ------------------------------------------------------------------
 def test_audit_log_appends_one_record(tmp_path):
     path = tmp_path / "audit.jsonl"
-    run_id = audit_log("run_backtest", {"strategy": "volume_spike"}, path=path,
-                       result_summary={"total_trades": 3})
+    run_id = audit_log(
+        "run_backtest", {"strategy": "volume_spike"}, path=path, result_summary={"total_trades": 3}
+    )
     lines = path.read_text().splitlines()
     assert len(lines) == 1
     record = json.loads(lines[0])
