@@ -8,7 +8,8 @@ folds, with a holdout slice scored exactly once at the end.
 
 Why it matters: the moment an agent can run hundreds of optimizations and read
 the resulting Sharpe, it becomes a machine for *discovering noise*. Optimizing on
-one slice and measuring on another is the structural defense (see the spec).
+one slice and measuring on another is the structural defense (see the
+walk-forward page in the engineering docs).
 
 Key correctness properties:
 * **No fold-boundary leakage.** Each OOS backtest fetches ``warmup`` bars before

@@ -1,4 +1,4 @@
-"""Backtest engine.
+"""Backtest engine - where strategies go to find out the truth about themselves.
 
 Orchestrates a vectorised-fetch / bar-by-bar-simulate / aggregate pipeline:
 

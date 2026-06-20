@@ -1,4 +1,5 @@
-"""Validation sandbox for proposals.
+"""Validation sandbox for proposals - the rules that keep an eager AI from
+manufacturing overfit garbage at scale (its words would be more enthusiastic).
 
 Two jobs:
 

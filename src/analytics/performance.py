@@ -1,4 +1,4 @@
-"""Backtest performance accounting.
+"""Backtest performance accounting - i.e. the part that delivers the bad news.
 
 Turns a table of completed trades plus an equity curve into a metrics dict. This
 logic lives here - not inside ``Strategy`` or the engine - so strategies stay

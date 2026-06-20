@@ -1,4 +1,5 @@
-"""MCP server: a thin adapter exposing TradeFlow's deterministic core as tools.
+"""MCP server: a thin adapter exposing TradeFlow's deterministic core as tools, so
+an agent can do the research and the engine can stay boringly deterministic.
 
 No business logic lives here - every tool calls a function in :mod:`src.services`
 and logs the call to the audit trail. The server constructs **only** a data

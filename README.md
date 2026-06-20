@@ -2,12 +2,18 @@
 
 [![CI](https://github.com/makedirectory/tradeflow/actions/workflows/ci.yml/badge.svg)](https://github.com/makedirectory/tradeflow/actions/workflows/ci.yml)
 
-A small, **layered**, **broker-agnostic** algorithmic-trading engine. It ships with
-an [Alpaca](https://alpaca.markets) adapter, but everything above the broker layer
-is vendor-neutral.
+A small, **layered**, **broker-agnostic** algorithmic-trading engine — and an
+honest one, which mostly means it's very good at telling you your brilliant
+strategy is actually noise. It ships with an [Alpaca](https://alpaca.markets)
+adapter, but everything above the broker layer is vendor-neutral.
 It scans a universe of symbols, runs a strategy over them, and either **backtests**
 on history or **trades live** (paper by default) — with optional **parameter
-optimization** and **constraint-solver portfolio allocation**.
+optimization**, **walk-forward validation**, and **constraint-solver portfolio
+allocation**.
+
+> Making money in markets is genuinely hard. This project won't change that — but
+> it will at least stop you from fooling yourself quite so quickly, which is most
+> of the battle.
 
 Designed to be easy to try and easy to read:
 

@@ -1,11 +1,14 @@
-"""Pure performance-metric primitives.
+"""Pure performance-metric primitives - the numbers that tell you, honestly,
+whether you have an edge or just a flattering backtest.
 
 One definition each for the ratios and risk measures used in the project, shared
 by the backtest analytics (:mod:`src.analytics.performance`) and the scanner base
-class - so "Sharpe" or "max drawdown" mean the same thing everywhere.
+class - so "Sharpe" or "max drawdown" mean the same thing everywhere (a Sharpe
+that changes depending on who's asking is how people end up trading their savings).
 
 Every function is pure and defensive: empty/degenerate inputs yield 0.0 (or inf
-for ratios with a zero denominator) rather than raising.
+for ratios with a zero denominator) rather than raising - a backtest with zero
+trades shouldn't crash; it should just quietly tell you it found nothing.
 
 A note on annualisation: the headline ratios take a
 ``periods_per_year`` so they annualise to the *sampling frequency of the series

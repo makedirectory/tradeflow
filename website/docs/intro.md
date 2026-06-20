@@ -10,8 +10,13 @@ A small, **layered**, **broker-agnostic** algorithmic-trading engine. It ships
 with an [Alpaca](https://alpaca.markets) adapter, but everything above the broker
 layer is vendor-neutral. It scans a universe of symbols, runs a strategy over
 them, and either **backtests** on history or **trades live** (paper by default) —
-with optional **parameter optimization** and **constraint-solver portfolio
-allocation**.
+with optional **parameter optimization**, **walk-forward validation**, and
+**constraint-solver portfolio allocation**.
+
+> Beating the market is hard — embarrassingly hard. TradeFlow's real value isn't a
+> money printer; it's a rigorous skeptic that makes it harder to mistake luck for
+> skill. If your strategy survives walk-forward and the deflated Sharpe, *maybe*
+> you've got something. If it doesn't, you just saved yourself some tuition.
 
 It is built to be **easy to try** and **easy to read**:
 
@@ -23,8 +28,9 @@ It is built to be **easy to try** and **easy to read**:
 
 Two doc tracks:
 
-- **[Usage](usage/installation)** — install, configure, and run the four
-  workflows (scan, backtest, live, optimize) plus portfolio allocation.
+- **[Usage](usage/installation)** — install, configure, and run the workflows
+  (scan, backtest, live, optimize, walk-forward) plus portfolio allocation and the
+  optional AI agents.
 - **[Engineering Wiki](engineering/architecture)** — how it's built and why, and
   how to extend it with a new strategy, scanner, or broker.
 

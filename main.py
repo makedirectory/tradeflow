@@ -432,7 +432,10 @@ def _date(value: str) -> datetime:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="TradeFlow — a broker-agnostic trading engine")
+    parser = argparse.ArgumentParser(
+        description="TradeFlow — a broker-agnostic trading engine that's refreshingly "
+        "honest about how hard making money actually is"
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     def add_common(p, *, with_dates: bool) -> None:
@@ -446,7 +449,7 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument("--end", type=_date, default=datetime.now())
             p.add_argument("--capital", type=float, default=100_000.0)
 
-    bt = subparsers.add_parser("backtest", help="Run a historical backtest")
+    bt = subparsers.add_parser("backtest", help="Run a historical backtest (did the idea ever work?)")
     add_common(bt, with_dates=True)
     bt.add_argument(
         "--beta-sizing",
@@ -457,7 +460,7 @@ def build_parser() -> argparse.ArgumentParser:
     bt.add_argument("--benchmark", default="SPY", help="Benchmark symbol for beta")
     bt.set_defaults(func=cmd_backtest)
 
-    live = subparsers.add_parser("live", help="Run live/paper trading")
+    live = subparsers.add_parser("live", help="Run live/paper trading (paper by default, for your own good)")
     add_common(live, with_dates=False)
     live.add_argument(
         "--portfolio",
@@ -488,7 +491,9 @@ def build_parser() -> argparse.ArgumentParser:
     alloc.add_argument("--max-weight", dest="max_weight", type=float, default=0.25)
     alloc.set_defaults(func=cmd_allocate)
 
-    opt = subparsers.add_parser("optimize", help="Tune strategy parameters via backtest")
+    opt = subparsers.add_parser(
+        "optimize", help="Tune strategy parameters via backtest (in-sample — trust nothing yet)"
+    )
     add_common(opt, with_dates=True)
     opt.add_argument("--method", choices=["grid", "random", "bayesian"], default="grid")
     opt.add_argument("--objective", default="sharpe_ratio")
@@ -497,7 +502,8 @@ def build_parser() -> argparse.ArgumentParser:
     opt.set_defaults(func=cmd_optimize)
 
     wf = subparsers.add_parser(
-        "walkforward", help="Out-of-sample validation: optimize IS, score OOS, across folds"
+        "walkforward",
+        help="Out-of-sample validation: optimize IS, score OOS, across folds (the honest scorecard)",
     )
     add_common(wf, with_dates=True)
     wf.add_argument("--mode", choices=["anchored", "rolling"], default="anchored")

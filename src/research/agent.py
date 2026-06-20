@@ -1,4 +1,6 @@
-"""The autonomous research loop and its non-negotiable guardrails.
+"""The autonomous research loop and its non-negotiable guardrails - an AI that
+hunts for edge, wrapped in enough skepticism to stop it from gleefully reporting
+the 200 noise configs it "discovered."
 
 ```
 goal -> propose (Proposer) -> hygiene gate -> validate OUT-OF-SAMPLE (walk-forward)

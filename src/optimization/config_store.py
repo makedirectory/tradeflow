@@ -1,4 +1,5 @@
-"""Shared config persistence with provenance.
+"""Shared config persistence with provenance - so when a config makes (or loses)
+money, you can reconstruct exactly which decisions to blame.
 
 Walk-forward (and, later, the MCP server) produces a *chosen config*
 worth saving. This is the one serialization layer both use: plain JSON, with a
