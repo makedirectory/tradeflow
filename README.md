@@ -1,6 +1,7 @@
 # TradeFlow
 
 [![CI](https://github.com/makedirectory/tradeflow/actions/workflows/ci.yml/badge.svg)](https://github.com/makedirectory/tradeflow/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/docs-tradeflow.mk--dir.com-blue)](https://tradeflow.mk-dir.com/)
 
 A small, **layered**, **broker-agnostic** algorithmic-trading engine — and an
 honest one, which mostly means it's very good at telling you your brilliant
@@ -156,8 +157,8 @@ uv run python main.py research --provider ollama --model llama3.1 \
   --goal "improve OOS Sharpe without raising max drawdown" --holdout-days 60
 ```
 
-See the docs (Usage → *AI agents*) for the full tool surface, guardrails, and
-provider setup.
+See the [docs](https://tradeflow.mk-dir.com/) (Usage → *AI agents*) for the full
+tool surface, guardrails, and provider setup.
 
 ## Architecture
 
@@ -185,7 +186,10 @@ marketdata → strategy.process_data → strategy.generate_signals
            → engine (simulate fills | route to execution) → analytics
 ```
 
-See the docs site for the full engineering wiki and usage guide:
+Full docs — usage guide and engineering wiki — live at
+**[tradeflow.mk-dir.com](https://tradeflow.mk-dir.com/)**.
+
+To work on them locally:
 
 ```bash
 make docs        # serve the Docusaurus site at http://localhost:3000
