@@ -15,24 +15,19 @@ logger = logging.getLogger(__name__)
 
 
 def build_data_client() -> MarketDataClient:
-    """Construct the Alpaca-backed historical data client from ``config.py``.
+    """Construct the Alpaca-backed historical data client from settings.
 
     Deliberately constructs no trading client / broker: the
     process that calls this cannot place orders.
     """
-    import sys
-
-    try:
-        import config
-    except ModuleNotFoundError:
-        sys.exit("config.py not found. Copy config_example.py to config.py and add your Alpaca keys.")
-
     from alpaca.data.historical import StockHistoricalDataClient
 
     from src.brokers.alpaca.market_data import AlpacaMarketData
+    from src.settings import load_settings
 
-    historical = StockHistoricalDataClient(config.APCA_API_KEY_ID, config.APCA_API_SECRET_KEY)
-    return MarketDataClient(AlpacaMarketData(historical, config.APCA_API_KEY_ID, config.APCA_API_SECRET_KEY))
+    settings = load_settings()
+    historical = StockHistoricalDataClient(settings.alpaca_key, settings.alpaca_secret)
+    return MarketDataClient(AlpacaMarketData(historical, settings.alpaca_key, settings.alpaca_secret))
 
 
 def resolve_universe(

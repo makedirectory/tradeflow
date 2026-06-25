@@ -7,8 +7,8 @@ import logging
 
 from alpaca.trading.client import TradingClient
 
-import config
 from src.brokers.alpaca.broker import AlpacaBroker
+from src.settings import SettingsError, load_settings
 from src.utils.logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -16,8 +16,12 @@ logger = logging.getLogger(__name__)
 
 def main() -> None:
     setup_logging()
+    try:
+        settings = load_settings()
+    except SettingsError as exc:
+        raise SystemExit(str(exc))
     broker = AlpacaBroker(
-        TradingClient(config.APCA_API_KEY_ID, config.APCA_API_SECRET_KEY, paper=config.PAPER_TRADE)
+        TradingClient(settings.alpaca_key, settings.alpaca_secret, paper=settings.paper_trade)
     )
     if broker.cancel_all_orders():
         logger.info("All open orders cancelled.")

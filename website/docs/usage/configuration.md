@@ -5,23 +5,43 @@ title: Configuration
 
 # Configuration
 
-Credentials live in `config.py`, which is **gitignored** so your keys are never
+:::tip No keys needed to explore
+Want to see TradeFlow work before signing up for anything? Run `make demo` — it
+runs the whole pipeline (backtest + walk-forward) on synthetic data, offline.
+:::
+
+Credentials live in a `.env` file, which is **gitignored** so your keys are never
 committed. Create it from the template:
 
 ```bash
-cp config_example.py config.py
+cp .env.example .env
 ```
 
-```python title="config.py"
-APCA_API_KEY_ID = "<your key id>"
-APCA_API_SECRET_KEY = "<your secret>"
+```bash title=".env"
+APCA_API_KEY_ID=<your key id>
+APCA_API_SECRET_KEY=<your secret>
 
-# Keep this True until you are absolutely sure you want to trade real money.
-PAPER_TRADE = True
+# Keep this true until you are absolutely sure you want to trade real money.
+PAPER_TRADE=true
 ```
 
 Get paper keys from the [Alpaca dashboard](https://app.alpaca.markets/) under
 **Paper Account → API Keys**.
+
+## Where settings come from
+
+Every credential is resolved through one place (`src/settings.py`) in a fixed
+order, so there's never any ambiguity:
+
+1. **Environment variables** — the standard, 12-factor way (`export APCA_API_KEY_ID=…`).
+2. **`.env`** in the project root — loaded automatically; real environment
+   variables already set always win.
+3. **A legacy `config.py`** module, if present — the pre-`.env` mechanism, still
+   honoured so older checkouts keep working. New setups should use `.env`.
+
+The same chain resolves the optional LLM provider keys for the research agent
+(`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OLLAMA_BASE_URL`) — set them in `.env`
+or export them, whichever you prefer.
 
 ## Paper vs. live
 

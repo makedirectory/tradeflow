@@ -14,10 +14,11 @@ Each SDK is imported lazily inside its client, so the base install needs none of
 them and an unused provider never has to be installed.
 """
 
-import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Optional
+
+from src.settings import get_credential
 
 #: Default model per provider (override with ``--model`` / the ``model`` arg).
 DEFAULT_MODELS = {
@@ -25,24 +26,6 @@ DEFAULT_MODELS = {
     "openai": "gpt-4o",
     "ollama": "llama3.1",
 }
-
-
-def _resolve(name: str, default: Optional[str] = None) -> Optional[str]:
-    """Look up a credential/setting from ``config.py`` first, then the environment.
-
-    Lets a user keep provider keys alongside their Alpaca keys in ``config.py``
-    (e.g. ``ANTHROPIC_API_KEY = "..."``) while still honouring the standard
-    ``ANTHROPIC_API_KEY`` / ``OPENAI_API_KEY`` env vars the SDKs read by default.
-    """
-    try:
-        import config  # the same gitignored config.py used for Alpaca keys
-
-        value = getattr(config, name, None)
-        if value:
-            return value
-    except ModuleNotFoundError:
-        pass
-    return os.environ.get(name, default)
 
 
 @dataclass
@@ -66,8 +49,8 @@ class LLMClient(ABC):
 class AnthropicClient(LLMClient):
     """Claude via the Anthropic SDK.
 
-    The API key comes from ``ANTHROPIC_API_KEY`` in ``config.py`` if set, else the
-    ``ANTHROPIC_API_KEY`` environment variable.
+    The API key is resolved from ``ANTHROPIC_API_KEY`` via the standard settings
+    chain (environment / ``.env`` / legacy ``config.py``).
     """
 
     def __init__(self, model: str = "claude-opus-4-8", client=None):
@@ -78,7 +61,7 @@ class AnthropicClient(LLMClient):
         if self._client is None:
             import anthropic  # lazy: only needed when actually calling Claude
 
-            key = _resolve("ANTHROPIC_API_KEY")
+            key = get_credential("ANTHROPIC_API_KEY")
             self._client = anthropic.Anthropic(api_key=key) if key else anthropic.Anthropic()
         return self._client
 
@@ -98,8 +81,8 @@ class AnthropicClient(LLMClient):
 class OpenAIClient(LLMClient):
     """GPT models via the OpenAI SDK.
 
-    The API key comes from ``OPENAI_API_KEY`` in ``config.py`` if set, else the
-    ``OPENAI_API_KEY`` environment variable.
+    The API key is resolved from ``OPENAI_API_KEY`` via the standard settings
+    chain (environment / ``.env`` / legacy ``config.py``).
     """
 
     def __init__(self, model: str = "gpt-4o", client=None):
@@ -110,7 +93,7 @@ class OpenAIClient(LLMClient):
         if self._client is None:
             import openai  # lazy
 
-            key = _resolve("OPENAI_API_KEY")
+            key = get_credential("OPENAI_API_KEY")
             self._client = openai.OpenAI(api_key=key) if key else openai.OpenAI()
         return self._client
 
@@ -132,13 +115,13 @@ class OpenAIClient(LLMClient):
 class OllamaClient(LLMClient):
     """Any local model served by Ollama, via its HTTP API (no SDK dependency).
 
-    No API key. The server URL comes from ``OLLAMA_BASE_URL`` in ``config.py`` or
-    the environment, defaulting to ``http://localhost:11434``.
+    No API key. The server URL comes from ``OLLAMA_BASE_URL`` (environment /
+    ``.env`` / legacy ``config.py``), defaulting to ``http://localhost:11434``.
     """
 
     def __init__(self, model: str = "llama3.1", base_url: Optional[str] = None, timeout: float = 120.0):
         self.model = model
-        self.base_url = (base_url or _resolve("OLLAMA_BASE_URL", "http://localhost:11434")).rstrip("/")
+        self.base_url = (base_url or get_credential("OLLAMA_BASE_URL", "http://localhost:11434")).rstrip("/")
         self.timeout = timeout
 
     def complete(self, system: str, user: str, max_tokens: int = 1024) -> LLMResponse:

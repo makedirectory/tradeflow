@@ -79,16 +79,16 @@ uv run python main.py research --provider openai --model gpt-4o ...
 
 ### Setting credentials
 
-You can provide a key **either** in `config.py` **or** as the standard
-environment variable. The agent checks `config.py` first, then the environment —
-so the SDK defaults keep working and you don't have to duplicate keys.
+You can provide a key **either** in `.env` **or** as the standard environment
+variable — they resolve through the same chain (`environment` → `.env` → legacy
+`config.py`), so the SDK defaults keep working and you don't have to duplicate keys.
 
-`config.py` (alongside your Alpaca keys — see `config_example.py`):
+`.env` (alongside your Alpaca keys — see `.env.example`):
 
-```python
-ANTHROPIC_API_KEY = "sk-ant-..."   # for --provider anthropic
-OPENAI_API_KEY    = "sk-..."        # for --provider openai
-OLLAMA_BASE_URL   = "http://localhost:11434"  # optional, for --provider ollama
+```bash
+ANTHROPIC_API_KEY=sk-ant-...                # for --provider anthropic
+OPENAI_API_KEY=sk-...                       # for --provider openai
+OLLAMA_BASE_URL=http://localhost:11434      # optional, for --provider ollama
 ```
 
 …or the environment:
