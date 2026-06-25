@@ -86,8 +86,12 @@ def _equity_panel(ax, equity_curve: List[float], *, title: str, subtitle: Option
     ax.tick_params(colors=_MUTED)
     if subtitle:
         ax.annotate(
-            subtitle, xy=(0.015, 0.04), xycoords="axes fraction",
-            fontsize=10.5, color=_MUTED, style="italic",
+            subtitle,
+            xy=(0.015, 0.04),
+            xycoords="axes fraction",
+            fontsize=10.5,
+            color=_MUTED,
+            style="italic",
         )
 
 
@@ -106,22 +110,41 @@ def _verdict_panel(
     def stat_row(y, label, value):
         ax.text(0.0, y, label, transform=ax.transAxes, va="top", fontsize=10, color=_INK)
         ax.text(
-            1.0, y, value, transform=ax.transAxes, va="top", ha="right",
-            fontsize=10, family="monospace", color=_INK,
+            1.0,
+            y,
+            value,
+            transform=ax.transAxes,
+            va="top",
+            ha="right",
+            fontsize=10,
+            family="monospace",
+            color=_INK,
         )
 
-    ax.text(0.0, 0.99, title, transform=ax.transAxes, va="top",
-            fontsize=10, color=_MUTED, fontweight="bold")
+    ax.text(0.0, 0.99, title, transform=ax.transAxes, va="top", fontsize=10, color=_MUTED, fontweight="bold")
     ax.text(
-        0.0, 0.88, "PROMOTABLE" if promotable else "NOT PROMOTABLE",
-        transform=ax.transAxes, va="top", fontsize=22, fontweight="bold",
+        0.0,
+        0.88,
+        "PROMOTABLE" if promotable else "NOT PROMOTABLE",
+        transform=ax.transAxes,
+        va="top",
+        fontsize=22,
+        fontweight="bold",
         color=_PASS if promotable else _FAIL,
     )
     stat_row(0.74, "OOS Sharpe (median)", _fmt(oos_sharpe))
     stat_row(0.67, "Efficiency (OOS / IS)", _fmt(efficiency))
     stat_row(0.60, "OOS trades", str(oos_trades))
-    ax.text(0.0, 0.49, "Promotion gates", transform=ax.transAxes, va="top",
-            fontsize=10.5, color=_MUTED, fontweight="bold")
+    ax.text(
+        0.0,
+        0.49,
+        "Promotion gates",
+        transform=ax.transAxes,
+        va="top",
+        fontsize=10.5,
+        color=_MUTED,
+        fontweight="bold",
+    )
 
     top, bottom = 0.41, 0.02
     rows = list(checks.items())
@@ -129,13 +152,29 @@ def _verdict_panel(
     for i, (name, check) in enumerate(rows):
         y = top - i * step
         passed = bool(check.get("passed"))
-        ax.text(0.0, y, "PASS" if passed else "FAIL", transform=ax.transAxes, va="top",
-                fontsize=9.5, fontweight="bold", family="monospace",
-                color=_PASS if passed else _FAIL)
+        ax.text(
+            0.0,
+            y,
+            "PASS" if passed else "FAIL",
+            transform=ax.transAxes,
+            va="top",
+            fontsize=9.5,
+            fontweight="bold",
+            family="monospace",
+            color=_PASS if passed else _FAIL,
+        )
         ax.text(0.15, y, name, transform=ax.transAxes, va="top", fontsize=9.5, color=_INK)
-        ax.text(1.0, y, f"{_fmt(check.get('value'))} / {_fmt(check.get('threshold'))}",
-                transform=ax.transAxes, va="top", ha="right", fontsize=9,
-                family="monospace", color=_MUTED)
+        ax.text(
+            1.0,
+            y,
+            f"{_fmt(check.get('value'))} / {_fmt(check.get('threshold'))}",
+            transform=ax.transAxes,
+            va="top",
+            ha="right",
+            fontsize=9,
+            family="monospace",
+            color=_MUTED,
+        )
 
 
 def _save(fig, out_path: str) -> str:
@@ -157,7 +196,8 @@ def render_backtest_chart(
     fig = plt.figure(figsize=(10, 4.8), dpi=120, facecolor="white")
     ax = fig.add_subplot(1, 1, 1)
     _equity_panel(
-        ax, result.equity_curve,
+        ax,
+        result.equity_curve,
         title=title or "Backtest equity",
         subtitle=subtitle or _metrics_subtitle(result.metrics),
     )
@@ -190,7 +230,11 @@ def render_walkforward_chart(
 
 
 def render_demo_summary(
-    backtest_result, wf_result, out_path: str, *, strategy: str = "strategy",
+    backtest_result,
+    wf_result,
+    out_path: str,
+    *,
+    strategy: str = "strategy",
     seed: Optional[int] = None,
 ) -> str:
     """Compose the in-sample equity curve and the walk-forward verdict in one image.
@@ -207,7 +251,8 @@ def render_demo_summary(
     gs = GridSpec(1, 2, width_ratios=[1.55, 1.0], wspace=0.18, figure=fig)
 
     _equity_panel(
-        fig.add_subplot(gs[0, 0]), equity,
+        fig.add_subplot(gs[0, 0]),
+        equity,
         title=f"In-sample equity — {strategy} on synthetic data",
         subtitle=f"in-sample return {ret_pct:+.1f}%  ·  looks tradeable",
     )
@@ -225,7 +270,11 @@ def render_demo_summary(
         sub += f"  (seed {seed})"
     fig.suptitle(
         "TradeFlow demo: honest out-of-sample evaluation",
-        fontsize=15, fontweight="bold", x=0.07, ha="left", y=0.99,
+        fontsize=15,
+        fontweight="bold",
+        x=0.07,
+        ha="left",
+        y=0.99,
     )
     fig.text(0.07, 0.925, sub, fontsize=10.5, color=_MUTED, ha="left")
     fig.subplots_adjust(top=0.84, bottom=0.11, left=0.07, right=0.975)
