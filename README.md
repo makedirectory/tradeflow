@@ -27,6 +27,24 @@ Designed to be easy to try and easy to read:
 
 > ⚠️ Educational software. Trading is risky; use paper trading. No warranty.
 
+## The mental model: two clocks
+
+The one idea that explains everything else — TradeFlow runs on **two clocks that
+never touch**:
+
+- **Research clock** (offline, slow, exploratory): backtest → optimize →
+  walk-forward, plus the optional AI agent. Non-determinism and LLMs are allowed
+  here. It only ever *proposes* — writing provenance-stamped configs to disk.
+- **Trade clock** (live, deterministic, LLM-free): `live bar → signal → order`.
+  No model sits in the order path, so there's nothing to prompt-inject and nothing
+  non-deterministic to debug when real money is at stake.
+
+**Promotion is a manual human step** — automation never flips `PAPER_TRADE` or
+places an order. The [MCP server](#agent-integration-mcp) enforces this
+*structurally*: it builds only a data client, so it physically cannot trade. See
+the [architecture docs](https://tradeflow.mk-dir.com/docs/engineering/architecture)
+for the full picture.
+
 ## Requirements
 
 You need **either** of these — not both:
@@ -47,13 +65,16 @@ Either way you'll need free Alpaca **paper-trading** API keys from the
 
 ```bash
 # 1. Install uv:  https://docs.astral.sh/uv/
-# 2. Add your Alpaca paper keys
-cp config_example.py config.py        # then edit config.py
-
-# 3. Install dependencies
+# 2. Install dependencies
 make install                          # uv sync
 
-# 4. Try it (preconfigured combos)
+# 3. See it work — no keys, no network
+make demo                             # full pipeline on synthetic data + verdict
+
+# 4. Point it at real data: add your free Alpaca paper keys
+cp .env.example .env                  # then edit .env
+
+# 5. Try it (preconfigured combos)
 make scan                             # which symbols are flagged right now?
 make backtest                         # scan -> volume_spike strategy -> report
 make live                             # paper-trade the scanned universe
@@ -64,12 +85,12 @@ make live                             # paper-trade the scanned universe
 No local Python or uv required — just Docker:
 
 ```bash
-cp config_example.py config.py        # add your Alpaca paper keys
+cp .env.example .env                  # add your Alpaca paper keys
 make docker-build                     # build the image (uv runs inside it)
-make docker-run                       # paper live-trading; mounts your config.py
+make docker-run                       # paper live-trading; mounts your .env
 
 # or run any command in the container directly:
-docker run --rm -v $(pwd)/config.py:/app/config.py tradeflow \
+docker run --rm -v $(pwd)/.env:/app/.env tradeflow \
     uv run python main.py backtest --symbols NVDA,META --start 2024-01-02 --end 2024-04-01
 ```
 
@@ -90,13 +111,26 @@ uv run python main.py backtest --strategy volume_spike --scanner volume \
 
 | Command | What happens |
 |---------|--------------|
+| `demo` | Run the whole pipeline on **synthetic data** — no keys, no network — ending in an honest promotion verdict |
 | `scan` | Run the universe scanner and print flagged symbols |
-| `backtest` | Scan → run `volume_spike` over history → performance report |
+| `backtest` | Scan → run a strategy over history → performance report |
 | `live` | Scan → warm up indicators → stream bars → place paper/live orders |
 | `optimize` | Search strategy parameters by backtest objective (grid / random / Bayesian) |
 | `allocate` | Weight a portfolio across scanned symbols (OR-Tools constraint solver) |
 | `walkforward` | Out-of-sample validation: optimize in-sample, score out-of-sample across folds, with a sacred holdout and promotion gates |
 | `mcp` | Serve TradeFlow over MCP so an agent (Claude Code / Desktop) can drive scan/backtest/optimize/walk-forward — read-only, no live trading |
+
+Three strategies ship today — pick one with `--strategy`:
+
+- **`volume_spike`** — trend-following entries triggered by volume spikes out of
+  RSI extremes (intraday, 5-minute bars).
+- **`ma_crossover`** — long-only EMA trend follower: buy the golden cross, exit
+  the death cross (daily).
+- **`mean_reversion`** — long-only RSI mean reversion: buy oversold dips, exit on
+  the rebound (daily).
+
+Adding a fourth is a one-file change — see
+[Extending](https://tradeflow.mk-dir.com/docs/engineering/extending).
 
 ### Optional features
 
