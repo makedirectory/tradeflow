@@ -453,8 +453,14 @@ def cmd_demo(args) -> None:
     wf_result = WalkForwardValidator(
         STRATEGIES[wf_strategy], data_client, initial_capital=100_000.0, seed=args.seed
     ).run(
-        symbols, start, end,
-        n_folds=3, holdout_days=90, method="grid", objective="sharpe_ratio", max_evals=12,
+        symbols,
+        start,
+        end,
+        n_folds=3,
+        holdout_days=90,
+        method="grid",
+        objective="sharpe_ratio",
+        max_evals=12,
     )
     report = wf_result.gate_report()
 
@@ -529,7 +535,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bt.add_argument("--benchmark", default="SPY", help="Benchmark symbol for beta")
     bt.add_argument(
-        "--chart", metavar="PATH", default=None,
+        "--chart",
+        metavar="PATH",
+        default=None,
         help="render the equity curve + metrics to an image (needs the viz extra: matplotlib)",
     )
     bt.set_defaults(func=cmd_backtest)
@@ -617,7 +625,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     wf.add_argument("--results-csv", dest="results_csv", default=None, help="Write per-fold table to CSV")
     wf.add_argument(
-        "--chart", metavar="PATH", default=None,
+        "--chart",
+        metavar="PATH",
+        default=None,
         help="render the verdict + promotion-gate scorecard to an image (needs the viz extra)",
     )
     wf.add_argument(
