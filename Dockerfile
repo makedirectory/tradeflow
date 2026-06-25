@@ -1,7 +1,7 @@
 # Slim, build-toolchain-free image. No TA-Lib, so no gcc/make/native builds.
 FROM python:3.11-slim
 
-LABEL maintainer="Andrew Schwartz <andrew@koroid.com>"
+LABEL maintainer="Andrew Schwartz <andrew@mk-dir.com>"
 
 # uv: fast, reproducible dependency management.
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
