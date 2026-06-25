@@ -1,15 +1,21 @@
 """Command-line entry point.
 
-Wires the layers together for four workflows and nothing more - all the real
-work lives in ``src/``:
+A thin adapter that wires the layers together per command - all the real work
+lives in ``src/`` (and the shared service core in ``src/services/``, so the CLI,
+the MCP server, and the research agent run the same code):
 
-    backtest   scan universe -> BacktestEngine -> performance report
-    live       scan universe -> LiveEngine -> LiveTrader (paper/live orders)
-    scan       run the universe scanner and print flagged symbols
-    optimize   search a strategy's parameters by backtest objective
+    demo         run the whole pipeline on synthetic data (no keys, no network)
+    scan         run the universe scanner and print flagged symbols
+    backtest     scan universe -> BacktestEngine -> performance report
+    live         scan universe -> LiveEngine -> LiveTrader (paper/live orders)
+    optimize     search a strategy's parameters by backtest objective
+    allocate     weight a portfolio across scanned symbols (OR-Tools)
+    walkforward  out-of-sample validation with promotion gates
+    mcp          serve TradeFlow to an agent over MCP (read-only)
+    research     autonomous, offline research loop -> shortlist of configs
 
 Run ``python main.py <command> --help`` for options, or use the Makefile targets
-for preconfigured combos (``make backtest``, ``make live``, ...).
+for preconfigured combos (``make demo``, ``make backtest``, ...).
 """
 
 import argparse
@@ -31,37 +37,26 @@ DEFAULT_UNIVERSE = ["NVDA", "RIVN", "NFLX", "META", "BAC", "MS", "TSLA", "GS", "
 # ---------------------------------------------------------------------------- #
 # Wiring
 # ---------------------------------------------------------------------------- #
-def _load_config():
-    try:
-        import config
-    except ModuleNotFoundError:
-        sys.exit("config.py not found. Copy config_example.py to config.py and add your Alpaca keys.")
-    return config
-
-
 def build_data_and_broker():
-    """Construct the Alpaca-backed broker and market-data client from config."""
+    """Construct the Alpaca-backed broker and market-data client from settings."""
     from alpaca.data.historical import StockHistoricalDataClient
     from alpaca.trading.client import TradingClient
 
     from src.brokers.alpaca.broker import AlpacaBroker
     from src.brokers.alpaca.market_data import AlpacaMarketData
     from src.marketdata.client import MarketDataClient
+    from src.settings import load_settings
 
-    config = _load_config()
+    settings = load_settings()
     trading_client = TradingClient(
-        api_key=config.APCA_API_KEY_ID,
-        secret_key=config.APCA_API_SECRET_KEY,
-        paper=config.PAPER_TRADE,
+        api_key=settings.alpaca_key,
+        secret_key=settings.alpaca_secret,
+        paper=settings.paper_trade,
     )
-    historical = StockHistoricalDataClient(config.APCA_API_KEY_ID, config.APCA_API_SECRET_KEY)
+    historical = StockHistoricalDataClient(settings.alpaca_key, settings.alpaca_secret)
 
-    broker = AlpacaBroker(
-        trading_client, config.APCA_API_KEY_ID, config.APCA_API_SECRET_KEY, config.PAPER_TRADE
-    )
-    data_client = MarketDataClient(
-        AlpacaMarketData(historical, config.APCA_API_KEY_ID, config.APCA_API_SECRET_KEY)
-    )
+    broker = AlpacaBroker(trading_client, settings.alpaca_key, settings.alpaca_secret, settings.paper_trade)
+    data_client = MarketDataClient(AlpacaMarketData(historical, settings.alpaca_key, settings.alpaca_secret))
     return broker, data_client
 
 
@@ -81,6 +76,7 @@ def resolve_universe(data_client, scanner_name: Optional[str], candidates: List[
 def cmd_backtest(args) -> None:
     from src.analytics.reporting import log_backtest_report
     from src.engine.backtest import BacktestEngine
+    from src.services.sizing import build_beta_sizer
 
     _, data_client = build_data_and_broker()
     universe = resolve_universe(data_client, args.scanner, args.symbols)
@@ -109,69 +105,9 @@ def cmd_scan(args) -> None:
         print(f"{symbol:10}{signal}")
 
 
-def score_candidates(data_client, symbols, timeframe, lookback_days=90):
-    """Score symbols by trailing return over a recent window -> [Candidate].
-
-    Trailing return is a simple, transparent factor; swap in momentum /
-    inverse-vol / signal strength here. Shared by `allocate` and portfolio-sized
-    `live`.
-    """
-    from src.portfolio.allocator import Candidate
-
-    end = datetime.now()
-    bars = data_client.get_bars(symbols, timeframe, end - timedelta(days=lookback_days), end)
-    candidates = []
-    for symbol in symbols:
-        frame = bars.get(symbol)
-        if frame is None or len(frame) < 2:
-            continue
-        trailing_return = frame["close"].iloc[-1] / frame["close"].iloc[0] - 1
-        candidates.append(Candidate(symbol, score=max(trailing_return, 0.0), price=frame["close"].iloc[-1]))
-    return candidates
-
-
-def allocate_portfolio(data_client, symbols, timeframe, capital, max_positions, max_weight):
-    """Scan-agnostic allocation: score `symbols`, solve weights via OR-Tools."""
-    from src.portfolio.allocator import PortfolioAllocator
-
-    candidates = score_candidates(data_client, symbols, timeframe)
-    allocator = PortfolioAllocator(max_positions=max_positions, max_weight=max_weight)
-    return allocator.allocate(candidates, capital)
-
-
-def compute_betas(data_client, symbols, benchmark="SPY", lookback_days=90, as_of=None):
-    """Beta of each symbol vs a benchmark over a trailing daily window.
-
-    For backtests, pass ``as_of=start`` so betas use only data *before* the
-    backtest window (no look-ahead).
-    """
-    from src.indicators.indicators import calculate_beta
-
-    end = as_of or datetime.now()
-    bars = data_client.get_bars([benchmark, *symbols], "1Day", end - timedelta(days=lookback_days), end)
-    benchmark_bars = bars.get(benchmark)
-    if benchmark_bars is None or benchmark_bars.empty:
-        logger.warning("No %s data; beta sizing will fall back to neutral beta", benchmark)
-        return {}
-    return {
-        symbol: calculate_beta(bars[symbol]["close"], benchmark_bars["close"])
-        for symbol in symbols
-        if symbol in bars and not bars[symbol].empty
-    }
-
-
-def build_beta_sizer(data_client, strategy, symbols, benchmark, as_of=None):
-    """Construct a BetaSizer (neutral for any symbol whose beta can't be computed)."""
-    from src.execution.sizing import BetaSizer
-
-    betas = compute_betas(data_client, symbols, benchmark, as_of=as_of)
-    if betas:
-        logger.info("Beta sizing: %s", {s: round(b, 2) for s, b in betas.items()})
-    return BetaSizer(strategy, betas)
-
-
 def cmd_allocate(args) -> None:
     from src.scanners.symbol_scanner import SymbolScanner
+    from src.services.sizing import allocate_portfolio
 
     _, data_client = build_data_and_broker()
     scanner = SymbolScanner(data_client, args.scanner)
@@ -417,6 +353,7 @@ def cmd_mcp(args) -> None:
 def cmd_live(args) -> None:
     from src.engine.live import LiveEngine
     from src.execution.live_trader import LiveTrader
+    from src.services.sizing import build_beta_sizer, build_portfolio_weight_sizer
 
     broker, data_client = build_data_and_broker()
     universe = resolve_universe(data_client, args.scanner, args.symbols)
@@ -424,7 +361,11 @@ def cmd_live(args) -> None:
 
     sizer = None
     if args.portfolio:
-        sizer = _portfolio_sizer(broker, data_client, universe, args)
+        account = broker.get_account()
+        equity = account.equity if account else 100_000.0
+        sizer = build_portfolio_weight_sizer(
+            data_client, equity, universe, "1Day", args.max_positions, args.max_weight
+        )
         if sizer is not None:
             universe = sizer.symbols  # trade only the funded names
     elif args.beta_sizing:
@@ -437,33 +378,88 @@ def cmd_live(args) -> None:
         logger.info("Interrupted; shutting down live engine.")
 
 
-def _portfolio_sizer(broker, data_client, universe, args):
-    """Build a PortfolioWeightSizer by allocating capital across the universe.
+def cmd_demo(args) -> None:
+    """Run the whole pipeline on synthetic data - no Alpaca keys, no network.
 
-    Returns None (so LiveTrader falls back to risk-based sizing) if OR-Tools is
-    missing or the allocator funds nothing.
+    The point isn't the numbers; it's the *shape* of the workflow. We backtest
+    every registered strategy (in-sample, where everything looks plausible), then
+    walk-forward one of them out-of-sample and let the promotion gates deliver the
+    verdict. The data is a seeded random walk with no real edge - so a healthy run
+    ends in "NOT promotable", which is exactly the honesty the engine exists for.
     """
-    from src.execution.sizing import PortfolioWeightSizer
+    from src.engine.backtest import BacktestEngine
+    from src.marketdata.client import MarketDataClient
+    from src.marketdata.synthetic import SyntheticMarketData
+    from src.marketdata.timeframe import Timeframe
+    from src.services.analysis import run_walk_forward
 
-    account = broker.get_account()
-    capital = account.equity if account else 100_000.0
-    try:
-        allocations = allocate_portfolio(
-            data_client, universe, "1Day", capital, args.max_positions, args.max_weight
-        )
-    except RuntimeError as exc:  # OR-Tools not installed
-        logger.warning("%s\nFalling back to risk-based sizing.", exc)
-        return None
+    data_client = MarketDataClient(SyntheticMarketData(seed=args.seed))
+    symbols = ["SYNW", "SYNX", "SYNY", "SYNZ"]
+    anchor = datetime(2024, 12, 31)
 
-    weights = {a.symbol: a.weight for a in allocations}
-    if not weights:
-        logger.warning("Portfolio allocator funded nothing; using risk-based sizing.")
-        return None
+    def window_for(timeframe: str) -> tuple:
+        """A window wide enough for the timeframe (intraday needs fewer days)."""
+        unit = Timeframe.parse(timeframe).unit
+        days = 60 if unit in ("min", "hour") else 730
+        return anchor - timedelta(days=days), anchor
 
-    logger.info("Portfolio-weighted live sizing: %s", {s: round(w, 3) for s, w in weights.items()})
-    sizer = PortfolioWeightSizer(weights)
-    sizer.symbols = list(weights)  # convenience for the caller
-    return sizer
+    print("\n" + "=" * 70)
+    print("  TradeFlow demo — synthetic data, no API keys, no network")
+    print("  (a seeded random walk: realistic-looking, no actual edge)")
+    print("=" * 70)
+
+    print("\n1) In-sample backtest of every registered strategy")
+    print("   In-sample, almost anything looks tradeable. That's the trap.\n")
+    print(f"   {'STRATEGY':18}{'RETURN':>10}{'SHARPE':>9}{'TRADES':>8}")
+    print(f"   {'-' * 43}")
+    for name, cls in STRATEGIES.items():
+        try:
+            strategy = cls.create_with_defaults()
+            start, end = window_for(strategy.config["timeframe"])
+            result = BacktestEngine(strategy, data_client).run(symbols, start, end, 100_000.0)
+            m = result.metrics
+            print(
+                f"   {name:18}{m.get('total_return', 0.0):>9.2f}%"
+                f"{m.get('sharpe_ratio', 0.0):>9.2f}{int(m.get('total_trades', 0)):>8}"
+            )
+        except Exception as exc:  # noqa: BLE001 - demo should never hard-crash
+            print(f"   {name:18}{'(skipped: ' + str(exc)[:30] + ')':>30}")
+
+    wf_strategy = "ma_crossover"
+    print(f"\n2) Walk-forward validation of '{wf_strategy}' (the honest scorecard)")
+    print("   Optimize in-sample, score out-of-sample across folds, then gate it.\n")
+    start, end = window_for(STRATEGIES[wf_strategy].create_with_defaults().config["timeframe"])
+    wf = run_walk_forward(
+        data_client,
+        strategy=wf_strategy,
+        symbols=symbols,
+        start=start,
+        end=end,
+        n_folds=3,
+        holdout_days=90,
+        method="grid",
+        objective="sharpe_ratio",
+        max_evals=12,
+        seed=args.seed,
+    )
+
+    print(
+        f"   OOS Sharpe (median): {wf['median_oos_sharpe']:.2f}   "
+        f"efficiency (OOS/IS): {wf['median_efficiency']:.2f}   "
+        f"OOS trades: {wf['total_oos_trades']}"
+    )
+    report = wf["gate_report"]
+    print("\n   Promotion gates:")
+    for gate_name, check in report["checks"].items():
+        mark = "PASS" if check["passed"] else "FAIL"
+        print(f"     [{mark}] {gate_name}: {check['value']} (threshold {check['threshold']})")
+    verdict = "PROMOTABLE" if report["promotable"] else "NOT promotable"
+    print(f"\n   Verdict: {verdict}")
+    print(
+        "\n   No edge in a random walk → the gates refuse to promote it. That refusal\n"
+        "   is the product. Point TradeFlow at real data with `make backtest` (add\n"
+        "   your Alpaca paper keys to .env first — see .env.example).\n"
+    )
 
 
 # ---------------------------------------------------------------------------- #
@@ -637,13 +633,24 @@ def build_parser() -> argparse.ArgumentParser:
     res.add_argument("--seed", type=int, default=42)
     res.set_defaults(func=cmd_research)
 
+    demo = subparsers.add_parser(
+        "demo", help="Run the full pipeline on synthetic data (no API keys, no network)"
+    )
+    demo.add_argument("--seed", type=int, default=42)
+    demo.set_defaults(func=cmd_demo)
+
     return parser
 
 
 def main() -> None:
+    from src.settings import SettingsError
+
     setup_logging()
     args = build_parser().parse_args()
-    args.func(args)
+    try:
+        args.func(args)
+    except SettingsError as exc:
+        sys.exit(str(exc))
 
 
 if __name__ == "__main__":

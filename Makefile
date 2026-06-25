@@ -9,13 +9,17 @@ END      ?= 2024-04-01
 CAPITAL ?= 100000
 PY       = uv run python main.py
 
-.PHONY: help install install-optimize backtest backtest-no-scan scan live \
+.PHONY: help demo install install-optimize backtest backtest-no-scan scan live \
         optimize optimize-bayesian cancel-orders close-positions \
         test docs docs-build docker-build docker-run clean
 
 help:  ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 		| awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
+
+# --- try it now (no setup) --------------------------------------------------
+demo:  ## Run the whole pipeline on synthetic data — no API keys, no network
+	$(PY) demo
 
 # --- setup ------------------------------------------------------------------
 install:  ## Create the uv environment and install dependencies
@@ -80,8 +84,8 @@ docs-build:  ## Build the static documentation site
 docker-build:  ## Build the Docker image
 	docker build -t tradeflow .
 
-docker-run:  ## Run the container (paper live trading; mounts your config.py)
-	docker run --rm -it -v $$(pwd)/config.py:/app/config.py tradeflow
+docker-run:  ## Run the container (paper live trading; mounts your .env)
+	docker run --rm -it -v $$(pwd)/.env:/app/.env tradeflow
 
 clean:  ## Remove caches, build output, and results
 	rm -rf .venv optimization_results.csv website/build website/node_modules
