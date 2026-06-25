@@ -108,12 +108,6 @@ class VolumeSpikeStrategy(Strategy):
     #: Volume-MA window used by the spike detector (also affects lookback).
     VOLUME_MA_PERIOD = 14
 
-    @classmethod
-    def create_with_defaults(cls) -> "VolumeSpikeStrategy":
-        """Construct an instance using each parameter's default value."""
-        config = {param: spec["default"] for param, spec in cls.PARAM_RANGES.items()}
-        return cls(config)
-
     def __init__(self, config: Dict[str, Any]):
         config["timeframe"] = self.TIMEFRAME
         config.setdefault(

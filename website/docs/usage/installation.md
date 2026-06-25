@@ -36,13 +36,13 @@ are pure pandas/numpy, not TA-Lib.
 
 ```bash
 make docker-build                     # build the image
-make docker-run                       # paper live-trading; mounts your config.py
+make docker-run                       # paper live-trading; mounts your .env
 ```
 
 No local Python or uv needed. Override the command to backtest/scan, e.g.:
 
 ```bash
-docker run --rm -v $(pwd)/config.py:/app/config.py tradeflow \
+docker run --rm -v $(pwd)/.env:/app/.env tradeflow \
     uv run python main.py backtest --symbols NVDA,META --start 2024-01-02 --end 2024-04-01
 ```
 
@@ -65,7 +65,9 @@ uv sync --extra dev
 
 ```bash
 make test           # offline test suite — no API keys or network needed
+make demo           # run the whole pipeline on synthetic data (also keyless)
 ```
 
-A green run confirms the engine, scanner, optimizer, and portfolio allocator are
-wired correctly. Next: **[Configuration](configuration)**.
+A green `make test` confirms the engine, scanner, optimizer, and portfolio
+allocator are wired correctly; `make demo` shows them working end-to-end and ends
+in an honest promotion verdict. Next: **[Configuration](configuration)**.

@@ -34,6 +34,16 @@ class Strategy(ABC):
     #: Subclasses declare tunable parameters here for validation/optimization.
     PARAM_RANGES: Dict[str, Dict[str, Any]] = {}
 
+    @classmethod
+    def create_with_defaults(cls) -> "Strategy":
+        """Construct an instance using each parameter's declared default value.
+
+        The single construction path used by the CLI, MCP server, and research
+        agent, so every entry point builds a strategy the same way.
+        """
+        config = {param: spec["default"] for param, spec in cls.PARAM_RANGES.items()}
+        return cls(config)
+
     def __init__(self, config: Dict[str, Any]):
         """Initialise with a configuration dict.
 

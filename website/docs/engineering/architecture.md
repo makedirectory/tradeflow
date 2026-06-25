@@ -5,6 +5,37 @@ title: Architecture
 
 # Architecture
 
+## The mental model: two clocks
+
+Before the layers, the one idea that explains the most: TradeFlow runs on **two
+clocks**, and they never touch.
+
+```
+  RESEARCH CLOCK  (offline, slow, exploratory)        TRADE CLOCK  (live, fast, deterministic)
+  ───────────────────────────────────────────        ──────────────────────────────────────
+  hypothesis → backtest → optimize → walk-forward      live bar → signal → order
+  may be non-deterministic; LLMs allowed here          deterministic, auditable, LLM-free
+  emits configs + rationale to disk                    reads a human-approved config
+                              │                                    ▲
+                              └──────── a human promotes ──────────┘
+                                       (nothing auto-flips to live)
+```
+
+- **The research clock** is where intelligence and non-determinism live —
+  parameter search, walk-forward validation, and the optional AI research agent.
+  It only ever *proposes*: it writes provenance-stamped candidate configs to disk.
+- **The trade clock** (`src/engine/live.py` → `src/execution/`) is deliberately
+  dumb: a live bar produces a signal produces an order. No model sits in the order
+  path, so there's nothing to prompt-inject and nothing non-deterministic to debug
+  when real money is at stake.
+- **Promotion is a manual human step.** Automation never flips `PAPER_TRADE` or
+  routes an order. The [MCP server](mcp-server) enforces this *structurally* — it
+  builds only a data client, so it physically cannot trade.
+
+Everything below is how the code is arranged to keep those two clocks separate.
+
+## The layers
+
 The system is a stack of single-responsibility layers. Dependencies point
 **downward only**, and nothing above the broker layer imports a vendor SDK.
 
@@ -25,7 +56,7 @@ strategies/  scanners/  execution/  analytics/     │
                  indicators/   utils/   (leaf helpers)
 ```
 
-## The layers
+### The packages
 
 | Package | Responsibility |
 |---------|----------------|

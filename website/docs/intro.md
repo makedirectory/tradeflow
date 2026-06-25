@@ -41,9 +41,17 @@ This project is for learning. Trading carries real financial risk. Keep
 
 ## 60-second tour
 
+No keys, no network — see the whole pipeline (and its honest verdict) first:
+
 ```bash
-cp config_example.py config.py    # add your Alpaca paper keys
 make install                      # uv sync
+make demo                         # backtest + walk-forward on synthetic data
+```
+
+Then point it at real data with free Alpaca paper keys:
+
+```bash
+cp .env.example .env              # add your Alpaca paper keys
 make scan                         # what's flagged right now?
 make backtest                     # scan -> strategy -> performance report
 ```
