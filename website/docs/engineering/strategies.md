@@ -54,8 +54,18 @@ The base class coerces and range-checks every supplied value at construction, so
 an out-of-range parameter fails fast. `step` also lets the
 [optimizer](optimization) search the space.
 
-## The bundled strategy: `volume_spike`
+## The bundled strategies
 
-`VolumeSpikeStrategy` enters in the direction of a short/long EMA trend when a
-volume spike confirms a move out of an RSI extreme, using only the pure
-[indicators](indicators). See [Extending](extending) to add your own.
+Three ship today, all built on the pure [indicators](indicators) — chosen to
+*disagree*, so the [walk-forward](walk-forward) scorecard has something to
+discriminate between:
+
+| `--strategy` | Style | In one line |
+|--------------|-------|-------------|
+| `volume_spike` | Trend + volume (5-minute) | Enter with the short/long EMA trend when a volume spike confirms a move out of an RSI extreme. |
+| `ma_crossover` | Trend (daily) | Long-only EMA crossover: buy the golden cross, exit the death cross. |
+| `mean_reversion` | Contrarian (daily) | Long-only RSI mean reversion: buy oversold dips, exit on the rebound. |
+
+`ma_crossover` and `mean_reversion` are deliberately minimal (a handful of
+parameters each) — honest baselines and clean worked examples. See
+[Extending](extending) to add your own; it's a one-file change.

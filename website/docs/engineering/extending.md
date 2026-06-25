@@ -27,9 +27,11 @@ Three common extension points. Each touches one layer.
        def generate_signals(self, df): ...             # -> {timestamp: signal}
    ```
 
-2. Register it in `main.STRATEGIES`. It now works in `backtest`, `live`, and
-   `optimize` — sizing, fills, execution, and metrics come for free because they
-   only depend on the base interface.
+2. Register it in `STRATEGIES` in `src/services/registry.py`. It now works in
+   `backtest`, `live`, `optimize`, the MCP server, and the research agent — sizing,
+   fills, execution, and metrics come for free because they only depend on the base
+   interface. (`create_with_defaults()` is inherited from `Strategy`; no need to
+   write it.)
 
 Use the pure [indicators](indicators); don't reach for a compiled TA library.
 
