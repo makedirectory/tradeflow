@@ -10,16 +10,23 @@ title: Architecture
 Before the layers, the one idea that explains the most: TradeFlow runs on **two
 clocks**, and they never touch.
 
+```mermaid
+flowchart LR
+    subgraph research["Research clock — offline · slow · exploratory"]
+        direction TB
+        H[hypothesis] --> B[backtest] --> O[optimize] --> W[walk-forward]
+        W --> C[(provenance-stamped<br/>config on disk)]
+    end
+    subgraph trade["Trade clock — live · deterministic · LLM-free"]
+        direction TB
+        Bar[live bar] --> Sig[signal] --> Ord[broker order]
+    end
+    C -. "a human promotes<br/>(nothing auto-flips to live)" .-> Bar
 ```
-  RESEARCH CLOCK  (offline, slow, exploratory)        TRADE CLOCK  (live, fast, deterministic)
-  ───────────────────────────────────────────        ──────────────────────────────────────
-  hypothesis → backtest → optimize → walk-forward      live bar → signal → order
-  may be non-deterministic; LLMs allowed here          deterministic, auditable, LLM-free
-  emits configs + rationale to disk                    reads a human-approved config
-                              │                                    ▲
-                              └──────── a human promotes ──────────┘
-                                       (nothing auto-flips to live)
-```
+
+The research clock may be non-deterministic and LLMs are allowed there; it only
+ever emits configs and rationale to disk. The trade clock reads a
+human-approved config and nothing else.
 
 - **The research clock** is where intelligence and non-determinism live —
   parameter search, walk-forward validation, and the optional AI research agent.
