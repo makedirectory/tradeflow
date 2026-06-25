@@ -73,9 +73,11 @@ def run_backtest(
 
     Trades are NOT inlined (could be thousands of rows); read the CSV if needed.
     """
+    from src.services.sizing import build_beta_sizer
+
     run_id = new_run_id()
     strat = _strategy(strategy, config)
-    sizer = _beta_sizer(data_client, strat, symbols, benchmark, as_of=start) if beta_sizing else None
+    sizer = build_beta_sizer(data_client, strat, symbols, benchmark, as_of=start) if beta_sizing else None
     result = BacktestEngine(strat, data_client, sizer=sizer).run(symbols, start, end, capital)
 
     trades_csv = None
@@ -295,23 +297,6 @@ def summarize_bars(
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
-def _beta_sizer(data_client, strategy, symbols, benchmark, as_of=None):
-    from src.execution.sizing import BetaSizer
-    from src.indicators.indicators import calculate_beta
-
-    end = as_of or datetime.now()
-    bars = data_client.get_bars([benchmark, *symbols], "1Day", end - timedelta(days=90), end)
-    benchmark_bars = bars.get(benchmark)
-    betas: Dict[str, float] = {}
-    if benchmark_bars is not None and not benchmark_bars.empty:
-        betas = {
-            s: calculate_beta(bars[s]["close"], benchmark_bars["close"])
-            for s in symbols
-            if s in bars and not bars[s].empty
-        }
-    return BetaSizer(strategy, betas)
-
-
 def _jsonable(value: Any) -> Any:
     if isinstance(value, dict):
         return {str(k): _jsonable(v) for k, v in value.items()}
