@@ -3,10 +3,13 @@
 [![CI](https://github.com/makedirectory/tradeflow/actions/workflows/ci.yml/badge.svg)](https://github.com/makedirectory/tradeflow/actions/workflows/ci.yml)
 [![Docs](https://img.shields.io/badge/docs-tradeflow.mk--dir.com-blue)](https://tradeflow.mk-dir.com/)
 
-A small, **layered**, **broker-agnostic** algorithmic-trading engine — and an
-honest one, which mostly means it's very good at telling you your brilliant
-strategy is actually noise. It ships with an [Alpaca](https://alpaca.markets)
-adapter, but everything above the broker layer is vendor-neutral.
+A small, **layered**, **broker-agnostic** algorithmic-trading **research
+engine** — and an honest one, which mostly means it's very good at telling you
+your brilliant strategy is actually noise. It scans markets, tests strategies,
+validates them out-of-sample, allocates portfolios, and exposes the whole
+research surface to AI agents **without ever handing them order-execution
+authority**. It ships with an [Alpaca](https://alpaca.markets) adapter, but
+everything above the broker layer is vendor-neutral.
 It scans a universe of symbols, runs a strategy over them, and either **backtests**
 on history or **trades live** (paper by default) — with optional **parameter
 optimization**, **walk-forward validation**, and **constraint-solver portfolio
@@ -107,6 +110,57 @@ uv run python main.py backtest --strategy volume_spike --scanner volume \
     --symbols NVDA,META,TSLA --start 2024-01-02 --end 2024-04-01
 ```
 
+## See it run
+
+`make demo` runs the entire pipeline on a seeded random walk — no keys, no
+network — and ends in a promotion verdict. The point isn't a winning strategy;
+it's that the **refusal to promote a noise strategy is the product**:
+
+```text
+$ make demo
+
+======================================================================
+  TradeFlow demo — synthetic data, no API keys, no network
+  (a seeded random walk: realistic-looking, no actual edge)
+======================================================================
+
+1) In-sample backtest of every registered strategy
+   In-sample, almost anything looks tradeable. That's the trap.
+
+   STRATEGY              RETURN   SHARPE  TRADES
+   -------------------------------------------
+   volume_spike           0.00%     0.00       0
+   ma_crossover          16.80%     0.48      52
+   mean_reversion       -15.77%    -0.52      52
+
+2) Walk-forward validation of 'ma_crossover' (the honest scorecard)
+   Optimize in-sample, score out-of-sample across folds, then gate it.
+
+   ... (per-fold parameter search elided) ...
+   Best sharpe_ratio = 1.1499 with {fast_ema_period: 13, slow_ema_period: 60, ...}
+
+   OOS Sharpe (median): -0.42   efficiency (OOS/IS): -0.37   OOS trades: 29
+
+   Promotion gates:
+     [FAIL] oos_sharpe:              -0.42  (threshold 1.0)
+     [FAIL] oos_profit_factor:        0.71  (threshold 1.3)
+     [FAIL] walk_forward_efficiency: -0.37  (threshold 0.4)
+     [FAIL] oos_drawdown_vs_is:      23.57  (threshold 15.43)
+     [FAIL] min_oos_trades:          29     (threshold 100)
+     [FAIL] deflated_sharpe:          0.00  (threshold 0.5)
+
+   Verdict: NOT promotable
+
+   No edge in a random walk -> the gates refuse to promote it. That refusal
+   is the product. Point TradeFlow at real data with `make backtest`.
+```
+
+Notice the arc: `ma_crossover` looks great in-sample (+16.8%, Sharpe 0.48), but
+once it's optimized in-sample and scored **out-of-sample** the edge evaporates
+(median OOS Sharpe −0.42) and every promotion gate fails. That's
+[walk-forward validation](https://tradeflow.mk-dir.com/docs/engineering/walk-forward)
+doing its job.
+
 ## What it does
 
 | Command | What happens |
@@ -142,7 +196,32 @@ make install-portfolio    # Google OR-Tools, for `allocate`
 uv sync --extra mcp       # the MCP SDK, for `python main.py mcp`
 ```
 
+## Project status
+
+This is an evolving research project, not a production trading platform. To keep
+that honest, here's what's load-bearing versus what's still maturing:
+
+| Capability | Status |
+|------------|--------|
+| Broker / market-data abstractions | ✅ Stable |
+| Offline backtesting + analytics | ✅ Stable |
+| Pure pandas/numpy indicators | ✅ Stable |
+| Universe scanning | ✅ Stable |
+| Offline test suite (in-memory fakes) | ✅ Stable |
+| Parameter optimization — grid / random | ✅ Stable |
+| Walk-forward validation + promotion gates | 🧪 Experimental |
+| Parameter optimization — Bayesian | 🧪 Experimental |
+| Portfolio allocation (OR-Tools) | 🧪 Experimental |
+| Live paper trading | 🧪 Experimental |
+| MCP server | 🧪 Experimental |
+| Research agent | 🧪 Experimental |
+
+"Experimental" means the interfaces and gate thresholds may still change — not
+that the code is untested. Everything ships with offline tests.
+
 ## Agent integration (MCP)
+
+> **AI-assisted research without AI-controlled trading.**
 
 `python main.py mcp` exposes TradeFlow's deterministic capabilities to any MCP
 client (Claude Code / Claude Desktop) as tools: discovery, `run_scan`,
@@ -197,7 +276,24 @@ tool surface, guardrails, and provider setup.
 ## Architecture
 
 The codebase is organised into single-responsibility layers. Nothing above the
-broker layer imports a vendor SDK.
+broker layer imports a vendor SDK. The two clocks never touch — automation only
+ever proposes a config; a human promotes it:
+
+```mermaid
+flowchart LR
+    subgraph research["Research clock — offline · LLM-allowed"]
+        direction TB
+        H[hypothesis] --> B[backtest] --> O[optimize] --> W[walk-forward]
+        W --> C[(provenance-stamped<br/>config)]
+    end
+    subgraph trade["Trade clock — live · deterministic · LLM-free"]
+        direction TB
+        Bar[live bar] --> Sig[signal] --> Ord[broker order]
+    end
+    C -. "human promotes<br/>(nothing auto-flips)" .-> Bar
+```
+
+The layers themselves:
 
 ```
 brokers/        Broker interface + domain types  ── alpaca/ (AlpacaBroker, AlpacaMarketData)
