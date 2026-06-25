@@ -30,6 +30,7 @@ const sidebars = {
       collapsed: false,
       items: [
         'engineering/architecture',
+        'engineering/philosophy',
         'engineering/separation-of-concerns',
         'engineering/broker-abstraction',
         'engineering/data-flow',
