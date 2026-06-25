@@ -50,7 +50,7 @@ class AnthropicClient(LLMClient):
     """Claude via the Anthropic SDK.
 
     The API key is resolved from ``ANTHROPIC_API_KEY`` via the standard settings
-    chain (environment / ``.env`` / legacy ``config.py``).
+    chain (environment / ``.env``).
     """
 
     def __init__(self, model: str = "claude-opus-4-8", client=None):
@@ -82,7 +82,7 @@ class OpenAIClient(LLMClient):
     """GPT models via the OpenAI SDK.
 
     The API key is resolved from ``OPENAI_API_KEY`` via the standard settings
-    chain (environment / ``.env`` / legacy ``config.py``).
+    chain (environment / ``.env``).
     """
 
     def __init__(self, model: str = "gpt-4o", client=None):
@@ -116,7 +116,7 @@ class OllamaClient(LLMClient):
     """Any local model served by Ollama, via its HTTP API (no SDK dependency).
 
     No API key. The server URL comes from ``OLLAMA_BASE_URL`` (environment /
-    ``.env`` / legacy ``config.py``), defaulting to ``http://localhost:11434``.
+    ``.env``), defaulting to ``http://localhost:11434``.
     """
 
     def __init__(self, model: str = "llama3.1", base_url: Optional[str] = None, timeout: float = 120.0):

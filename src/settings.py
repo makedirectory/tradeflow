@@ -7,9 +7,6 @@ Every setting is resolved in the same predictable order:
 2. **A ``.env`` file** in the project root, loaded into the environment on first
    use. No dependency: a tiny built-in parser handles ``KEY=value`` lines, and
    real environment variables already set always win (standard dotenv behaviour).
-3. **A legacy ``config.py`` module**, if present - the pre-``.env`` mechanism.
-   Still honoured so existing checkouts keep working, but ``.env`` is the
-   recommended path now (see ``.env.example``).
 
 Alpaca credentials are required for any command that touches the market
 (``scan``/``backtest``/``live``/``optimize``/...); the offline ``demo`` command
@@ -65,31 +62,14 @@ def _load_dotenv_once() -> None:
         os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
-def _legacy_config():
-    """Return the legacy ``config.py`` module, or ``None`` if it isn't present."""
-    try:
-        import config  # gitignored; the pre-.env credential file
-    except ModuleNotFoundError:
-        return None
-    return config
-
-
 def get_credential(name: str, default: Optional[str] = None) -> Optional[str]:
-    """Resolve a single named setting: env / ``.env`` first, then ``config.py``.
+    """Resolve a single named setting from the environment (or ``.env``).
 
     Used for LLM provider keys (``ANTHROPIC_API_KEY`` ...) and the Alpaca keys
     alike, so every credential follows one rule.
     """
     _load_dotenv_once()
-    value = os.environ.get(name)
-    if value:
-        return value
-    legacy = _legacy_config()
-    if legacy is not None:
-        value = getattr(legacy, name, None)
-        if value:
-            return value
-    return default
+    return os.environ.get(name) or default
 
 
 def _parse_bool(value: object, default: bool = True) -> bool:
@@ -105,9 +85,6 @@ def _resolve_paper_trade() -> bool:
     _load_dotenv_once()
     if "PAPER_TRADE" in os.environ:
         return _parse_bool(os.environ["PAPER_TRADE"])
-    legacy = _legacy_config()
-    if legacy is not None and hasattr(legacy, "PAPER_TRADE"):
-        return _parse_bool(legacy.PAPER_TRADE)
     return True
 
 
@@ -140,7 +117,7 @@ def load_settings() -> Settings:
             + ", ".join(missing)
             + ".\nCopy .env.example to .env and add your Alpaca paper-trading keys "
             "(free at https://app.alpaca.markets/ -> Paper Account -> API Keys).\n"
-            "Environment variables and a legacy config.py are also honoured. "
+            "Environment variables are honoured too. "
             "No keys needed to explore? Run `make demo`."
         )
     return Settings(alpaca_key=key, alpaca_secret=secret, paper_trade=_resolve_paper_trade())

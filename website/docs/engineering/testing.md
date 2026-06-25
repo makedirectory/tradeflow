@@ -28,7 +28,7 @@ uv run --extra dev pytest tests/test_live_trader.py::test_hold_is_noop  # one te
 
 Notes:
 
-- **No setup needed** — no `config.py`, keys, or network. Tests use the fakes below.
+- **No setup needed** — no keys or network. Tests use the fakes below.
 - The **OR-Tools** portfolio tests `skip` automatically if that optional dependency
   isn't installed; everything else runs with just the `dev` extra.
 - CI runs the same command on every push/PR, alongside `ruff check` and

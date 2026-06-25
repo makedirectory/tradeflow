@@ -36,8 +36,6 @@ order, so there's never any ambiguity:
 1. **Environment variables** — the standard, 12-factor way (`export APCA_API_KEY_ID=…`).
 2. **`.env`** in the project root — loaded automatically; real environment
    variables already set always win.
-3. **A legacy `config.py`** module, if present — the pre-`.env` mechanism, still
-   honoured so older checkouts keep working. New setups should use `.env`.
 
 The same chain resolves the optional LLM provider keys for the research agent
 (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OLLAMA_BASE_URL`) — set them in `.env`

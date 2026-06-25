@@ -260,9 +260,8 @@ The proposer is **provider-agnostic** — choose with `--provider`:
 | `openai` | `uv sync --extra openai` | `gpt-4o` | `OPENAI_API_KEY` |
 | `ollama` (local) | none | `llama3.1` | none |
 
-Set the credential either in `config.py` (alongside your Alpaca keys — see
-`config_example.py`) or as the standard environment variable; the agent checks
-`config.py` first, then the environment. Ollama runs locally and needs no key.
+Set the credential in `.env` (alongside your Alpaca keys — see `.env.example`)
+or as the standard environment variable. Ollama runs locally and needs no key.
 
 ```bash
 uv run python main.py research --provider ollama --model llama3.1 \
@@ -329,7 +328,7 @@ make docs        # serve the Docusaurus site at http://localhost:3000
 
 ```bash
 make docker-build
-make docker-run            # paper live-trading; mounts your config.py
+make docker-run            # paper live-trading; mounts your .env
 ```
 
 ## Tests
