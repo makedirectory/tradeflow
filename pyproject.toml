@@ -48,7 +48,6 @@ select = ["E", "F", "I", "W"]
 ignore = ["E501"]
 
 [tool.ruff.lint.isort]
-# Classify these as first-party explicitly. Otherwise import ordering depends on
-# whether `config.py` (gitignored) exists on disk — which differs between a local
-# checkout and CI, producing inconsistent I001 results.
-known-first-party = ["src", "config"]
+# Classify the application package as first-party so import ordering is stable
+# across a local checkout and CI.
+known-first-party = ["src"]

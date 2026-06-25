@@ -80,8 +80,8 @@ uv run python main.py research --provider openai --model gpt-4o ...
 ### Setting credentials
 
 You can provide a key **either** in `.env` **or** as the standard environment
-variable — they resolve through the same chain (`environment` → `.env` → legacy
-`config.py`), so the SDK defaults keep working and you don't have to duplicate keys.
+variable — they resolve through the same chain (`environment` → `.env`), so the
+SDK defaults keep working and you don't have to duplicate keys.
 
 `.env` (alongside your Alpaca keys — see `.env.example`):
 
