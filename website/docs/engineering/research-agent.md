@@ -71,7 +71,7 @@ The loop and guardrails are proposer-agnostic. `LLMProposer` drives any
 
 `build_proposer(provider, model)` / `build_llm_client(provider, model)` pick the
 backend. Credentials resolve through the shared settings chain — environment /
-`.env`, then a legacy `config.py` — via `src.settings.get_credential`
+`.env` — via `src.settings.get_credential`
 (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`; `OLLAMA_BASE_URL` for the local server).
 `FixedProposer` replays a fixed list for deterministic offline tests.
 

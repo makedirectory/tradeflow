@@ -1,7 +1,6 @@
-"""Tests for credential resolution (env / .env / legacy config.py) + validation."""
+"""Tests for credential resolution (env / .env) + validation."""
 
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -11,10 +10,9 @@ from src.settings import SettingsError, load_settings
 
 @pytest.fixture(autouse=True)
 def _isolate(monkeypatch):
-    """Run each test with no .env file, no legacy config, and a clean environment."""
+    """Run each test with no .env file and a clean environment."""
     monkeypatch.setattr(settings, "_dotenv_loaded", False)
     monkeypatch.setattr(settings, "ENV_PATH", Path("/nonexistent/.env"))
-    monkeypatch.setattr(settings, "_legacy_config", lambda: None)
     for key in ("APCA_API_KEY_ID", "APCA_API_SECRET_KEY", "PAPER_TRADE", "ANTHROPIC_API_KEY"):
         monkeypatch.delenv(key, raising=False)
 
@@ -47,24 +45,6 @@ def test_placeholder_values_count_as_missing(monkeypatch):
     monkeypatch.setenv("APCA_API_SECRET_KEY", "<APCA_API_SECRET_KEY>")
     with pytest.raises(SettingsError):
         load_settings()
-
-
-def test_legacy_config_is_a_fallback(monkeypatch):
-    legacy = SimpleNamespace(APCA_API_KEY_ID="legacyk", APCA_API_SECRET_KEY="legacys", PAPER_TRADE=True)
-    monkeypatch.setattr(settings, "_legacy_config", lambda: legacy)
-
-    s = load_settings()
-    assert s.alpaca_key == "legacyk"
-    assert s.paper_trade is True
-
-
-def test_env_wins_over_legacy(monkeypatch):
-    legacy = SimpleNamespace(APCA_API_KEY_ID="legacyk", APCA_API_SECRET_KEY="legacys")
-    monkeypatch.setattr(settings, "_legacy_config", lambda: legacy)
-    monkeypatch.setenv("APCA_API_KEY_ID", "envk")
-    monkeypatch.setenv("APCA_API_SECRET_KEY", "envs")
-
-    assert load_settings().alpaca_key == "envk"
 
 
 def test_get_credential_falls_back_to_default():
