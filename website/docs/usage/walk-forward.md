@@ -20,6 +20,38 @@ uv run python main.py walkforward \
   --method grid --objective sharpe_ratio --max-evals 50
 ```
 
+## Why it matters
+
+The failure mode this guards against is **overfitting** — mistaking the random
+noise in a particular stretch of history for a real, repeatable edge.
+
+It's easy to do by accident. Search enough parameter combinations against one
+date range and *something* will look brilliant, purely by luck — the more configs
+you try, the better the best one looks even if none of them has any edge. (This
+is the multiple-testing problem, and it's why TradeFlow also reports a **deflated
+Sharpe** that discounts your result by how many configs you tried.) Optimize and
+report on the *same* window and you've measured how well you fit that window's
+noise, not whether the strategy will work next month.
+
+`make demo` shows the trap in one screen: a moving-average crossover posts
++16.8% in-sample, then collapses to a **−0.42 median Sharpe out-of-sample** and
+fails every promotion gate. Same strategy, same data — the only thing that
+changed is that it had to perform on bars it wasn't tuned on.
+
+Walk-forward closes the gap by splitting time into three roles:
+
+- **In-sample (IS)** — the only data the optimizer is allowed to fit.
+- **Out-of-sample (OOS)** — later data the optimizer never saw, used to measure
+  whether the chosen config *generalizes*. Repeated across folds so the verdict
+  doesn't hinge on one lucky window.
+- **Holdout** — a final slice carved off first and scored exactly once, at the
+  very end. It's the closest thing to "live" you get before risking real money,
+  so it must never influence any decision along the way.
+
+The payoff isn't a higher return — it's an *honest* one. A config that clears the
+promotion gates here has at least been asked the right question: does this work
+on data it has never seen?
+
 ## What it does
 
 For each fold it optimizes parameters on an **in-sample (IS)** window, then scores
