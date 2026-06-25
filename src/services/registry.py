@@ -9,11 +9,15 @@ from typing import Any, Dict, List, Type
 from src.scanners.base import ScannerStrategy
 from src.scanners.symbol_scanner import SymbolScanner
 from src.strategies.base import Strategy
+from src.strategies.ma_crossover import MovingAverageCrossoverStrategy
+from src.strategies.mean_reversion import MeanReversionStrategy
 from src.strategies.volume_spike import VolumeSpikeStrategy
 
 #: Trading strategies exposed everywhere (CLI, MCP, agent).
 STRATEGIES: Dict[str, Type[Strategy]] = {
     "volume_spike": VolumeSpikeStrategy,
+    "ma_crossover": MovingAverageCrossoverStrategy,
+    "mean_reversion": MeanReversionStrategy,
 }
 
 #: Universe scanners (delegates to the scanner package's own registry).
