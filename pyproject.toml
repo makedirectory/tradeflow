@@ -24,7 +24,9 @@ ai = ["anthropic>=0.40"]
 # Use OpenAI models as the research proposer instead of Claude. Opt-in.
 openai = ["openai>=1.40"]
 # (Ollama needs no dependency - the research agent talks to its local HTTP API.)
-dev = ["pytest>=8.0", "ruff>=0.6", "scikit-learn>=1.4", "ortools>=9.8"]
+# Render the demo artifact (equity curve + walk-forward verdict) to an image.
+viz = ["matplotlib>=3.8"]
+dev = ["pytest>=8.0", "ruff>=0.6", "scikit-learn>=1.4", "ortools>=9.8", "matplotlib>=3.8"]
 
 [tool.uv]
 # This is an application, not a library: install dependencies only, don't build

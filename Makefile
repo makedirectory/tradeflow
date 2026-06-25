@@ -21,6 +21,9 @@ help:  ## Show available commands
 demo:  ## Run the whole pipeline on synthetic data — no API keys, no network
 	$(PY) demo
 
+demo-artifact:  ## Regenerate the README demo image (equity curve + verdict)
+	uv run --extra viz python main.py demo --chart website/static/img/demo.png
+
 # --- setup ------------------------------------------------------------------
 install:  ## Create the uv environment and install dependencies
 	uv sync
