@@ -91,6 +91,15 @@ def cmd_backtest(args) -> None:
     )
     log_backtest_report(result.metrics, result.initial_capital, result.final_capital)
 
+    if getattr(args, "chart", None):
+        from src.analytics.charts import render_backtest_chart
+
+        try:
+            path = render_backtest_chart(result, args.chart, title=f"{args.strategy} — backtest")
+            print(f"Chart saved to {path}")
+        except RuntimeError as exc:  # matplotlib (viz extra) not installed
+            print(f"Chart skipped: {exc}")
+
 
 def cmd_scan(args) -> None:
     from src.scanners.symbol_scanner import SymbolScanner
@@ -181,6 +190,15 @@ def cmd_walkforward(args) -> None:
         leakage_probe=args.leakage_probe,
     )
     _print_walkforward(result, args.objective)
+
+    if getattr(args, "chart", None):
+        from src.analytics.charts import render_walkforward_chart
+
+        try:
+            path = render_walkforward_chart(result, args.chart, title=f"{args.strategy} — walk-forward")
+            print(f"Chart saved to {path}")
+        except RuntimeError as exc:  # matplotlib (viz extra) not installed
+            print(f"Chart skipped: {exc}")
 
     if args.results_csv:
         rows = [
@@ -391,7 +409,7 @@ def cmd_demo(args) -> None:
     from src.marketdata.client import MarketDataClient
     from src.marketdata.synthetic import SyntheticMarketData
     from src.marketdata.timeframe import Timeframe
-    from src.services.analysis import run_walk_forward
+    from src.optimization.walk_forward import WalkForwardValidator
 
     data_client = MarketDataClient(SyntheticMarketData(seed=args.seed))
     symbols = ["SYNW", "SYNX", "SYNY", "SYNZ"]
@@ -412,11 +430,15 @@ def cmd_demo(args) -> None:
     print("   In-sample, almost anything looks tradeable. That's the trap.\n")
     print(f"   {'STRATEGY':18}{'RETURN':>10}{'SHARPE':>9}{'TRADES':>8}")
     print(f"   {'-' * 43}")
+    chart_result = None  # the wf strategy's in-sample BacktestResult, for the chart
+    wf_strategy = "ma_crossover"
     for name, cls in STRATEGIES.items():
         try:
             strategy = cls.create_with_defaults()
             start, end = window_for(strategy.config["timeframe"])
             result = BacktestEngine(strategy, data_client).run(symbols, start, end, 100_000.0)
+            if name == wf_strategy:
+                chart_result = result
             m = result.metrics
             print(
                 f"   {name:18}{m.get('total_return', 0.0):>9.2f}%"
@@ -425,30 +447,28 @@ def cmd_demo(args) -> None:
         except Exception as exc:  # noqa: BLE001 - demo should never hard-crash
             print(f"   {name:18}{'(skipped: ' + str(exc)[:30] + ')':>30}")
 
-    wf_strategy = "ma_crossover"
     print(f"\n2) Walk-forward validation of '{wf_strategy}' (the honest scorecard)")
     print("   Optimize in-sample, score out-of-sample across folds, then gate it.\n")
     start, end = window_for(STRATEGIES[wf_strategy].create_with_defaults().config["timeframe"])
-    wf = run_walk_forward(
-        data_client,
-        strategy=wf_strategy,
-        symbols=symbols,
-        start=start,
-        end=end,
+    wf_result = WalkForwardValidator(
+        STRATEGIES[wf_strategy], data_client, initial_capital=100_000.0, seed=args.seed
+    ).run(
+        symbols,
+        start,
+        end,
         n_folds=3,
         holdout_days=90,
         method="grid",
         objective="sharpe_ratio",
         max_evals=12,
-        seed=args.seed,
     )
+    report = wf_result.gate_report()
 
     print(
-        f"   OOS Sharpe (median): {wf['median_oos_sharpe']:.2f}   "
-        f"efficiency (OOS/IS): {wf['median_efficiency']:.2f}   "
-        f"OOS trades: {wf['total_oos_trades']}"
+        f"   OOS Sharpe (median): {wf_result.median_oos('sharpe_ratio'):.2f}   "
+        f"efficiency (OOS/IS): {wf_result.median_efficiency():.2f}   "
+        f"OOS trades: {wf_result.total_oos_trades()}"
     )
-    report = wf["gate_report"]
     print("\n   Promotion gates:")
     for gate_name, check in report["checks"].items():
         mark = "PASS" if check["passed"] else "FAIL"
@@ -460,6 +480,20 @@ def cmd_demo(args) -> None:
         "   is the product. Point TradeFlow at real data with `make backtest` (add\n"
         "   your Alpaca paper keys to .env first — see .env.example).\n"
     )
+
+    if getattr(args, "chart", None):
+        if chart_result is None:
+            print("   Chart skipped: no backtest result was captured.")
+        else:
+            from src.analytics.charts import render_demo_summary
+
+            try:
+                path = render_demo_summary(
+                    chart_result, wf_result, args.chart, strategy=wf_strategy, seed=args.seed
+                )
+                print(f"   Saved demo chart → {path}\n")
+            except RuntimeError as exc:  # matplotlib (viz extra) not installed
+                print(f"   Chart skipped: {exc}\n")
 
 
 # ---------------------------------------------------------------------------- #
@@ -500,6 +534,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Scale position sizing inversely by each symbol's beta",
     )
     bt.add_argument("--benchmark", default="SPY", help="Benchmark symbol for beta")
+    bt.add_argument(
+        "--chart",
+        metavar="PATH",
+        default=None,
+        help="render the equity curve + metrics to an image (needs the viz extra: matplotlib)",
+    )
     bt.set_defaults(func=cmd_backtest)
 
     live = subparsers.add_parser("live", help="Run live/paper trading (paper by default, for your own good)")
@@ -585,6 +625,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     wf.add_argument("--results-csv", dest="results_csv", default=None, help="Write per-fold table to CSV")
     wf.add_argument(
+        "--chart",
+        metavar="PATH",
+        default=None,
+        help="render the verdict + promotion-gate scorecard to an image (needs the viz extra)",
+    )
+    wf.add_argument(
         "--save-config",
         dest="save_config",
         default=None,
@@ -637,6 +683,12 @@ def build_parser() -> argparse.ArgumentParser:
         "demo", help="Run the full pipeline on synthetic data (no API keys, no network)"
     )
     demo.add_argument("--seed", type=int, default=42)
+    demo.add_argument(
+        "--chart",
+        metavar="PATH",
+        default=None,
+        help="also render the demo as an image to PATH (needs the viz extra: matplotlib)",
+    )
     demo.set_defaults(func=cmd_demo)
 
     return parser
