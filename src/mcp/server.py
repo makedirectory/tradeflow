@@ -269,7 +269,7 @@ def build_server(data_client=None):
         strategy: str,
         symbols: List[str],
         as_of: str,
-        source: str = "signal",
+        source: str = "strategy",
         scanner: str = "volume",
         ic: float = 0.03,
         benchmark: str = "SPY",
@@ -280,10 +280,11 @@ def build_server(data_client=None):
 
         Turns each name's view into a comparable, annualised residual-return
         forecast via alpha = sigma * IC * z (cross-sectional z-score scaled by
-        residual vol and an ASSUMED IC). source: "signal" reads the strategy's
-        BUY/SELL/HOLD; "score" reads the scanner's continuous strength. Read-only:
-        forecasts only, never reads a forward return, places no orders. The
-        absolute scale is only as good as the assumed IC; relative ranking is not.
+        residual vol and an ASSUMED IC). source: "strategy" uses the strategy's
+        continuous conviction; "signal" uses its BUY/SELL/HOLD as +1/-1/0; "scanner"
+        uses the scanner's continuous strength. Read-only: forecasts only, never
+        reads a forward return, places no orders. The absolute scale is only as good
+        as the assumed IC; relative ranking is not.
         """
         inputs = {
             "strategy": strategy,

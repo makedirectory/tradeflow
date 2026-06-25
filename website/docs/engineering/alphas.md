@@ -78,20 +78,29 @@ exposures by construction, with an intercept so the residual is mean-zero):
 The z-score already centres the cross-section at 0, so equal-weight benchmark
 neutrality holds even before the explicit step.
 
-## Producing raw scores
+## The feature panel and refinement
 
-Two `AlphaModel` subclasses differ only in *where the conviction comes from*; both
-share the pipeline above.
+The refinement runs over a [`FeaturePanel`](./data-panel.md) — the cross-sectional,
+point-in-time table that holds every name's features in one place. The flow is
+`scan → panel → refine`:
 
-| Model | Source | Raw score |
-|-------|--------|-----------|
-| `SignalAlphaModel` | a `Strategy`'s discrete signal | `BUY → +1`, `SELL → −1`, `HOLD`/exits → `0` |
-| `ScoreAlphaModel` | any continuous metric (a `scorer` callable) | the metric itself; `scanner_scorer` signs a scanner's `signal_strength` by direction |
+1. A **scorer** fills the panel's `score` column (one per name). A scorer is just
+   `Callable[[DataFrame], float]`:
 
-`SignalAlphaModel` is the bridge for direction-only strategies — it reads the
-existing trade signal as a ±1 conviction without touching the strategy or the order
-path. A genuinely continuous source (a scanner's strength, a momentum z) is better
-served by `ScoreAlphaModel`.
+   | Scorer | Score |
+   |--------|-------|
+   | `strategy_scorer` | the strategy's own continuous conviction (`calculate_scores`) — the natural, richest source |
+   | `signal_scorer` | the strategy's discrete direction as `+1 / −1 / 0` (a lossy bucketing of the score) |
+   | `scanner_scorer` | a scanner's `signal_strength`, signed by direction |
+
+2. The **risk producer** fills `beta` and `residual_vol`.
+3. **`refine_alpha(panel, context)`** reads `score` + `residual_vol` (+ `beta` when
+   neutralising) and writes the `z` and `alpha` columns. One implementation, one
+   place — whatever produced the score flows through the same pipeline.
+
+This is why each strategy is now **score-first** (`calculate_scores` is its one
+decision function): the same number the trade clock derives its signal from is the
+conviction the alpha layer scales. No parallel discrete-signal path.
 
 ## Hidden factors
 
@@ -105,25 +114,27 @@ served by `ScoreAlphaModel`.
 - **Thin universes.** Below `min_universe` (default 10) names the z-score and
   winsorize quantiles are unstable, so the pipeline falls back to **demean-only** (no
   scaling by cross-sectional std) and sets `low_confidence`.
-- **As-of discipline.** `compute_alphas` slices every frame to bars `≤ as_of` before
-  any computation, and residual-vol windows use only data `≤ as_of`. The alpha table
-  is byte-identical whether or not later bars exist (a regression test asserts this).
+- **As-of discipline.** The bar [scan](./data-panel.md) is the single home of the
+  leakage guard — it returns no bar after `as_of`, so every panel column (and the
+  residual-vol window) is point-in-time. The alpha table is byte-identical whether or
+  not later bars exist (a regression test asserts this).
 
 ## Where it runs
 
-`services/analysis.py::compute_alphas` is the shared entry point: it slices to
-`as_of`, computes residual vol via `calculate_beta` + `calculate_residual_volatility`,
-builds the model, and returns the ranked table. The CLI (`python main.py alphas`) and
-the read-only MCP tool `compute_alphas` both route through it (one code path across
-surfaces). See the [usage guide](../usage/alphas.md).
+`services/analysis.py::compute_alphas` is the shared entry point: it scans the
+universe as of `as_of`, assembles a [`FeaturePanel`](./data-panel.md) (risk + score
+columns), refines it, and returns the ranked table. The CLI (`python main.py alphas`)
+and the read-only MCP tool `compute_alphas` both route through it (one code path
+across surfaces). `--source` picks the scorer: `strategy` (continuous conviction,
+default), `signal` (discrete ±1), or `scanner` (scanner strength). See the
+[usage guide](../usage/alphas.md).
 
-## Status and scope
+## One source of truth
 
-`SignalAlphaModel` reads the strategy's existing discrete signal rather than
-rewriting each strategy to be score-first. A literal "derive `BUY`/`SELL`/`HOLD` from
-the sign of a continuous score" rewrite was **deferred**: the current strategies are
-edge-triggered (a `BUY` fires only on the crossing bar, not on every bar the trend
-holds) and use a four-value vocabulary including `CLOSE_BUY`/`CLOSE_SELL`, neither of
-which a scalar sign can reproduce without changing trade-clock behaviour. The
-signal→score bridge delivers comparable, scaled alphas while keeping the order path
-untouched.
+Each strategy was **migrated to be score-first**: `calculate_scores` is its one
+decision function, and the trade clock's `BUY/SELL/HOLD` is derived from that score
+by the base class (edge-triggered hysteresis — see [Strategies](./strategies.md)).
+So `strategy_scorer` reads exactly the same conviction the live engine acts on;
+there is no parallel discrete-signal path to drift. The order path stays
+deterministic and model-free — improving *how* its signal is computed is not the
+same as putting a model in the order path.

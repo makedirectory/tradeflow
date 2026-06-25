@@ -18,28 +18,28 @@ python main.py alphas \
 ```
 
 ```
-Alphas from 'volume_spike' signal as of 2025-06-01 (IC=0.03, benchmark=SPY)
+Alphas from 'volume_spike' score as of 2025-06-01 (IC=0.03, benchmark=SPY)
 
-SYMBOL           RAW        Z    BETA  RESID_VOL     ALPHA
-NVDA           1.000     1.41    1.34      38.2%     1.62%
-AMD            1.000     1.41    1.21      31.0%     1.31%
-AAPL           0.000    -0.35    1.05      22.4%    -0.24%
-META          -1.000    -1.06    1.12      27.8%    -0.92%
-TSLA          -1.000    -1.41    1.55      44.1%    -1.95%
+SYMBOL         SCORE        Z    BETA  RESID_VOL     ALPHA
+NVDA           0.043     1.41    1.34      38.2%     1.62%
+AMD            0.031     1.18    1.21      31.0%     1.10%
+AAPL          -0.004    -0.35    1.05      22.4%    -0.24%
+META          -0.018    -1.06    1.12      27.8%    -0.92%
+TSLA          -0.040    -1.41    1.55      44.1%    -1.95%
 ```
 
-Read it as: `RAW` is the source view, `Z` is the cross-sectional standardised score,
-and `ALPHA = RESID_VOL · IC · Z` is the forecast residual return for the year. The
-ranking is what a mean-variance [portfolio optimiser](./portfolio.md) sizes positions
-from.
+Read it as: `SCORE` is the strategy's continuous conviction, `Z` is the
+cross-sectional standardised score, and `ALPHA = RESID_VOL · IC · Z` is the forecast
+residual return for the year. The ranking is what a mean-variance
+[portfolio optimiser](./portfolio.md) sizes positions from.
 
 ## Options
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--strategy` | `volume_spike` | Strategy whose signal is the raw view (`--source signal`). |
-| `--source` | `signal` | `signal` reads the strategy's `BUY`/`SELL`/`HOLD`; `score` reads the scanner's continuous strength. |
-| `--scanner` | `volume` | Scanner used as the metric when `--source score`. |
+| `--strategy` | `volume_spike` | Strategy whose score is the view (`--source strategy`/`signal`). |
+| `--source` | `strategy` | `strategy` = the strategy's continuous conviction; `signal` = its `BUY`/`SELL`/`HOLD` as +1/−1/0; `scanner` = the scanner's continuous strength. |
+| `--scanner` | `volume` | Scanner used as the metric when `--source scanner`. |
 | `--symbols` | demo universe | Comma-separated candidates. |
 | `--as-of` | today | Rebalance date; only data up to this date is used. |
 | `--ic` | `0.03` | Assumed information coefficient (sets overall aggressiveness). |
@@ -47,11 +47,11 @@ from.
 | `--neutralize` | off | Make alphas beta-neutral (regress out benchmark beta). |
 | `--lookback-days` | `180` | History fetched (≤ `as_of`) for the residual-vol estimate. |
 
-Use `--source score` to rank by a scanner's continuous conviction instead of a
-strategy's discrete direction:
+Use `--source scanner` to rank by a scanner's continuous conviction instead of the
+strategy's score:
 
 ```bash
-python main.py alphas --source score --scanner volume --symbols NVDA,AAPL,META --as-of 2025-06-01
+python main.py alphas --source scanner --scanner volume --symbols NVDA,AAPL,META --as-of 2025-06-01
 ```
 
 ## What the numbers mean (and don't)

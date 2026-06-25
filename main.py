@@ -379,7 +379,11 @@ def cmd_alphas(args) -> None:
         lookback_days=args.lookback_days,
     )
 
-    src_desc = f"scanner '{args.scanner}' strength" if args.source == "score" else f"'{args.strategy}' signal"
+    src_desc = {
+        "strategy": f"'{args.strategy}' score",
+        "signal": f"'{args.strategy}' signal",
+        "scanner": f"scanner '{args.scanner}' strength",
+    }[args.source]
     print(f"\nAlphas from {src_desc} as of {args.as_of:%Y-%m-%d} (IC={args.ic}, benchmark={args.benchmark})")
     if not result["benchmark_available"]:
         print("  ! benchmark unavailable — residual vol falls back to total volatility")
@@ -389,10 +393,10 @@ def cmd_alphas(args) -> None:
         print("No scorable names.")
         return
 
-    print(f"\n{'SYMBOL':10}{'RAW':>10}{'Z':>9}{'BETA':>8}{'RESID_VOL':>11}{'ALPHA':>10}")
+    print(f"\n{'SYMBOL':10}{'SCORE':>10}{'Z':>9}{'BETA':>8}{'RESID_VOL':>11}{'ALPHA':>10}")
     for row in result["alphas"]:
         print(
-            f"{row['symbol']:10}{row['raw_score']:>10.3f}{row['z']:>9.2f}{row['beta']:>8.2f}"
+            f"{row['symbol']:10}{row['score']:>10.3f}{row['z']:>9.2f}{row['beta']:>8.2f}"
             f"{row['residual_vol']:>10.1%}{row['alpha']:>10.2%}"
         )
 
@@ -692,9 +696,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     alphas.add_argument(
         "--source",
-        choices=["signal", "score"],
-        default="signal",
-        help="Raw-score origin: 'signal' = strategy BUY/SELL/HOLD; 'score' = scanner strength",
+        choices=["strategy", "signal", "scanner"],
+        default="strategy",
+        help="Score origin: 'strategy' = continuous conviction; 'signal' = BUY/SELL/HOLD; "
+        "'scanner' = scanner strength",
     )
     alphas.add_argument("--ic", type=float, default=0.03, help="Assumed information coefficient")
     alphas.add_argument("--benchmark", default="SPY", help="Benchmark for residual vol / beta")

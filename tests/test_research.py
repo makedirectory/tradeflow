@@ -102,7 +102,6 @@ def test_hygiene_rejects_missing_hypothesis_and_too_many_params():
 _VALID_CODE = '''
 import pandas as pd
 from src.strategies.base import Strategy
-from src.strategies import signals
 
 class GenStrat(Strategy):
     """Always-long. Hypothesis: the synthetic series drifts up."""
@@ -125,8 +124,9 @@ class GenStrat(Strategy):
     def process_data(self, data):
         return data
 
-    def generate_signals(self, data):
-        return {ts: signals.BUY for ts in data.index}
+    def calculate_scores(self, data):
+        # Always bullish; the base class derives BUY-then-hold from the sign.
+        return pd.Series(1.0, index=data.index)
 '''
 
 

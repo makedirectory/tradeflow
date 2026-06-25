@@ -1,10 +1,12 @@
 """RSI mean reversion - the trend follower's temperamental opposite.
 
-Long-only and contrarian: buy when RSI dips **into** oversold territory (betting
-the dip snaps back), and exit when RSI climbs **into** overbought territory (or a
-stop / take-profit fires first). Both entries and exits are edge-triggered - they
-fire on the bar that *crosses* a threshold, not on every bar that sits beyond it -
-so a single dip produces one entry, not a flurry.
+Long-only and contrarian. Its conviction score is **how oversold the name is**,
+``50 - rsi``: positive when RSI is below the midpoint (a dip worth fading), negative
+when it's stretched up. The base class derives the trade signal with *asymmetric*
+hysteresis (see :meth:`signal_thresholds`): enter long when RSI dips below
+``oversold``, hold through the middle, exit only when RSI climbs above
+``overbought``. So the discrete behavior - enter the dip, exit the rebound - falls
+out of the score, with no separate signal code.
 
 A useful foil to :mod:`ma_crossover`: the two disagree by construction, which is
 exactly what makes side-by-side walk-forward results worth looking at.
@@ -15,8 +17,10 @@ from typing import Any, ClassVar, Dict
 import pandas as pd
 
 from src.indicators import indicators
-from src.strategies import signals
-from src.strategies.base import Strategy
+from src.strategies.base import ScoreThresholds, Strategy
+
+#: RSI midpoint the score is centered on, so score = MIDPOINT - rsi.
+_RSI_MIDPOINT = 50.0
 
 
 class MeanReversionStrategy(Strategy):
@@ -101,17 +105,17 @@ class MeanReversionStrategy(Strategy):
         enriched["rsi"] = indicators.calculate_rsi(data["close"], self.config["rsi_period"])
         return enriched
 
-    def generate_signals(self, data: pd.DataFrame) -> Dict[Any, str]:
+    def calculate_scores(self, data: pd.DataFrame) -> pd.Series:
         if data.empty:
-            return {}
+            return pd.Series(dtype=float)
+        # Oversold-ness: positive when RSI is below the midpoint (a dip to fade).
+        return _RSI_MIDPOINT - data["rsi"]
 
-        rsi = data["rsi"]
-        prev_rsi = rsi.shift(1)
-        # Edge-triggered: the bar that crosses the threshold, not every bar past it.
-        crossed_into_oversold = (rsi < self.config["oversold"]) & (prev_rsi >= self.config["oversold"])
-        crossed_into_overbought = (rsi > self.config["overbought"]) & (prev_rsi <= self.config["overbought"])
-
-        result = pd.Series(signals.HOLD, index=data.index)
-        result[crossed_into_oversold] = signals.BUY
-        result[crossed_into_overbought] = signals.CLOSE_BUY
-        return result.to_dict()
+    def signal_thresholds(self) -> ScoreThresholds:
+        # Enter when RSI < oversold (score above 50-oversold); exit only when
+        # RSI > overbought (score below 50-overbought). The wide middle band is the
+        # "hold the position" zone - this is what makes entries and exits asymmetric.
+        return ScoreThresholds(
+            enter_long=_RSI_MIDPOINT - self.config["oversold"],
+            exit_long=_RSI_MIDPOINT - self.config["overbought"],
+        )

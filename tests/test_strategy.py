@@ -15,7 +15,7 @@ def test_defaults_include_timeframe_and_lookback():
     s = _strategy()
     assert s.config["timeframe"] == "5Min"
     assert s.config["required_lookback_periods"] == max(
-        s.config["rsi_period"] + 1, s.config["long_ema_period"] + 1, s.VOLUME_MA_PERIOD
+        s.config["long_ema_period"] + 1, s.config["volume_ma_period"] + 1
     )
 
 
@@ -24,7 +24,7 @@ def test_invalid_parameter_raises():
         VolumeSpikeStrategy(
             {
                 **{p: spec["default"] for p, spec in VolumeSpikeStrategy.PARAM_RANGES.items()},
-                "rsi_period": 999,
+                "long_ema_period": 999,
             }
         )  # out of range
 
@@ -65,7 +65,18 @@ def test_process_data_adds_indicator_columns():
     from tests.fakes import make_ohlcv
 
     processed = _strategy().process_data(make_ohlcv(n=200))
-    assert {"rsi", "volume_spike", "trend", "atr"} <= set(processed.columns)
+    assert {"short_ema", "long_ema", "volume_ma"} <= set(processed.columns)
+
+
+def test_calculate_scores_is_signed_and_aligned():
+    from tests.fakes import make_ohlcv
+
+    s = _strategy()
+    scores = s.calculate_scores(s.process_data(make_ohlcv(n=200)))
+    assert len(scores) == 200
+    # A real signed conviction: both bullish and bearish bars appear on a random walk.
+    valid = scores.dropna()
+    assert (valid > 0).any() and (valid < 0).any()
 
 
 def test_process_bar_preserves_full_ohlcv():

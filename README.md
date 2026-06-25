@@ -182,14 +182,17 @@ doing its job.
 | `walkforward` | Out-of-sample validation: optimize in-sample, score out-of-sample across folds, with a sacred holdout and promotion gates |
 | `mcp` | Serve TradeFlow over MCP so an agent (Claude Code / Desktop) can drive scan/backtest/optimize/walk-forward/alphas — read-only, no live trading |
 
-Three strategies ship today — pick one with `--strategy`:
+Three strategies ship today — pick one with `--strategy`. Each defines a single
+continuous **score** (its conviction); the trade clock's `BUY/SELL/HOLD` and the
+[continuous alpha](https://tradeflow.mk-dir.com/docs/engineering/alphas) are both
+derived from it — one source of truth.
 
-- **`volume_spike`** — trend-following entries triggered by volume spikes out of
-  RSI extremes (intraday, 5-minute bars).
-- **`ma_crossover`** — long-only EMA trend follower: buy the golden cross, exit
-  the death cross (daily).
-- **`mean_reversion`** — long-only RSI mean reversion: buy oversold dips, exit on
-  the rebound (daily).
+- **`volume_spike`** — long/short EMA-trend strength scaled by volume confirmation
+  (intraday, 5-minute bars).
+- **`ma_crossover`** — long-only EMA trend follower: the normalized fast−slow gap,
+  whose sign crossings are the golden / death cross (daily).
+- **`mean_reversion`** — long-only RSI mean reversion: score is oversold-ness, enter
+  the dip and exit on the rebound (daily).
 
 Adding a fourth is a one-file change — see
 [Extending](https://tradeflow.mk-dir.com/docs/engineering/extending).

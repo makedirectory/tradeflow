@@ -199,8 +199,10 @@ module**, and **no vendor SDK lives above the broker layer**. Product policy
 | Brokers | `brokers/base.py`, `brokers/alpaca/` | The **only** place a vendor SDK (`alpaca`) is imported. `Broker` / `MarketDataProvider` interfaces. |
 | Market data | `marketdata/` (`client`, `synthetic`, `timeframe`) | Bar fetching and the keyless synthetic feed behind `make demo`. |
 | Indicators | `indicators/` | Pure pandas/numpy signal math. |
-| Strategies | `strategies/` (`base`, `volume_spike`, `ma_crossover`, `mean_reversion`, `signals`) | `bar → signal` policy. One strategy per file. |
+| Strategies | `strategies/` (`base`, `volume_spike`, `ma_crossover`, `mean_reversion`, `signals`) | `bar → score` policy: each strategy defines one continuous score; the base class derives the discrete signal. One strategy per file. |
 | Scanners | `scanners/` (`base`, `volume`, `symbol`) | Universe selection. One scanner per file. |
+| Data | `data/` (`scan`, `panel`, `features`) | The cross-sectional substrate: the point-in-time `scan()` seam (the leakage guard) and the `FeaturePanel` every research module reads/writes. |
+| Alphas | `alphas/` (`refine`, `base`, `scorers`) | Continuous-alpha refinement: a score column → a comparable residual-return forecast (`α = σ·IC·z`). Research-clock. |
 | Engine | `engine/backtest.py`, `engine/live.py` | The backtest loop and the **sacred trade-clock** live loop. |
 | Execution | `execution/` (`live_trader`, `sizing`) | Order placement and position sizing — trade-clock. |
 | Analytics | `analytics/` (`metrics`, `performance`, `reporting`, `charts`) | Honest evaluation metrics, reports, and result charts. |

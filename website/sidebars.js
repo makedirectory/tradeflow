@@ -35,6 +35,7 @@ const sidebars = {
         'engineering/separation-of-concerns',
         'engineering/broker-abstraction',
         'engineering/data-flow',
+        'engineering/data-panel',
         'engineering/strategies',
         'engineering/scanners',
         'engineering/indicators',
