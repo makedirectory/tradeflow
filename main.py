@@ -10,6 +10,7 @@ the MCP server, and the research agent run the same code):
     live         scan universe -> LiveEngine -> LiveTrader (paper/live orders)
     optimize     search a strategy's parameters by backtest objective
     allocate     weight a portfolio across scanned symbols (OR-Tools)
+    alphas       rank a universe by continuous alpha (residual-return forecast)
     walkforward  out-of-sample validation with promotion gates
     mcp          serve TradeFlow to an agent over MCP (read-only)
     research     autonomous, offline research loop -> shortlist of configs
@@ -355,6 +356,47 @@ def cmd_research(args) -> None:
     print(f"\nJournal: {result.journal_path}  (a human reviews and promotes; nothing is live)")
 
 
+def cmd_alphas(args) -> None:
+    """Print the ranked alpha table (residual-return forecasts) for a universe.
+
+    Read-only research-clock flow: scores each name as of --as-of, scales the
+    cross-section into comparable annualised-return forecasts, and ranks them.
+    Produces no orders and saves no config.
+    """
+    from src.services.analysis import compute_alphas
+
+    _, data_client = build_data_and_broker()
+    result = compute_alphas(
+        data_client,
+        args.strategy,
+        args.symbols,
+        as_of=args.as_of,
+        source=args.source,
+        scanner=args.scanner,
+        ic=args.ic,
+        benchmark=args.benchmark,
+        neutralize=args.neutralize,
+        lookback_days=args.lookback_days,
+    )
+
+    src_desc = f"scanner '{args.scanner}' strength" if args.source == "score" else f"'{args.strategy}' signal"
+    print(f"\nAlphas from {src_desc} as of {args.as_of:%Y-%m-%d} (IC={args.ic}, benchmark={args.benchmark})")
+    if not result["benchmark_available"]:
+        print("  ! benchmark unavailable — residual vol falls back to total volatility")
+    if result["low_confidence"]:
+        print(f"  ! thin universe ({result['universe_size']} names) — demean-only, low confidence")
+    if not result["alphas"]:
+        print("No scorable names.")
+        return
+
+    print(f"\n{'SYMBOL':10}{'RAW':>10}{'Z':>9}{'BETA':>8}{'RESID_VOL':>11}{'ALPHA':>10}")
+    for row in result["alphas"]:
+        print(
+            f"{row['symbol']:10}{row['raw_score']:>10.3f}{row['z']:>9.2f}{row['beta']:>8.2f}"
+            f"{row['residual_vol']:>10.1%}{row['alpha']:>10.2%}"
+        )
+
+
 def cmd_mcp(args) -> None:
     """Serve TradeFlow over MCP (stdio). Opt-in; requires the ``mcp`` extra.
 
@@ -637,6 +679,32 @@ def build_parser() -> argparse.ArgumentParser:
         help="Save the chosen config (with provenance) to this path",
     )
     wf.set_defaults(func=cmd_walkforward)
+
+    alphas = subparsers.add_parser(
+        "alphas",
+        help="Rank a universe by continuous alpha (residual-return forecast) — read-only",
+    )
+    alphas.add_argument("--strategy", choices=STRATEGIES, default="volume_spike")
+    alphas.add_argument("--scanner", default="volume", help="Scanner used as the --source score metric")
+    alphas.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
+    alphas.add_argument(
+        "--as-of", dest="as_of", type=_date, default=datetime.now(), help="Rebalance date (YYYY-MM-DD)"
+    )
+    alphas.add_argument(
+        "--source",
+        choices=["signal", "score"],
+        default="signal",
+        help="Raw-score origin: 'signal' = strategy BUY/SELL/HOLD; 'score' = scanner strength",
+    )
+    alphas.add_argument("--ic", type=float, default=0.03, help="Assumed information coefficient")
+    alphas.add_argument("--benchmark", default="SPY", help="Benchmark for residual vol / beta")
+    alphas.add_argument(
+        "--neutralize",
+        action="store_true",
+        help="Make alphas beta-neutral (regress out benchmark beta)",
+    )
+    alphas.add_argument("--lookback-days", dest="lookback_days", type=int, default=180)
+    alphas.set_defaults(func=cmd_alphas)
 
     mcp = subparsers.add_parser(
         "mcp", help="Serve TradeFlow over MCP for an agent (opt-in; needs the 'mcp' extra)"

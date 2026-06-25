@@ -86,6 +86,47 @@ def calculate_beta(symbol_close: pd.Series, benchmark_close: pd.Series) -> float
     return float(covariance / benchmark_var)
 
 
+def calculate_residual_volatility(
+    symbol_close: pd.Series,
+    benchmark_close: pd.Series,
+    beta: float,
+    periods_per_year: float = 252.0,
+) -> float:
+    """Annualised volatility of a symbol's *residual* returns vs a benchmark.
+
+    Residual return strips out the part of the move that beta to the benchmark
+    explains: ``r_resid = r_symbol - beta * r_benchmark``. Its annualised std is the
+    ``sigma`` the alpha-scaling identity (alpha = sigma * IC * z) needs - the risk
+    of the bet that *isn't* just market exposure.
+
+    Computed on aligned period-over-period returns. Returns 0.0 for degenerate
+    input (too few overlapping points). ``periods_per_year`` annualises to the
+    sampling frequency of the series passed in (daily bars -> 252).
+
+    Args:
+        symbol_close: Close-price series for the symbol.
+        benchmark_close: Close-price series for the benchmark (e.g. SPY).
+        beta: The symbol's beta to the benchmark (see :func:`calculate_beta`).
+        periods_per_year: Annualisation factor for the bar frequency.
+
+    Returns:
+        Annualised residual volatility (a fraction, e.g. 0.20 == 20%/yr).
+    """
+    prices = pd.concat([symbol_close, benchmark_close], axis=1, keys=["symbol", "benchmark"]).dropna()
+    if len(prices) < 3:
+        return 0.0
+
+    returns = prices.pct_change().dropna()
+    if returns.empty:
+        return 0.0
+
+    residual = returns["symbol"] - beta * returns["benchmark"]
+    std = residual.std()
+    if not (std == std):  # NaN guard
+        return 0.0
+    return float(std * (periods_per_year**0.5))
+
+
 def calculate_volume_spike(
     volume: pd.Series,
     price: pd.Series,

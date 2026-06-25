@@ -14,9 +14,12 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
+from src.alphas import DEFAULT_IC, AlphaContext, ScoreAlphaModel, SignalAlphaModel, scanner_scorer
 from src.analytics import metrics as m
 from src.engine.backtest import BacktestEngine
+from src.indicators import indicators
 from src.marketdata.client import MarketDataClient
+from src.marketdata.timeframe import Timeframe
 from src.optimization.optimizer import ParameterOptimizer
 from src.optimization.walk_forward import WalkForwardValidator
 from src.services.audit import new_run_id
@@ -294,9 +297,147 @@ def summarize_bars(
     return {"timeframe": timeframe, "lookback_days": lookback_days, "symbols": out}
 
 
+def compute_alphas(
+    data_client: MarketDataClient,
+    strategy: str,
+    symbols: List[str],
+    as_of: datetime,
+    source: str = "signal",
+    scanner: str = "volume",
+    ic: float = DEFAULT_IC,
+    benchmark: str = "SPY",
+    neutralize: bool = False,
+    lookback_days: int = 180,
+    timeframe: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Turn a strategy/scanner's per-name view into ranked residual-return alphas.
+
+    Read-only research-clock flow: scores each name as of ``as_of``,
+    scales the cross-section into comparable annualised-return forecasts via
+    ``alpha = sigma * IC * z``, and returns the ranked table. Produces no orders and
+    saves no config.
+
+    ``source`` selects the raw-score origin: ``"signal"`` reads the strategy's
+    discrete BUY/SELL/HOLD (via :class:`SignalAlphaModel`); ``"score"`` reads the
+    ``scanner``'s continuous signed strength (via :class:`ScoreAlphaModel`).
+
+    Leakage discipline: every frame is sliced to bars ``<= as_of`` before any
+    computation, so the result is independent of whether later bars exist.
+    """
+    run_id = new_run_id()
+    strat = _strategy(strategy, None)
+    tf = timeframe or strat.config.get("timeframe", "1Day")
+    periods_per_year = Timeframe.parse(tf).periods_per_year()
+
+    # Fetch with end == as_of (defends leakage for real feeds) then slice defensively
+    # to <= as_of (FakeMarketData ignores the window, so the slice is the real guard).
+    start = as_of - timedelta(days=lookback_days)
+    fetch = list(dict.fromkeys([*symbols, benchmark]))
+    raw = data_client.get_bars(fetch, tf, start, as_of)
+    bars = {sym: _slice_to_as_of(frame, as_of) for sym, frame in raw.items()}
+    bars = {sym: frame for sym, frame in bars.items() if not frame.empty}
+
+    bench_frame = bars.get(benchmark)
+    universe = {sym: frame for sym, frame in bars.items() if sym in symbols}
+
+    # Build the scoring model and produce raw scores.
+    if source == "score":
+        model = ScoreAlphaModel(scanner_scorer(_scanner(scanner)))
+    elif source == "signal":
+        model = SignalAlphaModel(strat)
+    else:
+        raise ValueError(f"source must be 'signal' or 'score', got {source!r}")
+    scores = model.raw_scores(universe, as_of)
+    raw_by_symbol = {sc.symbol: sc.score for sc in scores}
+
+    # Residual volatility (annualised) + beta per scored name.
+    residual_vol: Dict[str, float] = {}
+    betas: Dict[str, float] = {}
+    benchmark_available = bench_frame is not None and not bench_frame.empty
+    for sc in scores:
+        close = universe[sc.symbol]["close"]
+        if benchmark_available:
+            beta = indicators.calculate_beta(close, bench_frame["close"])
+            vol = indicators.calculate_residual_volatility(
+                close, bench_frame["close"], beta, periods_per_year
+            )
+        else:
+            # No benchmark series: fall back to total volatility, beta unknown (=1).
+            beta = 1.0
+            vol = m.annualized_volatility(close.pct_change().dropna(), int(round(periods_per_year)))
+        betas[sc.symbol] = beta
+        residual_vol[sc.symbol] = vol
+
+    exposures = {sym: {"beta": betas[sym]} for sym in betas} if neutralize else None
+    context = AlphaContext(residual_vol=residual_vol, ic=ic, neutralize=neutralize, exposures=exposures)
+    alphas = model.alphas(scores, context)
+
+    table = sorted(
+        (
+            {
+                "symbol": a.symbol,
+                "raw_score": raw_by_symbol.get(a.symbol, 0.0),
+                "z": a.raw_z,
+                "beta": betas.get(a.symbol, 1.0),
+                "residual_vol": a.residual_vol,
+                "alpha": a.alpha,
+            }
+            for a in alphas
+        ),
+        key=lambda row: row["alpha"],
+        reverse=True,
+    )
+
+    return {
+        "run_id": run_id,
+        "strategy": strategy,
+        "source": source,
+        "scanner": scanner if source == "score" else None,
+        "as_of": as_of.isoformat(),
+        "timeframe": tf,
+        "ic": ic,
+        "benchmark": benchmark,
+        "benchmark_available": benchmark_available,
+        "neutralize": neutralize,
+        "universe_size": len(scores),
+        "low_confidence": context.low_confidence,
+        "alphas": _jsonable(table),
+        "note": "Alphas are residual-return FORECASTS, annualised, scaled by an "
+        "ASSUMED IC (a prior until it is measured from realised outcomes). Relative sizing across "
+        "names is correct regardless of IC; the absolute scale is only as good as it.",
+    }
+
+
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
+def _scanner(scanner_name: str):
+    """Instantiate a scanner from its declared defaults (for ScoreAlphaModel)."""
+    from src.scanners.symbol_scanner import SymbolScanner
+
+    if scanner_name not in SymbolScanner.SCANNERS:
+        raise ValueError(f"Unknown scanner '{scanner_name}'. Available: {SymbolScanner.available()}")
+    cls = SymbolScanner.SCANNERS[scanner_name]
+    sc = cls({p: spec["default"] for p, spec in cls.PARAM_RANGES.items()})
+    sc.initialize()
+    return sc
+
+
+def _slice_to_as_of(frame: pd.DataFrame, as_of: datetime) -> pd.DataFrame:
+    """Return only bars at or before ``as_of`` (the leakage guard).
+
+    Handles a tz-aware bar index against a possibly-naive ``as_of`` by localising
+    the cutoff to the frame's timezone.
+    """
+    if frame is None or frame.empty:
+        return frame
+    ts = pd.Timestamp(as_of)
+    idx = frame.index
+    if isinstance(idx, pd.DatetimeIndex) and idx.tz is not None:
+        ts = ts.tz_localize(idx.tz) if ts.tzinfo is None else ts.tz_convert(idx.tz)
+    return frame.loc[idx <= ts]
+
+
 def _jsonable(value: Any) -> Any:
     if isinstance(value, dict):
         return {str(k): _jsonable(v) for k, v in value.items()}

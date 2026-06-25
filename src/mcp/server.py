@@ -31,6 +31,7 @@ EXPOSED_TOOLS = (
     "run_backtest",
     "run_optimization",
     "run_walk_forward",
+    "compute_alphas",
     "get_metrics_glossary",
     "summarize_bars",
     "save_config",
@@ -262,6 +263,51 @@ def build_server(data_client=None):
             leakage_probe=leakage_probe,
         )
         return _logged("run_walk_forward", inputs, result)
+
+    @server.tool()
+    def compute_alphas(
+        strategy: str,
+        symbols: List[str],
+        as_of: str,
+        source: str = "signal",
+        scanner: str = "volume",
+        ic: float = 0.03,
+        benchmark: str = "SPY",
+        neutralize: bool = False,
+        lookback_days: int = 180,
+    ) -> Dict[str, Any]:
+        """Rank `symbols` by continuous alpha (residual-return forecast) as of a date.
+
+        Turns each name's view into a comparable, annualised residual-return
+        forecast via alpha = sigma * IC * z (cross-sectional z-score scaled by
+        residual vol and an ASSUMED IC). source: "signal" reads the strategy's
+        BUY/SELL/HOLD; "score" reads the scanner's continuous strength. Read-only:
+        forecasts only, never reads a forward return, places no orders. The
+        absolute scale is only as good as the assumed IC; relative ranking is not.
+        """
+        inputs = {
+            "strategy": strategy,
+            "symbols": symbols,
+            "as_of": as_of,
+            "source": source,
+            "scanner": scanner,
+            "ic": ic,
+            "benchmark": benchmark,
+            "neutralize": neutralize,
+        }
+        result = analysis.compute_alphas(
+            dc,
+            strategy,
+            symbols,
+            _parse_date(as_of),
+            source=source,
+            scanner=scanner,
+            ic=ic,
+            benchmark=benchmark,
+            neutralize=neutralize,
+            lookback_days=lookback_days,
+        )
+        return _logged("compute_alphas", inputs, result)
 
     @server.tool()
     def get_metrics_glossary() -> Dict[str, Any]:

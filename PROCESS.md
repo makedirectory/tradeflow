@@ -147,7 +147,15 @@ Default checklist for every change.
 - Once a change lands, its behavior belongs in the wiki/usage docs. Any design
   note or spec you wrote up front stays a historical rationale, not the
   source of truth for built behavior.
-- Code comments link to durable docs, not stale planning notes.
+- Docs (and code comments) must be **self-contained**: describe the built behavior
+  directly and never reference a planning spec by file or number (`spec 005`,
+  `§3.2`, `specs/planning/...`). A reader should never need a planning doc to
+  understand shipped behavior. Link to the relevant wiki/usage page instead, and
+  for not-yet-built work name the capability generically (e.g. "a future
+  information-analysis step", "the portfolio optimiser") rather than its spec.
+- **Code must be self-contained: never reference specs or planning docs in code.**
+  A comment should explain the behavior on its own terms; if it needs to point
+  somewhere, link to the engineering wiki — never to a planning spec.
 
 ### Review after every change
 

@@ -178,8 +178,9 @@ doing its job.
 | `live` | Scan → warm up indicators → stream bars → place paper/live orders |
 | `optimize` | Search strategy parameters by backtest objective (grid / random / Bayesian) |
 | `allocate` | Weight a portfolio across scanned symbols (OR-Tools constraint solver) |
+| `alphas` | Rank a universe by continuous alpha — a comparable, annualized residual-return forecast per name (read-only) |
 | `walkforward` | Out-of-sample validation: optimize in-sample, score out-of-sample across folds, with a sacred holdout and promotion gates |
-| `mcp` | Serve TradeFlow over MCP so an agent (Claude Code / Desktop) can drive scan/backtest/optimize/walk-forward — read-only, no live trading |
+| `mcp` | Serve TradeFlow over MCP so an agent (Claude Code / Desktop) can drive scan/backtest/optimize/walk-forward/alphas — read-only, no live trading |
 
 Three strategies ship today — pick one with `--strategy`:
 
