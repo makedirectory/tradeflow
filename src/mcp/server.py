@@ -36,6 +36,7 @@ EXPOSED_TOOLS = (
     "compute_risk",
     "construct_portfolio",
     "compute_information",
+    "compute_horizon",
     "get_metrics_glossary",
     "summarize_bars",
     "save_config",
@@ -352,6 +353,37 @@ def build_server(data_client=None):
             n_points=n_points,
         )
         return _logged("combine_alphas", inputs, result)
+
+    @server.tool()
+    def compute_horizon(
+        strategy: str,
+        symbols: List[str],
+        start: str,
+        end: str,
+        source: str = "strategy",
+        benchmark: str = "SPY",
+        max_lag: int = 10,
+    ) -> Dict[str, Any]:
+        """Measure an alpha's decay/half-life and recommend cadence + lagged blend (012).
+
+        Measures the IC-vs-lag profile (alpha at t vs residual return n periods later),
+        fits the per-period decay δ and half-life, derives the rebalance cadence that
+        maximises IC·√(1/Δt), and computes the IR-maximising current/lagged blend from
+        δ and the signal autocorrelation (diversify if δ>ρ, hedge if δ<ρ). The
+        half-life is the holding period to amortise cost over. Read-only.
+        """
+        inputs = {"strategy": strategy, "symbols": symbols, "start": start, "end": end}
+        result = analysis.compute_horizon(
+            dc,
+            strategy,
+            symbols,
+            _parse_date(start),
+            _parse_date(end),
+            source=source,
+            benchmark=benchmark,
+            max_lag=max_lag,
+        )
+        return _logged("compute_horizon", inputs, result)
 
     @server.tool()
     def compute_risk(

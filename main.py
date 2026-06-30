@@ -13,6 +13,7 @@ the MCP server, and the research agent run the same code):
     alphas       rank a universe by continuous alpha (residual-return forecast)
     risk         estimate the universe covariance Σ and summarize its risk structure
     info         information report: IC, breadth, predicted-vs-realized IR
+    horizon      measure alpha decay / half-life; recommend cadence + lagged blend
     walkforward  out-of-sample validation with promotion gates
     mcp          serve TradeFlow to an agent over MCP (read-only)
     research     autonomous, offline research loop -> shortlist of configs
@@ -588,6 +589,46 @@ def cmd_info(args) -> None:
         print(f"  Recommended IC for alpha scaling (a human applies it): {r['recommended_ic']:.4f}")
 
 
+def cmd_horizon(args) -> None:
+    """Print the alpha-decay curve, half-life, recommended cadence, and lagged blend.
+
+    Read-only research diagnostic: measures how fast the signal's IC decays and turns
+    that into a rebalance cadence and a current/lagged blend. Produces no orders.
+    """
+    from src.services.analysis import compute_horizon
+
+    _, data_client = build_data_and_broker()
+    r = compute_horizon(
+        data_client,
+        args.strategy,
+        args.symbols,
+        args.start,
+        args.end,
+        source=args.source,
+        scanner=args.scanner,
+        benchmark=args.benchmark,
+        max_lag=args.max_lag,
+        timeframe=args.timeframe,
+    )
+    if not r.get("ic_by_lag"):
+        print(r.get("note", "No horizon report produced."))
+        return
+
+    print(f"\nInformation horizon: '{args.strategy}' {args.start:%Y-%m-%d}..{args.end:%Y-%m-%d}")
+    print("  IC by lag: " + "  ".join(f"{n}:{ic:+.3f}" for n, ic in sorted(r["ic_by_lag"].items())))
+    hl = r["half_life"]
+    hl_str = f"{hl:.1f} periods" if hl == hl and hl != float("inf") else "∞ (no decay detected)"
+    print(f"  decay δ {r['decay_delta']:.3f}  half-life {hl_str}  fit R² {r['decay_r_squared']:.2f}")
+    print(
+        f"  recommended cadence: every {r['recommended_cadence']} periods  "
+        f"(best return horizon ≈ {r['peak_return_horizon']:.1f})"
+    )
+    print(
+        f"  lagged blend [{r['blend_regime']}]: w_now {r['blend_weight_now']:+.2f}  "
+        f"w_lagged {r['blend_weight_lagged']:+.2f}  (signal autocorr ρ {r['signal_autocorrelation']:.2f})"
+    )
+
+
 def cmd_mcp(args) -> None:
     """Serve TradeFlow over MCP (stdio). Opt-in; requires the ``mcp`` extra.
 
@@ -969,6 +1010,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Configs tried (for multiple-testing inflation)",
     )
     info.set_defaults(func=cmd_info)
+
+    hz = subparsers.add_parser(
+        "horizon",
+        help="Measure alpha decay / half-life and recommend rebalance cadence + blend — read-only",
+    )
+    hz.add_argument("--strategy", choices=STRATEGIES, default="volume_spike")
+    hz.add_argument("--source", choices=["strategy", "signal", "scanner"], default="strategy")
+    hz.add_argument("--scanner", default="volume")
+    hz.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
+    hz.add_argument("--start", type=_date, default=datetime.now() - timedelta(days=365))
+    hz.add_argument("--end", type=_date, default=datetime.now())
+    hz.add_argument("--benchmark", default="SPY")
+    hz.add_argument(
+        "--max-lag", dest="max_lag", type=int, default=10, help="Largest lag (periods) to measure"
+    )
+    hz.add_argument("--timeframe", default="1Day")
+    hz.set_defaults(func=cmd_horizon)
 
     risk = subparsers.add_parser(
         "risk",

@@ -50,6 +50,7 @@ const sidebars = {
         'engineering/risk-model',
         'engineering/transaction-costs',
         'engineering/information-analysis',
+        'engineering/information-horizon',
         'engineering/evaluation-metrics',
         'engineering/walk-forward',
         'engineering/mcp-server',

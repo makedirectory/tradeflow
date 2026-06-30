@@ -630,6 +630,114 @@ def compute_information(
     }
 
 
+def compute_horizon(
+    data_client: MarketDataClient,
+    strategy: str,
+    symbols: List[str],
+    start: datetime,
+    end: datetime,
+    source: str = "strategy",
+    scanner: str = "volume",
+    benchmark: str = "SPY",
+    neutralize: bool = True,
+    ic_prior: float = DEFAULT_IC,
+    max_lag: int = 10,
+    n_points: int = 20,
+    timeframe: str = "1Day",
+) -> Dict[str, Any]:
+    """Measure an alpha's decay and recommend a rebalance cadence + lagged blend.
+
+    Read-only research diagnostic (spec 012): measures the IC-vs-lag profile (the
+    alpha at ``t`` vs the residual return realised ``n`` periods later, for
+    ``n = 1..max_lag``), fits the per-period decay ``δ`` and half-life, derives the
+    cadence that maximises ``IC(Δt)·√(1/Δt)``, and computes the IR-maximising
+    current/lagged blend from ``δ`` and the signal's autocorrelation. The half-life is
+    the holding period transaction cost should be amortised over.
+    """
+    from src.alphas import horizon as hz
+    from src.indicators import indicators
+
+    run_id = new_run_id()
+    strat = _strategy(strategy, None)
+    periods_per_year = Timeframe.parse(timeframe).periods_per_year()
+
+    bars = ClientBarSource(data_client).scan([*symbols, benchmark], timeframe, end, _window_days(start, end))
+    bench = bars.get(benchmark)
+    universe_bars = {sym: bars[sym] for sym in symbols if sym in bars}
+    if bench is None or bench.empty or not universe_bars:
+        return {
+            "run_id": run_id,
+            "strategy": strategy,
+            "periods": 0,
+            "note": "Insufficient data: need a benchmark series and scored names.",
+        }
+
+    scorer = {
+        "strategy": lambda: strategy_scorer(strat),
+        "signal": lambda: signal_scorer(strat),
+        "scanner": lambda: scanner_scorer(_scanner(scanner)),
+    }[source]()
+    ctx = AlphaContext(ic=ic_prior, neutralize=neutralize)
+
+    index = bench.index
+    window = index[(index >= _to_ts(start, index)) & (index <= _to_ts(end, index))]
+    last = len(window) - max_lag - 1
+    if last <= 30:
+        return {
+            "run_id": run_id,
+            "strategy": strategy,
+            "periods": 0,
+            "note": "Window too short for the requested max_lag.",
+        }
+    points = np.linspace(30, last, num=min(n_points, last - 30), dtype=int)
+
+    ic_by_lag: Dict[int, List[float]] = {n: [] for n in range(1, max_lag + 1)}
+    prev_alpha = None
+    autocorrs: List[float] = []
+    for j in points:
+        t = window[j]
+        alpha = _alpha_cross_section(universe_bars, bench, scorer, periods_per_year, t, ctx)
+        if alpha.dropna().std() == 0 or alpha.dropna().empty:
+            continue
+        for n in range(1, max_lag + 1):
+            resid = _forward_residual_return(universe_bars, bench, t, window[j + n], indicators)
+            pair = pd.concat([alpha, resid], axis=1).dropna()
+            if len(pair) >= 5 and pair.iloc[:, 1].std() > 0:
+                ic_by_lag[n].append(float(pair.iloc[:, 0].corr(pair.iloc[:, 1])))
+        if prev_alpha is not None:
+            joint = pd.concat([alpha, prev_alpha], axis=1).dropna()
+            if len(joint) >= 5 and joint.iloc[:, 0].std() > 0 and joint.iloc[:, 1].std() > 0:
+                autocorrs.append(float(joint.iloc[:, 0].corr(joint.iloc[:, 1])))
+        prev_alpha = alpha
+
+    ic_profile = {n: float(np.mean(v)) for n, v in ic_by_lag.items() if v}
+    fit = hz.fit_decay(ic_profile)
+    rho = float(np.mean(autocorrs)) if autocorrs else 0.0
+    w_now, w_lag = hz.blend_weights(fit["delta"], rho) if fit["delta"] == fit["delta"] else (1.0, 0.0)
+    cadence = hz.recommended_cadence(ic_profile)
+
+    return {
+        "run_id": run_id,
+        "strategy": strategy,
+        "source": source,
+        "window": {"start": start.isoformat(), "end": end.isoformat()},
+        "ic_by_lag": _jsonable(ic_profile),
+        "decay_delta": fit["delta"],
+        "half_life": fit["half_life"],
+        "decay_r_squared": fit["r_squared"],
+        "peak_return_horizon": hz.peak_return_horizon(fit["half_life"]),
+        "frequency_ir_curve": _jsonable(hz.frequency_ir_curve(ic_profile)),
+        "recommended_cadence": cadence,
+        "signal_autocorrelation": rho,
+        "blend_weight_now": w_now,
+        "blend_weight_lagged": w_lag,
+        "blend_regime": "diversify" if w_lag > 1e-6 else "hedge" if w_lag < -1e-6 else "latest-only",
+        "note": "δ is the per-period IC decay (HL = half-life). Rebalance near the "
+        "cadence that maximises IC·√(1/Δt); amortise cost over the half-life. The "
+        "lagged blend adds turnover — confirm it survives cost (spec 007) before using.",
+    }
+
+
 def compute_risk(
     data_client: MarketDataClient,
     symbols: List[str],
