@@ -16,8 +16,6 @@ website/.docusaurus/
 # Mongo Data
 /data/db
 
-__init__.py
-
 # Below is a standard to gitignore file for Python
 # Byte-compiled / optimized / DLL files
 __pycache__/
