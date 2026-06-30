@@ -7,7 +7,9 @@ import pytest
 
 pytest.importorskip("pyarrow")
 
-from datetime import datetime  # noqa: E402
+from datetime import datetime, timezone  # noqa: E402
+
+import pandas as pd  # noqa: E402
 
 from src.data import BarSource, ClientBarSource, ParquetBarStore  # noqa: E402
 from src.marketdata.client import MarketDataClient  # noqa: E402
@@ -18,6 +20,14 @@ SYMBOLS = ["AAA", "BBB", "CCC"]
 
 def _bars():
     return {s: make_ohlcv(n=300, seed=i, freq="1D") for i, s in enumerate(SYMBOLS)}
+
+
+def _multiyear_bars(start="2018-01-01", years=6):
+    # Daily bars spanning several calendar years, so the year= partitions are exercised.
+    idx = pd.date_range(start, periods=365 * years, freq="1D", tz="UTC")
+    close = pd.Series(range(len(idx)), index=idx, dtype=float) + 100.0
+    frame = pd.DataFrame({c: close for c in ("open", "high", "low", "close", "volume")}, index=idx)
+    return {"AAA": frame}
 
 
 def test_is_a_bar_source(tmp_path):
@@ -111,3 +121,53 @@ def test_streaming_backtest_matches_batch(tmp_path):
     )
     assert streamed.final_capital == pytest.approx(batch.final_capital)
     assert len(streamed.trades) == len(batch.trades)
+
+
+# --------------------------------------------------------------------------- #
+# Date-partitioned layout (symbol=…/year=…) and file-level date pruning (spec 015)
+# --------------------------------------------------------------------------- #
+def test_write_creates_year_partitions(tmp_path):
+    store = ParquetBarStore(tmp_path)
+    store.write(_multiyear_bars(start="2018-01-01", years=6), timeframe="1Day")
+    years = sorted(p.name for p in (tmp_path / "1Day" / "symbol=AAA").glob("year=*"))
+    assert years == [f"year={y}" for y in range(2018, 2024)]  # one partition per calendar year
+
+
+def test_windowed_scan_prunes_partition_files(tmp_path):
+    store = ParquetBarStore(tmp_path)
+    store.write(_multiyear_bars(start="2018-01-01", years=6), timeframe="1Day")
+    as_of = datetime(2021, 6, 1, tzinfo=timezone.utc)
+
+    all_files = store.partition_paths(["AAA"], "1Day")  # every year
+    pruned = store.partition_paths(["AAA"], "1Day", as_of=as_of, lookback_days=200)
+    assert len(all_files) == 6
+    # A ~200-day window ending mid-2021 spans only 2020–2021 → 2 partition files read.
+    assert len(pruned) < len(all_files)
+    assert all(("year=2020" in p or "year=2021" in p) for p in pruned)
+
+
+def test_windowed_scan_data_correct_across_years(tmp_path):
+    # File-level pruning must not drop in-window rows: the scan still returns exactly
+    # the bars in (as_of - lookback, as_of], spanning the year boundary.
+    store = ParquetBarStore(tmp_path)
+    bars = _multiyear_bars(start="2018-01-01", years=6)
+    store.write(bars, timeframe="1Day")
+    as_of = datetime(2021, 3, 1, tzinfo=timezone.utc)
+    scanned = store.scan(["AAA"], "1Day", as_of, lookback_days=120)["AAA"]
+    original = bars["AAA"]
+    expected = original[
+        (original.index > (pd.Timestamp(as_of) - pd.Timedelta(days=120)))
+        & (original.index <= pd.Timestamp(as_of))
+    ]
+    assert len(scanned) == len(expected)
+    assert scanned.index.min().year == 2020 and scanned.index.max().year == 2021  # crosses the boundary
+    assert scanned["close"].to_numpy() == pytest.approx(expected["close"].to_numpy())
+
+
+def test_rewrite_replaces_stale_year_partitions(tmp_path):
+    # Re-writing a symbol with a shorter history must not leave stale year partitions.
+    store = ParquetBarStore(tmp_path)
+    store.write(_multiyear_bars(start="2018-01-01", years=6), timeframe="1Day")
+    store.write(_multiyear_bars(start="2022-01-01", years=1), timeframe="1Day")  # only 2022
+    years = sorted(p.name for p in (tmp_path / "1Day" / "symbol=AAA").glob("year=*"))
+    assert years == ["year=2022"]

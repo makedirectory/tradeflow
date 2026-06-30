@@ -14,6 +14,7 @@ appears only at the edge (the returned per-symbol frames), never as the cross-la
 currency. Requires the ``store`` extra (``pyarrow``).
 """
 
+import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional, Sequence
@@ -31,11 +32,18 @@ BAR_COLUMNS = ["ts", "symbol", "open", "high", "low", "close", "volume"]
 
 
 class ParquetBarStore:
-    """A point-in-time :class:`BarSource` backed by symbol-partitioned Parquet.
+    """A point-in-time :class:`BarSource` backed by symbol/date-partitioned Parquet.
 
-    Layout: ``<root>/<timeframe>/symbol=<SYM>/part.parquet``. One timeframe per
-    subtree; the scan prunes by symbol partition and pushes the ``as_of`` window down
-    to the Parquet reader.
+    Layout: ``<root>/<timeframe>/symbol=<SYM>/year=<YYYY>/part.parquet``. One timeframe
+    per subtree, then a Hive ``symbol=…/year=…`` partitioning that serves both access
+    patterns (a symbol's full history, and a date window across symbols). A scan prunes
+    to the **partition files that overlap the date window** (file-level pruning) and
+    then pushes the exact ``as_of`` window into the Parquet reader (row-group pruning),
+    so a one-year scan of a decade-deep store physically opens ~one year of files.
+
+    Year is the partition granularity: coarse enough that daily/most-intraday data
+    keeps a sane file count, fine enough that a typical lookback window touches one or
+    two partitions. Writing a symbol replaces its whole subtree (all years).
     """
 
     def __init__(self, root: str):
@@ -45,7 +53,12 @@ class ParquetBarStore:
     # Write
     # ------------------------------------------------------------------ #
     def write(self, bars: Dict[str, pd.DataFrame], timeframe: TimeframeLike = "1Day") -> None:
-        """Persist ``{symbol: OHLCV}`` to the store (overwriting each symbol's partition)."""
+        """Persist ``{symbol: OHLCV}`` to the store (replacing each symbol's subtree).
+
+        Each symbol's bars are split into ``year=<YYYY>`` partition files (by the bar's
+        UTC year, the same basis the scan window prunes on). The symbol's existing
+        subtree is removed first so a rewrite never leaves a stale year partition behind.
+        """
         import pyarrow as pa
         import pyarrow.parquet as pq
 
@@ -53,10 +66,15 @@ class ParquetBarStore:
         for symbol, frame in bars.items():
             if frame is None or frame.empty:
                 continue
-            table = pa.Table.from_pandas(self._to_records(symbol, frame), preserve_index=False)
-            part = self.root / tf / f"symbol={symbol}"
-            part.mkdir(parents=True, exist_ok=True)
-            pq.write_table(table, part / "part.parquet")
+            records = self._to_records(symbol, frame)
+            sdir = self._symbol_dir(tf, symbol)
+            if sdir.exists():
+                shutil.rmtree(sdir)  # full replace: no stale year partitions survive
+            for year, group in records.groupby(records["ts"].dt.year):
+                part = sdir / f"year={int(year)}"
+                part.mkdir(parents=True, exist_ok=True)
+                table = pa.Table.from_pandas(group, preserve_index=False)
+                pq.write_table(table, part / "part.parquet")
 
     # ------------------------------------------------------------------ #
     # Scan (the BarSource contract)
@@ -66,26 +84,24 @@ class ParquetBarStore:
     ) -> Dict[str, pd.DataFrame]:
         """Return ``{symbol: OHLCV}`` over ``(as_of - lookback, as_of]`` — pushed down.
 
-        The timestamp window is a Parquet filter, so rows outside it (in particular any
-        bar *after* ``as_of``) are never read into memory.
+        Only the ``year=`` partition files overlapping the window are opened (file-level
+        pruning), and the timestamp window is then a Parquet filter, so rows outside it
+        (in particular any bar *after* ``as_of``) are never read into memory.
         """
         import pyarrow.compute as pc
         import pyarrow.dataset as ds
 
         tf = str(Timeframe.parse(timeframe) if isinstance(timeframe, str) else timeframe)
-        root = self.root / tf
-        if not root.exists():
+        if not (self.root / tf).exists():
             return {}
 
-        end = pd.Timestamp(as_of)
-        end = end.tz_localize("UTC") if end.tzinfo is None else end.tz_convert("UTC")
-        start = end - timedelta(days=lookback_days)
+        start, end = self._window(as_of, lookback_days)
         out: Dict[str, pd.DataFrame] = {}
         for symbol in dict.fromkeys(universe):
-            part = root / f"symbol={symbol}"
-            if not part.exists():
+            files = self._window_files(tf, symbol, start, end)
+            if not files:
                 continue
-            dataset = ds.dataset(part, format="parquet")
+            dataset = ds.dataset(files, format="parquet")
             # Predicate pushdown: only ts in (start, end] is read off disk.
             table = dataset.to_table(filter=(pc.field("ts") > start) & (pc.field("ts") <= end))
             if table.num_rows:
@@ -93,24 +109,65 @@ class ParquetBarStore:
         return out
 
     # ------------------------------------------------------------------ #
-    # Lazy scan (the out-of-core compute seam, spec 015)
+    # Partition geometry (symbol=…/year=… Hive layout)
     # ------------------------------------------------------------------ #
     def _tf_root(self, timeframe: TimeframeLike) -> Path:
         tf = str(Timeframe.parse(timeframe) if isinstance(timeframe, str) else timeframe)
         return self.root / tf
 
-    def partition_paths(self, universe: Sequence[str], timeframe: TimeframeLike = "1Day") -> List[str]:
-        """The Parquet file paths backing ``universe`` (existing partitions only).
+    def _symbol_dir(self, tf: str, symbol: str) -> Path:
+        return self.root / tf / f"symbol={symbol}"
 
-        The glob a DuckDB/Polars set-based query (:func:`src.data.compute.sql_query`)
-        reads over — one file per symbol partition that actually exists.
+    @staticmethod
+    def _window(as_of: datetime, lookback_days: int) -> tuple:
+        """Normalise ``as_of`` to UTC and return the ``(start, end]`` window."""
+        end = pd.Timestamp(as_of)
+        end = end.tz_localize("UTC") if end.tzinfo is None else end.tz_convert("UTC")
+        return end - timedelta(days=lookback_days), end
+
+    def _year_files(self, sdir: Path, lo_year: Optional[int], hi_year: Optional[int]) -> List[str]:
+        """``part.parquet`` paths in ``sdir``'s ``year=`` partitions within ``[lo, hi]``."""
+        if not sdir.exists():
+            return []
+        files = []
+        for ydir in sorted(sdir.glob("year=*")):
+            try:
+                year = int(ydir.name.split("=", 1)[1])
+            except (IndexError, ValueError):
+                continue
+            if (lo_year is None or year >= lo_year) and (hi_year is None or year <= hi_year):
+                part = ydir / "part.parquet"
+                if part.exists():
+                    files.append(str(part))
+        return files
+
+    def _window_files(self, tf: str, symbol: str, start: pd.Timestamp, end: pd.Timestamp) -> List[str]:
+        """The partition files for ``symbol`` overlapping ``[start.year, end.year]``."""
+        return self._year_files(self._symbol_dir(tf, symbol), start.year, end.year)
+
+    def partition_paths(
+        self,
+        universe: Sequence[str],
+        timeframe: TimeframeLike = "1Day",
+        as_of: Optional[datetime] = None,
+        lookback_days: int = 365,
+    ) -> List[str]:
+        """The Parquet partition files backing ``universe`` (existing partitions only).
+
+        The file list a DuckDB/Polars set-based query (:func:`src.data.compute.sql_query`)
+        or :meth:`scan_lazy` reads over. With ``as_of`` given the list is pruned to the
+        ``year=`` partitions overlapping ``(as_of - lookback, as_of]`` (file-level
+        date pruning); without it, every year partition for the symbols is returned.
         """
-        root = self._tf_root(timeframe)
-        paths = []
+        tf = str(Timeframe.parse(timeframe) if isinstance(timeframe, str) else timeframe)
+        if as_of is None:
+            lo_year = hi_year = None
+        else:
+            start, end = self._window(as_of, lookback_days)
+            lo_year, hi_year = start.year, end.year
+        paths: List[str] = []
         for symbol in dict.fromkeys(universe):
-            part = root / f"symbol={symbol}" / "part.parquet"
-            if part.exists():
-                paths.append(str(part))
+            paths.extend(self._year_files(self._symbol_dir(tf, symbol), lo_year, hi_year))
         return paths
 
     def scan_lazy(
@@ -150,16 +207,15 @@ class ParquetBarStore:
             "volume": pl.Float64,
         }
 
-        paths = self.partition_paths(universe, timeframe)
+        # File-level date pruning: only year partitions overlapping the window.
+        paths = self.partition_paths(universe, timeframe, as_of=as_of, lookback_days=lookback_days)
         if not paths:
             empty = pl.DataFrame(schema=schema).lazy()
             if columns is not None:
                 empty = empty.select(list(dict.fromkeys(["ts", "symbol", *columns])))
             return empty
 
-        end = pd.Timestamp(as_of)
-        end = end.tz_localize("UTC") if end.tzinfo is None else end.tz_convert("UTC")
-        start = end - timedelta(days=lookback_days)
+        start, end = self._window(as_of, lookback_days)
         # hive_partitioning=false: `symbol` is a real column in each file; don't also
         # synthesise it from the `symbol=…` directory (that collides).
         lf = pl.scan_parquet(paths, hive_partitioning=False)
