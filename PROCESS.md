@@ -206,7 +206,7 @@ module**, and **no vendor SDK lives above the broker layer**. Product policy
 | Risk | `risk/` (`base`, `sample`) | The covariance matrix Σ (Ledoit–Wolf shrinkage) + tracking error / MCR. Research-clock; never in the order path. |
 | Engine | `engine/backtest.py`, `engine/live.py` | The backtest loop and the **sacred trade-clock** live loop. |
 | Execution | `execution/` (`live_trader`, `sizing`) | Order placement and position sizing — trade-clock. |
-| Analytics | `analytics/` (`metrics`, `performance`, `reporting`, `charts`) | Honest evaluation metrics, reports, and result charts. |
+| Analytics | `analytics/` (`metrics`, `performance`, `reporting`, `charts`, `information`) | Honest evaluation metrics, reports, result charts, and information analysis (IC / breadth / IR reconciliation). |
 | Optimization | `optimization/` (`optimizer`, `param_space`, `walk_forward`, `config_store`) | Research-clock parameter modeling + the walk-forward fitness function. |
 | Portfolio | `portfolio/` (`allocator`, `optimizer`) | OR-Tools scalar-score sizing (operational); mean-variance utility construction `αᵀw − λ·wᵀΣw` from alpha + Σ (research proposal). |
 | Research | `research/` (`agent`, `proposer`, `llm`, `sandbox`) | The autonomous, LLM-driven, **propose-only** research loop. |

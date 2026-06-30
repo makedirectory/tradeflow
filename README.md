@@ -180,8 +180,9 @@ doing its job.
 | `allocate` | Weight a portfolio: scalar-score sizing (OR-Tools), or `--objective utility` for mean-variance construction from alpha + Σ |
 | `alphas` | Rank a universe by continuous alpha — a comparable, annualized residual-return forecast per name; `--combine` blends several signals (read-only) |
 | `risk` | Estimate the universe covariance Σ (Ledoit–Wolf shrinkage) and summarize its risk structure (read-only) |
+| `info` | Information report: measure IC, breadth, and predicted-vs-realized IR — skill vs luck (read-only) |
 | `walkforward` | Out-of-sample validation: optimize in-sample, score out-of-sample across folds, with a sacred holdout and promotion gates |
-| `mcp` | Serve TradeFlow over MCP so an agent (Claude Code / Desktop) can drive scan/backtest/optimize/walk-forward/alphas/risk/portfolio — read-only, no live trading |
+| `mcp` | Serve TradeFlow over MCP so an agent (Claude Code / Desktop) can drive scan/backtest/optimize/walk-forward/alphas/risk/portfolio/info — read-only, no live trading |
 
 Three strategies ship today — pick one with `--strategy`. Each defines a single
 continuous **score** (its conviction); the trade clock's `BUY/SELL/HOLD` and the

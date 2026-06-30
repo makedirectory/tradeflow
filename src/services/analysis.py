@@ -475,6 +475,140 @@ def compute_combined_alphas(
     }
 
 
+def compute_information(
+    data_client: MarketDataClient,
+    strategy: str,
+    symbols: List[str],
+    start: datetime,
+    end: datetime,
+    source: str = "strategy",
+    scanner: str = "volume",
+    benchmark: str = "SPY",
+    neutralize: bool = True,
+    ic_prior: float = DEFAULT_IC,
+    horizon: int = 5,
+    n_points: int = 24,
+    n_trials: int = 1,
+    timeframe: str = "1Day",
+    risk_model: str = "shrinkage",
+) -> Dict[str, Any]:
+    """Measure a strategy's information coefficient, breadth, and information ratio.
+
+    Read-only research-clock diagnostic (spec 009). At sampled rebalances it pairs the
+    alpha forecast known *at* ``t`` with the realised **residual** return over
+    ``(t, t+horizon]`` (strict forward alignment - rewarding skill, not beta), giving
+    the IC time series (Pearson + rank), its t-stat, the effective breadth ``BR_eff``
+    (deflated by the average correlation ρ̄ from Σ), and the **predicted vs realised
+    IR** reconciliation - with the research-integrity guardrails (IR standard-error
+    band, multiple-testing inflation, sanity ceiling) that keep a lucky backtest
+    honest. Factor/specific attribution and capacity are deferred (need the factor risk
+    model and the cost model respectively).
+    """
+    from src.analytics import information as info
+    from src.indicators import indicators
+    from src.risk import RISK_MODELS, build_risk_matrix
+
+    run_id = new_run_id()
+    strat = _strategy(strategy, None)
+    periods_per_year = Timeframe.parse(timeframe).periods_per_year()
+    rebalances_per_year = periods_per_year / horizon
+
+    # One scan over the window; per-rebalance slices reuse it (leakage-safe by <= t).
+    bars = ClientBarSource(data_client).scan([*symbols, benchmark], timeframe, end, _window_days(start, end))
+    bench = bars.get(benchmark)
+    universe_bars = {sym: bars[sym] for sym in symbols if sym in bars}
+    if bench is None or bench.empty or not universe_bars:
+        return {
+            "run_id": run_id,
+            "strategy": strategy,
+            "periods": 0,
+            "note": "Insufficient data: need a benchmark series and scored names.",
+        }
+
+    scorer = {
+        "strategy": lambda: strategy_scorer(strat),
+        "signal": lambda: signal_scorer(strat),
+        "scanner": lambda: scanner_scorer(_scanner(scanner)),
+    }[source]()
+    ctx = AlphaContext(ic=ic_prior, neutralize=neutralize)
+
+    index = bench.index
+    lo, hi = _to_ts(start, index), _to_ts(end, index)
+    window = index[(index >= lo) & (index <= hi)]
+    points = _rebalance_points(len(window), horizon, n_points)
+
+    pearson_ics, rank_ics, portfolio_returns = [], [], []
+    n_names_seen = []
+    for j in points:
+        t, t_fwd = window[j], window[j + horizon]
+        alpha = _alpha_cross_section(universe_bars, bench, scorer, periods_per_year, t, ctx)
+        resid = _forward_residual_return(universe_bars, bench, t, t_fwd, indicators)
+        aligned = pd.concat([alpha, resid], axis=1, keys=["alpha", "resid"]).dropna()
+        if len(aligned) < 5:
+            continue
+        pearson_ics.append(info.pearson_ic(aligned["alpha"], aligned["resid"]))
+        rank_ics.append(info.rank_ic(aligned["alpha"], aligned["resid"]))
+        # Realised return of the paper alpha portfolio: standardized-alpha-weighted
+        # residual return (scale cancels in the IR).
+        z = aligned["alpha"] - aligned["alpha"].mean()
+        if z.std() > 0:
+            portfolio_returns.append(float((z / z.std()) @ aligned["resid"]))
+        n_names_seen.append(len(aligned))
+
+    stats = info.ic_stats(pearson_ics)
+    rank_stats = info.ic_stats(rank_ics)
+    n_names = int(np.median(n_names_seen)) if n_names_seen else 0
+
+    # ρ̄ from the risk model over the window (correlated bets deflate breadth).
+    matrix = build_risk_matrix(RISK_MODELS[risk_model](), universe_bars, periods_per_year)
+    if matrix is not None and len(matrix.symbols) > 1:
+        corr = matrix.correlation().to_numpy()
+        rho_bar = float((corr.sum() - len(corr)) / (len(corr) * (len(corr) - 1)))
+    else:
+        rho_bar = 0.0
+
+    breadth = info.effective_breadth(n_names, rebalances_per_year, rho_bar)
+    pred_ir = info.predicted_ir(stats["mean_ic"], breadth["br_eff"])
+
+    realized_ir = 0.0
+    if len(portfolio_returns) > 1 and np.std(portfolio_returns) > 0:
+        realized_ir = float(
+            np.mean(portfolio_returns) / np.std(portfolio_returns) * np.sqrt(rebalances_per_year)
+        )
+    years = max((end - start).days / 365.25, 1e-9)
+
+    return {
+        "run_id": run_id,
+        "strategy": strategy,
+        "source": source,
+        "window": {"start": start.isoformat(), "end": end.isoformat()},
+        "horizon_bars": horizon,
+        "periods": stats["periods"],
+        "low_sample": stats["periods"] < info.MIN_PERIODS,
+        "mean_ic": stats["mean_ic"],
+        "ic_vol": stats["ic_vol"],
+        "ic_tstat": stats["ic_tstat"],
+        "rank_ic": rank_stats["mean_ic"],
+        "rank_ic_tstat": rank_stats["ic_tstat"],
+        "n_names": n_names,
+        "rho_bar": rho_bar,
+        "breadth_effective": breadth["br_eff"],
+        "breadth_naive": breadth["br_naive"],
+        "predicted_ir": pred_ir,
+        "realized_ir": realized_ir,
+        "ir_standard_error": info.ir_standard_error(realized_ir, years),
+        "multiple_testing_inflation": info.multiple_testing_inflation(n_trials),
+        "n_trials": n_trials,
+        "sanity_ceiling_breached": abs(realized_ir) > 2.0,
+        "recommended_ic": stats["mean_ic"],  # feeds back into 005's scaling — a human applies it
+        "note": "IC measured as alpha-vs-forward-RESIDUAL-return (strict t→t+h, no "
+        "look-ahead). predicted_IR = mean_IC·√BR_eff; BR_eff deflates the name count "
+        "by ρ̄. An IC t-stat < 2, a realized IR within its standard-error band of 0, or "
+        "a realized IR > 2 on public data all mean: not skill yet. Attribution & "
+        "capacity need the factor risk model and cost model.",
+    }
+
+
 def compute_risk(
     data_client: MarketDataClient,
     symbols: List[str],
@@ -668,6 +802,56 @@ def _scanner(scanner_name: str):
     sc = cls({p: spec["default"] for p, spec in cls.PARAM_RANGES.items()})
     sc.initialize()
     return sc
+
+
+def _window_days(start: datetime, end: datetime) -> int:
+    """Calendar days to fetch so the scan covers [start, end] with a warmup buffer."""
+    return max((end - start).days + 90, 120)
+
+
+def _to_ts(when: datetime, index: pd.Index) -> pd.Timestamp:
+    """Localise a possibly-naive timestamp to a (possibly tz-aware) index's timezone."""
+    ts = pd.Timestamp(when)
+    if isinstance(index, pd.DatetimeIndex) and index.tz is not None:
+        ts = ts.tz_localize(index.tz) if ts.tzinfo is None else ts.tz_convert(index.tz)
+    return ts
+
+
+def _rebalance_points(n_bars: int, horizon: int, n_points: int):
+    """Evenly spaced rebalance indices leaving room for the forward horizon."""
+    last = n_bars - horizon - 1
+    warmup = 30
+    if last <= warmup:
+        return []
+    return np.linspace(warmup, last, num=min(n_points, last - warmup), dtype=int)
+
+
+def _alpha_cross_section(universe_bars, bench, scorer, periods_per_year, t, ctx) -> pd.Series:
+    """The refined alpha per name as of ``t`` (bars ≤ t only)."""
+    ub_t = {sym: f.loc[f.index <= t] for sym, f in universe_bars.items()}
+    ub_t = {sym: f for sym, f in ub_t.items() if len(f) >= 2}
+    bench_t = bench.loc[bench.index <= t]
+    panel = FeaturePanel.for_universe(t, list(ub_t))
+    add_risk_features(panel, ub_t, bench_t, periods_per_year)
+    add_score_feature(panel, scorer, ub_t)
+    refine_alpha(panel, ctx)
+    return pd.Series({a.symbol: a.alpha for a in panel_to_alphas(panel, ctx)})
+
+
+def _forward_residual_return(universe_bars, bench, t, t_fwd, indicators) -> pd.Series:
+    """Realised residual return per name over ``(t, t_fwd]``: r − β·r_benchmark."""
+    bench_close = bench["close"]
+    if t not in bench_close.index or t_fwd not in bench_close.index:
+        return pd.Series(dtype=float)
+    bench_ret = bench_close.loc[t_fwd] / bench_close.loc[t] - 1.0
+    out: Dict[str, float] = {}
+    for sym, frame in universe_bars.items():
+        close = frame["close"]
+        if t not in close.index or t_fwd not in close.index:
+            continue
+        beta = indicators.calculate_beta(close.loc[close.index <= t], bench_close.loc[bench_close.index <= t])
+        out[sym] = (close.loc[t_fwd] / close.loc[t] - 1.0) - beta * bench_ret
+    return pd.Series(out)
 
 
 def _jsonable(value: Any) -> Any:

@@ -12,6 +12,7 @@ the MCP server, and the research agent run the same code):
     allocate     weight a portfolio across scanned symbols (OR-Tools)
     alphas       rank a universe by continuous alpha (residual-return forecast)
     risk         estimate the universe covariance Σ and summarize its risk structure
+    info         information report: IC, breadth, predicted-vs-realized IR
     walkforward  out-of-sample validation with promotion gates
     mcp          serve TradeFlow to an agent over MCP (read-only)
     research     autonomous, offline research loop -> shortlist of configs
@@ -520,6 +521,54 @@ def cmd_risk(args) -> None:
         print(f"{row['symbol']:10}{row['volatility']:>8.1%}{row['risk_contribution']:>14.2%}")
 
 
+def cmd_info(args) -> None:
+    """Print the information report: IC, breadth, and the predicted-vs-realized IR.
+
+    Read-only research diagnostic: measures the strategy's information coefficient and
+    effective breadth over [start, end] and reconciles predicted IR with realized,
+    surfacing the research-integrity guardrails. Produces no orders.
+    """
+    from src.services.analysis import compute_information
+
+    _, data_client = build_data_and_broker()
+    r = compute_information(
+        data_client,
+        args.strategy,
+        args.symbols,
+        args.start,
+        args.end,
+        source=args.source,
+        scanner=args.scanner,
+        benchmark=args.benchmark,
+        horizon=args.horizon,
+        n_trials=args.n_trials,
+    )
+    if not r.get("periods"):
+        print(r.get("note", "No information report produced."))
+        return
+
+    print(f"\nInformation report: '{args.strategy}' {args.start:%Y-%m-%d}..{args.end:%Y-%m-%d}")
+    print(f"  measured over {r['periods']} rebalances (horizon {r['horizon_bars']} bars)")
+    flag = "  ⚠ low sample" if r["low_sample"] else ""
+    print(f"  IC mean {r['mean_ic']:+.4f}  t-stat {r['ic_tstat']:+.2f}  rank-IC {r['rank_ic']:+.4f}{flag}")
+    print(
+        f"  breadth: {r['breadth_effective']:.0f} effective vs {r['breadth_naive']:.0f} naive "
+        f"(ρ̄ {r['rho_bar']:.2f}, {r['n_names']} names)"
+    )
+    print(
+        f"  IR: predicted {r['predicted_ir']:+.2f}  realized {r['realized_ir']:+.2f} "
+        f"± {r['ir_standard_error']:.2f} (SE)"
+    )
+    print(
+        f"  guardrails: P(any |t|>2 in {r['n_trials']} trials) = {r['multiple_testing_inflation']:.2f}"
+        + ("  | ⚠ realized IR > 2 — suspect a bug/leak" if r["sanity_ceiling_breached"] else "")
+    )
+    verdict = "distinguishable from luck" if abs(r["ic_tstat"]) >= 2 else "NOT distinguishable from luck"
+    print(f"\n  Verdict: skill is {verdict} (IC t-stat {r['ic_tstat']:+.2f}).")
+    if abs(r["ic_tstat"]) >= 2:
+        print(f"  Recommended IC for alpha scaling (a human applies it): {r['recommended_ic']:.4f}")
+
+
 def cmd_mcp(args) -> None:
     """Serve TradeFlow over MCP (stdio). Opt-in; requires the ``mcp`` extra.
 
@@ -762,7 +811,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-names", dest="max_names", type=int, default=None, help="Cardinality cap (utility)"
     )
     alloc.add_argument(
-        "--min-weight", dest="min_weight", type=float, default=0.0, help="Dust floor: min weight if held (utility)"
+        "--min-weight",
+        dest="min_weight",
+        type=float,
+        default=0.0,
+        help="Dust floor: min weight if held (utility)",
     )
     alloc.add_argument("--benchmark", default="SPY", help="Benchmark for residual vol / beta (utility)")
     alloc.set_defaults(func=cmd_allocate)
@@ -865,6 +918,29 @@ def build_parser() -> argparse.ArgumentParser:
     )
     alphas.add_argument("--lookback-days", dest="lookback_days", type=int, default=180)
     alphas.set_defaults(func=cmd_alphas)
+
+    info = subparsers.add_parser(
+        "info",
+        help="Information report: measure IC, breadth, and predicted-vs-realized IR — read-only",
+    )
+    info.add_argument("--strategy", choices=STRATEGIES, default="volume_spike")
+    info.add_argument(
+        "--source", choices=["strategy", "signal", "scanner"], default="strategy", help="Alpha score origin"
+    )
+    info.add_argument("--scanner", default="volume", help="Scanner used when --source scanner")
+    info.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
+    info.add_argument("--start", type=_date, default=datetime.now() - timedelta(days=365))
+    info.add_argument("--end", type=_date, default=datetime.now())
+    info.add_argument("--benchmark", default="SPY", help="Benchmark for residual returns")
+    info.add_argument("--horizon", type=int, default=5, help="Forward-return horizon in bars")
+    info.add_argument(
+        "--n-trials",
+        dest="n_trials",
+        type=int,
+        default=1,
+        help="Configs tried (for multiple-testing inflation)",
+    )
+    info.set_defaults(func=cmd_info)
 
     risk = subparsers.add_parser(
         "risk",

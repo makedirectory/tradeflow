@@ -10,7 +10,7 @@ CAPITAL ?= 100000
 PY       = uv run python main.py
 
 .PHONY: help demo install install-optimize backtest backtest-no-scan scan live \
-        allocate allocate-utility alphas risk optimize optimize-bayesian cancel-orders close-positions \
+        allocate allocate-utility alphas risk info optimize optimize-bayesian cancel-orders close-positions \
         test docs docs-build docker-build docker-run clean
 
 help:  ## Show available commands
@@ -58,6 +58,9 @@ risk:  ## Estimate the universe covariance Σ and summarize its risk structure �
 
 allocate-utility:  ## Mean-variance portfolio construction (alpha + Σ) — read-only proposal
 	$(PY) allocate --objective utility --strategy volume_spike --symbols $(SYMBOLS) --as-of $(END) --target-te 0.04
+
+info:  ## Information report: IC, breadth, predicted-vs-realized IR — read-only
+	$(PY) info --strategy volume_spike --symbols $(SYMBOLS) --start $(START) --end $(END)
 
 live:  ## Paper-trade: volume scanner -> volume_spike strategy
 	$(PY) live --strategy volume_spike --scanner volume --symbols $(SYMBOLS)

@@ -35,6 +35,7 @@ EXPOSED_TOOLS = (
     "combine_alphas",
     "compute_risk",
     "construct_portfolio",
+    "compute_information",
     "get_metrics_glossary",
     "summarize_bars",
     "save_config",
@@ -410,6 +411,40 @@ def build_server(data_client=None):
             capital=capital,
         )
         return _logged("construct_portfolio", inputs, result)
+
+    @server.tool()
+    def compute_information(
+        strategy: str,
+        symbols: List[str],
+        start: str,
+        end: str,
+        source: str = "strategy",
+        benchmark: str = "SPY",
+        horizon: int = 5,
+        n_trials: int = 1,
+    ) -> Dict[str, Any]:
+        """Measure a strategy's IC, breadth, and predicted-vs-realized IR (spec 009).
+
+        Pairs the alpha known at each rebalance with the subsequent realised residual
+        return (strict forward alignment) to measure the information coefficient
+        (Pearson + rank) and its t-stat, the effective breadth (deflated by ρ̄), and the
+        predicted vs realised information ratio — with guardrails (IR standard-error
+        band, multiple-testing inflation for `n_trials`, sanity ceiling). An IC t-stat
+        below 2 means the skill is not distinguishable from luck. Read-only.
+        """
+        inputs = {"strategy": strategy, "symbols": symbols, "start": start, "end": end, "n_trials": n_trials}
+        result = analysis.compute_information(
+            dc,
+            strategy,
+            symbols,
+            _parse_date(start),
+            _parse_date(end),
+            source=source,
+            benchmark=benchmark,
+            horizon=horizon,
+            n_trials=n_trials,
+        )
+        return _logged("compute_information", inputs, result)
 
     @server.tool()
     def get_metrics_glossary() -> Dict[str, Any]:
