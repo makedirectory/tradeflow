@@ -48,3 +48,32 @@ The CLI scores by trailing return, but the allocator accepts any score. Swap in
 momentum, inverse volatility, a model's expected return, or signal strength — see
 **[Portfolio (engineering)](../engineering/portfolio)** for the model and how to
 change the scoring factor.
+
+## Mean-variance construction (`--objective utility`)
+
+The default `allocate` is a scalar-score sizer. `--objective utility` instead builds
+the **risk-adjusted** portfolio from a strategy's [alpha](alphas) and the
+[covariance Σ](risk) — maximising `αᵀw − λ·wᵀΣw` at a target tracking error. It is a
+**read-only research proposal** (it places no orders):
+
+```bash
+python main.py allocate --objective utility \
+  --strategy volume_spike --symbols NVDA,AAPL,META,AMD,TSLA,GOOG,MSFT,AMZN \
+  --as-of 2025-06-01 --target-te 0.04 --max-names 20
+```
+
+```
+Portfolio for 'volume_spike' as of 2025-06-01 (target TE 4%)
+  IR* 0.81  predicted TE 3.9%  predicted IR 0.74  transfer coef 0.91  turnover 100.0%
+
+SYMBOL      WEIGHT       DOLLARS    SHARES
+NVDA        25.0%     25,000.00       190
+AMD         18.0%     18,000.00       142
+...
+```
+
+Read it as: **IR\*** is the best information ratio achievable from these alphas and
+this Σ; the **transfer coefficient** is how much of it survives your constraints
+(tighten `--max-names` or `--max-weight` and watch it fall); **predicted IR** ≈
+`TC · IR*`. See [Portfolio construction (engineering)](../engineering/portfolio-construction)
+for the math.

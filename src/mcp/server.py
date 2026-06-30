@@ -34,6 +34,7 @@ EXPOSED_TOOLS = (
     "compute_alphas",
     "combine_alphas",
     "compute_risk",
+    "construct_portfolio",
     "get_metrics_glossary",
     "summarize_bars",
     "save_config",
@@ -373,6 +374,42 @@ def build_server(data_client=None):
             dc, symbols, _parse_date(as_of), model=model, timeframe=timeframe, lookback_days=lookback_days
         )
         return _logged("compute_risk", inputs, result)
+
+    @server.tool()
+    def construct_portfolio(
+        strategy: str,
+        symbols: List[str],
+        as_of: str,
+        source: str = "strategy",
+        target_te: float = 0.04,
+        max_weight: float = 0.25,
+        max_names: Optional[int] = None,
+        benchmark: str = "SPY",
+        capital: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Construct the mean-variance optimal portfolio from alphas (005) and Σ (006).
+
+        Maximises αᵀw − λ·wᵀΣw over long-only, box-bounded, budgeted (optionally
+        cardinality-capped) weights, calibrating λ to `target_te`. Returns the proposed
+        weights plus the Fundamental-Law report: IR* (best achievable IR), predicted
+        tracking error and IR, the transfer coefficient (how much of IR* survives the
+        constraints), and turnover. A PROPOSAL — read-only, places no orders; a human
+        promotes the config.
+        """
+        inputs = {"strategy": strategy, "symbols": symbols, "as_of": as_of, "target_te": target_te}
+        result = analysis.construct_portfolio(
+            dc,
+            strategy,
+            symbols,
+            _parse_date(as_of),
+            source=source,
+            target_te=target_te,
+            max_weight=max_weight,
+            max_names=max_names,
+            benchmark=benchmark,
+            capital=capital,
+        )
+        return _logged("construct_portfolio", inputs, result)
 
     @server.tool()
     def get_metrics_glossary() -> Dict[str, Any]:

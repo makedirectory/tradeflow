@@ -548,6 +548,112 @@ def compute_risk(
     }
 
 
+def construct_portfolio(
+    data_client: MarketDataClient,
+    strategy: str,
+    symbols: List[str],
+    as_of: datetime,
+    source: str = "strategy",
+    scanner: str = "volume",
+    target_te: float = 0.04,
+    max_weight: float = 0.25,
+    max_names: Optional[int] = None,
+    benchmark: str = "SPY",
+    neutralize: bool = True,
+    risk_model: str = "shrinkage",
+    lookback_days: int = 365,
+    timeframe: str = "1Day",
+    capital: Optional[float] = None,
+    current_weights: Optional[Dict[str, float]] = None,
+) -> Dict[str, Any]:
+    """Construct the utility-maximising portfolio from alphas (005) and Σ (006).
+
+    Read-only research-clock flow: scans the universe as of ``as_of``, builds
+    benchmark-neutral alphas and an annualised covariance Σ, then maximises
+    ``αᵀw − λ·wᵀΣw`` over long-only, box-bounded, budgeted (and optionally
+    cardinality-capped) weights, calibrating ``λ`` to ``target_te``. Returns the
+    proposed weights plus the Fundamental-Law report (IR*, predicted TE/IR, transfer
+    coefficient, turnover). This is a **proposal** - it places no orders.
+    """
+    from src.portfolio.optimizer import MeanVarianceOptimizer
+    from src.risk import RISK_MODELS, build_risk_matrix
+
+    run_id = new_run_id()
+    strat = _strategy(strategy, None)
+    tf = timeframe
+    periods_per_year = Timeframe.parse(tf).periods_per_year()
+
+    bars = ClientBarSource(data_client).scan([*symbols, benchmark], tf, as_of, lookback_days)
+    bench_frame = bars.get(benchmark)
+    universe_bars = {sym: bars[sym] for sym in symbols if sym in bars}
+
+    scorer = {
+        "strategy": lambda: strategy_scorer(strat),
+        "signal": lambda: signal_scorer(strat),
+        "scanner": lambda: scanner_scorer(_scanner(scanner)),
+    }.get(source)
+    if scorer is None:
+        raise ValueError(f"source must be 'strategy', 'signal', or 'scanner', got {source!r}")
+
+    # Alphas (the value) and Σ (the risk denominator), both as of the same moment.
+    panel = FeaturePanel.for_universe(as_of, list(universe_bars))
+    add_risk_features(panel, universe_bars, bench_frame, periods_per_year)
+    add_score_feature(panel, scorer(), universe_bars)
+    alpha_ctx = AlphaContext(ic=DEFAULT_IC, neutralize=neutralize)
+    refine_alpha(panel, alpha_ctx)
+    alphas = panel_to_alphas(panel, alpha_ctx)
+    matrix = build_risk_matrix(RISK_MODELS[risk_model](), universe_bars, periods_per_year)
+
+    if not alphas or matrix is None:
+        return {
+            "run_id": run_id,
+            "strategy": strategy,
+            "as_of": as_of.isoformat(),
+            "feasible": False,
+            "note": "Insufficient data for alphas and/or a covariance matrix.",
+        }
+
+    optimizer = MeanVarianceOptimizer(max_weight=max_weight, max_names=max_names)
+    result = optimizer.optimize(alphas, matrix, target_te=target_te, current_weights=current_weights)
+
+    holdings = []
+    if result.feasible and capital:
+        from src.utils.numeric import round_quantity
+
+        last_close = {sym: float(frame["close"].iloc[-1]) for sym, frame in universe_bars.items()}
+        for sym, weight in sorted(result.weights.items(), key=lambda kv: kv[1], reverse=True):
+            price = last_close.get(sym, 0.0)
+            dollars = weight * capital
+            holdings.append(
+                {
+                    "symbol": sym,
+                    "weight": weight,
+                    "dollars": dollars,
+                    "shares": round_quantity(dollars / price) if price > 0 else 0.0,
+                }
+            )
+
+    return {
+        "run_id": run_id,
+        "strategy": strategy,
+        "source": source,
+        "as_of": as_of.isoformat(),
+        "timeframe": tf,
+        "benchmark": benchmark,
+        "target_te": target_te,
+        "feasible": result.feasible,
+        "binding_constraint": result.binding_constraint,
+        "universe_size": len(alphas),
+        "risk_model": risk_model,
+        "shrinkage": matrix.shrinkage,
+        "weights": _jsonable(dict(sorted(result.weights.items(), key=lambda kv: kv[1], reverse=True))),
+        "holdings": _jsonable(holdings),
+        "diagnostics": _jsonable(result.diagnostics),
+        "note": "PROPOSAL, not an order. Maximises αᵀw − λ·wᵀΣw at the target tracking "
+        "error; the transfer coefficient shows how much of IR* survives the constraints.",
+    }
+
+
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #

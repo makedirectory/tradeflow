@@ -208,7 +208,7 @@ module**, and **no vendor SDK lives above the broker layer**. Product policy
 | Execution | `execution/` (`live_trader`, `sizing`) | Order placement and position sizing — trade-clock. |
 | Analytics | `analytics/` (`metrics`, `performance`, `reporting`, `charts`) | Honest evaluation metrics, reports, and result charts. |
 | Optimization | `optimization/` (`optimizer`, `param_space`, `walk_forward`, `config_store`) | Research-clock parameter modeling + the walk-forward fitness function. |
-| Portfolio | `portfolio/allocator.py` | OR-Tools constraint-solver weighting (opt-in). |
+| Portfolio | `portfolio/` (`allocator`, `optimizer`) | OR-Tools scalar-score sizing (operational); mean-variance utility construction `αᵀw − λ·wᵀΣw` from alpha + Σ (research proposal). |
 | Research | `research/` (`agent`, `proposer`, `llm`, `sandbox`) | The autonomous, LLM-driven, **propose-only** research loop. |
 | MCP | `mcp/server.py` | Read-only agent surface — builds a data client only; cannot trade. |
 | Services | `services/` | The domain-service layer that the CLI and surfaces call into (see inventory). |

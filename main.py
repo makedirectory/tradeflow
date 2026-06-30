@@ -117,6 +117,10 @@ def cmd_scan(args) -> None:
 
 
 def cmd_allocate(args) -> None:
+    if getattr(args, "objective", "weights") == "utility":
+        _allocate_utility(args)
+        return
+
     from src.scanners.symbol_scanner import SymbolScanner
     from src.services.sizing import allocate_portfolio
 
@@ -137,6 +141,44 @@ def cmd_allocate(args) -> None:
     print(f"{'SYMBOL':10}{'WEIGHT':>8}{'DOLLARS':>14}{'SHARES':>10}")
     for a in allocations:
         print(f"{a.symbol:10}{a.weight:>7.1%}{a.dollars:>14,.2f}{a.shares:>10.0f}")
+
+
+def _allocate_utility(args) -> None:
+    """Mean-variance portfolio construction (alpha + Σ) — a read-only proposal."""
+    from src.services.analysis import construct_portfolio
+
+    _, data_client = build_data_and_broker()
+    result = construct_portfolio(
+        data_client,
+        args.strategy,
+        args.symbols,
+        as_of=args.as_of,
+        source=args.source,
+        scanner=args.scanner,
+        target_te=args.target_te,
+        max_weight=args.max_weight,
+        max_names=args.max_names,
+        benchmark=args.benchmark,
+        capital=args.capital,
+    )
+    if not result["feasible"]:
+        print(f"Infeasible: {result.get('binding_constraint') or result.get('note')}")
+        return
+
+    d = result["diagnostics"]
+    print(f"\nPortfolio for '{args.strategy}' as of {args.as_of:%Y-%m-%d} (target TE {args.target_te:.0%})")
+    print(
+        f"  IR* {d['ir_star']:.2f}  predicted TE {d['predicted_tracking_error']:.1%}  "
+        f"predicted IR {d['predicted_ir']:.2f}  transfer coef {d['transfer_coefficient']:.2f}  "
+        f"turnover {d['turnover']:.1%}"
+    )
+    print(f"\n{'SYMBOL':10}{'WEIGHT':>8}" + (f"{'DOLLARS':>14}{'SHARES':>10}" if result["holdings"] else ""))
+    if result["holdings"]:
+        for h in result["holdings"]:
+            print(f"{h['symbol']:10}{h['weight']:>7.1%}{h['dollars']:>14,.2f}{h['shares']:>10.0f}")
+    else:
+        for sym, w in result["weights"].items():
+            print(f"{sym:10}{w:>7.1%}")
 
 
 def cmd_optimize(args) -> None:
@@ -687,12 +729,38 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
     scan.set_defaults(func=cmd_scan)
 
-    alloc = subparsers.add_parser("allocate", help="Weight a portfolio over scanned symbols (OR-Tools)")
+    alloc = subparsers.add_parser("allocate", help="Weight a portfolio over scanned symbols")
     alloc.add_argument("--scanner", default="volume")
     alloc.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
     alloc.add_argument("--capital", type=float, default=100_000.0)
     alloc.add_argument("--max-positions", dest="max_positions", type=int, default=5)
     alloc.add_argument("--max-weight", dest="max_weight", type=float, default=0.25)
+    alloc.add_argument(
+        "--objective",
+        choices=["weights", "utility"],
+        default="weights",
+        help="'weights' = trailing-return scalar sizing (OR-Tools); "
+        "'utility' = mean-variance construction from alpha + Σ (a research proposal)",
+    )
+    alloc.add_argument(
+        "--strategy", choices=STRATEGIES, default="volume_spike", help="Alpha source (utility)"
+    )
+    alloc.add_argument(
+        "--source",
+        choices=["strategy", "signal", "scanner"],
+        default="strategy",
+        help="Score origin (utility)",
+    )
+    alloc.add_argument(
+        "--as-of", dest="as_of", type=_date, default=datetime.now(), help="Rebalance date (utility)"
+    )
+    alloc.add_argument(
+        "--target-te", dest="target_te", type=float, default=0.04, help="Target tracking error"
+    )
+    alloc.add_argument(
+        "--max-names", dest="max_names", type=int, default=None, help="Cardinality cap (utility)"
+    )
+    alloc.add_argument("--benchmark", default="SPY", help="Benchmark for residual vol / beta (utility)")
     alloc.set_defaults(func=cmd_allocate)
 
     opt = subparsers.add_parser(

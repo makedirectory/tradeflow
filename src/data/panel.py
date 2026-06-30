@@ -59,12 +59,3 @@ class FeaturePanel:
     @property
     def columns(self) -> List[str]:
         return list(self.features.columns)
-
-    def records(self) -> List[Dict[str, Any]]:
-        """Rows as ``{"symbol": ..., <feature>: ...}`` dicts (NaNs preserved)."""
-        out: List[Dict[str, Any]] = []
-        for symbol, row in self.features.iterrows():
-            record: Dict[str, Any] = {"symbol": symbol}
-            record.update({col: row[col] for col in self.features.columns})
-            out.append(record)
-        return out
