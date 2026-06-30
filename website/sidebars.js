@@ -48,6 +48,7 @@ const sidebars = {
         'engineering/alphas',
         'engineering/multi-signal',
         'engineering/risk-model',
+        'engineering/transaction-costs',
         'engineering/information-analysis',
         'engineering/evaluation-metrics',
         'engineering/walk-forward',

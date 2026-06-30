@@ -79,17 +79,33 @@ def run_backtest(
     config: Optional[Dict[str, Any]] = None,
     beta_sizing: bool = False,
     benchmark: str = "SPY",
+    gross: bool = False,
+    commission_bps: float = 1.0,
+    impact_eta: float = 0.3,
+    participation_cap: float = 0.10,
 ) -> Dict[str, Any]:
     """Backtest a strategy; return the full metrics dict + a path to the trades CSV.
 
-    Trades are NOT inlined (could be thousands of rows); read the CSV if needed.
+    Metrics are **net of transaction cost** by default (commission + half-spread +
+    square-root impact); pass ``gross=True`` to disable cost for attribution. Trades
+    are NOT inlined (could be thousands of rows); read the CSV if needed.
     """
+    from src.costs import ParametricCostModel
     from src.services.sizing import build_beta_sizer
 
     run_id = new_run_id()
     strat = _strategy(strategy, config)
     sizer = build_beta_sizer(data_client, strat, symbols, benchmark, as_of=start) if beta_sizing else None
-    result = BacktestEngine(strat, data_client, sizer=sizer).run(symbols, start, end, capital)
+    cost_model = (
+        None
+        if gross
+        else ParametricCostModel(
+            commission_bps=commission_bps, impact_eta=impact_eta, participation_cap=participation_cap
+        )
+    )
+    result = BacktestEngine(strat, data_client, sizer=sizer, cost_model=cost_model).run(
+        symbols, start, end, capital
+    )
 
     trades_csv = None
     if not result.trades.empty:
@@ -104,6 +120,10 @@ def run_backtest(
         "window": {"start": start.isoformat(), "end": end.isoformat()},
         "initial_capital": capital,
         "final_capital": result.final_capital,
+        "gross": gross,
+        "total_cost": result.total_cost,
+        "gross_final_capital": result.gross_final_capital,
+        "cost_drag_pct": (result.total_cost / capital * 100.0) if capital else 0.0,
         "metrics": _jsonable(result.metrics),
         "total_trades": int(len(result.trades)),
         "trades_csv": trades_csv,
@@ -700,6 +720,7 @@ def construct_portfolio(
     timeframe: str = "1Day",
     capital: Optional[float] = None,
     current_weights: Optional[Dict[str, float]] = None,
+    holding_period_years: float = 1.0 / 12.0,
 ) -> Dict[str, Any]:
     """Construct the utility-maximising portfolio from alphas (005) and Σ (006).
 
@@ -750,6 +771,18 @@ def construct_portfolio(
 
     optimizer = MeanVarianceOptimizer(max_weight=max_weight, min_weight=min_weight, max_names=max_names)
     result = optimizer.optimize(alphas, matrix, target_te=target_te, current_weights=current_weights)
+
+    # Ex-post cost drag: the proposed turnover priced through the linear cost rate,
+    # amortized over the holding period (a haircut on the expected active return).
+    if result.feasible:
+        from src.costs import ParametricCostModel
+
+        rate = ParametricCostModel().turnover_cost_rate()
+        cost_drag = result.diagnostics["turnover"] * rate / max(holding_period_years, 1e-9)
+        result.diagnostics["cost_drag"] = cost_drag
+        result.diagnostics["expected_active_return_net"] = (
+            result.diagnostics["expected_active_return"] - cost_drag
+        )
 
     holdings = []
     if result.feasible and capital:

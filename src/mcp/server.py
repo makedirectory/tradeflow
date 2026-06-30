@@ -133,11 +133,14 @@ def build_server(data_client=None):
         config: Optional[Dict[str, Any]] = None,
         beta_sizing: bool = False,
         benchmark: str = "SPY",
+        gross: bool = False,
     ) -> Dict[str, Any]:
         """Backtest `strategy` on `symbols` over [start, end] (YYYY-MM-DD).
 
-        Returns the full  metrics dict, trade count, and a path to the
-        trades CSV (trades are not inlined). `config` overrides default params.
+        Returns the full metrics dict (NET of transaction cost by default — commission
+        + half-spread + square-root impact; pass gross=True to disable), the trade
+        count, total cost, and a path to the trades CSV (trades are not inlined).
+        `config` overrides default params.
         """
         inputs = {
             "strategy": strategy,
@@ -147,6 +150,7 @@ def build_server(data_client=None):
             "capital": capital,
             "config": config,
             "beta_sizing": beta_sizing,
+            "gross": gross,
         }
         result = analysis.run_backtest(
             dc,
@@ -158,6 +162,7 @@ def build_server(data_client=None):
             config,
             beta_sizing,
             benchmark,
+            gross=gross,
         )
         return _logged("run_backtest", inputs, result)
 

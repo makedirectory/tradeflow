@@ -78,6 +78,7 @@ def resolve_universe(data_client, scanner_name: Optional[str], candidates: List[
 # ---------------------------------------------------------------------------- #
 def cmd_backtest(args) -> None:
     from src.analytics.reporting import log_backtest_report
+    from src.costs import ParametricCostModel
     from src.engine.backtest import BacktestEngine
     from src.services.sizing import build_beta_sizer
 
@@ -89,10 +90,22 @@ def cmd_backtest(args) -> None:
     if args.beta_sizing:
         sizer = build_beta_sizer(data_client, strategy, universe, args.benchmark, as_of=args.start)
 
-    result = BacktestEngine(strategy, data_client, sizer=sizer).run(
+    # Metrics are net of transaction cost by default; --gross disables the charge.
+    cost_model = (
+        None
+        if args.gross
+        else ParametricCostModel(commission_bps=args.commission_bps, impact_eta=args.impact_eta)
+    )
+    result = BacktestEngine(strategy, data_client, sizer=sizer, cost_model=cost_model).run(
         universe, args.start, args.end, args.capital
     )
     log_backtest_report(result.metrics, result.initial_capital, result.final_capital)
+    if not args.gross and result.total_cost:
+        print(
+            f"Transaction cost: ${result.total_cost:,.2f} "
+            f"({result.total_cost / result.initial_capital * 100:.2f}% of capital); "
+            f"gross final ${result.gross_final_capital:,.2f}"
+        )
 
     if getattr(args, "chart", None):
         from src.analytics.charts import render_backtest_chart
@@ -748,6 +761,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Scale position sizing inversely by each symbol's beta",
     )
     bt.add_argument("--benchmark", default="SPY", help="Benchmark symbol for beta")
+    bt.add_argument(
+        "--gross",
+        action="store_true",
+        help="Report GROSS metrics (disable transaction cost; net is the default)",
+    )
+    bt.add_argument("--commission-bps", dest="commission_bps", type=float, default=1.0)
+    bt.add_argument(
+        "--impact-eta", dest="impact_eta", type=float, default=0.3, help="Market-impact coefficient"
+    )
     bt.add_argument(
         "--chart",
         metavar="PATH",
