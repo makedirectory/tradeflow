@@ -26,7 +26,10 @@ openai = ["openai>=1.40"]
 # (Ollama needs no dependency - the research agent talks to its local HTTP API.)
 # Render the demo artifact (equity curve + walk-forward verdict) to an image.
 viz = ["matplotlib>=3.8"]
-dev = ["pytest>=8.0", "ruff>=0.6", "scikit-learn>=1.4", "ortools>=9.8", "matplotlib>=3.8"]
+# Out-of-core columnar storage: an Arrow/Parquet bar store behind the scan() seam,
+# so the data tier scales without touching the layers above. Opt-in; pure wheels.
+store = ["pyarrow>=14"]
+dev = ["pytest>=8.0", "ruff>=0.6", "scikit-learn>=1.4", "ortools>=9.8", "matplotlib>=3.8", "pyarrow>=14"]
 
 [tool.uv]
 # This is an application, not a library: install dependencies only, don't build

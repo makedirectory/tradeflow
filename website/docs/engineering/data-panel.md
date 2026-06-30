@@ -18,9 +18,26 @@ universe up to `as_of`. It is the **single home of the leakage guard**: the
 future bar through. `ClientBarSource` backs it with the existing `MarketDataClient`
 today.
 
-The signature is deliberately the contract an out-of-core Arrow/Polars/DuckDB source
-would implement: growing the storage tier is a new adapter behind `scan()`, not a
-rewrite of the layers above.
+The signature is deliberately the contract an out-of-core columnar source implements:
+growing the storage tier is a new adapter behind `scan()`, not a rewrite of the layers
+above.
+
+### Out-of-core storage (the `store` extra)
+
+`ParquetBarStore` is the first storage tier that scales past RAM. Bars live in
+**symbol-partitioned Parquet**, and `scan()` reads them through **Arrow with predicate
+pushdown** — the `as_of` window is a Parquet filter, so a point-in-time scan
+*physically never reads rows after `as_of`*. It implements the same `BarSource`
+contract as the in-memory `ClientBarSource`, so it's a **drop-in**: the alpha, risk,
+and portfolio layers never learn where the data lives, and pandas appears only at the
+edge (the returned per-symbol frames). It's opt-in (`uv sync --extra store`, pure
+`pyarrow` wheels — the no-compiler promise holds).
+
+This is the concrete meaning of *"design for scale, start small"*: the seam exists from
+the start, so reaching Parquet (and later partitioned/columnar tiers, or migrating the
+compute layer to lazy Polars/DuckDB) is an adapter swap, not a rewrite. Those larger
+phases — lazy panel-wide compute and a streaming chunked backtest — are deferred until
+the data volume actually forces them.
 
 ## The panel
 
