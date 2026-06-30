@@ -190,6 +190,11 @@ def _allocate_utility(args) -> None:
         f"predicted IR {d['predicted_ir']:.2f}  transfer coef {d['transfer_coefficient']:.2f}  "
         f"turnover {d['turnover']:.1%}"
     )
+    if "capacity_capital" in d:
+        print(
+            f"  cost drag {d['cost_drag']:.2%}/yr  capacity ≈ ${d['capacity_capital']:,.0f} "
+            f"(where √-impact erases the alpha)"
+        )
     print(f"\n{'SYMBOL':10}{'WEIGHT':>8}" + (f"{'DOLLARS':>14}{'SHARES':>10}" if result["holdings"] else ""))
     if result["holdings"]:
         for h in result["holdings"]:
@@ -584,6 +589,10 @@ def cmd_info(args) -> None:
     print(
         f"  guardrails: P(any |t|>2 in {r['n_trials']} trials) = {r['multiple_testing_inflation']:.2f}"
         + ("  | ⚠ realized IR > 2 — suspect a bug/leak" if r["sanity_ceiling_breached"] else "")
+    )
+    print(
+        f"  attribution: factor {r['factor_return']:+.4f} / specific {r['specific_return']:+.4f} "
+        f"per rebalance (factor tilts vs name selection)"
     )
     verdict = "distinguishable from luck" if abs(r["ic_tstat"]) >= 2 else "NOT distinguishable from luck"
     print(f"\n  Verdict: skill is {verdict} (IC t-stat {r['ic_tstat']:+.2f}).")

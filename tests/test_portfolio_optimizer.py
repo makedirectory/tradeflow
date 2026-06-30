@@ -111,6 +111,22 @@ def test_min_weight_must_not_exceed_max_weight():
         MeanVarianceOptimizer(max_weight=0.2, min_weight=0.3)
 
 
+# --- capacity (009) ----------------------------------------------------------
+def test_capacity_is_liquidity_sensitive():
+    from src.services.analysis import _capacity
+    from tests.fakes import make_ohlcv
+
+    syms = [f"S{i}" for i in range(6)]
+    weights = {s: 1.0 / len(syms) for s in syms}
+    liquid = {s: make_ohlcv(n=200, seed=i, freq="1D") for i, s in enumerate(syms)}
+    illiquid = {s: f.assign(volume=f["volume"] * 0.01) for s, f in liquid.items()}
+
+    cap_liquid = _capacity(weights, liquid, gross_alpha=0.05, holding_period_years=1 / 12)
+    cap_illiquid = _capacity(weights, illiquid, gross_alpha=0.05, holding_period_years=1 / 12)
+    assert cap_liquid > cap_illiquid  # deeper liquidity → more capacity before cost bites
+    assert _capacity(weights, liquid, gross_alpha=0.0, holding_period_years=1 / 12) == 0.0  # no edge
+
+
 # --- integration / leakage ---------------------------------------------------
 def test_construct_portfolio_independent_of_post_as_of_bars():
     symbols = [f"S{i}" for i in range(8)]

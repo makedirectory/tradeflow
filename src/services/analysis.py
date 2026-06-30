@@ -563,6 +563,7 @@ def compute_information(
     points = _rebalance_points(len(window), horizon, n_points)
 
     pearson_ics, rank_ics, portfolio_returns = [], [], []
+    factor_contribs, specific_contribs = [], []
     n_names_seen = []
     for j in points:
         t, t_fwd = window[j], window[j + horizon]
@@ -577,7 +578,14 @@ def compute_information(
         # residual return (scale cancels in the IR).
         z = aligned["alpha"] - aligned["alpha"].mean()
         if z.std() > 0:
-            portfolio_returns.append(float((z / z.std()) @ aligned["resid"]))
+            w = z / z.std()
+            portfolio_returns.append(float(w @ aligned["resid"]))
+            # Attribution: split that return into factor vs specific by projecting the
+            # realised cross-section onto the factor exposures (the split closes exactly).
+            split = _factor_attribution(w, universe_bars, bench, t, t_fwd, periods_per_year)
+            if split is not None:
+                factor_contribs.append(split[0])
+                specific_contribs.append(split[1])
         n_names_seen.append(len(aligned))
 
     stats = info.ic_stats(pearson_ics)
@@ -626,11 +634,16 @@ def compute_information(
         "n_trials": n_trials,
         "sanity_ceiling_breached": abs(realized_ir) > 2.0,
         "recommended_ic": stats["mean_ic"],  # feeds back into 005's scaling — a human applies it
+        # Attribution: the realised active return split into factor tilts vs genuine
+        # name selection (they sum to the realised portfolio return per rebalance).
+        "factor_return": float(np.mean(factor_contribs)) if factor_contribs else 0.0,
+        "specific_return": float(np.mean(specific_contribs)) if specific_contribs else 0.0,
         "note": "IC measured as alpha-vs-forward-RESIDUAL-return (strict t→t+h, no "
         "look-ahead). predicted_IR = mean_IC·√BR_eff; BR_eff deflates the name count "
         "by ρ̄. An IC t-stat < 2, a realized IR within its standard-error band of 0, or "
-        "a realized IR > 2 on public data all mean: not skill yet. Attribution & "
-        "capacity need the factor risk model and cost model.",
+        "a realized IR > 2 on public data all mean: not skill yet. factor_return vs "
+        "specific_return attributes the realized active return; capacity is in the "
+        "portfolio report.",
     }
 
 
@@ -910,6 +923,10 @@ def construct_portfolio(
         result.diagnostics["expected_active_return_net"] = (
             result.diagnostics["expected_active_return"] - cost_drag
         )
+        # Capacity: the capital at which √-impact cost erases the gross alpha.
+        result.diagnostics["capacity_capital"] = _capacity(
+            result.weights, universe_bars, result.diagnostics["expected_active_return"], holding_period_years
+        )
 
     holdings = []
     if result.feasible and capital:
@@ -952,6 +969,48 @@ def construct_portfolio(
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
+def _capacity(weights, universe_bars, gross_alpha, holding_period_years) -> float:
+    """Capital at which √-impact cost erases the gross alpha (net active return → 0).
+
+    Cost as a fraction of capital grows ∝ √capital (square-root impact), so net alpha
+    is monotone-decreasing in capital — solved by bisection. Returns 0 if the alpha
+    can't even cover cost at tiny size.
+    """
+    from src.costs import ParametricCostModel, Trade
+
+    model = ParametricCostModel()
+    liquidity = {}
+    for sym, w in weights.items():
+        frame = universe_bars.get(sym)
+        if frame is None or len(frame) < 2 or w <= 0:
+            continue
+        liquidity[sym] = (
+            w,
+            float(frame["close"].iloc[-1]),
+            float(frame["volume"].tail(20).mean()),
+            float(frame["close"].pct_change().tail(20).std()),
+        )
+    if not liquidity or gross_alpha <= 0:
+        return 0.0
+
+    def net(capital: float) -> float:
+        total = sum(
+            model.cost(Trade(sym, w * capital / price, price, adv, vol)).total
+            for sym, (w, price, adv, vol) in liquidity.items()
+        )
+        return gross_alpha - 2.0 * (total / capital) / max(holding_period_years, 1e-9)
+
+    lo, hi = 1e3, 1e12
+    if net(lo) <= 0:
+        return lo
+    if net(hi) > 0:
+        return hi
+    for _ in range(60):
+        mid = 0.5 * (lo + hi)
+        lo, hi = (mid, hi) if net(mid) > 0 else (lo, mid)
+    return 0.5 * (lo + hi)
+
+
 def _build_covariance(model, bars, benchmark_bars, periods_per_year, min_obs=60):
     """Build a covariance RiskMatrix by model name (statistical estimator or factor)."""
     from src.risk import RISK_MODELS, build_factor_risk_matrix, build_risk_matrix
@@ -1005,6 +1064,48 @@ def _alpha_cross_section(universe_bars, bench, scorer, periods_per_year, t, ctx)
     add_score_feature(panel, scorer, ub_t)
     refine_alpha(panel, ctx)
     return pd.Series({a.symbol: a.alpha for a in panel_to_alphas(panel, ctx)})
+
+
+def _forward_raw_return(universe_bars, t, t_fwd) -> pd.Series:
+    """Realised raw return per name over ``(t, t_fwd]`` (no beta adjustment)."""
+    out: Dict[str, float] = {}
+    for sym, frame in universe_bars.items():
+        close = frame["close"]
+        if t in close.index and t_fwd in close.index:
+            out[sym] = close.loc[t_fwd] / close.loc[t] - 1.0
+    return pd.Series(out)
+
+
+def _factor_attribution(weights: pd.Series, universe_bars, bench, t, t_fwd, periods_per_year):
+    """Split the portfolio's realised return into (factor, specific) at one rebalance.
+
+    Projects the realised raw-return cross-section onto the factor exposures known at
+    ``t``; the factor part is ``w·fitted`` and the specific part ``w·(R − fitted)``, so
+    the two sum to the portfolio's realised return exactly.
+    """
+    from src.risk.exposures import build_factor_exposures
+
+    bars_t = {s: f.loc[f.index <= t] for s, f in universe_bars.items()}
+    exposures = build_factor_exposures(bars_t, bench.loc[bench.index <= t])
+    raw = _forward_raw_return(universe_bars, t, t_fwd)
+    if exposures.empty or raw.dropna().empty:
+        return None
+    common = weights.index.intersection(exposures.index).intersection(raw.dropna().index)
+    if len(common) < len(exposures.columns) + 1:
+        return None
+    return _factor_split(
+        weights.loc[common].to_numpy(), exposures.loc[common].to_numpy(), raw.loc[common].to_numpy()
+    )
+
+
+def _factor_split(w: np.ndarray, x: np.ndarray, r: np.ndarray):
+    """Split ``w·r`` into (factor, specific) by projecting returns ``r`` onto exposures ``x``.
+
+    ``fitted = x·(xᵀx)⁻¹·xᵀ·r`` is the factor-explained return; the two parts sum to
+    ``w·r`` exactly (the projection + its residual reconstruct ``r``).
+    """
+    fitted = x @ np.linalg.pinv(x.T @ x) @ x.T @ r
+    return float(w @ fitted), float(w @ (r - fitted))
 
 
 def _forward_residual_return(universe_bars, bench, t, t_fwd, indicators) -> pd.Series:

@@ -91,6 +91,27 @@ def test_compute_information_zero_skill_null():
     assert abs(r["multiple_testing_inflation"] - (1 - 0.95**10)) < 1e-9
 
 
+# --- attribution (009 §3.4) --------------------------------------------------
+def test_factor_split_closes():
+    from src.services.analysis import _factor_split
+
+    rng = np.random.default_rng(0)
+    w = rng.normal(0, 1, 8)
+    x = rng.normal(0, 1, (8, 3))
+    r = rng.normal(0, 0.02, 8)
+    factor, specific = _factor_split(w, x, r)
+    assert abs((factor + specific) - float(w @ r)) < 1e-12  # the split reconstructs w·r exactly
+
+
+def test_compute_information_reports_attribution():
+    client, syms = _client()
+    r = analysis.compute_information(
+        client, "volume_spike", syms, datetime(2023, 1, 1), datetime(2024, 12, 31), n_points=16
+    )
+    assert "factor_return" in r and "specific_return" in r
+    assert np.isfinite(r["factor_return"]) and np.isfinite(r["specific_return"])
+
+
 def test_compute_information_independent_of_post_end_bars():
     syms = [f"S{i}" for i in range(8)]
     full = {s: make_ohlcv(n=700, seed=i, freq="1D") for i, s in enumerate([*syms, "SPY"])}

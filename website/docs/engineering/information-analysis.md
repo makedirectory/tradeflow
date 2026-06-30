@@ -70,12 +70,21 @@ indistinguishable from 0 — the report shows IR with that band, not as a point
 estimate, and counts how many configs were tried (`--n-trials`) so one lucky backtest
 doesn't read as skill.
 
-## Deferred
+## Attribution and capacity
 
-Factor/specific **attribution** (was the return from cheap factor tilts or genuine
-name selection?) needs the structural factor risk model; **capacity** (where net IR
-crosses zero as capital scales) needs the transaction-cost model. Both are noted in
-the report rather than faked.
+With the [factor risk model](./risk-model) and [cost model](./transaction-costs) in
+place, two more diagnostics close the loop:
+
+- **Factor vs specific attribution.** At each rebalance the realised return
+  cross-section is projected onto the factor exposures; the portfolio's return splits
+  into a *factor* part (`w·fitted`) and a *specific* part (`w·(R−fitted)`) that sum to
+  it exactly. This answers "was my return from cheap factor tilts (momentum, size) or
+  genuine name selection?" — and checks whether 005's neutralization actually worked.
+  Reported as `factor_return` / `specific_return` per rebalance.
+- **Capacity.** As capital scales, square-root impact cost grows ∝ √capital, so the net
+  alpha is monotone-decreasing in capital. `construct_portfolio` reports the
+  `capacity_capital` — the size at which net active return crosses zero — by bisection
+  over the proposed portfolio's impact cost.
 
 ## Where it runs
 
