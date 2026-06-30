@@ -535,7 +535,6 @@ def compute_information(
     """
     from src.analytics import information as info
     from src.indicators import indicators
-    from src.risk import RISK_MODELS, build_risk_matrix
 
     run_id = new_run_id()
     strat = _strategy(strategy, None)
@@ -597,7 +596,7 @@ def compute_information(
     n_names = int(np.median(n_names_seen)) if n_names_seen else 0
 
     # ρ̄ from the risk model over the window (correlated bets deflate breadth).
-    matrix = build_risk_matrix(RISK_MODELS[risk_model](), universe_bars, periods_per_year)
+    matrix = _build_covariance(risk_model, universe_bars, bench, periods_per_year)
     if matrix is not None and len(matrix.symbols) > 1:
         corr = matrix.correlation().to_numpy()
         rho_bar = float((corr.sum() - len(corr)) / (len(corr) * (len(corr) - 1)))

@@ -3,7 +3,7 @@ scaled, comparable residual-return forecast.
 
 Every function here is a pure cross-sectional transform on a pandas Series indexed
 by symbol: same names in, same names out, inputs untouched. They are deliberately
-standalone (no AlphaModel, no I/O) so each step of the pipeline in
+standalone (no state, no I/O) so each step of the pipeline in
 :mod:`src.alphas.base` is unit-testable in isolation and composable.
 
 The pipeline order:
