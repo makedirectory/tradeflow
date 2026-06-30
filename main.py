@@ -11,6 +11,7 @@ the MCP server, and the research agent run the same code):
     optimize     search a strategy's parameters by backtest objective
     allocate     weight a portfolio across scanned symbols (OR-Tools)
     alphas       rank a universe by continuous alpha (residual-return forecast)
+    risk         estimate the universe covariance Σ and summarize its risk structure
     walkforward  out-of-sample validation with promotion gates
     mcp          serve TradeFlow to an agent over MCP (read-only)
     research     autonomous, offline research loop -> shortlist of configs
@@ -401,6 +402,41 @@ def cmd_alphas(args) -> None:
         )
 
 
+def cmd_risk(args) -> None:
+    """Print the universe's covariance risk summary (read-only).
+
+    Estimates an annualized, well-conditioned Σ as of --as-of and reports the
+    shrinkage intensity, conditioning, mean correlation, equal-weight portfolio
+    volatility, and the top risk contributors. Produces no orders.
+    """
+    from src.services.analysis import compute_risk
+
+    _, data_client = build_data_and_broker()
+    result = compute_risk(
+        data_client,
+        args.symbols,
+        as_of=args.as_of,
+        model=args.model,
+        lookback_days=args.lookback_days,
+        timeframe=args.timeframe,
+    )
+    if not result.get("universe_size"):
+        print(result.get("note", "No risk matrix produced."))
+        return
+
+    delta = result["shrinkage"]
+    delta_str = f"  shrinkage δ {delta:.3f}" if delta is not None else ""
+    print(f"\nRisk model '{result['model']}' as of {args.as_of:%Y-%m-%d} ({result['timeframe']} returns)")
+    print(f"  names {result['universe_size']}{delta_str}")
+    print(
+        f"  condition number {result['condition_number']:.1f}  PD {result['positive_definite']}  "
+        f"mean corr {result['mean_correlation']:.2f}  eq-weight vol {result['equal_weight_volatility']:.1%}"
+    )
+    print(f"\n{'SYMBOL':10}{'VOL':>9}{'RISK CONTRIB':>14}")
+    for row in result["top_risk_contributors"]:
+        print(f"{row['symbol']:10}{row['volatility']:>8.1%}{row['risk_contribution']:>14.2%}")
+
+
 def cmd_mcp(args) -> None:
     """Serve TradeFlow over MCP (stdio). Opt-in; requires the ``mcp`` extra.
 
@@ -710,6 +746,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     alphas.add_argument("--lookback-days", dest="lookback_days", type=int, default=180)
     alphas.set_defaults(func=cmd_alphas)
+
+    risk = subparsers.add_parser(
+        "risk",
+        help="Estimate the universe covariance Σ and summarise its risk structure — read-only",
+    )
+    risk.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
+    risk.add_argument(
+        "--as-of", dest="as_of", type=_date, default=datetime.now(), help="Rebalance date (YYYY-MM-DD)"
+    )
+    risk.add_argument(
+        "--model", choices=["shrinkage", "sample"], default="shrinkage", help="Covariance estimator"
+    )
+    risk.add_argument("--timeframe", default="1Day", help="Bar timeframe for returns")
+    risk.add_argument("--lookback-days", dest="lookback_days", type=int, default=365)
+    risk.set_defaults(func=cmd_risk)
 
     mcp = subparsers.add_parser(
         "mcp", help="Serve TradeFlow over MCP for an agent (opt-in; needs the 'mcp' extra)"

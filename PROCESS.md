@@ -203,6 +203,7 @@ module**, and **no vendor SDK lives above the broker layer**. Product policy
 | Scanners | `scanners/` (`base`, `volume`, `symbol`) | Universe selection. One scanner per file. |
 | Data | `data/` (`scan`, `panel`, `features`) | The cross-sectional substrate: the point-in-time `scan()` seam (the leakage guard) and the `FeaturePanel` every research module reads/writes. |
 | Alphas | `alphas/` (`refine`, `base`, `scorers`) | Continuous-alpha refinement: a score column → a comparable residual-return forecast (`α = σ·IC·z`). Research-clock. |
+| Risk | `risk/` (`base`, `sample`) | The covariance matrix Σ (Ledoit–Wolf shrinkage) + tracking error / MCR. Research-clock; never in the order path. |
 | Engine | `engine/backtest.py`, `engine/live.py` | The backtest loop and the **sacred trade-clock** live loop. |
 | Execution | `execution/` (`live_trader`, `sizing`) | Order placement and position sizing — trade-clock. |
 | Analytics | `analytics/` (`metrics`, `performance`, `reporting`, `charts`) | Honest evaluation metrics, reports, and result charts. |

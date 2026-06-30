@@ -32,6 +32,7 @@ EXPOSED_TOOLS = (
     "run_optimization",
     "run_walk_forward",
     "compute_alphas",
+    "compute_risk",
     "get_metrics_glossary",
     "summarize_bars",
     "save_config",
@@ -309,6 +310,34 @@ def build_server(data_client=None):
             lookback_days=lookback_days,
         )
         return _logged("compute_alphas", inputs, result)
+
+    @server.tool()
+    def compute_risk(
+        symbols: List[str],
+        as_of: str,
+        model: str = "shrinkage",
+        timeframe: str = "1Day",
+        lookback_days: int = 365,
+    ) -> Dict[str, Any]:
+        """Estimate the universe's covariance Σ and summarise its risk structure.
+
+        Returns the shrinkage intensity δ, condition number, mean correlation, the
+        equal-weight portfolio volatility, and the top risk contributors as of a date
+        (model: "shrinkage" = Ledoit–Wolf, the well-conditioned default; "sample" =
+        raw). Read-only: Σ sizes conviction, it never places an order. Risk is not
+        additive — correlated names are one bet, which this matrix is what captures.
+        """
+        inputs = {
+            "symbols": symbols,
+            "as_of": as_of,
+            "model": model,
+            "timeframe": timeframe,
+            "lookback_days": lookback_days,
+        }
+        result = analysis.compute_risk(
+            dc, symbols, _parse_date(as_of), model=model, timeframe=timeframe, lookback_days=lookback_days
+        )
+        return _logged("compute_risk", inputs, result)
 
     @server.tool()
     def get_metrics_glossary() -> Dict[str, Any]:

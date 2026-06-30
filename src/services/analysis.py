@@ -388,6 +388,79 @@ def compute_alphas(
     }
 
 
+def compute_risk(
+    data_client: MarketDataClient,
+    symbols: List[str],
+    as_of: datetime,
+    model: str = "shrinkage",
+    lookback_days: int = 365,
+    timeframe: str = "1Day",
+    min_obs: int = 60,
+) -> Dict[str, Any]:
+    """Estimate the universe's covariance Σ and summarise its risk structure.
+
+    Read-only research-clock flow: scans returns up to ``as_of`` (leakage-safe),
+    estimates an annualised, well-conditioned Σ (Ledoit–Wolf shrinkage by default),
+    and returns a compact summary - shrinkage δ, condition number, mean correlation,
+    the equal-weight portfolio volatility, and the top risk contributors. Σ itself is
+    not inlined; this is the diagnostic view the optimiser consumes programmatically.
+    """
+    from src.risk import RISK_MODELS, build_risk_matrix
+
+    if model not in RISK_MODELS:
+        raise ValueError(f"model must be one of {sorted(RISK_MODELS)}, got {model!r}")
+
+    run_id = new_run_id()
+    periods_per_year = Timeframe.parse(timeframe).periods_per_year()
+    bars = ClientBarSource(data_client).scan(symbols, timeframe, as_of, lookback_days)
+    matrix = build_risk_matrix(RISK_MODELS[model](), bars, periods_per_year, min_obs=min_obs)
+
+    if matrix is None:
+        return {
+            "run_id": run_id,
+            "model": model,
+            "as_of": as_of.isoformat(),
+            "universe_size": 0,
+            "note": f"Insufficient history: no name has >= {min_obs} aligned returns.",
+        }
+
+    names = matrix.symbols
+    weights = {sym: 1.0 / len(names) for sym in names}
+    vols = matrix.volatilities()
+    mcr = matrix.marginal_contribution_to_risk(weights)
+    # Each name's contribution to the equal-weight portfolio vol (sums to the total).
+    contribution = {sym: weights[sym] * mcr[sym] for sym in names}
+    corr = matrix.correlation().to_numpy()
+    n = len(names)
+    mean_corr = float((corr.sum() - n) / (n * (n - 1))) if n > 1 else 0.0
+
+    top = sorted(
+        (
+            {"symbol": s, "volatility": float(vols[s]), "risk_contribution": float(contribution[s])}
+            for s in names
+        ),
+        key=lambda r: r["risk_contribution"],
+        reverse=True,
+    )[:TOP_N]
+
+    return {
+        "run_id": run_id,
+        "model": model,
+        "as_of": as_of.isoformat(),
+        "timeframe": timeframe,
+        "universe_size": n,
+        "shrinkage": matrix.shrinkage,
+        "condition_number": matrix.condition_number(),
+        "positive_definite": matrix.is_positive_definite(),
+        "mean_correlation": mean_corr,
+        "equal_weight_volatility": matrix.volatility(weights),
+        "top_risk_contributors": _jsonable(top),
+        "note": "Σ is annualised and shrunk to stay invertible (δ is the shrinkage "
+        "intensity; higher = noisier sample). Risk is not additive — correlated names "
+        "are one bet. This is the denominator the portfolio optimiser divides alpha by.",
+    }
+
+
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
