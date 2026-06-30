@@ -388,6 +388,93 @@ def compute_alphas(
     }
 
 
+def compute_combined_alphas(
+    data_client: MarketDataClient,
+    signals: List[str],
+    symbols: List[str],
+    as_of: datetime,
+    benchmark: str = "SPY",
+    neutralize: bool = False,
+    lookback_days: int = 365,
+    timeframe: str = "1Day",
+    horizon: int = 5,
+    n_points: int = 12,
+) -> Dict[str, Any]:
+    """Combine several strategies' signals into one alpha by their IC and correlation.
+
+    Read-only research-clock flow: measures each signal's IC and the signal
+    correlation matrix over a trailing window (realised residual returns), shrinks the
+    ICs by their estimation confidence, and combines them with GLS weights
+    (``Ω⁻¹·IC``) so redundant signals split a weight rather than double-count. The
+    combined score is scaled by the **measured** combined IC - replacing Spec 005's
+    assumed per-signal scalar, never applied twice. Returns the ranked alpha table
+    plus the measured ICs, weights, and correlation matrix.
+    """
+    from src.alphas import combined_score, measure_signals, strategy_scorer
+
+    strategies = [resolve_strategy_class(s) and s for s in signals]  # validate names
+    run_id = new_run_id()
+    periods_per_year = Timeframe.parse(timeframe).periods_per_year()
+
+    bars = ClientBarSource(data_client).scan([*symbols, benchmark], timeframe, as_of, lookback_days)
+    bench_frame = bars.get(benchmark)
+    universe_bars = {sym: bars[sym] for sym in symbols if sym in bars}
+    if bench_frame is None or bench_frame.empty or not universe_bars:
+        return {
+            "run_id": run_id,
+            "signals": strategies,
+            "as_of": as_of.isoformat(),
+            "universe_size": 0,
+            "note": "Insufficient data: need a benchmark series and at least one scored name.",
+        }
+
+    scorers = {name: strategy_scorer(_strategy(name, None)) for name in strategies}
+    measurement = measure_signals(
+        universe_bars, scorers, bench_frame, as_of, horizon=horizon, n_points=n_points
+    )
+
+    panel = FeaturePanel.for_universe(as_of, list(universe_bars))
+    panel.set("score", combined_score(universe_bars, scorers, measurement, as_of))
+    add_risk_features(panel, universe_bars, bench_frame, periods_per_year)
+    # The combined, measured, shrunk IC replaces the assumed scalar (no double-scaling).
+    context = AlphaContext(ic=measurement.combined_ic, neutralize=neutralize)
+    refine_alpha(panel, context)
+    alphas = panel_to_alphas(panel, context)
+
+    table = [
+        {
+            "symbol": a.symbol,
+            "score": float(panel.get("score").get(a.symbol)),
+            "z": a.raw_z,
+            "beta": float(panel.get("beta").get(a.symbol)) if panel.has("beta") else 1.0,
+            "residual_vol": a.residual_vol,
+            "alpha": a.alpha,
+        }
+        for a in alphas
+    ]
+
+    return {
+        "run_id": run_id,
+        "signals": strategies,
+        "as_of": as_of.isoformat(),
+        "timeframe": timeframe,
+        "benchmark": benchmark,
+        "neutralize": neutralize,
+        "universe_size": int(panel.get("score").notna().sum()) if panel.has("score") else 0,
+        "low_confidence": bool(panel.meta.get("low_confidence")),
+        "n_periods": measurement.n_periods,
+        "combined_ic": measurement.combined_ic,
+        "signal_ics": _jsonable(measurement.ics),
+        "signal_shrunk_ics": _jsonable(measurement.shrunk_ics),
+        "signal_weights": _jsonable(measurement.weights),
+        "signal_correlation": _jsonable(measurement.correlation.to_dict()),
+        "alphas": _jsonable(table),
+        "note": "ICs and the signal correlation are MEASURED over the trailing window "
+        "(not assumed) and shrunk by estimation confidence; redundant signals split a "
+        "weight via Ω⁻¹. Measure on out-of-sample data for an honest combination.",
+    }
+
+
 def compute_risk(
     data_client: MarketDataClient,
     symbols: List[str],

@@ -32,6 +32,7 @@ EXPOSED_TOOLS = (
     "run_optimization",
     "run_walk_forward",
     "compute_alphas",
+    "combine_alphas",
     "compute_risk",
     "get_metrics_glossary",
     "summarize_bars",
@@ -310,6 +311,40 @@ def build_server(data_client=None):
             lookback_days=lookback_days,
         )
         return _logged("compute_alphas", inputs, result)
+
+    @server.tool()
+    def combine_alphas(
+        signals: List[str],
+        symbols: List[str],
+        as_of: str,
+        benchmark: str = "SPY",
+        neutralize: bool = False,
+        lookback_days: int = 365,
+        horizon: int = 5,
+        n_points: int = 12,
+    ) -> Dict[str, Any]:
+        """Combine several strategies' signals into one alpha by IC + correlation.
+
+        `signals` is a list of strategy names. Measures each signal's IC and the
+        signal correlation matrix over a trailing window of realised residual returns,
+        shrinks the ICs by estimation confidence, and combines them with GLS weights
+        (Ω⁻¹·IC) so redundant signals split a weight instead of double-counting.
+        Returns the ranked combined alphas plus measured ICs, shrunk ICs, weights, and
+        the correlation matrix. Read-only; measure on out-of-sample data for honesty.
+        """
+        inputs = {"signals": signals, "symbols": symbols, "as_of": as_of, "neutralize": neutralize}
+        result = analysis.compute_combined_alphas(
+            dc,
+            signals,
+            symbols,
+            _parse_date(as_of),
+            benchmark=benchmark,
+            neutralize=neutralize,
+            lookback_days=lookback_days,
+            horizon=horizon,
+            n_points=n_points,
+        )
+        return _logged("combine_alphas", inputs, result)
 
     @server.tool()
     def compute_risk(

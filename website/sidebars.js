@@ -44,6 +44,7 @@ const sidebars = {
         'engineering/optimization',
         'engineering/portfolio',
         'engineering/alphas',
+        'engineering/multi-signal',
         'engineering/risk-model',
         'engineering/evaluation-metrics',
         'engineering/walk-forward',

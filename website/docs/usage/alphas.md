@@ -54,6 +54,31 @@ strategy's score:
 python main.py alphas --source scanner --scanner volume --symbols NVDA,AAPL,META --as-of 2025-06-01
 ```
 
+## Combining several signals
+
+`--combine` blends multiple strategies' signals into one alpha, weighting them by
+their **measured** information coefficient and **correlation** so redundant signals
+don't double-count and uncertain ones are shrunk toward zero:
+
+```bash
+python main.py alphas --combine volume_spike,ma_crossover,mean_reversion \
+  --symbols NVDA,AAPL,META,AMD,TSLA --as-of 2025-06-01
+```
+
+```
+Combined alpha from volume_spike, ma_crossover, mean_reversion as of 2025-06-01
+  measured over 12 rebalances  |  combined IC 0.0412
+
+SIGNAL                 IC   SHRUNK   WEIGHT
+volume_spike       0.0380   0.0310    0.180
+ma_crossover       0.0350   0.0280   -0.020   ← redundant with volume_spike, down-weighted
+mean_reversion     0.0290   0.0210    0.240   ← independent, earns its weight
+```
+
+The ICs and the signal correlation are estimated over a trailing window of realised
+residual returns — measure on out-of-sample data for an honest combination. See
+[Multi-signal combination](../engineering/multi-signal.md) for the math.
+
 ## What the numbers mean (and don't)
 
 - **The absolute scale is only as good as the assumed IC.** With no measured IC,
