@@ -45,6 +45,7 @@ class MeanVarianceOptimizer:
     def __init__(
         self,
         max_weight: float = 0.25,
+        min_weight: float = 0.0,
         max_names: Optional[int] = None,
         no_trade_band: float = 0.0,
         max_iter: int = 2000,
@@ -52,7 +53,10 @@ class MeanVarianceOptimizer:
     ):
         if not 0 < max_weight <= 1:
             raise ValueError("max_weight must be in (0, 1]")
+        if not 0 <= min_weight <= max_weight:
+            raise ValueError("min_weight must be in [0, max_weight]")
         self.max_weight = max_weight
+        self.min_weight = min_weight  # minimum weight for a *held* name (a dust floor)
         self.max_names = max_names
         self.no_trade_band = no_trade_band
         self.max_iter = max_iter
@@ -97,11 +101,7 @@ class MeanVarianceOptimizer:
         lam = self._risk_aversion(ir_star, target_te, risk_aversion)
         unconstrained = (sigma_inv @ alpha) / (2.0 * lam)
 
-        # Constrained solve, with optional cardinality (two-stage: select then weight).
-        w = self._solve(alpha, sigma, lam, np.arange(n))
-        if self.max_names is not None and int(np.sum(w > 1e-9)) > self.max_names:
-            keep = np.argsort(w)[::-1][: self.max_names]
-            w = self._solve(alpha, sigma, lam, keep)
+        w = self._constrained_solve(alpha, sigma, lam, n)
 
         w0 = self._vector(current_weights or {}, symbols)
         # No-trade band: if every name moves less than the band, don't churn.
@@ -119,6 +119,34 @@ class MeanVarianceOptimizer:
     # ------------------------------------------------------------------ #
     # Solve
     # ------------------------------------------------------------------ #
+    def _constrained_solve(self, alpha: np.ndarray, sigma: np.ndarray, lam: float, n: int) -> np.ndarray:
+        """Box+budget QP, plus the two non-convex constraints handled by re-solving.
+
+        Cardinality (``‖w‖₀ ≤ max_names``) and the semi-continuous dust floor
+        (``w ∈ {0} ∪ [min_weight, max_weight]``) are both non-convex, so each is
+        enforced the same pragmatic way: solve the convex QP, drop the offending
+        names (the smallest beyond the cardinality cap, or any stuck in the
+        ``(0, min_weight)`` hole), and re-solve on the survivors until stable.
+        """
+        active = np.arange(n)
+        w = self._solve(alpha, sigma, lam, active)
+
+        if self.max_names is not None and int(np.sum(w > 1e-9)) > self.max_names:
+            active = np.argsort(w)[::-1][: self.max_names]
+            w = self._solve(alpha, sigma, lam, active)
+
+        # Dust floor: drop held names below min_weight and re-solve, while the budget
+        # stays fundable (enough remaining names at max_weight to reach 1).
+        while self.min_weight > 0:
+            held = np.where(w > 1e-9)[0]
+            keep = held[w[held] >= self.min_weight]
+            if len(keep) == len(held):
+                break  # every held name clears the floor
+            if len(keep) == 0 or len(keep) * self.max_weight < 1.0 - 1e-9:
+                break  # dropping further would make the budget infeasible
+            w = self._solve(alpha, sigma, lam, keep)
+        return w
+
     def _solve(self, alpha: np.ndarray, sigma: np.ndarray, lam: float, active: np.ndarray) -> np.ndarray:
         """Projected-gradient QP over the active names; full-length weight vector out."""
         n = len(alpha)

@@ -93,6 +93,24 @@ def test_weights_respect_box_budget_and_cardinality():
     assert abs(sum(w.values()) - 1.0) < 1e-6
 
 
+# --- min-weight dust floor ---------------------------------------------------
+def test_min_weight_leaves_no_dust_positions():
+    # Every held name must clear the floor (no 0 < w < min_weight); budget still met.
+    result = MeanVarianceOptimizer(max_weight=0.5, min_weight=0.1).optimize(
+        _alphas(), _risk(), target_te=0.05
+    )
+    w = result.weights
+    assert all(v >= 0.1 - 1e-9 for v in w.values())
+    assert abs(sum(w.values()) - 1.0) < 1e-6
+
+
+def test_min_weight_must_not_exceed_max_weight():
+    import pytest
+
+    with pytest.raises(ValueError):
+        MeanVarianceOptimizer(max_weight=0.2, min_weight=0.3)
+
+
 # --- integration / leakage ---------------------------------------------------
 def test_construct_portfolio_independent_of_post_as_of_bars():
     symbols = [f"S{i}" for i in range(8)]

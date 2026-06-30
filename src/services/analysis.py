@@ -557,6 +557,7 @@ def construct_portfolio(
     scanner: str = "volume",
     target_te: float = 0.04,
     max_weight: float = 0.25,
+    min_weight: float = 0.0,
     max_names: Optional[int] = None,
     benchmark: str = "SPY",
     neutralize: bool = True,
@@ -613,7 +614,7 @@ def construct_portfolio(
             "note": "Insufficient data for alphas and/or a covariance matrix.",
         }
 
-    optimizer = MeanVarianceOptimizer(max_weight=max_weight, max_names=max_names)
+    optimizer = MeanVarianceOptimizer(max_weight=max_weight, min_weight=min_weight, max_names=max_names)
     result = optimizer.optimize(alphas, matrix, target_te=target_te, current_weights=current_weights)
 
     holdings = []

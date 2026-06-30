@@ -157,6 +157,7 @@ def _allocate_utility(args) -> None:
         scanner=args.scanner,
         target_te=args.target_te,
         max_weight=args.max_weight,
+        min_weight=args.min_weight,
         max_names=args.max_names,
         benchmark=args.benchmark,
         capital=args.capital,
@@ -759,6 +760,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     alloc.add_argument(
         "--max-names", dest="max_names", type=int, default=None, help="Cardinality cap (utility)"
+    )
+    alloc.add_argument(
+        "--min-weight", dest="min_weight", type=float, default=0.0, help="Dust floor: min weight if held (utility)"
     )
     alloc.add_argument("--benchmark", default="SPY", help="Benchmark for residual vol / beta (utility)")
     alloc.set_defaults(func=cmd_allocate)

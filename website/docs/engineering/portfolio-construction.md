@@ -64,8 +64,10 @@ turnover.
 - **Constrained**: `U` is a concave quadratic, so the long-only / box / budget optimum
   is a small convex QP solved by **projected gradient** with a capped-simplex
   projection — no heavyweight QP dependency.
-- **Cardinality** (`‖w‖₀ ≤ k`): two-stage — solve, then keep the top-`k` names and
-  re-solve on that subset.
+- **Cardinality** (`‖w‖₀ ≤ k`) and the **dust floor** (`w ∈ {0} ∪ [min_weight, max_weight]`)
+  are both non-convex, so each is handled the same pragmatic way: solve the convex QP,
+  drop the offending names (the smallest beyond the cardinality cap, or any stuck in the
+  `(0, min_weight)` hole), and re-solve on the survivors until stable.
 
 ## Edge cases it handles
 
