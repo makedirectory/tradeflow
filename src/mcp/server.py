@@ -364,10 +364,11 @@ def build_server(data_client=None):
         """Estimate the universe's covariance Σ and summarise its risk structure.
 
         Returns the shrinkage intensity δ, condition number, mean correlation, the
-        equal-weight portfolio volatility, and the top risk contributors as of a date
-        (model: "shrinkage" = Ledoit–Wolf, the well-conditioned default; "sample" =
-        raw). Read-only: Σ sizes conviction, it never places an order. Risk is not
-        additive — correlated names are one bet, which this matrix is what captures.
+        equal-weight portfolio volatility, and the top risk contributors as of a date.
+        model: "shrinkage" = Ledoit–Wolf (default), "sample" = raw, "factor" =
+        structural XFXᵀ+Δ (adds the factor-vs-specific risk split). Read-only: Σ sizes
+        conviction, it never places an order. Risk is not additive — correlated names
+        are one bet, which is what this matrix captures.
         """
         inputs = {
             "symbols": symbols,

@@ -56,9 +56,15 @@ Two estimators behind one `RiskModel.estimate(returns)` interface:
 - **`sample`.** The raw sample covariance. Honest, but ill-conditioned when `T ≲ N`
   — there mostly to show *why* shrinkage exists.
 
-A structural **factor model** (`Σ = X F Xᵀ + Δ`) is the planned v2; it makes risk
-attributable into factor vs specific components. v1 ships the shrinkage estimator,
-which is the load-bearing piece the optimiser needs.
+- **`factor` (structural).** `Σ = X F Xᵀ + Δ` — a small factor model. Exposures `X`
+  load each name on **market** (beta), **momentum** (12-1 trailing return),
+  **volatility**, and **size** (log dollar volume), cross-sectionally standardized.
+  Factor returns are recovered each period by a cross-sectional regression of returns
+  on `X`; `F` is their covariance and `Δ` the diagonal residual variance. The parameter
+  count drops from `O(N²)` to `O(N·K)`, Σ is invertible by construction, and — the
+  payoff — risk becomes **attributable**: portfolio variance splits cleanly into
+  *factor* risk (`w_aᵀ X F Xᵀ w_a`) and *specific* risk (`w_aᵀ Δ w_a`). `risk --model
+  factor` reports that split; it's what makes performance attribution possible.
 
 ## Edge cases it handles
 

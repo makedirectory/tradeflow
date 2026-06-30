@@ -514,6 +514,7 @@ def cmd_risk(args) -> None:
         args.symbols,
         as_of=args.as_of,
         model=args.model,
+        benchmark=args.benchmark,
         lookback_days=args.lookback_days,
         timeframe=args.timeframe,
     )
@@ -529,6 +530,11 @@ def cmd_risk(args) -> None:
         f"  condition number {result['condition_number']:.1f}  PD {result['positive_definite']}  "
         f"mean corr {result['mean_correlation']:.2f}  eq-weight vol {result['equal_weight_volatility']:.1%}"
     )
+    if "factor_risk_share" in result:
+        print(
+            f"  risk split: {result['factor_risk_share']:.0%} factor / "
+            f"{result['specific_risk_share']:.0%} specific  (factors: {', '.join(result['factor_names'])})"
+        )
     print(f"\n{'SYMBOL':10}{'VOL':>9}{'RISK CONTRIB':>14}")
     for row in result["top_risk_contributors"]:
         print(f"{row['symbol']:10}{row['volatility']:>8.1%}{row['risk_contribution']:>14.2%}")
@@ -973,8 +979,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--as-of", dest="as_of", type=_date, default=datetime.now(), help="Rebalance date (YYYY-MM-DD)"
     )
     risk.add_argument(
-        "--model", choices=["shrinkage", "sample"], default="shrinkage", help="Covariance estimator"
+        "--model",
+        choices=["shrinkage", "sample", "factor"],
+        default="shrinkage",
+        help="Covariance model: shrinkage (Ledoit–Wolf), sample (raw), or factor (XFXᵀ+Δ)",
     )
+    risk.add_argument("--benchmark", default="SPY", help="Benchmark for the market factor / beta")
     risk.add_argument("--timeframe", default="1Day", help="Bar timeframe for returns")
     risk.add_argument("--lookback-days", dest="lookback_days", type=int, default=365)
     risk.set_defaults(func=cmd_risk)

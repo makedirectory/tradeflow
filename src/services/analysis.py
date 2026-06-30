@@ -521,8 +521,9 @@ def compute_information(
     (deflated by the average correlation ρ̄ from Σ), and the **predicted vs realised
     IR** reconciliation - with the research-integrity guardrails (IR standard-error
     band, multiple-testing inflation, sanity ceiling) that keep a lucky backtest
-    honest. Factor/specific attribution and capacity are deferred (need the factor risk
-    model and the cost model respectively).
+    honest. Factor-vs-specific **risk** attribution is available via the factor model
+    (``compute_risk(..., model='factor')``); realised-return attribution and capacity
+    are smaller follow-ons.
     """
     from src.analytics import information as info
     from src.indicators import indicators
@@ -634,6 +635,7 @@ def compute_risk(
     symbols: List[str],
     as_of: datetime,
     model: str = "shrinkage",
+    benchmark: str = "SPY",
     lookback_days: int = 365,
     timeframe: str = "1Day",
     min_obs: int = 60,
@@ -641,20 +643,23 @@ def compute_risk(
     """Estimate the universe's covariance Σ and summarise its risk structure.
 
     Read-only research-clock flow: scans returns up to ``as_of`` (leakage-safe),
-    estimates an annualised, well-conditioned Σ (Ledoit–Wolf shrinkage by default),
-    and returns a compact summary - shrinkage δ, condition number, mean correlation,
-    the equal-weight portfolio volatility, and the top risk contributors. Σ itself is
-    not inlined; this is the diagnostic view the optimiser consumes programmatically.
+    estimates an annualised, well-conditioned Σ (``shrinkage`` = Ledoit–Wolf,
+    ``factor`` = structural ``X F Xᵀ + Δ``, ``sample`` = raw), and returns a compact
+    summary - shrinkage δ, condition number, mean correlation, equal-weight portfolio
+    volatility, top risk contributors, and (factor model) the factor-vs-specific risk
+    split. Σ itself is not inlined; this is the diagnostic the optimiser consumes.
     """
-    from src.risk import RISK_MODELS, build_risk_matrix
+    from src.risk import COVARIANCE_MODELS
+    from src.risk.factor import FactorRiskMatrix
 
-    if model not in RISK_MODELS:
-        raise ValueError(f"model must be one of {sorted(RISK_MODELS)}, got {model!r}")
+    if model not in COVARIANCE_MODELS:
+        raise ValueError(f"model must be one of {sorted(COVARIANCE_MODELS)}, got {model!r}")
 
     run_id = new_run_id()
     periods_per_year = Timeframe.parse(timeframe).periods_per_year()
-    bars = ClientBarSource(data_client).scan(symbols, timeframe, as_of, lookback_days)
-    matrix = build_risk_matrix(RISK_MODELS[model](), bars, periods_per_year, min_obs=min_obs)
+    fetched = ClientBarSource(data_client).scan([*symbols, benchmark], timeframe, as_of, lookback_days)
+    bars = {s: fetched[s] for s in symbols if s in fetched}
+    matrix = _build_covariance(model, bars, fetched.get(benchmark), periods_per_year, min_obs)
 
     if matrix is None:
         return {
@@ -684,7 +689,7 @@ def compute_risk(
         reverse=True,
     )[:TOP_N]
 
-    return {
+    result = {
         "run_id": run_id,
         "model": model,
         "as_of": as_of.isoformat(),
@@ -696,10 +701,21 @@ def compute_risk(
         "mean_correlation": mean_corr,
         "equal_weight_volatility": matrix.volatility(weights),
         "top_risk_contributors": _jsonable(top),
-        "note": "Σ is annualised and shrunk to stay invertible (δ is the shrinkage "
-        "intensity; higher = noisier sample). Risk is not additive — correlated names "
-        "are one bet. This is the denominator the portfolio optimiser divides alpha by.",
+        "note": "Σ is annualised and kept invertible (shrinkage δ, or a structural "
+        "factor model). Risk is not additive — correlated names are one bet. This is "
+        "the denominator the portfolio optimiser divides alpha by.",
     }
+
+    # The factor model makes risk attributable: split the equal-weight portfolio's
+    # variance into common-factor risk and idiosyncratic (specific) risk.
+    if isinstance(matrix, FactorRiskMatrix):
+        total_var = matrix.variance(weights)
+        factor_var = matrix.factor_variance(weights)
+        result["factor_names"] = matrix.factor_names
+        result["factor_risk_share"] = float(factor_var / total_var) if total_var > 0 else 0.0
+        result["specific_risk_share"] = float(1.0 - factor_var / total_var) if total_var > 0 else 0.0
+
+    return result
 
 
 def construct_portfolio(
@@ -732,7 +748,6 @@ def construct_portfolio(
     coefficient, turnover). This is a **proposal** - it places no orders.
     """
     from src.portfolio.optimizer import MeanVarianceOptimizer
-    from src.risk import RISK_MODELS, build_risk_matrix
 
     run_id = new_run_id()
     strat = _strategy(strategy, None)
@@ -758,7 +773,7 @@ def construct_portfolio(
     alpha_ctx = AlphaContext(ic=DEFAULT_IC, neutralize=neutralize)
     refine_alpha(panel, alpha_ctx)
     alphas = panel_to_alphas(panel, alpha_ctx)
-    matrix = build_risk_matrix(RISK_MODELS[risk_model](), universe_bars, periods_per_year)
+    matrix = _build_covariance(risk_model, universe_bars, bench_frame, periods_per_year)
 
     if not alphas or matrix is None:
         return {
@@ -825,6 +840,15 @@ def construct_portfolio(
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
+def _build_covariance(model, bars, benchmark_bars, periods_per_year, min_obs=60):
+    """Build a covariance RiskMatrix by model name (statistical estimator or factor)."""
+    from src.risk import RISK_MODELS, build_factor_risk_matrix, build_risk_matrix
+
+    if model == "factor":
+        return build_factor_risk_matrix(bars, benchmark_bars, periods_per_year, min_obs=min_obs)
+    return build_risk_matrix(RISK_MODELS[model](), bars, periods_per_year, min_obs=min_obs)
+
+
 def _scanner(scanner_name: str):
     """Instantiate a scanner from its declared defaults (for the scanner scorer)."""
     from src.scanners.symbol_scanner import SymbolScanner

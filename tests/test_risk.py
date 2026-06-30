@@ -113,3 +113,48 @@ def test_sample_covariance_runs_and_is_symmetric():
     sigma, shrink = SampleCovariance().estimate(r)
     assert shrink is None
     assert np.allclose(sigma, sigma.T)
+
+
+# --- factor model (006 v2) ---------------------------------------------------
+def test_factor_model_recovers_known_factor_covariance():
+    from src.risk import FactorRiskMatrix, estimate_factor_model
+
+    rng = np.random.default_rng(0)
+    n, k, t = 20, 3, 3000
+    x = rng.normal(0, 1, (n, k))
+    f_true = np.diag([0.04, 0.02, 0.01])
+    spec_true = rng.uniform(0.5, 1.5, n) * 1e-3
+    f = rng.multivariate_normal(np.zeros(k), f_true, t)
+    u = rng.normal(0, 1, (t, n)) * np.sqrt(spec_true)
+    syms = [f"S{i}" for i in range(n)]
+    returns = pd.DataFrame(f @ x.T + u, columns=syms)
+    exposures = pd.DataFrame(x, index=syms, columns=["f0", "f1", "f2"])
+
+    m = estimate_factor_model(returns, exposures, periods_per_year=1.0)
+    assert isinstance(m, FactorRiskMatrix)
+    assert m.is_positive_definite()
+    assert np.allclose(np.diag(m.factor_cov), np.diag(f_true), atol=0.01)
+
+
+def test_factor_and_specific_variance_sum_to_total():
+    from src.risk import estimate_factor_model
+
+    rng = np.random.default_rng(1)
+    n, k, t = 10, 2, 500
+    x = rng.normal(0, 1, (n, k))
+    returns = pd.DataFrame(rng.normal(0, 0.01, (t, n)), columns=[f"S{i}" for i in range(n)])
+    exposures = pd.DataFrame(x, index=returns.columns, columns=["a", "b"])
+    m = estimate_factor_model(returns, exposures, periods_per_year=252.0)
+
+    w = {s: 1.0 / n for s in returns.columns}
+    assert abs((m.factor_variance(w) + m.specific_variance(w)) - m.variance(w)) < 1e-12
+
+
+def test_compute_risk_factor_model_reports_split():
+    symbols = [f"S{i}" for i in range(8)]
+    data = {s: make_ohlcv(n=400, seed=i, freq="1D") for i, s in enumerate([*symbols, "SPY"])}
+    r = analysis.compute_risk(MarketDataClient(DictMarketData(data)), symbols, AS_OF, model="factor")
+    assert r["positive_definite"]
+    assert "factor_risk_share" in r
+    assert abs(r["factor_risk_share"] + r["specific_risk_share"] - 1.0) < 1e-9
+    assert set(r["factor_names"]) == {"market", "momentum", "volatility", "size"}

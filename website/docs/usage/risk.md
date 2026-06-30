@@ -39,7 +39,7 @@ is each name's share of the equal-weight portfolio's volatility (they sum to it)
 |------|---------|---------|
 | `--symbols` | demo universe | Comma-separated universe. |
 | `--as-of` | today | Estimation date; only returns up to it are used. |
-| `--model` | `shrinkage` | `shrinkage` = Ledoit–Wolf (well-conditioned); `sample` = raw covariance. |
+| `--model` | `shrinkage` | `shrinkage` = Ledoit–Wolf; `sample` = raw covariance; `factor` = structural `XFXᵀ+Δ` (adds the factor-vs-specific risk split). |
 | `--timeframe` | `1Day` | Bar timeframe for the return series. |
 | `--lookback-days` | `365` | History fetched (≤ `as_of`) for the estimate. |
 
