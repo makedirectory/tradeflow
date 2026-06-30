@@ -16,12 +16,15 @@ currency. Requires the ``store`` extra (``pyarrow``).
 
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List
+from typing import TYPE_CHECKING, Dict, List, Optional, Sequence
 
 import pandas as pd
 
 from src.marketdata.client import TimeframeLike
 from src.marketdata.timeframe import Timeframe
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    import polars as pl
 
 #: The enforced bar schema columns (the Arrow boundary contract).
 BAR_COLUMNS = ["ts", "symbol", "open", "high", "low", "close", "volume"]
@@ -88,6 +91,85 @@ class ParquetBarStore:
             if table.num_rows:
                 out[symbol] = self._from_records(table.to_pandas())
         return out
+
+    # ------------------------------------------------------------------ #
+    # Lazy scan (the out-of-core compute seam, spec 015)
+    # ------------------------------------------------------------------ #
+    def _tf_root(self, timeframe: TimeframeLike) -> Path:
+        tf = str(Timeframe.parse(timeframe) if isinstance(timeframe, str) else timeframe)
+        return self.root / tf
+
+    def partition_paths(self, universe: Sequence[str], timeframe: TimeframeLike = "1Day") -> List[str]:
+        """The Parquet file paths backing ``universe`` (existing partitions only).
+
+        The glob a DuckDB/Polars set-based query (:func:`src.data.compute.sql_query`)
+        reads over — one file per symbol partition that actually exists.
+        """
+        root = self._tf_root(timeframe)
+        paths = []
+        for symbol in dict.fromkeys(universe):
+            part = root / f"symbol={symbol}" / "part.parquet"
+            if part.exists():
+                paths.append(str(part))
+        return paths
+
+    def scan_lazy(
+        self,
+        universe: List[str],
+        timeframe: TimeframeLike,
+        as_of: datetime,
+        lookback_days: int = 365,
+        columns: Optional[Sequence[str]] = None,
+    ) -> "pl.LazyFrame":
+        """Return a **lazy** long-format panel for ``universe`` over ``(as_of - lookback, as_of]``.
+
+        The compute-tier counterpart to :meth:`scan`: instead of materialising
+        per-symbol pandas frames, it returns a Polars :class:`~polars.LazyFrame` over
+        the Parquet partitions with the ``as_of`` window pushed into the reader as a
+        predicate (rows after ``as_of`` are physically never read) and an optional
+        column projection pushed down too. ``as_of`` may be naive (treated as UTC) or
+        tz-aware; the window matches the eager :meth:`scan` exactly (strict ``>`` on the
+        lower bound, ``<=`` on ``as_of``). Nothing executes until a terminal collect
+        (:func:`src.data.edges.collect_streaming`). The leaf scan + pushdown stream; a
+        downstream ``over(...)``/sort buffers (see :mod:`src.data.compute` on what is
+        genuinely bounded-memory). Requires the ``store`` extra (``polars``).
+
+        An empty universe yields an empty but **schema-carrying** LazyFrame, so a
+        window helper composed onto it resolves its source column and returns an empty
+        frame rather than raising (the lazy analogue of :meth:`scan` returning ``{}``).
+        """
+        import polars as pl
+
+        schema = {
+            "ts": pl.Datetime("us", "UTC"),
+            "symbol": pl.Utf8,
+            "open": pl.Float64,
+            "high": pl.Float64,
+            "low": pl.Float64,
+            "close": pl.Float64,
+            "volume": pl.Float64,
+        }
+
+        paths = self.partition_paths(universe, timeframe)
+        if not paths:
+            empty = pl.DataFrame(schema=schema).lazy()
+            if columns is not None:
+                empty = empty.select(list(dict.fromkeys(["ts", "symbol", *columns])))
+            return empty
+
+        end = pd.Timestamp(as_of)
+        end = end.tz_localize("UTC") if end.tzinfo is None else end.tz_convert("UTC")
+        start = end - timedelta(days=lookback_days)
+        # hive_partitioning=false: `symbol` is a real column in each file; don't also
+        # synthesise it from the `symbol=…` directory (that collides).
+        lf = pl.scan_parquet(paths, hive_partitioning=False)
+        # Predicate pushdown: the window (in particular the as_of upper bound) is
+        # pushed into the Parquet SCAN, so post-as_of rows are never read.
+        lf = lf.filter((pl.col("ts") > pl.lit(start)) & (pl.col("ts") <= pl.lit(end)))
+        if columns is not None:
+            keep = list(dict.fromkeys(["ts", "symbol", *columns]))
+            lf = lf.select(keep)
+        return lf
 
     # ------------------------------------------------------------------ #
     # The pandas edge (the only sanctioned crossings)
