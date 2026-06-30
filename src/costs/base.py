@@ -65,6 +65,10 @@ class CostModel(ABC):
         notional = trade.notional
         return self.cost(trade).total / notional if notional > 0 else 0.0
 
+    def carry_cost(self, notional: float, is_short: bool, holding_years: float) -> float:
+        """Financing cost of *holding* a position (borrow on shorts). Default: none."""
+        return 0.0
+
     def annual_cost_rate(self, trade: Trade, holding_period_years: float) -> float:
         """Round-trip cost amortized over the holding period - the alpha haircut rate.
 

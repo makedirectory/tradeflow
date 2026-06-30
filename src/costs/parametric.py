@@ -30,12 +30,14 @@ class ParametricCostModel(CostModel):
         default_spread_bps: float = 5.0,
         impact_eta: float = 0.3,
         participation_cap: float = 0.10,
+        annual_borrow_bps: float = 50.0,
         linear_impact: bool = False,
     ):
         self.commission_rate = commission_bps / 1e4
         self.default_spread = default_spread_bps / 1e4
         self.impact_eta = impact_eta
         self.participation_cap = participation_cap
+        self.annual_borrow_rate = annual_borrow_bps / 1e4  # financing cost to hold a short
         self.linear_impact = linear_impact  # linear participation (convex-quadratic) vs √-law
 
     def cost(self, trade: Trade) -> TradeCost:
@@ -63,6 +65,17 @@ class ParametricCostModel(CostModel):
             participation=participation,
             capped=participation > self.participation_cap,
         )
+
+    def carry_cost(self, notional: float, is_short: bool, holding_years: float) -> float:
+        """Financing cost of *holding* a position - borrow on shorts, accrued over time.
+
+        Long positions have no borrow cost here (margin financing is a separate, later
+        concern); a short pays ``borrow_rate · notional · holding_years``. This is what
+        stops a short-heavy strategy from being silently flattered.
+        """
+        if not is_short or holding_years <= 0:
+            return 0.0
+        return self.annual_borrow_rate * abs(notional) * holding_years
 
     def turnover_cost_rate(self, spread: float = None) -> float:
         """Linear cost per unit of turnover notional - the optimiser's L1 cost term.

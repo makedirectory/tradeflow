@@ -83,6 +83,7 @@ def run_backtest(
     commission_bps: float = 1.0,
     impact_eta: float = 0.3,
     participation_cap: float = 0.10,
+    borrow_bps: float = 50.0,
 ) -> Dict[str, Any]:
     """Backtest a strategy; return the full metrics dict + a path to the trades CSV.
 
@@ -100,7 +101,10 @@ def run_backtest(
         None
         if gross
         else ParametricCostModel(
-            commission_bps=commission_bps, impact_eta=impact_eta, participation_cap=participation_cap
+            commission_bps=commission_bps,
+            impact_eta=impact_eta,
+            participation_cap=participation_cap,
+            annual_borrow_bps=borrow_bps,
         )
     )
     result = BacktestEngine(strat, data_client, sizer=sizer, cost_model=cost_model).run(

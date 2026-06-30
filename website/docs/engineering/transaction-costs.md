@@ -65,11 +65,18 @@ profitable when it isn't.
 - **Participation cap**: a trade demanding more than ~10% of a day's volume is flagged
   — the seed of a capacity analysis (how much capital before cost eats the edge).
 
-## Known omissions
+## Borrow (short financing)
 
-No borrow/financing/short costs in v1 — flagged so short-heavy strategies aren't
-silently flattered. The optimiser uses the linear cost term while the backtest charges
-the √-law; the gap is small and documented.
+Holding a **short** accrues a borrow cost over time: `borrow_rate · notional ·
+holding_years` (default 50 bp/yr, `--borrow-bps`). The backtest charges it per short
+position by how long it was held, so a short-heavy strategy isn't silently flattered.
+Long-side margin financing and leverage costs remain out of scope.
+
+## Known gaps
+
+The optimiser uses the linear cost term while the backtest charges the √-law; the gap
+is small and documented. A name-specific cost term inside the optimiser objective
+needs an SOCP solver (the ex-post drag report is the v1 stand-in).
 
 ## Where it runs
 

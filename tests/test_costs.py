@@ -4,6 +4,7 @@ import math
 from datetime import datetime
 
 import pandas as pd
+import pytest
 
 from src.costs import ParametricCostModel, Trade
 from src.engine.backtest import BacktestEngine
@@ -74,6 +75,34 @@ def test_backtest_charges_both_legs_and_net_below_gross():
     for _, trade in net.trades.iterrows():
         assert abs(trade["pnl"] - (trade["gross_pnl"] - trade["cost"])) < 1e-9
         assert trade["cost"] > 0  # every closed trade paid entry + exit
+
+
+def test_carry_cost_charges_shorts_only():
+    m = ParametricCostModel(annual_borrow_bps=100.0)  # 1%/yr borrow
+    # A short held a year on $10k notional pays 1%; a long pays nothing.
+    assert m.carry_cost(10_000, is_short=True, holding_years=1.0) == pytest.approx(100.0)
+    assert m.carry_cost(10_000, is_short=True, holding_years=0.5) == pytest.approx(50.0)
+    assert m.carry_cost(10_000, is_short=False, holding_years=1.0) == 0.0
+
+
+def test_backtest_charges_borrow_on_shorts():
+    # volume_spike is long/short, so a high borrow rate raises total cost via its shorts.
+    dc = MarketDataClient(FakeMarketData(["AAA", "BBB"], n=400, freq="5min"))
+
+    def run(borrow_bps):
+        model = ParametricCostModel(annual_borrow_bps=borrow_bps)
+        res = BacktestEngine(VolumeSpikeStrategy.create_with_defaults(), dc, cost_model=model).run(
+            ["AAA", "BBB"], datetime(2024, 1, 1), datetime(2024, 3, 1), 100_000.0
+        )
+        shorts = int((res.trades["side"] == "SELL").sum()) if not res.trades.empty else 0
+        return res.total_cost, shorts
+
+    cost_no_borrow, shorts = run(0.0)
+    cost_borrow, _ = run(2000.0)  # an extreme 20%/yr to make the effect unmistakable
+    if shorts > 0:
+        assert cost_borrow > cost_no_borrow
+    else:  # no shorts taken on this fixture → borrow changes nothing
+        assert cost_borrow == pytest.approx(cost_no_borrow)
 
 
 def test_total_cost_reconciles_gross_and_net():

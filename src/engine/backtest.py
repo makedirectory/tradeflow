@@ -20,6 +20,7 @@ from src.brokers.base import AccountSnapshot
 from src.costs.base import CostModel, Trade
 from src.execution.sizing import PositionSizer, RiskBasedSizer
 from src.marketdata.client import MarketDataClient
+from src.marketdata.timeframe import Timeframe
 from src.strategies import signals
 from src.strategies.base import Strategy
 from src.utils.numeric import round_quantity
@@ -72,7 +73,9 @@ class BacktestEngine:
         """Backtest ``symbols`` over ``[start, end]`` starting from ``initial_capital``."""
         self.strategy.initialize()
 
-        data = self.data_client.get_bars(symbols, self.strategy.config["timeframe"], start, end)
+        timeframe = self.strategy.config["timeframe"]
+        self._periods_per_year = Timeframe.parse(timeframe).periods_per_year()
+        data = self.data_client.get_bars(symbols, timeframe, start, end)
 
         # ``available`` is realised cash used to gate new entries; it carries
         # across symbols so the run can't spend the same dollar twice.
@@ -160,7 +163,9 @@ class BacktestEngine:
                 # Track the worst/best price seen while open, for MAE/MFE.
                 position["lowest"] = min(position["lowest"], lows[i])
                 position["highest"] = max(position["highest"], highs[i])
-                exit_cost = self._trade_cost(symbol, position["size"], opens[i], adv, vol, i)
+                exit_cost = self._trade_cost(symbol, position["size"], opens[i], adv, vol, i) + self._carry(
+                    position, i
+                )
                 closed = self._maybe_close(
                     position, signal, opens[i], highs[i], lows[i], timestamps[i], exit_cost
                 )
@@ -173,11 +178,15 @@ class BacktestEngine:
             if position is None and signal in signals.ENTRY_SIGNALS:
                 position = self._maybe_open(symbol, signal, opens[i], timestamps[i])
                 if position is not None:
+                    position["entry_bar"] = i
                     position["entry_cost"] = self._trade_cost(symbol, position["size"], opens[i], adv, vol, i)
 
         # Force-close anything still open at the final bar.
         if position is not None:
-            final_cost = self._trade_cost(symbol, position["size"], data["close"].iloc[-1], adv, vol, -1)
+            last = len(timestamps) - 1
+            final_cost = self._trade_cost(
+                symbol, position["size"], data["close"].iloc[-1], adv, vol, -1
+            ) + self._carry(position, last)
             trades.append(
                 self._close(position, data["close"].iloc[-1], timestamps[-1], "END_OF_PERIOD", final_cost)
             )
@@ -191,6 +200,14 @@ class BacktestEngine:
             return 0.0
         trade = Trade(symbol=symbol, shares=shares, price=price, adv=float(adv[i]), daily_vol=float(vol[i]))
         return self.cost_model.cost(trade).total
+
+    def _carry(self, position: Dict[str, Any], exit_bar: int) -> float:
+        """Financing (borrow) cost of holding ``position`` until ``exit_bar`` - shorts only."""
+        if self.cost_model is None:
+            return 0.0
+        held_years = max(exit_bar - position.get("entry_bar", exit_bar), 0) / self._periods_per_year
+        notional = position["size"] * position["entry_price"]
+        return self.cost_model.carry_cost(notional, position["side"] == signals.SELL, held_years)
 
     def _maybe_open(self, symbol: str, signal: str, price: float, timestamp) -> Optional[Dict[str, Any]]:
         # Present realised cash as an account snapshot so the same PositionSizer

@@ -95,7 +95,9 @@ def cmd_backtest(args) -> None:
     cost_model = (
         None
         if args.gross
-        else ParametricCostModel(commission_bps=args.commission_bps, impact_eta=args.impact_eta)
+        else ParametricCostModel(
+            commission_bps=args.commission_bps, impact_eta=args.impact_eta, annual_borrow_bps=args.borrow_bps
+        )
     )
     result = BacktestEngine(strategy, data_client, sizer=sizer, cost_model=cost_model).run(
         universe, args.start, args.end, args.capital
@@ -816,6 +818,9 @@ def build_parser() -> argparse.ArgumentParser:
     bt.add_argument("--commission-bps", dest="commission_bps", type=float, default=1.0)
     bt.add_argument(
         "--impact-eta", dest="impact_eta", type=float, default=0.3, help="Market-impact coefficient"
+    )
+    bt.add_argument(
+        "--borrow-bps", dest="borrow_bps", type=float, default=50.0, help="Annual short borrow rate (bps)"
     )
     bt.add_argument(
         "--chart",
