@@ -41,6 +41,10 @@ ARTIFACT_DIR = Path("logs") / "artifacts"
 #: Cap on rows returned inline from an optimization (the rest go to CSV).
 TOP_N = 10
 
+#: A lagged blend whose added turnover costs more than this per year (a conservative
+#: heuristic) isn't recommended — the IR uplift rarely justifies it.
+_BLEND_COST_CEILING = 0.02
+
 
 def _strategy(strategy_name: str, config: Optional[Dict[str, Any]] = None):
     """Instantiate a strategy from defaults, overlaid with ``config`` overrides."""
@@ -733,6 +737,14 @@ def compute_horizon(
     w_now, w_lag = hz.blend_weights(fit["delta"], rho) if fit["delta"] == fit["delta"] else (1.0, 0.0)
     cadence = hz.recommended_cadence(ic_profile)
 
+    # Net-of-cost guard: the lagged leg adds turnover; price it and only recommend the
+    # blend when it diversifies (adds independent info) and its annual cost is modest.
+    from src.costs import ParametricCostModel
+
+    rebalances_per_year = periods_per_year / max(cadence, 1)
+    blend_cost = abs(w_lag) * ParametricCostModel().turnover_cost_rate() * rebalances_per_year
+    blend_recommended = (w_lag > 1e-3) and (blend_cost < _BLEND_COST_CEILING)
+
     return {
         "run_id": run_id,
         "strategy": strategy,
@@ -749,9 +761,11 @@ def compute_horizon(
         "blend_weight_now": w_now,
         "blend_weight_lagged": w_lag,
         "blend_regime": "diversify" if w_lag > 1e-6 else "hedge" if w_lag < -1e-6 else "latest-only",
+        "blend_annual_cost": blend_cost,
+        "blend_recommended": blend_recommended,
         "note": "δ is the per-period IC decay (HL = half-life). Rebalance near the "
-        "cadence that maximises IC·√(1/Δt); amortise cost over the half-life. The "
-        "lagged blend adds turnover — confirm it survives cost (spec 007) before using.",
+        "cadence that maximises IC·√(1/Δt); amortise cost over the half-life. The lagged "
+        "blend is recommended only when it diversifies and its turnover cost is modest.",
     }
 
 

@@ -70,20 +70,56 @@ class BacktestEngine:
     def run(
         self, symbols: List[str], start: datetime, end: datetime, initial_capital: float
     ) -> BacktestResult:
-        """Backtest ``symbols`` over ``[start, end]`` starting from ``initial_capital``."""
-        self.strategy.initialize()
+        """Backtest ``symbols`` over ``[start, end]`` starting from ``initial_capital``.
 
+        Loads the full ``{symbol: bars}`` panel up front. For broad universes / long
+        intraday histories that don't fit in RAM, :meth:`run_streaming` is equivalent
+        but bounded by one symbol at a time.
+        """
+        self.strategy.initialize()
         timeframe = self.strategy.config["timeframe"]
         self._periods_per_year = Timeframe.parse(timeframe).periods_per_year()
         data = self.data_client.get_bars(symbols, timeframe, start, end)
+        return self._simulate(((s, b) for s, b in data.items()), start, end, initial_capital)
 
-        # ``available`` is realised cash used to gate new entries; it carries
-        # across symbols so the run can't spend the same dollar twice.
+    def run_streaming(
+        self,
+        source,
+        symbols: List[str],
+        start: datetime,
+        end: datetime,
+        initial_capital: float,
+        lookback_days: int = 3650,
+    ) -> BacktestResult:
+        """Backtest from a :class:`~src.data.scan.BarSource`, **one symbol at a time**.
+
+        The per-symbol simulation is independent and cash carries across symbols in
+        order, so this is identical to :meth:`run` on the same data — but peak memory is
+        bounded by a single symbol's history (each frame is retired before the next is
+        scanned), not the whole panel. The leakage guard lives in the source's scan.
+        """
+        self.strategy.initialize()
+        timeframe = self.strategy.config["timeframe"]
+        self._periods_per_year = Timeframe.parse(timeframe).periods_per_year()
+
+        def per_symbol():
+            for symbol in symbols:
+                scanned = source.scan([symbol], timeframe, end, lookback_days)
+                frame = scanned.get(symbol)
+                if frame is not None and not frame.empty:
+                    yield symbol, frame  # retired after this iteration → bounded memory
+
+        return self._simulate(per_symbol(), start, end, initial_capital)
+
+    def _simulate(self, symbol_bars, start, end, initial_capital: float) -> BacktestResult:
+        """Run the per-symbol simulation over an iterable of ``(symbol, bars)`` and assemble."""
+        # ``available`` is realised cash used to gate new entries; it carries across
+        # symbols (in order) so the run can't spend the same dollar twice.
         self._available = initial_capital
         market_data: Dict[str, Dict[str, float]] = {}
         all_trades: List[Dict[str, Any]] = []
 
-        for symbol, bars in data.items():
+        for symbol, bars in symbol_bars:
             if bars.empty:
                 continue
             market_data[symbol] = {"first_open": bars["open"].iloc[0], "last_close": bars["close"].iloc[-1]}
@@ -103,13 +139,7 @@ class BacktestEngine:
         final_capital = initial_capital + net_pnl
         equity_curve = performance.build_equity_curve(trades_df, initial_capital)
         metrics = performance.compute_backtest_metrics(
-            trades_df,
-            equity_curve,
-            initial_capital,
-            final_capital,
-            market_data,
-            start=start,
-            end=end,
+            trades_df, equity_curve, initial_capital, final_capital, market_data, start=start, end=end
         )
 
         return BacktestResult(

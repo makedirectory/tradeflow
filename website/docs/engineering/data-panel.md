@@ -35,9 +35,18 @@ edge (the returned per-symbol frames). It's opt-in (`uv sync --extra store`, pur
 
 This is the concrete meaning of *"design for scale, start small"*: the seam exists from
 the start, so reaching Parquet (and later partitioned/columnar tiers, or migrating the
-compute layer to lazy Polars/DuckDB) is an adapter swap, not a rewrite. Those larger
-phases — lazy panel-wide compute and a streaming chunked backtest — are deferred until
-the data volume actually forces them.
+compute layer to lazy Polars/DuckDB) is an adapter swap, not a rewrite.
+
+### Streaming backtest (bounded memory)
+
+`BacktestEngine.run_streaming(source, symbols, …)` backtests from any `BarSource`
+**one symbol at a time** — each symbol's bars are scanned, simulated, and retired
+before the next, so peak memory is bounded by a single symbol's history rather than
+the whole panel. Because the per-symbol simulation is independent and cash carries
+across symbols in order, the result is identical to the in-memory `run()` (a
+regression test asserts this against a Parquet store). The remaining phase — migrating
+the panel-wide *compute* (indicators, cross-sectional ops) to lazy Polars/DuckDB — is
+deferred until data volume forces it; the seam makes it incremental.
 
 ## The panel
 

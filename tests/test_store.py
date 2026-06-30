@@ -87,3 +87,27 @@ def test_missing_symbol_is_skipped(tmp_path):
     store.write({"AAA": make_ohlcv(n=100, seed=0, freq="1D")}, timeframe="1Day")
     scanned = store.scan(["AAA", "ZZZ"], "1Day", datetime(2025, 1, 1), lookback_days=10_000)
     assert set(scanned) == {"AAA"}
+
+
+def test_streaming_backtest_matches_batch(tmp_path):
+    # Streaming one symbol at a time from the store is equivalent to the in-memory
+    # batch backtest on the same data — bounded memory, identical result.
+    from src.engine.backtest import BacktestEngine
+    from src.strategies.ma_crossover import MovingAverageCrossoverStrategy
+
+    syms = ["AAA", "BBB", "CCC"]
+    bars = {s: make_ohlcv(n=400, seed=i, freq="1D") for i, s in enumerate(syms)}
+    end = bars["AAA"].index[-1].to_pydatetime()
+    start = bars["AAA"].index[0].to_pydatetime()
+
+    store = ParquetBarStore(tmp_path)
+    store.write(bars, timeframe="1Day")
+
+    batch = BacktestEngine(
+        MovingAverageCrossoverStrategy.create_with_defaults(), MarketDataClient(DictMarketData(bars))
+    ).run(syms, start, end, 100_000.0)
+    streamed = BacktestEngine(MovingAverageCrossoverStrategy.create_with_defaults(), None).run_streaming(
+        store, syms, start, end, 100_000.0
+    )
+    assert streamed.final_capital == pytest.approx(batch.final_capital)
+    assert len(streamed.trades) == len(batch.trades)

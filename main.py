@@ -634,9 +634,11 @@ def cmd_horizon(args) -> None:
         f"  recommended cadence: every {r['recommended_cadence']} periods  "
         f"(best return horizon ≈ {r['peak_return_horizon']:.1f})"
     )
+    rec = "recommended" if r["blend_recommended"] else "not worth the turnover cost"
     print(
         f"  lagged blend [{r['blend_regime']}]: w_now {r['blend_weight_now']:+.2f}  "
-        f"w_lagged {r['blend_weight_lagged']:+.2f}  (signal autocorr ρ {r['signal_autocorrelation']:.2f})"
+        f"w_lagged {r['blend_weight_lagged']:+.2f}  (ρ {r['signal_autocorrelation']:.2f}, "
+        f"cost {r['blend_annual_cost']:.2%}/yr → {rec})"
     )
 
 

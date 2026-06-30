@@ -64,8 +64,9 @@ skill.
 
 - **Decay should be measured out-of-sample** — fitting it on the selection data
   overstates persistence.
-- **The blend adds turnover** — confirm it survives [cost](./transaction-costs) before
-  using it; a blend that raises gross IR can lose net.
+- **The blend adds turnover** — its lagged leg is priced through the [cost](./transaction-costs)
+  model and `blend_recommended` is only true when the blend *diversifies* and its
+  annual turnover cost is modest; a high-turnover blend that would lose net is flagged.
 - **Regime-dependent decay** — the half-life isn't constant; re-estimate on a rolling
   window rather than freezing one number.
 

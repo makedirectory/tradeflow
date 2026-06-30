@@ -67,6 +67,11 @@ def test_compute_horizon_structure_and_leakage():
     assert r["recommended_cadence"] >= 1
     assert -2.0 <= r["blend_weight_now"] <= 3.0
     assert r["blend_regime"] in ("diversify", "hedge", "latest-only")
+    # Net-of-cost guard: the blend is priced and recommended only when it pays off.
+    assert isinstance(r["blend_recommended"], bool)
+    assert r["blend_annual_cost"] >= 0.0
+    if r["blend_regime"] != "diversify":
+        assert r["blend_recommended"] is False  # only a diversifying blend can be worth cost
 
 
 def test_compute_horizon_independent_of_post_end_bars():
