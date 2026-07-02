@@ -875,16 +875,24 @@ def construct_portfolio(
     capital: Optional[float] = None,
     current_weights: Optional[Dict[str, float]] = None,
     holding_period_years: float = 1.0 / 12.0,
+    cost_aware: bool = True,
 ) -> Dict[str, Any]:
     """Construct the utility-maximising portfolio from alphas (005) and Σ (006).
 
     Read-only research-clock flow: scans the universe as of ``as_of``, builds
     benchmark-neutral alphas and an annualised covariance Σ, then maximises
-    ``αᵀw − λ·wᵀΣw`` over long-only, box-bounded, budgeted (and optionally
-    cardinality-capped) weights, calibrating ``λ`` to ``target_te``. Returns the
-    proposed weights plus the Fundamental-Law report (IR*, predicted TE/IR, transfer
-    coefficient, turnover). This is a **proposal** - it places no orders.
+    ``αᵀw − λ·wᵀΣw − cost(w − w₀)`` over long-only, box-bounded, budgeted (and
+    optionally cardinality-capped) weights, calibrating ``λ`` to ``target_te``.
+
+    With ``cost_aware`` (default) the objective carries 007's cost (Spec 016):
+    name-specific linear turnover (commission + a high-low-range spread proxy) and,
+    when ``capital`` is set, the √-impact term - so the optimiser trades a name's
+    alpha against *that name's* cost and a no-trade band emerges from the cost itself.
+    ``cost_aware=False`` recovers the cost-blind (gross) solve with an ex-post drag.
+    Returns the proposed weights plus the Fundamental-Law report (IR*, predicted TE/IR,
+    transfer coefficient, turnover, cost split). This is a **proposal** - no orders.
     """
+    from src.costs import ParametricCostModel
     from src.portfolio.optimizer import MeanVarianceOptimizer
 
     run_id = new_run_id()
@@ -922,20 +930,33 @@ def construct_portfolio(
             "note": "Insufficient data for alphas and/or a covariance matrix.",
         }
 
+    cost_model = ParametricCostModel()
+    # Per-name, as-of liquidity context (spread proxy, ADV$, daily vol) priced by the
+    # same cost model the backtest uses - the optimiser and backtest share one model.
+    cost_inputs = _cost_inputs(universe_bars, cost_model) if cost_aware else None
+
     optimizer = MeanVarianceOptimizer(max_weight=max_weight, min_weight=min_weight, max_names=max_names)
-    result = optimizer.optimize(alphas, matrix, target_te=target_te, current_weights=current_weights)
+    result = optimizer.optimize(
+        alphas,
+        matrix,
+        target_te=target_te,
+        current_weights=current_weights,
+        cost_model=cost_model if cost_aware else None,
+        cost_inputs=cost_inputs,
+        capital=capital,
+        holding_period_years=holding_period_years,
+    )
 
-    # Ex-post cost drag: the proposed turnover priced through the linear cost rate,
-    # amortized over the holding period (a haircut on the expected active return).
     if result.feasible:
-        from src.costs import ParametricCostModel
-
-        rate = ParametricCostModel().turnover_cost_rate()
-        cost_drag = result.diagnostics["turnover"] * rate / max(holding_period_years, 1e-9)
-        result.diagnostics["cost_drag"] = cost_drag
-        result.diagnostics["expected_active_return_net"] = (
-            result.diagnostics["expected_active_return"] - cost_drag
-        )
+        if not result.diagnostics.get("cost_aware"):
+            # Cost-blind (gross) objective: still report the ex-post drag so the net
+            # figure is visible - the honest haircut on a cost-blind solve.
+            rate = cost_model.turnover_cost_rate()
+            cost_drag = result.diagnostics["turnover"] * rate / max(holding_period_years, 1e-9)
+            result.diagnostics["cost_drag"] = cost_drag
+            result.diagnostics["expected_active_return_net"] = (
+                result.diagnostics["expected_active_return"] - cost_drag
+            )
         # Capacity: the capital at which √-impact cost erases the gross alpha.
         result.diagnostics["capacity_capital"] = _capacity(
             result.weights, universe_bars, result.diagnostics["expected_active_return"], holding_period_years
@@ -982,6 +1003,50 @@ def construct_portfolio(
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
+#: The bar feed carries no quotes, so the effective spread is proxied as this fraction
+#: of the trailing daily high-low range (a rough liquidity signal), then clamped.
+SPREAD_RANGE_FRACTION = 0.10
+_COST_WINDOW = 20  # trailing bars for the ADV / vol / spread estimates (matches the backtest)
+
+
+def _spread_proxy(frame, cost_model, window: int = _COST_WINDOW) -> float:
+    """Per-name fractional spread from the trailing high-low range, clamped.
+
+    Effective spread ≈ ``SPREAD_RANGE_FRACTION`` of the median daily range, floored at
+    a fraction of the model default (so very liquid names can price below it) and capped
+    at 2%. Falls back to the model default when OHLC is missing - an honest proxy, not a
+    quote.
+    """
+    if not {"high", "low", "close"} <= set(frame.columns) or len(frame) < 2:
+        return cost_model.default_spread
+    rng = ((frame["high"] - frame["low"]) / frame["close"]).tail(window)
+    proxy = float(rng.median()) * SPREAD_RANGE_FRACTION
+    if not np.isfinite(proxy):
+        return cost_model.default_spread
+    return float(min(max(proxy, cost_model.default_spread * 0.2), 0.02))
+
+
+def _cost_inputs(universe_bars, cost_model, window: int = _COST_WINDOW):
+    """Per-name as-of liquidity context (spread proxy, ADV$, daily vol) for the solve.
+
+    Trailing windows only, so nothing depends on post-``as_of`` bars (the same leakage
+    discipline as the backtest's cost inputs and :func:`_capacity`).
+    """
+    from src.portfolio.optimizer import CostInputs
+
+    spread, adv_dollar, daily_vol = {}, {}, {}
+    for sym, frame in universe_bars.items():
+        if frame is None or len(frame) < 2:
+            continue
+        price = float(frame["close"].iloc[-1])
+        adv_shares = float(frame["volume"].tail(window).mean()) if "volume" in frame else 0.0
+        spread[sym] = _spread_proxy(frame, cost_model, window)
+        adv_dollar[sym] = price * adv_shares
+        vol = float(frame["close"].pct_change().tail(window).std())
+        daily_vol[sym] = vol if np.isfinite(vol) else 0.0
+    return CostInputs(spread=spread, adv_dollar=adv_dollar, daily_vol=daily_vol)
+
+
 def _capacity(weights, universe_bars, gross_alpha, holding_period_years) -> float:
     """Capital at which √-impact cost erases the gross alpha (net active return → 0).
 

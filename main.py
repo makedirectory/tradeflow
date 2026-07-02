@@ -178,18 +178,30 @@ def _allocate_utility(args) -> None:
         max_names=args.max_names,
         benchmark=args.benchmark,
         capital=args.capital,
+        holding_period_years=args.holding_period,
+        cost_aware=not args.gross_objective,
     )
     if not result["feasible"]:
         print(f"Infeasible: {result.get('binding_constraint') or result.get('note')}")
         return
 
     d = result["diagnostics"]
-    print(f"\nPortfolio for '{args.strategy}' as of {args.as_of:%Y-%m-%d} (target TE {args.target_te:.0%})")
+    mode = "cost-aware" if d.get("cost_aware") else "gross (cost-blind)"
+    print(
+        f"\nPortfolio for '{args.strategy}' as of {args.as_of:%Y-%m-%d} "
+        f"(target TE {args.target_te:.0%}, {mode})"
+    )
     print(
         f"  IR* {d['ir_star']:.2f}  predicted TE {d['predicted_tracking_error']:.1%}  "
         f"predicted IR {d['predicted_ir']:.2f}  transfer coef {d['transfer_coefficient']:.2f}  "
         f"turnover {d['turnover']:.1%}"
     )
+    if d.get("cost_aware"):
+        print(
+            f"  net active return {d['expected_active_return_net']:.2%}/yr  "
+            f"(gross {d['expected_active_return']:.2%} − cost {d['cost_drag']:.2%}: "
+            f"linear {d['linear_cost']:.2%} + √-impact {d['impact_cost']:.2%})"
+        )
     if "capacity_capital" in d:
         print(
             f"  cost drag {d['cost_drag']:.2%}/yr  capacity ≈ ${d['capacity_capital']:,.0f} "
@@ -903,6 +915,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Dust floor: min weight if held (utility)",
     )
     alloc.add_argument("--benchmark", default="SPY", help="Benchmark for residual vol / beta (utility)")
+    alloc.add_argument(
+        "--gross-objective",
+        dest="gross_objective",
+        action="store_true",
+        help="Cost-blind solve (utility): drop 007's cost from the objective, report it ex-post only. "
+        "Default is cost-aware (name-specific turnover + √-impact in the objective).",
+    )
+    alloc.add_argument(
+        "--holding-period",
+        dest="holding_period",
+        type=float,
+        default=1.0 / 12.0,
+        help="Expected holding period in years, to annualise the in-objective cost (utility; default 1/12)",
+    )
     alloc.set_defaults(func=cmd_allocate)
 
     opt = subparsers.add_parser(
