@@ -9,7 +9,7 @@ artifact file and referenced by path - never inlined.
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -24,7 +24,13 @@ from src.alphas import (
     strategy_scorer,
 )
 from src.analytics import metrics as m
-from src.data import ClientBarSource, FeaturePanel, add_risk_features, add_score_feature
+from src.data import (
+    ClientBarSource,
+    FeaturePanel,
+    add_factor_exposure_features,
+    add_risk_features,
+    add_score_feature,
+)
 from src.engine.backtest import BacktestEngine
 from src.marketdata.client import MarketDataClient
 from src.marketdata.timeframe import Timeframe
@@ -343,6 +349,7 @@ def compute_alphas(
     ic: float = DEFAULT_IC,
     benchmark: str = "SPY",
     neutralize: bool = False,
+    neutralize_factors: Sequence[str] = (),
     lookback_days: int = 180,
     timeframe: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -378,9 +385,11 @@ def compute_alphas(
 
     panel = FeaturePanel.for_universe(as_of, list(universe_bars))
     add_risk_features(panel, universe_bars, bench_frame, periods_per_year)
+    if neutralize_factors:
+        add_factor_exposure_features(panel, universe_bars, bench_frame, neutralize_factors)
     add_score_feature(panel, scorer(), universe_bars)
 
-    context = AlphaContext(ic=ic, neutralize=neutralize)
+    context = AlphaContext(ic=ic, neutralize=neutralize, neutralize_factors=tuple(neutralize_factors))
     refine_alpha(panel, context)
     alphas = panel_to_alphas(panel, context)
 
@@ -407,6 +416,8 @@ def compute_alphas(
         "benchmark": benchmark,
         "benchmark_available": bool(panel.meta.get("benchmark_available")),
         "neutralize": neutralize,
+        "neutralize_factors": list(neutralize_factors),
+        "neutralized_against": list(panel.meta.get("neutralized_against", [])),
         "universe_size": int(panel.get("score").notna().sum()) if panel.has("score") else 0,
         "low_confidence": bool(panel.meta.get("low_confidence")),
         "alphas": _jsonable(table),
@@ -423,6 +434,7 @@ def compute_combined_alphas(
     as_of: datetime,
     benchmark: str = "SPY",
     neutralize: bool = False,
+    neutralize_factors: Sequence[str] = (),
     lookback_days: int = 365,
     timeframe: str = "1Day",
     horizon: int = 5,
@@ -464,8 +476,14 @@ def compute_combined_alphas(
     panel = FeaturePanel.for_universe(as_of, list(universe_bars))
     panel.set("score", combined_score(universe_bars, scorers, measurement, as_of))
     add_risk_features(panel, universe_bars, bench_frame, periods_per_year)
+    if neutralize_factors:
+        add_factor_exposure_features(panel, universe_bars, bench_frame, neutralize_factors)
     # The combined, measured, shrunk IC replaces the assumed scalar (no double-scaling).
-    context = AlphaContext(ic=measurement.combined_ic, neutralize=neutralize)
+    context = AlphaContext(
+        ic=measurement.combined_ic,
+        neutralize=neutralize,
+        neutralize_factors=tuple(neutralize_factors),
+    )
     refine_alpha(panel, context)
     alphas = panel_to_alphas(panel, context)
 
@@ -488,6 +506,8 @@ def compute_combined_alphas(
         "timeframe": timeframe,
         "benchmark": benchmark,
         "neutralize": neutralize,
+        "neutralize_factors": list(neutralize_factors),
+        "neutralized_against": list(panel.meta.get("neutralized_against", [])),
         "universe_size": int(panel.get("score").notna().sum()) if panel.has("score") else 0,
         "low_confidence": bool(panel.meta.get("low_confidence")),
         "n_periods": measurement.n_periods,
@@ -513,6 +533,7 @@ def compute_information(
     scanner: str = "volume",
     benchmark: str = "SPY",
     neutralize: bool = True,
+    neutralize_factors: Sequence[str] = (),
     ic_prior: float = DEFAULT_IC,
     horizon: int = 5,
     n_points: int = 24,
@@ -558,7 +579,9 @@ def compute_information(
         "signal": lambda: signal_scorer(strat),
         "scanner": lambda: scanner_scorer(_scanner(scanner)),
     }[source]()
-    ctx = AlphaContext(ic=ic_prior, neutralize=neutralize)
+    ctx = AlphaContext(
+        ic=ic_prior, neutralize=neutralize, neutralize_factors=tuple(neutralize_factors)
+    )
 
     index = bench.index
     lo, hi = _to_ts(start, index), _to_ts(end, index)
@@ -660,6 +683,7 @@ def compute_horizon(
     scanner: str = "volume",
     benchmark: str = "SPY",
     neutralize: bool = True,
+    neutralize_factors: Sequence[str] = (),
     ic_prior: float = DEFAULT_IC,
     max_lag: int = 10,
     n_points: int = 20,
@@ -697,7 +721,9 @@ def compute_horizon(
         "signal": lambda: signal_scorer(strat),
         "scanner": lambda: scanner_scorer(_scanner(scanner)),
     }[source]()
-    ctx = AlphaContext(ic=ic_prior, neutralize=neutralize)
+    ctx = AlphaContext(
+        ic=ic_prior, neutralize=neutralize, neutralize_factors=tuple(neutralize_factors)
+    )
 
     index = bench.index
     window = index[(index >= _to_ts(start, index)) & (index <= _to_ts(end, index))]
@@ -869,6 +895,7 @@ def construct_portfolio(
     max_names: Optional[int] = None,
     benchmark: str = "SPY",
     neutralize: bool = True,
+    neutralize_factors: Sequence[str] = (),
     risk_model: str = "shrinkage",
     lookback_days: int = 365,
     timeframe: str = "1Day",
@@ -915,8 +942,12 @@ def construct_portfolio(
     # Alphas (the value) and Σ (the risk denominator), both as of the same moment.
     panel = FeaturePanel.for_universe(as_of, list(universe_bars))
     add_risk_features(panel, universe_bars, bench_frame, periods_per_year)
+    if neutralize_factors:
+        add_factor_exposure_features(panel, universe_bars, bench_frame, neutralize_factors)
     add_score_feature(panel, scorer(), universe_bars)
-    alpha_ctx = AlphaContext(ic=DEFAULT_IC, neutralize=neutralize)
+    alpha_ctx = AlphaContext(
+        ic=DEFAULT_IC, neutralize=neutralize, neutralize_factors=tuple(neutralize_factors)
+    )
     refine_alpha(panel, alpha_ctx)
     alphas = panel_to_alphas(panel, alpha_ctx)
     matrix = _build_covariance(risk_model, universe_bars, bench_frame, periods_per_year)
@@ -1143,6 +1174,8 @@ def _alpha_cross_section(universe_bars, bench, scorer, periods_per_year, t, ctx)
     bench_t = bench.loc[bench.index <= t]
     panel = FeaturePanel.for_universe(t, list(ub_t))
     add_risk_features(panel, ub_t, bench_t, periods_per_year)
+    if ctx.neutralize_factors:
+        add_factor_exposure_features(panel, ub_t, bench_t, ctx.neutralize_factors)
     add_score_feature(panel, scorer, ub_t)
     refine_alpha(panel, ctx)
     return pd.Series({a.symbol: a.alpha for a in panel_to_alphas(panel, ctx)})

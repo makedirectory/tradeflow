@@ -66,6 +66,15 @@ Two estimators behind one `RiskModel.estimate(returns)` interface:
   *factor* risk (`w_aᵀ X F Xᵀ w_a`) and *specific* risk (`w_aᵀ Δ w_a`). `risk --model
   factor` reports that split; it's what makes performance attribution possible.
 
+  The exposure builder (`build_factor_exposures`) is also the source of the
+  [alpha pipeline's](./alphas.md#neutralization) factor-neutralization columns — one
+  definition of "factor", both places. For that use it accepts a **subset**
+  (`factors=[...]`, relaxing the history requirement when momentum isn't requested)
+  and **precomputed betas** (`betas=...`, so the market column reuses the panel's
+  beta regression instead of rerunning it per name). Known limitation: the history
+  gate is two-way (momentum ⇒ ~148 bars, otherwise 61), not per-factor — a
+  market-only subset still requires 61 bars.
+
 ## Edge cases it handles
 
 - **Invertibility is the whole point.** Every estimator returns a positive-definite

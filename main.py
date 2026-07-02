@@ -177,6 +177,7 @@ def _allocate_utility(args) -> None:
         min_weight=args.min_weight,
         max_names=args.max_names,
         benchmark=args.benchmark,
+        neutralize_factors=args.neutralize_factors,
         capital=args.capital,
         holding_period_years=args.holding_period,
         cost_aware=not args.gross_objective,
@@ -464,6 +465,7 @@ def cmd_alphas(args) -> None:
                 as_of=args.as_of,
                 benchmark=args.benchmark,
                 neutralize=args.neutralize,
+                neutralize_factors=args.neutralize_factors,
                 lookback_days=args.lookback_days,
             ),
             args,
@@ -480,6 +482,7 @@ def cmd_alphas(args) -> None:
         ic=args.ic,
         benchmark=args.benchmark,
         neutralize=args.neutralize,
+        neutralize_factors=args.neutralize_factors,
         lookback_days=args.lookback_days,
     )
 
@@ -489,6 +492,7 @@ def cmd_alphas(args) -> None:
         "scanner": f"scanner '{args.scanner}' strength",
     }[args.source]
     print(f"\nAlphas from {src_desc} as of {args.as_of:%Y-%m-%d} (IC={args.ic}, benchmark={args.benchmark})")
+    _print_neutralization(result)
     if not result["benchmark_available"]:
         print("  ! benchmark unavailable — residual vol falls back to total volatility")
     if result["low_confidence"]:
@@ -505,6 +509,25 @@ def cmd_alphas(args) -> None:
         )
 
 
+def _print_neutralization(result) -> None:
+    """One honest line about what the alphas were actually regressed against.
+
+    Reports what was *applied* (from the refinement's meta), not what was requested —
+    and warns when a requested factor exposure was unavailable, so "factor-neutral"
+    is never claimed for un-neutralized output.
+    """
+    requested = result.get("neutralize_factors") or []
+    applied = result.get("neutralized_against") or []
+    if applied:
+        print(f"  neutralized against: {', '.join(applied)}")
+    missing = [f for f in requested if f not in applied]
+    if missing:
+        print(
+            f"  ! requested factor(s) NOT neutralized (exposures unavailable — "
+            f"insufficient history?): {', '.join(missing)}"
+        )
+
+
 def _print_combined_alphas(result, args) -> None:
     """Print the multi-signal combination: per-signal weights/ICs + the combined alphas."""
     if not result.get("universe_size"):
@@ -512,6 +535,7 @@ def _print_combined_alphas(result, args) -> None:
         return
 
     print(f"\nCombined alpha from {', '.join(result['signals'])} as of {args.as_of:%Y-%m-%d}")
+    _print_neutralization(result)
     print(f"  measured over {result['n_periods']} rebalances  |  combined IC {result['combined_ic']:.4f}")
     print(f"\n{'SIGNAL':16}{'IC':>9}{'SHRUNK':>9}{'WEIGHT':>9}")
     for sig in result["signals"]:
@@ -589,6 +613,7 @@ def cmd_info(args) -> None:
         source=args.source,
         scanner=args.scanner,
         benchmark=args.benchmark,
+        neutralize_factors=args.neutralize_factors,
         horizon=args.horizon,
         n_trials=args.n_trials,
     )
@@ -640,6 +665,7 @@ def cmd_horizon(args) -> None:
         source=args.source,
         scanner=args.scanner,
         benchmark=args.benchmark,
+        neutralize_factors=args.neutralize_factors,
         max_lag=args.max_lag,
         timeframe=args.timeframe,
     )
@@ -812,6 +838,37 @@ def _symbols(value: str) -> List[str]:
     return [s.strip().upper() for s in value.split(",") if s.strip()]
 
 
+#: The bare-flag default for --neutralize-factors: the risk-control factors.
+#: Momentum is deliberately excluded — a momentum tilt is a return bet the alphas
+#: may intend; regress it out explicitly if that's the goal.
+DEFAULT_NEUTRAL_FACTORS = ["market", "volatility", "size"]
+
+
+def _factors(value: str) -> List[str]:
+    from src.risk.exposures import FACTOR_NAMES
+
+    factors = [s.strip().lower() for s in value.split(",") if s.strip()]
+    unknown = [f for f in factors if f not in FACTOR_NAMES]
+    if unknown:
+        raise argparse.ArgumentTypeError(
+            f"unknown factor(s) {', '.join(unknown)}; available: {', '.join(FACTOR_NAMES)}"
+        )
+    return factors
+
+
+def _add_neutralize_factors_flag(parser, note: str = "") -> None:
+    parser.add_argument(
+        "--neutralize-factors",
+        dest="neutralize_factors",
+        type=_factors,
+        nargs="?",
+        const=DEFAULT_NEUTRAL_FACTORS,
+        default=[],
+        help="Factor-neutral alphas: regress out these risk-model exposures "
+        f"(comma-separated; bare flag = {','.join(DEFAULT_NEUTRAL_FACTORS)} — momentum kept){note}",
+    )
+
+
 def _date(value: str) -> datetime:
     return datetime.strptime(value, "%Y-%m-%d")
 
@@ -925,6 +982,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Dust floor: min weight if held (utility)",
     )
     alloc.add_argument("--benchmark", default="SPY", help="Benchmark for residual vol / beta (utility)")
+    _add_neutralize_factors_flag(alloc, note=" (utility)")
     alloc.add_argument(
         "--gross-objective",
         dest="gross_objective",
@@ -1037,6 +1095,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Make alphas beta-neutral (regress out benchmark beta)",
     )
+    _add_neutralize_factors_flag(alphas)
     alphas.add_argument("--lookback-days", dest="lookback_days", type=int, default=180)
     alphas.set_defaults(func=cmd_alphas)
 
@@ -1061,6 +1120,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=1,
         help="Configs tried (for multiple-testing inflation)",
     )
+    _add_neutralize_factors_flag(info, note="; measure the alpha you deploy")
     info.set_defaults(func=cmd_info)
 
     hz = subparsers.add_parser(
@@ -1078,6 +1138,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-lag", dest="max_lag", type=int, default=10, help="Largest lag (periods) to measure"
     )
     hz.add_argument("--timeframe", default="1Day")
+    _add_neutralize_factors_flag(hz, note="; measure the alpha you deploy")
     hz.set_defaults(func=cmd_horizon)
 
     risk = subparsers.add_parser(
