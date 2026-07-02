@@ -949,14 +949,18 @@ def construct_portfolio(
 
     if result.feasible:
         if not result.diagnostics.get("cost_aware"):
-            # Cost-blind (gross) objective: still report the ex-post drag so the net
-            # figure is visible - the honest haircut on a cost-blind solve.
+            # Cost-blind (gross) objective: still report the ex-post drag so the net figure
+            # is visible. Same convention as the cost-aware path - a round-trip haircut on
+            # the book for the headline (matching capacity), one-way rebalance drag in detail.
+            h = max(holding_period_years, 1e-9)
             rate = cost_model.turnover_cost_rate()
-            cost_drag = result.diagnostics["turnover"] * rate / max(holding_period_years, 1e-9)
-            result.diagnostics["cost_drag"] = cost_drag
-            result.diagnostics["expected_active_return_net"] = (
-                result.diagnostics["expected_active_return"] - cost_drag
-            )
+            expected = result.diagnostics["expected_active_return"]
+            one_way = result.diagnostics["turnover"] * rate / h
+            round_trip = 2.0 * rate * sum(result.weights.values()) / h
+            result.diagnostics["cost_drag"] = one_way
+            result.diagnostics["round_trip_cost"] = round_trip
+            result.diagnostics["expected_active_return_net"] = expected - round_trip
+            result.diagnostics["expected_active_return_net_oneway"] = expected - one_way
         # Capacity: the capital at which √-impact cost erases the gross alpha.
         result.diagnostics["capacity_capital"] = _capacity(
             result.weights, universe_bars, result.diagnostics["expected_active_return"], holding_period_years

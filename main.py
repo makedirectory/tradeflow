@@ -196,17 +196,27 @@ def _allocate_utility(args) -> None:
         f"predicted IR {d['predicted_ir']:.2f}  transfer coef {d['transfer_coefficient']:.2f}  "
         f"turnover {d['turnover']:.1%}"
     )
-    if d.get("cost_aware"):
+    if "round_trip_cost" in d:
+        # Headline: the conservative round-trip haircut (enter + exit, amortised) - the
+        # same cost model as capacity, so the two agree.
         print(
-            f"  net active return {d['expected_active_return_net']:.2%}/yr  "
-            f"(gross {d['expected_active_return']:.2%} − cost {d['cost_drag']:.2%}: "
-            f"linear {d['linear_cost']:.2%} + √-impact {d['impact_cost']:.2%})"
+            f"  net active return {d['expected_active_return_net']:.2%}/yr (round-trip)  "
+            f"= gross {d['expected_active_return']:.2%} − round-trip cost {d['round_trip_cost']:.2%}"
         )
+        # Detail: the one-way cost of this rebalance's turnover (prior reporting).
+        if d.get("cost_aware"):
+            print(
+                f"    this rebalance: turnover cost {d['cost_drag']:.2%}/yr one-way "
+                f"(linear {d['linear_cost']:.2%} + √-impact {d['impact_cost']:.2%}); "
+                f"one-way net {d['expected_active_return_net_oneway']:.2%}"
+            )
+        else:
+            print(
+                f"    this rebalance: turnover cost {d['cost_drag']:.2%}/yr one-way; "
+                f"one-way net {d['expected_active_return_net_oneway']:.2%}"
+            )
     if "capacity_capital" in d:
-        print(
-            f"  cost drag {d['cost_drag']:.2%}/yr  capacity ≈ ${d['capacity_capital']:,.0f} "
-            f"(where √-impact erases the alpha)"
-        )
+        print(f"  capacity ≈ ${d['capacity_capital']:,.0f} (where √-impact erases the alpha)")
     print(f"\n{'SYMBOL':10}{'WEIGHT':>8}" + (f"{'DOLLARS':>14}{'SHARES':>10}" if result["holdings"] else ""))
     if result["holdings"]:
         for h in result["holdings"]:

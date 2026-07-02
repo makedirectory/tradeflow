@@ -300,7 +300,12 @@ def test_construct_portfolio_cost_aware_reports_the_cost_split():
     d = res["diagnostics"]
     assert d.get("cost_aware") is True
     assert "linear_cost" in d and "impact_cost" in d
-    assert d["expected_active_return_net"] == pytest.approx(d["expected_active_return"] - d["cost_drag"])
+    # Headline net is the round-trip haircut; the one-way rebalance figure stays in detail.
+    assert d["expected_active_return_net"] == pytest.approx(d["expected_active_return"] - d["round_trip_cost"])
+    assert d["expected_active_return_net_oneway"] == pytest.approx(
+        d["expected_active_return"] - d["cost_drag"]
+    )
+    assert d["cost_drag"] == pytest.approx(d["linear_cost"] + d["impact_cost"])  # one-way total
 
 
 def test_construct_portfolio_gross_objective_uses_ex_post_drag():
@@ -327,6 +332,27 @@ def test_reported_linear_cost_equals_independent_sum():
     w = _vec(res)
     c_lin, _ = MeanVarianceOptimizer._cost_coefficients(model, ci, None, H, SYMS)
     assert res.diagnostics["linear_cost"] == pytest.approx(float(np.sum(c_lin * np.abs(w))))
+
+
+# --- round-trip headline haircut --------------------------------------------
+def test_round_trip_headline_is_conservative_and_capacity_aligned():
+    model = ParametricCostModel()
+    ci = _inputs({"A": 0.02, "B": 0.001, "C": 0.0005, "D": 0.0005}, adv_dollar=1e8)
+    res = MeanVarianceOptimizer(max_weight=0.5).optimize(  # from cash → Δw = w
+        _alphas(), _risk(), risk_aversion=LAM, cost_model=model, cost_inputs=ci,
+        capital=1e7, holding_period_years=H,
+    )
+    d = res.diagnostics
+    w = _vec(res)
+    c_lin, k_imp = MeanVarianceOptimizer._cost_coefficients(model, ci, 1e7, H, SYMS)
+    # Round-trip = 2 × (Σ cᵢwᵢ + Σ kᵢwᵢ^{3/2}) — the same book cost capacity prices, ×2.
+    expected_rt = 2.0 * (float(np.sum(c_lin * w)) + float(np.sum(k_imp * w**1.5)))
+    assert d["round_trip_cost"] == pytest.approx(expected_rt)
+    # From cash the round-trip is exactly twice the one-way rebalance cost, and strictly
+    # more conservative than the one-way net.
+    assert d["round_trip_cost"] == pytest.approx(2.0 * d["cost_drag"])
+    assert d["expected_active_return_net"] < d["expected_active_return_net_oneway"]
+    assert d["expected_active_return_net"] == pytest.approx(d["expected_active_return"] - expected_rt)
 
 
 # --- cardinality / dust re-solve with cost (spec §4 factor 6 interaction) ----

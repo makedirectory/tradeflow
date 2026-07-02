@@ -351,16 +351,26 @@ class MeanVarianceOptimizer:
             "turnover": float(np.sum(np.abs(dw))),
         }
         if cost_aware:
+            # One-way cost of *this rebalance's* turnover - what the objective charged,
+            # kept for continuity with the prior (pre-016) ex-post drag. Detail.
             linear_cost = float(np.sum(c_lin * np.abs(dw)))
             impact_cost = float(np.sum(k_imp * np.abs(dw) ** 1.5))
-            total_cost = linear_cost + impact_cost
+            rebalance_cost = linear_cost + impact_cost
+            # Round-trip haircut on the *held book* (007 §3.2 / the capacity convention):
+            # entering AND exiting each position, amortised over the holding period. This
+            # is the conservative headline net figure - the same cost model _capacity
+            # prices, so the net return and the capacity number agree.
+            book = np.abs(w)
+            round_trip_cost = float(2.0 * (np.sum(c_lin * book) + np.sum(k_imp * book**1.5)))
             diagnostics.update(
                 {
                     "cost_aware": True,
-                    "linear_cost": linear_cost,  # annualised Σ cᵢ|Δwᵢ| (turnover cost)
-                    "impact_cost": impact_cost,  # annualised Σ kᵢ|Δwᵢ|^{3/2} (√-impact)
-                    "cost_drag": total_cost,
-                    "expected_active_return_net": expected - total_cost,
+                    "linear_cost": linear_cost,  # one-way Σ cᵢ|Δwᵢ| (rebalance turnover)
+                    "impact_cost": impact_cost,  # one-way Σ kᵢ|Δwᵢ|^{3/2} (rebalance √-impact)
+                    "cost_drag": rebalance_cost,  # one-way rebalance total (continuity)
+                    "round_trip_cost": round_trip_cost,  # round-trip book haircut (headline)
+                    "expected_active_return_net": expected - round_trip_cost,  # headline: round-trip
+                    "expected_active_return_net_oneway": expected - rebalance_cost,  # detail: one-way
                     "names_traded": int(np.sum(np.abs(dw) > 1e-9)),
                 }
             )
