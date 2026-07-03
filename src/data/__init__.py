@@ -6,7 +6,7 @@ scans a universe as of a timestamp (leakage-safe), and a :class:`~src.data.panel
 holds every name's features in one table that producers fill and consumers read.
 """
 
-from src.data.features import Scorer, add_risk_features, add_score_feature
+from src.data.features import Scorer, add_factor_exposure_features, add_risk_features, add_score_feature
 from src.data.panel import FeaturePanel
 from src.data.scan import BarSource, ClientBarSource, slice_to_as_of
 from src.data.store import BAR_COLUMNS, ParquetBarStore
@@ -21,6 +21,7 @@ __all__ = [
     "slice_to_as_of",
     "FeaturePanel",
     "Scorer",
+    "add_factor_exposure_features",
     "add_risk_features",
     "add_score_feature",
     "ParquetBarStore",

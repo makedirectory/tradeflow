@@ -54,8 +54,18 @@ service function, logs the call, and returns JSON. The exposed surface:
 - Discovery: `list_strategies`, `list_scanners`, `get_param_ranges`
 - Analyze: `run_scan`, `run_backtest`, `run_optimization`, `run_walk_forward`,
   `get_metrics_glossary`, `summarize_bars`
+- Research: `compute_alphas`, `combine_alphas`, `compute_risk`,
+  `construct_portfolio`, `compute_information`, `compute_horizon`
 - Propose (writes a file, never live state): `save_config`, `load_config`,
   `list_configs`
+
+:::note Known gap
+The research tools don't expose the CLI's `neutralize_factors` parameter yet
+([factor-neutral alphas](./alphas.md#neutralization)) — their results echo a
+`neutralized_against` field, but via this surface it is always empty. Wiring the
+parameter through the tool signatures is a small follow-up for when the agent
+surface needs it.
+:::
 
 ## The hard wall
 

@@ -94,6 +94,104 @@ def test_refine_neutralize_is_beta_orthogonal():
     assert abs(float(np.dot(z.values, b.values))) < 1e-9
 
 
+def test_neutralize_multi_column_orthogonal_to_each():
+    """One regression on the exposure union: residual orthogonal to every column."""
+    rng = np.random.default_rng(7)
+    names = [f"S{i}" for i in range(20)]
+    z = pd.Series(rng.normal(size=20), index=names)
+    exposures = pd.DataFrame(
+        {"exp_volatility": rng.normal(size=20), "exp_size": rng.normal(size=20)}, index=names
+    )
+    resid = refine.neutralize(z, exposures)
+    assert abs(resid.mean()) < 1e-9
+    for col in exposures:
+        assert abs(float(np.dot(resid.values, exposures[col].values))) < 1e-9
+
+
+def test_refine_factor_neutral_is_orthogonal_to_exposure_columns():
+    """neutralize_factors regresses out exp_<factor> columns; beta may stay exposed."""
+    rng = np.random.default_rng(11)
+    raw = {f"S{i}": float(i % 5) - 2 for i in range(12)}
+    panel = _panel(raw, betas={f"S{i}": 1.0 + 0.1 * i for i in range(12)})
+    panel.set("exp_volatility", {s: float(v) for s, v in zip(raw, rng.normal(size=12))})
+    panel.set("exp_size", {s: float(v) for s, v in zip(raw, rng.normal(size=12))})
+
+    refine_alpha(panel, AlphaContext(ic=0.04, neutralize_factors=("volatility", "size")))
+    z = panel.get("z")
+    for col in ("exp_volatility", "exp_size"):
+        assert abs(float(np.dot(z.values, panel.get(col).reindex(z.index).values))) < 1e-9
+
+
+def test_refine_market_factor_supersedes_plain_beta():
+    """With 'market' in neutralize_factors, the standardized exposure column is used
+    (plain beta is skipped) and the residual is orthogonal to it."""
+    raw = {f"S{i}": float(i % 5) - 2 for i in range(12)}
+    betas = {f"S{i}": 1.0 + 0.1 * i for i in range(12)}
+    panel = _panel(raw, betas=betas)
+    exp_market = refine.zscore(pd.Series(betas))
+    panel.set("exp_market", exp_market)
+
+    refine_alpha(panel, AlphaContext(ic=0.04, neutralize=True, neutralize_factors=("market",)))
+    z = panel.get("z")
+    assert abs(float(np.dot(z.values, exp_market.reindex(z.index).values))) < 1e-9
+    # Standardized market exposure is affine in beta, so beta-orthogonality follows too.
+    assert abs(float(np.dot(z.values, pd.Series(betas).reindex(z.index).values))) < 1e-9
+
+
+def test_refine_names_missing_exposures_are_mean_imputed_not_dropped():
+    """A name missing a factor value gets the cross-sectional mean (0), staying in
+    the regression — it must not silently lose beta neutralisation (G&K union trap)."""
+    raw = {f"S{i}": float(i % 5) - 2 for i in range(12)}
+    betas = {f"S{i}": 1.0 + 0.1 * i for i in range(12)}
+    panel = _panel(raw, betas=betas)
+    covered = [s for s in list(raw) if s != "S0"]
+    rng = np.random.default_rng(3)
+    panel.set("exp_size", {s: float(v) for s, v in zip(covered, rng.normal(size=len(covered)))})
+
+    refine_alpha(panel, AlphaContext(ic=0.04, neutralize=True, neutralize_factors=("size",)))
+    z = panel.get("z")
+    b = pd.Series(betas).reindex(z.index)
+    imputed_size = panel.get("exp_size").reindex(z.index).fillna(0.0)
+    # The WHOLE cross-section (S0 included) is beta- and size-orthogonal.
+    assert abs(float(np.dot(z.values, b.values))) < 1e-9
+    assert abs(float(np.dot(z.values, imputed_size.values))) < 1e-9
+    assert panel.meta["neutralize_imputed"] == 1
+    assert panel.meta["neutralized_against"] == ["size", "beta"]
+
+
+def test_refine_unusable_exposures_fall_back_to_beta():
+    """All-NaN or constant exposure columns must degrade to beta neutralisation —
+    never to NO neutralisation (the silent-loss bug: requested market neutrality
+    on a short-history universe previously disabled beta too)."""
+    raw = {f"S{i}": float(i % 5) - 2 for i in range(12)}
+    betas = {f"S{i}": 1.0 + 0.1 * i for i in range(12)}
+    panel = _panel(raw, betas=betas)
+    panel.set("exp_market", {s: np.nan for s in raw})  # e.g. from an empty exposure build
+    panel.set("exp_volatility", {s: 1.0 for s in raw})  # constant: no cross-sectional info
+
+    refine_alpha(
+        panel,
+        AlphaContext(ic=0.04, neutralize=True, neutralize_factors=("market", "volatility")),
+    )
+    z = panel.get("z")
+    assert abs(float(np.dot(z.values, pd.Series(betas).reindex(z.index).values))) < 1e-9
+    assert panel.meta["neutralized_against"] == ["beta"]
+
+
+def test_producer_writes_nothing_on_short_history():
+    """An exposure build qualifying <2 names writes no columns, so refinement can
+    fall back to beta instead of regressing on all-NaN exposures."""
+    from src.data.features import add_factor_exposure_features
+
+    names = [f"S{i}" for i in range(12)]
+    bars = {s: make_ohlcv(n=40, seed=i, freq="1D") for i, s in enumerate(names)}  # < 61 bars
+    bench = make_ohlcv(n=40, seed=99, freq="1D")
+    panel = _panel({s: float(i % 5) - 2 for i, s in enumerate(names)})
+    add_factor_exposure_features(panel, bars, bench, ["market", "volatility", "size"])
+    assert not panel.has("exp_market")
+    assert not panel.has("exp_volatility")
+
+
 # --- scorers (the score-first migration) -------------------------------------
 def test_strategy_scorer_matches_direction():
     """A migrated strategy's score sign and discrete signal agree at a BUY bar."""
@@ -147,6 +245,31 @@ def test_alphas_are_independent_of_post_as_of_bars():
     )
     assert res_truncated["alphas"] == res_full["alphas"]
     assert res_truncated["low_confidence"] == res_full["low_confidence"]
+
+
+def test_compute_alphas_factor_neutral_end_to_end():
+    """The service threads neutralize_factors: exposures built, echoed, and applied."""
+    symbols = [f"S{i:02d}" for i in range(12)]
+    data = {s: make_ohlcv(n=250, seed=i, freq="1D") for i, s in enumerate([*symbols, "SPY"])}
+    client = MarketDataClient(DictMarketData(data))
+    as_of = data["S00"].index[-1].to_pydatetime()
+
+    plain = analysis.compute_alphas(client, "ma_crossover", symbols, as_of, benchmark="SPY")
+    neutral = analysis.compute_alphas(
+        client,
+        "ma_crossover",
+        symbols,
+        as_of,
+        benchmark="SPY",
+        neutralize_factors=("volatility", "size"),
+    )
+    assert neutral["neutralize_factors"] == ["volatility", "size"]
+    assert neutral["neutralized_against"] == ["volatility", "size"]
+    assert neutral["alphas"] and plain["alphas"]
+    # The factor regression must actually change the cross-section.
+    z_plain = {r["symbol"]: r["z"] for r in plain["alphas"]}
+    z_neutral = {r["symbol"]: r["z"] for r in neutral["alphas"]}
+    assert any(abs(z_plain[s] - z_neutral[s]) > 1e-12 for s in z_plain)
 
 
 # --- thin universe -----------------------------------------------------------

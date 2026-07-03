@@ -46,6 +46,7 @@ how inflated a "significant" result is once you account for everything you tried
 | `--benchmark` | `SPY` | Used to strip beta (residual returns). |
 | `--horizon` | `5` | Forward-return horizon, in bars. |
 | `--n-trials` | `1` | Configs tried, for the multiple-testing inflation. |
+| `--neutralize-factors` | off | Measure the **factor-neutral** alpha (bare flag = `market,volatility,size`) — use the same setting you deploy with, so the measured IC/IR describes the forecast you actually trade. Also on `horizon`. |
 
 ## What it does (and doesn't) tell you
 

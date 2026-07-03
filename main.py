@@ -177,24 +177,47 @@ def _allocate_utility(args) -> None:
         min_weight=args.min_weight,
         max_names=args.max_names,
         benchmark=args.benchmark,
+        neutralize_factors=args.neutralize_factors,
         capital=args.capital,
+        holding_period_years=args.holding_period,
+        cost_aware=not args.gross_objective,
     )
     if not result["feasible"]:
         print(f"Infeasible: {result.get('binding_constraint') or result.get('note')}")
         return
 
     d = result["diagnostics"]
-    print(f"\nPortfolio for '{args.strategy}' as of {args.as_of:%Y-%m-%d} (target TE {args.target_te:.0%})")
+    mode = "cost-aware" if d.get("cost_aware") else "gross (cost-blind)"
+    print(
+        f"\nPortfolio for '{args.strategy}' as of {args.as_of:%Y-%m-%d} "
+        f"(target TE {args.target_te:.0%}, {mode})"
+    )
     print(
         f"  IR* {d['ir_star']:.2f}  predicted TE {d['predicted_tracking_error']:.1%}  "
         f"predicted IR {d['predicted_ir']:.2f}  transfer coef {d['transfer_coefficient']:.2f}  "
         f"turnover {d['turnover']:.1%}"
     )
-    if "capacity_capital" in d:
+    if "round_trip_cost" in d:
+        # Headline: the conservative round-trip haircut (enter + exit, amortised) - the
+        # same cost model as capacity, so the two agree.
         print(
-            f"  cost drag {d['cost_drag']:.2%}/yr  capacity ≈ ${d['capacity_capital']:,.0f} "
-            f"(where √-impact erases the alpha)"
+            f"  net active return {d['expected_active_return_net']:.2%}/yr (round-trip)  "
+            f"= gross {d['expected_active_return']:.2%} − round-trip cost {d['round_trip_cost']:.2%}"
         )
+        # Detail: the one-way cost of this rebalance's turnover (prior reporting).
+        if d.get("cost_aware"):
+            print(
+                f"    this rebalance: turnover cost {d['cost_drag']:.2%}/yr one-way "
+                f"(linear {d['linear_cost']:.2%} + √-impact {d['impact_cost']:.2%}); "
+                f"one-way net {d['expected_active_return_net_oneway']:.2%}"
+            )
+        else:
+            print(
+                f"    this rebalance: turnover cost {d['cost_drag']:.2%}/yr one-way; "
+                f"one-way net {d['expected_active_return_net_oneway']:.2%}"
+            )
+    if "capacity_capital" in d:
+        print(f"  capacity ≈ ${d['capacity_capital']:,.0f} (where √-impact erases the alpha)")
     print(f"\n{'SYMBOL':10}{'WEIGHT':>8}" + (f"{'DOLLARS':>14}{'SHARES':>10}" if result["holdings"] else ""))
     if result["holdings"]:
         for h in result["holdings"]:
@@ -442,6 +465,7 @@ def cmd_alphas(args) -> None:
                 as_of=args.as_of,
                 benchmark=args.benchmark,
                 neutralize=args.neutralize,
+                neutralize_factors=args.neutralize_factors,
                 lookback_days=args.lookback_days,
             ),
             args,
@@ -458,6 +482,7 @@ def cmd_alphas(args) -> None:
         ic=args.ic,
         benchmark=args.benchmark,
         neutralize=args.neutralize,
+        neutralize_factors=args.neutralize_factors,
         lookback_days=args.lookback_days,
     )
 
@@ -467,6 +492,7 @@ def cmd_alphas(args) -> None:
         "scanner": f"scanner '{args.scanner}' strength",
     }[args.source]
     print(f"\nAlphas from {src_desc} as of {args.as_of:%Y-%m-%d} (IC={args.ic}, benchmark={args.benchmark})")
+    _print_neutralization(result)
     if not result["benchmark_available"]:
         print("  ! benchmark unavailable — residual vol falls back to total volatility")
     if result["low_confidence"]:
@@ -483,6 +509,25 @@ def cmd_alphas(args) -> None:
         )
 
 
+def _print_neutralization(result) -> None:
+    """One honest line about what the alphas were actually regressed against.
+
+    Reports what was *applied* (from the refinement's meta), not what was requested —
+    and warns when a requested factor exposure was unavailable, so "factor-neutral"
+    is never claimed for un-neutralized output.
+    """
+    requested = result.get("neutralize_factors") or []
+    applied = result.get("neutralized_against") or []
+    if applied:
+        print(f"  neutralized against: {', '.join(applied)}")
+    missing = [f for f in requested if f not in applied]
+    if missing:
+        print(
+            f"  ! requested factor(s) NOT neutralized (exposures unavailable — "
+            f"insufficient history?): {', '.join(missing)}"
+        )
+
+
 def _print_combined_alphas(result, args) -> None:
     """Print the multi-signal combination: per-signal weights/ICs + the combined alphas."""
     if not result.get("universe_size"):
@@ -490,6 +535,7 @@ def _print_combined_alphas(result, args) -> None:
         return
 
     print(f"\nCombined alpha from {', '.join(result['signals'])} as of {args.as_of:%Y-%m-%d}")
+    _print_neutralization(result)
     print(f"  measured over {result['n_periods']} rebalances  |  combined IC {result['combined_ic']:.4f}")
     print(f"\n{'SIGNAL':16}{'IC':>9}{'SHRUNK':>9}{'WEIGHT':>9}")
     for sig in result["signals"]:
@@ -567,6 +613,7 @@ def cmd_info(args) -> None:
         source=args.source,
         scanner=args.scanner,
         benchmark=args.benchmark,
+        neutralize_factors=args.neutralize_factors,
         horizon=args.horizon,
         n_trials=args.n_trials,
     )
@@ -618,6 +665,7 @@ def cmd_horizon(args) -> None:
         source=args.source,
         scanner=args.scanner,
         benchmark=args.benchmark,
+        neutralize_factors=args.neutralize_factors,
         max_lag=args.max_lag,
         timeframe=args.timeframe,
     )
@@ -790,6 +838,37 @@ def _symbols(value: str) -> List[str]:
     return [s.strip().upper() for s in value.split(",") if s.strip()]
 
 
+#: The bare-flag default for --neutralize-factors: the risk-control factors.
+#: Momentum is deliberately excluded — a momentum tilt is a return bet the alphas
+#: may intend; regress it out explicitly if that's the goal.
+DEFAULT_NEUTRAL_FACTORS = ["market", "volatility", "size"]
+
+
+def _factors(value: str) -> List[str]:
+    from src.risk.exposures import FACTOR_NAMES
+
+    factors = [s.strip().lower() for s in value.split(",") if s.strip()]
+    unknown = [f for f in factors if f not in FACTOR_NAMES]
+    if unknown:
+        raise argparse.ArgumentTypeError(
+            f"unknown factor(s) {', '.join(unknown)}; available: {', '.join(FACTOR_NAMES)}"
+        )
+    return factors
+
+
+def _add_neutralize_factors_flag(parser, note: str = "") -> None:
+    parser.add_argument(
+        "--neutralize-factors",
+        dest="neutralize_factors",
+        type=_factors,
+        nargs="?",
+        const=DEFAULT_NEUTRAL_FACTORS,
+        default=[],
+        help="Factor-neutral alphas: regress out these risk-model exposures "
+        f"(comma-separated; bare flag = {','.join(DEFAULT_NEUTRAL_FACTORS)} — momentum kept){note}",
+    )
+
+
 def _date(value: str) -> datetime:
     return datetime.strptime(value, "%Y-%m-%d")
 
@@ -903,6 +982,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Dust floor: min weight if held (utility)",
     )
     alloc.add_argument("--benchmark", default="SPY", help="Benchmark for residual vol / beta (utility)")
+    _add_neutralize_factors_flag(alloc, note=" (utility)")
+    alloc.add_argument(
+        "--gross-objective",
+        dest="gross_objective",
+        action="store_true",
+        help="Cost-blind solve (utility): drop 007's cost from the objective, report it ex-post only. "
+        "Default is cost-aware (name-specific turnover + √-impact in the objective).",
+    )
+    alloc.add_argument(
+        "--holding-period",
+        dest="holding_period",
+        type=float,
+        default=1.0 / 12.0,
+        help="Expected holding period in years, to annualise the in-objective cost (utility; default 1/12)",
+    )
     alloc.set_defaults(func=cmd_allocate)
 
     opt = subparsers.add_parser(
@@ -1001,6 +1095,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Make alphas beta-neutral (regress out benchmark beta)",
     )
+    _add_neutralize_factors_flag(alphas)
     alphas.add_argument("--lookback-days", dest="lookback_days", type=int, default=180)
     alphas.set_defaults(func=cmd_alphas)
 
@@ -1025,6 +1120,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=1,
         help="Configs tried (for multiple-testing inflation)",
     )
+    _add_neutralize_factors_flag(info, note="; measure the alpha you deploy")
     info.set_defaults(func=cmd_info)
 
     hz = subparsers.add_parser(
@@ -1042,6 +1138,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-lag", dest="max_lag", type=int, default=10, help="Largest lag (periods) to measure"
     )
     hz.add_argument("--timeframe", default="1Day")
+    _add_neutralize_factors_flag(hz, note="; measure the alpha you deploy")
     hz.set_defaults(func=cmd_horizon)
 
     risk = subparsers.add_parser(

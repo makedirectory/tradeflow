@@ -77,3 +77,8 @@ this Σ; the **transfer coefficient** is how much of it survives your constraint
 (tighten `--max-names` or `--max-weight` and watch it fall); **predicted IR** ≈
 `TC · IR*`. See [Portfolio construction (engineering)](../engineering/portfolio-construction)
 for the math.
+
+`--neutralize-factors` builds the book from **factor-neutral alphas** (bare flag =
+`market,volatility,size`; momentum kept as a deliberate return tilt) — see
+[Ranking by alpha](alphas#factor-neutral-alphas) for the semantics and the
+honesty warning when exposures are unavailable.

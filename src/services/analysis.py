@@ -9,7 +9,7 @@ artifact file and referenced by path - never inlined.
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -24,7 +24,13 @@ from src.alphas import (
     strategy_scorer,
 )
 from src.analytics import metrics as m
-from src.data import ClientBarSource, FeaturePanel, add_risk_features, add_score_feature
+from src.data import (
+    ClientBarSource,
+    FeaturePanel,
+    add_factor_exposure_features,
+    add_risk_features,
+    add_score_feature,
+)
 from src.engine.backtest import BacktestEngine
 from src.marketdata.client import MarketDataClient
 from src.marketdata.timeframe import Timeframe
@@ -343,6 +349,7 @@ def compute_alphas(
     ic: float = DEFAULT_IC,
     benchmark: str = "SPY",
     neutralize: bool = False,
+    neutralize_factors: Sequence[str] = (),
     lookback_days: int = 180,
     timeframe: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -378,9 +385,11 @@ def compute_alphas(
 
     panel = FeaturePanel.for_universe(as_of, list(universe_bars))
     add_risk_features(panel, universe_bars, bench_frame, periods_per_year)
+    if neutralize_factors:
+        add_factor_exposure_features(panel, universe_bars, bench_frame, neutralize_factors)
     add_score_feature(panel, scorer(), universe_bars)
 
-    context = AlphaContext(ic=ic, neutralize=neutralize)
+    context = AlphaContext(ic=ic, neutralize=neutralize, neutralize_factors=tuple(neutralize_factors))
     refine_alpha(panel, context)
     alphas = panel_to_alphas(panel, context)
 
@@ -407,6 +416,8 @@ def compute_alphas(
         "benchmark": benchmark,
         "benchmark_available": bool(panel.meta.get("benchmark_available")),
         "neutralize": neutralize,
+        "neutralize_factors": list(neutralize_factors),
+        "neutralized_against": list(panel.meta.get("neutralized_against", [])),
         "universe_size": int(panel.get("score").notna().sum()) if panel.has("score") else 0,
         "low_confidence": bool(panel.meta.get("low_confidence")),
         "alphas": _jsonable(table),
@@ -423,6 +434,7 @@ def compute_combined_alphas(
     as_of: datetime,
     benchmark: str = "SPY",
     neutralize: bool = False,
+    neutralize_factors: Sequence[str] = (),
     lookback_days: int = 365,
     timeframe: str = "1Day",
     horizon: int = 5,
@@ -464,8 +476,14 @@ def compute_combined_alphas(
     panel = FeaturePanel.for_universe(as_of, list(universe_bars))
     panel.set("score", combined_score(universe_bars, scorers, measurement, as_of))
     add_risk_features(panel, universe_bars, bench_frame, periods_per_year)
+    if neutralize_factors:
+        add_factor_exposure_features(panel, universe_bars, bench_frame, neutralize_factors)
     # The combined, measured, shrunk IC replaces the assumed scalar (no double-scaling).
-    context = AlphaContext(ic=measurement.combined_ic, neutralize=neutralize)
+    context = AlphaContext(
+        ic=measurement.combined_ic,
+        neutralize=neutralize,
+        neutralize_factors=tuple(neutralize_factors),
+    )
     refine_alpha(panel, context)
     alphas = panel_to_alphas(panel, context)
 
@@ -488,6 +506,8 @@ def compute_combined_alphas(
         "timeframe": timeframe,
         "benchmark": benchmark,
         "neutralize": neutralize,
+        "neutralize_factors": list(neutralize_factors),
+        "neutralized_against": list(panel.meta.get("neutralized_against", [])),
         "universe_size": int(panel.get("score").notna().sum()) if panel.has("score") else 0,
         "low_confidence": bool(panel.meta.get("low_confidence")),
         "n_periods": measurement.n_periods,
@@ -513,6 +533,7 @@ def compute_information(
     scanner: str = "volume",
     benchmark: str = "SPY",
     neutralize: bool = True,
+    neutralize_factors: Sequence[str] = (),
     ic_prior: float = DEFAULT_IC,
     horizon: int = 5,
     n_points: int = 24,
@@ -558,7 +579,7 @@ def compute_information(
         "signal": lambda: signal_scorer(strat),
         "scanner": lambda: scanner_scorer(_scanner(scanner)),
     }[source]()
-    ctx = AlphaContext(ic=ic_prior, neutralize=neutralize)
+    ctx = AlphaContext(ic=ic_prior, neutralize=neutralize, neutralize_factors=tuple(neutralize_factors))
 
     index = bench.index
     lo, hi = _to_ts(start, index), _to_ts(end, index)
@@ -660,6 +681,7 @@ def compute_horizon(
     scanner: str = "volume",
     benchmark: str = "SPY",
     neutralize: bool = True,
+    neutralize_factors: Sequence[str] = (),
     ic_prior: float = DEFAULT_IC,
     max_lag: int = 10,
     n_points: int = 20,
@@ -697,7 +719,7 @@ def compute_horizon(
         "signal": lambda: signal_scorer(strat),
         "scanner": lambda: scanner_scorer(_scanner(scanner)),
     }[source]()
-    ctx = AlphaContext(ic=ic_prior, neutralize=neutralize)
+    ctx = AlphaContext(ic=ic_prior, neutralize=neutralize, neutralize_factors=tuple(neutralize_factors))
 
     index = bench.index
     window = index[(index >= _to_ts(start, index)) & (index <= _to_ts(end, index))]
@@ -869,22 +891,31 @@ def construct_portfolio(
     max_names: Optional[int] = None,
     benchmark: str = "SPY",
     neutralize: bool = True,
+    neutralize_factors: Sequence[str] = (),
     risk_model: str = "shrinkage",
     lookback_days: int = 365,
     timeframe: str = "1Day",
     capital: Optional[float] = None,
     current_weights: Optional[Dict[str, float]] = None,
     holding_period_years: float = 1.0 / 12.0,
+    cost_aware: bool = True,
 ) -> Dict[str, Any]:
     """Construct the utility-maximising portfolio from alphas (005) and Σ (006).
 
     Read-only research-clock flow: scans the universe as of ``as_of``, builds
     benchmark-neutral alphas and an annualised covariance Σ, then maximises
-    ``αᵀw − λ·wᵀΣw`` over long-only, box-bounded, budgeted (and optionally
-    cardinality-capped) weights, calibrating ``λ`` to ``target_te``. Returns the
-    proposed weights plus the Fundamental-Law report (IR*, predicted TE/IR, transfer
-    coefficient, turnover). This is a **proposal** - it places no orders.
+    ``αᵀw − λ·wᵀΣw − cost(w − w₀)`` over long-only, box-bounded, budgeted (and
+    optionally cardinality-capped) weights, calibrating ``λ`` to ``target_te``.
+
+    With ``cost_aware`` (default) the objective carries 007's cost (Spec 016):
+    name-specific linear turnover (commission + a high-low-range spread proxy) and,
+    when ``capital`` is set, the √-impact term - so the optimiser trades a name's
+    alpha against *that name's* cost and a no-trade band emerges from the cost itself.
+    ``cost_aware=False`` recovers the cost-blind (gross) solve with an ex-post drag.
+    Returns the proposed weights plus the Fundamental-Law report (IR*, predicted TE/IR,
+    transfer coefficient, turnover, cost split). This is a **proposal** - no orders.
     """
+    from src.costs import ParametricCostModel
     from src.portfolio.optimizer import MeanVarianceOptimizer
 
     run_id = new_run_id()
@@ -907,8 +938,12 @@ def construct_portfolio(
     # Alphas (the value) and Σ (the risk denominator), both as of the same moment.
     panel = FeaturePanel.for_universe(as_of, list(universe_bars))
     add_risk_features(panel, universe_bars, bench_frame, periods_per_year)
+    if neutralize_factors:
+        add_factor_exposure_features(panel, universe_bars, bench_frame, neutralize_factors)
     add_score_feature(panel, scorer(), universe_bars)
-    alpha_ctx = AlphaContext(ic=DEFAULT_IC, neutralize=neutralize)
+    alpha_ctx = AlphaContext(
+        ic=DEFAULT_IC, neutralize=neutralize, neutralize_factors=tuple(neutralize_factors)
+    )
     refine_alpha(panel, alpha_ctx)
     alphas = panel_to_alphas(panel, alpha_ctx)
     matrix = _build_covariance(risk_model, universe_bars, bench_frame, periods_per_year)
@@ -922,20 +957,37 @@ def construct_portfolio(
             "note": "Insufficient data for alphas and/or a covariance matrix.",
         }
 
+    cost_model = ParametricCostModel()
+    # Per-name, as-of liquidity context (spread proxy, ADV$, daily vol) priced by the
+    # same cost model the backtest uses - the optimiser and backtest share one model.
+    cost_inputs = _cost_inputs(universe_bars, cost_model) if cost_aware else None
+
     optimizer = MeanVarianceOptimizer(max_weight=max_weight, min_weight=min_weight, max_names=max_names)
-    result = optimizer.optimize(alphas, matrix, target_te=target_te, current_weights=current_weights)
+    result = optimizer.optimize(
+        alphas,
+        matrix,
+        target_te=target_te,
+        current_weights=current_weights,
+        cost_model=cost_model if cost_aware else None,
+        cost_inputs=cost_inputs,
+        capital=capital,
+        holding_period_years=holding_period_years,
+    )
 
-    # Ex-post cost drag: the proposed turnover priced through the linear cost rate,
-    # amortized over the holding period (a haircut on the expected active return).
     if result.feasible:
-        from src.costs import ParametricCostModel
-
-        rate = ParametricCostModel().turnover_cost_rate()
-        cost_drag = result.diagnostics["turnover"] * rate / max(holding_period_years, 1e-9)
-        result.diagnostics["cost_drag"] = cost_drag
-        result.diagnostics["expected_active_return_net"] = (
-            result.diagnostics["expected_active_return"] - cost_drag
-        )
+        if not result.diagnostics.get("cost_aware"):
+            # Cost-blind (gross) objective: still report the ex-post drag so the net figure
+            # is visible. Same convention as the cost-aware path - a round-trip haircut on
+            # the book for the headline (matching capacity), one-way rebalance drag in detail.
+            h = max(holding_period_years, 1e-9)
+            rate = cost_model.turnover_cost_rate()
+            expected = result.diagnostics["expected_active_return"]
+            one_way = result.diagnostics["turnover"] * rate / h
+            round_trip = 2.0 * rate * sum(result.weights.values()) / h
+            result.diagnostics["cost_drag"] = one_way
+            result.diagnostics["round_trip_cost"] = round_trip
+            result.diagnostics["expected_active_return_net"] = expected - round_trip
+            result.diagnostics["expected_active_return_net_oneway"] = expected - one_way
         # Capacity: the capital at which √-impact cost erases the gross alpha.
         result.diagnostics["capacity_capital"] = _capacity(
             result.weights, universe_bars, result.diagnostics["expected_active_return"], holding_period_years
@@ -982,6 +1034,50 @@ def construct_portfolio(
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
+#: The bar feed carries no quotes, so the effective spread is proxied as this fraction
+#: of the trailing daily high-low range (a rough liquidity signal), then clamped.
+SPREAD_RANGE_FRACTION = 0.10
+_COST_WINDOW = 20  # trailing bars for the ADV / vol / spread estimates (matches the backtest)
+
+
+def _spread_proxy(frame, cost_model, window: int = _COST_WINDOW) -> float:
+    """Per-name fractional spread from the trailing high-low range, clamped.
+
+    Effective spread ≈ ``SPREAD_RANGE_FRACTION`` of the median daily range, floored at
+    a fraction of the model default (so very liquid names can price below it) and capped
+    at 2%. Falls back to the model default when OHLC is missing - an honest proxy, not a
+    quote.
+    """
+    if not {"high", "low", "close"} <= set(frame.columns) or len(frame) < 2:
+        return cost_model.default_spread
+    rng = ((frame["high"] - frame["low"]) / frame["close"]).tail(window)
+    proxy = float(rng.median()) * SPREAD_RANGE_FRACTION
+    if not np.isfinite(proxy):
+        return cost_model.default_spread
+    return float(min(max(proxy, cost_model.default_spread * 0.2), 0.02))
+
+
+def _cost_inputs(universe_bars, cost_model, window: int = _COST_WINDOW):
+    """Per-name as-of liquidity context (spread proxy, ADV$, daily vol) for the solve.
+
+    Trailing windows only, so nothing depends on post-``as_of`` bars (the same leakage
+    discipline as the backtest's cost inputs and :func:`_capacity`).
+    """
+    from src.portfolio.optimizer import CostInputs
+
+    spread, adv_dollar, daily_vol = {}, {}, {}
+    for sym, frame in universe_bars.items():
+        if frame is None or len(frame) < 2:
+            continue
+        price = float(frame["close"].iloc[-1])
+        adv_shares = float(frame["volume"].tail(window).mean()) if "volume" in frame else 0.0
+        spread[sym] = _spread_proxy(frame, cost_model, window)
+        adv_dollar[sym] = price * adv_shares
+        vol = float(frame["close"].pct_change().tail(window).std())
+        daily_vol[sym] = vol if np.isfinite(vol) else 0.0
+    return CostInputs(spread=spread, adv_dollar=adv_dollar, daily_vol=daily_vol)
+
+
 def _capacity(weights, universe_bars, gross_alpha, holding_period_years) -> float:
     """Capital at which √-impact cost erases the gross alpha (net active return → 0).
 
@@ -1074,6 +1170,8 @@ def _alpha_cross_section(universe_bars, bench, scorer, periods_per_year, t, ctx)
     bench_t = bench.loc[bench.index <= t]
     panel = FeaturePanel.for_universe(t, list(ub_t))
     add_risk_features(panel, ub_t, bench_t, periods_per_year)
+    if ctx.neutralize_factors:
+        add_factor_exposure_features(panel, ub_t, bench_t, ctx.neutralize_factors)
     add_score_feature(panel, scorer, ub_t)
     refine_alpha(panel, ctx)
     return pd.Series({a.symbol: a.alpha for a in panel_to_alphas(panel, ctx)})
