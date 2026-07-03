@@ -579,9 +579,7 @@ def compute_information(
         "signal": lambda: signal_scorer(strat),
         "scanner": lambda: scanner_scorer(_scanner(scanner)),
     }[source]()
-    ctx = AlphaContext(
-        ic=ic_prior, neutralize=neutralize, neutralize_factors=tuple(neutralize_factors)
-    )
+    ctx = AlphaContext(ic=ic_prior, neutralize=neutralize, neutralize_factors=tuple(neutralize_factors))
 
     index = bench.index
     lo, hi = _to_ts(start, index), _to_ts(end, index)
@@ -721,9 +719,7 @@ def compute_horizon(
         "signal": lambda: signal_scorer(strat),
         "scanner": lambda: scanner_scorer(_scanner(scanner)),
     }[source]()
-    ctx = AlphaContext(
-        ic=ic_prior, neutralize=neutralize, neutralize_factors=tuple(neutralize_factors)
-    )
+    ctx = AlphaContext(ic=ic_prior, neutralize=neutralize, neutralize_factors=tuple(neutralize_factors))
 
     index = bench.index
     window = index[(index >= _to_ts(start, index)) & (index <= _to_ts(end, index))]

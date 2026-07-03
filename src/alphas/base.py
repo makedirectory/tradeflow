@@ -123,7 +123,7 @@ def refine_alpha(
         if columns:
             z = refine.neutralize(z, pd.DataFrame(columns).reindex(z.index))
         panel.meta["neutralized_against"] = [
-            c[len(EXPOSURE_PREFIX):] if c.startswith(EXPOSURE_PREFIX) else c for c in columns
+            c[len(EXPOSURE_PREFIX) :] if c.startswith(EXPOSURE_PREFIX) else c for c in columns
         ]
         panel.meta["neutralize_imputed"] = imputed
 

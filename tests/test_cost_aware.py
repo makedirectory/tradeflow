@@ -58,7 +58,12 @@ def test_zero_cost_reduces_to_cost_blind_solve():
     free = ParametricCostModel(commission_bps=0.0, default_spread_bps=0.0)
     blind = MeanVarianceOptimizer(max_weight=0.5).optimize(_alphas(), _risk(), risk_aversion=LAM)
     zero = MeanVarianceOptimizer(max_weight=0.5).optimize(
-        _alphas(), _risk(), risk_aversion=LAM, cost_model=free, cost_inputs=_inputs(0.0), holding_period_years=H
+        _alphas(),
+        _risk(),
+        risk_aversion=LAM,
+        cost_model=free,
+        cost_inputs=_inputs(0.0),
+        holding_period_years=H,
     )
     assert np.allclose(_vec(zero), _vec(blind), atol=1e-9)
     # Unconstrained optimum still the spec-008 closed form, untouched by the (zero) cost.
@@ -74,7 +79,12 @@ def test_uniform_cost_from_cash_is_a_noop():
     model = ParametricCostModel()
     blind = MeanVarianceOptimizer(max_weight=0.5).optimize(_alphas(), _risk(), risk_aversion=LAM)
     uniform = MeanVarianceOptimizer(max_weight=0.5).optimize(
-        _alphas(), _risk(), risk_aversion=LAM, cost_model=model, cost_inputs=_inputs(0.001), holding_period_years=H
+        _alphas(),
+        _risk(),
+        risk_aversion=LAM,
+        cost_model=model,
+        cost_inputs=_inputs(0.001),
+        holding_period_years=H,
     )
     assert np.allclose(_vec(uniform), _vec(blind), atol=1e-6)
 
@@ -85,8 +95,12 @@ def test_name_specific_cost_tilts_away_from_expensive_names():
     # Make the top-alpha name (A) expensive; the cost-aware optimum must down-weight it.
     expensive = {"A": 0.02, "B": 0.0005, "C": 0.0005, "D": 0.0005}
     tilted = MeanVarianceOptimizer(max_weight=0.5).optimize(
-        _alphas(), _risk(), risk_aversion=LAM, cost_model=model,
-        cost_inputs=_inputs(expensive), holding_period_years=H,
+        _alphas(),
+        _risk(),
+        risk_aversion=LAM,
+        cost_model=model,
+        cost_inputs=_inputs(expensive),
+        holding_period_years=H,
     )
     assert _vec(tilted)[0] < _vec(blind)[0] - 1e-6  # A shrinks
     assert abs(sum(tilted.weights.values()) - 1.0) < 1e-6  # still fully invested
@@ -99,11 +113,18 @@ def test_emergent_no_trade_band_suppresses_subthreshold_churn():
     base = opt.optimize(_alphas(), _risk(), risk_aversion=LAM)
     # Nudge one name's alpha by +0.02 — below its cost band (a ~100bps spread over a 1/12
     # yr hold gives a ~6%/yr band half-width), but enough that a cost-blind solve chases it.
-    nudged = [Alpha(s, float(ALPHA[i]) + (0.02 if s == "D" else 0.0), AS_OF, 0.2, 0.05, 0.0)
-              for i, s in enumerate(SYMS)]
+    nudged = [
+        Alpha(s, float(ALPHA[i]) + (0.02 if s == "D" else 0.0), AS_OF, 0.2, 0.05, 0.0)
+        for i, s in enumerate(SYMS)
+    ]
     rebal = opt.optimize(
-        nudged, _risk(), risk_aversion=LAM, current_weights=base.weights,
-        cost_model=model, cost_inputs=_inputs(0.01), holding_period_years=H,
+        nudged,
+        _risk(),
+        risk_aversion=LAM,
+        current_weights=base.weights,
+        cost_model=model,
+        cost_inputs=_inputs(0.01),
+        holding_period_years=H,
     )
     assert rebal.diagnostics["turnover"] < 1e-9  # machine epsilon: no meaningful trade
     assert rebal.diagnostics["names_traded"] == 0
@@ -147,9 +168,7 @@ def test_impact_penalty_is_superlinear_in_trade_size():
     # trade more than doubles it (×2^1.5). Uses the real _cost_coefficients so an
     # annualisation/formula bug in kᵢ would surface here, not just literal arithmetic.
     model = ParametricCostModel()
-    _, k_imp = MeanVarianceOptimizer._cost_coefficients(
-        model, _inputs(0.0005, adv_dollar=1e8), 1e7, H, SYMS
-    )
+    _, k_imp = MeanVarianceOptimizer._cost_coefficients(model, _inputs(0.0005, adv_dollar=1e8), 1e7, H, SYMS)
     assert np.all(k_imp > 0)
     p1 = k_imp[0] * 0.1**1.5
     p2 = k_imp[0] * 0.2**1.5
@@ -166,7 +185,13 @@ def test_sqrt_impact_spreads_size_away_from_illiquid_names():
         _alphas(), _risk(), risk_aversion=LAM, cost_model=model, cost_inputs=ci, holding_period_years=H
     )
     conic = opt.optimize(  # capital set → √-impact active
-        _alphas(), _risk(), risk_aversion=LAM, cost_model=model, cost_inputs=ci, capital=5e7, holding_period_years=H
+        _alphas(),
+        _risk(),
+        risk_aversion=LAM,
+        cost_model=model,
+        cost_inputs=ci,
+        capital=5e7,
+        holding_period_years=H,
     )
     assert conic.diagnostics["impact_cost"] > 0
     assert _vec(conic)[0] < _vec(linear)[0] - 1e-4  # A down-weighted by impact
@@ -178,9 +203,17 @@ def test_linear_and_conic_agree_when_impact_is_negligible_and_gap_is_reported():
     model = ParametricCostModel()
     ci = _inputs(0.0005, adv_dollar=1e13)  # very deep books
     opt = MeanVarianceOptimizer(max_weight=0.5)
-    linear = opt.optimize(_alphas(), _risk(), risk_aversion=LAM, cost_model=model, cost_inputs=ci, holding_period_years=H)
+    linear = opt.optimize(
+        _alphas(), _risk(), risk_aversion=LAM, cost_model=model, cost_inputs=ci, holding_period_years=H
+    )
     conic = opt.optimize(
-        _alphas(), _risk(), risk_aversion=LAM, cost_model=model, cost_inputs=ci, capital=1e5, holding_period_years=H
+        _alphas(),
+        _risk(),
+        risk_aversion=LAM,
+        cost_model=model,
+        cost_inputs=ci,
+        capital=1e5,
+        holding_period_years=H,
     )
     # Deep liquidity + small capital → the √-impact term is tiny, so the two solutions
     # coincide within tolerance; the impact charge is surfaced, not hidden.
@@ -193,8 +226,24 @@ def test_conic_gap_grows_with_capital():
     model = ParametricCostModel()
     ci = _inputs(0.0005, adv_dollar=1e8)
     opt = MeanVarianceOptimizer(max_weight=0.5)
-    small = opt.optimize(_alphas(), _risk(), risk_aversion=LAM, cost_model=model, cost_inputs=ci, capital=1e5, holding_period_years=H)
-    large = opt.optimize(_alphas(), _risk(), risk_aversion=LAM, cost_model=model, cost_inputs=ci, capital=1e9, holding_period_years=H)
+    small = opt.optimize(
+        _alphas(),
+        _risk(),
+        risk_aversion=LAM,
+        cost_model=model,
+        cost_inputs=ci,
+        capital=1e5,
+        holding_period_years=H,
+    )
+    large = opt.optimize(
+        _alphas(),
+        _risk(),
+        risk_aversion=LAM,
+        cost_model=model,
+        cost_inputs=ci,
+        capital=1e9,
+        holding_period_years=H,
+    )
     assert large.diagnostics["impact_cost"] > small.diagnostics["impact_cost"]
 
 
@@ -203,14 +252,18 @@ def test_no_feasible_perturbation_beats_the_cost_aware_optimum():
     model = ParametricCostModel()
     ci = _inputs({"A": 0.02, "B": 0.0005, "C": 0.0005, "D": 0.0005})
     opt = MeanVarianceOptimizer(max_weight=0.5)
-    res = opt.optimize(_alphas(), _risk(), risk_aversion=LAM, cost_model=model, cost_inputs=ci, holding_period_years=H)
+    res = opt.optimize(
+        _alphas(), _risk(), risk_aversion=LAM, cost_model=model, cost_inputs=ci, holding_period_years=H
+    )
     w = _vec(res)
     c_lin, k_imp = MeanVarianceOptimizer._cost_coefficients(model, ci, None, H, SYMS)
     w0 = np.zeros(4)
 
     def util(x):
         dw = x - w0
-        return ALPHA @ x - LAM * (x @ SIGMA @ x) - np.sum(c_lin * np.abs(dw)) - np.sum(k_imp * np.abs(dw) ** 1.5)
+        return (
+            ALPHA @ x - LAM * (x @ SIGMA @ x) - np.sum(c_lin * np.abs(dw)) - np.sum(k_imp * np.abs(dw) ** 1.5)
+        )
 
     u_opt = util(w)
     rng = np.random.default_rng(0)
@@ -294,14 +347,18 @@ def test_construct_portfolio_cost_aware_reports_the_cost_split():
     from src.services import analysis
 
     symbols, dc = _universe()
-    res = analysis.construct_portfolio(dc, "ma_crossover", symbols, AS_OF, capital=1_000_000.0, cost_aware=True)
+    res = analysis.construct_portfolio(
+        dc, "ma_crossover", symbols, AS_OF, capital=1_000_000.0, cost_aware=True
+    )
     if not res["feasible"]:
         pytest.skip("fixture produced no feasible portfolio")
     d = res["diagnostics"]
     assert d.get("cost_aware") is True
     assert "linear_cost" in d and "impact_cost" in d
     # Headline net is the round-trip haircut; the one-way rebalance figure stays in detail.
-    assert d["expected_active_return_net"] == pytest.approx(d["expected_active_return"] - d["round_trip_cost"])
+    assert d["expected_active_return_net"] == pytest.approx(
+        d["expected_active_return"] - d["round_trip_cost"]
+    )
     assert d["expected_active_return_net_oneway"] == pytest.approx(
         d["expected_active_return"] - d["cost_drag"]
     )
@@ -312,7 +369,9 @@ def test_construct_portfolio_gross_objective_uses_ex_post_drag():
     from src.services import analysis
 
     symbols, dc = _universe()
-    res = analysis.construct_portfolio(dc, "ma_crossover", symbols, AS_OF, capital=1_000_000.0, cost_aware=False)
+    res = analysis.construct_portfolio(
+        dc, "ma_crossover", symbols, AS_OF, capital=1_000_000.0, cost_aware=False
+    )
     if not res["feasible"]:
         pytest.skip("fixture produced no feasible portfolio")
     d = res["diagnostics"]
@@ -339,8 +398,13 @@ def test_round_trip_headline_is_conservative_and_capacity_aligned():
     model = ParametricCostModel()
     ci = _inputs({"A": 0.02, "B": 0.001, "C": 0.0005, "D": 0.0005}, adv_dollar=1e8)
     res = MeanVarianceOptimizer(max_weight=0.5).optimize(  # from cash → Δw = w
-        _alphas(), _risk(), risk_aversion=LAM, cost_model=model, cost_inputs=ci,
-        capital=1e7, holding_period_years=H,
+        _alphas(),
+        _risk(),
+        risk_aversion=LAM,
+        cost_model=model,
+        cost_inputs=ci,
+        capital=1e7,
+        holding_period_years=H,
     )
     d = res.diagnostics
     w = _vec(res)
@@ -362,8 +426,13 @@ def test_cardinality_liquidation_cost_is_counted():
     model = ParametricCostModel()
     w0 = {s: 0.25 for s in SYMS}
     res = MeanVarianceOptimizer(max_weight=0.5, max_names=2).optimize(
-        _alphas(), _risk(), risk_aversion=LAM, current_weights=w0,
-        cost_model=model, cost_inputs=_inputs(0.001), holding_period_years=H,
+        _alphas(),
+        _risk(),
+        risk_aversion=LAM,
+        current_weights=w0,
+        cost_model=model,
+        cost_inputs=_inputs(0.001),
+        holding_period_years=H,
     )
     assert len(res.weights) <= 2
     c_lin, _ = MeanVarianceOptimizer._cost_coefficients(model, _inputs(0.001), None, H, SYMS)
@@ -377,7 +446,12 @@ def test_cardinality_liquidation_cost_is_counted():
 def test_dust_floor_liquidation_is_priced_with_cost():
     model = ParametricCostModel()
     res = MeanVarianceOptimizer(max_weight=0.5, min_weight=0.1).optimize(
-        _alphas(), _risk(), risk_aversion=LAM, cost_model=model, cost_inputs=_inputs(0.001), holding_period_years=H
+        _alphas(),
+        _risk(),
+        risk_aversion=LAM,
+        cost_model=model,
+        cost_inputs=_inputs(0.001),
+        holding_period_years=H,
     )
     assert all(v >= 0.1 - 1e-9 for v in res.weights.values())  # no dust survives
     assert abs(sum(res.weights.values()) - 1.0) < 1e-6
@@ -395,7 +469,13 @@ def test_missing_adv_name_gets_linear_only_others_get_impact():
     c_lin, k_imp = MeanVarianceOptimizer._cost_coefficients(model, ci, 5e7, H, SYMS)
     assert k_imp[0] == 0.0 and np.all(k_imp[1:] > 0)  # A linear-only, others conic
     res = MeanVarianceOptimizer(max_weight=0.5).optimize(
-        _alphas(), _risk(), risk_aversion=LAM, cost_model=model, cost_inputs=ci, capital=5e7, holding_period_years=H
+        _alphas(),
+        _risk(),
+        risk_aversion=LAM,
+        cost_model=model,
+        cost_inputs=ci,
+        capital=5e7,
+        holding_period_years=H,
     )
     assert res.feasible and abs(sum(res.weights.values()) - 1.0) < 1e-6
 
@@ -404,8 +484,24 @@ def test_zero_capital_equals_linear_only_solve():
     model = ParametricCostModel()
     ci = _inputs(0.0005, adv_dollar=1e8)
     opt = MeanVarianceOptimizer(max_weight=0.5)
-    zero_cap = opt.optimize(_alphas(), _risk(), risk_aversion=LAM, cost_model=model, cost_inputs=ci, capital=0.0, holding_period_years=H)
-    no_cap = opt.optimize(_alphas(), _risk(), risk_aversion=LAM, cost_model=model, cost_inputs=ci, capital=None, holding_period_years=H)
+    zero_cap = opt.optimize(
+        _alphas(),
+        _risk(),
+        risk_aversion=LAM,
+        cost_model=model,
+        cost_inputs=ci,
+        capital=0.0,
+        holding_period_years=H,
+    )
+    no_cap = opt.optimize(
+        _alphas(),
+        _risk(),
+        risk_aversion=LAM,
+        cost_model=model,
+        cost_inputs=ci,
+        capital=None,
+        holding_period_years=H,
+    )
     assert zero_cap.diagnostics["impact_cost"] == 0.0
     assert np.allclose(_vec(zero_cap), _vec(no_cap))
 
@@ -414,8 +510,24 @@ def test_linear_impact_mode_disables_the_conic_term_in_the_solve():
     linear_model = ParametricCostModel(linear_impact=True)
     ci = _inputs(0.0005, adv_dollar=1e7)  # illiquid → would accrue √-impact if enabled
     opt = MeanVarianceOptimizer(max_weight=0.5)
-    lin = opt.optimize(_alphas(), _risk(), risk_aversion=LAM, cost_model=linear_model, cost_inputs=ci, capital=5e7, holding_period_years=H)
-    only_linear = opt.optimize(_alphas(), _risk(), risk_aversion=LAM, cost_model=linear_model, cost_inputs=ci, capital=None, holding_period_years=H)
+    lin = opt.optimize(
+        _alphas(),
+        _risk(),
+        risk_aversion=LAM,
+        cost_model=linear_model,
+        cost_inputs=ci,
+        capital=5e7,
+        holding_period_years=H,
+    )
+    only_linear = opt.optimize(
+        _alphas(),
+        _risk(),
+        risk_aversion=LAM,
+        cost_model=linear_model,
+        cost_inputs=ci,
+        capital=None,
+        holding_period_years=H,
+    )
     assert lin.diagnostics["impact_cost"] == 0.0  # conic term not fed to the optimiser
     assert np.allclose(_vec(lin), _vec(only_linear))
 

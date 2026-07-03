@@ -69,7 +69,9 @@ def build_factor_exposures(
             else:
                 row["market"] = 1.0
         if "momentum" in wanted:
-            row["momentum"] = close.iloc[-1 - momentum_skip] / close.iloc[-1 - momentum_skip - momentum_window] - 1.0
+            row["momentum"] = (
+                close.iloc[-1 - momentum_skip] / close.iloc[-1 - momentum_skip - momentum_window] - 1.0
+            )
         if "volatility" in wanted:
             returns = close.tail(vol_window + 1).pct_change().dropna()
             row["volatility"] = float(returns.std())
