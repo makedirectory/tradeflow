@@ -97,3 +97,20 @@ def recommended_cadence(ic_by_lag: Mapping[int, float]) -> int:
     """The cadence (in periods) that maximizes the IR proxy ``IC(Δt)·√(1/Δt)``."""
     curve = frequency_ir_curve(ic_by_lag)
     return max(curve, key=curve.get) if curve else 1
+
+
+def effective_sample_size(n_obs: float, horizon: int, spacing: float = 1.0) -> float:
+    """Effective *independent* observations when each spans ``horizon`` periods.
+
+    An IC measured from returns over a ``horizon``-period holding, sampled every
+    ``spacing`` periods, overlaps: consecutive observations share ``horizon − spacing``
+    periods of return and so are not independent. The independent count is
+    ``n_obs / overlap`` with ``overlap = max(1, horizon/spacing)`` — daily rows with a
+    21-day horizon (``spacing=1``) are ~21× overlapped, so ``T_eff ≈ n/21``; rebalances
+    already spaced ``≥ horizon`` apart (``spacing ≥ horizon``) are independent and
+    ``T_eff = n``. This is the honest ``T`` the IC-uncertainty shrink
+    (:func:`src.alphas.refine.level_shrink_factor`) needs: using the raw row count
+    under-shrinks by exactly the overlap factor.
+    """
+    overlap = max(1.0, horizon / max(spacing, 1e-9))
+    return float(n_obs / overlap) if overlap > 0 else float(n_obs)

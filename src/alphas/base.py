@@ -17,7 +17,7 @@ places no orders.
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import List
+from typing import List, Optional, Tuple
 
 import pandas as pd
 
@@ -63,6 +63,19 @@ class AlphaContext:
     winsorize_limits: tuple = (0.025, 0.975)
     alpha_cap_std: float = 3.0
     min_universe: int = DEFAULT_MIN_UNIVERSE
+    #: Per-name scaling. ``"case1"`` = the standard rule ``ω·IC·z`` (the default,
+    #: correct when per-name signal vol is constant across names); ``"case2"`` =
+    #: ``IC·c_g·z`` with a constant :func:`~src.alphas.refine.case_scale_factor`, for
+    #: signals whose vol is ∝ the name's residual vol (multiplying by ``ω_n`` would
+    #: double-count it). :func:`~src.alphas.refine.case_test` picks the case empirically.
+    #: See the Continuous-alphas page in the engineering docs for the Case test.
+    scaling: str = "case1"
+    #: IC-uncertainty **level** shrink. When set to ``(measured_ic, t_eff)`` the refined
+    #: alpha is multiplied once by :func:`~src.alphas.refine.level_shrink_factor` — the
+    #: estimation-error haircut on the *level*. ``None`` = off (a measured IC hasn't been
+    #: supplied, e.g. an assumed prior, or the level shrink is owned upstream by the
+    #: multi-signal combination's per-signal Bayesian shrink).
+    level_shrink: Optional[Tuple[float, float]] = None
 
 
 def refine_alpha(
@@ -127,12 +140,41 @@ def refine_alpha(
         ]
         panel.meta["neutralize_imputed"] = imputed
 
-    # 4. Scale to a residual-return forecast via alpha_i = sigma_i * IC * z_i.
+    # 4. Scale to a residual-return forecast. Case 1: alpha_i = sigma_i * IC * z_i
+    #    (per-name vol). Case 2: alpha_i = IC * c_g * z_i (one constant c_g), which
+    #    avoids double-counting vol for signals whose per-name vol is ∝ sigma_i.
     if panel.has("residual_vol"):
         vol = panel.get("residual_vol").reindex(z.index).fillna(context.default_residual_vol)
     else:
         vol = pd.Series(context.default_residual_vol, index=z.index)
-    alpha = refine.scale_to_alpha(z, vol, context.ic)
+
+    chain: List[dict] = []
+    if context.scaling == "case2" and not thin:
+        c_g = refine.case_scale_factor(s, vol, context.winsorize_limits)
+        if not (c_g == c_g):  # NaN fallback → a representative vol, so it never crashes
+            c_g = float(vol.mean())
+        alpha = refine.scale_to_alpha(z, pd.Series(c_g, index=z.index), context.ic)
+        chain.append({"step": "scale", "case": 2, "c_g": float(c_g), "multiplier": float(context.ic * c_g)})
+    else:
+        alpha = refine.scale_to_alpha(z, vol, context.ic)
+        chain.append({"step": "scale", "case": 1, "multiplier": float(context.ic)})
+
+    # 4b. IC-uncertainty level shrink, applied exactly once here — the single
+    #     application point for both the single-signal and combined paths.
+    if context.level_shrink is not None:
+        ic_measured, t_eff = context.level_shrink
+        factor = refine.level_shrink_factor(ic_measured, t_eff)
+        alpha = alpha * factor
+        chain.append(
+            {
+                "step": "ic_uncertainty",
+                "owner": "level_shrink",
+                "ic": float(ic_measured),
+                "t_eff": float(t_eff),
+                "multiplier": float(factor),
+            }
+        )
+    panel.meta["shrink_chain"] = chain
 
     # 5. Final sanity cap (meaningless on a thin, unscaled vector).
     if not thin:
