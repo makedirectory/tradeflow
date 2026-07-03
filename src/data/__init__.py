@@ -11,7 +11,7 @@ from src.data.panel import FeaturePanel
 from src.data.scan import BarSource, ClientBarSource, slice_to_as_of
 from src.data.store import BAR_COLUMNS, ParquetBarStore
 
-# Lazy out-of-core compute (spec 015) lives in src.data.compute / src.data.edges and
+# Lazy out-of-core compute lives in src.data.compute / src.data.edges and
 # is imported on demand — both need the optional ``store`` extra (polars/duckdb), so
 # they are intentionally not pulled into the base-install import path here.
 

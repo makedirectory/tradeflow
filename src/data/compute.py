@@ -1,7 +1,7 @@
-"""Lazy, out-of-core compute over the bar panel (spec 015 — Polars · DuckDB).
+"""Lazy, out-of-core compute over the bar panel (Polars · DuckDB).
 
-Spec 011 delivered the *storage* half of out-of-core (a Parquet/Arrow ``BarSource``
-behind ``scan()``). This module is the *compute* half: the hot, panel-wide
+The *storage* half of out-of-core (a Parquet/Arrow ``BarSource`` behind ``scan()``)
+lives in the store module. This module is the *compute* half: the hot, panel-wide
 operations expressed as a **lazy** plan, rather than eagerly materializing a ``T×N``
 pandas panel into RAM.
 

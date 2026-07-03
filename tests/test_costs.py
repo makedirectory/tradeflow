@@ -1,4 +1,4 @@
-"""Tests for the transaction-cost model and its backtest integration (spec 007)."""
+"""Tests for the transaction-cost model and its backtest integration."""
 
 import math
 from datetime import datetime

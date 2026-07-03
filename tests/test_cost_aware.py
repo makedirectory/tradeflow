@@ -1,9 +1,9 @@
-"""Tests for cost-aware portfolio construction (spec 016).
+"""Tests for cost-aware portfolio construction.
 
 Cost is inside the objective: ``αᵀw − λ·wᵀΣw − Σ cᵢ|Δwᵢ| − Σ kᵢ|Δwᵢ|^{3/2}``. These
-tests cover the spec §6 checklist — name-specific tilt, the emergent no-trade band,
-w₀ sensitivity, √-impact super-linearity, the linear↔conic gap, and the zero-cost
-reduction to spec 008 — plus the proximal-operator primitives, a KKT optimality
+tests cover name-specific tilt, the emergent no-trade band, w₀ sensitivity, √-impact
+super-linearity, the linear↔conic gap, and the zero-cost reduction to the cost-blind
+solve — plus the proximal-operator primitives, a KKT optimality
 certificate, the cost-model coefficients, and the end-to-end service integration.
 
 Offline and deterministic.
@@ -53,7 +53,7 @@ def _inputs(spread, adv_dollar=1e12, daily_vol=0.02) -> CostInputs:
     )
 
 
-# --- closed-form / zero-cost reduction (spec §6 "closed-form sanity") --------
+# --- closed-form / zero-cost reduction ---------------------------------------
 def test_zero_cost_reduces_to_cost_blind_solve():
     free = ParametricCostModel(commission_bps=0.0, default_spread_bps=0.0)
     blind = MeanVarianceOptimizer(max_weight=0.5).optimize(_alphas(), _risk(), risk_aversion=LAM)
@@ -66,13 +66,13 @@ def test_zero_cost_reduces_to_cost_blind_solve():
         holding_period_years=H,
     )
     assert np.allclose(_vec(zero), _vec(blind), atol=1e-9)
-    # Unconstrained optimum still the spec-008 closed form, untouched by the (zero) cost.
+    # Unconstrained optimum still the cost-blind closed form, untouched by the (zero) cost.
     expected = (np.linalg.inv(SIGMA) @ ALPHA) / (2 * LAM)
     got = np.array([blind.unconstrained_weights[s] for s in SYMS])
     assert np.allclose(got, expected)
 
 
-# --- name-specific cost changes weights (spec §6 test 1) ---------------------
+# --- name-specific cost changes weights --------------------------------------
 def test_uniform_cost_from_cash_is_a_noop():
     # Long-only from cash with a uniform per-name cost: Σcᵢ|wᵢ| = c·Σwᵢ = c is constant,
     # so the optimum is unchanged — the baseline the name-specific case must beat.
@@ -106,7 +106,7 @@ def test_name_specific_cost_tilts_away_from_expensive_names():
     assert abs(sum(tilted.weights.values()) - 1.0) < 1e-6  # still fully invested
 
 
-# --- emergent no-trade band (spec §6 test 2) ---------------------------------
+# --- emergent no-trade band --------------------------------------------------
 def test_emergent_no_trade_band_suppresses_subthreshold_churn():
     model = ParametricCostModel()
     opt = MeanVarianceOptimizer(max_weight=0.5)  # no_trade_band=0: the band must EMERGE from cost
@@ -150,7 +150,7 @@ def test_no_trade_band_half_width_is_the_one_way_cost():
     assert 2 * c_one_way == pytest.approx(model.annual_cost_rate(tiny, H), rel=1e-6)
 
 
-# --- w0 sensitivity (spec §6 test 3) -----------------------------------------
+# --- w0 sensitivity ----------------------------------------------------------
 def test_turnover_depends_on_current_weights():
     model = ParametricCostModel()
     opt = MeanVarianceOptimizer(max_weight=0.5)
@@ -162,7 +162,7 @@ def test_turnover_depends_on_current_weights():
     assert from_cash.diagnostics["turnover"] > 0.5  # from cash → fully invest
 
 
-# --- √-impact super-linearity (spec §6 test 4) -------------------------------
+# --- √-impact super-linearity ------------------------------------------------
 def test_impact_penalty_is_superlinear_in_trade_size():
     # The penalty kᵢ·|Δw|^{3/2} under the optimizer's *own* coefficient: doubling the
     # trade more than doubles it (×2^1.5). Uses the real _cost_coefficients so an
@@ -198,7 +198,7 @@ def test_sqrt_impact_spreads_size_away_from_illiquid_names():
     assert abs(sum(conic.weights.values()) - 1.0) < 1e-6
 
 
-# --- linear ↔ conic gap (spec §6 test 5) -------------------------------------
+# --- linear ↔ conic gap ------------------------------------------------------
 def test_linear_and_conic_agree_when_impact_is_negligible_and_gap_is_reported():
     model = ParametricCostModel()
     ci = _inputs(0.0005, adv_dollar=1e13)  # very deep books
@@ -419,7 +419,7 @@ def test_round_trip_headline_is_conservative_and_capacity_aligned():
     assert d["expected_active_return_net"] == pytest.approx(d["expected_active_return"] - expected_rt)
 
 
-# --- cardinality / dust re-solve with cost (spec §4 factor 6 interaction) ----
+# --- cardinality / dust re-solve with cost -----------------------------------
 def test_cardinality_liquidation_cost_is_counted():
     # A full-book w₀ with max_names=2 must fully liquidate the dropped names; that
     # liquidation turnover and its cost must appear in the diagnostics (priced over w−w₀).

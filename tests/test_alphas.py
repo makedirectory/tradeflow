@@ -140,7 +140,7 @@ def test_refine_market_factor_supersedes_plain_beta():
 
 def test_refine_names_missing_exposures_are_mean_imputed_not_dropped():
     """A name missing a factor value gets the cross-sectional mean (0), staying in
-    the regression — it must not silently lose beta neutralization (G&K union trap)."""
+    the regression — it must not silently lose beta neutralization (the union trap)."""
     raw = {f"S{i}": float(i % 5) - 2 for i in range(12)}
     betas = {f"S{i}": 1.0 + 0.1 * i for i in range(12)}
     panel = _panel(raw, betas=betas)

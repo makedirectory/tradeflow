@@ -1,4 +1,4 @@
-"""Tests for mean-variance portfolio construction (spec 008).
+"""Tests for mean-variance portfolio construction.
 
 Offline and deterministic. Covers the closed-form optimum, target-TE calibration,
 transfer-coefficient monotonicity, the no-trade band, turnover-from-w0,

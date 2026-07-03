@@ -4,8 +4,8 @@ The OR-Tools :class:`~src.portfolio.allocator.PortfolioAllocator` maximizes a sc
 score subject to constraints - it has no notion of risk, so it piles weight onto the
 highest-scoring names regardless of how correlated they are. Active-management
 construction instead maximizes a **risk-adjusted utility**, trading expected residual
-return (alpha, Spec 005) against active risk (covariance, Spec 006) - and, once cost is
-in the objective (Spec 016), against the *name-specific* cost of getting there:
+return (alpha) against active risk (covariance) - and, once cost is in the objective
+(the cost-aware solve), against the *name-specific* cost of getting there:
 
     U(w) = αᵀw − λ_A · wᵀΣw − Σᵢ cᵢ·|Δwᵢ| − Σᵢ kᵢ·|Δwᵢ|^{3/2}      (Δw = w − w₀)
            └ value ┘  └ active risk ┘  └ linear turnover ┘  └ √-impact (conic) ┘
@@ -26,7 +26,7 @@ budget dual, and each coordinate has a closed form (a soft-threshold *around w�
 linear cost; a quadratic-in-√ root for the √-impact) - so the whole conic problem is
 solved by the same 1-D budget bisection the cost-free projection already used, with no
 external solver. When ``cᵢ = kᵢ = 0`` it reduces *exactly* to the cost-free projected
-gradient, so Spec 008's behavior is unchanged.
+gradient, so the cost-blind behavior is unchanged.
 """
 
 from dataclasses import dataclass, field
@@ -43,7 +43,7 @@ from src.risk.base import RiskMatrix
 class CostInputs:
     """Per-name, as-of liquidity context the cost model prices trades against.
 
-    Threaded from Spec 007: a fractional ``spread`` (quoted, or a high-low-range proxy),
+    Threaded from the cost model: a fractional ``spread`` (quoted, or a high-low-range proxy),
     trailing ``adv_dollar`` (ADV in dollars = price · share-ADV), and trailing
     ``daily_vol`` (daily return volatility). All keyed by symbol; missing names fall
     back to the cost model's defaults (spread) or drop the √-impact term (ADV/vol).
@@ -113,8 +113,8 @@ class MeanVarianceOptimizer:
         016): the objective gains a name-specific linear turnover penalty and, when
         ``capital`` is given, the √-impact term. Cost coefficients are *annualized* to
         the same units as the (annualized) alpha by dividing the one-way rate by
-        ``holding_period_years`` - matching Spec 007's alpha-haircut and the ex-post
-        cost drag. Without a cost model the solve is cost-blind (Spec 008, unchanged).
+        ``holding_period_years`` - matching the cost model's alpha-haircut and the
+        ex-post cost drag. Without a cost model the solve is cost-blind (unchanged).
 
         Returns the weights, the diagnostics (``IR*``, predicted TE/IR, transfer
         coefficient, value added, turnover, and - when cost-aware - the linear/impact
@@ -145,7 +145,7 @@ class MeanVarianceOptimizer:
 
         w0 = self._vector(current_weights or {}, symbols)
         # Per-name cost coefficients (annualized), aligned to `symbols`. Both zero when
-        # cost-blind -> the solve reduces exactly to Spec 008's projected gradient.
+        # cost-blind -> the solve reduces exactly to the cost-blind projected gradient.
         c_lin, k_imp = self._cost_coefficients(
             cost_model, cost_inputs, capital, holding_period_years, symbols
         )
@@ -356,7 +356,7 @@ class MeanVarianceOptimizer:
             linear_cost = float(np.sum(c_lin * np.abs(dw)))
             impact_cost = float(np.sum(k_imp * np.abs(dw) ** 1.5))
             rebalance_cost = linear_cost + impact_cost
-            # Round-trip haircut on the *held book* (007 §3.2 / the capacity convention):
+            # Round-trip haircut on the *held book* (the capacity convention):
             # entering AND exiting each position, amortized over the holding period. This
             # is the conservative headline net figure - the same cost model _capacity
             # prices, so the net return and the capacity number agree.
