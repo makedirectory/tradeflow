@@ -86,6 +86,17 @@ place, two more diagnostics close the loop:
   `capacity_capital` — the size at which net active return crosses zero — by bisection
   over the proposed portfolio's impact cost.
 
+Two more ride the same report:
+
+- **IC-uncertainty level shrink.** The measured IC is itself estimated; the report
+  echoes `level_shrink_factor` = `g/(g+1)` with `g = T_eff·IC²` — the fraction of the
+  naive alpha *level* that survives that estimation error — plus the shrunk IC to
+  deploy. `T_eff` deflates the rebalance count for horizon overlap. See the
+  [forecast-refinement-v2 section](./alphas#forecast-refinement-v2).
+- **Equal-risk-contribution monitor.** `risk_bucket_diagnostic` buckets the
+  paper active book by residual vol and flags a monotone variance-share gradient — the
+  fingerprint of a mis-scaled (wrong-Case) alpha.
+
 ## Where it runs
 
 `services.compute_information` scans the window, samples rebalances, measures the IC
