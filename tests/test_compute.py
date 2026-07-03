@@ -1,4 +1,4 @@
-"""Tests for lazy out-of-core compute (spec 015 — Polars · DuckDB).
+"""Tests for lazy out-of-core compute (Polars · DuckDB).
 
 Skipped automatically unless the ``store`` extra (pyarrow + polars + duckdb) is
 installed. These prove the lazy ports are *faithful*: each migrated op is checked
@@ -280,7 +280,7 @@ def test_sql_query_empty_result_has_schema(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-# Regression tests for the spec-015 adversarial review.
+# Regression tests for the out-of-core adversarial review.
 # Each guards a confirmed finding the original suite missed.
 # --------------------------------------------------------------------------- #
 def _shuffled_store(tmp_path, n=40, seed=3):

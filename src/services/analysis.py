@@ -352,17 +352,26 @@ def compute_alphas(
     neutralize_factors: Sequence[str] = (),
     lookback_days: int = 180,
     timeframe: Optional[str] = None,
+    scaling: str = "case1",
+    price_derived: bool = True,
 ) -> Dict[str, Any]:
     """Turn a per-name view into ranked residual-return alphas, via a feature panel.
 
     Read-only research-clock flow: scans the universe as of ``as_of`` (leakage-safe),
     assembles a :class:`FeaturePanel` (risk + score columns), refines it into a
-    comparable annualized forecast (``alpha = sigma * IC * z``), and returns the
-    ranked table. Produces no orders and saves no config.
+    comparable annualized forecast, and returns the ranked table. Produces no orders
+    and saves no config.
 
     ``source`` selects the score column's origin: ``"strategy"`` uses the strategy's
     continuous conviction; ``"signal"`` uses its discrete BUY/SELL/HOLD as +1/-1/0;
     ``"scanner"`` uses the ``scanner``'s continuous signed strength.
+
+    ``scaling`` picks the per-name scaling: ``"case1"`` = ``ω·IC·z`` (the default),
+    ``"case2"`` = ``IC·c_g·z`` (no per-name vol multiply), or ``"auto"`` to let
+    :func:`~src.alphas.refine.case_test` decide from trailing history
+    (``price_derived`` is the base-rate default when the test can't decide). The case
+    diagnostics — chosen case, R², both candidates' cross-sectional correlation — are
+    echoed under ``case`` whenever the test runs so a wrong call is visible.
     """
     run_id = new_run_id()
     strat = _strategy(strategy, None)
@@ -389,7 +398,20 @@ def compute_alphas(
         add_factor_exposure_features(panel, universe_bars, bench_frame, neutralize_factors)
     add_score_feature(panel, scorer(), universe_bars)
 
-    context = AlphaContext(ic=ic, neutralize=neutralize, neutralize_factors=tuple(neutralize_factors))
+    # Case selection: only when the caller asks — the "case1" default keeps the base
+    # refinement pipeline byte-for-byte (the equivalence guard) and cheap.
+    case_diag = None
+    chosen_scaling = scaling
+    if scaling in ("auto", "case2") and panel.has("residual_vol"):
+        case_diag = _run_case_test(universe_bars, scorer(), panel.get("residual_vol"), price_derived)
+        chosen_scaling = f"case{case_diag['case']}" if scaling == "auto" else "case2"
+
+    context = AlphaContext(
+        ic=ic,
+        neutralize=neutralize,
+        neutralize_factors=tuple(neutralize_factors),
+        scaling=chosen_scaling,
+    )
     refine_alpha(panel, context)
     alphas = panel_to_alphas(panel, context)
 
@@ -420,10 +442,15 @@ def compute_alphas(
         "neutralized_against": list(panel.meta.get("neutralized_against", [])),
         "universe_size": int(panel.get("score").notna().sum()) if panel.has("score") else 0,
         "low_confidence": bool(panel.meta.get("low_confidence")),
+        "scaling": chosen_scaling,
+        "case": _jsonable(case_diag) if case_diag else None,
+        "shrink_chain": _jsonable(panel.meta.get("shrink_chain", [])),
         "alphas": _jsonable(table),
         "note": "Alphas are residual-return FORECASTS, annualized, scaled by an "
         "ASSUMED IC (a prior until it is measured from realized outcomes). Relative sizing across "
-        "names is correct regardless of IC; the absolute scale is only as good as it.",
+        "names is correct regardless of IC; the absolute scale is only as good as it. "
+        "'case' picks Case-1 (ω·IC·z) vs Case-2 (IC·c_g·z) scaling; the IC-uncertainty "
+        "level shrink engages only where a MEASURED IC is available (compute_information).",
     }
 
 
@@ -446,8 +473,8 @@ def compute_combined_alphas(
     correlation matrix over a trailing window (realized residual returns), shrinks the
     ICs by their estimation confidence, and combines them with GLS weights
     (``Ω⁻¹·IC``) so redundant signals split a weight rather than double-count. The
-    combined score is scaled by the **measured** combined IC - replacing Spec 005's
-    assumed per-signal scalar, never applied twice. Returns the ranked alpha table
+    combined score is scaled by the **measured** combined IC - replacing the
+    single-signal assumed scalar, never applied twice. Returns the ranked alpha table
     plus the measured ICs, weights, and correlation matrix.
     """
     from src.alphas import combined_score, measure_signals, strategy_scorer
@@ -517,9 +544,30 @@ def compute_combined_alphas(
         "signal_weights": _jsonable(measurement.weights),
         "signal_correlation": _jsonable(measurement.correlation.to_dict()),
         "alphas": _jsonable(table),
+        # Shrink-chain audit: the "is the IC real" level shrink is OWNED HERE by the
+        # combination's per-signal Bayesian shrink (the same g/(g+1) math as the
+        # single-signal level shrink, T = n_periods), so it is NOT re-applied
+        # post-combination — that would double-shrink and undertrade forever. The
+        # combination owns credit-sharing (Ω⁻¹) AND, on this path, the level; the
+        # single-signal level shrink owns it on the non-combined path. See the
+        # Multi-signal and Continuous-alphas pages in the engineering docs.
+        "shrink_chain": _jsonable(
+            [
+                {"step": "measure", "ics": measurement.ics},
+                {
+                    "step": "ic_uncertainty",
+                    "owner": "combination_shrink",
+                    "shrunk_ics": measurement.shrunk_ics,
+                    "n_periods": measurement.n_periods,
+                },
+                {"step": "combine", "combined_ic": measurement.combined_ic},
+            ]
+        ),
         "note": "ICs and the signal correlation are MEASURED over the trailing window "
         "(not assumed) and shrunk by estimation confidence; redundant signals split a "
-        "weight via Ω⁻¹. Measure on out-of-sample data for an honest combination.",
+        "weight via Ω⁻¹. The IC-uncertainty level shrink is owned here by the per-signal "
+        "Bayesian shrink (not re-applied — that would double-shrink). Measure on "
+        "out-of-sample data for an honest combination.",
     }
 
 
@@ -543,7 +591,8 @@ def compute_information(
 ) -> Dict[str, Any]:
     """Measure a strategy's information coefficient, breadth, and information ratio.
 
-    Read-only research-clock diagnostic (spec 009). At sampled rebalances it pairs the
+    Read-only research-clock diagnostic (see the Information-analysis page in the
+    engineering docs). At sampled rebalances it pairs the
     alpha forecast known *at* ``t`` with the realized **residual** return over
     ``(t, t+horizon]`` (strict forward alignment - rewarding skill, not beta), giving
     the IC time series (Pearson + rank), its t-stat, the effective breadth ``BR_eff``
@@ -554,6 +603,8 @@ def compute_information(
     (``compute_risk(..., model='factor')``); realized-return attribution and capacity
     are smaller follow-ons.
     """
+    from src.alphas import horizon as hz
+    from src.alphas import refine
     from src.analytics import information as info
     from src.indicators import indicators
 
@@ -589,6 +640,7 @@ def compute_information(
     pearson_ics, rank_ics, portfolio_returns = [], [], []
     factor_contribs, specific_contribs = [], []
     n_names_seen = []
+    last_weights = None  # the most recent paper active book, for the bucket diagnostic
     for j in points:
         t, t_fwd = window[j], window[j + horizon]
         alpha = _alpha_cross_section(universe_bars, bench, scorer, periods_per_year, t, ctx)
@@ -603,6 +655,7 @@ def compute_information(
         z = aligned["alpha"] - aligned["alpha"].mean()
         if z.std() > 0:
             w = z / z.std()
+            last_weights = w  # mean-zero ⇒ already an active book
             portfolio_returns.append(float(w @ aligned["resid"]))
             # Attribution: split that return into factor vs specific by projecting the
             # realized cross-section onto the factor exposures (the split closes exactly).
@@ -626,6 +679,32 @@ def compute_information(
 
     breadth = info.effective_breadth(n_names, rebalances_per_year, rho_bar)
     pred_ir = info.predicted_ir(stats["mean_ic"], breadth["br_eff"])
+
+    # IC-uncertainty level shrink: how much of the measured-IC level survives its own
+    # estimation error. T_eff deflates the rebalance count by the horizon/spacing overlap
+    # (raw count under-shrinks); this is the honest haircut a human applies to the
+    # recommended_ic before feeding it back into the alpha scaling.
+    spacing = float(np.mean(np.diff(points))) if len(points) > 1 else float(horizon)
+    t_eff = hz.effective_sample_size(stats["periods"], horizon, spacing)
+    shrink_factor = refine.level_shrink_factor(stats["mean_ic"], t_eff)
+    shrink_chain = [
+        {"step": "scale", "note": "ω·IC·z at the recommended (measured) IC"},
+        {
+            "step": "ic_uncertainty",
+            "owner": "level_shrink",
+            "ic": stats["mean_ic"],
+            "t_eff": t_eff,
+            "multiplier": shrink_factor,
+        },
+    ]
+
+    # Equal-risk-contribution diagnostic: does the current paper book spread active
+    # variance evenly across residual-vol buckets, or tilt into one?
+    bucket_diag = None
+    if matrix is not None and last_weights is not None and len(matrix.symbols) > 1:
+        bucket_diag = info.risk_bucket_diagnostic(
+            last_weights, matrix.sigma, matrix.symbols, matrix.volatilities()
+        )
 
     realized_ir = 0.0
     if len(portfolio_returns) > 1 and np.std(portfolio_returns) > 0:
@@ -658,6 +737,10 @@ def compute_information(
         "n_trials": n_trials,
         "sanity_ceiling_breached": abs(realized_ir) > 2.0,
         "recommended_ic": stats["mean_ic"],  # feeds back into 005's scaling — a human applies it
+        "effective_t": t_eff,
+        "level_shrink_factor": shrink_factor,  # keep this fraction of the naive alpha level
+        "shrink_chain": _jsonable(shrink_chain),
+        "risk_bucket_diagnostic": _jsonable(bucket_diag) if bucket_diag else None,
         # Attribution: the realized active return split into factor tilts vs genuine
         # name selection (they sum to the realized portfolio return per rebalance).
         "factor_return": float(np.mean(factor_contribs)) if factor_contribs else 0.0,
@@ -667,8 +750,123 @@ def compute_information(
         "by ρ̄. An IC t-stat < 2, a realized IR within its standard-error band of 0, or "
         "a realized IR > 2 on public data all mean: not skill yet. factor_return vs "
         "specific_return attributes the realized active return; capacity is in the "
-        "portfolio report.",
+        "portfolio report. level_shrink_factor is the IC-uncertainty haircut on the "
+        "recommended_ic LEVEL for its own estimation error (T_eff deflates for horizon "
+        "overlap); risk_bucket_diagnostic flags a residual-vol tilt from mis-scaling.",
     }
+
+
+def run_scaling_ab(
+    data_client: MarketDataClient,
+    strategy: str,
+    symbols: List[str],
+    start: datetime,
+    end: datetime,
+    source: str = "strategy",
+    scanner: str = "volume",
+    benchmark: str = "SPY",
+    neutralize: bool = True,
+    neutralize_factors: Sequence[str] = (),
+    ic_prior: float = DEFAULT_IC,
+    horizon: int = 5,
+    n_points: int = 24,
+    timeframe: str = "1Day",
+    price_derived: bool = True,
+) -> Dict[str, Any]:
+    """A/B the two scalings walk-forward: realized IR under Case 1 vs Case 2.
+
+    The regression-based :func:`~src.alphas.refine.case_test` is one cheap number; this
+    is the ground-truth tiebreak. At each rebalance it builds
+    the paper alpha book under **both** scalings (same z, same measured residual return;
+    only the per-name vol multiply differs) and reports each book's realized information
+    ratio, alongside the regression's recommendation. When the two disagree, trust the
+    A/B — but note the IR standard-error band before acting on a small gap.
+    """
+    run_id = new_run_id()
+    strat = _strategy(strategy, None)
+    periods_per_year = Timeframe.parse(timeframe).periods_per_year()
+    rebalances_per_year = periods_per_year / horizon
+
+    bars = ClientBarSource(data_client).scan([*symbols, benchmark], timeframe, end, _window_days(start, end))
+    bench = bars.get(benchmark)
+    universe_bars = {sym: bars[sym] for sym in symbols if sym in bars}
+    if bench is None or bench.empty or not universe_bars:
+        return {
+            "run_id": run_id,
+            "strategy": strategy,
+            "periods": 0,
+            "note": "Insufficient data: need a benchmark series and scored names.",
+        }
+
+    scorer = {
+        "strategy": lambda: strategy_scorer(strat),
+        "signal": lambda: signal_scorer(strat),
+        "scanner": lambda: scanner_scorer(_scanner(scanner)),
+    }[source]()
+    ctxs = {
+        kind: AlphaContext(
+            ic=ic_prior, neutralize=neutralize, neutralize_factors=tuple(neutralize_factors), scaling=kind
+        )
+        for kind in ("case1", "case2")
+    }
+
+    index = bench.index
+    window = index[(index >= _to_ts(start, index)) & (index <= _to_ts(end, index))]
+    points = _rebalance_points(len(window), horizon, n_points)
+
+    returns: Dict[str, List[float]] = {"case1": [], "case2": []}
+    for j in points:
+        t, t_fwd = window[j], window[j + horizon]
+        resid = _forward_residual_return(universe_bars, bench, t, t_fwd, indicators=_indicators())
+        if resid.dropna().empty:
+            continue
+        for kind, ctx in ctxs.items():
+            alpha = _alpha_cross_section(universe_bars, bench, scorer, periods_per_year, t, ctx)
+            aligned = pd.concat([alpha, resid], axis=1, keys=["a", "r"]).dropna()
+            if len(aligned) < 5:
+                continue
+            z = aligned["a"] - aligned["a"].mean()
+            if z.std() > 0:
+                returns[kind].append(float((z / z.std()) @ aligned["r"]))
+
+    def _ir(r: List[float]) -> float:
+        if len(r) > 1 and np.std(r) > 0:
+            return float(np.mean(r) / np.std(r) * np.sqrt(rebalances_per_year))
+        return 0.0
+
+    case1_ir, case2_ir = _ir(returns["case1"]), _ir(returns["case2"])
+
+    # Regression recommendation needs the per-name residual vol as of the window end.
+    panel = FeaturePanel.for_universe(end, list(universe_bars))
+    add_risk_features(panel, universe_bars, bench, periods_per_year)
+    resid_vol = panel.get("residual_vol") if panel.has("residual_vol") else pd.Series(dtype=float)
+    case_diag = _run_case_test(universe_bars, scorer, resid_vol, price_derived)
+
+    ab_pick = "case2" if case2_ir > case1_ir else "case1"
+    return {
+        "run_id": run_id,
+        "strategy": strategy,
+        "source": source,
+        "window": {"start": start.isoformat(), "end": end.isoformat()},
+        "horizon_bars": horizon,
+        "periods": min(len(returns["case1"]), len(returns["case2"])),
+        "case1_realized_ir": case1_ir,
+        "case2_realized_ir": case2_ir,
+        "regression_pick": f"case{case_diag['case']}",
+        "ab_pick": ab_pick,
+        "agree": bool(f"case{case_diag['case']}" == ab_pick),
+        "case_test": _jsonable(case_diag),
+        "note": "case1 = ω·IC·z, case2 = IC·c_g·z. A/B realized IR is the ground truth; "
+        "the regression case_test is the cheap proxy. Compare the IR gap to its "
+        "standard-error band before acting — a small gap is noise.",
+    }
+
+
+def _indicators():
+    """The indicators module (deferred import to keep the module load light)."""
+    from src.indicators import indicators
+
+    return indicators
 
 
 def compute_horizon(
@@ -689,7 +887,8 @@ def compute_horizon(
 ) -> Dict[str, Any]:
     """Measure an alpha's decay and recommend a rebalance cadence + lagged blend.
 
-    Read-only research diagnostic (spec 012): measures the IC-vs-lag profile (the
+    Read-only research diagnostic (see the Information-horizon page in the engineering
+    docs): measures the IC-vs-lag profile (the
     alpha at ``t`` vs the residual return realized ``n`` periods later, for
     ``n = 1..max_lag``), fits the per-period decay ``δ`` and half-life, derives the
     cadence that maximizes ``IC(Δt)·√(1/Δt)``, and computes the IR-maximizing
@@ -907,7 +1106,7 @@ def construct_portfolio(
     ``αᵀw − λ·wᵀΣw − cost(w − w₀)`` over long-only, box-bounded, budgeted (and
     optionally cardinality-capped) weights, calibrating ``λ`` to ``target_te``.
 
-    With ``cost_aware`` (default) the objective carries 007's cost (Spec 016):
+    With ``cost_aware`` (default) the objective carries the transaction-cost term:
     name-specific linear turnover (commission + a high-low-range spread proxy) and,
     when ``capital`` is set, the √-impact term - so the optimizer trades a name's
     alpha against *that name's* cost and a no-trade band emerges from the cost itself.
@@ -1161,6 +1360,69 @@ def _rebalance_points(n_bars: int, horizon: int, n_points: int):
     if last <= warmup:
         return []
     return np.linspace(warmup, last, num=min(n_points, last - warmup), dtype=int)
+
+
+def _raw_signal_history(universe_bars, scorer, n_points: int = 48, warmup: int = 30) -> pd.DataFrame:
+    """Trailing time×name frame of the **raw** signal, for the Case test.
+
+    Scores every name at ``n_points`` dates along the reference index using only bars
+    ``≤ t`` (the same leakage discipline as the alpha cross-section), so each column is
+    a name's raw-signal time series ``g_n(t)`` — the input :func:`refine.case_test`
+    regresses ``Std_TS`` on ``ω``.
+    """
+    if not universe_bars:
+        return pd.DataFrame()
+    ref = max((f.index for f in universe_bars.values()), key=len)
+    last = len(ref) - 1
+    if last <= warmup:
+        points = range(len(ref))
+    else:
+        points = np.linspace(warmup, last, num=min(n_points, last - warmup), dtype=int)
+
+    rows: Dict[Any, Dict[str, float]] = {}
+    for j in points:
+        t = ref[j]
+        row: Dict[str, float] = {}
+        for sym, frame in universe_bars.items():
+            hist = frame.loc[frame.index <= t]
+            if len(hist) < 2:
+                continue
+            val = scorer(hist)
+            if val is not None and not pd.isna(val):
+                row[sym] = float(val)
+        if row:
+            rows[t] = row
+    return pd.DataFrame(rows).T
+
+
+def _run_case_test(universe_bars, scorer, residual_vol: pd.Series, price_derived: bool) -> Dict[str, Any]:
+    """Case-1/Case-2 decision + the two candidate alphas' cross-sectional correlation.
+
+    Runs :func:`refine.case_test` on the trailing raw-signal history, then reports how
+    different the two scalings actually are at the latest cross-section (``corr`` of the
+    Case-1 ``ω·z`` vector with the Case-2 ``c_g·z`` vector) — a correlation near 1 means
+    the case choice barely matters here, near 0 means it matters a lot.
+    """
+    from src.alphas import refine
+
+    history = _raw_signal_history(universe_bars, scorer)
+    diag = refine.case_test(history, residual_vol, price_derived=price_derived)
+
+    corr = float("nan")
+    c_g = float("nan")
+    if not history.empty:
+        g = history.iloc[-1].dropna()
+        if len(g) >= 2:
+            z = refine.zscore(refine.winsorize(g))
+            vol = residual_vol.reindex(z.index)
+            c_g = refine.case_scale_factor(g, vol)
+            scale = c_g if (c_g == c_g) else float(vol.mean())
+            a1, a2 = vol * z, scale * z  # IC cancels in the correlation
+            if a1.std() > 0 and a2.std() > 0:
+                corr = float(a1.corr(a2))
+    diag["candidate_correlation"] = corr
+    diag["c_g"] = c_g
+    return diag
 
 
 def _alpha_cross_section(universe_bars, bench, scorer, periods_per_year, t, ctx) -> pd.Series:

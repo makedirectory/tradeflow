@@ -114,6 +114,73 @@ rules that keep degraded inputs honest rather than silently wrong:
   mean-imputed per rule 2).
 :::
 
+## Forecast refinement v2
+
+The identity `α = σ·IC·z` is exactly right — *when* the cross-sectional z we compute
+equals the **time-series** z the standard rule is stated in. Whether it does is an
+empirical property of each signal, and two refinements the base pipeline skipped close
+the gap.
+
+### The Case test — which scaling is right
+
+- **Case 1** — a signal's per-name time-series vol `Std_TS{g_n}` is ~constant across
+  names ⇒ `z_TS ≈ z_CS` and the `σ_n` multiply is correct (the classic sector-momentum
+  example). This is `α = σ·IC·z`, unchanged.
+- **Case 2** — `Std_TS{g_n}` is ~proportional to the name's residual vol `σ_n`
+  (empirically, **most** price/estimate signals — momentum, reversal, revision) ⇒ the
+  vol is already inside the raw signal, and multiplying by `σ_n` **double-counts** it,
+  systematically overweighting high-vol names. The fix replaces the per-name `σ_n`
+  with one cross-sectional constant `c_g = Std_CS{g} / Std_CS{g/σ}`:
+
+  ```
+  α_n = IC · c_g · z_n          # Case 2 — one constant scale, no per-name vol tilt
+  ```
+
+`refine.case_test(signal_history, σ)` decides by regressing `Std_TS{g_n} = a + b·σ_n`
+across names: **R² ≥ 0.25 and a significant slope ⇒ Case 2; R² ≤ 0.05 ⇒ Case 1**; the
+ambiguous band defaults to the base rate (**Case 2 for price-derived signals, Case 1
+otherwise**), flagged `ambiguous` so a wrong call is visible. `c_g` is computed on the
+**raw** signal, winsorized exactly as the pipeline winsorizes — after standardization
+the raw dispersion that defines it is gone. `--scaling case1|case2|auto` selects it;
+`--scaling-ab` (on the `info` command) is the ground-truth tiebreak: it walk-forwards
+the realized IR under both scalings.
+
+### The IC-uncertainty level shrink
+
+The IC that scales alphas is itself **estimated**, and its sampling error dominates
+the mapping (`Var{Δβ/β} ≈ 1/(IC²·T)`). The Bayes-with-zero-prior fix is one factor on
+the whole level:
+
+```
+α ← α · 1/(1 + 1/(T_eff·IC²))      # = g/(g+1),  g = T_eff·IC²
+```
+
+The honest magnitudes are startling: a *good* signal (IC 0.05) with 5 years of monthly
+data keeps **13%** of its naive alpha; a great one (IC 0.10, 10 years) keeps ~55%.
+Two subtleties the implementation gets right:
+
+- **`T_eff`, not raw T.** Daily rows with a 21-day horizon are ~21× overlapped; using
+  the raw count under-shrinks by that factor.
+  [`horizon.effective_sample_size`](./information-horizon.md) deflates by the
+  horizon/spacing overlap, so the same panel sampled daily-with-a-monthly-horizon and
+  monthly gives the *same* shrink.
+- **No double-shrink.** The combination's per-signal Bayesian shrink and this level
+  shrink are the same `g/(g+1)` math. The rule: **the level shrink owns "is the IC
+  real"; the combination owns "how correlated signals share credit."** So it is applied
+  **exactly once** — by the level shrink on the single-signal measured path, and by the
+  combination's per-signal shrink on the combined path (never both). Every result
+  echoes a `shrink_chain` with one multiplier per step so the total haircut is auditable.
+
+### The equal-risk-contribution diagnostic
+
+A production monitor that catches a mis-scaled alpha *after the fact*: under correct
+scaling every residual-vol bucket contributes ~equally to active variance (`E{z²}=1`),
+so a bucket's share of `w_aᵀΣw_a` should track its share of *names*, not its vol. The
+`info` report buckets the paper active book by residual-vol quantile and flags a
+**monotone gradient** as the fingerprint of mis-scaling (usually a Case mis-choice). It
+degrades quintiles → terciles → suppressed as the universe thins, because a bucket mean
+of `z²` has sampling error `√(2/n)` — quintiles on 30 names are noise, not signal.
+
 ## The feature panel and refinement
 
 The refinement runs over a [`FeaturePanel`](./data-panel.md) — the cross-sectional,

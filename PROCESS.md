@@ -156,6 +156,11 @@ Default checklist for every change.
 - **Code must be self-contained: never reference specs or planning docs in code.**
   A comment should explain the behavior on its own terms; if it needs to point
   somewhere, link to the engineering wiki — never to a planning spec.
+- **No external-source citations in code or docs.** Explain the math and the
+  reasoning directly; do not name the book, paper, author, or equation/table number
+  a technique came from (e.g. no "G&K 11.32", no "per Chapter 11"). Cite the concept
+  (`the IC-uncertainty level shrink`), not its provenance. Identifiers in output
+  (e.g. a `shrink_chain` `owner`) follow the same rule — use a descriptive name.
 
 ### Review after every change
 

@@ -1,4 +1,4 @@
-"""Tests for the out-of-core Parquet bar store (spec 011).
+"""Tests for the out-of-core Parquet bar store.
 
 Skipped automatically if the optional ``store`` extra (pyarrow) isn't installed.
 """
@@ -131,7 +131,7 @@ def test_streaming_backtest_matches_batch(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-# Date-partitioned layout (symbol=…/year=…) and file-level date pruning (spec 015)
+# Date-partitioned layout (symbol=…/year=…) and file-level date pruning
 # --------------------------------------------------------------------------- #
 def test_write_creates_year_partitions(tmp_path):
     store = ParquetBarStore(tmp_path)

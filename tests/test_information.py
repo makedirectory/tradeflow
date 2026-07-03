@@ -1,4 +1,4 @@
-"""Tests for information analysis (spec 009): IC, breadth, IR reconciliation."""
+"""Tests for information analysis: IC, breadth, IR reconciliation."""
 
 from datetime import datetime
 
@@ -91,7 +91,7 @@ def test_compute_information_zero_skill_null():
     assert abs(r["multiple_testing_inflation"] - (1 - 0.95**10)) < 1e-9
 
 
-# --- attribution (009 §3.4) --------------------------------------------------
+# --- attribution -------------------------------------------------------------
 def test_factor_split_closes():
     from src.services.analysis import _factor_split
 

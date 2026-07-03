@@ -14,12 +14,18 @@ const config = {
   url: 'https://tradeflow.mk-dir.com',
   baseUrl: '/',
 
-  onBrokenLinks: 'warn',
-  onBrokenMarkdownLinks: 'warn',
+  // Broken internal links and anchors fail the build — the docs CI relies on this
+  // to catch dead cross-references (e.g. a renamed heading) before they ship.
+  onBrokenLinks: 'throw',
+  onBrokenAnchors: 'throw',
 
   // Render ```mermaid fenced code blocks as diagrams.
   markdown: {
     mermaid: true,
+    // (was the deprecated top-level `onBrokenMarkdownLinks`.)
+    hooks: {
+      onBrokenMarkdownLinks: 'throw',
+    },
   },
   themes: ['@docusaurus/theme-mermaid'],
 

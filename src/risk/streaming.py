@@ -6,7 +6,7 @@ materialization in the stack: it builds an aligned returns DataFrame for the who
 history and hands it to an estimator. For a broad universe over many years that ``T×N``
 panel is the thing that does not fit in RAM.
 
-This module is the out-of-core counterpart (spec 015): it estimates the *same*
+This module is the out-of-core counterpart: it estimates the *same*
 quantities by **streaming** the return panel out of a
 :class:`~src.data.store.ParquetBarStore` in date-chunks and accumulating sufficient
 statistics. It never holds the ``T×N`` panel: peak working memory is one chunk

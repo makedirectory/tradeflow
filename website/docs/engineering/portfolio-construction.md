@@ -16,8 +16,8 @@ maximize   U(w) = αᵀw − λ_A · wᵀΣw          (long-only absolute: bench
 subject to Σw = 1,  0 ≤ w ≤ max_weight,  ‖w‖₀ ≤ max_names
 ```
 
-α is the [alpha](./alphas) vector (Spec 005), Σ the [covariance](./risk-model)
-(Spec 006), and `λ_A` the aversion to active variance.
+α is the [alpha](./alphas) vector, Σ the [covariance](./risk-model), and `λ_A` the
+aversion to active variance.
 
 :::note Research clock — a proposal, not an order
 This is portfolio *construction*: it proposes target weights (a config a human

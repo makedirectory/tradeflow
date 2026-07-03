@@ -69,7 +69,8 @@ class CostModel(ABC):
         """Linear (size-independent) one-way cost per unit of traded notional.
 
         The size-independent part of a trade's cost — the optimizer's L1 turnover
-        coefficient (Spec 016). A model with no linear cost returns 0 (the default);
+        coefficient (the cost-aware objective). A model with no linear cost returns 0
+        (the default);
         :class:`~src.costs.parametric.ParametricCostModel` returns commission + s/2.
         """
         return 0.0
@@ -78,7 +79,8 @@ class CostModel(ABC):
         """√-impact coefficient ``k`` for the optimizer's ``Σ kᵢ·|Δwᵢ|^{3/2}`` term.
 
         The realistic square-root impact is convex in size but not quadratic, so it
-        enters Spec 008's objective as a conic term rather than the risk quadratic.
+        enters the portfolio optimizer's objective as a conic term rather than the
+        risk quadratic.
         ``k`` is *per unit of capital, per rebalance*: the impact cost as a fraction of
         capital of trading ``|Δwᵢ|`` (a fraction of the ``capital`` book) is
         ``k·|Δwᵢ|^{3/2}``. A model with no impact returns 0 (the default).

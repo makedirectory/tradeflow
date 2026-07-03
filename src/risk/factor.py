@@ -4,7 +4,7 @@ A factor model is the preferred form for active risk: the parameter count drops 
 ``O(N²)`` to ``O(N·K)``, Σ is invertible and stable by construction (``K`` small), and
 — crucially — risk becomes **attributable**, splitting into *factor* risk
 (``w_aᵀ X F Xᵀ w_a``) and *specific* risk (``w_aᵀ Δ w_a``). That decomposition is what
-Spec 009's attribution and Spec 005's factor-neutralization both consume.
+the information-analysis attribution and the alpha factor-neutralization both consume.
 
 Factor returns ``f_t`` are recovered each period by a cross-sectional regression of
 that period's returns on the (slowly-varying) exposures ``X``; ``F`` is their

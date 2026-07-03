@@ -1,4 +1,4 @@
-"""Tests for the out-of-core streaming sample covariance (spec 015 follow-on).
+"""Tests for the out-of-core streaming sample covariance.
 
 Proves the streaming estimator reproduces the eager ``build_risk_matrix`` oracle
 (to machine epsilon) and that it runs in memory bounded by chunk size, not history.

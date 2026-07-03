@@ -1,4 +1,4 @@
-"""Tests for information horizon / alpha decay (spec 012)."""
+"""Tests for information horizon / alpha decay."""
 
 from datetime import datetime
 

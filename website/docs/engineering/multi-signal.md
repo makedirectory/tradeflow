@@ -59,9 +59,19 @@ the mean cross-sectional correlation between signals is `Ω`. Measuring on
 out-of-sample data is what keeps the combination from over-fitting its own weights.
 
 The combined score then flows through the **same** [`refine_alpha`](./alphas)
-pipeline, scaled by the combined IC. So Spec 005's single assumed IC scalar is
-*replaced* by one measured, shrunk, redundancy-aware number — applied once, never
+pipeline, scaled by the combined IC. So the [single-signal](./alphas) assumed IC scalar
+is *replaced* by one measured, shrunk, redundancy-aware number — applied once, never
 twice.
+
+:::note Who owns the level shrink
+The per-signal Bayesian shrink here and the
+[IC-uncertainty level shrink](./alphas#forecast-refinement-v2) are the *same* `g/(g+1)`
+math, so applying both would double-shrink and undertrade forever. The rule: **the
+level shrink owns "is the IC real"; the combination owns "how correlated signals share
+credit."** On this combined path the combination discharges the level; the level shrink
+is *not* re-applied. The result echoes a `shrink_chain` so the single application is
+auditable.
+:::
 
 ## Where it runs
 

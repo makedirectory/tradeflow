@@ -47,6 +47,21 @@ how inflated a "significant" result is once you account for everything you tried
 | `--horizon` | `5` | Forward-return horizon, in bars. |
 | `--n-trials` | `1` | Configs tried, for the multiple-testing inflation. |
 | `--neutralize-factors` | off | Measure the **factor-neutral** alpha (bare flag = `market,volatility,size`) — use the same setting you deploy with, so the measured IC/IR describes the forecast you actually trade. Also on `horizon`. |
+| `--scaling-ab` | off | Research mode: walk-forward the realized IR under **Case-1** (`σ·IC·z`) vs **Case-2** (`IC·c_g·z`) scaling and compare against the regression's pick — the ground-truth tiebreak for the [Case test](alphas#case-scaling). |
+
+## The level shrink and the risk-bucket monitor
+
+The report also carries two more diagnostics:
+
+- **Level shrink.** The measured IC is itself estimated; the report prints
+  what fraction of the naive level survives that estimation error —
+  `keep 13% of the naive level (T_eff 60, IC 0.05)` — and the shrunk IC to deploy.
+  `T_eff` deflates the rebalance count for horizon overlap, so a daily-sampled monthly
+  horizon isn't credited 21× the observations it really has.
+- **Risk buckets.** Under correct scaling every residual-vol bucket
+  contributes ~equally to active variance; a **monotone gradient** flags a mis-scaled
+  alpha (usually a Case mis-choice). Suppressed on universes too thin for reliable
+  buckets rather than reporting noise.
 
 ## What it does (and doesn't) tell you
 

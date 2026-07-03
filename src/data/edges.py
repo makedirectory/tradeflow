@@ -1,7 +1,7 @@
 """The pandas edge — the *only* sanctioned crossings between the lazy columnar core
 and pandas.
 
-The lazy compute model (spec 015) keeps the panel in Arrow/Polars and never
+The lazy compute model keeps the panel in Arrow/Polars and never
 materializes the whole thing into pandas. But pandas is still the right currency at
 two narrow places: a **per-symbol leaf** where the data is provably small (the
 indicator math the strategy already speaks), and the **final report** a human reads.

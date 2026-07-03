@@ -47,6 +47,28 @@ residual return for the year. The ranking is what a mean-variance
 | `--neutralize` | off | Make alphas beta-neutral (regress out benchmark beta). |
 | `--neutralize-factors` | off | Make alphas **factor-neutral**: regress out the risk model's exposures. Bare flag = `market,volatility,size` (momentum kept — a momentum tilt is a return bet the alpha may intend); or pass a comma-separated subset. |
 | `--lookback-days` | `180` | History fetched (≤ `as_of`) for the residual-vol estimate. |
+| `--scaling` | `case1` | Per-name scaling: `case1` = `σ·IC·z`; `case2` = `IC·c_g·z` (no per-name vol multiply); `auto` = let a `Std_TS`-vs-`σ` regression decide, echoing the Case test. |
+
+## Case scaling
+
+`α = σ·IC·z` multiplies each name's score by its residual vol. That is right only if
+the signal's per-name vol is *constant* across names (**Case 1**). For most
+price-derived signals the vol is already *inside* the signal (**Case 2**), and the
+`σ` multiply double-counts it — tilting the book into high-vol names.
+`--scaling auto` runs a regression to decide and prints the verdict:
+
+```bash
+python main.py alphas --strategy mean_reversion --symbols ... --as-of 2025-06-01 --scaling auto
+```
+
+```
+  scaling: case2 — Case 2 (R²=0.41, t=+3.8, candidate corr 0.62)
+```
+
+`candidate corr` is how different the two scalings actually are here (near 1 ⇒ the
+choice barely matters). The ground-truth tiebreak is `info --scaling-ab`, which
+walk-forwards the realized IR under both. See
+[Continuous alphas](../engineering/alphas.md#forecast-refinement-v2).
 
 Use `--source scanner` to rank by a scanner's continuous conviction instead of the
 strategy's score:
