@@ -1,10 +1,13 @@
 """Moving-average crossover - the "hello world" of trend following.
 
-Long-only: enter when the fast EMA crosses **above** the slow EMA (a golden
-cross) and exit when it crosses back **below** (a death cross), with a protective
-stop and take-profit in between. Deliberately simple and only five parameters, so
-it's an honest baseline - and a clean second example of how little it takes to add
-a strategy (one file, the indicators you already have, register the name).
+Long-only. Its conviction score is the **normalized EMA gap**
+``(fast - slow) / slow``: positive (and rising) when the fast line leads, negative
+when it lags. The base class derives the trade signal from the score's sign, so a
+golden cross (score crossing above 0) becomes a ``BUY`` and a death cross (crossing
+below 0) a ``CLOSE_BUY`` - the discrete behavior is a consequence of the score, not
+a second code path. Deliberately simple and only five parameters, so it's an honest
+baseline - and a clean example of how little it takes to add a strategy (one file,
+a score, the indicators you already have, register the name).
 """
 
 from typing import Any, ClassVar, Dict
@@ -12,7 +15,6 @@ from typing import Any, ClassVar, Dict
 import pandas as pd
 
 from src.indicators import indicators
-from src.strategies import signals
 from src.strategies.base import Strategy
 
 
@@ -88,24 +90,13 @@ class MovingAverageCrossoverStrategy(Strategy):
             return pd.DataFrame()
 
         enriched = data.copy()
-        fast = indicators.calculate_ema(data["close"], self.config["fast_ema_period"])
-        slow = indicators.calculate_ema(data["close"], self.config["slow_ema_period"])
-        enriched["fast_ema"] = fast
-        enriched["slow_ema"] = slow
-        # +1 when the fast line is above the slow line (uptrend), -1 otherwise.
-        enriched["trend"] = (fast > slow).astype(int) * 2 - 1
+        enriched["fast_ema"] = indicators.calculate_ema(data["close"], self.config["fast_ema_period"])
+        enriched["slow_ema"] = indicators.calculate_ema(data["close"], self.config["slow_ema_period"])
         return enriched
 
-    def generate_signals(self, data: pd.DataFrame) -> Dict[Any, str]:
+    def calculate_scores(self, data: pd.DataFrame) -> pd.Series:
         if data.empty:
-            return {}
-
-        trend = data["trend"]
-        prev_trend = trend.shift(1)
-        golden_cross = (trend == 1) & (prev_trend == -1)
-        death_cross = (trend == -1) & (prev_trend == 1)
-
-        result = pd.Series(signals.HOLD, index=data.index)
-        result[golden_cross] = signals.BUY
-        result[death_cross] = signals.CLOSE_BUY
-        return result.to_dict()
+            return pd.Series(dtype=float)
+        # Normalized EMA gap: signed trend strength. Sign crossings are the golden /
+        # death crosses; magnitude is how decisively the fast line leads.
+        return (data["fast_ema"] - data["slow_ema"]) / data["slow_ema"]

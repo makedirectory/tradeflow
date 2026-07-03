@@ -10,6 +10,10 @@ the MCP server, and the research agent run the same code):
     live         scan universe -> LiveEngine -> LiveTrader (paper/live orders)
     optimize     search a strategy's parameters by backtest objective
     allocate     weight a portfolio across scanned symbols (OR-Tools)
+    alphas       rank a universe by continuous alpha (residual-return forecast)
+    risk         estimate the universe covariance Σ and summarize its risk structure
+    info         information report: IC, breadth, predicted-vs-realized IR
+    horizon      measure alpha decay / half-life; recommend cadence + lagged blend
     walkforward  out-of-sample validation with promotion gates
     mcp          serve TradeFlow to an agent over MCP (read-only)
     research     autonomous, offline research loop -> shortlist of configs
@@ -75,6 +79,7 @@ def resolve_universe(data_client, scanner_name: Optional[str], candidates: List[
 # ---------------------------------------------------------------------------- #
 def cmd_backtest(args) -> None:
     from src.analytics.reporting import log_backtest_report
+    from src.costs import ParametricCostModel
     from src.engine.backtest import BacktestEngine
     from src.services.sizing import build_beta_sizer
 
@@ -86,10 +91,24 @@ def cmd_backtest(args) -> None:
     if args.beta_sizing:
         sizer = build_beta_sizer(data_client, strategy, universe, args.benchmark, as_of=args.start)
 
-    result = BacktestEngine(strategy, data_client, sizer=sizer).run(
+    # Metrics are net of transaction cost by default; --gross disables the charge.
+    cost_model = (
+        None
+        if args.gross
+        else ParametricCostModel(
+            commission_bps=args.commission_bps, impact_eta=args.impact_eta, annual_borrow_bps=args.borrow_bps
+        )
+    )
+    result = BacktestEngine(strategy, data_client, sizer=sizer, cost_model=cost_model).run(
         universe, args.start, args.end, args.capital
     )
     log_backtest_report(result.metrics, result.initial_capital, result.final_capital)
+    if not args.gross and result.total_cost:
+        print(
+            f"Transaction cost: ${result.total_cost:,.2f} "
+            f"({result.total_cost / result.initial_capital * 100:.2f}% of capital); "
+            f"gross final ${result.gross_final_capital:,.2f}"
+        )
 
     if getattr(args, "chart", None):
         from src.analytics.charts import render_backtest_chart
@@ -115,6 +134,10 @@ def cmd_scan(args) -> None:
 
 
 def cmd_allocate(args) -> None:
+    if getattr(args, "objective", "weights") == "utility":
+        _allocate_utility(args)
+        return
+
     from src.scanners.symbol_scanner import SymbolScanner
     from src.services.sizing import allocate_portfolio
 
@@ -135,6 +158,73 @@ def cmd_allocate(args) -> None:
     print(f"{'SYMBOL':10}{'WEIGHT':>8}{'DOLLARS':>14}{'SHARES':>10}")
     for a in allocations:
         print(f"{a.symbol:10}{a.weight:>7.1%}{a.dollars:>14,.2f}{a.shares:>10.0f}")
+
+
+def _allocate_utility(args) -> None:
+    """Mean-variance portfolio construction (alpha + Σ) — a read-only proposal."""
+    from src.services.analysis import construct_portfolio
+
+    _, data_client = build_data_and_broker()
+    result = construct_portfolio(
+        data_client,
+        args.strategy,
+        args.symbols,
+        as_of=args.as_of,
+        source=args.source,
+        scanner=args.scanner,
+        target_te=args.target_te,
+        max_weight=args.max_weight,
+        min_weight=args.min_weight,
+        max_names=args.max_names,
+        benchmark=args.benchmark,
+        neutralize_factors=args.neutralize_factors,
+        capital=args.capital,
+        holding_period_years=args.holding_period,
+        cost_aware=not args.gross_objective,
+    )
+    if not result["feasible"]:
+        print(f"Infeasible: {result.get('binding_constraint') or result.get('note')}")
+        return
+
+    d = result["diagnostics"]
+    mode = "cost-aware" if d.get("cost_aware") else "gross (cost-blind)"
+    print(
+        f"\nPortfolio for '{args.strategy}' as of {args.as_of:%Y-%m-%d} "
+        f"(target TE {args.target_te:.0%}, {mode})"
+    )
+    print(
+        f"  IR* {d['ir_star']:.2f}  predicted TE {d['predicted_tracking_error']:.1%}  "
+        f"predicted IR {d['predicted_ir']:.2f}  transfer coef {d['transfer_coefficient']:.2f}  "
+        f"turnover {d['turnover']:.1%}"
+    )
+    if "round_trip_cost" in d:
+        # Headline: the conservative round-trip haircut (enter + exit, amortised) - the
+        # same cost model as capacity, so the two agree.
+        print(
+            f"  net active return {d['expected_active_return_net']:.2%}/yr (round-trip)  "
+            f"= gross {d['expected_active_return']:.2%} − round-trip cost {d['round_trip_cost']:.2%}"
+        )
+        # Detail: the one-way cost of this rebalance's turnover (prior reporting).
+        if d.get("cost_aware"):
+            print(
+                f"    this rebalance: turnover cost {d['cost_drag']:.2%}/yr one-way "
+                f"(linear {d['linear_cost']:.2%} + √-impact {d['impact_cost']:.2%}); "
+                f"one-way net {d['expected_active_return_net_oneway']:.2%}"
+            )
+        else:
+            print(
+                f"    this rebalance: turnover cost {d['cost_drag']:.2%}/yr one-way; "
+                f"one-way net {d['expected_active_return_net_oneway']:.2%}"
+            )
+    if "capacity_capital" in d:
+        print(f"  capacity ≈ ${d['capacity_capital']:,.0f} (where √-impact erases the alpha)")
+    print(f"\n{'SYMBOL':10}{'WEIGHT':>8}" + (f"{'DOLLARS':>14}{'SHARES':>10}" if result["holdings"] else ""))
+    if result["holdings"]:
+        for h in result["holdings"]:
+            print(f"{h['symbol']:10}{h['weight']:>7.1%}{h['dollars']:>14,.2f}{h['shares']:>10.0f}")
+    else:
+        for sym, w in result["weights"].items():
+            print(f"{sym:10}{w:>7.1%}")
 
 
 def cmd_optimize(args) -> None:
@@ -355,6 +445,251 @@ def cmd_research(args) -> None:
     print(f"\nJournal: {result.journal_path}  (a human reviews and promotes; nothing is live)")
 
 
+def cmd_alphas(args) -> None:
+    """Print the ranked alpha table (residual-return forecasts) for a universe.
+
+    Read-only research-clock flow: scores each name as of --as-of, scales the
+    cross-section into comparable annualised-return forecasts, and ranks them.
+    Produces no orders and saves no config.
+    """
+    from src.services.analysis import compute_alphas, compute_combined_alphas
+
+    _, data_client = build_data_and_broker()
+
+    if args.combine:
+        _print_combined_alphas(
+            compute_combined_alphas(
+                data_client,
+                args.combine,
+                args.symbols,
+                as_of=args.as_of,
+                benchmark=args.benchmark,
+                neutralize=args.neutralize,
+                neutralize_factors=args.neutralize_factors,
+                lookback_days=args.lookback_days,
+            ),
+            args,
+        )
+        return
+
+    result = compute_alphas(
+        data_client,
+        args.strategy,
+        args.symbols,
+        as_of=args.as_of,
+        source=args.source,
+        scanner=args.scanner,
+        ic=args.ic,
+        benchmark=args.benchmark,
+        neutralize=args.neutralize,
+        neutralize_factors=args.neutralize_factors,
+        lookback_days=args.lookback_days,
+    )
+
+    src_desc = {
+        "strategy": f"'{args.strategy}' score",
+        "signal": f"'{args.strategy}' signal",
+        "scanner": f"scanner '{args.scanner}' strength",
+    }[args.source]
+    print(f"\nAlphas from {src_desc} as of {args.as_of:%Y-%m-%d} (IC={args.ic}, benchmark={args.benchmark})")
+    _print_neutralization(result)
+    if not result["benchmark_available"]:
+        print("  ! benchmark unavailable — residual vol falls back to total volatility")
+    if result["low_confidence"]:
+        print(f"  ! thin universe ({result['universe_size']} names) — demean-only, low confidence")
+    if not result["alphas"]:
+        print("No scorable names.")
+        return
+
+    print(f"\n{'SYMBOL':10}{'SCORE':>10}{'Z':>9}{'BETA':>8}{'RESID_VOL':>11}{'ALPHA':>10}")
+    for row in result["alphas"]:
+        print(
+            f"{row['symbol']:10}{row['score']:>10.3f}{row['z']:>9.2f}{row['beta']:>8.2f}"
+            f"{row['residual_vol']:>10.1%}{row['alpha']:>10.2%}"
+        )
+
+
+def _print_neutralization(result) -> None:
+    """One honest line about what the alphas were actually regressed against.
+
+    Reports what was *applied* (from the refinement's meta), not what was requested —
+    and warns when a requested factor exposure was unavailable, so "factor-neutral"
+    is never claimed for un-neutralized output.
+    """
+    requested = result.get("neutralize_factors") or []
+    applied = result.get("neutralized_against") or []
+    if applied:
+        print(f"  neutralized against: {', '.join(applied)}")
+    missing = [f for f in requested if f not in applied]
+    if missing:
+        print(
+            f"  ! requested factor(s) NOT neutralized (exposures unavailable — "
+            f"insufficient history?): {', '.join(missing)}"
+        )
+
+
+def _print_combined_alphas(result, args) -> None:
+    """Print the multi-signal combination: per-signal weights/ICs + the combined alphas."""
+    if not result.get("universe_size"):
+        print(result.get("note", "No combined alphas produced."))
+        return
+
+    print(f"\nCombined alpha from {', '.join(result['signals'])} as of {args.as_of:%Y-%m-%d}")
+    _print_neutralization(result)
+    print(f"  measured over {result['n_periods']} rebalances  |  combined IC {result['combined_ic']:.4f}")
+    print(f"\n{'SIGNAL':16}{'IC':>9}{'SHRUNK':>9}{'WEIGHT':>9}")
+    for sig in result["signals"]:
+        print(
+            f"{sig:16}{result['signal_ics'][sig]:>9.4f}{result['signal_shrunk_ics'][sig]:>9.4f}"
+            f"{result['signal_weights'][sig]:>9.3f}"
+        )
+    if result["low_confidence"]:
+        print(f"\n  ! thin universe ({result['universe_size']} names) — demean-only, low confidence")
+    print(f"\n{'SYMBOL':10}{'SCORE':>10}{'Z':>9}{'BETA':>8}{'RESID_VOL':>11}{'ALPHA':>10}")
+    for row in result["alphas"]:
+        print(
+            f"{row['symbol']:10}{row['score']:>10.3f}{row['z']:>9.2f}{row['beta']:>8.2f}"
+            f"{row['residual_vol']:>10.1%}{row['alpha']:>10.2%}"
+        )
+
+
+def cmd_risk(args) -> None:
+    """Print the universe's covariance risk summary (read-only).
+
+    Estimates an annualized, well-conditioned Σ as of --as-of and reports the
+    shrinkage intensity, conditioning, mean correlation, equal-weight portfolio
+    volatility, and the top risk contributors. Produces no orders.
+    """
+    from src.services.analysis import compute_risk
+
+    _, data_client = build_data_and_broker()
+    result = compute_risk(
+        data_client,
+        args.symbols,
+        as_of=args.as_of,
+        model=args.model,
+        benchmark=args.benchmark,
+        lookback_days=args.lookback_days,
+        timeframe=args.timeframe,
+    )
+    if not result.get("universe_size"):
+        print(result.get("note", "No risk matrix produced."))
+        return
+
+    delta = result["shrinkage"]
+    delta_str = f"  shrinkage δ {delta:.3f}" if delta is not None else ""
+    print(f"\nRisk model '{result['model']}' as of {args.as_of:%Y-%m-%d} ({result['timeframe']} returns)")
+    print(f"  names {result['universe_size']}{delta_str}")
+    print(
+        f"  condition number {result['condition_number']:.1f}  PD {result['positive_definite']}  "
+        f"mean corr {result['mean_correlation']:.2f}  eq-weight vol {result['equal_weight_volatility']:.1%}"
+    )
+    if "factor_risk_share" in result:
+        print(
+            f"  risk split: {result['factor_risk_share']:.0%} factor / "
+            f"{result['specific_risk_share']:.0%} specific  (factors: {', '.join(result['factor_names'])})"
+        )
+    print(f"\n{'SYMBOL':10}{'VOL':>9}{'RISK CONTRIB':>14}")
+    for row in result["top_risk_contributors"]:
+        print(f"{row['symbol']:10}{row['volatility']:>8.1%}{row['risk_contribution']:>14.2%}")
+
+
+def cmd_info(args) -> None:
+    """Print the information report: IC, breadth, and the predicted-vs-realized IR.
+
+    Read-only research diagnostic: measures the strategy's information coefficient and
+    effective breadth over [start, end] and reconciles predicted IR with realized,
+    surfacing the research-integrity guardrails. Produces no orders.
+    """
+    from src.services.analysis import compute_information
+
+    _, data_client = build_data_and_broker()
+    r = compute_information(
+        data_client,
+        args.strategy,
+        args.symbols,
+        args.start,
+        args.end,
+        source=args.source,
+        scanner=args.scanner,
+        benchmark=args.benchmark,
+        neutralize_factors=args.neutralize_factors,
+        horizon=args.horizon,
+        n_trials=args.n_trials,
+    )
+    if not r.get("periods"):
+        print(r.get("note", "No information report produced."))
+        return
+
+    print(f"\nInformation report: '{args.strategy}' {args.start:%Y-%m-%d}..{args.end:%Y-%m-%d}")
+    print(f"  measured over {r['periods']} rebalances (horizon {r['horizon_bars']} bars)")
+    flag = "  ⚠ low sample" if r["low_sample"] else ""
+    print(f"  IC mean {r['mean_ic']:+.4f}  t-stat {r['ic_tstat']:+.2f}  rank-IC {r['rank_ic']:+.4f}{flag}")
+    print(
+        f"  breadth: {r['breadth_effective']:.0f} effective vs {r['breadth_naive']:.0f} naive "
+        f"(ρ̄ {r['rho_bar']:.2f}, {r['n_names']} names)"
+    )
+    print(
+        f"  IR: predicted {r['predicted_ir']:+.2f}  realized {r['realized_ir']:+.2f} "
+        f"± {r['ir_standard_error']:.2f} (SE)"
+    )
+    print(
+        f"  guardrails: P(any |t|>2 in {r['n_trials']} trials) = {r['multiple_testing_inflation']:.2f}"
+        + ("  | ⚠ realized IR > 2 — suspect a bug/leak" if r["sanity_ceiling_breached"] else "")
+    )
+    print(
+        f"  attribution: factor {r['factor_return']:+.4f} / specific {r['specific_return']:+.4f} "
+        f"per rebalance (factor tilts vs name selection)"
+    )
+    verdict = "distinguishable from luck" if abs(r["ic_tstat"]) >= 2 else "NOT distinguishable from luck"
+    print(f"\n  Verdict: skill is {verdict} (IC t-stat {r['ic_tstat']:+.2f}).")
+    if abs(r["ic_tstat"]) >= 2:
+        print(f"  Recommended IC for alpha scaling (a human applies it): {r['recommended_ic']:.4f}")
+
+
+def cmd_horizon(args) -> None:
+    """Print the alpha-decay curve, half-life, recommended cadence, and lagged blend.
+
+    Read-only research diagnostic: measures how fast the signal's IC decays and turns
+    that into a rebalance cadence and a current/lagged blend. Produces no orders.
+    """
+    from src.services.analysis import compute_horizon
+
+    _, data_client = build_data_and_broker()
+    r = compute_horizon(
+        data_client,
+        args.strategy,
+        args.symbols,
+        args.start,
+        args.end,
+        source=args.source,
+        scanner=args.scanner,
+        benchmark=args.benchmark,
+        neutralize_factors=args.neutralize_factors,
+        max_lag=args.max_lag,
+        timeframe=args.timeframe,
+    )
+    if not r.get("ic_by_lag"):
+        print(r.get("note", "No horizon report produced."))
+        return
+
+    print(f"\nInformation horizon: '{args.strategy}' {args.start:%Y-%m-%d}..{args.end:%Y-%m-%d}")
+    print("  IC by lag: " + "  ".join(f"{n}:{ic:+.3f}" for n, ic in sorted(r["ic_by_lag"].items())))
+    hl = r["half_life"]
+    hl_str = f"{hl:.1f} periods" if hl == hl and hl != float("inf") else "∞ (no decay detected)"
+    print(f"  decay δ {r['decay_delta']:.3f}  half-life {hl_str}  fit R² {r['decay_r_squared']:.2f}")
+    print(
+        f"  recommended cadence: every {r['recommended_cadence']} periods  "
+        f"(best return horizon ≈ {r['peak_return_horizon']:.1f})"
+    )
+    rec = "recommended" if r["blend_recommended"] else "not worth the turnover cost"
+    print(
+        f"  lagged blend [{r['blend_regime']}]: w_now {r['blend_weight_now']:+.2f}  "
+        f"w_lagged {r['blend_weight_lagged']:+.2f}  (ρ {r['signal_autocorrelation']:.2f}, "
+        f"cost {r['blend_annual_cost']:.2%}/yr → {rec})"
+    )
+
+
 def cmd_mcp(args) -> None:
     """Serve TradeFlow over MCP (stdio). Opt-in; requires the ``mcp`` extra.
 
@@ -503,6 +838,37 @@ def _symbols(value: str) -> List[str]:
     return [s.strip().upper() for s in value.split(",") if s.strip()]
 
 
+#: The bare-flag default for --neutralize-factors: the risk-control factors.
+#: Momentum is deliberately excluded — a momentum tilt is a return bet the alphas
+#: may intend; regress it out explicitly if that's the goal.
+DEFAULT_NEUTRAL_FACTORS = ["market", "volatility", "size"]
+
+
+def _factors(value: str) -> List[str]:
+    from src.risk.exposures import FACTOR_NAMES
+
+    factors = [s.strip().lower() for s in value.split(",") if s.strip()]
+    unknown = [f for f in factors if f not in FACTOR_NAMES]
+    if unknown:
+        raise argparse.ArgumentTypeError(
+            f"unknown factor(s) {', '.join(unknown)}; available: {', '.join(FACTOR_NAMES)}"
+        )
+    return factors
+
+
+def _add_neutralize_factors_flag(parser, note: str = "") -> None:
+    parser.add_argument(
+        "--neutralize-factors",
+        dest="neutralize_factors",
+        type=_factors,
+        nargs="?",
+        const=DEFAULT_NEUTRAL_FACTORS,
+        default=[],
+        help="Factor-neutral alphas: regress out these risk-model exposures "
+        f"(comma-separated; bare flag = {','.join(DEFAULT_NEUTRAL_FACTORS)} — momentum kept){note}",
+    )
+
+
 def _date(value: str) -> datetime:
     return datetime.strptime(value, "%Y-%m-%d")
 
@@ -535,6 +901,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bt.add_argument("--benchmark", default="SPY", help="Benchmark symbol for beta")
     bt.add_argument(
+        "--gross",
+        action="store_true",
+        help="Report GROSS metrics (disable transaction cost; net is the default)",
+    )
+    bt.add_argument("--commission-bps", dest="commission_bps", type=float, default=1.0)
+    bt.add_argument(
+        "--impact-eta", dest="impact_eta", type=float, default=0.3, help="Market-impact coefficient"
+    )
+    bt.add_argument(
+        "--borrow-bps", dest="borrow_bps", type=float, default=50.0, help="Annual short borrow rate (bps)"
+    )
+    bt.add_argument(
         "--chart",
         metavar="PATH",
         default=None,
@@ -565,12 +943,60 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
     scan.set_defaults(func=cmd_scan)
 
-    alloc = subparsers.add_parser("allocate", help="Weight a portfolio over scanned symbols (OR-Tools)")
+    alloc = subparsers.add_parser("allocate", help="Weight a portfolio over scanned symbols")
     alloc.add_argument("--scanner", default="volume")
     alloc.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
     alloc.add_argument("--capital", type=float, default=100_000.0)
     alloc.add_argument("--max-positions", dest="max_positions", type=int, default=5)
     alloc.add_argument("--max-weight", dest="max_weight", type=float, default=0.25)
+    alloc.add_argument(
+        "--objective",
+        choices=["weights", "utility"],
+        default="weights",
+        help="'weights' = trailing-return scalar sizing (OR-Tools); "
+        "'utility' = mean-variance construction from alpha + Σ (a research proposal)",
+    )
+    alloc.add_argument(
+        "--strategy", choices=STRATEGIES, default="volume_spike", help="Alpha source (utility)"
+    )
+    alloc.add_argument(
+        "--source",
+        choices=["strategy", "signal", "scanner"],
+        default="strategy",
+        help="Score origin (utility)",
+    )
+    alloc.add_argument(
+        "--as-of", dest="as_of", type=_date, default=datetime.now(), help="Rebalance date (utility)"
+    )
+    alloc.add_argument(
+        "--target-te", dest="target_te", type=float, default=0.04, help="Target tracking error"
+    )
+    alloc.add_argument(
+        "--max-names", dest="max_names", type=int, default=None, help="Cardinality cap (utility)"
+    )
+    alloc.add_argument(
+        "--min-weight",
+        dest="min_weight",
+        type=float,
+        default=0.0,
+        help="Dust floor: min weight if held (utility)",
+    )
+    alloc.add_argument("--benchmark", default="SPY", help="Benchmark for residual vol / beta (utility)")
+    _add_neutralize_factors_flag(alloc, note=" (utility)")
+    alloc.add_argument(
+        "--gross-objective",
+        dest="gross_objective",
+        action="store_true",
+        help="Cost-blind solve (utility): drop 007's cost from the objective, report it ex-post only. "
+        "Default is cost-aware (name-specific turnover + √-impact in the objective).",
+    )
+    alloc.add_argument(
+        "--holding-period",
+        dest="holding_period",
+        type=float,
+        default=1.0 / 12.0,
+        help="Expected holding period in years, to annualise the in-objective cost (utility; default 1/12)",
+    )
     alloc.set_defaults(func=cmd_allocate)
 
     opt = subparsers.add_parser(
@@ -637,6 +1063,102 @@ def build_parser() -> argparse.ArgumentParser:
         help="Save the chosen config (with provenance) to this path",
     )
     wf.set_defaults(func=cmd_walkforward)
+
+    alphas = subparsers.add_parser(
+        "alphas",
+        help="Rank a universe by continuous alpha (residual-return forecast) — read-only",
+    )
+    alphas.add_argument("--strategy", choices=STRATEGIES, default="volume_spike")
+    alphas.add_argument("--scanner", default="volume", help="Scanner used as the --source score metric")
+    alphas.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
+    alphas.add_argument(
+        "--as-of", dest="as_of", type=_date, default=datetime.now(), help="Rebalance date (YYYY-MM-DD)"
+    )
+    alphas.add_argument(
+        "--source",
+        choices=["strategy", "signal", "scanner"],
+        default="strategy",
+        help="Score origin: 'strategy' = continuous conviction; 'signal' = BUY/SELL/HOLD; "
+        "'scanner' = scanner strength",
+    )
+    alphas.add_argument("--ic", type=float, default=0.03, help="Assumed information coefficient")
+    alphas.add_argument(
+        "--combine",
+        type=lambda v: [s.strip() for s in v.split(",") if s.strip()],
+        default=None,
+        help="Combine several strategies' signals into one alpha (comma-separated, "
+        "e.g. volume_spike,ma_crossover,mean_reversion). Measures + shrinks their ICs.",
+    )
+    alphas.add_argument("--benchmark", default="SPY", help="Benchmark for residual vol / beta")
+    alphas.add_argument(
+        "--neutralize",
+        action="store_true",
+        help="Make alphas beta-neutral (regress out benchmark beta)",
+    )
+    _add_neutralize_factors_flag(alphas)
+    alphas.add_argument("--lookback-days", dest="lookback_days", type=int, default=180)
+    alphas.set_defaults(func=cmd_alphas)
+
+    info = subparsers.add_parser(
+        "info",
+        help="Information report: measure IC, breadth, and predicted-vs-realized IR — read-only",
+    )
+    info.add_argument("--strategy", choices=STRATEGIES, default="volume_spike")
+    info.add_argument(
+        "--source", choices=["strategy", "signal", "scanner"], default="strategy", help="Alpha score origin"
+    )
+    info.add_argument("--scanner", default="volume", help="Scanner used when --source scanner")
+    info.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
+    info.add_argument("--start", type=_date, default=datetime.now() - timedelta(days=365))
+    info.add_argument("--end", type=_date, default=datetime.now())
+    info.add_argument("--benchmark", default="SPY", help="Benchmark for residual returns")
+    info.add_argument("--horizon", type=int, default=5, help="Forward-return horizon in bars")
+    info.add_argument(
+        "--n-trials",
+        dest="n_trials",
+        type=int,
+        default=1,
+        help="Configs tried (for multiple-testing inflation)",
+    )
+    _add_neutralize_factors_flag(info, note="; measure the alpha you deploy")
+    info.set_defaults(func=cmd_info)
+
+    hz = subparsers.add_parser(
+        "horizon",
+        help="Measure alpha decay / half-life and recommend rebalance cadence + blend — read-only",
+    )
+    hz.add_argument("--strategy", choices=STRATEGIES, default="volume_spike")
+    hz.add_argument("--source", choices=["strategy", "signal", "scanner"], default="strategy")
+    hz.add_argument("--scanner", default="volume")
+    hz.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
+    hz.add_argument("--start", type=_date, default=datetime.now() - timedelta(days=365))
+    hz.add_argument("--end", type=_date, default=datetime.now())
+    hz.add_argument("--benchmark", default="SPY")
+    hz.add_argument(
+        "--max-lag", dest="max_lag", type=int, default=10, help="Largest lag (periods) to measure"
+    )
+    hz.add_argument("--timeframe", default="1Day")
+    _add_neutralize_factors_flag(hz, note="; measure the alpha you deploy")
+    hz.set_defaults(func=cmd_horizon)
+
+    risk = subparsers.add_parser(
+        "risk",
+        help="Estimate the universe covariance Σ and summarise its risk structure — read-only",
+    )
+    risk.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
+    risk.add_argument(
+        "--as-of", dest="as_of", type=_date, default=datetime.now(), help="Rebalance date (YYYY-MM-DD)"
+    )
+    risk.add_argument(
+        "--model",
+        choices=["shrinkage", "sample", "factor"],
+        default="shrinkage",
+        help="Covariance model: shrinkage (Ledoit–Wolf), sample (raw), or factor (XFXᵀ+Δ)",
+    )
+    risk.add_argument("--benchmark", default="SPY", help="Benchmark for the market factor / beta")
+    risk.add_argument("--timeframe", default="1Day", help="Bar timeframe for returns")
+    risk.add_argument("--lookback-days", dest="lookback_days", type=int, default=365)
+    risk.set_defaults(func=cmd_risk)
 
     mcp = subparsers.add_parser(
         "mcp", help="Serve TradeFlow over MCP for an agent (opt-in; needs the 'mcp' extra)"

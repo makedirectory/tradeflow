@@ -36,7 +36,7 @@ def test_discovery_lists_and_param_ranges():
     assert any(s["name"] == "volume_spike" for s in registry.list_strategies())
     assert any(s["name"] == "volume" for s in registry.list_scanners())
     pr = registry.get_param_ranges("strategy", "volume_spike")
-    assert "volume_threshold" in pr["param_ranges"]
+    assert "short_ema_period" in pr["param_ranges"]
     with pytest.raises(ValueError):
         registry.get_param_ranges("strategy", "nope")
     with pytest.raises(ValueError):

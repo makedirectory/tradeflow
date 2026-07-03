@@ -1,0 +1,170 @@
+"""Risk model core - the covariance matrix Σ and the quantities built on it.
+
+A portfolio's risk is **not** additive: two names that move together are one bet,
+two that move oppositely are a hedge. The covariance matrix Σ is what lets the
+optimiser (and the diagnostics) tell the difference - compute portfolio variance,
+tracking error, and each name's marginal contribution to risk.
+
+This module owns the shared types: :class:`RiskMatrix` (an annualised Σ plus the
+derived quantities) and :class:`RiskModel` (the estimator interface). Concrete
+estimators live in :mod:`src.risk.sample`. Everything is research-clock: Σ is a tool
+for sizing conviction, never consulted to place an order.
+"""
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import Dict, List, Mapping, Optional, Tuple, Union
+
+import numpy as np
+import pandas as pd
+
+Weights = Union[Mapping[str, float], np.ndarray]
+
+
+@dataclass
+class RiskMatrix:
+    """An annualised covariance matrix Σ over a universe, plus risk math on it."""
+
+    symbols: List[str]
+    sigma: np.ndarray  # N×N annualised covariance, positive-definite
+    shrinkage: Optional[float] = None  # δ used (Ledoit–Wolf), for audit
+
+    def __post_init__(self) -> None:
+        self._index = {sym: i for i, sym in enumerate(self.symbols)}
+
+    # ------------------------------------------------------------------ #
+    # Weight handling
+    # ------------------------------------------------------------------ #
+    def _vector(self, weights: Weights) -> np.ndarray:
+        """Align a weight mapping to Σ's symbol order (missing names → 0)."""
+        if isinstance(weights, np.ndarray):
+            if weights.shape != (len(self.symbols),):
+                raise ValueError(f"weight vector must have length {len(self.symbols)}")
+            return weights.astype(float)
+        vec = np.zeros(len(self.symbols))
+        for sym, w in weights.items():
+            idx = self._index.get(sym)
+            if idx is not None:
+                vec[idx] = w
+        return vec
+
+    # ------------------------------------------------------------------ #
+    # Risk quantities (Σ is annualised, so these are annualised too)
+    # ------------------------------------------------------------------ #
+    def variance(self, weights: Weights) -> float:
+        """Portfolio variance ``wᵀ Σ w``."""
+        w = self._vector(weights)
+        return float(w @ self.sigma @ w)
+
+    def volatility(self, weights: Weights) -> float:
+        """Portfolio volatility ``√(wᵀ Σ w)`` (annualised)."""
+        return float(np.sqrt(max(self.variance(weights), 0.0)))
+
+    def tracking_error(self, weights: Weights, benchmark: Weights) -> float:
+        """Tracking error ``√(w_aᵀ Σ w_a)`` for active weights ``w_a = w − w_B``."""
+        active = self._vector(weights) - self._vector(benchmark)
+        return float(np.sqrt(max(active @ self.sigma @ active, 0.0)))
+
+    def marginal_contribution_to_risk(
+        self, weights: Weights, benchmark: Optional[Weights] = None
+    ) -> pd.Series:
+        """Per-name MCR ``(Σ w_a) / ψ`` - ``∂ψ/∂w_a``, the risk gradient."""
+        active = self._vector(weights)
+        if benchmark is not None:
+            active = active - self._vector(benchmark)
+        te = float(np.sqrt(max(active @ self.sigma @ active, 0.0)))
+        if te == 0:
+            return pd.Series(0.0, index=self.symbols)
+        return pd.Series((self.sigma @ active) / te, index=self.symbols)
+
+    def correlation(self) -> pd.DataFrame:
+        """The implied correlation matrix (Σ scaled by its diagonal std)."""
+        std = np.sqrt(np.diag(self.sigma))
+        denom = np.outer(std, std)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            corr = np.where(denom > 0, self.sigma / denom, 0.0)
+        return pd.DataFrame(corr, index=self.symbols, columns=self.symbols)
+
+    def volatilities(self) -> pd.Series:
+        """Annualised volatility per name (√diagonal of Σ)."""
+        return pd.Series(np.sqrt(np.diag(self.sigma)), index=self.symbols)
+
+    def condition_number(self) -> float:
+        """Condition number of Σ - how close to singular (the invertibility guard)."""
+        return float(np.linalg.cond(self.sigma))
+
+    def is_positive_definite(self) -> bool:
+        """Whether Σ is positive-definite (so ``Σ⁻¹`` exists for the optimiser)."""
+        try:
+            np.linalg.cholesky(self.sigma)
+            return True
+        except np.linalg.LinAlgError:
+            return False
+
+
+class RiskModel(ABC):
+    """Estimates a per-bar covariance over a returns panel (columns = symbols)."""
+
+    @abstractmethod
+    def estimate(self, returns: pd.DataFrame) -> Tuple[np.ndarray, Optional[float]]:
+        """Return ``(Σ_per_bar, shrinkage)`` over complete-case ``returns`` columns."""
+
+
+def build_return_panel(bars: Dict[str, pd.DataFrame], min_obs: int = 60) -> Tuple[pd.DataFrame, List[str]]:
+    """Build an aligned (dates × symbols) return panel and the under-sampled names.
+
+    Names enter and leave the universe, so the raw panel is ragged. We keep names
+    with at least ``min_obs`` returns and align them on their common (complete-case)
+    dates; names below the floor are returned separately so the caller can apply the
+    documented fallback (a cross-sectional median variance) rather than drop them.
+    """
+    returns = pd.DataFrame(
+        {sym: frame["close"].pct_change() for sym, frame in bars.items() if not frame.empty}
+    )
+    if returns.empty:
+        return returns, []
+    counts = returns.notna().sum()
+    kept = [sym for sym in returns.columns if counts[sym] >= min_obs]
+    under_sampled = [sym for sym in returns.columns if sym not in kept]
+    panel = returns[kept].dropna() if kept else returns.iloc[0:0]
+    return panel, under_sampled
+
+
+def build_risk_matrix(
+    model: RiskModel,
+    bars: Dict[str, pd.DataFrame],
+    periods_per_year: float,
+    min_obs: int = 60,
+) -> Optional[RiskMatrix]:
+    """Estimate an annualised :class:`RiskMatrix` over a universe's scanned bars.
+
+    Builds the aligned return panel, estimates Σ on the well-sampled names, annualises
+    it, and splices in under-sampled names with the documented fallback - a
+    cross-sectional **median variance** and zero correlation - so the matrix spans the
+    full universe and stays positive-definite rather than dropping names silently.
+    Returns ``None`` if no name has enough history.
+    """
+    panel, under_sampled = build_return_panel(bars, min_obs=min_obs)
+    universe = [sym for sym in bars if not bars[sym].empty]
+    if panel.empty or panel.shape[0] < 2:
+        return None
+
+    sigma_bar, shrinkage = model.estimate(panel)
+    sigma = sigma_bar * periods_per_year
+    kept = list(panel.columns)
+
+    if not under_sampled:
+        return RiskMatrix(symbols=kept, sigma=sigma, shrinkage=shrinkage)
+
+    # Fallback for thin-history names: independent, at the median estimated variance.
+    median_var = float(np.median(np.diag(sigma))) if sigma.size else 0.0
+    order = [sym for sym in universe if sym in kept or sym in under_sampled]
+    idx = {sym: i for i, sym in enumerate(kept)}
+    full = np.zeros((len(order), len(order)))
+    for a, sa in enumerate(order):
+        for b, sb in enumerate(order):
+            if sa in idx and sb in idx:
+                full[a, b] = sigma[idx[sa], idx[sb]]
+        if sa in under_sampled:
+            full[a, a] = median_var
+    return RiskMatrix(symbols=order, sigma=full, shrinkage=shrinkage)

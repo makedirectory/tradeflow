@@ -49,6 +49,10 @@ class PeriodicStrategy(Strategy):
     def process_data(self, data: pd.DataFrame) -> pd.DataFrame:
         return data
 
+    def calculate_scores(self, data: pd.DataFrame) -> pd.Series:
+        # This double scripts signals directly (below); the score is unused.
+        return pd.Series(0.0, index=data.index)
+
     def generate_signals(self, data: pd.DataFrame) -> Dict[Any, str]:
         # Open at the start of each cycle and close midway, so trades round-trip
         # frequently across the window (not one position held to the end).

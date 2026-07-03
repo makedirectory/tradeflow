@@ -31,6 +31,12 @@ EXPOSED_TOOLS = (
     "run_backtest",
     "run_optimization",
     "run_walk_forward",
+    "compute_alphas",
+    "combine_alphas",
+    "compute_risk",
+    "construct_portfolio",
+    "compute_information",
+    "compute_horizon",
     "get_metrics_glossary",
     "summarize_bars",
     "save_config",
@@ -128,11 +134,14 @@ def build_server(data_client=None):
         config: Optional[Dict[str, Any]] = None,
         beta_sizing: bool = False,
         benchmark: str = "SPY",
+        gross: bool = False,
     ) -> Dict[str, Any]:
         """Backtest `strategy` on `symbols` over [start, end] (YYYY-MM-DD).
 
-        Returns the full  metrics dict, trade count, and a path to the
-        trades CSV (trades are not inlined). `config` overrides default params.
+        Returns the full metrics dict (NET of transaction cost by default — commission
+        + half-spread + square-root impact; pass gross=True to disable), the trade
+        count, total cost, and a path to the trades CSV (trades are not inlined).
+        `config` overrides default params.
         """
         inputs = {
             "strategy": strategy,
@@ -142,6 +151,7 @@ def build_server(data_client=None):
             "capital": capital,
             "config": config,
             "beta_sizing": beta_sizing,
+            "gross": gross,
         }
         result = analysis.run_backtest(
             dc,
@@ -153,6 +163,7 @@ def build_server(data_client=None):
             config,
             beta_sizing,
             benchmark,
+            gross=gross,
         )
         return _logged("run_backtest", inputs, result)
 
@@ -262,6 +273,216 @@ def build_server(data_client=None):
             leakage_probe=leakage_probe,
         )
         return _logged("run_walk_forward", inputs, result)
+
+    @server.tool()
+    def compute_alphas(
+        strategy: str,
+        symbols: List[str],
+        as_of: str,
+        source: str = "strategy",
+        scanner: str = "volume",
+        ic: float = 0.03,
+        benchmark: str = "SPY",
+        neutralize: bool = False,
+        lookback_days: int = 180,
+    ) -> Dict[str, Any]:
+        """Rank `symbols` by continuous alpha (residual-return forecast) as of a date.
+
+        Turns each name's view into a comparable, annualised residual-return
+        forecast via alpha = sigma * IC * z (cross-sectional z-score scaled by
+        residual vol and an ASSUMED IC). source: "strategy" uses the strategy's
+        continuous conviction; "signal" uses its BUY/SELL/HOLD as +1/-1/0; "scanner"
+        uses the scanner's continuous strength. Read-only: forecasts only, never
+        reads a forward return, places no orders. The absolute scale is only as good
+        as the assumed IC; relative ranking is not.
+        """
+        inputs = {
+            "strategy": strategy,
+            "symbols": symbols,
+            "as_of": as_of,
+            "source": source,
+            "scanner": scanner,
+            "ic": ic,
+            "benchmark": benchmark,
+            "neutralize": neutralize,
+        }
+        result = analysis.compute_alphas(
+            dc,
+            strategy,
+            symbols,
+            _parse_date(as_of),
+            source=source,
+            scanner=scanner,
+            ic=ic,
+            benchmark=benchmark,
+            neutralize=neutralize,
+            lookback_days=lookback_days,
+        )
+        return _logged("compute_alphas", inputs, result)
+
+    @server.tool()
+    def combine_alphas(
+        signals: List[str],
+        symbols: List[str],
+        as_of: str,
+        benchmark: str = "SPY",
+        neutralize: bool = False,
+        lookback_days: int = 365,
+        horizon: int = 5,
+        n_points: int = 12,
+    ) -> Dict[str, Any]:
+        """Combine several strategies' signals into one alpha by IC + correlation.
+
+        `signals` is a list of strategy names. Measures each signal's IC and the
+        signal correlation matrix over a trailing window of realised residual returns,
+        shrinks the ICs by estimation confidence, and combines them with GLS weights
+        (Ω⁻¹·IC) so redundant signals split a weight instead of double-counting.
+        Returns the ranked combined alphas plus measured ICs, shrunk ICs, weights, and
+        the correlation matrix. Read-only; measure on out-of-sample data for honesty.
+        """
+        inputs = {"signals": signals, "symbols": symbols, "as_of": as_of, "neutralize": neutralize}
+        result = analysis.compute_combined_alphas(
+            dc,
+            signals,
+            symbols,
+            _parse_date(as_of),
+            benchmark=benchmark,
+            neutralize=neutralize,
+            lookback_days=lookback_days,
+            horizon=horizon,
+            n_points=n_points,
+        )
+        return _logged("combine_alphas", inputs, result)
+
+    @server.tool()
+    def compute_horizon(
+        strategy: str,
+        symbols: List[str],
+        start: str,
+        end: str,
+        source: str = "strategy",
+        benchmark: str = "SPY",
+        max_lag: int = 10,
+    ) -> Dict[str, Any]:
+        """Measure an alpha's decay/half-life and recommend cadence + lagged blend (012).
+
+        Measures the IC-vs-lag profile (alpha at t vs residual return n periods later),
+        fits the per-period decay δ and half-life, derives the rebalance cadence that
+        maximises IC·√(1/Δt), and computes the IR-maximising current/lagged blend from
+        δ and the signal autocorrelation (diversify if δ>ρ, hedge if δ<ρ). The
+        half-life is the holding period to amortise cost over. Read-only.
+        """
+        inputs = {"strategy": strategy, "symbols": symbols, "start": start, "end": end}
+        result = analysis.compute_horizon(
+            dc,
+            strategy,
+            symbols,
+            _parse_date(start),
+            _parse_date(end),
+            source=source,
+            benchmark=benchmark,
+            max_lag=max_lag,
+        )
+        return _logged("compute_horizon", inputs, result)
+
+    @server.tool()
+    def compute_risk(
+        symbols: List[str],
+        as_of: str,
+        model: str = "shrinkage",
+        timeframe: str = "1Day",
+        lookback_days: int = 365,
+    ) -> Dict[str, Any]:
+        """Estimate the universe's covariance Σ and summarise its risk structure.
+
+        Returns the shrinkage intensity δ, condition number, mean correlation, the
+        equal-weight portfolio volatility, and the top risk contributors as of a date.
+        model: "shrinkage" = Ledoit–Wolf (default), "sample" = raw, "factor" =
+        structural XFXᵀ+Δ (adds the factor-vs-specific risk split). Read-only: Σ sizes
+        conviction, it never places an order. Risk is not additive — correlated names
+        are one bet, which is what this matrix captures.
+        """
+        inputs = {
+            "symbols": symbols,
+            "as_of": as_of,
+            "model": model,
+            "timeframe": timeframe,
+            "lookback_days": lookback_days,
+        }
+        result = analysis.compute_risk(
+            dc, symbols, _parse_date(as_of), model=model, timeframe=timeframe, lookback_days=lookback_days
+        )
+        return _logged("compute_risk", inputs, result)
+
+    @server.tool()
+    def construct_portfolio(
+        strategy: str,
+        symbols: List[str],
+        as_of: str,
+        source: str = "strategy",
+        target_te: float = 0.04,
+        max_weight: float = 0.25,
+        max_names: Optional[int] = None,
+        benchmark: str = "SPY",
+        capital: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Construct the mean-variance optimal portfolio from alphas (005) and Σ (006).
+
+        Maximises αᵀw − λ·wᵀΣw over long-only, box-bounded, budgeted (optionally
+        cardinality-capped) weights, calibrating λ to `target_te`. Returns the proposed
+        weights plus the Fundamental-Law report: IR* (best achievable IR), predicted
+        tracking error and IR, the transfer coefficient (how much of IR* survives the
+        constraints), and turnover. A PROPOSAL — read-only, places no orders; a human
+        promotes the config.
+        """
+        inputs = {"strategy": strategy, "symbols": symbols, "as_of": as_of, "target_te": target_te}
+        result = analysis.construct_portfolio(
+            dc,
+            strategy,
+            symbols,
+            _parse_date(as_of),
+            source=source,
+            target_te=target_te,
+            max_weight=max_weight,
+            max_names=max_names,
+            benchmark=benchmark,
+            capital=capital,
+        )
+        return _logged("construct_portfolio", inputs, result)
+
+    @server.tool()
+    def compute_information(
+        strategy: str,
+        symbols: List[str],
+        start: str,
+        end: str,
+        source: str = "strategy",
+        benchmark: str = "SPY",
+        horizon: int = 5,
+        n_trials: int = 1,
+    ) -> Dict[str, Any]:
+        """Measure a strategy's IC, breadth, and predicted-vs-realized IR (spec 009).
+
+        Pairs the alpha known at each rebalance with the subsequent realised residual
+        return (strict forward alignment) to measure the information coefficient
+        (Pearson + rank) and its t-stat, the effective breadth (deflated by ρ̄), and the
+        predicted vs realised information ratio — with guardrails (IR standard-error
+        band, multiple-testing inflation for `n_trials`, sanity ceiling). An IC t-stat
+        below 2 means the skill is not distinguishable from luck. Read-only.
+        """
+        inputs = {"strategy": strategy, "symbols": symbols, "start": start, "end": end, "n_trials": n_trials}
+        result = analysis.compute_information(
+            dc,
+            strategy,
+            symbols,
+            _parse_date(start),
+            _parse_date(end),
+            source=source,
+            benchmark=benchmark,
+            horizon=horizon,
+            n_trials=n_trials,
+        )
+        return _logged("compute_information", inputs, result)
 
     @server.tool()
     def get_metrics_glossary() -> Dict[str, Any]:

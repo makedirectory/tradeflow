@@ -10,16 +10,46 @@ more:
 
 1. **Indicators** — `process_data(df)` returns the OHLCV frame plus the columns
    it needs.
-2. **Signals** — `generate_signals(df)` maps each timestamp to a signal string.
+2. **Conviction** — `calculate_scores(df)` returns one continuous, signed **score**
+   per bar (positive = bullish, negative = bearish, magnitude = strength). This is
+   the strategy's single source of truth.
 3. **Sizing & risk** — `calculate_position_size`, `check_exit_conditions`,
    `validate_signal`.
 
 It does **not** fetch data, place orders, or compute portfolio metrics.
 
+## One score, two consumers
+
+A strategy defines **only** the score. Everything else is derived from it, so there
+is no parallel decision path to keep in sync:
+
+- The **trade clock** gets its discrete `BUY/SELL/HOLD` from `generate_signals(df)`,
+  which the base class implements by walking the score with hysteresis (see below).
+  Strategies do not override it.
+- The **alpha layer** ([continuous alphas](alphas)) reads the same score as a
+  cross-sectional conviction and scales it into a residual-return forecast.
+
+### Deriving the signal from the score
+
+`generate_signals` tracks the desired position direction implied by the score:
+
+```
+enter long   when score crosses above  enter_long
+exit long    when score falls to/below exit_long      → CLOSE_BUY
+(short side mirrors it, for strategies with LONG_ONLY = False)
+```
+
+The bands come from `signal_thresholds()` (default: pure sign — long while score >
+0). A strategy with asymmetric entry/exit — e.g. `mean_reversion` enters when RSI is
+oversold but holds until it's overbought — overrides `signal_thresholds()` to set a
+wide hold band. Entries are edge-triggered (emitted on the crossing bar); while a
+direction is held the bar emits `HOLD`, and the engine dedupes against the open
+position.
+
 ## The signal vocabulary
 
-Signals are plain strings, defined once in `src/strategies/signals.py` so every
-layer agrees:
+The derived signals are plain strings, defined once in `src/strategies/signals.py`
+so every layer agrees:
 
 ```python
 BUY, SELL          # open a position
@@ -37,7 +67,9 @@ another checks for `"BUY"`.
 | `calculate_required_lookback()` | construction | bars needed before indicators are valid |
 | `initialize()` | start of a run | validate parameters / relationships |
 | `process_data(df)` | each batch/bar | add indicator columns |
-| `generate_signals(df)` | after processing | produce `{timestamp: signal}` |
+| `calculate_scores(df)` | after processing | produce `{timestamp: score}` (the one thing you implement) |
+| `signal_thresholds()` | per signal derivation | optional: asymmetric entry/exit bands |
+| `generate_signals(df)` | after scoring (base class) | derive `{timestamp: signal}` from the score |
 | `process_real_time_data(...)` | live, per bar | fold a streamed bar into a rolling buffer and emit the latest signal |
 
 ## Position sizing
@@ -60,11 +92,11 @@ Three ship today, all built on the pure [indicators](indicators) — chosen to
 *disagree*, so the [walk-forward](walk-forward) scorecard has something to
 discriminate between:
 
-| `--strategy` | Style | In one line |
-|--------------|-------|-------------|
-| `volume_spike` | Trend + volume (5-minute) | Enter with the short/long EMA trend when a volume spike confirms a move out of an RSI extreme. |
-| `ma_crossover` | Trend (daily) | Long-only EMA crossover: buy the golden cross, exit the death cross. |
-| `mean_reversion` | Contrarian (daily) | Long-only RSI mean reversion: buy oversold dips, exit on the rebound. |
+| `--strategy` | Style | Score (the one decision) |
+|--------------|-------|--------------------------|
+| `volume_spike` | Trend + volume (5-minute, long/short) | Signed EMA-trend strength `× volume / volume_ma` — lean with the trend, conviction amplified by volume confirmation. |
+| `ma_crossover` | Trend (daily, long-only) | Normalized EMA gap `(fast − slow) / slow` — sign crossings are the golden / death cross. |
+| `mean_reversion` | Contrarian (daily, long-only) | Oversold-ness `50 − rsi`, with asymmetric bands: enter below `oversold`, exit above `overbought`. |
 
 `ma_crossover` and `mean_reversion` are deliberately minimal (a handful of
 parameters each) — honest baselines and clean worked examples. See

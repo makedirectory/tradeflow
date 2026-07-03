@@ -24,8 +24,13 @@ Three common extension points. Each touches one layer.
        def calculate_required_lookback(self): return self.config["lookback"] + 1
        def initialize(self): ...
        def process_data(self, df): ...                 # add indicator columns
-       def generate_signals(self, df): ...             # -> {timestamp: signal}
+       def calculate_scores(self, df): ...             # -> {timestamp: signed score}
    ```
+
+   You implement `calculate_scores` (one signed conviction per bar) and nothing
+   else for decisions: the base class derives `BUY/SELL/HOLD` from the score, and
+   the [alpha layer](alphas) scales the same score. Set `LONG_ONLY = False` to allow
+   shorts, and override `signal_thresholds()` for asymmetric entry/exit bands.
 
 2. Register it in `STRATEGIES` in `src/services/registry.py`. It now works in
    `backtest`, `live`, `optimize`, the MCP server, and the research agent — sizing,
