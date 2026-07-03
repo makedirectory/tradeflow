@@ -67,16 +67,52 @@ model, so the scaling identity and the as-of discipline live in exactly one plac
 
 Alphas should be **benchmark-neutral** — the equal-weighted average alpha ≈ 0 — so
 they express only *relative* views and don't smuggle in a directional market bet.
-Two levers, both in `refine.neutralize` (an OLS residual, orthogonal to the supplied
-exposures by construction, with an intercept so the residual is mean-zero):
+Two levers, both ending in `refine.neutralize` (an OLS residual, orthogonal to the
+supplied exposures by construction, with an intercept so the residual is mean-zero):
 
-- **Benchmark-beta neutral** (always available): regress `z` on each name's beta and
-  keep the residual. Enabled by `--neutralize`.
-- **Factor neutral** (when a factor risk model exists): regress on the
-  factor-exposure matrix so the alpha is orthogonal to size/momentum/vol.
+- **Benchmark-beta neutral**: regress `z` on each name's beta and keep the residual.
+  Enabled by `--neutralize`.
+- **Factor neutral**: regress on the [risk model's](./risk-model.md) standardized
+  factor exposures (`exp_<factor>` panel columns, written by
+  `add_factor_exposure_features` from the *same* builder the factor risk model uses —
+  one definition of "factor", both places). Enabled by `--neutralize-factors`; the
+  bare flag neutralizes **market, volatility, size**. **Momentum is deliberately not
+  in the default set** — a momentum tilt is a return bet the alpha may intend;
+  regress it out explicitly (`--neutralize-factors market,volatility,size,momentum`)
+  if that's the goal.
 
 The z-score already centres the cross-section at 0, so equal-weight benchmark
 neutrality holds even before the explicit step.
+
+Both levers compose into **one regression on the union** of exposures, with three
+rules that keep degraded inputs honest rather than silently wrong:
+
+1. **Usability gating.** A factor column is used only if it exists and actually
+   varies across covered names. An absent, all-NaN, or constant column (e.g. the
+   exposure build qualified fewer than two names on a short-history universe)
+   **degrades to plain-beta neutralisation — never to no neutralisation**.
+2. **Mean-imputation for partial coverage.** A name missing one factor value gets
+   the cross-sectional mean (0 — exposures are standardized), keeping it *in* the
+   regression. Without this, the union's row-wise NaN-drop would strip that name's
+   beta neutralisation too, and the cross-section would silently mix neutralized and
+   raw scores.
+3. **Report what was applied, not what was asked.** The refinement records
+   `panel.meta["neutralized_against"]` (and an imputation count); the services echo
+   it as `neutralized_against`, and the CLI prints it — with an explicit warning when
+   a requested factor's exposures were unavailable. "Factor-neutral" is never claimed
+   for un-neutralized output.
+
+:::note Known limitations (deliberate, tracked)
+- The **MCP tools don't expose `neutralize_factors` yet** — results echo the field
+  (always `[]` via that surface); wiring the parameter through
+  [`src/mcp/server.py`](./mcp-server.md) is a small follow-up for when the agent
+  surface needs it.
+- The exposure builder's **history gate is two-way, not per-factor**: a subset with
+  momentum requires the full 12-1 window (~148 bars), any other subset requires
+  `vol_window + 1` (61) bars — even for factors (like market) that could tolerate
+  less. Names between those bounds are dropped from the exposure frame (then
+  mean-imputed per rule 2).
+:::
 
 ## The feature panel and refinement
 

@@ -68,14 +68,16 @@ Each module is a column producer, a consumer, or both:
 | Producer | Writes |
 |----------|--------|
 | `add_risk_features` | `beta`, `residual_vol` (annualised; falls back to total vol with no benchmark) |
+| `add_factor_exposure_features` | `exp_<factor>` (the [risk model's](./risk-model) standardized exposures, for [factor-neutral alphas](./alphas#neutralization); reuses the panel's `beta`, writes nothing if `<2` names qualify) |
 | `add_score_feature` | `score` (applies any `scorer`: a strategy, a scanner, …) |
 
 | Consumer | Reads → writes |
 |----------|----------------|
-| `refine_alpha` ([alphas](./alphas)) | `score`, `residual_vol`, `beta` → `z`, `alpha` |
+| `refine_alpha` ([alphas](./alphas)) | `score`, `residual_vol`, `beta`, `exp_*` → `z`, `alpha` (+ `meta.neutralized_against`) |
 
-New producers (factor exposures, transaction-cost params, liquidity) slot in the same
-way, and consumers downstream don't change.
+New producers (transaction-cost params, liquidity) slot in the same way, and
+consumers downstream don't change — the factor-exposure producer arrived exactly
+this way.
 
 ## Why it's shaped this way
 

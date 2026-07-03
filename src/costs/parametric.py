@@ -85,3 +85,20 @@ class ParametricCostModel(CostModel):
         """
         s = self.default_spread if spread is None else spread
         return self.commission_rate + s / 2.0
+
+    def impact_coefficient(self, daily_vol: float, adv_dollar: float, capital: float) -> float:
+        """√-impact coefficient ``k`` (per unit capital) for the optimiser's conic term.
+
+        The √-law impact rate is ``η·σ·√(participation)`` with ``participation =
+        |q|/ADV``. Trading ``|Δw|`` of a ``capital``-dollar book is ``q = |Δw|·capital/p``
+        shares, so ``participation = |Δw|·capital / (p·ADV) = |Δw|·capital / ADV$``. The
+        impact cost as a *fraction of capital* is then ``η·σ·√(capital/ADV$)·|Δw|^{3/2}``,
+        so ``k = η·σ·√(capital/ADV$)``. Zero when ADV is unavailable (mirrors
+        :meth:`cost`, which charges no impact without volume) or in linear-impact mode
+        (that fallback is quadratic-in-size, not conic, and isn't fed to the optimiser).
+        """
+        # `not (x > 0)` (rather than `x <= 0`) also rejects NaN, so a bad ADV/vol input
+        # drops the impact term instead of poisoning the solve with a NaN coefficient.
+        if self.linear_impact or not (adv_dollar > 0) or not (capital > 0) or not (daily_vol > 0):
+            return 0.0
+        return self.impact_eta * daily_vol * math.sqrt(capital / adv_dollar)

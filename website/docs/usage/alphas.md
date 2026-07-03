@@ -45,6 +45,7 @@ residual return for the year. The ranking is what a mean-variance
 | `--ic` | `0.03` | Assumed information coefficient (sets overall aggressiveness). |
 | `--benchmark` | `SPY` | Benchmark for beta and residual volatility. |
 | `--neutralize` | off | Make alphas beta-neutral (regress out benchmark beta). |
+| `--neutralize-factors` | off | Make alphas **factor-neutral**: regress out the risk model's exposures. Bare flag = `market,volatility,size` (momentum kept — a momentum tilt is a return bet the alpha may intend); or pass a comma-separated subset. |
 | `--lookback-days` | `180` | History fetched (≤ `as_of`) for the residual-vol estimate. |
 
 Use `--source scanner` to rank by a scanner's continuous conviction instead of the
@@ -53,6 +54,35 @@ strategy's score:
 ```bash
 python main.py alphas --source scanner --scanner volume --symbols NVDA,AAPL,META --as-of 2025-06-01
 ```
+
+## Factor-neutral alphas
+
+`--neutralize-factors` regresses the scores against the
+[risk model's](../engineering/risk-model.md) standardized factor exposures, so the
+alphas can't hide an incidental market/volatility/size tilt:
+
+```bash
+python main.py alphas --strategy volume_spike --symbols ... --neutralize-factors
+```
+
+The report states what was **actually applied** — and warns when it couldn't be:
+
+```
+Alphas from 'volume_spike' score as of 2025-06-01 (IC=0.03, benchmark=SPY)
+  neutralized against: market, volatility, size
+```
+
+```
+  neutralized against: beta
+  ! requested factor(s) NOT neutralized (exposures unavailable — insufficient history?): market, volatility, size
+```
+
+The second form appears when the universe's history is too short to build the
+exposures (momentum needs ~148 daily bars, the others 61) — the pipeline then falls
+back to plain-beta neutralisation rather than silently doing nothing. Unknown factor
+names are rejected at parse time. The same flag exists on `allocate --objective
+utility` (construct from factor-neutral alphas) and on `info`/`horizon` — **measure
+the same alpha you deploy**. Note: the MCP tools don't expose this parameter yet.
 
 ## Combining several signals
 

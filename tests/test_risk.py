@@ -9,6 +9,7 @@ from datetime import datetime
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from src.marketdata.client import MarketDataClient
 from src.risk import LedoitWolfCovariance, RiskMatrix, SampleCovariance, build_risk_matrix
@@ -158,3 +159,50 @@ def test_compute_risk_factor_model_reports_split():
     assert "factor_risk_share" in r
     assert abs(r["factor_risk_share"] + r["specific_risk_share"] - 1.0) < 1e-9
     assert set(r["factor_names"]) == {"market", "momentum", "volatility", "size"}
+
+
+def test_factor_exposures_subset_relaxes_history_requirement():
+    """A subset without momentum keeps names the full four-factor build must drop."""
+    from src.risk.exposures import build_factor_exposures
+
+    # ~90 bars: enough for volatility/size (60-bar windows), far short of 12-1 momentum.
+    bars = {s: make_ohlcv(n=90, seed=i, freq="1D") for i, s in enumerate(["AAA", "BBB", "CCC"])}
+    bench = make_ohlcv(n=90, seed=9, freq="1D")
+
+    full = build_factor_exposures(bars, bench)
+    subset = build_factor_exposures(bars, bench, factors=["market", "volatility", "size"])
+    assert full.empty
+    assert list(subset.index) == ["AAA", "BBB", "CCC"]
+    assert list(subset.columns) == ["market", "volatility", "size"]
+    # Cross-sectionally standardized: mean 0, unit dispersion per factor.
+    assert np.allclose(subset.mean().values, 0.0, atol=1e-12)
+    assert np.allclose(subset.std(ddof=0).values, 1.0, atol=1e-12)
+
+
+def test_factor_exposures_unknown_factor_raises():
+    from src.risk.exposures import build_factor_exposures
+
+    bars = {"AAA": make_ohlcv(n=200, seed=0, freq="1D")}
+    with pytest.raises(ValueError, match="value"):
+        build_factor_exposures(bars, None, factors=["market", "value"])
+
+
+def test_factor_exposures_empty_factor_list_returns_empty():
+    from src.risk.exposures import build_factor_exposures
+
+    bars = {s: make_ohlcv(n=200, seed=i, freq="1D") for i, s in enumerate(["AAA", "BBB"])}
+    assert build_factor_exposures(bars, None, factors=[]).empty
+
+
+def test_factor_exposures_reuse_precomputed_betas():
+    """A supplied beta Series is used verbatim for the market column (no re-regression)."""
+    from src.risk.exposures import build_factor_exposures
+
+    symbols = ["AAA", "BBB", "CCC"]
+    bars = {s: make_ohlcv(n=90, seed=i, freq="1D") for i, s in enumerate(symbols)}
+    bench = make_ohlcv(n=90, seed=9, freq="1D")
+    betas = pd.Series({"AAA": 0.5, "BBB": 1.0, "CCC": 1.5})
+    frame = build_factor_exposures(bars, bench, factors=["market"], betas=betas)
+    # Standardized column must be the z-score of the supplied betas exactly.
+    expected = (betas - betas.mean()) / betas.std(ddof=0)
+    assert np.allclose(frame["market"].reindex(symbols).values, expected.values)
