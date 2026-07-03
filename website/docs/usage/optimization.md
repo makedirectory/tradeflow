@@ -6,7 +6,7 @@ title: Parameter optimization
 # Parameter optimization
 
 Optimization searches a strategy's parameter space for the configuration that
-maximises a chosen backtest objective (Sharpe ratio, total return, ...). Each
+maximizes a chosen backtest objective (Sharpe ratio, total return, ...). Each
 candidate configuration is scored by running a full backtest.
 
 A warning that bears repeating: optimization is *very* good at finding the
@@ -54,6 +54,6 @@ A configuration that looks great in-sample often disappoints out-of-sample.
 Validate the winner on a *different* date range before trusting it.
 :::
 
-How the search avoids materialising astronomically large grids, and how the
+How the search avoids materializing astronomically large grids, and how the
 surrogate model works, is covered in
 **[Optimization (engineering)](../engineering/optimization)**.

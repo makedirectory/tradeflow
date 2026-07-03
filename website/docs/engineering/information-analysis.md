@@ -21,7 +21,7 @@ as a *recommendation* for [alpha](./alphas) scaling that a human applies.
 ## Information coefficient
 
 At each rebalance `t`, the IC is the cross-sectional correlation between the alpha
-known *at* `t` and the realised **residual** return over `(t, t+horizon]`:
+known *at* `t` and the realized **residual** return over `(t, t+horizon]`:
 
 ```
 IC_t = corr( α_{·,t} , r^res_{·,t+1} )
@@ -31,8 +31,8 @@ Two disciplines are load-bearing:
 
 - **Residual, not raw, return.** Correlating alpha with raw forward return rewards
   beta, not skill — so the benchmark/`β` component is stripped first, consistent with
-  how the alpha was neutralised.
-- **Strict forward alignment.** `IC_t` pairs `α` at `t` with returns realised *after*
+  how the alpha was neutralized.
+- **Strict forward alignment.** `IC_t` pairs `α` at `t` with returns realized *after*
   `t`. An off-by-one (using `r_t` instead of `r_{t+1}`) is a leak that manufactures
   spectacular fake IC — a regression test pins that the IC function is alignment-sensitive.
 
@@ -55,14 +55,14 @@ deflates it by the average pairwise correlation `ρ̄` (taken from the [risk mod
 
 ## The reconciliation
 
-The report puts the predicted IR next to a **realised IR** — computed from the actual
+The report puts the predicted IR next to a **realized IR** — computed from the actual
 period returns of the standardized-alpha portfolio over the same forward windows — so
 the gap is visible. Against it sit the research-integrity guardrails:
 
 ```
 IR standard error      SE(IR) ≈ √((1 + IR²/2) / T_years)
 multiple-testing        P(any |t| > 2 in m trials) = 1 − 0.95^m
-sanity ceiling          realised IR > 2 on public data ⇒ suspect a bug/leak
+sanity ceiling          realized IR > 2 on public data ⇒ suspect a bug/leak
 ```
 
 A 3-year backtest has `SE(IR) ≈ 0.6`, so an IR of 0.5 is statistically
@@ -75,7 +75,7 @@ doesn't read as skill.
 With the [factor risk model](./risk-model) and [cost model](./transaction-costs) in
 place, two more diagnostics close the loop:
 
-- **Factor vs specific attribution.** At each rebalance the realised return
+- **Factor vs specific attribution.** At each rebalance the realized return
   cross-section is projected onto the factor exposures; the portfolio's return splits
   into a *factor* part (`w·fitted`) and a *specific* part (`w·(R−fitted)`) that sum to
   it exactly. This answers "was my return from cheap factor tilts (momentum, size) or
@@ -89,6 +89,6 @@ place, two more diagnostics close the loop:
 ## Where it runs
 
 `services.compute_information` scans the window, samples rebalances, measures the IC
-series and realised portfolio returns, and assembles the report. The CLI
+series and realized portfolio returns, and assembles the report. The CLI
 (`python main.py info`) and the read-only MCP tool `compute_information` route through
 it. See the [usage guide](../usage/information.md).

@@ -147,4 +147,4 @@ def test_exit_cancels_resting_orders_before_closing():
 
     _trader(broker).handle_signal("AAA", signals.CLOSE_BUY, 100.0)
     assert broker.closed == ["AAA"]
-    assert broker.list_open_orders("AAA") == []  # resting legs cancelled
+    assert broker.list_open_orders("AAA") == []  # resting legs canceled

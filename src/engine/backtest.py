@@ -1,6 +1,6 @@
 """Backtest engine - where strategies go to find out the truth about themselves.
 
-Orchestrates a vectorised-fetch / bar-by-bar-simulate / aggregate pipeline:
+Orchestrates a vectorized-fetch / bar-by-bar-simulate / aggregate pipeline:
 
     data (marketdata) -> signals (strategy) -> fills (here) -> metrics (analytics)
 
@@ -61,7 +61,7 @@ class BacktestEngine:
         self.strategy = strategy
         self.data_client = data_client
         # Same sizing abstraction as live execution; defaults to the strategy's
-        # own risk-based sizing so behaviour is unchanged unless a sizer is given.
+        # own risk-based sizing so behavior is unchanged unless a sizer is given.
         self.sizer = sizer or RiskBasedSizer(strategy)
         # When set, every simulated fill is charged so metrics are net of cost.
         # None = gross (the engine is a mechanism; the service layer defaults to net).
@@ -113,7 +113,7 @@ class BacktestEngine:
 
     def _simulate(self, symbol_bars, start, end, initial_capital: float) -> BacktestResult:
         """Run the per-symbol simulation over an iterable of ``(symbol, bars)`` and assemble."""
-        # ``available`` is realised cash used to gate new entries; it carries across
+        # ``available`` is realized cash used to gate new entries; it carries across
         # symbols (in order) so the run can't spend the same dollar twice.
         self._available = initial_capital
         market_data: Dict[str, Dict[str, float]] = {}
@@ -240,7 +240,7 @@ class BacktestEngine:
         return self.cost_model.carry_cost(notional, position["side"] == signals.SELL, held_years)
 
     def _maybe_open(self, symbol: str, signal: str, price: float, timestamp) -> Optional[Dict[str, Any]]:
-        # Present realised cash as an account snapshot so the same PositionSizer
+        # Present realized cash as an account snapshot so the same PositionSizer
         # used in live execution can size backtest entries.
         account = AccountSnapshot(
             cash=self._available,

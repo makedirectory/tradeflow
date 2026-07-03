@@ -152,7 +152,7 @@ Default checklist for every change.
   `§3.2`, `specs/planning/...`). A reader should never need a planning doc to
   understand shipped behavior. Link to the relevant wiki/usage page instead, and
   for not-yet-built work name the capability generically (e.g. "a future
-  information-analysis step", "the portfolio optimiser") rather than its spec.
+  information-analysis step", "the portfolio optimizer") rather than its spec.
 - **Code must be self-contained: never reference specs or planning docs in code.**
   A comment should explain the behavior on its own terms; if it needs to point
   somewhere, link to the engineering wiki — never to a planning spec.

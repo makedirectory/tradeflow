@@ -89,7 +89,7 @@ block, and the **promotion-gate verdict** — a pass/fail per gate plus an overa
 Sharpe, profit factor, efficiency, drawdown ratio, minimum OOS trades, deflated
 Sharpe, and — when requested — parameter sensitivity and the leakage probe).
 
-> Saving a config never changes live behaviour. It writes a JSON file to a
+> Saving a config never changes live behavior. It writes a JSON file to a
 > gitignored `configs/` directory; promoting it to live trading is a manual human
 > step.
 

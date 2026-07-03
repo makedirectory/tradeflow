@@ -6,7 +6,7 @@ Every setting is resolved in the same predictable order:
 1. **Process environment variables** - the standard, 12-factor way.
 2. **A ``.env`` file** in the project root, loaded into the environment on first
    use. No dependency: a tiny built-in parser handles ``KEY=value`` lines, and
-   real environment variables already set always win (standard dotenv behaviour).
+   real environment variables already set always win (standard dotenv behavior).
 
 Alpaca credentials are required for any command that touches the market
 (``scan``/``backtest``/``live``/``optimize``/...); the offline ``demo`` command
@@ -117,7 +117,7 @@ def load_settings() -> Settings:
             + ", ".join(missing)
             + ".\nCopy .env.example to .env and add your Alpaca paper-trading keys "
             "(free at https://app.alpaca.markets/ -> Paper Account -> API Keys).\n"
-            "Environment variables are honoured too. "
+            "Environment variables are honored too. "
             "No keys needed to explore? Run `make demo`."
         )
     return Settings(alpaca_key=key, alpaca_secret=secret, paper_trade=_resolve_paper_trade())

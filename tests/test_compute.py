@@ -143,7 +143,7 @@ def test_streaming_covariance_bounded_memory_via_generator():
     # reference accumulation, proving the out-of-core path is faithful.
     import pandas as pd
 
-    N, CHUNK, NCHUNKS = 6, 64, 200  # 12,800 rows, never materialised together
+    N, CHUNK, NCHUNKS = 6, 64, 200  # 12,800 rows, never materialized together
     seeds = range(NCHUNKS)
 
     def gen():
@@ -171,7 +171,7 @@ def test_scan_lazy_pushes_as_of_into_parquet_scan(tmp_path):
     store, bars, _ = _store(tmp_path)
     cutoff = bars["AAA"].index[150]
     lf = store.scan_lazy(SYMBOLS, "1Day", cutoff.to_pydatetime(), 10_000)
-    # The predicate is pushed into the SCAN node, not applied after materialise.
+    # The predicate is pushed into the SCAN node, not applied after materialize.
     plan = lf.explain()
     assert "SELECTION" in plan and "ts" in plan
     out = edges.collect_streaming(lf)
@@ -333,7 +333,7 @@ def test_zscore_inf_treated_as_missing():
 
     df = _xs([1.0, float("inf"), 3.0])
     got = compute.cross_sectional_zscore(df.lazy()).collect().sort("symbol")["z"].to_numpy()
-    # inf -> missing, the two finite names standardise around their own mean/std.
+    # inf -> missing, the two finite names standardize around their own mean/std.
     oracle = refine.zscore(pd.Series([1.0, np.nan, 3.0])).to_numpy()
     np.testing.assert_allclose(got, oracle, atol=1e-12, equal_nan=True)
 
@@ -398,7 +398,7 @@ def test_scan_lazy_naive_as_of_localises_utc(tmp_path):
     assert naive.tzinfo is None
     lazy_rows = edges.collect_streaming(store.scan_lazy(["AAA"], "1Day", naive, 10_000)).height
     eager_rows = len(store.scan(["AAA"], "1Day", naive, 10_000)["AAA"])
-    assert lazy_rows == eager_rows  # lazy and eager agree on the localised window
+    assert lazy_rows == eager_rows  # lazy and eager agree on the localized window
 
     # And a non-UTC tz-aware as_of resolves to the same instant.
     ny = bars["AAA"].index[100].tz_convert("America/New_York").to_pydatetime()
@@ -448,7 +448,7 @@ def test_streaming_covariance_bounded_memory_tracemalloc():
     # full T×N panel never exists, and assert peak allocation stays near chunk-size.
     import tracemalloc
 
-    N, CHUNK, NCHUNKS = 8, 256, 400  # 102,400 rows would be ~6.5 MB if materialised
+    N, CHUNK, NCHUNKS = 8, 256, 400  # 102,400 rows would be ~6.5 MB if materialized
     full_bytes = N * CHUNK * NCHUNKS * 8
 
     def gen():

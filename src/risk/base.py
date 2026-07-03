@@ -2,10 +2,10 @@
 
 A portfolio's risk is **not** additive: two names that move together are one bet,
 two that move oppositely are a hedge. The covariance matrix Σ is what lets the
-optimiser (and the diagnostics) tell the difference - compute portfolio variance,
+optimizer (and the diagnostics) tell the difference - compute portfolio variance,
 tracking error, and each name's marginal contribution to risk.
 
-This module owns the shared types: :class:`RiskMatrix` (an annualised Σ plus the
+This module owns the shared types: :class:`RiskMatrix` (an annualized Σ plus the
 derived quantities) and :class:`RiskModel` (the estimator interface). Concrete
 estimators live in :mod:`src.risk.sample`. Everything is research-clock: Σ is a tool
 for sizing conviction, never consulted to place an order.
@@ -23,10 +23,10 @@ Weights = Union[Mapping[str, float], np.ndarray]
 
 @dataclass
 class RiskMatrix:
-    """An annualised covariance matrix Σ over a universe, plus risk math on it."""
+    """An annualized covariance matrix Σ over a universe, plus risk math on it."""
 
     symbols: List[str]
-    sigma: np.ndarray  # N×N annualised covariance, positive-definite
+    sigma: np.ndarray  # N×N annualized covariance, positive-definite
     shrinkage: Optional[float] = None  # δ used (Ledoit–Wolf), for audit
 
     def __post_init__(self) -> None:
@@ -49,7 +49,7 @@ class RiskMatrix:
         return vec
 
     # ------------------------------------------------------------------ #
-    # Risk quantities (Σ is annualised, so these are annualised too)
+    # Risk quantities (Σ is annualized, so these are annualized too)
     # ------------------------------------------------------------------ #
     def variance(self, weights: Weights) -> float:
         """Portfolio variance ``wᵀ Σ w``."""
@@ -57,7 +57,7 @@ class RiskMatrix:
         return float(w @ self.sigma @ w)
 
     def volatility(self, weights: Weights) -> float:
-        """Portfolio volatility ``√(wᵀ Σ w)`` (annualised)."""
+        """Portfolio volatility ``√(wᵀ Σ w)`` (annualized)."""
         return float(np.sqrt(max(self.variance(weights), 0.0)))
 
     def tracking_error(self, weights: Weights, benchmark: Weights) -> float:
@@ -86,7 +86,7 @@ class RiskMatrix:
         return pd.DataFrame(corr, index=self.symbols, columns=self.symbols)
 
     def volatilities(self) -> pd.Series:
-        """Annualised volatility per name (√diagonal of Σ)."""
+        """Annualized volatility per name (√diagonal of Σ)."""
         return pd.Series(np.sqrt(np.diag(self.sigma)), index=self.symbols)
 
     def condition_number(self) -> float:
@@ -94,7 +94,7 @@ class RiskMatrix:
         return float(np.linalg.cond(self.sigma))
 
     def is_positive_definite(self) -> bool:
-        """Whether Σ is positive-definite (so ``Σ⁻¹`` exists for the optimiser)."""
+        """Whether Σ is positive-definite (so ``Σ⁻¹`` exists for the optimizer)."""
         try:
             np.linalg.cholesky(self.sigma)
             return True
@@ -136,9 +136,9 @@ def build_risk_matrix(
     periods_per_year: float,
     min_obs: int = 60,
 ) -> Optional[RiskMatrix]:
-    """Estimate an annualised :class:`RiskMatrix` over a universe's scanned bars.
+    """Estimate an annualized :class:`RiskMatrix` over a universe's scanned bars.
 
-    Builds the aligned return panel, estimates Σ on the well-sampled names, annualises
+    Builds the aligned return panel, estimates Σ on the well-sampled names, annualizes
     it, and splices in under-sampled names with the documented fallback - a
     cross-sectional **median variance** and zero correlation - so the matrix spans the
     full universe and stays positive-definite rather than dropping names silently.

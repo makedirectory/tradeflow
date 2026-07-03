@@ -2,7 +2,7 @@
 
 Spec 011 delivered the *storage* half of out-of-core (a Parquet/Arrow ``BarSource``
 behind ``scan()``). This module is the *compute* half: the hot, panel-wide
-operations expressed as a **lazy** plan, rather than eagerly materialising a ``T×N``
+operations expressed as a **lazy** plan, rather than eagerly materializing a ``T×N``
 pandas panel into RAM.
 
 Two engines, sharing Arrow so it isn't either/or:
@@ -10,7 +10,7 @@ Two engines, sharing Arrow so it isn't either/or:
 - **Polars ``LazyFrame``** for dataframe-style transforms — rolling-window indicators
   become window expressions ``.over("symbol", order_by="ts")``, and the
   cross-sectional z-score / winsorize / rank become ``.over("ts")`` expressions.
-  Nothing materialises until a terminal :func:`~src.data.edges.collect_streaming`.
+  Nothing materializes until a terminal :func:`~src.data.edges.collect_streaming`.
 - **DuckDB SQL** (:func:`sql_query`) for set-based work over the Parquet store
   (aggregations, joins) — its out-of-core engine streams the scan too.
 
@@ -18,8 +18,8 @@ Three disciplines the spec calls out and this module keeps:
 
 1. **Pushdown survives the plan.** A lazy scan reads only the columns/row-ranges it
    needs and the ``as_of`` predicate is pushed into the Parquet reader — never a
-   post-materialise filter (see :meth:`ParquetBarStore.scan_lazy`).
-2. **Determinism under multithreading.** Polars/DuckDB parallelise; float reduction
+   post-materialize filter (see :meth:`ParquetBarStore.scan_lazy`).
+2. **Determinism under multithreading.** Polars/DuckDB parallelize; float reduction
    order can vary. The cross-sectional reductions here are order-invariant
    (mean/std/quantile), and :data:`CANONICAL_SORT` pins a stable output order so
    repeated runs are byte-identical.
@@ -30,7 +30,7 @@ Three disciplines the spec calls out and this module keeps:
 pushed-down predicate/projection) streams, and :func:`streaming_covariance` is bounded
 by the universe size, not by history length. But in the current Polars engine a
 ``.over(...)`` window groupby and a top-level :func:`sort_canonical` are *buffering*
-operators — they materialise their input — so a pipeline that ends on a cross-sectional
+operators — they materialize their input — so a pipeline that ends on a cross-sectional
 ``over("ts")`` plus a canonical sort has peak memory ~ the panel it sorts, not O(chunk).
 The honest out-of-core wins today are the streaming scan, the as-of pushdown, and the
 streaming covariance accumulator; the set-based DuckDB path (which can spill) is the
@@ -135,7 +135,7 @@ def with_returns(
 # src/alphas/refine.py stays the equivalence oracle.
 #
 # Missing-data contract: the pandas oracle (refine.py) runs on ``.dropna()`` — it
-# skips non-finite names and standardises/ranks the rest. Polars reductions skip
+# skips non-finite names and standardizes/ranks the rest. Polars reductions skip
 # *null* but PROPAGATE NaN/inf, which would poison the whole cross-section (one NaN
 # score → every name's z collapses to 0; a NaN gets handed the top rank). So each
 # helper first maps non-finite to null via ``_finite`` — then a single contaminated
@@ -224,7 +224,7 @@ def cross_sectional_demean(
 
 # --------------------------------------------------------------------------- #
 # Streaming covariance — accumulate cross-products by streaming the return panel
-# instead of materialising the full T×N matrix. src/risk/sample.SampleCovariance
+# instead of materializing the full T×N matrix. src/risk/sample.SampleCovariance
 # is the equivalence oracle (this reproduces its population MLE estimate).
 # --------------------------------------------------------------------------- #
 def streaming_covariance(
@@ -282,7 +282,7 @@ def streaming_covariance(
 def iter_row_chunks(matrix: np.ndarray, chunk_rows: int) -> Iterable[np.ndarray]:
     """Yield row-blocks of ``matrix`` of at most ``chunk_rows`` rows.
 
-    The bridge from a materialised return panel to :func:`streaming_covariance`: lets
+    The bridge from a materialized return panel to :func:`streaming_covariance`: lets
     a caller feed an in-memory panel in bounded slices, or a streaming reader hand
     chunks straight through.
     """
@@ -307,7 +307,7 @@ def sql_query(
     Registers ``parquet_glob`` (a path/glob or a list of paths) as a view named
     ``view`` (default ``bars``) so the query reads ``FROM bars``. DuckDB's reader does
     its own projection/predicate pushdown and streams the scan, so an aggregation over
-    a multi-file store never materialises the whole thing. The result returns as
+    a multi-file store never materializes the whole thing. The result returns as
     Polars (shared Arrow) — collapse it to pandas only at the edge via
     :func:`src.data.edges.to_pandas`.
 
@@ -320,7 +320,7 @@ def sql_query(
     con = duckdb.connect()
     try:
         # hive_partitioning=false: the store embeds `symbol` as a real column, so we
-        # must not also synthesise it from the `symbol=…` path (that would collide).
+        # must not also synthesize it from the `symbol=…` path (that would collide).
         # Register the scan as a relation (CREATE VIEW can't take a prepared param).
         con.register(view, con.read_parquet(paths, hive_partitioning=False))
         arrow = con.execute(sql, list(params) if params is not None else None).to_arrow_table()

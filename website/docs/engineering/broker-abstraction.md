@@ -37,7 +37,7 @@ class Broker(ABC):
 
 `list_open_orders` backs two live-trading safeguards: skipping an entry when an
 order is already pending (no double-submits between placement and fill) and
-cancelling resting bracket legs before a discretionary close (no orphaned
+canceling resting bracket legs before a discretionary close (no orphaned
 stop/take orders). `stream_trade_updates` is an *optional* capability — brokers
 that can't stream account events simply return `False` from
 `supports_trade_updates`.
@@ -62,8 +62,8 @@ adapter maps SDK objects to these.
 
 `src/brokers/alpaca/` is the **only** place `import alpaca` appears
 (`AlpacaBroker`, `AlpacaMarketData`). `AlpacaMarketData` also converts the
-project's `Timeframe` into Alpaca's `TimeFrame` and normalises bars into
-per-symbol, New-York-localised OHLCV frames.
+project's `Timeframe` into Alpaca's `TimeFrame` and normalizes bars into
+per-symbol, New-York-localized OHLCV frames.
 
 ## Dropping in another broker
 

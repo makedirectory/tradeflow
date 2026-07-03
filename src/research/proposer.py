@@ -6,7 +6,7 @@ A :class:`Proposer` turns a goal + the history so far into the next
 so the LLM-backed :class:`LLMProposer` and a deterministic test double share one
 contract.
 
-Each proposal must carry a one-paragraph **hypothesis** (the economic/behavioural
+Each proposal must carry a one-paragraph **hypothesis** (the economic/behavioral
 rationale). No rationale -> the agent rejects it unevaluated (a research-hygiene
 rule; see the research-agent guide in the engineering docs).
 

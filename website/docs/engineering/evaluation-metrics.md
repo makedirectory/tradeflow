@@ -46,14 +46,14 @@ drawdown), `treynor_ratio`, `information_ratio`, `martin_ratio`, `sterling_ratio
 
 **Trade-level.** `win_rate`, `profit_factor`, `payoff_ratio`, `expectancy`,
 `gain_to_pain_ratio`, `kelly_criterion`, `sqn`, `max_consecutive_wins/losses`,
-`avg_trade_duration`, `turnover`, and **MAE/MFE** (max adverse / favourable
+`avg_trade_duration`, `turnover`, and **MAE/MFE** (max adverse / favorable
 excursion, tracked intra-trade by the simulator).
 
 **Benchmark-relative.** `alpha`, `beta`, `r_squared`, `information_ratio`,
 `treynor_ratio` — computed when a benchmark return series is supplied; otherwise
 zeroed and `benchmark_available` is `False`.
 
-## Annualisation
+## Annualization
 
 Headline ratios take a `periods_per_year`. The backtest equity curve is resampled
 to daily P&L, so its returns are daily and `TRADING_DAYS_PER_YEAR` (252) is the

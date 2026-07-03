@@ -64,11 +64,11 @@ uv run ruff format .            # auto-format (CI uses --check)
 
 ## A real bug the tests caught
 
-`grid_search` originally materialised the entire parameter grid before capping —
+`grid_search` originally materialized the entire parameter grid before capping —
 billions of combinations for the bundled strategy, which OOM-killed the process
 (`exit 137`). The optimizer test surfaced it immediately; the fix computes
 `grid_size()` and samples instead. See [Optimization](optimization).
 
 Engine fill logic is asserted with a `ScriptedStrategy` that emits a fixed signal
-per bar, so stop/take/exit/end-of-period behaviour and P&L are checked **exactly**,
+per bar, so stop/take/exit/end-of-period behavior and P&L are checked **exactly**,
 independent of any indicator quirk.

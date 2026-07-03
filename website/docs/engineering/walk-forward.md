@@ -35,7 +35,7 @@ optimizer call.
   bars *before* `oos_start` so indicators are valid, but only trades entered
   at/after `oos_start` are counted (`_filter_trades_from`). The embargo separates
   IS from OOS.
-- **Variable-length folds ⇒ CAGR / annualised metrics**, never raw total return.
+- **Variable-length folds ⇒ CAGR / annualized metrics**, never raw total return.
 - **Honest aggregate.** The OOS aggregate recomputes metrics over the
   concatenation of every fold's OOS trades and a stitched curve — cross-fold
   Sharpe/drawdown are real, not an average of per-fold numbers.
@@ -72,4 +72,4 @@ leakage probe. A config is `promotable` only if it clears **every** gate.
 `src/optimization/config_store.py` saves a chosen config as JSON with a
 `provenance` block (method, windows, objective, OOS metrics, `n_trials`, seed, git
 SHA, timestamp). Configs land in a gitignored `configs/` directory. Saving a
-config never alters live behaviour — it's a file a human chooses to promote.
+config never alters live behavior — it's a file a human chooses to promote.

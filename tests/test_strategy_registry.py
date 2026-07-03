@@ -1,6 +1,6 @@
 """Cross-strategy contract tests: every registered strategy must behave.
 
-Parametrised over the registry, so adding a strategy automatically inherits this
+Parametrized over the registry, so adding a strategy automatically inherits this
 coverage - the architecture's "a strategy is one file" promise, enforced.
 """
 

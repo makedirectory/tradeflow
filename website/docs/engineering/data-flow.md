@@ -29,7 +29,7 @@ analytics.performance.compute_backtest_metrics(...)   # -> metrics dict
 analytics.reporting.log_backtest_report(...)          # -> text
 ```
 
-The engine carries realised cash across symbols so a run can't spend the same
+The engine carries realized cash across symbols so a run can't spend the same
 dollar twice, and force-closes any open position at the final bar.
 
 ## Live

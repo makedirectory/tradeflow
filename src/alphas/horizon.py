@@ -63,7 +63,7 @@ def peak_return_horizon(half_life: float) -> float:
 
 
 def blend_weights(gamma: float, rho: float) -> Tuple[float, float]:
-    """IR-maximising weights on the current vs lagged signal: ``(w_now, w_lag)``.
+    """IR-maximizing weights on the current vs lagged signal: ``(w_now, w_lag)``.
 
     ``w_now = (1 − γ·ρ) / (1 + γ² − 2·γ·ρ)`` (decay ``γ``, current/lagged
     autocorrelation ``ρ``); ``w_lag = 1 − w_now``. Three regimes:
@@ -94,6 +94,6 @@ def frequency_ir_curve(ic_by_lag: Mapping[int, float]) -> Dict[int, float]:
 
 
 def recommended_cadence(ic_by_lag: Mapping[int, float]) -> int:
-    """The cadence (in periods) that maximises the IR proxy ``IC(Δt)·√(1/Δt)``."""
+    """The cadence (in periods) that maximizes the IR proxy ``IC(Δt)·√(1/Δt)``."""
     curve = frequency_ir_curve(ic_by_lag)
     return max(curve, key=curve.get) if curve else 1

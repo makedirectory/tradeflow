@@ -1,8 +1,8 @@
-"""Out-of-core risk estimation — stream the return panel instead of materialising it.
+"""Out-of-core risk estimation — stream the return panel instead of materializing it.
 
 :func:`src.risk.base.build_risk_matrix` (and the factor model that shares its
 :func:`build_return_panel`) is the only genuinely **panel-wide** (``T×N``) pandas
-materialisation in the stack: it builds an aligned returns DataFrame for the whole
+materialization in the stack: it builds an aligned returns DataFrame for the whole
 history and hands it to an estimator. For a broad universe over many years that ``T×N``
 panel is the thing that does not fit in RAM.
 
@@ -12,7 +12,7 @@ quantities by **streaming** the return panel out of a
 statistics. It never holds the ``T×N`` panel: peak working memory is one chunk
 (``chunk_obs × N``) plus the small accumulators (``N×N`` / ``K×K`` / ``N``) plus a 1-D
 ``O(T)`` index of complete-case timestamps — so on a long, wide history it peaks well
-below the eager path (the dominant ``T×N`` matrix is never materialised), growing in
+below the eager path (the dominant ``T×N`` matrix is never materialized), growing in
 ``T`` only as a thin timestamp vector.
 
 Two estimators, both reproducing their eager oracle to machine epsilon for the
@@ -51,7 +51,7 @@ def _kept_and_blocks(
     min_obs: int,
     chunk_obs: int,
 ) -> Optional[Tuple[List[str], Callable[[], Iterable[np.ndarray]]]]:
-    """The shared streaming spine: the complete-case return panel, never materialised.
+    """The shared streaming spine: the complete-case return panel, never materialized.
 
     Reproduces :func:`build_return_panel` exactly: keep names with ≥ ``min_obs`` finite
     returns (in ``universe`` order), take the timestamps where **every** kept name has a
@@ -120,7 +120,7 @@ def streaming_sample_covariance(
     min_obs: int = 60,
     chunk_obs: int = 1024,
 ) -> Optional[RiskMatrix]:
-    """Annualised sample :class:`RiskMatrix` by streaming the return panel.
+    """Annualized sample :class:`RiskMatrix` by streaming the return panel.
 
     Mirrors :func:`build_risk_matrix` with :class:`~src.risk.sample.SampleCovariance`
     (population covariance), accumulating cross-products chunk-by-chunk via
@@ -158,7 +158,7 @@ def streaming_factor_risk_matrix(
     Mirrors :func:`src.risk.factor.estimate_factor_model`: factor returns are recovered
     per period by the cross-sectional OLS ``f_t = (XᵀX)⁻¹Xᵀ r_t``, ``F`` is their
     covariance (``ddof=1``, as ``np.cov``) and ``Δ`` the per-name residual variance
-    (``ddof=1``) — both annualised. The ``N×K`` ``exposures`` (a small cross-sectional
+    (``ddof=1``) — both annualized. The ``N×K`` ``exposures`` (a small cross-sectional
     leaf from :func:`src.risk.build_factor_exposures`) stay pandas; only the panel-wide
     ``T×N`` returns are streamed. Each chunk is projected to factor returns and residuals
     and folded into ``K×K`` / ``N`` accumulators, so the ``T×N`` panel is never held.

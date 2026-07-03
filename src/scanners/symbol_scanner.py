@@ -23,7 +23,7 @@ _LOOKBACK_DAY_BUFFER = 3
 
 
 class SymbolScanner:
-    """Filters a candidate universe down to currently-signalled symbols."""
+    """Filters a candidate universe down to currently-signaled symbols."""
 
     #: Registered scanners by name (extend with new TA-Lib-free scanners here).
     SCANNERS: Dict[str, Type[ScannerStrategy]] = {

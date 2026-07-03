@@ -20,7 +20,7 @@ imports no broker and the order path imports no risk model.
 ## What it produces
 
 `build_risk_matrix(model, bars, periods_per_year)` returns a `RiskMatrix` — an
-**annualised**, positive-definite Σ over the universe plus the quantities built on
+**annualized**, positive-definite Σ over the universe plus the quantities built on
 it:
 
 | Quantity | Formula | Meaning |
@@ -30,8 +30,8 @@ it:
 | MCR | `(Σ w_a) / ψ` | each name's marginal contribution to risk |
 | condition number | `cond(Σ)` | how close to singular (the invertibility guard) |
 
-Annualised so it shares a time unit with the [alphas](./alphas) (`α = σ·IC·z`) and
-the optimiser's risk-aversion term.
+Annualized so it shares a time unit with the [alphas](./alphas) (`α = σ·IC·z`) and
+the optimizer's risk-aversion term.
 
 ## Estimators
 
@@ -40,7 +40,7 @@ Two estimators behind one `RiskModel.estimate(returns)` interface:
 - **`shrinkage` (Ledoit–Wolf, default).** The raw sample covariance `S` over `N`
   names from `T` observations needs `N(N+1)/2` parameters; when `T` is not far
   greater than `N` it is noisy and often **non-invertible** — fatal, since the
-  optimiser needs `Σ⁻¹`. Ledoit–Wolf shrinks `S` toward a structured target by the
+  optimizer needs `Σ⁻¹`. Ledoit–Wolf shrinks `S` toward a structured target by the
   analytically optimal intensity `δ`:
 
   ```
@@ -79,7 +79,7 @@ Two estimators behind one `RiskModel.estimate(returns)` interface:
 
 - **Invertibility is the whole point.** Every estimator returns a positive-definite
   Σ; a regression test inverts it and checks the condition number even when `T < N`.
-- **Annualisation.** Bar-level covariance × periods/year, on the same footing as the
+- **Annualization.** Bar-level covariance × periods/year, on the same footing as the
   alphas.
 - **As-of / no look-ahead.** Σ at `t` is built from the [scan](./data-panel)'s
   returns `≤ t`; a test asserts it's unchanged whether later bars exist.

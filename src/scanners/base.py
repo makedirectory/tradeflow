@@ -56,7 +56,7 @@ class ScannerStrategy(ABC):
         """
 
     # ------------------------------------------------------------------ #
-    # Shared behaviour
+    # Shared behavior
     # ------------------------------------------------------------------ #
     def latest_signal(self, signals_df: pd.DataFrame) -> str:
         """The most recent scan signal, or ``SCANNER_HOLD`` if none/empty."""
@@ -79,7 +79,7 @@ class ScannerStrategy(ABC):
         """Score a symbol's signals against subsequent price action.
 
         Used by the optimizer to tune scanner parameters. Returns hit rate,
-        average return, Sharpe and profit factor over the realised signals.
+        average return, Sharpe and profit factor over the realized signals.
         """
         empty = {
             "hit_rate": 0.0,

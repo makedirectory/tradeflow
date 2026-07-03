@@ -46,7 +46,7 @@ class ParameterSpace:
         return values
 
     def grid_size(self) -> int:
-        """Number of points in the full grid, computed without materialising it."""
+        """Number of points in the full grid, computed without materializing it."""
         return math.prod(len(self._values_for(name)) for name in self.searchable) if self.searchable else 0
 
     def grid(self) -> List[Dict[str, Any]]:

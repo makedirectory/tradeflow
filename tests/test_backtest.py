@@ -2,7 +2,7 @@
 
 Uses a ``ScriptedStrategy`` that emits a fixed signal per bar, so we can assert
 the engine's exit handling (stop-loss, take-profit, signal exit, end-of-period)
-and P&L exactly - independent of any indicator behaviour.
+and P&L exactly - independent of any indicator behavior.
 """
 
 from datetime import datetime

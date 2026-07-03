@@ -2,7 +2,7 @@
 
 The raw sample covariance ``S`` over ``N`` names from ``T`` observations needs
 ``N(N+1)/2`` parameters; when ``T`` is not far greater than ``N`` it is noisy and
-often **non-invertible** - fatal, because the optimiser needs ``Σ⁻¹``.
+often **non-invertible** - fatal, because the optimizer needs ``Σ⁻¹``.
 Ledoit–Wolf shrinks ``S`` toward a structured target ``F`` by the analytically
 optimal intensity ``δ``:
 
