@@ -304,7 +304,7 @@ def summarize_bars(
 ) -> Dict[str, Any]:
     """Compact OHLCV stats per symbol for qualitative analysis (no raw bars).
 
-    Descriptive only. NOTE for the caller: choosing symbols by their realised
+    Descriptive only. NOTE for the caller: choosing symbols by their realized
     stats here and then backtesting them is look-ahead - universe selection is a
     research decision, not a metric to optimize.
     """
@@ -357,7 +357,7 @@ def compute_alphas(
 
     Read-only research-clock flow: scans the universe as of ``as_of`` (leakage-safe),
     assembles a :class:`FeaturePanel` (risk + score columns), refines it into a
-    comparable annualised forecast (``alpha = sigma * IC * z``), and returns the
+    comparable annualized forecast (``alpha = sigma * IC * z``), and returns the
     ranked table. Produces no orders and saves no config.
 
     ``source`` selects the score column's origin: ``"strategy"`` uses the strategy's
@@ -421,8 +421,8 @@ def compute_alphas(
         "universe_size": int(panel.get("score").notna().sum()) if panel.has("score") else 0,
         "low_confidence": bool(panel.meta.get("low_confidence")),
         "alphas": _jsonable(table),
-        "note": "Alphas are residual-return FORECASTS, annualised, scaled by an "
-        "ASSUMED IC (a prior until it is measured from realised outcomes). Relative sizing across "
+        "note": "Alphas are residual-return FORECASTS, annualized, scaled by an "
+        "ASSUMED IC (a prior until it is measured from realized outcomes). Relative sizing across "
         "names is correct regardless of IC; the absolute scale is only as good as it.",
     }
 
@@ -443,7 +443,7 @@ def compute_combined_alphas(
     """Combine several strategies' signals into one alpha by their IC and correlation.
 
     Read-only research-clock flow: measures each signal's IC and the signal
-    correlation matrix over a trailing window (realised residual returns), shrinks the
+    correlation matrix over a trailing window (realized residual returns), shrinks the
     ICs by their estimation confidence, and combines them with GLS weights
     (``Ω⁻¹·IC``) so redundant signals split a weight rather than double-count. The
     combined score is scaled by the **measured** combined IC - replacing Spec 005's
@@ -544,14 +544,14 @@ def compute_information(
     """Measure a strategy's information coefficient, breadth, and information ratio.
 
     Read-only research-clock diagnostic (spec 009). At sampled rebalances it pairs the
-    alpha forecast known *at* ``t`` with the realised **residual** return over
+    alpha forecast known *at* ``t`` with the realized **residual** return over
     ``(t, t+horizon]`` (strict forward alignment - rewarding skill, not beta), giving
     the IC time series (Pearson + rank), its t-stat, the effective breadth ``BR_eff``
-    (deflated by the average correlation ρ̄ from Σ), and the **predicted vs realised
+    (deflated by the average correlation ρ̄ from Σ), and the **predicted vs realized
     IR** reconciliation - with the research-integrity guardrails (IR standard-error
     band, multiple-testing inflation, sanity ceiling) that keep a lucky backtest
     honest. Factor-vs-specific **risk** attribution is available via the factor model
-    (``compute_risk(..., model='factor')``); realised-return attribution and capacity
+    (``compute_risk(..., model='factor')``); realized-return attribution and capacity
     are smaller follow-ons.
     """
     from src.analytics import information as info
@@ -598,14 +598,14 @@ def compute_information(
             continue
         pearson_ics.append(info.pearson_ic(aligned["alpha"], aligned["resid"]))
         rank_ics.append(info.rank_ic(aligned["alpha"], aligned["resid"]))
-        # Realised return of the paper alpha portfolio: standardized-alpha-weighted
+        # Realized return of the paper alpha portfolio: standardized-alpha-weighted
         # residual return (scale cancels in the IR).
         z = aligned["alpha"] - aligned["alpha"].mean()
         if z.std() > 0:
             w = z / z.std()
             portfolio_returns.append(float(w @ aligned["resid"]))
             # Attribution: split that return into factor vs specific by projecting the
-            # realised cross-section onto the factor exposures (the split closes exactly).
+            # realized cross-section onto the factor exposures (the split closes exactly).
             split = _factor_attribution(w, universe_bars, bench, t, t_fwd, periods_per_year)
             if split is not None:
                 factor_contribs.append(split[0])
@@ -658,8 +658,8 @@ def compute_information(
         "n_trials": n_trials,
         "sanity_ceiling_breached": abs(realized_ir) > 2.0,
         "recommended_ic": stats["mean_ic"],  # feeds back into 005's scaling — a human applies it
-        # Attribution: the realised active return split into factor tilts vs genuine
-        # name selection (they sum to the realised portfolio return per rebalance).
+        # Attribution: the realized active return split into factor tilts vs genuine
+        # name selection (they sum to the realized portfolio return per rebalance).
         "factor_return": float(np.mean(factor_contribs)) if factor_contribs else 0.0,
         "specific_return": float(np.mean(specific_contribs)) if specific_contribs else 0.0,
         "note": "IC measured as alpha-vs-forward-RESIDUAL-return (strict t→t+h, no "
@@ -690,11 +690,11 @@ def compute_horizon(
     """Measure an alpha's decay and recommend a rebalance cadence + lagged blend.
 
     Read-only research diagnostic (spec 012): measures the IC-vs-lag profile (the
-    alpha at ``t`` vs the residual return realised ``n`` periods later, for
+    alpha at ``t`` vs the residual return realized ``n`` periods later, for
     ``n = 1..max_lag``), fits the per-period decay ``δ`` and half-life, derives the
-    cadence that maximises ``IC(Δt)·√(1/Δt)``, and computes the IR-maximising
+    cadence that maximizes ``IC(Δt)·√(1/Δt)``, and computes the IR-maximizing
     current/lagged blend from ``δ`` and the signal's autocorrelation. The half-life is
-    the holding period transaction cost should be amortised over.
+    the holding period transaction cost should be amortized over.
     """
     from src.alphas import horizon as hz
     from src.indicators import indicators
@@ -785,7 +785,7 @@ def compute_horizon(
         "blend_annual_cost": blend_cost,
         "blend_recommended": blend_recommended,
         "note": "δ is the per-period IC decay (HL = half-life). Rebalance near the "
-        "cadence that maximises IC·√(1/Δt); amortise cost over the half-life. The lagged "
+        "cadence that maximizes IC·√(1/Δt); amortize cost over the half-life. The lagged "
         "blend is recommended only when it diversifies and its turnover cost is modest.",
     }
 
@@ -800,14 +800,14 @@ def compute_risk(
     timeframe: str = "1Day",
     min_obs: int = 60,
 ) -> Dict[str, Any]:
-    """Estimate the universe's covariance Σ and summarise its risk structure.
+    """Estimate the universe's covariance Σ and summarize its risk structure.
 
     Read-only research-clock flow: scans returns up to ``as_of`` (leakage-safe),
-    estimates an annualised, well-conditioned Σ (``shrinkage`` = Ledoit–Wolf,
+    estimates an annualized, well-conditioned Σ (``shrinkage`` = Ledoit–Wolf,
     ``factor`` = structural ``X F Xᵀ + Δ``, ``sample`` = raw), and returns a compact
     summary - shrinkage δ, condition number, mean correlation, equal-weight portfolio
     volatility, top risk contributors, and (factor model) the factor-vs-specific risk
-    split. Σ itself is not inlined; this is the diagnostic the optimiser consumes.
+    split. Σ itself is not inlined; this is the diagnostic the optimizer consumes.
     """
     from src.risk import COVARIANCE_MODELS
     from src.risk.factor import FactorRiskMatrix
@@ -861,9 +861,9 @@ def compute_risk(
         "mean_correlation": mean_corr,
         "equal_weight_volatility": matrix.volatility(weights),
         "top_risk_contributors": _jsonable(top),
-        "note": "Σ is annualised and kept invertible (shrinkage δ, or a structural "
+        "note": "Σ is annualized and kept invertible (shrinkage δ, or a structural "
         "factor model). Risk is not additive — correlated names are one bet. This is "
-        "the denominator the portfolio optimiser divides alpha by.",
+        "the denominator the portfolio optimizer divides alpha by.",
     }
 
     # The factor model makes risk attributable: split the equal-weight portfolio's
@@ -900,16 +900,16 @@ def construct_portfolio(
     holding_period_years: float = 1.0 / 12.0,
     cost_aware: bool = True,
 ) -> Dict[str, Any]:
-    """Construct the utility-maximising portfolio from alphas (005) and Σ (006).
+    """Construct the utility-maximizing portfolio from alphas (005) and Σ (006).
 
     Read-only research-clock flow: scans the universe as of ``as_of``, builds
-    benchmark-neutral alphas and an annualised covariance Σ, then maximises
+    benchmark-neutral alphas and an annualized covariance Σ, then maximizes
     ``αᵀw − λ·wᵀΣw − cost(w − w₀)`` over long-only, box-bounded, budgeted (and
     optionally cardinality-capped) weights, calibrating ``λ`` to ``target_te``.
 
     With ``cost_aware`` (default) the objective carries 007's cost (Spec 016):
     name-specific linear turnover (commission + a high-low-range spread proxy) and,
-    when ``capital`` is set, the √-impact term - so the optimiser trades a name's
+    when ``capital`` is set, the √-impact term - so the optimizer trades a name's
     alpha against *that name's* cost and a no-trade band emerges from the cost itself.
     ``cost_aware=False`` recovers the cost-blind (gross) solve with an ex-post drag.
     Returns the proposed weights plus the Fundamental-Law report (IR*, predicted TE/IR,
@@ -959,7 +959,7 @@ def construct_portfolio(
 
     cost_model = ParametricCostModel()
     # Per-name, as-of liquidity context (spread proxy, ADV$, daily vol) priced by the
-    # same cost model the backtest uses - the optimiser and backtest share one model.
+    # same cost model the backtest uses - the optimizer and backtest share one model.
     cost_inputs = _cost_inputs(universe_bars, cost_model) if cost_aware else None
 
     optimizer = MeanVarianceOptimizer(max_weight=max_weight, min_weight=min_weight, max_names=max_names)
@@ -1026,7 +1026,7 @@ def construct_portfolio(
         "weights": _jsonable(dict(sorted(result.weights.items(), key=lambda kv: kv[1], reverse=True))),
         "holdings": _jsonable(holdings),
         "diagnostics": _jsonable(result.diagnostics),
-        "note": "PROPOSAL, not an order. Maximises αᵀw − λ·wᵀΣw at the target tracking "
+        "note": "PROPOSAL, not an order. Maximizes αᵀw − λ·wᵀΣw at the target tracking "
         "error; the transfer coefficient shows how much of IR* survives the constraints.",
     }
 
@@ -1147,7 +1147,7 @@ def _window_days(start: datetime, end: datetime) -> int:
 
 
 def _to_ts(when: datetime, index: pd.Index) -> pd.Timestamp:
-    """Localise a possibly-naive timestamp to a (possibly tz-aware) index's timezone."""
+    """Localize a possibly-naive timestamp to a (possibly tz-aware) index's timezone."""
     ts = pd.Timestamp(when)
     if isinstance(index, pd.DatetimeIndex) and index.tz is not None:
         ts = ts.tz_localize(index.tz) if ts.tzinfo is None else ts.tz_convert(index.tz)
@@ -1178,7 +1178,7 @@ def _alpha_cross_section(universe_bars, bench, scorer, periods_per_year, t, ctx)
 
 
 def _forward_raw_return(universe_bars, t, t_fwd) -> pd.Series:
-    """Realised raw return per name over ``(t, t_fwd]`` (no beta adjustment)."""
+    """Realized raw return per name over ``(t, t_fwd]`` (no beta adjustment)."""
     out: Dict[str, float] = {}
     for sym, frame in universe_bars.items():
         close = frame["close"]
@@ -1188,11 +1188,11 @@ def _forward_raw_return(universe_bars, t, t_fwd) -> pd.Series:
 
 
 def _factor_attribution(weights: pd.Series, universe_bars, bench, t, t_fwd, periods_per_year):
-    """Split the portfolio's realised return into (factor, specific) at one rebalance.
+    """Split the portfolio's realized return into (factor, specific) at one rebalance.
 
-    Projects the realised raw-return cross-section onto the factor exposures known at
+    Projects the realized raw-return cross-section onto the factor exposures known at
     ``t``; the factor part is ``w·fitted`` and the specific part ``w·(R − fitted)``, so
-    the two sum to the portfolio's realised return exactly.
+    the two sum to the portfolio's realized return exactly.
     """
     from src.risk.exposures import build_factor_exposures
 
@@ -1220,7 +1220,7 @@ def _factor_split(w: np.ndarray, x: np.ndarray, r: np.ndarray):
 
 
 def _forward_residual_return(universe_bars, bench, t, t_fwd, indicators) -> pd.Series:
-    """Realised residual return per name over ``(t, t_fwd]``: r − β·r_benchmark."""
+    """Realized residual return per name over ``(t, t_fwd]``: r − β·r_benchmark."""
     bench_close = bench["close"]
     if t not in bench_close.index or t_fwd not in bench_close.index:
         return pd.Series(dtype=float)

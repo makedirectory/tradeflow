@@ -142,10 +142,10 @@ def test_no_trade_band_half_width_is_the_one_way_cost():
     assert list(np.abs(d) > 0) == [True, True, False, False, True, True]  # zero strictly inside ±thr
 
     model = ParametricCostModel(commission_bps=1.0, default_spread_bps=5.0)
-    c_one_way = model.turnover_cost_rate() / H  # cᵢ, annualised one-way
+    c_one_way = model.turnover_cost_rate() / H  # cᵢ, annualized one-way
     c_lin, _ = MeanVarianceOptimizer._cost_coefficients(model, _inputs(model.default_spread), None, H, SYMS)
     assert np.allclose(c_lin, c_one_way)
-    # Full band width = 2·cᵢ equals the annualised round-trip rate (impact→0 for a tiny trade).
+    # Full band width = 2·cᵢ equals the annualized round-trip rate (impact→0 for a tiny trade).
     tiny = Trade("A", shares=1e-6, price=100.0, adv=1e12, daily_vol=0.02, spread=model.default_spread)
     assert 2 * c_one_way == pytest.approx(model.annual_cost_rate(tiny, H), rel=1e-6)
 
@@ -164,9 +164,9 @@ def test_turnover_depends_on_current_weights():
 
 # --- √-impact super-linearity (spec §6 test 4) -------------------------------
 def test_impact_penalty_is_superlinear_in_trade_size():
-    # The penalty kᵢ·|Δw|^{3/2} under the optimiser's *own* coefficient: doubling the
+    # The penalty kᵢ·|Δw|^{3/2} under the optimizer's *own* coefficient: doubling the
     # trade more than doubles it (×2^1.5). Uses the real _cost_coefficients so an
-    # annualisation/formula bug in kᵢ would surface here, not just literal arithmetic.
+    # annualization/formula bug in kᵢ would surface here, not just literal arithmetic.
     model = ParametricCostModel()
     _, k_imp = MeanVarianceOptimizer._cost_coefficients(model, _inputs(0.0005, adv_dollar=1e8), 1e7, H, SYMS)
     assert np.all(k_imp > 0)
@@ -382,7 +382,7 @@ def test_construct_portfolio_gross_objective_uses_ex_post_drag():
 # --- reported-value integrity ------------------------------------------------
 def test_reported_linear_cost_equals_independent_sum():
     # Pin the diagnostic against an independently computed Σ cᵢ|Δwᵢ| (from cash, w₀=0),
-    # so a coefficient or annualisation bug surfaces (not just the net = gross − cost id).
+    # so a coefficient or annualization bug surfaces (not just the net = gross − cost id).
     model = ParametricCostModel()
     ci = _inputs({"A": 0.02, "B": 0.001, "C": 0.0005, "D": 0.0005})
     res = MeanVarianceOptimizer(max_weight=0.5).optimize(
@@ -528,7 +528,7 @@ def test_linear_impact_mode_disables_the_conic_term_in_the_solve():
         capital=None,
         holding_period_years=H,
     )
-    assert lin.diagnostics["impact_cost"] == 0.0  # conic term not fed to the optimiser
+    assert lin.diagnostics["impact_cost"] == 0.0  # conic term not fed to the optimizer
     assert np.allclose(_vec(lin), _vec(only_linear))
 
 

@@ -92,25 +92,25 @@ def calculate_residual_volatility(
     beta: float,
     periods_per_year: float = 252.0,
 ) -> float:
-    """Annualised volatility of a symbol's *residual* returns vs a benchmark.
+    """Annualized volatility of a symbol's *residual* returns vs a benchmark.
 
     Residual return strips out the part of the move that beta to the benchmark
-    explains: ``r_resid = r_symbol - beta * r_benchmark``. Its annualised std is the
+    explains: ``r_resid = r_symbol - beta * r_benchmark``. Its annualized std is the
     ``sigma`` the alpha-scaling identity (alpha = sigma * IC * z) needs - the risk
     of the bet that *isn't* just market exposure.
 
     Computed on aligned period-over-period returns. Returns 0.0 for degenerate
-    input (too few overlapping points). ``periods_per_year`` annualises to the
+    input (too few overlapping points). ``periods_per_year`` annualizes to the
     sampling frequency of the series passed in (daily bars -> 252).
 
     Args:
         symbol_close: Close-price series for the symbol.
         benchmark_close: Close-price series for the benchmark (e.g. SPY).
         beta: The symbol's beta to the benchmark (see :func:`calculate_beta`).
-        periods_per_year: Annualisation factor for the bar frequency.
+        periods_per_year: Annualization factor for the bar frequency.
 
     Returns:
-        Annualised residual volatility (a fraction, e.g. 0.20 == 20%/yr).
+        Annualized residual volatility (a fraction, e.g. 0.20 == 20%/yr).
     """
     prices = pd.concat([symbol_close, benchmark_close], axis=1, keys=["symbol", "benchmark"]).dropna()
     if len(prices) < 3:

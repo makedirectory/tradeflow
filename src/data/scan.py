@@ -60,7 +60,7 @@ class ClientBarSource:
 def slice_to_as_of(frame: pd.DataFrame, as_of: datetime) -> pd.DataFrame:
     """Return only bars at or before ``as_of`` - the leakage guard.
 
-    Handles a tz-aware bar index against a possibly-naive ``as_of`` by localising
+    Handles a tz-aware bar index against a possibly-naive ``as_of`` by localizing
     the cutoff to the frame's timezone.
     """
     if frame is None or frame.empty:

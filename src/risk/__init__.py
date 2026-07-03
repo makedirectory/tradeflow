@@ -1,7 +1,7 @@
 """Risk model: the covariance matrix Σ and the quantities built on it.
 
 Active management needs a structural answer to "how risky is this portfolio?" that
-respects the fact that risk is not additive. This module estimates an annualised,
+respects the fact that risk is not additive. This module estimates an annualized,
 well-conditioned, invertible Σ over a universe (Ledoit–Wolf shrinkage in v1) and
 exposes portfolio variance, tracking error, and marginal contribution to risk.
 Research-clock only: Σ sizes conviction, it never reaches the order path.

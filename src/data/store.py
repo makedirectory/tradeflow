@@ -120,7 +120,7 @@ class ParquetBarStore:
 
     @staticmethod
     def _window(as_of: datetime, lookback_days: int) -> tuple:
-        """Normalise ``as_of`` to UTC and return the ``(start, end]`` window."""
+        """Normalize ``as_of`` to UTC and return the ``(start, end]`` window."""
         end = pd.Timestamp(as_of)
         end = end.tz_localize("UTC") if end.tzinfo is None else end.tz_convert("UTC")
         return end - timedelta(days=lookback_days), end
@@ -180,7 +180,7 @@ class ParquetBarStore:
     ) -> "pl.LazyFrame":
         """Return a **lazy** long-format panel for ``universe`` over ``(as_of - lookback, as_of]``.
 
-        The compute-tier counterpart to :meth:`scan`: instead of materialising
+        The compute-tier counterpart to :meth:`scan`: instead of materializing
         per-symbol pandas frames, it returns a Polars :class:`~polars.LazyFrame` over
         the Parquet partitions with the ``as_of`` window pushed into the reader as a
         predicate (rows after ``as_of`` are physically never read) and an optional
@@ -217,7 +217,7 @@ class ParquetBarStore:
 
         start, end = self._window(as_of, lookback_days)
         # hive_partitioning=false: `symbol` is a real column in each file; don't also
-        # synthesise it from the `symbol=…` directory (that collides).
+        # synthesize it from the `symbol=…` directory (that collides).
         lf = pl.scan_parquet(paths, hive_partitioning=False)
         # Predicate pushdown: the window (in particular the as_of upper bound) is
         # pushed into the Parquet SCAN, so post-as_of rows are never read.

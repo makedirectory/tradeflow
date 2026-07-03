@@ -10,9 +10,9 @@ with the empirically robust **square-root law** for impact (Almgren et al.):
     impact_rate = η · σ_daily · √(|q| / ADV)
 
 This is concave in size *per share* (√) but convex in *total* cost
-(``|q|·impact_rate ∝ |q|^{3/2}``) - the property that makes an optimiser prefer to
+(``|q|·impact_rate ∝ |q|^{3/2}``) - the property that makes an optimizer prefer to
 spread a target across names. A linear impact fallback is offered for a fully
-convex-quadratic optimiser formulation. Defaults are calibrated to liquid US
+convex-quadratic optimizer formulation. Defaults are calibrated to liquid US
 equities and are all overridable.
 """
 
@@ -78,7 +78,7 @@ class ParametricCostModel(CostModel):
         return self.annual_borrow_rate * abs(notional) * holding_years
 
     def turnover_cost_rate(self, spread: float = None) -> float:
-        """Linear cost per unit of turnover notional - the optimiser's L1 cost term.
+        """Linear cost per unit of turnover notional - the optimizer's L1 cost term.
 
         The size-independent part (commission + half-spread); impact is omitted here
         because it's non-linear in trade size (it belongs in the √-law accounting).
@@ -87,7 +87,7 @@ class ParametricCostModel(CostModel):
         return self.commission_rate + s / 2.0
 
     def impact_coefficient(self, daily_vol: float, adv_dollar: float, capital: float) -> float:
-        """√-impact coefficient ``k`` (per unit capital) for the optimiser's conic term.
+        """√-impact coefficient ``k`` (per unit capital) for the optimizer's conic term.
 
         The √-law impact rate is ``η·σ·√(participation)`` with ``participation =
         |q|/ADV``. Trading ``|Δw|`` of a ``capital``-dollar book is ``q = |Δw|·capital/p``
@@ -95,7 +95,7 @@ class ParametricCostModel(CostModel):
         impact cost as a *fraction of capital* is then ``η·σ·√(capital/ADV$)·|Δw|^{3/2}``,
         so ``k = η·σ·√(capital/ADV$)``. Zero when ADV is unavailable (mirrors
         :meth:`cost`, which charges no impact without volume) or in linear-impact mode
-        (that fallback is quadratic-in-size, not conic, and isn't fed to the optimiser).
+        (that fallback is quadratic-in-size, not conic, and isn't fed to the optimizer).
         """
         # `not (x > 0)` (rather than `x <= 0`) also rejects NaN, so a bad ADV/vol input
         # drops the impact term instead of poisoning the solve with a NaN coefficient.

@@ -288,7 +288,7 @@ def build_server(data_client=None):
     ) -> Dict[str, Any]:
         """Rank `symbols` by continuous alpha (residual-return forecast) as of a date.
 
-        Turns each name's view into a comparable, annualised residual-return
+        Turns each name's view into a comparable, annualized residual-return
         forecast via alpha = sigma * IC * z (cross-sectional z-score scaled by
         residual vol and an ASSUMED IC). source: "strategy" uses the strategy's
         continuous conviction; "signal" uses its BUY/SELL/HOLD as +1/-1/0; "scanner"
@@ -334,7 +334,7 @@ def build_server(data_client=None):
         """Combine several strategies' signals into one alpha by IC + correlation.
 
         `signals` is a list of strategy names. Measures each signal's IC and the
-        signal correlation matrix over a trailing window of realised residual returns,
+        signal correlation matrix over a trailing window of realized residual returns,
         shrinks the ICs by estimation confidence, and combines them with GLS weights
         (Ω⁻¹·IC) so redundant signals split a weight instead of double-counting.
         Returns the ranked combined alphas plus measured ICs, shrunk ICs, weights, and
@@ -368,9 +368,9 @@ def build_server(data_client=None):
 
         Measures the IC-vs-lag profile (alpha at t vs residual return n periods later),
         fits the per-period decay δ and half-life, derives the rebalance cadence that
-        maximises IC·√(1/Δt), and computes the IR-maximising current/lagged blend from
+        maximizes IC·√(1/Δt), and computes the IR-maximizing current/lagged blend from
         δ and the signal autocorrelation (diversify if δ>ρ, hedge if δ<ρ). The
-        half-life is the holding period to amortise cost over. Read-only.
+        half-life is the holding period to amortize cost over. Read-only.
         """
         inputs = {"strategy": strategy, "symbols": symbols, "start": start, "end": end}
         result = analysis.compute_horizon(
@@ -393,7 +393,7 @@ def build_server(data_client=None):
         timeframe: str = "1Day",
         lookback_days: int = 365,
     ) -> Dict[str, Any]:
-        """Estimate the universe's covariance Σ and summarise its risk structure.
+        """Estimate the universe's covariance Σ and summarize its risk structure.
 
         Returns the shrinkage intensity δ, condition number, mean correlation, the
         equal-weight portfolio volatility, and the top risk contributors as of a date.
@@ -428,7 +428,7 @@ def build_server(data_client=None):
     ) -> Dict[str, Any]:
         """Construct the mean-variance optimal portfolio from alphas (005) and Σ (006).
 
-        Maximises αᵀw − λ·wᵀΣw over long-only, box-bounded, budgeted (optionally
+        Maximizes αᵀw − λ·wᵀΣw over long-only, box-bounded, budgeted (optionally
         cardinality-capped) weights, calibrating λ to `target_te`. Returns the proposed
         weights plus the Fundamental-Law report: IR* (best achievable IR), predicted
         tracking error and IR, the transfer coefficient (how much of IR* survives the
@@ -463,10 +463,10 @@ def build_server(data_client=None):
     ) -> Dict[str, Any]:
         """Measure a strategy's IC, breadth, and predicted-vs-realized IR (spec 009).
 
-        Pairs the alpha known at each rebalance with the subsequent realised residual
+        Pairs the alpha known at each rebalance with the subsequent realized residual
         return (strict forward alignment) to measure the information coefficient
         (Pearson + rank) and its t-stat, the effective breadth (deflated by ρ̄), and the
-        predicted vs realised information ratio — with guardrails (IR standard-error
+        predicted vs realized information ratio — with guardrails (IR standard-error
         band, multiple-testing inflation for `n_trials`, sanity ceiling). An IC t-stat
         below 2 means the skill is not distinguishable from luck. Read-only.
         """

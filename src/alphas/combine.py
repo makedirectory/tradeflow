@@ -5,7 +5,7 @@ trend read, a volume read, a mean-reversion read - and they are **correlated**.
 Two mistakes follow if you ignore that:
 
 1. **Naive weighting double-counts.** Weighting by raw IC over-weights redundant
-   signals (three flavours of trend look like three bets but are one) and
+   signals (three flavors of trend look like three bets but are one) and
    under-weights a weak-but-independent signal that adds the most.
 2. **Estimated ICs are themselves uncertain**, and that uncertainty should shrink
    the contribution toward zero - more for short histories and low ICs.
@@ -17,7 +17,7 @@ single combined score (with its combined IC), which flows through the same
 replaced by one measured, shrunk, redundancy-aware number, never applied twice.
 
 The ICs and the correlation matrix must be **measured** (here, over a trailing
-window of realised residual returns), not assumed - in-sample/assumed ICs would let
+window of realized residual returns), not assumed - in-sample/assumed ICs would let
 the combination over-fit its own weights.
 """
 
@@ -73,9 +73,9 @@ def _regularized(corr: np.ndarray, ridge: float) -> np.ndarray:
 def combination_weights(ics: np.ndarray, corr: np.ndarray, ridge: float = DEFAULT_RIDGE) -> np.ndarray:
     """Optimal signal weights ``w = Ω⁻¹ · IC`` (GLS on the signal correlation matrix).
 
-    These maximise the combined IC. Because ``Ω⁻¹`` accounts for correlation, two
+    These maximize the combined IC. Because ``Ω⁻¹`` accounts for correlation, two
     redundant signals **split** a weight rather than each getting full credit - the
-    built-in defence against double-counting. A ridge regularises the inverse so a
+    built-in defense against double-counting. A ridge regularizes the inverse so a
     near-duplicate pair (ρ → 1) stays finite.
     """
     ic = np.asarray(ics, dtype=float)
@@ -97,9 +97,9 @@ def combined_ic(ics: np.ndarray, corr: np.ndarray, ridge: float = DEFAULT_RIDGE)
 def combine_scores(score_frame: pd.DataFrame, weights: np.ndarray) -> pd.Series:
     """Weighted sum of per-signal cross-sectional z-scores → one combined score.
 
-    Each signal column is standardised cross-sectionally first (so the weights act
+    Each signal column is standardized cross-sectionally first (so the weights act
     on comparable units), then combined by ``weights``. The result's absolute scale
-    is irrelevant - :func:`refine_alpha` re-standardises it - so only the relative
+    is irrelevant - :func:`refine_alpha` re-standardizes it - so only the relative
     weights matter.
     """
     if score_frame.empty:
@@ -110,7 +110,7 @@ def combine_scores(score_frame: pd.DataFrame, weights: np.ndarray) -> pd.Series:
 
 
 # --------------------------------------------------------------------------- #
-# IC measurement (over a trailing window of realised residual returns)
+# IC measurement (over a trailing window of realized residual returns)
 # --------------------------------------------------------------------------- #
 @dataclass
 class SignalMeasurement:
@@ -141,7 +141,7 @@ def measure_signals(
 
     At each of ``n_points`` rebalance dates within ``(warmup, as_of − horizon]``, score
     every signal on the cross-section (using only bars ``≤ t``) and correlate it with
-    the subsequent ``horizon``-bar realised **residual** return (return minus
+    the subsequent ``horizon``-bar realized **residual** return (return minus
     ``β·benchmark`` - rewarding skill, not beta). The mean over rebalances is the IC;
     the mean cross-sectional correlation between signals is ``Ω``. ICs are then shrunk
     and combined into GLS weights.
@@ -196,7 +196,7 @@ def measure_signals(
 
 
 def _cross_section(bars, names, scorers, benchmark_bars, t, t_fwd, min_names):
-    """Per-signal score cross-section at ``t`` and the realised residual return to ``t_fwd``."""
+    """Per-signal score cross-section at ``t`` and the realized residual return to ``t_fwd``."""
     bench_close = benchmark_bars["close"]
     if t not in bench_close.index or t_fwd not in bench_close.index:
         return None, None
@@ -226,7 +226,7 @@ def _cross_section(bars, names, scorers, benchmark_bars, t, t_fwd, min_names):
 
 
 def _to_ts(as_of: datetime, index: pd.Index) -> pd.Timestamp:
-    """Localise a possibly-naive ``as_of`` to a (possibly tz-aware) index's timezone."""
+    """Localize a possibly-naive ``as_of`` to a (possibly tz-aware) index's timezone."""
     ts = pd.Timestamp(as_of)
     if isinstance(index, pd.DatetimeIndex) and index.tz is not None:
         ts = ts.tz_localize(index.tz) if ts.tzinfo is None else ts.tz_convert(index.tz)

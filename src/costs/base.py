@@ -68,14 +68,14 @@ class CostModel(ABC):
     def turnover_cost_rate(self, spread: float = None) -> float:
         """Linear (size-independent) one-way cost per unit of traded notional.
 
-        The size-independent part of a trade's cost — the optimiser's L1 turnover
+        The size-independent part of a trade's cost — the optimizer's L1 turnover
         coefficient (Spec 016). A model with no linear cost returns 0 (the default);
         :class:`~src.costs.parametric.ParametricCostModel` returns commission + s/2.
         """
         return 0.0
 
     def impact_coefficient(self, daily_vol: float, adv_dollar: float, capital: float) -> float:
-        """√-impact coefficient ``k`` for the optimiser's ``Σ kᵢ·|Δwᵢ|^{3/2}`` term.
+        """√-impact coefficient ``k`` for the optimizer's ``Σ kᵢ·|Δwᵢ|^{3/2}`` term.
 
         The realistic square-root impact is convex in size but not quadratic, so it
         enters Spec 008's objective as a conic term rather than the risk quadratic.

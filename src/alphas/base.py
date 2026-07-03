@@ -1,17 +1,17 @@
 """Alpha types and the refinement that turns a score column into a forecast.
 
 An *alpha* is a forecast of **residual return** (return in excess of what beta to
-the benchmark explains), annualised and on the same scale for every name, so it is
+the benchmark explains), annualized and on the same scale for every name, so it is
 directly comparable across symbols and directly consumable by a mean-variance
-optimiser.
+optimizer.
 
 The refinement runs over a :class:`~src.data.panel.FeaturePanel`: it reads the
 cross-section's ``score`` and ``residual_vol`` columns (and ``beta`` when
-neutralising) and writes ``z`` and ``alpha`` columns back. One implementation, one
+neutralizing) and writes ``z`` and ``alpha`` columns back. One implementation, one
 place - whatever produced the score (a strategy, a scanner, a combination of
 signals) flows through the same pipeline.
 
-Research clock only: it forecasts, it never reads a realised forward return, it
+Research clock only: it forecasts, it never reads a realized forward return, it
 places no orders.
 """
 
@@ -26,7 +26,7 @@ from src.data.features import EXPOSURE_PREFIX
 from src.data.panel import FeaturePanel
 
 #: Conservative default information coefficient. The absolute scale of alphas is
-#: only as good as this prior until IC is measured from realised outcomes; the
+#: only as good as this prior until IC is measured from realized outcomes; the
 #: *relative* sizing across names is correct regardless (IC is a common scalar).
 DEFAULT_IC = 0.03
 
@@ -37,14 +37,14 @@ DEFAULT_MIN_UNIVERSE = 10
 
 @dataclass
 class Alpha:
-    """A refined residual-return forecast: annualised, benchmark-relative."""
+    """A refined residual-return forecast: annualized, benchmark-relative."""
 
     symbol: str
-    alpha: float  # expected annualised residual return, e.g. 0.04 = +4%/yr
+    alpha: float  # expected annualized residual return, e.g. 0.04 = +4%/yr
     as_of: datetime
-    residual_vol: float  # sigma used in scaling (annualised), for audit
+    residual_vol: float  # sigma used in scaling (annualized), for audit
     ic: float  # information coefficient used in scaling
-    raw_z: float  # standardised score that produced it
+    raw_z: float  # standardized score that produced it
 
 
 @dataclass
@@ -77,7 +77,7 @@ def refine_alpha(
     (``context.neutralize_factors`` reading ``exp_<factor>`` columns), scale by
     ``sigma * IC``, then cap. On a thin
     universe (``< context.min_universe`` scored names) winsorize and the unit-std
-    scaling are skipped in favour of demean-only, and ``panel.meta['low_confidence']``
+    scaling are skipped in favor of demean-only, and ``panel.meta['low_confidence']``
     is set. Reads ``residual_vol`` for ``sigma`` (falling back to the context default).
     """
     if not panel.has(score_col):
@@ -92,20 +92,20 @@ def refine_alpha(
     thin = len(s) < context.min_universe
     panel.meta["low_confidence"] = thin
 
-    # 1-2. Winsorize then standardise. On thin universes the quantiles and the
+    # 1-2. Winsorize then standardize. On thin universes the quantiles and the
     #      cross-sectional std are unreliable, so demean-only (no scaling).
     if thin:
         z = refine.demean(s)
     else:
         z = refine.zscore(refine.winsorize(s, *context.winsorize_limits))
 
-    # 3. Optional neutralisation: benchmark beta and/or risk-model factor exposures
+    # 3. Optional neutralization: benchmark beta and/or risk-model factor exposures
     #    (one regression on the union, so the residual is orthogonal to all of it).
     #    A factor column is used only if it actually varies across covered names —
-    #    an absent, all-NaN, or constant column must degrade to beta neutralisation,
-    #    never silently to *no* neutralisation. Names missing a factor value get the
+    #    an absent, all-NaN, or constant column must degrade to beta neutralization,
+    #    never silently to *no* neutralization. Names missing a factor value get the
     #    cross-sectional mean (0 — exposures are standardized), which keeps them in
-    #    the regression instead of stripping their beta neutralisation too.
+    #    the regression instead of stripping their beta neutralization too.
     if not thin:
         columns = {}
         imputed = 0

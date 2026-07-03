@@ -198,7 +198,7 @@ def _allocate_utility(args) -> None:
         f"turnover {d['turnover']:.1%}"
     )
     if "round_trip_cost" in d:
-        # Headline: the conservative round-trip haircut (enter + exit, amortised) - the
+        # Headline: the conservative round-trip haircut (enter + exit, amortized) - the
         # same cost model as capacity, so the two agree.
         print(
             f"  net active return {d['expected_active_return_net']:.2%}/yr (round-trip)  "
@@ -449,7 +449,7 @@ def cmd_alphas(args) -> None:
     """Print the ranked alpha table (residual-return forecasts) for a universe.
 
     Read-only research-clock flow: scores each name as of --as-of, scales the
-    cross-section into comparable annualised-return forecasts, and ranks them.
+    cross-section into comparable annualized-return forecasts, and ranks them.
     Produces no orders and saves no config.
     """
     from src.services.analysis import compute_alphas, compute_combined_alphas
@@ -995,7 +995,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="holding_period",
         type=float,
         default=1.0 / 12.0,
-        help="Expected holding period in years, to annualise the in-objective cost (utility; default 1/12)",
+        help="Expected holding period in years, to annualize the in-objective cost (utility; default 1/12)",
     )
     alloc.set_defaults(func=cmd_allocate)
 
@@ -1143,7 +1143,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     risk = subparsers.add_parser(
         "risk",
-        help="Estimate the universe covariance Σ and summarise its risk structure — read-only",
+        help="Estimate the universe covariance Σ and summarize its risk structure — read-only",
     )
     risk.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
     risk.add_argument(

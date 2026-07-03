@@ -1,4 +1,4 @@
-"""Scanner tests: volume scanner signal logic and base-class behaviour."""
+"""Scanner tests: volume scanner signal logic and base-class behavior."""
 
 import pandas as pd
 import pytest

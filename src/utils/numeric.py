@@ -1,6 +1,6 @@
 """Small numeric helpers shared across layers.
 
-Centralised so price/quantity rounding and step math are defined once and reused
+Centralized so price/quantity rounding and step math are defined once and reused
 by execution, the optimizer, and reporting - rather than re-derived inline.
 """
 

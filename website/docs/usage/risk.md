@@ -6,8 +6,8 @@ title: Estimating risk (Σ)
 # Estimating risk (Σ)
 
 `python main.py risk` estimates the universe's covariance matrix **Σ** as of a date
-and summarises its risk structure. It is **read-only**: Σ sizes conviction for the
-portfolio optimiser, it never places an order.
+and summarizes its risk structure. It is **read-only**: Σ sizes conviction for the
+portfolio optimizer, it never places an order.
 
 ```bash
 python main.py risk \
@@ -47,7 +47,7 @@ is each name's share of the equal-weight portfolio's volatility (they sum to it)
 
 The raw sample covariance needs `N(N+1)/2` parameters and is often **non-invertible**
 when you don't have far more observations than names — which breaks the portfolio
-optimiser (it needs `Σ⁻¹`). Ledoit–Wolf shrinks it toward a constant-correlation
+optimizer (it needs `Σ⁻¹`). Ledoit–Wolf shrinks it toward a constant-correlation
 target by an analytically optimal amount, guaranteeing an invertible, well-conditioned
 Σ. Use `--model sample` to see the contrast (its condition number blows up as the
 universe grows relative to the history).

@@ -45,7 +45,7 @@ class LiveEngine:
         self.live_trader = live_trader
 
     async def start(self, symbols: List[str]) -> None:
-        """Warm up indicators with history, then stream live bars until cancelled.
+        """Warm up indicators with history, then stream live bars until canceled.
 
         When the broker supports it, the account/trade-update stream runs
         concurrently with the market-data stream so fills are logged.

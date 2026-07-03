@@ -20,7 +20,7 @@ For each candidate the model has:
 - a continuous **weight** `w_i ∈ [0, max_weight]`,
 - a binary **selection** `x_i ∈ {0, 1}`.
 
-**Maximise** the score-weighted allocation:
+**Maximize** the score-weighted allocation:
 
 ```
 max  Σ score_i · w_i

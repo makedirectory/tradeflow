@@ -12,7 +12,7 @@ by an objective metric. Three search methods, increasing in sophistication:
   approach). Requires scikit-learn (optional ``optimize`` extra).
 
 Runs serially for determinism and simplicity; each evaluation is an independent
-:class:`BacktestEngine` run, so this is trivially parallelisable later.
+:class:`BacktestEngine` run, so this is trivially parallelizable later.
 """
 
 import logging
@@ -69,7 +69,7 @@ class ParameterOptimizer:
     ) -> OptimizationResult:
         total = self.space.grid_size()
         # The full grid is combinatorial: for many-parameter spaces it can be
-        # billions of points, so never materialise it when we're going to cap.
+        # billions of points, so never materialize it when we're going to cap.
         # When the grid exceeds the budget, randomly sample the grid instead.
         if max_evals and total > max_evals:
             logger.info("Grid has %d configs; randomly sampling %d", total, max_evals)

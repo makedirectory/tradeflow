@@ -120,7 +120,7 @@ def compute_backtest_metrics(
         market_data: ``{symbol: {"first_open", "last_close"}}`` for buy & hold.
         start / end: Backtest window, used for CAGR and exposure. When absent,
             elapsed time is inferred from the equity-curve length.
-        periods_per_year: Annualisation factor for the equity-curve returns
+        periods_per_year: Annualization factor for the equity-curve returns
             (the curve is daily, so the default 252 is correct; pass a different
             value only for a non-daily series).
         benchmark_returns: Optional return series for alpha/beta/IR. When ``None``
@@ -254,7 +254,7 @@ def _exposure(trades_df: pd.DataFrame, start: Optional[datetime], end: Optional[
     intervals = sorted(
         (pd.Timestamp(a), pd.Timestamp(b)) for a, b in zip(trades_df["entry_time"], trades_df["exit_time"])
     )
-    # Normalise timezone so subtraction against tz-naive start/end is valid.
+    # Normalize timezone so subtraction against tz-naive start/end is valid.
     covered = 0.0
     cur_start, cur_end = None, None
     for a, b in intervals:

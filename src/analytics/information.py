@@ -41,7 +41,7 @@ def rank_ic(forecast: pd.Series, realized: pd.Series) -> float:
 
 
 def ic_stats(ics: Sequence[float]) -> Dict[str, float]:
-    """Summarise an IC time series: mean, volatility, and the skill t-stat.
+    """Summarize an IC time series: mean, volatility, and the skill t-stat.
 
     ``IC_tstat = mean_IC / (IC_vol / √P)`` is the honesty gate on skill - a fine mean
     IC with a t-stat below ~2 is a few lucky periods, not evidence of skill.

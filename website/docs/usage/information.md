@@ -7,7 +7,7 @@ title: Information report (IC / IR)
 
 `python main.py info` measures whether a strategy has **skill** — its information
 coefficient and effective breadth — and reconciles the predicted information ratio
-with the realised one. It is **read-only**: a diagnostic, never a control input.
+with the realized one. It is **read-only**: a diagnostic, never a control input.
 
 ```bash
 python main.py info \
@@ -30,7 +30,7 @@ Information report: 'volume_spike' 2024-01-01..2024-12-31
 
 Read it as: the **IC t-stat** is the honesty gate — below ~2 the mean IC is a few
 lucky periods, not skill. **Effective breadth** deflates the name count by how
-correlated the bets are (`ρ̄`); **predicted IR** = `mean_IC · √BR_eff`. The realised
+correlated the bets are (`ρ̄`); **predicted IR** = `mean_IC · √BR_eff`. The realized
 IR comes with a **standard-error band** — a 1-year window has `SE(IR) ≈ 1`, so almost
 any IR is indistinguishable from zero on a single short window. `--n-trials` reports
 how inflated a "significant" result is once you account for everything you tried.
@@ -50,7 +50,7 @@ how inflated a "significant" result is once you account for everything you tried
 
 ## What it does (and doesn't) tell you
 
-- **Skill vs luck.** A high IC with a low t-stat, or a realised IR inside its SE band
+- **Skill vs luck.** A high IC with a low t-stat, or a realized IR inside its SE band
   of zero, is not skill — the report says so plainly.
 - **No look-ahead.** The IC pairs each forecast with strictly *later* residual returns.
 - **Feedback to alphas.** When skill is distinguishable, the report recommends the

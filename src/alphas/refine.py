@@ -10,8 +10,8 @@ The pipeline order:
 
     raw scores  ->  winsorize  ->  zscore  ->  [neutralize]  ->  scale  ->  cap
 
-All standardisation here is **cross-sectional** (across names at one rebalance),
-never across time for one name - standardising over time would reintroduce the
+All standardization here is **cross-sectional** (across names at one rebalance),
+never across time for one name - standardizing over time would reintroduce the
 look-ahead this module exists to avoid.
 """
 
@@ -36,7 +36,7 @@ def winsorize(scores: pd.Series, lower: float = 0.025, upper: float = 0.975) -> 
 def demean(scores: pd.Series) -> pd.Series:
     """Subtract the cross-sectional mean (the thin-universe fallback for zscore).
 
-    Centres the scores at 0 without dividing by the cross-sectional std, which is
+    Centers the scores at 0 without dividing by the cross-sectional std, which is
     unstable on a handful of names. Preserves relative spacing; sets no scale.
     """
     if scores.empty:
@@ -45,7 +45,7 @@ def demean(scores: pd.Series) -> pd.Series:
 
 
 def zscore(scores: pd.Series) -> pd.Series:
-    """Cross-sectional standardisation: ``z = (s - mean) / std``.
+    """Cross-sectional standardization: ``z = (s - mean) / std``.
 
     Uses the population std (``ddof=0``) so the output has mean 0 and unit
     dispersion exactly. If every score is identical (zero std) the result is all
@@ -67,8 +67,8 @@ def neutralize(z: pd.Series, exposures: pd.DataFrame) -> pd.Series:
     included (so the residual is mean-zero, i.e. benchmark/equal-weight neutral),
     and the residual is orthogonal to every exposure column by construction
     (the defining property of an OLS residual). Pass a single beta column for
-    benchmark-beta neutralisation, or a factor-exposure matrix for factor
-    neutralisation.
+    benchmark-beta neutralization, or a factor-exposure matrix for factor
+    neutralization.
 
     ``exposures`` is a DataFrame indexed by symbol; it is aligned to ``z`` and any
     name missing an exposure is dropped from the regression and returned unchanged.
@@ -95,9 +95,9 @@ def neutralize(z: pd.Series, exposures: pd.DataFrame) -> pd.Series:
 def scale_to_alpha(z: pd.Series, residual_vol: pd.Series, ic: float) -> pd.Series:
     """Apply the refinement identity ``alpha_i = sigma_i * IC * z_i``.
 
-    Turns a standardised score into a forecast of annualised residual return. The
+    Turns a standardized score into a forecast of annualized residual return. The
     cross-sectional std of the result is ``~ IC * sigma`` (for unit-std ``z``), so
-    the alphas carry the right information ratio for a mean-variance optimiser to
+    the alphas carry the right information ratio for a mean-variance optimizer to
     size positions by genuine conviction rather than by an arbitrary signal scale.
 
     ``residual_vol`` is aligned to ``z`` by symbol.

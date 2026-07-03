@@ -37,11 +37,11 @@ cost($) = commission + (s/2)·|q|·p + impact_rate·|q|·p
   the name's daily volatility, `η` a coefficient (~0.3 default). Impact is concave
   per share (√) but **convex in total cost** (`|q|·impact_rate ∝ |q|^{3/2}`) — exactly
   the property that makes spreading a target across names cheaper than dumping it on
-  one. A linear-participation fallback is offered for a convex-quadratic optimiser.
+  one. A linear-participation fallback is offered for a convex-quadratic optimizer.
 
 ## As an alpha haircut
 
-Amortising the round-trip cost over the holding period gives a cost rate per unit
+Amortizing the round-trip cost over the holding period gives a cost rate per unit
 time, which is the honest input to portfolio construction:
 
 ```
@@ -74,8 +74,8 @@ Long-side margin financing and leverage costs remain out of scope.
 
 ## Known gaps
 
-The optimiser uses the linear cost term while the backtest charges the √-law; the gap
-is small and documented. A name-specific cost term inside the optimiser objective
+The optimizer uses the linear cost term while the backtest charges the √-law; the gap
+is small and documented. A name-specific cost term inside the optimizer objective
 needs an SOCP solver (the ex-post drag report is the v1 stand-in).
 
 ## Where it runs

@@ -1,4 +1,4 @@
-"""Tests for the Strategy base behaviour via VolumeSpikeStrategy."""
+"""Tests for the Strategy base behavior via VolumeSpikeStrategy."""
 
 import pandas as pd
 import pytest

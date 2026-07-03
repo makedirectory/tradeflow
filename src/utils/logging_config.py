@@ -1,4 +1,4 @@
-"""Centralised logging configuration.
+"""Centralized logging configuration.
 
 A single ``setup_logging`` entry point keeps log formatting consistent across
 every module (engine, scanner, strategies) without each one re-running

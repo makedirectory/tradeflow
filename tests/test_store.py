@@ -18,7 +18,7 @@ from tests.fakes import DictMarketData, make_ohlcv  # noqa: E402
 
 SYMBOLS = ["AAA", "BBB", "CCC"]
 
-#: The store normalises the timeframe to its canonical directory name (e.g. "1day"),
+#: The store normalizes the timeframe to its canonical directory name (e.g. "1day"),
 #: which differs in case from the "1Day" people type. Derive it rather than hardcode
 #: the string so raw-path assertions match the on-disk layout on case-sensitive
 #: filesystems (Linux CI), not just case-insensitive ones (default macOS).

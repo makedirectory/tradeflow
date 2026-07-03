@@ -10,8 +10,8 @@ Every function is pure and defensive: empty/degenerate inputs yield 0.0 (or inf
 for ratios with a zero denominator) rather than raising - a backtest with zero
 trades shouldn't crash; it should just quietly tell you it found nothing.
 
-A note on annualisation: the headline ratios take a
-``periods_per_year`` so they annualise to the *sampling frequency of the series
+A note on annualization: the headline ratios take a
+``periods_per_year`` so they annualize to the *sampling frequency of the series
 passed in*. The backtest equity curve is resampled to daily P&L
 (:func:`src.analytics.performance.build_equity_curve`), so its returns are daily
 and ``TRADING_DAYS_PER_YEAR`` is the correct factor; intraday or weekly series
@@ -24,7 +24,7 @@ from typing import Sequence, Tuple, Union
 import numpy as np
 import pandas as pd
 
-#: US trading days per year, used to annualise daily-return ratios.
+#: US trading days per year, used to annualize daily-return ratios.
 TRADING_DAYS_PER_YEAR = 252
 
 #: Euler-Mascheroni constant, used by the Deflated Sharpe expected-maximum.
@@ -133,7 +133,7 @@ def annualized_volatility(returns: Numbers, periods_per_year: int = TRADING_DAYS
 
 
 def downside_deviation(returns: Numbers, periods_per_year: int = TRADING_DAYS_PER_YEAR) -> float:
-    """Annualised deviation of negative returns only (the Sortino denominator)."""
+    """Annualized deviation of negative returns only (the Sortino denominator)."""
     r = _as_series(returns)
     downside = r[r < 0]
     if len(downside) < 2:
@@ -145,7 +145,7 @@ def downside_deviation(returns: Numbers, periods_per_year: int = TRADING_DAYS_PE
 # Risk-adjusted ratios
 # --------------------------------------------------------------------------- #
 def sharpe_ratio(returns: Numbers, periods_per_year: int = TRADING_DAYS_PER_YEAR) -> float:
-    """Annualised Sharpe ratio (risk-free rate assumed 0)."""
+    """Annualized Sharpe ratio (risk-free rate assumed 0)."""
     r = _as_series(returns)
     if len(r) < 2 or r.std() == 0:
         return 0.0
@@ -153,7 +153,7 @@ def sharpe_ratio(returns: Numbers, periods_per_year: int = TRADING_DAYS_PER_YEAR
 
 
 def sortino_ratio(returns: Numbers, periods_per_year: int = TRADING_DAYS_PER_YEAR) -> float:
-    """Annualised Sortino ratio (downside-deviation denominator)."""
+    """Annualized Sortino ratio (downside-deviation denominator)."""
     r = _as_series(returns)
     if len(r) < 2:
         return 0.0
@@ -174,7 +174,7 @@ def calmar_ratio(cagr_value: float, max_drawdown_value: float) -> float:
 
 
 def treynor_ratio(returns: Numbers, beta: float, periods_per_year: int = TRADING_DAYS_PER_YEAR) -> float:
-    """Annualised excess return per unit of market beta. ``0.0`` if beta is zero."""
+    """Annualized excess return per unit of market beta. ``0.0`` if beta is zero."""
     r = _as_series(returns)
     if len(r) < 2 or beta == 0:
         return 0.0
@@ -213,7 +213,7 @@ def max_drawdown_duration(equity_curve: Numbers) -> int:
 
 
 def ulcer_index(equity_curve: Numbers) -> float:
-    """Root-mean-square drawdown depth (%), penalising deep *and* long drawdowns."""
+    """Root-mean-square drawdown depth (%), penalizing deep *and* long drawdowns."""
     dd = drawdown_series(equity_curve)
     if dd.empty:
         return 0.0
@@ -314,7 +314,7 @@ def probabilistic_sharpe_ratio(returns: Numbers, benchmark_sr: float = 0.0) -> f
     """P(true Sharpe > ``benchmark_sr``) given the observed per-period Sharpe.
 
     Corrects the Sharpe estimate for sample length, skew and (excess) kurtosis.
-    ``benchmark_sr`` is a *per-period* (non-annualised) Sharpe, matching the
+    ``benchmark_sr`` is a *per-period* (non-annualized) Sharpe, matching the
     series passed in. Returns a probability in [0, 1].
     """
     r = _as_series(returns)
@@ -470,7 +470,7 @@ def alpha_beta(returns: Numbers, benchmark_returns: Numbers) -> Tuple[float, flo
 def information_ratio(
     returns: Numbers, benchmark_returns: Numbers, periods_per_year: int = TRADING_DAYS_PER_YEAR
 ) -> float:
-    """Annualised mean active return over its tracking error vs a benchmark."""
+    """Annualized mean active return over its tracking error vs a benchmark."""
     paired = _align(returns, benchmark_returns)
     if len(paired) < 2:
         return 0.0
