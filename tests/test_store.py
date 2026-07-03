@@ -13,9 +13,16 @@ import pandas as pd  # noqa: E402
 
 from src.data import BarSource, ClientBarSource, ParquetBarStore  # noqa: E402
 from src.marketdata.client import MarketDataClient  # noqa: E402
+from src.marketdata.timeframe import Timeframe  # noqa: E402
 from tests.fakes import DictMarketData, make_ohlcv  # noqa: E402
 
 SYMBOLS = ["AAA", "BBB", "CCC"]
+
+#: The store normalises the timeframe to its canonical directory name (e.g. "1day"),
+#: which differs in case from the "1Day" people type. Derive it rather than hardcode
+#: the string so raw-path assertions match the on-disk layout on case-sensitive
+#: filesystems (Linux CI), not just case-insensitive ones (default macOS).
+TF_DIR = str(Timeframe.parse("1Day"))
 
 
 def _bars():
@@ -129,7 +136,7 @@ def test_streaming_backtest_matches_batch(tmp_path):
 def test_write_creates_year_partitions(tmp_path):
     store = ParquetBarStore(tmp_path)
     store.write(_multiyear_bars(start="2018-01-01", years=6), timeframe="1Day")
-    years = sorted(p.name for p in (tmp_path / "1Day" / "symbol=AAA").glob("year=*"))
+    years = sorted(p.name for p in (tmp_path / TF_DIR / "symbol=AAA").glob("year=*"))
     assert years == [f"year={y}" for y in range(2018, 2024)]  # one partition per calendar year
 
 
@@ -169,5 +176,5 @@ def test_rewrite_replaces_stale_year_partitions(tmp_path):
     store = ParquetBarStore(tmp_path)
     store.write(_multiyear_bars(start="2018-01-01", years=6), timeframe="1Day")
     store.write(_multiyear_bars(start="2022-01-01", years=1), timeframe="1Day")  # only 2022
-    years = sorted(p.name for p in (tmp_path / "1Day" / "symbol=AAA").glob("year=*"))
+    years = sorted(p.name for p in (tmp_path / TF_DIR / "symbol=AAA").glob("year=*"))
     assert years == ["year=2022"]
