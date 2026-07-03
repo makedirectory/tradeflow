@@ -177,18 +177,25 @@ doing its job.
 | `backtest` | Scan → run a strategy over history → performance report |
 | `live` | Scan → warm up indicators → stream bars → place paper/live orders |
 | `optimize` | Search strategy parameters by backtest objective (grid / random / Bayesian) |
-| `allocate` | Weight a portfolio across scanned symbols (OR-Tools constraint solver) |
+| `allocate` | Weight a portfolio: scalar-score sizing (OR-Tools), or `--objective utility` for mean-variance construction from alpha + Σ |
+| `alphas` | Rank a universe by continuous alpha — a comparable, annualized residual-return forecast per name; `--combine` blends several signals, `--neutralize-factors` regresses out the risk model's factor exposures (read-only) |
+| `risk` | Estimate the universe covariance Σ (Ledoit–Wolf shrinkage) and summarize its risk structure (read-only) |
+| `info` | Information report: measure IC, breadth, and predicted-vs-realized IR — skill vs luck (read-only) |
+| `horizon` | Measure alpha decay / half-life; recommend rebalance cadence + current/lagged blend (read-only) |
 | `walkforward` | Out-of-sample validation: optimize in-sample, score out-of-sample across folds, with a sacred holdout and promotion gates |
-| `mcp` | Serve TradeFlow over MCP so an agent (Claude Code / Desktop) can drive scan/backtest/optimize/walk-forward — read-only, no live trading |
+| `mcp` | Serve TradeFlow over MCP so an agent (Claude Code / Desktop) can drive scan/backtest/optimize/walk-forward/alphas/risk/portfolio/info — read-only, no live trading |
 
-Three strategies ship today — pick one with `--strategy`:
+Three strategies ship today — pick one with `--strategy`. Each defines a single
+continuous **score** (its conviction); the trade clock's `BUY/SELL/HOLD` and the
+[continuous alpha](https://tradeflow.mk-dir.com/docs/engineering/alphas) are both
+derived from it — one source of truth.
 
-- **`volume_spike`** — trend-following entries triggered by volume spikes out of
-  RSI extremes (intraday, 5-minute bars).
-- **`ma_crossover`** — long-only EMA trend follower: buy the golden cross, exit
-  the death cross (daily).
-- **`mean_reversion`** — long-only RSI mean reversion: buy oversold dips, exit on
-  the rebound (daily).
+- **`volume_spike`** — long/short EMA-trend strength scaled by volume confirmation
+  (intraday, 5-minute bars).
+- **`ma_crossover`** — long-only EMA trend follower: the normalized fast−slow gap,
+  whose sign crossings are the golden / death cross (daily).
+- **`mean_reversion`** — long-only RSI mean reversion: score is oversold-ness, enter
+  the dip and exit on the rebound (daily).
 
 Adding a fourth is a one-file change — see
 [Extending](https://tradeflow.mk-dir.com/docs/engineering/extending).

@@ -18,7 +18,8 @@ MarketDataClient.get_bars(universe, tf, start, end)   # {symbol: OHLCV}
         │
         ▼  per symbol
 Strategy.process_data(bars)               # + indicator columns
-Strategy.generate_signals(processed)      # {timestamp: BUY/SELL/HOLD/...}
+Strategy.calculate_scores(processed)      # {timestamp: signed score}  ← the one decision
+Strategy.generate_signals(processed)      # base class derives {timestamp: BUY/SELL/HOLD/...}
         │
         ▼
 BacktestEngine._simulate_symbol(...)      # bar-by-bar fills, stop/take/exit

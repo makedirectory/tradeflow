@@ -4,8 +4,12 @@ theory about the market, which the backtester then evaluates without mercy.
 A :class:`Strategy` is responsible for exactly three things:
 
 1. **Indicators** - turn raw OHLCV into the columns it needs (:meth:`process_data`).
-2. **Signals** - turn those columns into BUY/SELL/HOLD decisions
-   (:meth:`generate_signals`).
+2. **Conviction** - turn those columns into a single continuous **score** per bar
+   (:meth:`calculate_scores`): signed (``+`` bullish, ``-`` bearish), with
+   magnitude = strength. This is the one source of truth for the strategy's view.
+   The discrete ``BUY/SELL/HOLD`` the trade clock consumes is *derived* from the
+   score by the base class (:meth:`generate_signals`); the cross-sectional alpha
+   layer reads the same score. There is no parallel discrete-signal path.
 3. **Sizing & risk** - decide how big a position should be and reject signals
    that conflict with the current book.
 
@@ -20,6 +24,7 @@ The same strategy object is driven unchanged by the backtest and live engines.
 """
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -28,11 +33,32 @@ import pandas as pd
 from src.strategies import signals
 
 
+@dataclass(frozen=True)
+class ScoreThresholds:
+    """Hysteresis bands that turn a continuous score into discrete entries/exits.
+
+    Semantics (long side): enter long when ``score > enter_long``; stay long while
+    ``score > exit_long``; exit when ``score <= exit_long``. The short side mirrors
+    it. Defaults are all 0 - pure sign: long while score > 0. A strategy with
+    asymmetric entry/exit levels (e.g. enter oversold, exit overbought) overrides
+    :meth:`Strategy.signal_thresholds`.
+    """
+
+    enter_long: float = 0.0
+    exit_long: float = 0.0
+    enter_short: float = 0.0
+    exit_short: float = 0.0
+
+
 class Strategy(ABC):
     """Abstract base for all trading strategies."""
 
     #: Subclasses declare tunable parameters here for validation/optimization.
     PARAM_RANGES: Dict[str, Dict[str, Any]] = {}
+
+    #: Whether the strategy may hold short positions. Long-only strategies never
+    #: emit SELL entries; a negative score simply means "flat" (exit any long).
+    LONG_ONLY: bool = True
 
     @classmethod
     def create_with_defaults(cls) -> "Strategy":
@@ -105,12 +131,86 @@ class Strategy(ABC):
         """Return ``data`` enriched with the indicator columns the strategy needs."""
 
     @abstractmethod
-    def generate_signals(self, data: pd.DataFrame) -> Dict[Any, str]:
-        """Map each timestamp in processed ``data`` to a signal string."""
+    def calculate_scores(self, data: pd.DataFrame) -> pd.Series:
+        """Return a continuous, signed conviction score per bar of processed ``data``.
+
+        Positive = bullish, negative = bearish, magnitude = strength; NaN where
+        indicators aren't yet valid. This is the strategy's single source of truth:
+        the discrete trade signal is derived from it (:meth:`generate_signals`) and
+        the cross-sectional alpha layer scales the same score.
+        """
 
     @abstractmethod
     def calculate_required_lookback(self) -> int:
         """Number of bars required before indicators/signals are valid."""
+
+    # ------------------------------------------------------------------ #
+    # Signal derivation (shared - never overridden by a strategy)
+    # ------------------------------------------------------------------ #
+    def signal_thresholds(self) -> ScoreThresholds:
+        """The hysteresis bands used to derive discrete signals from the score.
+
+        Defaults to pure sign (enter long when score > 0). Strategies with
+        asymmetric entry/exit levels override this.
+        """
+        return ScoreThresholds()
+
+    def generate_signals(self, data: pd.DataFrame) -> Dict[Any, str]:
+        """Derive the discrete ``BUY/SELL/HOLD`` stream from :meth:`calculate_scores`.
+
+        Walks the score series once, tracking the desired position direction with
+        hysteresis: a fresh entry emits ``BUY``/``SELL``; returning to flat emits
+        ``CLOSE_BUY``/``CLOSE_SELL``; a direct flip closes first (the opposite entry
+        follows on the next bar). While a direction is held the bar emits ``HOLD``,
+        so entries are edge-triggered - re-affirmation is left to the engine, which
+        dedupes against the open position.
+        """
+        if data.empty:
+            return {}
+
+        scores = self.calculate_scores(data)
+        thresholds = self.signal_thresholds()
+        long_only = self.LONG_ONLY
+
+        out: Dict[Any, str] = {}
+        state = 0  # desired direction implied by the score: +1 long, -1 short, 0 flat
+        values = scores.to_numpy()
+        index = scores.index
+        for i in range(len(values)):
+            score = values[i]
+            if score != score:  # NaN - indicators not yet valid
+                out[index[i]] = signals.HOLD
+                continue
+            target = self._desired_direction(score, state, thresholds, long_only)
+            signal, state = self._transition(state, target)
+            out[index[i]] = signal
+        return out
+
+    @staticmethod
+    def _desired_direction(score: float, state: int, th: ScoreThresholds, long_only: bool) -> int:
+        """Target direction for this bar given the score and the current direction."""
+        # Hold an existing position until its exit band trips.
+        if state == 1 and score > th.exit_long:
+            return 1
+        if state == -1 and score < th.exit_short:
+            return -1
+        # Flat, or just released: look for a fresh entry.
+        if score > th.enter_long:
+            return 1
+        if not long_only and score < th.enter_short:
+            return -1
+        return 0
+
+    @staticmethod
+    def _transition(state: int, target: int) -> tuple:
+        """Map a (current -> target) direction change to a signal + the new state."""
+        if target == state:
+            return signals.HOLD, state
+        if state == 0:  # entering from flat
+            return (signals.BUY, 1) if target == 1 else (signals.SELL, -1)
+        # Leaving a position (exit to flat, or a flip): always close first and go
+        # flat; a flip re-enters on the next bar once state is 0.
+        return (signals.CLOSE_BUY if state == 1 else signals.CLOSE_SELL), 0
 
     # ------------------------------------------------------------------ #
     # Position sizing & risk

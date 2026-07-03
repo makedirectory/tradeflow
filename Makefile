@@ -10,7 +10,7 @@ CAPITAL ?= 100000
 PY       = uv run python main.py
 
 .PHONY: help demo install install-optimize backtest backtest-no-scan scan live \
-        optimize optimize-bayesian cancel-orders close-positions \
+        allocate allocate-utility alphas risk info horizon optimize optimize-bayesian cancel-orders close-positions \
         test docs docs-build docker-build docker-run clean
 
 help:  ## Show available commands
@@ -49,6 +49,21 @@ scan:  ## Run the universe scanner and print flagged symbols
 
 allocate: install-portfolio  ## Weight a portfolio over scanned symbols (OR-Tools)
 	$(PY) allocate --scanner volume --symbols $(SYMBOLS) --capital $(CAPITAL)
+
+alphas:  ## Rank a universe by continuous alpha (residual-return forecast) — read-only
+	$(PY) alphas --strategy volume_spike --symbols $(SYMBOLS) --as-of $(END) --ic 0.03
+
+risk:  ## Estimate the universe covariance Σ and summarize its risk structure — read-only
+	$(PY) risk --symbols $(SYMBOLS) --as-of $(END) --model shrinkage
+
+allocate-utility:  ## Mean-variance portfolio construction (alpha + Σ) — read-only proposal
+	$(PY) allocate --objective utility --strategy volume_spike --symbols $(SYMBOLS) --as-of $(END) --target-te 0.04
+
+info:  ## Information report: IC, breadth, predicted-vs-realized IR — read-only
+	$(PY) info --strategy volume_spike --symbols $(SYMBOLS) --start $(START) --end $(END)
+
+horizon:  ## Alpha decay / half-life + rebalance cadence + lagged blend — read-only
+	$(PY) horizon --strategy volume_spike --symbols $(SYMBOLS) --start $(START) --end $(END)
 
 live:  ## Paper-trade: volume scanner -> volume_spike strategy
 	$(PY) live --strategy volume_spike --scanner volume --symbols $(SYMBOLS)

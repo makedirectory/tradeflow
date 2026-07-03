@@ -1,6 +1,6 @@
 [project]
 name = "tradeflow"
-version = "0.2.0"
+version = "0.3.0"
 description = "A simple, layered, broker-agnostic algorithmic trading engine (Alpaca adapter included; backtest + live)."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -26,7 +26,16 @@ openai = ["openai>=1.40"]
 # (Ollama needs no dependency - the research agent talks to its local HTTP API.)
 # Render the demo artifact (equity curve + walk-forward verdict) to an image.
 viz = ["matplotlib>=3.8"]
-dev = ["pytest>=8.0", "ruff>=0.6", "scikit-learn>=1.4", "ortools>=9.8", "matplotlib>=3.8"]
+# Out-of-core columnar storage + lazy compute: an Arrow/Parquet bar store behind the
+# scan() seam (011), plus lazy/streaming panel-wide compute over it (015 — Polars for
+# dataframe transforms, DuckDB for set-based queries). Opt-in; all pure wheels, so the
+# no-compiler promise holds. polars>=1.25: the streaming terminal uses
+# collect(engine="streaming"), which replaced the streaming= kwarg at 1.25.
+store = ["pyarrow>=14", "polars>=1.25", "duckdb>=1.0"]
+dev = [
+    "pytest>=8.0", "ruff>=0.6", "scikit-learn>=1.4", "ortools>=9.8", "matplotlib>=3.8",
+    "pyarrow>=14", "polars>=1.25", "duckdb>=1.0",
+]
 
 [tool.uv]
 # This is an application, not a library: install dependencies only, don't build

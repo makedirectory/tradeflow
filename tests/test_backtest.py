@@ -44,6 +44,10 @@ class ScriptedStrategy(Strategy):
     def process_data(self, data: pd.DataFrame) -> pd.DataFrame:
         return data
 
+    def calculate_scores(self, data: pd.DataFrame) -> pd.Series:
+        # Engine fill-logic tests script signals directly; the score is unused.
+        return pd.Series(0.0, index=data.index)
+
     def generate_signals(self, data: pd.DataFrame) -> Dict:
         return dict(zip(data.index, self._signals))
 
