@@ -2,7 +2,7 @@
 
 A :class:`MarketDataProvider` that fabricates bars from a seeded random walk, so
 the whole pipeline (backtest, optimize, walk-forward) runs with **no Alpaca keys
-and no network**. Unlike the test fakes, it honours the requested ``[start, end]``
+and no network**. Unlike the test fakes, it honors the requested ``[start, end]``
 window and timeframe, so date-based machinery like walk-forward fold splitting
 works exactly as it does on real data.
 
@@ -25,7 +25,7 @@ from src.utils.timeutils import NEW_YORK
 
 
 def _symbol_seed(symbol: str, base_seed: int) -> int:
-    """A stable per-symbol seed (independent of Python's hash randomisation)."""
+    """A stable per-symbol seed (independent of Python's hash randomization)."""
     return base_seed + sum(ord(ch) for ch in symbol)
 
 

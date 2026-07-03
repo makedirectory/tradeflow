@@ -10,7 +10,7 @@ volume read, a mean-reversion read — and they are **correlated**. `src/alphas/
 combines them into one alpha while avoiding the two classic mistakes:
 
 1. **Naive weighting double-counts.** Weighting by raw IC over-weights redundant
-   signals (three flavours of trend look like three bets but are one) and
+   signals (three flavors of trend look like three bets but are one) and
    under-weights a weak-but-independent signal that adds the most.
 2. **Estimated ICs are uncertain**, and that uncertainty should shrink a signal's
    contribution toward zero — more for short histories and low ICs.
@@ -18,7 +18,7 @@ combines them into one alpha while avoiding the two classic mistakes:
 ## Optimal combination via the signal correlation matrix
 
 Given each signal's information coefficient `IC` and the signal correlation matrix
-`Ω`, the weights that maximise the combined IC are the GLS solution:
+`Ω`, the weights that maximize the combined IC are the GLS solution:
 
 ```
 w = Ω⁻¹ · IC            combined IC = √(ICᵀ Ω⁻¹ IC)
@@ -33,7 +33,7 @@ IC₁' = (IC₁ − ρ·IC₂)/(1 − ρ²)        IC_comb² = (IC₁² + IC₂�
 ```
 
 So adding a weak *independent* signal raises the combined IC; adding a strong
-*redundant* one barely does. A small ridge regularises `Ω⁻¹` so a near-duplicate
+*redundant* one barely does. A small ridge regularizes `Ω⁻¹` so a near-duplicate
 pair (`ρ → 1`) stays finite.
 
 ## Bayesian IC-uncertainty shrinkage
@@ -53,7 +53,7 @@ primary reason backtested alphas disappoint live.
 
 The ICs and `Ω` are **measured** over a trailing window, never assumed. At each of
 several rebalance dates, every signal is scored on the cross-section (using only bars
-`≤ t`) and correlated with the subsequent realised **residual** return (return minus
+`≤ t`) and correlated with the subsequent realized **residual** return (return minus
 `β·benchmark` — so it rewards skill, not beta). The mean over rebalances is the IC;
 the mean cross-sectional correlation between signals is `Ω`. Measuring on
 out-of-sample data is what keeps the combination from over-fitting its own weights.

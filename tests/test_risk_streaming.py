@@ -68,7 +68,7 @@ def test_chunk_size_does_not_change_result(tmp_path):
 def test_is_positive_definite_and_annualised(tmp_path):
     store, _, as_of = _store(tmp_path)
     streamed = streaming_sample_covariance(store, SYMBOLS, "1Day", as_of, lookback_days=10_000)
-    # Variances are annualised (×252) and the matrix is usable by the optimiser.
+    # Variances are annualized (×252) and the matrix is usable by the optimizer.
     assert streamed.is_positive_definite()
     daily = streaming_sample_covariance(
         store, SYMBOLS, "1Day", as_of, lookback_days=10_000, periods_per_year=1.0
@@ -128,7 +128,7 @@ def test_matches_oracle_across_year_boundary(tmp_path):
 
 def test_streaming_peak_below_eager_on_long_history(tmp_path):
     # The point of the migration: on a long, wide history the streaming path peaks well
-    # below the eager build_risk_matrix, which materialises the full T×N return panel.
+    # below the eager build_risk_matrix, which materializes the full T×N return panel.
     import tracemalloc
 
     wide = [f"S{i}" for i in range(20)]

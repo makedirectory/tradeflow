@@ -7,7 +7,7 @@ title: Portfolio allocation
 
 The portfolio manager decides **how much weight** to give each symbol, using a
 constraint solver ([Google OR-Tools](https://developers.google.com/optimization))
-rather than ad-hoc rules. It maximises total expected score subject to hard
+rather than ad-hoc rules. It maximizes total expected score subject to hard
 constraints.
 
 ```bash
@@ -27,7 +27,7 @@ make install-portfolio    # or: uv sync --extra portfolio
 
 Each scanned symbol becomes a *candidate* with a **score** (here, its trailing
 return — a transparent, swappable factor) and a price. The solver chooses weights
-to **maximise the score-weighted allocation** subject to:
+to **maximize the score-weighted allocation** subject to:
 
 - invest at most 100% of capital,
 - hold at most `--max-positions` names,
@@ -53,7 +53,7 @@ change the scoring factor.
 
 The default `allocate` is a scalar-score sizer. `--objective utility` instead builds
 the **risk-adjusted** portfolio from a strategy's [alpha](alphas) and the
-[covariance Σ](risk) — maximising `αᵀw − λ·wᵀΣw` at a target tracking error. It is a
+[covariance Σ](risk) — maximizing `αᵀw − λ·wᵀΣw` at a target tracking error. It is a
 **read-only research proposal** (it places no orders):
 
 ```bash

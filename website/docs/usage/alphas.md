@@ -6,7 +6,7 @@ title: Ranking by alpha
 # Ranking by alpha
 
 `python main.py alphas` ranks a universe by **continuous alpha** — a forecast of
-each name's residual return (annualised, benchmark-relative), so the names are
+each name's residual return (annualized, benchmark-relative), so the names are
 directly comparable. It is **read-only**: it produces no orders and saves no config.
 
 ```bash
@@ -29,9 +29,9 @@ TSLA          -0.040    -1.41    1.55      44.1%    -1.95%
 ```
 
 Read it as: `SCORE` is the strategy's continuous conviction, `Z` is the
-cross-sectional standardised score, and `ALPHA = RESID_VOL · IC · Z` is the forecast
+cross-sectional standardized score, and `ALPHA = RESID_VOL · IC · Z` is the forecast
 residual return for the year. The ranking is what a mean-variance
-[portfolio optimiser](./portfolio.md) sizes positions from.
+[portfolio optimizer](./portfolio.md) sizes positions from.
 
 ## Options
 
@@ -79,7 +79,7 @@ Alphas from 'volume_spike' score as of 2025-06-01 (IC=0.03, benchmark=SPY)
 
 The second form appears when the universe's history is too short to build the
 exposures (momentum needs ~148 daily bars, the others 61) — the pipeline then falls
-back to plain-beta neutralisation rather than silently doing nothing. Unknown factor
+back to plain-beta neutralization rather than silently doing nothing. Unknown factor
 names are rejected at parse time. The same flag exists on `allocate --objective
 utility` (construct from factor-neutral alphas) and on `info`/`horizon` — **measure
 the same alpha you deploy**. Note: the MCP tools don't expose this parameter yet.
@@ -105,7 +105,7 @@ ma_crossover       0.0350   0.0280   -0.020   ← redundant with volume_spike, d
 mean_reversion     0.0290   0.0210    0.240   ← independent, earns its weight
 ```
 
-The ICs and the signal correlation are estimated over a trailing window of realised
+The ICs and the signal correlation are estimated over a trailing window of realized
 residual returns — measure on out-of-sample data for an honest combination. See
 [Multi-signal combination](../engineering/multi-signal.md) for the math.
 

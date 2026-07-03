@@ -34,7 +34,7 @@ class AccountSnapshot:
 
 @dataclass
 class Position:
-    """An open position, normalised across brokers.
+    """An open position, normalized across brokers.
 
     ``side`` is ``"long"`` or ``"short"``; ``qty`` is always non-negative.
     """
@@ -144,7 +144,7 @@ class Broker(ABC):
 
     @abstractmethod
     def close_all_positions(self, cancel_orders: bool = True) -> bool:
-        """Liquidate all positions, optionally cancelling orders first."""
+        """Liquidate all positions, optionally canceling orders first."""
 
     # --- market clock --------------------------------------------------------
     @abstractmethod
@@ -157,7 +157,7 @@ class Broker(ABC):
         return False
 
     async def stream_trade_updates(self, handler: TradeUpdateHandler) -> None:
-        """Stream account/order updates to ``handler`` until cancelled.
+        """Stream account/order updates to ``handler`` until canceled.
 
         Optional: only meaningful when :meth:`supports_trade_updates` is True.
         """

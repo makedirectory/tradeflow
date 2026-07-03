@@ -30,7 +30,7 @@ A bar-by-bar replay holding **one position at a time**:
   exit fills at the next open.
 - Any position still open at the final bar is force-closed (`END_OF_PERIOD`).
 
-Realised cash (`_available`) carries across symbols so the run can't spend the
+Realized cash (`_available`) carries across symbols so the run can't spend the
 same dollar twice. P&L is `(exit − entry) × size × direction`.
 
 `BacktestResult` carries `metrics`, the `trades` DataFrame, the `equity_curve`,

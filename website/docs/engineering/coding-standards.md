@@ -66,6 +66,6 @@ These keep the layering honest — they matter more than any style nit:
 
 - **Offline and deterministic.** Use the in-memory fakes (`tests/fakes.py`); seed
   any randomness. No network or API keys.
-- **One behaviour per test**, named for what it asserts.
+- **One behavior per test**, named for what it asserts.
 - Cover the boundary you changed: a new sizer, scanner, or broker gets a test
   through its interface.

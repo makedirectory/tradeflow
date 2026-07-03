@@ -16,7 +16,7 @@ A diagnostic over an existing alpha's decay structure; it places no orders.
 
 ## Decay and half-life
 
-IC measured at increasing lags `n` (the alpha at `t` vs the residual return realised
+IC measured at increasing lags `n` (the alpha at `t` vs the residual return realized
 `n` periods later) follows:
 
 ```
@@ -36,13 +36,13 @@ IR(Δt) = IC(Δt) · √(1/Δt)
 
 Rebalancing faster raises `√BR` but acts on less-confirmed information (lower `IC`) and
 costs more. The optimum is interior: `recommended_cadence` returns the `Δt` that
-maximises this IR proxy, so the cadence is *chosen*, not assumed. The half-life is also
-the holding period [transaction cost](./transaction-costs) should be amortised over —
+maximizes this IR proxy, so the cadence is *chosen*, not assumed. The half-life is also
+the holding period [transaction cost](./transaction-costs) should be amortized over —
 closing that spec's "what holding period?" gap.
 
 ## The optimal current/lagged blend
 
-Given decay `γ` (= δ) and the signal's autocorrelation `ρ`, the IR-maximising weight on
+Given decay `γ` (= δ) and the signal's autocorrelation `ρ`, the IR-maximizing weight on
 the current signal is:
 
 ```

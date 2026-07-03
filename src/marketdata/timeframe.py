@@ -71,7 +71,7 @@ class Timeframe:
     def periods_per_year(self) -> float:
         """How many bars of this timeframe occur in a trading year.
 
-        Used to annualise ratios computed on a *per-bar* return series (a 5-minute
+        Used to annualize ratios computed on a *per-bar* return series (a 5-minute
         bar is **not** 1/252 of a year). Note the backtest equity curve is daily-
         resampled, so its metrics use ``TRADING_DAYS_PER_YEAR`` directly; this is
         for callers that work on bar-frequency returns.

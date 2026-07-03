@@ -1,9 +1,9 @@
 """Continuous alphas: turn a score column into a comparable residual-return forecast.
 
 The central active-management move: convert a raw, arbitrary-scale signal into an
-*alpha* - a forecast of residual return in annualised-return units, the same for
+*alpha* - a forecast of residual return in annualized-return units, the same for
 every name - so views can be pooled, ranked, and sized by a mean-variance
-optimiser. Research-clock only: alphas forecast, they never trade.
+optimizer. Research-clock only: alphas forecast, they never trade.
 
 The refinement runs over a :class:`~src.data.panel.FeaturePanel`: a scorer
 (:mod:`src.alphas.scorers`) fills the ``score`` column, :func:`refine_alpha` adds

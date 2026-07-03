@@ -1,7 +1,7 @@
 """Reconnecting async stream runner.
 
 Live WebSockets drop. Both the market-data bar stream and the trade-update
-stream want the same behaviour: run until the connection errors, then reconnect
+stream want the same behavior: run until the connection errors, then reconnect
 with capped exponential backoff, while letting cancellation (Ctrl-C) through
 cleanly. That loop lives here so both share one implementation.
 """
@@ -36,7 +36,7 @@ async def run_with_reconnect(
             logger.info("%s stream ended normally.", name)
             return
         except asyncio.CancelledError:
-            logger.info("%s stream cancelled; shutting down.", name)
+            logger.info("%s stream canceled; shutting down.", name)
             raise
         except Exception as exc:  # noqa: BLE001 - reconnect on any stream error
             logger.error("%s stream error (%s); reconnecting in %.0fs", name, exc, delay)

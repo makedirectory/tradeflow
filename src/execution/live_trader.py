@@ -69,7 +69,7 @@ class LiveTrader:
         if signal in signals.ENTRY_SIGNALS:
             return self._handle_entry(symbol, signal, price, position)
 
-        logger.warning("Ignoring unrecognised signal %r for %s", signal, symbol)
+        logger.warning("Ignoring unrecognized signal %r for %s", signal, symbol)
         return None
 
     # ------------------------------------------------------------------ #

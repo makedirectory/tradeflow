@@ -1,7 +1,7 @@
 """Timezone helpers.
 
 US equity sessions are reasoned about in America/New_York, so all market-data
-timestamps are normalised to that zone in one place.
+timestamps are normalized to that zone in one place.
 """
 
 import pandas as pd

@@ -5,14 +5,14 @@ title: Portfolio construction
 
 # Portfolio construction
 
-`src/portfolio/optimizer.py` turns alphas and risk into the portfolio that maximises
+`src/portfolio/optimizer.py` turns alphas and risk into the portfolio that maximizes
 the **information ratio you can actually implement**. Where the OR-Tools
-[allocator](./portfolio) maximises a scalar score subject to constraints — and so
+[allocator](./portfolio) maximizes a scalar score subject to constraints — and so
 piles weight onto the highest-scoring names regardless of how correlated they are —
 the `MeanVarianceOptimizer` trades expected residual return against active risk:
 
 ```
-maximise   U(w) = αᵀw − λ_A · wᵀΣw          (long-only absolute: benchmark w_B = 0)
+maximize   U(w) = αᵀw − λ_A · wᵀΣw          (long-only absolute: benchmark w_B = 0)
 subject to Σw = 1,  0 ≤ w ≤ max_weight,  ‖w‖₀ ≤ max_names
 ```
 
@@ -82,7 +82,7 @@ turnover.
 ## Where it runs
 
 `services/analysis.py::construct_portfolio` scans the universe, builds benchmark-neutral
-alphas and Σ as of the date, optimises, and returns the proposed weights plus the
+alphas and Σ as of the date, optimizes, and returns the proposed weights plus the
 report. The CLI (`python main.py allocate --objective utility --target-te 0.04`) and the
 read-only MCP tool `construct_portfolio` route through it. See the
 [usage guide](../usage/portfolio.md).

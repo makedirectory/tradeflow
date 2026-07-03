@@ -1,16 +1,16 @@
 """Portfolio construction as mean-variance utility maximization.
 
-The OR-Tools :class:`~src.portfolio.allocator.PortfolioAllocator` maximises a scalar
+The OR-Tools :class:`~src.portfolio.allocator.PortfolioAllocator` maximizes a scalar
 score subject to constraints - it has no notion of risk, so it piles weight onto the
 highest-scoring names regardless of how correlated they are. Active-management
-construction instead maximises a **risk-adjusted utility**, trading expected residual
+construction instead maximizes a **risk-adjusted utility**, trading expected residual
 return (alpha, Spec 005) against active risk (covariance, Spec 006) - and, once cost is
 in the objective (Spec 016), against the *name-specific* cost of getting there:
 
     U(w) = αᵀw − λ_A · wᵀΣw − Σᵢ cᵢ·|Δwᵢ| − Σᵢ kᵢ·|Δwᵢ|^{3/2}      (Δw = w − w₀)
            └ value ┘  └ active risk ┘  └ linear turnover ┘  └ √-impact (conic) ┘
 
-The output is the portfolio that maximises the *information ratio you can actually
+The output is the portfolio that maximizes the *information ratio you can actually
 implement net of cost*, plus the Fundamental-Law diagnostics that make the cost of
 every constraint visible. This is **research-clock**: it proposes target weights (a
 config a human promotes), it never places an order - so it lives apart from the
@@ -26,7 +26,7 @@ budget dual, and each coordinate has a closed form (a soft-threshold *around w�
 linear cost; a quadratic-in-√ root for the √-impact) - so the whole conic problem is
 solved by the same 1-D budget bisection the cost-free projection already used, with no
 external solver. When ``cᵢ = kᵢ = 0`` it reduces *exactly* to the cost-free projected
-gradient, so Spec 008's behaviour is unchanged.
+gradient, so Spec 008's behavior is unchanged.
 """
 
 from dataclasses import dataclass, field
@@ -66,7 +66,7 @@ class PortfolioResult:
 
 
 class MeanVarianceOptimizer:
-    """Maximise ``αᵀw − λ·wᵀΣw − cost(w − w₀)`` over long-only, box, budgeted weights."""
+    """Maximize ``αᵀw − λ·wᵀΣw − cost(w − w₀)`` over long-only, box, budgeted weights."""
 
     def __init__(
         self,
@@ -103,7 +103,7 @@ class MeanVarianceOptimizer:
         capital: Optional[float] = None,
         holding_period_years: float = 1.0 / 12.0,
     ) -> PortfolioResult:
-        """Construct the utility-maximising portfolio over the alpha/risk universe.
+        """Construct the utility-maximizing portfolio over the alpha/risk universe.
 
         Supply *either* ``target_te`` (the intuitive knob - "run at 4% tracking
         error") *or* ``risk_aversion`` (``λ_A`` directly). ``current_weights`` (``w₀``)
@@ -111,8 +111,8 @@ class MeanVarianceOptimizer:
 
         Pass a ``cost_model`` + ``cost_inputs`` to make the solve **cost-aware** (Spec
         016): the objective gains a name-specific linear turnover penalty and, when
-        ``capital`` is given, the √-impact term. Cost coefficients are *annualised* to
-        the same units as the (annualised) alpha by dividing the one-way rate by
+        ``capital`` is given, the √-impact term. Cost coefficients are *annualized* to
+        the same units as the (annualized) alpha by dividing the one-way rate by
         ``holding_period_years`` - matching Spec 007's alpha-haircut and the ex-post
         cost drag. Without a cost model the solve is cost-blind (Spec 008, unchanged).
 
@@ -144,7 +144,7 @@ class MeanVarianceOptimizer:
         unconstrained = (sigma_inv @ alpha) / (2.0 * lam)
 
         w0 = self._vector(current_weights or {}, symbols)
-        # Per-name cost coefficients (annualised), aligned to `symbols`. Both zero when
+        # Per-name cost coefficients (annualized), aligned to `symbols`. Both zero when
         # cost-blind -> the solve reduces exactly to Spec 008's projected gradient.
         c_lin, k_imp = self._cost_coefficients(
             cost_model, cost_inputs, capital, holding_period_years, symbols
@@ -172,7 +172,7 @@ class MeanVarianceOptimizer:
     # ------------------------------------------------------------------ #
     @staticmethod
     def _cost_coefficients(cost_model, cost_inputs, capital, holding_period_years, symbols):
-        """Build the annualised per-name linear (``cᵢ``) and √-impact (``kᵢ``) vectors.
+        """Build the annualized per-name linear (``cᵢ``) and √-impact (``kᵢ``) vectors.
 
         ``cᵢ = turnover_cost_rate(spreadᵢ) / h`` (one-way commission+half-spread, per
         year); ``kᵢ = impact_coefficient(σᵢ, ADV$ᵢ, capital) / h`` (per year), and
@@ -235,7 +235,7 @@ class MeanVarianceOptimizer:
     def _solve(self, alpha, sigma, lam, active, c_lin, k_imp, w0) -> np.ndarray:
         """Proximal-gradient solve over the active names; full-length weight vector out.
 
-        Minimises ``f(w) + g(w)`` with smooth ``f = −αᵀw + λwᵀΣw`` and nonsmooth convex
+        Minimizes ``f(w) + g(w)`` with smooth ``f = −αᵀw + λwᵀΣw`` and nonsmooth convex
         ``g = Σ cᵢ|wᵢ−w₀ⁱ| + Σ kᵢ|wᵢ−w₀ⁱ|^{3/2} + ι_{box∩budget}``. Each iteration is a
         gradient step on ``f`` followed by the exact proximal operator of ``g`` (see
         :meth:`_prox_project`). Step ``1/L`` with ``L = 2λ·λmax(Σ)`` guarantees
@@ -342,7 +342,7 @@ class MeanVarianceOptimizer:
             "ir_star": ir_star,
             "risk_aversion": float(lam),
             "expected_active_return": expected,
-            "predicted_tracking_error": te,  # realised TE at the (cost-bent) optimum
+            "predicted_tracking_error": te,  # realized TE at the (cost-bent) optimum
             "predicted_ir": expected / te if te > 0 else 0.0,
             "transfer_coefficient": tc,
             "ir_achieved": tc * ir_star,
@@ -357,7 +357,7 @@ class MeanVarianceOptimizer:
             impact_cost = float(np.sum(k_imp * np.abs(dw) ** 1.5))
             rebalance_cost = linear_cost + impact_cost
             # Round-trip haircut on the *held book* (007 §3.2 / the capacity convention):
-            # entering AND exiting each position, amortised over the holding period. This
+            # entering AND exiting each position, amortized over the holding period. This
             # is the conservative headline net figure - the same cost model _capacity
             # prices, so the net return and the capacity number agree.
             book = np.abs(w)

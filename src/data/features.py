@@ -30,7 +30,7 @@ def add_risk_features(
     periods_per_year: float,
     default_residual_vol: float = 0.20,
 ) -> FeaturePanel:
-    """Write ``beta`` and ``residual_vol`` columns (annualised) for each name.
+    """Write ``beta`` and ``residual_vol`` columns (annualized) for each name.
 
     Residual volatility strips the benchmark-explained part of each return; it is
     the ``sigma`` the alpha-scaling identity needs. With no benchmark series
@@ -76,7 +76,7 @@ def add_factor_exposure_features(
     both places. The market factor reuses the panel's ``beta`` column when present
     (same regression, already run by :func:`add_risk_features`). If the build
     qualifies fewer than two names, **no columns are written** — the refinement then
-    falls back to plain-beta neutralisation rather than silently doing nothing.
+    falls back to plain-beta neutralization rather than silently doing nothing.
     Names missing a single factor get a NaN exposure (mean-imputed downstream).
     """
     from src.risk.exposures import build_factor_exposures

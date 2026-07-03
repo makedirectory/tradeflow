@@ -35,7 +35,7 @@ def test_shrinkage_is_positive_definite_when_t_below_n():
     sigma, delta = LedoitWolfCovariance().estimate(r)
     m = RiskMatrix(list(r.columns), sigma * 252)
     assert m.is_positive_definite()
-    np.linalg.inv(m.sigma)  # Σ⁻¹ exists — the whole point for the optimiser
+    np.linalg.inv(m.sigma)  # Σ⁻¹ exists — the whole point for the optimizer
     assert 0.0 <= delta <= 1.0
 
 

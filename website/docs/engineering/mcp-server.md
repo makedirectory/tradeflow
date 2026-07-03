@@ -78,7 +78,7 @@ live is a manual human step outside MCP.
 
 ## Honest-evaluation guardrails for agents
 
-`run_optimization` results are explicitly labelled in-sample and tell the caller to
+`run_optimization` results are explicitly labeled in-sample and tell the caller to
 validate with `run_walk_forward`. `run_walk_forward` returns the promotion-gate
 verdict as its advancement criterion. The glossary spells out the deflated-Sharpe
 / multiple-testing trap. These keep an agent from optimizing and then trusting the

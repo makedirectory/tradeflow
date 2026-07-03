@@ -1,7 +1,7 @@
 """Tests for the continuous-alpha refinement and the scorers that feed it.
 
 Offline and deterministic. Covers the refinement identity, cross-sectional
-z-scoring, neutralisation orthogonality, the strategy/signal scorers, the
+z-scoring, neutralization orthogonality, the strategy/signal scorers, the
 as-of/leakage discipline, and the thin-universe fallback.
 """
 
@@ -74,7 +74,7 @@ def test_zscore_degenerate_universe_is_all_zero():
     assert (refine.zscore(s) == 0.0).all()
 
 
-# --- neutralisation ----------------------------------------------------------
+# --- neutralization ----------------------------------------------------------
 def test_neutralize_removes_mean_and_exposure():
     z = pd.Series({"A": 1.2, "B": -0.7, "C": 0.4, "D": -0.9, "E": 1.0})
     betas = pd.DataFrame({"beta": [1.3, 0.8, 1.1, 0.5, 1.6]}, index=list("ABCDE"))
@@ -140,7 +140,7 @@ def test_refine_market_factor_supersedes_plain_beta():
 
 def test_refine_names_missing_exposures_are_mean_imputed_not_dropped():
     """A name missing a factor value gets the cross-sectional mean (0), staying in
-    the regression — it must not silently lose beta neutralisation (G&K union trap)."""
+    the regression — it must not silently lose beta neutralization (G&K union trap)."""
     raw = {f"S{i}": float(i % 5) - 2 for i in range(12)}
     betas = {f"S{i}": 1.0 + 0.1 * i for i in range(12)}
     panel = _panel(raw, betas=betas)
@@ -160,8 +160,8 @@ def test_refine_names_missing_exposures_are_mean_imputed_not_dropped():
 
 
 def test_refine_unusable_exposures_fall_back_to_beta():
-    """All-NaN or constant exposure columns must degrade to beta neutralisation —
-    never to NO neutralisation (the silent-loss bug: requested market neutrality
+    """All-NaN or constant exposure columns must degrade to beta neutralization —
+    never to NO neutralization (the silent-loss bug: requested market neutrality
     on a short-history universe previously disabled beta too)."""
     raw = {f"S{i}": float(i % 5) - 2 for i in range(12)}
     betas = {f"S{i}": 1.0 + 0.1 * i for i in range(12)}

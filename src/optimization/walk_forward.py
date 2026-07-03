@@ -15,7 +15,7 @@ Key correctness properties:
 * **No fold-boundary leakage.** Each OOS backtest fetches ``warmup`` bars before
   ``oos_start`` so indicators are valid, but only trades entered at/after
   ``oos_start`` are counted. The embargo (>= lookback) separates IS from OOS.
-* **Variable-length folds ⇒ CAGR/annualised metrics**, never raw
+* **Variable-length folds ⇒ CAGR/annualized metrics**, never raw
   total return.
 * **The holdout is sacred** - computed first, subtracted from the fold region,
   never passed to any optimizer call.
@@ -667,7 +667,7 @@ class WalkForwardValidator:
     def leakage_probe(self, client, frames, symbols, best_params, fold, warmup_days) -> Dict[str, Any]:
         """Re-run the OOS with bars shifted forward; identical results => leakage.
 
-        Operationalises the fold-boundary leakage check: if the strategy reads future data, shifting
+        Operationalizes the fold-boundary leakage check: if the strategy reads future data, shifting
         the feed forward leaves results unchanged. A *clean* strategy's results
         change materially, so we **fail** when they don't.
         """

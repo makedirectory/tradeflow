@@ -71,9 +71,9 @@ class Strategy(ABC):
         return cls(config)
 
     def __init__(self, config: Dict[str, Any]):
-        """Initialise with a configuration dict.
+        """Initialize with a configuration dict.
 
-        Recognised keys (strategy-specific keys may be added freely):
+        Recognized keys (strategy-specific keys may be added freely):
             risk_per_trade: fraction of capital risked per trade
             stop_loss / take_profit: fractional distances from entry price
             position_limits: optional {max_positions, max_position_size,

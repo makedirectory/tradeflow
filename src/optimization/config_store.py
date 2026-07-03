@@ -6,7 +6,7 @@ worth saving. This is the one serialization layer both use: plain JSON, with a
 ``provenance`` block recording exactly how the config was produced so a human can
 audit it before promoting it to live trading.
 
-Saving a config **never** alters live behaviour - it writes a file a human
+Saving a config **never** alters live behavior - it writes a file a human
 chooses to use. Configs land in a gitignored ``configs/`` directory by default.
 """
 

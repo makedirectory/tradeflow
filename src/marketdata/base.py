@@ -55,7 +55,7 @@ class MarketDataProvider(ABC):
 
     @abstractmethod
     async def stream_bars(self, symbols: List[str], handler: BarHandler) -> None:
-        """Subscribe to live bars and invoke ``handler`` for each, until cancelled."""
+        """Subscribe to live bars and invoke ``handler`` for each, until canceled."""
 
     def supports_streaming(self) -> bool:
         """Whether this provider can stream live bars. Override if not."""

@@ -288,7 +288,7 @@ tool surface, guardrails, and provider setup.
 
 ## Architecture
 
-The codebase is organised into single-responsibility layers. Nothing above the
+The codebase is organized into single-responsibility layers. Nothing above the
 broker layer imports a vendor SDK. The two clocks never touch — automation only
 ever proposes a config; a human promotes it:
 
