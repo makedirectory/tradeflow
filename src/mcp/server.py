@@ -285,16 +285,19 @@ def build_server(data_client=None):
         benchmark: str = "SPY",
         neutralize: bool = False,
         lookback_days: int = 180,
+        scaling: str = "case1",
     ) -> Dict[str, Any]:
         """Rank `symbols` by continuous alpha (residual-return forecast) as of a date.
 
         Turns each name's view into a comparable, annualized residual-return
-        forecast via alpha = sigma * IC * z (cross-sectional z-score scaled by
-        residual vol and an ASSUMED IC). source: "strategy" uses the strategy's
-        continuous conviction; "signal" uses its BUY/SELL/HOLD as +1/-1/0; "scanner"
-        uses the scanner's continuous strength. Read-only: forecasts only, never
-        reads a forward return, places no orders. The absolute scale is only as good
-        as the assumed IC; relative ranking is not.
+        forecast. `scaling` picks the per-name scaling: "case1" =
+        sigma*IC*z (the default; correct when per-name signal vol is constant across
+        names), "case2" = IC*c_g*z (no per-name vol multiply, for signals whose vol is
+        proportional to the name's vol — most price signals), or "auto" to let a
+        Std_TS-vs-omega regression decide (echoed under `case`). source: "strategy"
+        uses the strategy's continuous conviction; "signal" uses its BUY/SELL/HOLD as
+        +1/-1/0; "scanner" uses the scanner's continuous strength. Read-only. The
+        absolute scale is only as good as the assumed IC; relative ranking is not.
         """
         inputs = {
             "strategy": strategy,
@@ -305,6 +308,7 @@ def build_server(data_client=None):
             "ic": ic,
             "benchmark": benchmark,
             "neutralize": neutralize,
+            "scaling": scaling,
         }
         result = analysis.compute_alphas(
             dc,
@@ -317,6 +321,7 @@ def build_server(data_client=None):
             benchmark=benchmark,
             neutralize=neutralize,
             lookback_days=lookback_days,
+            scaling=scaling,
         )
         return _logged("compute_alphas", inputs, result)
 
@@ -461,7 +466,7 @@ def build_server(data_client=None):
         horizon: int = 5,
         n_trials: int = 1,
     ) -> Dict[str, Any]:
-        """Measure a strategy's IC, breadth, and predicted-vs-realized IR (spec 009).
+        """Measure a strategy's IC, breadth, and predicted-vs-realized IR.
 
         Pairs the alpha known at each rebalance with the subsequent realized residual
         return (strict forward alignment) to measure the information coefficient

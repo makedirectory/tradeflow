@@ -484,6 +484,7 @@ def cmd_alphas(args) -> None:
         neutralize=args.neutralize,
         neutralize_factors=args.neutralize_factors,
         lookback_days=args.lookback_days,
+        scaling=args.scaling,
     )
 
     src_desc = {
@@ -493,6 +494,7 @@ def cmd_alphas(args) -> None:
     }[args.source]
     print(f"\nAlphas from {src_desc} as of {args.as_of:%Y-%m-%d} (IC={args.ic}, benchmark={args.benchmark})")
     _print_neutralization(result)
+    _print_case(result)
     if not result["benchmark_available"]:
         print("  ! benchmark unavailable — residual vol falls back to total volatility")
     if result["low_confidence"]:
@@ -526,6 +528,21 @@ def _print_neutralization(result) -> None:
             f"  ! requested factor(s) NOT neutralized (exposures unavailable — "
             f"insufficient history?): {', '.join(missing)}"
         )
+
+
+def _print_case(result) -> None:
+    """One line on the chosen scaling and the Case test, when it ran."""
+    case = result.get("case")
+    if not case:
+        if result.get("scaling") and result["scaling"] != "case1":
+            print(f"  scaling: {result['scaling']}")
+        return
+    amb = " (ambiguous → base rate)" if case.get("ambiguous") else ""
+    print(
+        f"  scaling: {result['scaling']} — Case {case['case']}{amb} "
+        f"(R²={case['r_squared']:.2f}, t={case['t_stat']:+.1f}, "
+        f"candidate corr {case.get('candidate_correlation', float('nan')):.2f})"
+    )
 
 
 def _print_combined_alphas(result, args) -> None:
@@ -604,6 +621,11 @@ def cmd_info(args) -> None:
     from src.services.analysis import compute_information
 
     _, data_client = build_data_and_broker()
+
+    if getattr(args, "scaling_ab", False):
+        _print_scaling_ab(data_client, args)
+        return
+
     r = compute_information(
         data_client,
         args.strategy,
@@ -641,10 +663,66 @@ def cmd_info(args) -> None:
         f"  attribution: factor {r['factor_return']:+.4f} / specific {r['specific_return']:+.4f} "
         f"per rebalance (factor tilts vs name selection)"
     )
+    # IC-uncertainty level shrink: how much of the measured IC level survives its own
+    # estimation error, with an overlap-honest effective T.
+    if "level_shrink_factor" in r:
+        print(
+            f"  level shrink: keep {r['level_shrink_factor']:.0%} of the naive level "
+            f"(T_eff {r['effective_t']:.1f}, IC {r['recommended_ic']:+.4f})"
+        )
+    _print_bucket_diagnostic(r.get("risk_bucket_diagnostic"))
     verdict = "distinguishable from luck" if abs(r["ic_tstat"]) >= 2 else "NOT distinguishable from luck"
     print(f"\n  Verdict: skill is {verdict} (IC t-stat {r['ic_tstat']:+.2f}).")
     if abs(r["ic_tstat"]) >= 2:
         print(f"  Recommended IC for alpha scaling (a human applies it): {r['recommended_ic']:.4f}")
+        print(
+            f"  After the IC-uncertainty level shrink, deploy IC ≈ "
+            f"{r['recommended_ic'] * r.get('level_shrink_factor', 1.0):.4f}"
+        )
+
+
+def _print_bucket_diagnostic(diag) -> None:
+    """The equal-risk-contribution check, when it engaged."""
+    if not diag or not diag.get("engaged"):
+        if diag and diag.get("reason"):
+            print(f"  risk buckets: suppressed — {diag['reason']}")
+        return
+    marker = "⚠ tilt" if diag["tilt_detected"] else "ok"
+    print(
+        f"  risk buckets ({diag['n_buckets']}, by residual vol): {marker} — "
+        f"variance-share gradient {diag['variance_share_gradient']:+.2f} "
+        f"vs band ±{diag['sampling_band']:.2f}"
+    )
+    if diag["tilt_detected"]:
+        print(f"    → {diag['verdict']}")
+
+
+def _print_scaling_ab(data_client, args) -> None:
+    """Walk-forward A/B of the two scalings (the `--scaling-ab` research mode)."""
+    from src.services.analysis import run_scaling_ab
+
+    r = run_scaling_ab(
+        data_client,
+        args.strategy,
+        args.symbols,
+        args.start,
+        args.end,
+        source=args.source,
+        scanner=args.scanner,
+        benchmark=args.benchmark,
+        neutralize_factors=args.neutralize_factors,
+        horizon=args.horizon,
+    )
+    if not r.get("periods"):
+        print(r.get("note", "No scaling A/B produced."))
+        return
+    print(f"\nScaling A/B: '{args.strategy}' {args.start:%Y-%m-%d}..{args.end:%Y-%m-%d}")
+    print(f"  measured over {r['periods']} rebalances (horizon {r['horizon_bars']} bars)")
+    print(f"  Case 1 (σ·IC·z) realized IR: {r['case1_realized_ir']:+.2f}")
+    print(f"  Case 2 (IC·c_g·z) realized IR: {r['case2_realized_ir']:+.2f}")
+    agree = "agree" if r["agree"] else "DISAGREE"
+    print(f"  regression picks {r['regression_pick']}, A/B picks {r['ab_pick']} — {agree}")
+    print("  (compare the IR gap to its standard-error band before acting — a small gap is noise)")
 
 
 def cmd_horizon(args) -> None:
@@ -1097,6 +1175,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_neutralize_factors_flag(alphas)
     alphas.add_argument("--lookback-days", dest="lookback_days", type=int, default=180)
+    alphas.add_argument(
+        "--scaling",
+        choices=["case1", "case2", "auto"],
+        default="case1",
+        help="Per-name scaling: 'case1' = σ·IC·z (default); 'case2' = IC·c_g·z "
+        "(no per-name vol multiply); 'auto' = let a Std_TS-vs-ω regression decide",
+    )
     alphas.set_defaults(func=cmd_alphas)
 
     info = subparsers.add_parser(
@@ -1119,6 +1204,13 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=1,
         help="Configs tried (for multiple-testing inflation)",
+    )
+    info.add_argument(
+        "--scaling-ab",
+        dest="scaling_ab",
+        action="store_true",
+        help="Research mode: walk-forward the realized IR under Case-1 vs "
+        "Case-2 scaling and compare against the regression's pick",
     )
     _add_neutralize_factors_flag(info, note="; measure the alpha you deploy")
     info.set_defaults(func=cmd_info)

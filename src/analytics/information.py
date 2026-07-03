@@ -12,7 +12,7 @@ layer. Research-clock only.
 """
 
 import math
-from typing import Dict, Sequence
+from typing import Dict, List, Sequence
 
 import numpy as np
 import pandas as pd
@@ -90,3 +90,108 @@ def multiple_testing_inflation(n_trials: int) -> float:
     With 20 informationless strategies this is ~0.64, not 0.05.
     """
     return float(1.0 - 0.95 ** max(n_trials, 0))
+
+
+def risk_bucket_diagnostic(
+    active_weights: pd.Series,
+    sigma: np.ndarray,
+    symbols: Sequence[str],
+    residual_vol: pd.Series,
+    *,
+    min_per_bucket: int = 8,
+) -> Dict:
+    """Equal-risk-contribution check by residual-vol bucket.
+
+    Under **correct** alpha scaling every name contributes ~equally to active variance
+    (``E{z²}=1``), so a residual-vol bucket's share of ``w_aᵀΣw_a`` should track its
+    share of *names*, not its vol. A monotone gradient across vol buckets is the
+    fingerprint of mis-scaled alphas — most often a Case mis-choice (see
+    :func:`src.alphas.refine.case_test`): scaling a Case-2 signal as Case 1 multiplies
+    in ``ω_n`` a second time and tilts variance into the high-vol bucket.
+
+    Buckets names by residual-vol quantile and reports each bucket's share of active
+    variance and of ``Σ|w_a|``, the expected (name-fraction) share, and the per-bucket
+    sampling error ``√(2/n)`` of mean ``z²``. Degrades quintiles → terciles → suppressed
+    as the universe thins (tiny buckets are noise, not signal). ``active_weights`` are
+    the book's active weights ``w_a = w − w_B``; ``sigma`` the annualized Σ over
+    ``symbols`` in that order.
+    """
+    aligned = (
+        pd.concat([active_weights.rename("w"), residual_vol.rename("vol")], axis=1)
+        .reindex(list(symbols))
+        .dropna()
+    )
+    n = len(aligned)
+
+    # Bucket count: a bucket mean of z² has sampling error ≈ √(2/n_bucket); below
+    # ~min_per_bucket names per bucket the gradient is noise, so widen or suppress.
+    if n >= 5 * min_per_bucket:
+        n_buckets = 5
+    elif n >= 3 * max(min_per_bucket - 3, 4):
+        n_buckets = 3
+    else:
+        return {
+            "engaged": False,
+            "n_names": int(n),
+            "reason": f"universe too thin for reliable buckets (n={n}); "
+            f"need ≥ {3 * max(min_per_bucket - 3, 4)} names for terciles",
+        }
+
+    idx = list(aligned.index)
+    w = aligned["w"].to_numpy()
+    vols = aligned["vol"].to_numpy()
+    pos = {s: i for i, s in enumerate(symbols)}
+    order = [pos[s] for s in idx]
+    sub = np.asarray(sigma, dtype=float)[np.ix_(order, order)]
+
+    # Per-name contribution to active variance: w_i·(Σw)_i sums to w_aᵀΣw_a exactly.
+    contrib = w * (sub @ w)
+    total_var = float(contrib.sum())
+    total_abs_w = float(np.abs(w).sum())
+
+    order_by_vol = np.argsort(vols, kind="stable")
+    buckets = np.array_split(order_by_vol, n_buckets)
+    rows: List[Dict] = []
+    var_shares: List[float] = []
+    for b, members in enumerate(buckets):
+        nb = len(members)
+        var_share = float(contrib[members].sum() / total_var) if total_var != 0 else 0.0
+        rows.append(
+            {
+                "bucket": b + 1,  # 1 = lowest residual vol
+                "n_names": int(nb),
+                "vol_low": float(vols[members].min()),
+                "vol_high": float(vols[members].max()),
+                "variance_share": var_share,
+                "name_fraction": float(nb / n),
+                "abs_weight_share": float(np.abs(w[members]).sum() / total_abs_w) if total_abs_w > 0 else 0.0,
+                "sampling_error": float(math.sqrt(2.0 / nb)) if nb > 0 else float("inf"),
+            }
+        )
+        var_shares.append(var_share)
+
+    # Monotone gradient beyond the sampling band ⇒ a vol tilt (mis-scaling).
+    diffs = np.diff(var_shares)
+    monotone = bool(np.all(diffs > 0) or np.all(diffs < 0))
+    gradient = float(var_shares[-1] - var_shares[0])
+    band = float(math.sqrt(2.0 / (n / n_buckets)) / n_buckets)
+    tilt = bool(monotone and abs(gradient) > band)
+    direction = "high-vol" if gradient > 0 else "low-vol"
+
+    return {
+        "engaged": True,
+        "n_names": int(n),
+        "n_buckets": n_buckets,
+        "buckets": rows,
+        "expected_share": float(1.0 / n_buckets),
+        "variance_share_gradient": gradient,
+        "monotone": monotone,
+        "sampling_band": band,
+        "tilt_detected": tilt,
+        "verdict": (
+            f"vol-bucket tilt toward {direction} names (gradient {gradient:+.2f} vs band "
+            f"±{band:.2f}) — likely a Case mis-choice; check the per-signal case_test"
+            if tilt
+            else "no material vol-bucket tilt (contributions ~equal across buckets)"
+        ),
+    }
