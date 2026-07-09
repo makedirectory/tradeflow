@@ -15,6 +15,9 @@ on history or **trades live** (paper by default) — with optional **parameter
 optimization**, **walk-forward validation**, and **constraint-solver portfolio
 allocation**.
 
+Full docs — usage guide and engineering wiki — live at
+**[tradeflow.mk-dir.com](https://tradeflow.mk-dir.com/)**.
+
 > Making money in markets is genuinely hard. This project won't change that — but
 > it will at least stop you from fooling yourself quite so quickly, which is most
 > of the battle.
@@ -328,9 +331,6 @@ Data flows the same way in both modes:
 marketdata → strategy.process_data → strategy.generate_signals
            → engine (simulate fills | route to execution) → analytics
 ```
-
-Full docs — usage guide and engineering wiki — live at
-**[tradeflow.mk-dir.com](https://tradeflow.mk-dir.com/)**.
 
 To work on them locally:
 
