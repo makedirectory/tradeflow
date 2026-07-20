@@ -9,7 +9,7 @@ END      ?= 2024-04-01
 CAPITAL ?= 100000
 PY       = uv run python main.py
 
-.PHONY: help demo install install-optimize backtest backtest-no-scan scan live \
+.PHONY: help demo demo-agent demo-agent-live install install-optimize backtest backtest-no-scan scan live \
         allocate allocate-utility alphas risk info horizon optimize optimize-bayesian cancel-orders close-positions \
         test docs docs-build docker-build docker-run clean
 
@@ -20,6 +20,12 @@ help:  ## Show available commands
 # --- try it now (no setup) --------------------------------------------------
 demo:  ## Run the whole pipeline on synthetic data — no API keys, no network
 	$(PY) demo
+
+demo-agent:  ## Narrate an AI research session on live data (needs Alpaca keys; no LLM key)
+	$(PY) demo-agent
+
+demo-agent-live:  ## Same, but with a live Claude proposer (needs ANTHROPIC_API_KEY + 'ai' extra)
+	uv run --extra ai python main.py demo-agent --provider anthropic
 
 demo-artifact:  ## Regenerate the README demo image (equity curve + verdict)
 	uv run --extra viz python main.py demo --chart website/static/img/demo.png

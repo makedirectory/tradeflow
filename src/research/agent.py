@@ -28,7 +28,8 @@ Guardrails enforced here in code (not by prompt):
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Type
+from statistics import median
+from typing import Any, Callable, Dict, List, Optional, Type
 
 from src.engine.backtest import BacktestError
 from src.marketdata.client import MarketDataClient
@@ -112,6 +113,7 @@ class ResearchAgent:
         *,
         seed: int = 42,
         journal_path: str = DEFAULT_JOURNAL,
+        observer: Optional[Callable[[str, Dict[str, Any]], None]] = None,
     ):
         self.strategy_name = strategy_name
         self.data_client = data_client
@@ -119,6 +121,9 @@ class ResearchAgent:
         self.config = config
         self.seed = seed
         self.journal_path = journal_path
+        #: Optional live callback, invoked with every journaled ``(event, payload)``.
+        #: Purely observational - it cannot influence the loop or its decisions.
+        self.observer = observer
         self.session_id = new_run_id()
 
     def run(self, symbols: List[str], start: datetime, end: datetime) -> ResearchResult:
@@ -188,6 +193,11 @@ class ResearchAgent:
 
             result, cls, full_params = verdict
             n_trials_cumulative = result.n_trials_total
+            # In-sample median is recorded for contrast only - selection is OOS-only
+            # (guardrail 1). It is what makes the IS -> OOS collapse legible.
+            is_sharpe = float(
+                median([fr.is_metrics.get("sharpe_ratio", 0.0) for fr in result.folds] or [0.0])
+            )
             oos_sharpe = result.median_oos("sharpe_ratio")
             oos_dd = result.oos_aggregate.get("max_drawdown", 0.0)
             gate_report = result.gate_report(cfg.gates)
@@ -202,9 +212,12 @@ class ResearchAgent:
                     "kind": proposal.kind,
                     "hypothesis": proposal.hypothesis,
                     "params": full_params,
+                    "is_sharpe": is_sharpe,
                     "oos_sharpe": oos_sharpe,
+                    "efficiency": result.median_efficiency(),
                     "oos_max_drawdown": oos_dd,
                     "oos_aggregate": result.oos_aggregate,
+                    "gate_report": gate_report,
                     "promotable": promotable,
                     "advanced": advanced,
                     "n_trials_cumulative": n_trials_cumulative,
@@ -426,3 +439,9 @@ class ResearchAgent:
 
     def _journal(self, event: str, payload: Dict[str, Any]) -> None:
         audit_log(f"research:{event}", payload, path=self.journal_path)
+        if self.observer is not None:
+            # An observer must never be able to break the research loop.
+            try:
+                self.observer(event, payload)
+            except Exception:  # noqa: BLE001 - narration is not load-bearing
+                logger.debug("research observer raised; continuing", exc_info=True)

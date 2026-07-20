@@ -171,11 +171,69 @@ once it's optimized in-sample and scored **out-of-sample** the edge evaporates
 [walk-forward validation](https://tradeflow.mk-dir.com/docs/engineering/walk-forward)
 doing its job.
 
+### Watching the agent get told "no"
+
+`make demo` makes the point on synthetic data, where the refusal is easy — there
+was never any edge to find. The harder and more useful question is what happens
+when a proposal *does* look good. `make demo-agent` runs one full research
+session on **real market data** and narrates every guardrail as it fires:
+
+```text
+$ make demo-agent
+
+  ── Round 1 ────────────────────────────────────────────────────
+     Hypothesis  Caching the processed universe to local disk lets the
+                 strategy reuse warm state across sessions...
+     Sandbox     REJECTED — generated code may not import 'os'
+                 ↳ no bars loaded, no backtest run, no trial consumed
+
+  ── Round 2 ────────────────────────────────────────────────────
+     Sandbox     REJECTED — MultiFactorConfluenceStrategy has 8 searchable params (cap 5)
+
+  ── Round 4 ────────────────────────────────────────────────────
+     Proposal    [code] new strategy implementation
+     Sandbox     ADMITTED — imports clean, contract valid, params within cap
+     Walk-forward  in-sample Sharpe   2.04   →   out-of-sample   1.39   (efficiency 0.76)
+     Multiple-testing correction applied over 37 trials
+     Promotion gates:
+       [PASS] oos_sharpe                     1.39   threshold 1.00
+       [PASS] oos_profit_factor              1.92   threshold 1.30
+       [PASS] walk_forward_efficiency        0.76   threshold 0.40
+       [FAIL] oos_drawdown_vs_is             0.18   threshold 0.09
+       [FAIL] min_oos_trades                 52.00  threshold 100.00
+       [PASS] deflated_sharpe                0.58   threshold 0.50
+     Verdict     NOT promotable — discarded
+```
+
+That last round is the one worth dwelling on. The strategy is *not* noise: it
+survives out-of-sample with a Sharpe of 1.39 and clears four of six gates. It is
+refused anyway, because 52 out-of-sample trades is too small a sample to
+distinguish skill from luck and its drawdown degraded relative to in-sample. A
+research engine that only rejects obvious garbage is not doing anything for you;
+the interesting behavior is rejecting things that look good.
+
+By default the proposals are **replayed** from a fixed set, so the run is
+deterministic and needs no LLM API key — only Alpaca market-data keys. Point it
+at a live model to watch it improvise instead:
+
+```bash
+make demo-agent                            # replayed proposals, deterministic
+make demo-agent-live                       # live Claude proposer (needs ANTHROPIC_API_KEY)
+
+uv run python main.py demo-agent --symbols NVDA,AAPL,META --provider ollama
+```
+
+Real market data means real variance: the exact Sharpes and which gates fail will
+differ with the universe and date range you point it at. The shape — proposals
+rejected before evaluation, survivors gated on out-of-sample evidence, nothing
+promoted automatically — is what stays constant.
+
 ## What it does
 
 | Command | What happens |
 |---------|--------------|
 | `demo` | Run the whole pipeline on **synthetic data** — no keys, no network — ending in an honest promotion verdict |
+| `demo-agent` | Narrate one AI research session on **real market data**: proposal → sandbox → walk-forward → gates → holdout |
 | `scan` | Run the universe scanner and print flagged symbols |
 | `backtest` | Scan → run a strategy over history → performance report |
 | `live` | Scan → warm up indicators → stream bars → place paper/live orders |

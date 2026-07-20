@@ -353,3 +353,23 @@ def test_llm_proposer_still_parses_tune_proposals_with_code_gen_enabled():
     assert proposal.params == {"period": 5}
 
 
+def test_observer_sees_events_and_cannot_break_the_loop(tmp_path):
+    """The narration hook is observational: it receives events and its errors are contained."""
+    seen = []
+
+    def boom(event, payload):
+        seen.append(event)
+        raise RuntimeError("observer exploded")
+
+    agent = ResearchAgent(
+        "periodic",
+        MarketDataClient(FakeMarketData(SYMBOLS, n=600, freq="1D")),
+        FixedProposer([_tune(3)]),
+        ResearchConfig(goal="g", n_folds=3, max_trials=1, gates=RELAXED_GATES),
+        seed=42,
+        journal_path=str(tmp_path / "journal.jsonl"),
+        observer=boom,
+    )
+    result = agent.run(SYMBOLS, START, END)  # must not raise
+    assert "session_start" in seen and "session_end" in seen
+    assert result.rounds == 1

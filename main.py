@@ -909,6 +909,150 @@ def cmd_demo(args) -> None:
                 print(f"   Chart skipped: {exc}\n")
 
 
+def cmd_demo_agent(args) -> None:
+    """Narrate one research session end-to-end on live Alpaca data.
+
+    The arc the guardrails produce: an AI proposes a strategy, the sandbox admits
+    or rejects it, survivors are validated out-of-sample by walk-forward, the
+    promotion gates deliver a verdict, and whatever is left is scored once on a
+    holdout reserved before the search began. Nothing here can place an order.
+
+    ``--provider replay`` (default) replays a curated proposal set, so the demo is
+    deterministic and needs no LLM key. Any other provider drives a live model
+    through the identical loop.
+    """
+    from src.research.agent import ResearchAgent, ResearchConfig
+    from src.research.demo_proposals import DEMO_PROPOSALS
+    from src.research.proposer import FixedProposer, build_proposer
+    from src.services.data import build_data_client
+
+    rule = "=" * 74
+    print(f"\n{rule}")
+    print("  TradeFlow demo-agent — AI proposal → sandbox → walk-forward → verdict")
+    print("  Live Alpaca market data · research clock only · no order path exists")
+    print(rule)
+
+    end = args.end or (datetime.now() - timedelta(days=2))
+    start = args.start or (end - timedelta(days=args.lookback_days))
+
+    if args.provider == "replay":
+        proposer = FixedProposer(DEMO_PROPOSALS)
+        source = f"replayed proposal set ({len(DEMO_PROPOSALS)} proposals, deterministic)"
+    else:
+        proposer = build_proposer(args.provider, args.model, allow_code_gen=True)
+        source = f"live model — {args.provider}/{proposer.client.model}"
+
+    data_client = build_data_client()
+    symbols = args.symbols
+
+    state = {"round": 0}
+
+    def narrate(event: str, payload: dict) -> None:
+        if event == "session_start":
+            research = payload["research_window"]
+            holdout = payload["holdout_window"]
+            print(f"\n  Proposals from : {source}")
+            print(f"  Universe       : {', '.join(symbols)}  (bars fetched live from Alpaca)")
+            print(f"  Base strategy  : {payload['strategy']}")
+            print(f"  Goal           : {payload['goal']}")
+            print(f"\n  Research window: {research['start'][:10]} → {research['end'][:10]}")
+            print(f"  Sacred holdout : {holdout['start'][:10]} → {holdout['end'][:10]}")
+            print("                   reserved now, never searched, scored once at the end")
+            return
+
+        if event == "reject":
+            state["round"] += 1
+            print(f"\n  ── Round {state['round']} " + "─" * 52)
+            hypothesis = payload.get("hypothesis") or "(no hypothesis supplied)"
+            print(f"     Hypothesis  {_wrap_field(hypothesis)}")
+            print(f"     Sandbox     REJECTED — {payload['reason']}")
+            print("                 ↳ no bars loaded, no backtest run, no trial consumed")
+            return
+
+        if event == "trial":
+            state["round"] += 1
+            print(f"\n  ── Round {state['round']} " + "─" * 52)
+            kind = "new strategy implementation" if payload["kind"] == "code" else "parameter config"
+            print(f"     Proposal    [{payload['kind']}] {kind}")
+            print(f"     Hypothesis  {_wrap_field(payload['hypothesis'])}")
+            if payload["kind"] == "code":
+                print("     Sandbox     ADMITTED — imports clean, contract valid, params within cap")
+            print(
+                f"     Walk-forward  in-sample Sharpe {payload['is_sharpe']:>6.2f}"
+                f"   →   out-of-sample {payload['oos_sharpe']:>6.2f}"
+                f"   (efficiency {payload['efficiency']:.2f})"
+            )
+            print(f"     Multiple-testing correction applied over {payload['n_trials_cumulative']} trials")
+            print("     Promotion gates:")
+            for name, check in payload["gate_report"]["checks"].items():
+                mark = "PASS" if check["passed"] else "FAIL"
+                print(f"       [{mark}] {name:<24} {check['value']:>10.2f}   threshold {check['threshold']:.2f}")
+            if payload["advanced"]:
+                print("     Verdict     PROMOTABLE — enters the shortlist")
+            elif payload["promotable"]:
+                print("     Verdict     passes gates but does not beat the incumbent — discarded")
+            else:
+                print("     Verdict     NOT promotable — discarded")
+            return
+
+        if event == "holdout_score":
+            metrics = payload["holdout_metrics"] or {}
+            print(f"\n  Holdout score (first and only look) — candidate {payload['candidate']}")
+            print(f"     Sharpe {metrics.get('sharpe_ratio', 0.0):.2f}   config → {payload['saved']}")
+
+    cfg = ResearchConfig(
+        goal=args.goal,
+        n_folds=args.folds,
+        holdout_days=args.holdout_days,
+        max_evals=args.max_evals,
+        max_trials=len(DEMO_PROPOSALS) if args.provider == "replay" else args.max_trials,
+        # The replay is built so the early rounds are *meant* to be rejected; the
+        # default dryness stop would end the session before the last proposal ran.
+        max_dry_rounds=len(DEMO_PROPOSALS) if args.provider == "replay" else args.max_dry_rounds,
+        capital=args.capital,
+        allow_code_gen=True,
+    )
+    agent = ResearchAgent(
+        args.strategy, data_client, proposer, cfg, seed=args.seed, observer=narrate
+    )
+    result = agent.run(symbols, start, end)
+
+    print(f"\n{rule}")
+    print(f"  Session {agent.session_id} — stopped: {result.stopped_reason}")
+    print(f"  {result.rounds} rounds, {result.n_trials_total} cumulative trials")
+    print(rule)
+
+    if not result.shortlist:
+        print("\n  Shortlist: EMPTY — nothing cleared the gates.")
+        print("\n  This is the intended outcome, not a failed run. Every proposal was either")
+        print("  rejected before evaluation or failed out-of-sample. An agent that cannot")
+        print("  produce a losing strategy quietly is an agent you cannot trust with a")
+        print("  winning one.")
+    else:
+        print(f"\n  Shortlist: {len(result.shortlist)} candidate(s) for HUMAN review")
+        for c in result.shortlist:
+            oos = c.oos_metrics.get("sharpe_ratio", 0.0)
+            hold = (c.holdout_metrics or {}).get("sharpe_ratio", 0.0)
+            print(f"    [{c.id}] OOS Sharpe {oos:.2f} | holdout Sharpe {hold:.2f}")
+            print(f"          {c.saved_path}")
+        print("\n  These are provenance-stamped config files on disk. Nothing is live.")
+
+    print("\n  What did NOT happen — structurally, not by policy:")
+    print("    · No order was placed. This command builds a data client only.")
+    print("    · PAPER_TRADE was never read, let alone flipped.")
+    print("    · No model output reached the trade clock. Promotion is a human step.")
+    print(f"\n  Full audit trail (every proposal, rejection, and gate): {result.journal_path}\n")
+
+
+def _wrap_field(text: str, width: int = 58, indent: int = 17) -> str:
+    """Wrap a long narration field under a fixed label column."""
+    import textwrap
+
+    lines = textwrap.wrap(text.strip(), width=width) or [""]
+    pad = " " * indent
+    return f"\n{pad}".join(lines)
+
+
 # ---------------------------------------------------------------------------- #
 # Argument parsing
 # ---------------------------------------------------------------------------- #
@@ -1292,6 +1436,38 @@ def build_parser() -> argparse.ArgumentParser:
     )
     res.add_argument("--seed", type=int, default=42)
     res.set_defaults(func=cmd_research)
+
+    dagent = subparsers.add_parser(
+        "demo-agent",
+        help="Narrate an AI research session on live data: proposal -> sandbox -> walk-forward -> verdict",
+    )
+    dagent.add_argument("--symbols", type=_symbols, default=["NVDA", "AAPL", "META", "AMD", "MSFT"])
+    dagent.add_argument("--strategy", default="ma_crossover")
+    dagent.add_argument("--start", type=_date, default=None)
+    dagent.add_argument("--end", type=_date, default=None)
+    dagent.add_argument(
+        "--lookback-days",
+        dest="lookback_days",
+        type=int,
+        default=1095,
+        help="History to research over when --start is omitted (default: 3 years)",
+    )
+    dagent.add_argument("--goal", default="Improve out-of-sample Sharpe without raising max drawdown")
+    dagent.add_argument("--folds", type=int, default=4)
+    dagent.add_argument("--holdout-days", dest="holdout_days", type=int, default=90)
+    dagent.add_argument("--max-evals", dest="max_evals", type=int, default=25)
+    dagent.add_argument("--max-trials", dest="max_trials", type=int, default=6)
+    dagent.add_argument("--max-dry-rounds", dest="max_dry_rounds", type=int, default=3)
+    dagent.add_argument("--capital", type=float, default=100_000.0)
+    dagent.add_argument(
+        "--provider",
+        choices=["replay", "anthropic", "openai", "ollama"],
+        default="replay",
+        help="'replay' (default) needs no API key and is deterministic; anything else drives a live model",
+    )
+    dagent.add_argument("--model", default=None, help="Model id (ignored when --provider replay)")
+    dagent.add_argument("--seed", type=int, default=42)
+    dagent.set_defaults(func=cmd_demo_agent)
 
     demo = subparsers.add_parser(
         "demo", help="Run the full pipeline on synthetic data (no API keys, no network)"
