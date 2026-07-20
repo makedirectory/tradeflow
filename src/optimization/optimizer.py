@@ -164,8 +164,12 @@ class ParameterOptimizer:
             return OptimizationResult({}, float("-inf"), objective, df)
         df = df.sort_values(objective, ascending=False).reset_index(drop=True)
         best = df.iloc[0]
-        best_params = {k: best[k] for k in self.space.searchable if k in df.columns}
-        logger.info("Best %s = %.4f with %s", objective, best[objective], best_params)
+        # Layer the searched values over the full defaults: callers construct a
+        # strategy straight from best_params, so dropping *pinned* params (declared
+        # with a default but no min/max/step) would yield an unconstructable config.
+        searched = {k: best[k] for k in self.space.searchable if k in df.columns}
+        best_params = {**self.space.defaults, **searched}
+        logger.info("Best %s = %.4f with %s", objective, best[objective], searched)
         return OptimizationResult(best_params, float(best[objective]), objective, df)
 
     @staticmethod

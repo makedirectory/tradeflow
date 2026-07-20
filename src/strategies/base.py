@@ -114,7 +114,9 @@ class Strategy(ABC):
             except (ValueError, TypeError):
                 raise ValueError(f"Parameter '{param}' value {value!r} cannot be converted to {param_type}")
 
-            if not (spec["min"] <= value <= spec["max"]):
+            # A spec without min/max is a *pinned* parameter: typed and required, but
+            # not searched (see ParameterSpace.searchable). There is no range to check.
+            if "min" in spec and "max" in spec and not (spec["min"] <= value <= spec["max"]):
                 raise ValueError(
                     f"Parameter '{param}' value {value} is outside valid range [{spec['min']}, {spec['max']}]"
                 )
