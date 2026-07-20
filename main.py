@@ -425,7 +425,7 @@ def cmd_research(args) -> None:
         shortlist_size=args.shortlist_size,
         allow_code_gen=args.allow_code_gen,
     )
-    proposer = build_proposer(args.provider, args.model)
+    proposer = build_proposer(args.provider, args.model, allow_code_gen=args.allow_code_gen)
     agent = ResearchAgent(args.strategy, data_client, proposer, cfg, seed=args.seed)
     result = agent.run(universe, args.start, args.end)
 

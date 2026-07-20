@@ -314,3 +314,42 @@ def test_sandbox_rejects_strategy_missing_execution_config():
         sandbox.load_strategy_from_code(missing)
 
 
+def test_llm_proposer_emits_code_proposals_when_enabled():
+    """With code-gen on, a ``kind: "code"`` response becomes a code proposal."""
+    from src.research.llm import LLMResponse
+    from src.research.proposer import LLMProposer
+
+    class CodeClient:
+        model = "stub"
+
+        def complete(self, system, user, max_tokens=1024):
+            assert "PARAM_RANGES" in system  # the contract is stated to the model
+            return LLMResponse('{"kind": "code", "hypothesis": "h", "code": "src"}', tokens=7)
+
+    ctx = ProposalContext(
+        goal="g", strategy="periodic", param_ranges={}, history=[], incumbent=None, round_index=0
+    )
+    proposal = LLMProposer(CodeClient(), allow_code_gen=True).propose(ctx)
+    assert proposal.kind == "code"
+    assert proposal.code == "src"
+    assert proposal.tokens_used == 7
+
+
+def test_llm_proposer_still_parses_tune_proposals_with_code_gen_enabled():
+    from src.research.llm import LLMResponse
+    from src.research.proposer import LLMProposer
+
+    class TuneClient:
+        model = "stub"
+
+        def complete(self, system, user, max_tokens=1024):
+            return LLMResponse('{"kind": "tune", "hypothesis": "h", "params": {"period": 5}}', tokens=2)
+
+    ctx = ProposalContext(
+        goal="g", strategy="periodic", param_ranges={}, history=[], incumbent=None, round_index=0
+    )
+    proposal = LLMProposer(TuneClient(), allow_code_gen=True).propose(ctx)
+    assert proposal.kind == "tune"
+    assert proposal.params == {"period": 5}
+
+
