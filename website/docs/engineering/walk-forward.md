@@ -88,19 +88,18 @@ dangerous direction — the correction gets *weaker* the harder you search:
 Treat a reported deflated Sharpe as a **lower bound on how much deflation is
 warranted**, and remember that configs tried in earlier sessions are invisible to it.
 
-Two further gaps worth knowing while reading any DSR number here:
+What *is* recorded: the research agent journals every trial, and CLI `backtest`
+(one trial) and `optimize` (one per evaluated config) append to the same
+`logs/research_journal.jsonl` — so a search of 50 configs lands as 50 rows, which
+is what a campaign count needs. Pass `--no-journal` to keep a throwaway run out of
+the total. One gap remains: `var_of_trial_sr`, the DSR's other input, is still
+estimated per run rather than from the real distribution of tried configs.
 
-- Only the **research agent** journals its trials. Ad-hoc `backtest` and `optimize`
-  runs from the CLI are not recorded anywhere, so even a future campaign-level
-  count would be a lower bound until those paths journal too.
-- `var_of_trial_sr`, the DSR's other input, is estimated per run rather than from
-  the real distribution of tried configs.
-
-Closing this needs a queryable index over the journal — the journal already records
-every trial, nothing reads it back. That is planned as a trial store: record first,
-then a separate evidence-backed decision about wiring campaign counts into the
-gates, since doing so makes every gate strictly harder and would reclassify configs
-already saved as promotable.
+The journal now records the trials; **nothing reads them back yet**. Closing the
+loop needs a queryable index over it — planned as a trial store: record first
+(done), then a separate, evidence-backed decision about wiring campaign counts into
+the gates, since doing so makes every gate strictly harder and would reclassify
+configs already saved as promotable.
 
 ### Why the thresholds are what they are
 

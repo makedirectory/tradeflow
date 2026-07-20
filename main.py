@@ -102,6 +102,23 @@ def cmd_backtest(args) -> None:
     result = BacktestEngine(strategy, data_client, sizer=sizer, cost_model=cost_model).run(
         universe, args.start, args.end, args.capital
     )
+
+    if not args.no_journal:
+        from src.services.audit import journal_trial
+
+        # One backtest is one evaluated config = one trial. Record only the tunable
+        # params (config also carries timeframe/limits/lookback, which are not knobs).
+        tunable = {k: strategy.config[k] for k in strategy.PARAM_RANGES if k in strategy.config}
+        journal_trial(
+            "backtest",
+            strategy=args.strategy,
+            symbols=universe,
+            start=args.start,
+            end=args.end,
+            params=tunable,
+            metrics=result.metrics,
+        )
+
     log_backtest_report(result.metrics, result.initial_capital, result.final_capital)
     if not args.gross and result.total_cost:
         print(
@@ -244,6 +261,28 @@ def cmd_optimize(args) -> None:
         )
     else:  # bayesian
         result = optimizer.optimize_bayesian(universe, args.start, args.end, args.objective)
+
+    if not args.no_journal and not result.results.empty:
+        from src.services.audit import journal_trial
+
+        # Each evaluated config is a distinct trial — a 50-point search is 50 trials,
+        # not one. Recording them per-config is what makes a campaign-level Deflated
+        # Sharpe honest (spec 026); the search columns are the params, the rest metrics.
+        searchable = optimizer.space.searchable
+        defaults = optimizer.space.defaults
+        for row in result.results.to_dict("records"):
+            searched = {k: row[k] for k in searchable if k in row}
+            metrics = {k: v for k, v in row.items() if k not in searchable}
+            journal_trial(
+                "optimize",
+                strategy=args.strategy,
+                symbols=universe,
+                start=args.start,
+                end=args.end,
+                params={**defaults, **searched},
+                metrics=metrics,
+                objective=args.objective,
+            )
 
     print(f"\nBest {result.objective}: {result.best_score:.4f}")
     print(f"Best parameters: {result.best_params}")
@@ -1125,6 +1164,17 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument("--end", type=_date, default=datetime.now())
             p.add_argument("--capital", type=float, default=100_000.0)
 
+    def add_no_journal(p) -> None:
+        # Trials are journaled so a campaign-level Deflated Sharpe can count them
+        # (spec 026). Opt out for throwaway/reproducibility runs you don't want
+        # inflating the multiple-testing total.
+        p.add_argument(
+            "--no-journal",
+            dest="no_journal",
+            action="store_true",
+            help="Do not record this run's trial(s) in the research journal",
+        )
+
     bt = subparsers.add_parser("backtest", help="Run a historical backtest (did the idea ever work?)")
     add_common(bt, with_dates=True)
     bt.add_argument(
@@ -1152,6 +1202,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="render the equity curve + metrics to an image (needs the viz extra: matplotlib)",
     )
+    add_no_journal(bt)
     bt.set_defaults(func=cmd_backtest)
 
     live = subparsers.add_parser("live", help="Run live/paper trading (paper by default, for your own good)")
@@ -1241,6 +1292,7 @@ def build_parser() -> argparse.ArgumentParser:
     opt.add_argument("--objective", default="sharpe_ratio")
     opt.add_argument("--max-evals", dest="max_evals", type=int, default=50)
     opt.add_argument("--output", default="optimization_results.csv")
+    add_no_journal(opt)
     opt.set_defaults(func=cmd_optimize)
 
     wf = subparsers.add_parser(

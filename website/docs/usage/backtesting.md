@@ -60,6 +60,15 @@ cost and the gross final capital alongside. Pass `--gross` to disable the charge
 attribution — "how much did costs cost me?"), and tune `--commission-bps` / `--impact-eta`.
 High-turnover strategies degrade sharply once costs are on; that's the point.
 
+## Trial journaling
+
+Each run records one **trial** — the config it evaluated, on this universe and
+window — to `logs/research_journal.jsonl`. That is the same journal the research
+agent writes, and it exists so multiple-testing corrections can eventually count
+every config a campaign tried, not just one session's (see the
+[deflated-Sharpe scope limit](../engineering/walk-forward#known-limit-n_trials-counts-a-run-not-a-campaign)).
+Pass `--no-journal` to keep a throwaway or reproducibility run out of that total.
+
 ## Tuning the strategy
 
 Once a backtest runs, search for better parameters with

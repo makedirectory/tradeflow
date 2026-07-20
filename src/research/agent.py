@@ -38,14 +38,15 @@ from src.optimization import config_store
 from src.optimization.walk_forward import WalkForwardValidator
 from src.research.proposer import Proposal, ProposalContext, Proposer
 from src.research.sandbox import load_strategy_from_code, validate_hygiene
-from src.services.audit import audit_log, new_run_id
+from src.services.audit import DEFAULT_TRIAL_JOURNAL, audit_log, new_run_id
 from src.services.registry import resolve_strategy_class
 from src.strategies.base import Strategy
 
 logger = logging.getLogger(__name__)
 
-#: Default research-journal location (append-only JSONL).
-DEFAULT_JOURNAL = "logs/research_journal.jsonl"
+#: Default research-journal location (append-only JSONL). The same file CLI
+#: ``backtest``/``optimize`` trials append to, so a trial store indexes one journal.
+DEFAULT_JOURNAL = str(DEFAULT_TRIAL_JOURNAL)
 
 
 @dataclass

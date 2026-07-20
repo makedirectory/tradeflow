@@ -113,6 +113,53 @@ def test_audit_log_appends_one_record(tmp_path):
     assert "timestamp" in record and "git_sha" in record
 
 
+def test_journal_trial_records_a_normalized_trial(tmp_path):
+    from src.engine.backtest import ACCOUNTING_VERSION
+    from src.services.audit import journal_trial
+
+    path = tmp_path / "journal.jsonl"
+    journal_trial(
+        "backtest",
+        strategy="ma_crossover",
+        symbols=["msft", "AAPL", "aapl"],  # duplicate + mixed case
+        start=datetime(2024, 1, 2),
+        end=datetime(2024, 3, 1),
+        params={"fast_ema_period": 10},
+        metrics={"sharpe_ratio": 1.2, "total_trades": 8, "not_a_headline": 999},
+        path=path,
+    )
+    record = json.loads(path.read_text().splitlines()[0])
+
+    assert record["tool"] == "trial:backtest"
+    assert record["kind"] == "backtest"
+    assert record["accounting"] == ACCOUNTING_VERSION
+    # Universe is normalized so the same set keys identically however it was typed.
+    assert record["inputs"]["symbols"] == ["AAPL", "MSFT"]
+    assert record["inputs"]["window"] == {"start": "2024-01-02T00:00:00", "end": "2024-03-01T00:00:00"}
+    assert record["resolved_config"] == {"fast_ema_period": 10}
+    # Only headline metrics are denormalized onto the row.
+    assert record["result_summary"] == {"sharpe_ratio": 1.2, "total_trades": 8}
+
+
+def test_journal_trial_records_the_objective_when_given(tmp_path):
+    from src.services.audit import journal_trial
+
+    path = tmp_path / "journal.jsonl"
+    journal_trial(
+        "optimize",
+        strategy="ma_crossover",
+        symbols=["NVDA"],
+        start=datetime(2024, 1, 2),
+        end=datetime(2024, 3, 1),
+        params={"fast_ema_period": 10},
+        metrics={"sharpe_ratio": 2.0},
+        objective="sharpe_ratio",
+        path=path,
+    )
+    record = json.loads(path.read_text().splitlines()[0])
+    assert record["inputs"]["objective"] == "sharpe_ratio"
+
+
 # --- the safety wall -----------------------------------------
 def test_no_live_or_order_tool_is_exposed():
     from src.mcp import server
@@ -139,3 +186,109 @@ def test_build_server_smoke():
 
     built = server.build_server(data_client=_client())
     assert built is not None
+
+
+# --- CLI trial journaling (spec 026 precondition) ---------------------------
+def _fake_cli_env(monkeypatch, tmp_path, symbols):
+    """Point the CLI at fake data and a temp journal; return the journal path."""
+    import main
+    from src.marketdata.client import MarketDataClient
+    from src.services import audit
+    from tests.fakes import FakeMarketData
+
+    client = MarketDataClient(FakeMarketData(symbols, n=400, freq="1D"))
+    monkeypatch.setattr(main, "build_data_and_broker", lambda: (None, client))
+    journal = tmp_path / "journal.jsonl"
+    monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", journal)
+    return journal
+
+
+def _trials(journal):
+    if not journal.exists():
+        return []
+    return [json.loads(line) for line in journal.read_text().splitlines()]
+
+
+def test_cli_backtest_journals_one_trial(monkeypatch, tmp_path):
+    import main
+
+    journal = _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB"])
+    args = main.build_parser().parse_args(
+        [
+            "backtest",
+            "--strategy",
+            "ma_crossover",
+            "--scanner",
+            "none",
+            "--symbols",
+            "AAA,BBB",
+            "--start",
+            "2024-01-02",
+            "--end",
+            "2024-06-01",
+        ]
+    )
+    args.func(args)
+
+    trials = _trials(journal)
+    assert len(trials) == 1
+    assert trials[0]["tool"] == "trial:backtest"
+    assert trials[0]["inputs"]["symbols"] == ["AAA", "BBB"]
+
+
+def test_cli_optimize_journals_one_trial_per_config(monkeypatch, tmp_path):
+    import main
+
+    journal = _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB"])
+    args = main.build_parser().parse_args(
+        [
+            "optimize",
+            "--strategy",
+            "ma_crossover",
+            "--scanner",
+            "none",
+            "--symbols",
+            "AAA,BBB",
+            "--start",
+            "2024-01-02",
+            "--end",
+            "2024-06-01",
+            "--method",
+            "grid",
+            "--max-evals",
+            "6",
+            "--output",
+            str(tmp_path / "out.csv"),
+        ]
+    )
+    args.func(args)
+
+    trials = _trials(journal)
+    # A search of N configs is N trials — the property the Deflated Sharpe count needs.
+    assert 1 < len(trials) <= 6
+    assert all(t["tool"] == "trial:optimize" for t in trials)
+    assert all(t["inputs"]["objective"] == "sharpe_ratio" for t in trials)
+
+
+def test_cli_no_journal_flag_records_nothing(monkeypatch, tmp_path):
+    import main
+
+    journal = _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB"])
+    args = main.build_parser().parse_args(
+        [
+            "backtest",
+            "--strategy",
+            "ma_crossover",
+            "--scanner",
+            "none",
+            "--symbols",
+            "AAA,BBB",
+            "--start",
+            "2024-01-02",
+            "--end",
+            "2024-06-01",
+            "--no-journal",
+        ]
+    )
+    args.func(args)
+    assert _trials(journal) == []
