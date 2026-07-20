@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Type
 
+from src.engine.backtest import BacktestError
 from src.marketdata.client import MarketDataClient
 from src.optimization import config_store
 from src.optimization.walk_forward import WalkForwardValidator
@@ -278,7 +279,9 @@ class ResearchAgent:
             try:
                 cls: Type[Strategy] = load_strategy_from_code(proposal.code)
             except Exception as exc:  # noqa: BLE001 - rejection, not crash
-                self._journal("reject", {"reason": f"sandbox: {exc}"})
+                self._journal(
+                    "reject", {"reason": f"sandbox: {exc}", "hypothesis": proposal.hypothesis}
+                )
                 return None
             ok, reason = validate_hygiene(proposal, cls)
         else:
@@ -291,6 +294,20 @@ class ResearchAgent:
             )
             return None
 
+        try:
+            return self._validate(proposal, cls, symbols, start, research_end, n_trials_offset)
+        except BacktestError as exc:
+            # Unrunnable is not the same as unprofitable. Journal it as its own
+            # rejection so a broken proposal can never be scored as "no edge".
+            self._journal(
+                "reject",
+                {"reason": f"unrunnable: {exc}", "hypothesis": proposal.hypothesis, "kind": proposal.kind},
+            )
+            return None
+
+    def _validate(self, proposal: Proposal, cls, symbols, start, research_end, n_trials_offset):
+        """Run the walk-forward validation for an already hygiene-cleared proposal."""
+        cfg = self.config
         validator = WalkForwardValidator(cls, self.data_client, cfg.capital, self.seed, cfg.gates)
         if proposal.kind == "code":
             # A new mechanism: let the optimizer search its PARAM_RANGES OOS.

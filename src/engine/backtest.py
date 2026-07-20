@@ -28,6 +28,15 @@ from src.utils.numeric import round_quantity
 logger = logging.getLogger(__name__)
 
 
+class BacktestError(RuntimeError):
+    """A backtest could not be simulated at all (as opposed to finding no edge).
+
+    Raised when every symbol in the universe failed, which almost always means a
+    broken strategy or an unconstructable config. Distinguishing this from a
+    genuine zero-trade result is what stops a crash being scored as "no edge".
+    """
+
+
 @dataclass
 class BacktestResult:
     """Everything produced by a backtest run."""
@@ -119,16 +128,28 @@ class BacktestEngine:
         market_data: Dict[str, Dict[str, float]] = {}
         all_trades: List[Dict[str, Any]] = []
 
+        attempted = 0
+        failures: List[str] = []
         for symbol, bars in symbol_bars:
             if bars.empty:
                 continue
+            attempted += 1
             market_data[symbol] = {"first_open": bars["open"].iloc[0], "last_close": bars["close"].iloc[-1]}
             try:
                 processed = self.strategy.process_data(bars)
                 signal_map = self.strategy.generate_signals(processed)
                 all_trades.extend(self._simulate_symbol(symbol, processed, signal_map))
             except Exception as exc:  # noqa: BLE001 - one bad symbol shouldn't abort the run
+                failures.append(f"{symbol}: {exc}")
                 logger.error("Error backtesting %s: %s", symbol, exc, exc_info=True)
+
+        # A run where *every* symbol raised is a broken strategy, not a flat one.
+        # Reporting it as a zero-trade result would let a config error masquerade as
+        # "no edge" - the one failure mode a validation engine must never have.
+        if attempted and len(failures) == attempted:
+            raise BacktestError(
+                f"backtest failed for all {attempted} symbol(s); first error - {failures[0]}"
+            )
 
         trades_df = pd.DataFrame(all_trades)
         if not trades_df.empty:

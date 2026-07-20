@@ -138,3 +138,50 @@ def test_no_signals_means_no_trades():
     assert result.trades.empty
     assert result.final_capital == 100_000
     assert result.metrics["total_trades"] == 0
+
+
+class _BrokenStrategy(ScriptedStrategy):
+    """Raises during signal generation, as an unconstructable config would."""
+
+    def generate_signals(self, data: pd.DataFrame) -> Dict:
+        raise KeyError("risk_per_trade")
+
+
+def test_all_symbols_failing_raises_instead_of_reporting_no_trades():
+    """A universe-wide failure is an error, not a zero-edge result.
+
+    Swallowing it would let a broken strategy be scored as "no edge" by the
+    promotion gates - a false negative the validation engine must not have.
+    """
+    from src.engine.backtest import BacktestError
+
+    rows = [{"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1}] * 3
+    data_client = MarketDataClient(DictMarketData({"AAA": _frame(rows)}))
+    with pytest.raises(BacktestError, match="risk_per_trade"):
+        BacktestEngine(_BrokenStrategy(["HOLD"] * 3), data_client).run(
+            ["AAA"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000
+        )
+
+
+def test_one_bad_symbol_still_completes_the_run():
+    """Partial failure keeps the original behavior: skip the symbol, run the rest."""
+    rows = [
+        {"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1},
+        {"open": 100, "high": 120, "low": 99, "close": 118, "volume": 1},
+        {"open": 118, "high": 120, "low": 99, "close": 118, "volume": 1},
+    ]
+
+    class HalfBroken(ScriptedStrategy):
+        def generate_signals(self, data: pd.DataFrame) -> Dict:
+            if float(data["close"].iloc[0]) == 50.0:  # the "bad" symbol
+                raise ValueError("bad symbol")
+            return dict(zip(data.index, self._signals))
+
+    bad = [{**r, "open": 50, "close": 50} for r in rows]
+    data_client = MarketDataClient(
+        DictMarketData({"AAA": _frame(rows), "BAD": _frame(bad)})
+    )
+    result = BacktestEngine(HalfBroken(["BUY", "HOLD", "CLOSE_BUY"]), data_client).run(
+        ["AAA", "BAD"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000
+    )
+    assert result.metrics["total_trades"] == 1

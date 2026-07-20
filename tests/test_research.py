@@ -300,3 +300,17 @@ def test_build_proposer_accepts_injected_client():
         goal="g", strategy="periodic", param_ranges={}, history=[], incumbent=None, round_index=0
     )
     assert proposer.propose(ctx).hypothesis == "x"
+
+
+def test_sandbox_rejects_strategy_missing_execution_config():
+    """A strategy the execution path cannot size is rejected, not silently zero-trade.
+
+    Sizing and exit handling read ``risk_per_trade``/``stop_loss``/``take_profit`` off
+    the config on every bar. Without this check the strategy validates cleanly and then
+    raises on the first bar, which the gates would score as "no edge".
+    """
+    missing = _VALID_CODE.replace('        config.setdefault("stop_loss", 0.05)\n', "")
+    with pytest.raises(sandbox.HygieneError, match="stop_loss"):
+        sandbox.load_strategy_from_code(missing)
+
+
