@@ -296,9 +296,7 @@ class ResearchAgent:
             try:
                 cls: Type[Strategy] = load_strategy_from_code(proposal.code)
             except Exception as exc:  # noqa: BLE001 - rejection, not crash
-                self._journal(
-                    "reject", {"reason": f"sandbox: {exc}", "hypothesis": proposal.hypothesis}
-                )
+                self._journal("reject", {"reason": f"sandbox: {exc}", "hypothesis": proposal.hypothesis})
                 return None
             ok, reason = validate_hygiene(proposal, cls)
         else:

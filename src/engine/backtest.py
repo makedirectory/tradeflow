@@ -194,9 +194,7 @@ class BacktestEngine:
         timeframe = self.strategy.config["timeframe"]
         self._periods_per_year = Timeframe.parse(timeframe).periods_per_year()
         data = self.data_client.get_bars(symbols, timeframe, start, end)
-        return self._simulate(
-            ((s, b) for s, b in data.items()), start, end, initial_capital, trade_from
-        )
+        return self._simulate(((s, b) for s, b in data.items()), start, end, initial_capital, trade_from)
 
     def run_streaming(
         self,
@@ -234,9 +232,7 @@ class BacktestEngine:
 
         return self._simulate(per_symbol(), start, end, initial_capital, trade_from)
 
-    def _simulate(
-        self, symbol_bars, start, end, initial_capital: float, trade_from=None
-    ) -> BacktestResult:
+    def _simulate(self, symbol_bars, start, end, initial_capital: float, trade_from=None) -> BacktestResult:
         """Simulate the whole universe on one clock against one capital pool."""
         panels, market_data, master = self._prepare(symbol_bars)
         all_trades, equity_curve = self._replay(panels, master, initial_capital, trade_from)
@@ -306,9 +302,7 @@ class BacktestEngine:
         # Reporting it as a zero-trade result would let a config error masquerade as
         # "no edge" - the one failure mode a validation engine must never have.
         if attempted and len(failures) == attempted:
-            raise BacktestError(
-                f"backtest failed for all {attempted} symbol(s); first error - {failures[0]}"
-            )
+            raise BacktestError(f"backtest failed for all {attempted} symbol(s); first error - {failures[0]}")
         if not frames:
             return {}, market_data, pd.DatetimeIndex([])
 
@@ -323,9 +317,7 @@ class BacktestEngine:
                 logger.error("Error backtesting %s: %s", symbol, exc, exc_info=True)
 
         if attempted and len(failures) == attempted:
-            raise BacktestError(
-                f"backtest failed for all {attempted} symbol(s); first error - {failures[0]}"
-            )
+            raise BacktestError(f"backtest failed for all {attempted} symbol(s); first error - {failures[0]}")
         return panels, market_data, master
 
     def _panel_for(self, symbol: str, data: pd.DataFrame, master: pd.DatetimeIndex) -> _Panel:
@@ -405,7 +397,13 @@ class BacktestEngine:
                     symbol, pos["size"], panel.opens[i], panel.adv, panel.vol, i
                 ) + self._carry(pos, k)
                 closed = self._maybe_close(
-                    pos, panel.sig[i], panel.opens[i], panel.highs[i], panel.lows[i], panel.timestamps[i], exit_cost
+                    pos,
+                    panel.sig[i],
+                    panel.opens[i],
+                    panel.highs[i],
+                    panel.lows[i],
+                    panel.timestamps[i],
+                    exit_cost,
                 )
                 if closed is not None:
                     trades.append(closed)
@@ -437,7 +435,13 @@ class BacktestEngine:
                         break
                     panel = panels[symbol]
                     pos = self._open_position(
-                        symbol, panel.sig[i], panel.opens[i], panel.timestamps[i], book, equity_now, max_total_risk
+                        symbol,
+                        panel.sig[i],
+                        panel.opens[i],
+                        panel.timestamps[i],
+                        book,
+                        equity_now,
+                        max_total_risk,
                     )
                     if pos is None:
                         continue
@@ -458,9 +462,9 @@ class BacktestEngine:
                 continue
             panel = panels[symbol]
             price = panel.closes[-1]
-            final_cost = self._trade_cost(
-                symbol, pos["size"], price, panel.adv, panel.vol, -1
-            ) + self._carry(pos, n_steps - 1)
+            final_cost = self._trade_cost(symbol, pos["size"], price, panel.adv, panel.vol, -1) + self._carry(
+                pos, n_steps - 1
+            )
             closed = self._close(pos, price, panel.last_timestamp, "END_OF_PERIOD", final_cost)
             trades.append(closed)
             book.cash += pos["notional"] + closed["gross_pnl"] - final_cost

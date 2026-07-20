@@ -178,9 +178,7 @@ def test_one_bad_symbol_still_completes_the_run():
             return dict(zip(data.index, self._signals))
 
     bad = [{**r, "open": 50, "close": 50} for r in rows]
-    data_client = MarketDataClient(
-        DictMarketData({"AAA": _frame(rows), "BAD": _frame(bad)})
-    )
+    data_client = MarketDataClient(DictMarketData({"AAA": _frame(rows), "BAD": _frame(bad)}))
     result = BacktestEngine(HalfBroken(["BUY", "HOLD", "CLOSE_BUY"]), data_client).run(
         ["AAA", "BAD"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000
     )
@@ -285,7 +283,10 @@ def test_trade_from_warms_up_without_trading():
     full = _multi(frames, ["BUY", "HOLD", "CLOSE_BUY"] * 2)
     strategy = ScriptedStrategy(["BUY", "HOLD", "CLOSE_BUY"] * 2)
     gated = BacktestEngine(strategy, MarketDataClient(DictMarketData(frames))).run(
-        ["AAA"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000,
+        ["AAA"],
+        datetime(2024, 1, 2),
+        datetime(2024, 1, 10),
+        100_000,
         trade_from=index[3].to_pydatetime(),
     )
     # The first round trip is warmup only, so the gated run keeps just the second.

@@ -368,7 +368,9 @@ class WalkForwardValidator:
         oos_trade_frames: List[pd.DataFrame] = []
 
         for fold in folds:
-            opt = ParameterOptimizer(self.strategy_class, sliced, self.initial_capital, self.seed, self.cost_model)
+            opt = ParameterOptimizer(
+                self.strategy_class, sliced, self.initial_capital, self.seed, self.cost_model
+            )
             is_result = self._optimize(opt, symbols, fold.is_start, fold.is_end, method, objective, max_evals)
             if not is_result.best_params:
                 logger.warning("Fold %d produced no valid IS config; skipping", fold.index)
@@ -617,7 +619,9 @@ class WalkForwardValidator:
     def _holdout(self, client, symbols, region_start, holdout, warmup_days, method, objective, max_evals):
         holdout_start, holdout_end = holdout
         # Optimize over everything before the holdout (the production training set).
-        opt = ParameterOptimizer(self.strategy_class, client, self.initial_capital, self.seed, self.cost_model)
+        opt = ParameterOptimizer(
+            self.strategy_class, client, self.initial_capital, self.seed, self.cost_model
+        )
         final = self._optimize(opt, symbols, region_start, holdout_start, method, objective, max_evals)
         if not final.best_params:
             return None, None
@@ -689,7 +693,9 @@ class WalkForwardValidator:
         A robust optimum loses little Sharpe; a config perched on a spike is
         overfit. Returns the worst observed Sharpe loss fraction.
         """
-        space = ParameterOptimizer(self.strategy_class, client, self.initial_capital, self.seed, self.cost_model).space
+        space = ParameterOptimizer(
+            self.strategy_class, client, self.initial_capital, self.seed, self.cost_model
+        ).space
         base = self._oos_sharpe(client, symbols, best_params, fold, warmup_days)
         worst_loss = 0.0
         details: Dict[str, float] = {}

@@ -207,9 +207,9 @@ def test_cost_model_reaches_both_in_sample_and_out_of_sample_backtests():
     )
 
     gross = WalkForwardValidator(PeriodicStrategy, client, seed=42).run(**kwargs)
-    net = WalkForwardValidator(
-        PeriodicStrategy, client, seed=42, cost_model=ParametricCostModel()
-    ).run(**kwargs)
+    net = WalkForwardValidator(PeriodicStrategy, client, seed=42, cost_model=ParametricCostModel()).run(
+        **kwargs
+    )
 
     # Same seed and folds, so any divergence is the cost model doing its job.
     assert net.folds and gross.folds

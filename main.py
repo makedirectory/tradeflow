@@ -997,7 +997,9 @@ def cmd_demo_agent(args) -> None:
             print("     Promotion gates:")
             for name, check in payload["gate_report"]["checks"].items():
                 mark = "PASS" if check["passed"] else "FAIL"
-                print(f"       [{mark}] {name:<24} {check['value']:>10.2f}   threshold {check['threshold']:.2f}")
+                print(
+                    f"       [{mark}] {name:<24} {check['value']:>10.2f}   threshold {check['threshold']:.2f}"
+                )
             if payload["advanced"]:
                 print("     Verdict     PROMOTABLE — enters the shortlist")
             elif payload["promotable"]:
@@ -1024,9 +1026,7 @@ def cmd_demo_agent(args) -> None:
         allow_code_gen=True,
         cost_model=cost_model,
     )
-    agent = ResearchAgent(
-        args.strategy, data_client, proposer, cfg, seed=args.seed, observer=narrate
-    )
+    agent = ResearchAgent(args.strategy, data_client, proposer, cfg, seed=args.seed, observer=narrate)
     result = agent.run(symbols, start, end)
 
     print(f"\n{rule}")
