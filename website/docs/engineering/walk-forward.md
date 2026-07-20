@@ -101,5 +101,24 @@ out-of-sample trades, the honest reading is that it has not earned a verdict yet
 
 `src/optimization/config_store.py` saves a chosen config as JSON with a
 `provenance` block (method, windows, objective, OOS metrics, `n_trials`, seed, git
-SHA, timestamp). Configs land in a gitignored `configs/` directory. Saving a
-config never alters live behavior — it's a file a human chooses to promote.
+SHA, timestamp, `accounting`). Configs land in a gitignored `configs/` directory.
+Saving a config never alters live behavior — it's a file a human chooses to promote.
+
+### The `accounting` stamp
+
+Metrics only mean something relative to how capital was accounted for, so every
+provenance block records the engine's `ACCOUNTING_VERSION`:
+
+- **1** — pre-[spec 025](engine.md#portfolio-accounting): each symbol simulated
+  independently against full capital, equity accumulated from realized P&L at exit.
+- **2** — current: one merged timeline, one capital pool, per-bar mark-to-market.
+
+Records written before the field existed carry no version, so absence reads as 1 —
+which is exactly what they are. `load_config` warns when a stored version differs
+from the running engine, and `is_current_accounting(payload)` is the check to use
+before ranking or comparing stored results. The *params* in an old config remain
+perfectly usable; it is the `oos_metrics` beside them that were measured a
+different way and must not be compared with a fresh run without re-running it.
+
+The same stamp goes on every `audit_log` record, so a research journal spanning an
+engine change stays interpretable on replay.

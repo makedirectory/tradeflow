@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from src.engine.backtest import ACCOUNTING_VERSION
 from src.optimization.config_store import current_git_sha
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,9 @@ def audit_log(
         "run_id": run_id,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "git_sha": current_git_sha(),
+        # Which capital-accounting model produced any metrics in this record, so a
+        # journal spanning an engine change stays interpretable on replay.
+        "accounting": ACCOUNTING_VERSION,
         "pid": os.getpid(),
         "tool": tool,
         "inputs": _safe(inputs),

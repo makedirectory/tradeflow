@@ -40,6 +40,20 @@ from src.utils.numeric import round_quantity
 
 logger = logging.getLogger(__name__)
 
+#: How the engine accounts for capital. Bump this whenever a change makes results
+#: incommensurable with earlier ones, so a stored record can never be compared to a
+#: newer one as though the two measured the same thing.
+#:
+#: * **1** — pre-spec-025. Each symbol was simulated independently over its whole
+#:   history against the full capital base, and the equity curve accumulated realized
+#:   P&L at exit, resampled to calendar days. Absolute return and Sharpe scaled with
+#:   universe size, and position limits were per-symbol.
+#: * **2** — spec 025. One merged timeline, one shared capital pool, portfolio-level
+#:   position limits, and a per-bar mark-to-market equity curve.
+#:
+#: Records written before this field existed carry no version; absence means 1.
+ACCOUNTING_VERSION = 2
+
 
 class BacktestError(RuntimeError):
     """A backtest could not be simulated at all (as opposed to finding no edge).
