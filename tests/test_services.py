@@ -292,3 +292,74 @@ def test_cli_no_journal_flag_records_nothing(monkeypatch, tmp_path):
     )
     args.func(args)
     assert _trials(journal) == []
+
+
+def test_cli_walkforward_journals_one_validated_trial(monkeypatch, tmp_path):
+    import main
+
+    journal = _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB"])
+    args = main.build_parser().parse_args(
+        [
+            "walkforward",
+            "--strategy",
+            "ma_crossover",
+            "--scanner",
+            "none",
+            "--symbols",
+            "AAA,BBB",
+            "--start",
+            "2024-01-02",
+            "--end",
+            "2025-06-01",
+            "--folds",
+            "3",
+            "--holdout-days",
+            "30",
+            "--method",
+            "grid",
+            "--max-evals",
+            "6",
+        ]
+    )
+    args.func(args)
+
+    trials = _trials(journal)
+    # One walk-forward is one validated config, not one row per inner search config.
+    assert len(trials) == 1
+    rec = trials[0]
+    assert rec["tool"] == "trial:walkforward"
+    # The internal search count rides along so a campaign can sum real configs tried.
+    assert rec["n_trials"] > 1
+    assert "promotable" in rec
+
+
+def test_cli_alphas_journals_a_readonly_trial(monkeypatch, tmp_path):
+    import main
+
+    journal = _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB", "CCC"])
+    args = main.build_parser().parse_args(
+        [
+            "alphas",
+            "--strategy",
+            "ma_crossover",
+            "--scanner",
+            "none",
+            "--symbols",
+            "AAA,BBB,CCC",
+            "--as-of",
+            "2025-03-01",
+            "--ic",
+            "0.05",
+        ]
+    )
+    args.func(args)
+
+    trials = _trials(journal)
+    assert len(trials) == 1
+    rec = trials[0]
+    assert rec["tool"] == "trial:alpha"
+    # A forecast has no Sharpe — the row exists for dedup/IC, not the DSR count.
+    assert rec["result_summary"] == {}
+    # The window collapses to the single as-of date.
+    assert rec["inputs"]["window"]["start"] == rec["inputs"]["window"]["end"]
+    assert rec["resolved_config"]["ic"] == 0.05

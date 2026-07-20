@@ -93,6 +93,7 @@ def journal_trial(
     params: Dict[str, Any],
     metrics: Dict[str, Any],
     objective: Optional[str] = None,
+    extra: Optional[Dict[str, Any]] = None,
     path: Optional[Path] = None,
 ) -> str:
     """Record one *evaluated configuration* as a trial in the research journal.
@@ -100,6 +101,13 @@ def journal_trial(
     A trial is one config scored on one ``(universe, window)`` — the unit the
     Deflated Sharpe counts. A grid search of 50 configs is 50 trials, so callers
     over a search loop invoke this once per config, not once per run.
+
+    ``kind`` groups records so a query can include or exclude a class of trial —
+    e.g. ``alpha`` runs are read-only forecasts with no Sharpe, so a multiple-testing
+    count should skip them while a dedup or IC query would not.
+
+    ``extra`` carries record-level fields the flat ``(params, metrics)`` shape does
+    not, such as a walk-forward's internal ``n_trials`` or a promotion verdict.
 
     The universe is normalized (upper-cased, de-duplicated, sorted) so the same set
     of symbols keys identically regardless of how it was typed — a trial store's
@@ -118,7 +126,7 @@ def journal_trial(
         resolved_config=dict(params),
         result_summary={k: metrics[k] for k in _TRIAL_METRICS if k in metrics},
         path=path or DEFAULT_TRIAL_JOURNAL,
-        extra={"kind": kind},
+        extra={"kind": kind, **(extra or {})},
     )
 
 

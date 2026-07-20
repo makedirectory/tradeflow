@@ -320,6 +320,31 @@ def cmd_walkforward(args) -> None:
     )
     _print_walkforward(result, args.objective)
 
+    if not args.no_journal and result.folds:
+        from src.services.audit import journal_trial
+
+        # One walk-forward is one *validated* config — the OOS aggregate is the
+        # headline. The many IS-optimization configs it evaluated internally are
+        # already counted in n_trials_total (which the DSR used); record that count
+        # rather than one row per inner config, matching how the agent journals.
+        chosen = result.holdout_params or result.folds[-1].is_best_params
+        report = result.gate_report()
+        journal_trial(
+            "walkforward",
+            strategy=args.strategy,
+            symbols=universe,
+            start=args.start,
+            end=args.end,
+            params=dict(chosen),
+            metrics=result.oos_aggregate,
+            objective=args.objective,
+            extra={
+                "n_trials": result.n_trials_total,
+                "promotable": report["promotable"],
+                "efficiency": result.median_efficiency(),
+            },
+        )
+
     if getattr(args, "chart", None):
         from src.analytics.charts import render_walkforward_chart
 
@@ -484,6 +509,42 @@ def cmd_research(args) -> None:
     print(f"\nJournal: {result.journal_path}  (a human reviews and promotes; nothing is live)")
 
 
+def _journal_alpha(args, strategy_label: str, source: str, result: dict) -> None:
+    """Record one alpha run as a read-only trial.
+
+    An alpha run is a point-in-time forecast, not a backtest — it has no Sharpe to
+    deflate, so it is journaled under ``kind="alpha"`` for dedup and future IC /
+    bootstrap work (specs 009, 023), and a multiple-testing count skips this kind.
+    The window collapses to the single as-of date.
+    """
+    if args.no_journal:
+        return
+    from src.services.audit import journal_trial
+
+    knobs = {
+        "source": source,
+        "ic": getattr(args, "ic", None),
+        "scaling": getattr(args, "scaling", None),
+        "neutralize": args.neutralize,
+        "neutralize_factors": list(args.neutralize_factors or []),
+        "lookback_days": args.lookback_days,
+    }
+    journal_trial(
+        "alpha",
+        strategy=strategy_label,
+        symbols=args.symbols,
+        start=args.as_of,
+        end=args.as_of,
+        params={k: v for k, v in knobs.items() if v is not None},
+        metrics={},  # a forecast has no realized-edge metric
+        extra={
+            "universe_size": result.get("universe_size", len(result.get("alphas", []))),
+            "benchmark_available": result.get("benchmark_available"),
+            "low_confidence": result.get("low_confidence"),
+        },
+    )
+
+
 def cmd_alphas(args) -> None:
     """Print the ranked alpha table (residual-return forecasts) for a universe.
 
@@ -496,19 +557,18 @@ def cmd_alphas(args) -> None:
     _, data_client = build_data_and_broker()
 
     if args.combine:
-        _print_combined_alphas(
-            compute_combined_alphas(
-                data_client,
-                args.combine,
-                args.symbols,
-                as_of=args.as_of,
-                benchmark=args.benchmark,
-                neutralize=args.neutralize,
-                neutralize_factors=args.neutralize_factors,
-                lookback_days=args.lookback_days,
-            ),
-            args,
+        combined = compute_combined_alphas(
+            data_client,
+            args.combine,
+            args.symbols,
+            as_of=args.as_of,
+            benchmark=args.benchmark,
+            neutralize=args.neutralize,
+            neutralize_factors=args.neutralize_factors,
+            lookback_days=args.lookback_days,
         )
+        _journal_alpha(args, "+".join(args.combine), "combine", combined)
+        _print_combined_alphas(combined, args)
         return
 
     result = compute_alphas(
@@ -525,6 +585,8 @@ def cmd_alphas(args) -> None:
         lookback_days=args.lookback_days,
         scaling=args.scaling,
     )
+
+    _journal_alpha(args, args.strategy, args.source, result)
 
     src_desc = {
         "strategy": f"'{args.strategy}' score",
@@ -1348,6 +1410,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Save the chosen config (with provenance) to this path",
     )
+    add_no_journal(wf)
     wf.set_defaults(func=cmd_walkforward)
 
     alphas = subparsers.add_parser(
@@ -1390,6 +1453,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Per-name scaling: 'case1' = σ·IC·z (default); 'case2' = IC·c_g·z "
         "(no per-name vol multiply); 'auto' = let a Std_TS-vs-ω regression decide",
     )
+    add_no_journal(alphas)
     alphas.set_defaults(func=cmd_alphas)
 
     info = subparsers.add_parser(

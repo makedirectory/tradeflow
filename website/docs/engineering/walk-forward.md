@@ -88,11 +88,13 @@ dangerous direction — the correction gets *weaker* the harder you search:
 Treat a reported deflated Sharpe as a **lower bound on how much deflation is
 warranted**, and remember that configs tried in earlier sessions are invisible to it.
 
-What *is* recorded: the research agent journals every trial, and CLI `backtest`
-(one trial) and `optimize` (one per evaluated config) append to the same
-`logs/research_journal.jsonl` — so a search of 50 configs lands as 50 rows, which
-is what a campaign count needs. Pass `--no-journal` to keep a throwaway run out of
-the total. One gap remains: `var_of_trial_sr`, the DSR's other input, is still
+What *is* recorded: every research-clock entrypoint journals to the same
+`logs/research_journal.jsonl` — the research agent, and CLI `backtest` (one trial),
+`optimize` (one per evaluated config, so a 50-point search is 50 rows), `walkforward`
+(one validated config, carrying its internal search count `n_trials`), and `alphas`
+(a read-only forecast under `kind="alpha"`, which a multiple-testing count skips
+since it has no Sharpe to cherry-pick). Pass `--no-journal` to keep a throwaway run
+out of the total. One gap remains: `var_of_trial_sr`, the DSR's other input, is still
 estimated per run rather than from the real distribution of tried configs.
 
 The journal now records the trials; **nothing reads them back yet**. Closing the
