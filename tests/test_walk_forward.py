@@ -184,3 +184,36 @@ def test_save_and_load_config_round_trip(tmp_path):
     assert loaded["provenance"]["objective"] == "sharpe_ratio"
     assert loaded["provenance"]["n_trials"] == 12
     assert loaded["provenance"]["windows"]["start"] == START.isoformat()
+
+
+def test_cost_model_reaches_both_in_sample_and_out_of_sample_backtests():
+    """A validator built with a cost model charges it on every simulated fill.
+
+    Threading it only into the OOS leg would let the optimizer pick a config on
+    gross returns and then score it net - flattering walk-forward efficiency for
+    a purely mechanical reason.
+    """
+    from src.costs import ParametricCostModel
+
+    client = MarketDataClient(FakeMarketData(["AAA", "BBB"], n=600, freq="1D"))
+    kwargs = dict(
+        symbols=["AAA", "BBB"],
+        start=datetime(2024, 1, 2),
+        end=datetime(2025, 6, 1),
+        n_folds=2,
+        holdout_days=30,
+        method="grid",
+        max_evals=4,
+    )
+
+    gross = WalkForwardValidator(PeriodicStrategy, client, seed=42).run(**kwargs)
+    net = WalkForwardValidator(
+        PeriodicStrategy, client, seed=42, cost_model=ParametricCostModel()
+    ).run(**kwargs)
+
+    # Same seed and folds, so any divergence is the cost model doing its job.
+    assert net.folds and gross.folds
+    is_gross = [fr.is_metrics.get("total_return", 0.0) for fr in gross.folds]
+    is_net = [fr.is_metrics.get("total_return", 0.0) for fr in net.folds]
+    assert is_net != is_gross, "costs did not reach the in-sample optimization"
+    assert all(n <= g + 1e-9 for n, g in zip(is_net, is_gross)), "costs must not improve returns"

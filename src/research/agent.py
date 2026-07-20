@@ -31,6 +31,7 @@ from datetime import datetime, timedelta
 from statistics import median
 from typing import Any, Callable, Dict, List, Optional, Type
 
+from src.costs.base import CostModel
 from src.engine.backtest import BacktestError
 from src.marketdata.client import MarketDataClient
 from src.optimization import config_store
@@ -70,6 +71,9 @@ class ResearchConfig:
     drawdown_guard_tolerance: float = 0.25  # OOS max_dd may worsen at most this fraction
     allow_code_gen: bool = False
     gates: Optional[Dict[str, float]] = None
+    #: Charged on every simulated fill. Left ``None`` the loop selects on gross
+    #: returns, which favors turnover the strategy could not afford live.
+    cost_model: Optional[CostModel] = None
 
 
 @dataclass
@@ -321,7 +325,9 @@ class ResearchAgent:
     def _validate(self, proposal: Proposal, cls, symbols, start, research_end, n_trials_offset):
         """Run the walk-forward validation for an already hygiene-cleared proposal."""
         cfg = self.config
-        validator = WalkForwardValidator(cls, self.data_client, cfg.capital, self.seed, cfg.gates)
+        validator = WalkForwardValidator(
+            cls, self.data_client, cfg.capital, self.seed, cfg.gates, cfg.cost_model
+        )
         if proposal.kind == "code":
             # A new mechanism: let the optimizer search its PARAM_RANGES OOS.
             result = validator.run(
@@ -367,6 +373,7 @@ class ResearchAgent:
                 self.config.capital,
                 self.seed,
                 self.config.gates,
+                self.config.cost_model,
             )
             candidate.holdout_metrics = validator.score_window(
                 symbols,

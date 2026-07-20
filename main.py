@@ -921,6 +921,7 @@ def cmd_demo_agent(args) -> None:
     deterministic and needs no LLM key. Any other provider drives a live model
     through the identical loop.
     """
+    from src.costs import ParametricCostModel
     from src.research.agent import ResearchAgent, ResearchConfig
     from src.research.demo_proposals import DEMO_PROPOSALS
     from src.research.proposer import FixedProposer, build_proposer
@@ -942,6 +943,10 @@ def cmd_demo_agent(args) -> None:
         proposer = build_proposer(args.provider, args.model, allow_code_gen=True)
         source = f"live model — {args.provider}/{proposer.client.model}"
 
+    # Costs are charged on every simulated fill, in-sample and out. Validating on
+    # gross returns systematically promotes turnover a strategy could not afford.
+    cost_model = None if args.no_costs else ParametricCostModel()
+
     data_client = build_data_client()
     symbols = args.symbols
 
@@ -953,6 +958,12 @@ def cmd_demo_agent(args) -> None:
             holdout = payload["holdout_window"]
             print(f"\n  Proposals from : {source}")
             print(f"  Universe       : {', '.join(symbols)}  (bars fetched live from Alpaca)")
+            costs = (
+                "gross returns (--no-costs)"
+                if cost_model is None
+                else "commission + half-spread + sqrt impact, charged per fill"
+            )
+            print(f"  Costs          : {costs}")
             print(f"  Base strategy  : {payload['strategy']}")
             print(f"  Goal           : {payload['goal']}")
             print(f"\n  Research window: {research['start'][:10]} → {research['end'][:10]}")
@@ -1011,6 +1022,7 @@ def cmd_demo_agent(args) -> None:
         max_dry_rounds=len(DEMO_PROPOSALS) if args.provider == "replay" else args.max_dry_rounds,
         capital=args.capital,
         allow_code_gen=True,
+        cost_model=cost_model,
     )
     agent = ResearchAgent(
         args.strategy, data_client, proposer, cfg, seed=args.seed, observer=narrate
@@ -1467,6 +1479,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     dagent.add_argument("--model", default=None, help="Model id (ignored when --provider replay)")
     dagent.add_argument("--seed", type=int, default=42)
+    dagent.add_argument(
+        "--no-costs",
+        dest="no_costs",
+        action="store_true",
+        help="Validate on gross returns (diagnostic only; costs are charged by default)",
+    )
     dagent.set_defaults(func=cmd_demo_agent)
 
     demo = subparsers.add_parser(

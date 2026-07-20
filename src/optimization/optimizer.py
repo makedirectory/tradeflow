@@ -18,11 +18,12 @@ Runs serially for determinism and simplicity; each evaluation is an independent
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Type
+from typing import Any, Dict, List, Optional, Type
 
 import numpy as np
 import pandas as pd
 
+from src.costs.base import CostModel
 from src.engine.backtest import BacktestEngine
 from src.marketdata.client import MarketDataClient
 from src.optimization.param_space import ParameterSpace
@@ -54,10 +55,14 @@ class ParameterOptimizer:
         data_client: MarketDataClient,
         initial_capital: float = 100_000.0,
         seed: int = 42,
+        cost_model: Optional[CostModel] = None,
     ):
         self.strategy_class = strategy_class
         self.data_client = data_client
         self.initial_capital = initial_capital
+        #: Charged on every simulated fill. ``None`` searches gross returns, which
+        #: reliably favors the highest-turnover config in the space.
+        self.cost_model = cost_model
         self.space = ParameterSpace(strategy_class.PARAM_RANGES)
         self._rng = np.random.default_rng(seed)
 
@@ -155,7 +160,9 @@ class ParameterOptimizer:
 
     def _backtest(self, params: Dict[str, Any], symbols, start: datetime, end: datetime) -> Dict[str, float]:
         strategy = self.strategy_class(dict(params))
-        result = BacktestEngine(strategy, self.data_client).run(symbols, start, end, self.initial_capital)
+        result = BacktestEngine(strategy, self.data_client, cost_model=self.cost_model).run(
+            symbols, start, end, self.initial_capital
+        )
         return result.metrics
 
     def _build_result(self, rows: List[Dict[str, Any]], objective: str) -> OptimizationResult:
