@@ -22,15 +22,20 @@ Strategy.calculate_scores(processed)      # {timestamp: signed score}  ← the o
 Strategy.generate_signals(processed)      # base class derives {timestamp: BUY/SELL/HOLD/...}
         │
         ▼
-BacktestEngine._simulate_symbol(...)      # bar-by-bar fills, stop/take/exit
+BacktestEngine._replay(...)               # one merged timeline, one capital pool
+                                          # mark -> exit -> rank -> admit -> record
         │  trades
         ▼
 analytics.performance.compute_backtest_metrics(...)   # -> metrics dict
 analytics.reporting.log_backtest_report(...)          # -> text
 ```
 
-The engine carries realized cash across symbols so a run can't spend the same
-dollar twice, and force-closes any open position at the final bar.
+Every symbol is simulated on a single merged timeline against one shared capital
+pool, so positions compete for the same dollars as they would live: exits settle
+before entries within a bar, and simultaneous candidates are admitted in
+conviction order while position limits and free cash allow. Any position still
+open at the final bar is force-closed. See
+[portfolio accounting](engine.md#portfolio-accounting).
 
 ## Live
 

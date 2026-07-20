@@ -67,6 +67,36 @@ factor, walk-forward efficiency, OOS-vs-IS drawdown ratio, a minimum-OOS-trades
 floor, the deflated Sharpe, and — when computed — parameter sensitivity and the
 leakage probe. A config is `promotable` only if it clears **every** gate.
 
+### Why the thresholds are what they are
+
+A threshold is only meaningful relative to how the quantity is measured, so when
+the engine moved to [portfolio-level accounting](engine.md#portfolio-accounting)
+the gates had to be re-checked — not to make strategies pass, but to keep the
+numbers meaning what they meant.
+
+Holding the trades fixed and varying *only* the equity-curve construction across
+12 runs (2 strategies × 3 universes × 2 windows):
+
+| Quantity | Mark-to-market ÷ realized-P&L | Threshold |
+|---|---|---|
+| Sharpe | 1.04–1.27, median **1.19** | `min_oos_sharpe` 1.0 → **1.2** |
+| Max drawdown | 1.00–1.28, median **1.04** | `max_dd_ratio` unchanged |
+
+The old curve booked a position's P&L as a single spike when it closed, which
+overstated volatility and so understated Sharpe. The new curve marks open
+positions to market. Rescaling `min_oos_sharpe` keeps the original bar; leaving it
+at 1.0 would have quietly made the gate ~16% easier. Ratio gates
+(`max_dd_ratio`, walk-forward efficiency) compare two same-construction numbers,
+so the factor cancels and they are untouched.
+
+`min_oos_trades` deliberately **did not move**, even though portfolio accounting
+made it much harder to clear: one book with `max_positions` slots simply takes
+fewer positions than every symbol trading its own full capital. That is a real
+loss of evidence rather than a change of units — the sample genuinely is smaller —
+and relaxing a statistical-power floor because results got worse is the precise
+form of self-deception the gates exist to prevent. If a strategy cannot reach 100
+out-of-sample trades, the honest reading is that it has not earned a verdict yet.
+
 ## Config persistence
 
 `src/optimization/config_store.py` saves a chosen config as JSON with a

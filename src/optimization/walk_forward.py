@@ -48,9 +48,30 @@ logger = logging.getLogger(__name__)
 #: Promotion gates. Config-driven so thresholds are tunable
 #: without code changes; uses *median* (not mean) for WFE/Sharpe so one lucky
 #: fold can't inflate the verdict.
+#:
+#: Calibration note (spec 025). Portfolio accounting changed how two of these are
+#: *measured*, so some thresholds had to move just to keep meaning what they meant:
+#:
+#: * **Sharpe scale shifted ~1.19x.** Measured over 12 runs (2 strategies x 3
+#:   universes x 2 windows), holding trades fixed and varying only the curve
+#:   construction: mark-to-market Sharpe ran 1.04-1.27x the old realized-P&L Sharpe
+#:   (median 1.19). The old curve booked P&L as a spike at exit, so its volatility
+#:   was overstated. ``min_oos_sharpe`` is rescaled 1.0 -> 1.2 to preserve the
+#:   original bar; leaving it at 1.0 would have quietly made the gate ~16% easier.
+#: * **Drawdown scale held** (median 1.04x over the same runs), and the gate is a
+#:   ratio of two same-construction numbers, so ``max_dd_ratio`` is unchanged.
+#:
+#: What deliberately did NOT move: ``min_oos_trades``. Portfolio accounting reduced
+#: trade counts sharply (one book, ``max_positions`` slots, instead of every symbol
+#: trading its own full capital), so strategies now clear it far less often. That is
+#: a genuine loss of evidence, not a measurement artifact - the sample really is
+#: smaller. Lowering a statistical-power floor because results got worse is exactly
+#: the gate-fitting this engine exists to prevent. Note the shipped strategies set
+#: ``max_positions: 1``, which caps concurrency and makes 100 OOS trades hard to
+#: reach; that is a strategy-config question, not a threshold question.
 DEFAULT_GATES: Dict[str, float] = {
-    "min_oos_sharpe": 1.0,  # median OOS Sharpe across folds
-    "min_oos_profit_factor": 1.3,  # median OOS profit factor
+    "min_oos_sharpe": 1.2,  # median OOS Sharpe across folds (rescaled, see above)
+    "min_oos_profit_factor": 1.3,  # median OOS profit factor (trade-level, unaffected)
     "min_wfe": 0.4,  # median walk-forward efficiency ...
     "wfe_relaxed": 0.3,  # ... or this if OOS Sharpe also clears target
     "max_dd_ratio": 1.5,  # OOS max drawdown <= this x IS max drawdown
