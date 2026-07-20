@@ -542,17 +542,37 @@ class WalkForwardValidator:
     def _oos_backtest(
         self, strategy, client, symbols, oos_start, oos_end, warmup_days, n_trials, var_of_trial_sr=None
     ):
-        """Backtest with warmup, then keep only trades entered at/after ``oos_start``."""
+        """Backtest with warmup, trading only from ``oos_start``.
+
+        ``trade_from`` keeps the warmup bars out of the book, so the engine's own
+        portfolio equity curve *is* the OOS curve — mark-to-market, open positions
+        included. Reconstructing one from a filtered trade list (the fallback in
+        :meth:`_metrics_for_trades`) can only see realized P&L at exit.
+        """
         fetch_start = oos_start - timedelta(days=warmup_days)
         result = BacktestEngine(strategy, client, cost_model=self.cost_model).run(
-            symbols, fetch_start, oos_end, self.initial_capital
+            symbols, fetch_start, oos_end, self.initial_capital, trade_from=oos_start
         )
-        oos_trades = _filter_trades_from(result.trades, oos_start)
-        metrics = self._metrics_for_trades(oos_trades, oos_start, oos_end, n_trials, var_of_trial_sr)
+        oos_trades = _filter_trades_from(result.trades, oos_start)  # belt and braces
+        metrics = self._metrics_for_trades(
+            oos_trades, oos_start, oos_end, n_trials, var_of_trial_sr, equity=result.equity_curve
+        )
         return metrics, oos_trades
 
-    def _metrics_for_trades(self, trades, start, end, n_trials, var_of_trial_sr):
-        equity = performance.build_equity_curve(trades, self.initial_capital)
+    def _metrics_for_trades(self, trades, start, end, n_trials, var_of_trial_sr, equity=None):
+        """Metrics for a trade set, preferring a real portfolio curve when available.
+
+        ``equity=None`` falls back to accumulating realized P&L, which is all that is
+        possible when the trades come from *several* folds and no single simulation
+        produced them (see :meth:`_aggregate_oos`).
+        """
+        # The two curve sources run on different clocks: the engine samples per bar,
+        # the realized-P&L fallback resamples to calendar days. Annualize accordingly.
+        if equity is None:
+            equity = performance.build_equity_curve(trades, self.initial_capital)
+            periods_per_year = TRADING_DAYS_PER_YEAR
+        else:
+            periods_per_year = self.timeframe.periods_per_year()
         final = self.initial_capital + (trades["pnl"].sum() if not trades.empty else 0.0)
         return performance.compute_backtest_metrics(
             trades,
@@ -562,6 +582,7 @@ class WalkForwardValidator:
             {},
             start=start,
             end=end,
+            periods_per_year=periods_per_year,
             n_trials=n_trials,
             var_of_trial_sr=var_of_trial_sr,
         )

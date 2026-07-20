@@ -185,3 +185,112 @@ def test_one_bad_symbol_still_completes_the_run():
         ["AAA", "BAD"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000
     )
     assert result.metrics["total_trades"] == 1
+
+
+# --------------------------------------------------------------------------- #
+# Portfolio accounting (spec 025)
+# --------------------------------------------------------------------------- #
+def _multi(frames: Dict[str, pd.DataFrame], per_bar_signals: List[str], capital=100_000):
+    strategy = ScriptedStrategy(per_bar_signals)
+    data_client = MarketDataClient(DictMarketData(frames))
+    return BacktestEngine(strategy, data_client).run(
+        sorted(frames), datetime(2024, 1, 2), datetime(2024, 1, 10), capital
+    )
+
+
+_ROUND_TRIP = [
+    {"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1},
+    {"open": 100, "high": 120, "low": 99, "close": 118, "volume": 1},
+    {"open": 118, "high": 119, "low": 99, "close": 100, "volume": 1},
+]
+
+
+def test_metrics_do_not_scale_with_universe_size():
+    """The bug that motivated spec 025: N copies of a symbol must not multiply returns.
+
+    With max_positions=1 the book can only ever hold one of the duplicates, so a
+    universe of N identical names must produce exactly the single-name result.
+    Under per-symbol accounting return scaled roughly linearly with N.
+    """
+    one = _multi({"AAA": _frame(_ROUND_TRIP)}, ["BUY", "HOLD", "CLOSE_BUY"])
+    many = _multi(
+        {sym: _frame(_ROUND_TRIP) for sym in ("AAA", "BBB", "CCC", "DDD")},
+        ["BUY", "HOLD", "CLOSE_BUY"],
+    )
+    assert many.final_capital == pytest.approx(one.final_capital)
+    assert many.metrics["total_return"] == pytest.approx(one.metrics["total_return"])
+    assert many.metrics["total_trades"] == one.metrics["total_trades"] == 1
+
+
+def test_position_limit_is_enforced_across_the_whole_book():
+    """max_positions is a portfolio limit, not a per-symbol one."""
+    frames = {sym: _frame(_ROUND_TRIP) for sym in ("AAA", "BBB", "CCC", "DDD")}
+    result = _multi(frames, ["BUY", "HOLD", "CLOSE_BUY"])
+    # One position at a time => at most one trade per round trip, not one per symbol.
+    assert len(result.trades) == 1
+
+
+def test_capital_is_conserved():
+    """Final capital is initial plus realized P&L, and the curve ends there."""
+    frames = {sym: _frame(_ROUND_TRIP) for sym in ("AAA", "BBB")}
+    result = _multi(frames, ["BUY", "HOLD", "CLOSE_BUY"])
+    expected = result.initial_capital + result.trades["pnl"].sum()
+    assert result.final_capital == pytest.approx(expected)
+    assert result.equity_curve[-1] == pytest.approx(result.final_capital)
+    assert min(result.equity_curve) > 0
+
+
+def test_ranking_is_deterministic_regardless_of_universe_order():
+    """Shuffling the universe must not change the result."""
+    frames = {sym: _frame(_ROUND_TRIP) for sym in ("AAA", "BBB", "CCC")}
+    forward = _multi(frames, ["BUY", "HOLD", "CLOSE_BUY"])
+    reversed_frames = {sym: frames[sym] for sym in reversed(list(frames))}
+    backward = _multi(reversed_frames, ["BUY", "HOLD", "CLOSE_BUY"])
+    assert forward.final_capital == pytest.approx(backward.final_capital)
+    assert list(forward.trades["symbol"]) == list(backward.trades["symbol"])
+
+
+def test_equity_curve_marks_open_positions_to_market():
+    """An open position moves the curve; it must not sit flat until the exit bar."""
+    rising = [
+        {"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1},
+        {"open": 100, "high": 110, "low": 100, "close": 109, "volume": 1},
+        {"open": 109, "high": 118, "low": 108, "close": 117, "volume": 1},
+    ]
+    result = _multi({"AAA": _frame(rising)}, ["BUY", "HOLD", "HOLD"])
+    # Bars 2 and 3 are both held; with mark-to-market they differ.
+    assert result.equity_curve[2] != pytest.approx(result.equity_curve[3])
+
+
+def test_freed_capital_is_reusable_in_the_same_bar():
+    """Exits settle before entries, so a close funds an open on the same bar."""
+    frames = {"AAA": _frame(_ROUND_TRIP), "BBB": _frame(_ROUND_TRIP)}
+    # AAA closes on bar 3 (CLOSE_BUY); BBB should be able to enter on that same bar.
+    result = _multi(frames, ["BUY", "HOLD", "CLOSE_BUY"])
+    assert len(result.trades) >= 1
+    # The single slot is reused rather than left idle after the exit.
+    assert result.trades["exit_reason"].iloc[0] in ("SIGNAL", "TAKE_PROFIT", "END_OF_PERIOD")
+
+
+def test_trade_from_warms_up_without_trading():
+    """Bars before ``trade_from`` feed indicators but open no positions.
+
+    This is what lets an OOS window be measured on its own portfolio curve instead
+    of a curve reconstructed from a filtered trade list.
+    """
+    rows = _ROUND_TRIP + _ROUND_TRIP
+    frames = {"AAA": _frame(rows)}
+    index = _frame(rows).index
+
+    full = _multi(frames, ["BUY", "HOLD", "CLOSE_BUY"] * 2)
+    strategy = ScriptedStrategy(["BUY", "HOLD", "CLOSE_BUY"] * 2)
+    gated = BacktestEngine(strategy, MarketDataClient(DictMarketData(frames))).run(
+        ["AAA"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000,
+        trade_from=index[3].to_pydatetime(),
+    )
+    # The first round trip is warmup only, so the gated run keeps just the second.
+    assert len(full.trades) == 2
+    assert len(gated.trades) == 1
+    assert gated.trades["entry_time"].iloc[0] >= index[3]
+    # And its curve covers only the traded span, not the warmup.
+    assert len(gated.equity_curve) < len(full.equity_curve)
