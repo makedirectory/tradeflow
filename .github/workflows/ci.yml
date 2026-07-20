@@ -30,5 +30,11 @@ jobs:
       - name: Format check (ruff)
         run: uv run ruff format --check .
 
+      - name: Docs link check
+        # Relative links and heading anchors across the docs site and top-level
+        # Markdown. Note specs/ is gitignored and so is never seen here — run
+        # `make check-links` locally to cover it.
+        run: uv run python scripts/check_links.py
+
       - name: Tests (pytest)
         run: uv run pytest -q

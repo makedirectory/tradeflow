@@ -51,7 +51,7 @@ optimizer call.
   average) so a big Sharpe drop is visible.
 - **Deflated Sharpe** with `n_trials_total` (and a session-wide `n_trials_offset`
   for the research agent) so the multiple-testing correction reflects how many
-  configs were tried.
+  configs were tried — **within a run**. See the scope limit below.
 - Optional, behind flags: **PBO** (CSCV-style probability of backtest
   overfitting), **Monte-Carlo** block-bootstrap (5th-percentile Sharpe),
   **parameter sensitivity** (±10% perturbation), and a **leakage probe** (shift
@@ -66,6 +66,41 @@ lucky fold can't inflate the verdict. Default gates: median OOS Sharpe, OOS prof
 factor, walk-forward efficiency, OOS-vs-IS drawdown ratio, a minimum-OOS-trades
 floor, the deflated Sharpe, and — when computed — parameter sensitivity and the
 leakage probe. A config is `promotable` only if it clears **every** gate.
+
+### Known limit: `n_trials` counts a run, not a campaign
+
+The Deflated Sharpe raises the bar as you try more configurations — the more
+lottery tickets you buy, the better your best one must be before it counts as
+skill. Today `n_trials` **resets when the process exits**: walk-forward accumulates
+across folds, and the research agent accumulates across a session, and then the
+count starts over.
+
+So a researcher on their tenth session is deflating against that session's few
+dozen trials rather than the campaign's few thousand. The error runs in the
+dangerous direction — the correction gets *weaker* the harder you search:
+
+| Trials counted | DSR (same Sharpe-2.0 series) | vs the 0.50 gate |
+|---:|---:|---|
+| 37 (one session) | 0.90 | PASS |
+| 370 | 0.69 | PASS |
+| 3700 (a real campaign) | 0.43 | **FAIL** |
+
+Treat a reported deflated Sharpe as a **lower bound on how much deflation is
+warranted**, and remember that configs tried in earlier sessions are invisible to it.
+
+Two further gaps worth knowing while reading any DSR number here:
+
+- Only the **research agent** journals its trials. Ad-hoc `backtest` and `optimize`
+  runs from the CLI are not recorded anywhere, so even a future campaign-level
+  count would be a lower bound until those paths journal too.
+- `var_of_trial_sr`, the DSR's other input, is estimated per run rather than from
+  the real distribution of tried configs.
+
+Closing this needs a queryable index over the journal — the journal already records
+every trial, nothing reads it back. That is planned as a trial store: record first,
+then a separate evidence-backed decision about wiring campaign counts into the
+gates, since doing so makes every gate strictly harder and would reclassify configs
+already saved as promotable.
 
 ### Why the thresholds are what they are
 

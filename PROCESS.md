@@ -189,6 +189,40 @@ deliberately and update the order-path discipline accordingly.
 
 - ⬜ Not started   🔄 In progress   ✅ Complete   ⚠️ Blocked   — Not applicable
 
+### A spec moves to `complete/` only when its tests exist
+
+`specs/complete/` means *built and covered*, not *designed* or *mostly done*. The
+gate is concrete: *the spec's §Testing section is implemented and passing.* No
+tests, no move — the spec stays in `planning/` however finished the design feels.
+
+This exists because both halves of it have already gone wrong:
+
+- **010 research persistence** sat in `complete/` with neither the bar cache nor
+  the trial store built. 011's `ParquetBarStore` (which does exist) was mistaken
+  for 010's cache manager, so the folder said "done" while the multiple-testing
+  correction it was supposed to enable had a live correctness gap.
+- **020 forecast refinement** shipped correctly but its index rows and inbound
+  links were never updated, leaving four broken references.
+
+Both were invisible because `specs/` is gitignored and never passes through CI.
+The folder is the only signal, which is exactly why it has to be trustworthy.
+
+When a spec does move:
+
+1. Confirm its §Testing items exist as real tests and pass.
+2. Update its `Status:` header — the folder and the header must agree.
+3. Update **all three** indexes: `specs/README.md`, `specs/complete/README.md`,
+   `specs/planning/README.md`.
+4. Run `make check-links` — moving a file breaks every sibling-relative link that
+   pointed at it, in both directions. CI cannot catch this for specs.
+5. If the spec only partly landed, split it rather than moving it whole: carve the
+   built part out and leave the rest in `planning/` with an audit note saying what
+   is missing (010 → 026 is the worked example).
+
+A spec that ships with known gaps records them under an *Implementation notes*
+section — deviations from the design, and anything deferred — so the next reader
+learns it from the spec rather than from the code.
+
 ---
 
 ## 4. Architecture and layer discipline

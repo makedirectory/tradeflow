@@ -11,7 +11,7 @@ PY       = uv run python main.py
 
 .PHONY: help demo demo-agent demo-agent-live install install-optimize backtest backtest-no-scan scan live \
         allocate allocate-utility alphas risk info horizon optimize optimize-bayesian cancel-orders close-positions \
-        test docs docs-build docker-build docker-run clean
+        test check-links docs docs-build docker-build docker-run clean
 
 help:  ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -95,6 +95,9 @@ close-positions:  ## Close all open positions (also cancels orders)
 	uv run python close_all_positions.py
 
 # --- quality & docs ---------------------------------------------------------
+check-links:  ## Verify Markdown links + heading anchors (includes local specs/)
+	uv run python scripts/check_links.py
+
 test:  ## Run the offline test suite (no API keys needed)
 	uv run --extra dev pytest -q
 

@@ -30,7 +30,11 @@ goal ─▶ propose (Proposer) ─▶ hygiene gate ─▶ validate OUT-OF-SAMPLE
    metrics are recorded but never the criterion.
 2. **Multiple-testing correction.** `n_trials` accumulates across the whole
    session (via `n_trials_offset`) and feeds the deflated Sharpe — the more the
-   agent tries, the higher the bar each new config must clear.
+   agent tries, the higher the bar each new config must clear. The count is
+   **per session**: it resets when the process exits, so trials from earlier
+   sessions do not raise the bar for this one. Read a deflated Sharpe as a lower
+   bound on the deflation warranted — see
+   [the scope limit](walk-forward.md#known-limit-n_trials-counts-a-run-not-a-campaign).
 3. **Sacred holdout.** Reserved up front, never passed to any search, scored once
    at the end on the final shortlist.
 4. **Budgets + dryness stop.** Hard caps on trials and tokens, plus a
