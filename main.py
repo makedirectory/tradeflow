@@ -17,6 +17,7 @@ the MCP server, and the research agent run the same code):
     walkforward  out-of-sample validation with promotion gates
     mcp          serve TradeFlow to an agent over MCP (read-only)
     research     autonomous, offline research loop -> shortlist of configs
+    trials       inspect the trial store: campaign n_trials, recent trials, drift check
 
 Run ``python main.py <command> --help`` for options, or use the Makefile targets
 for preconfigured combos (``make demo``, ``make backtest``, ...).
@@ -74,12 +75,31 @@ def resolve_universe(data_client, scanner_name: Optional[str], candidates: List[
     return _resolve(data_client, scanner_name, candidates)
 
 
+def build_cost_model(args):
+    """Build the parametric cost model from ``--gross``/``--commission-bps``/etc.,
+    or ``None`` for ``--gross``.
+
+    Shared by backtest/optimize/walkforward so a search or validation prices trades
+    the same way a live backtest does. Gross-by-default optimization silently
+    favors the highest-turnover config (see ``ParameterOptimizer``'s and
+    ``WalkForwardValidator``'s own docstrings), so this must reach every
+    research-clock entrypoint that can run a search or a validation, not just
+    ``backtest``.
+    """
+    from src.costs import ParametricCostModel
+
+    if args.gross:
+        return None
+    return ParametricCostModel(
+        commission_bps=args.commission_bps, impact_eta=args.impact_eta, annual_borrow_bps=args.borrow_bps
+    )
+
+
 # ---------------------------------------------------------------------------- #
 # Commands
 # ---------------------------------------------------------------------------- #
 def cmd_backtest(args) -> None:
     from src.analytics.reporting import log_backtest_report
-    from src.costs import ParametricCostModel
     from src.engine.backtest import BacktestEngine
     from src.services.sizing import build_beta_sizer
 
@@ -92,13 +112,7 @@ def cmd_backtest(args) -> None:
         sizer = build_beta_sizer(data_client, strategy, universe, args.benchmark, as_of=args.start)
 
     # Metrics are net of transaction cost by default; --gross disables the charge.
-    cost_model = (
-        None
-        if args.gross
-        else ParametricCostModel(
-            commission_bps=args.commission_bps, impact_eta=args.impact_eta, annual_borrow_bps=args.borrow_bps
-        )
-    )
+    cost_model = build_cost_model(args)
     result = BacktestEngine(strategy, data_client, sizer=sizer, cost_model=cost_model).run(
         universe, args.start, args.end, args.capital
     )
@@ -249,7 +263,14 @@ def cmd_optimize(args) -> None:
 
     _, data_client = build_data_and_broker()
     universe = resolve_universe(data_client, args.scanner, args.symbols)
-    optimizer = ParameterOptimizer(STRATEGIES[args.strategy], data_client, initial_capital=args.capital)
+    # Net of transaction cost by default; --gross searches on gross returns, which
+    # reliably favors the highest-turnover config.
+    optimizer = ParameterOptimizer(
+        STRATEGIES[args.strategy],
+        data_client,
+        initial_capital=args.capital,
+        cost_model=build_cost_model(args),
+    )
 
     if args.method == "grid":
         result = optimizer.grid_search(
@@ -297,8 +318,14 @@ def cmd_walkforward(args) -> None:
 
     _, data_client = build_data_and_broker()
     universe = resolve_universe(data_client, args.scanner, args.symbols)
+    # Net of transaction cost by default; --gross validates on gross returns, which
+    # systematically promotes turnover the strategy could not afford live.
     validator = WalkForwardValidator(
-        STRATEGIES[args.strategy], data_client, initial_capital=args.capital, seed=args.seed
+        STRATEGIES[args.strategy],
+        data_client,
+        initial_capital=args.capital,
+        seed=args.seed,
+        cost_model=build_cost_model(args),
     )
     result = validator.run(
         universe,
@@ -869,6 +896,77 @@ def cmd_horizon(args) -> None:
     )
 
 
+def cmd_trials(args) -> None:
+    """Inspect the trial store (spec 026): the queryable index over the research
+    journal that lets a campaign-level Deflated Sharpe count every config you've
+    ever tried, not just the ones from this process.
+    """
+    from src.store.trials import DEFAULT_JOURNAL_PATH, TrialStore
+
+    # `query` has no --journal flag; status/rebuild do. Passing it here too means
+    # a schema-mismatch rebuild (which can fire inside the constructor) replays
+    # the journal the user actually pointed at, not the global default.
+    with TrialStore(args.db, journal_path=getattr(args, "journal", None)) as store:
+        if args.trials_command == "status":
+            info = store.status(args.journal)
+            print(f"DB      : {info['db_path']}")
+            print(f"Journal : {info['journal_path']}")
+            print(f"Schema  : v{info['schema_version']}")
+            print(f"Rows    : {info['rows']}")
+            print(f"Journal : {info['journal_lines']} lines ({info['journal_trial_lines']} trials)")
+            if info["orphaned_rows"]:
+                print(f"Orphaned: {info['orphaned_rows']} row(s) with no strategy (session_start missing)")
+            if info["drift"]:
+                print(
+                    "\nDRIFT DETECTED — rows undercount journaled trials, or rows are orphaned. Run `trials rebuild`."
+                )
+            else:
+                print("\nOK — no drift detected.")
+            return
+
+        if args.trials_command == "rebuild":
+            journal = args.journal or DEFAULT_JOURNAL_PATH
+            stats = store.rebuild(args.journal)
+            print(
+                f"Rebuilt {stats['rows']} trial rows from {stats['journal_lines']} journal lines ({journal})."
+            )
+            return
+
+        # query — defaults to the current accounting version (spec 026 §4.6);
+        # --all-accounting opts into a listing that spans versions.
+        rows = store.query(
+            strategy=args.strategy,
+            kind=args.kind,
+            accounting=args.accounting,
+            all_accounting=args.all_accounting,
+            limit=args.limit,
+        )
+        if not rows:
+            print("No trials matched.")
+        else:
+            print(
+                f"{'ID':14}{'KIND':12}{'STRATEGY':16}{'OOS SHARPE':>11}{'DSR':>7}{'PROMO':>7}{'ACCT':>6}  TS"
+            )
+            for r in rows:
+                oos = r["oos_sharpe"] if r["oos_sharpe"] is not None else 0.0
+                dsr = r["deflated_sharpe"] if r["deflated_sharpe"] is not None else 0.0
+                promo = "-" if r["promotable"] is None else ("yes" if r["promotable"] else "no")
+                print(
+                    f"{r['id']:14}{r['kind']:12}{(r['strategy'] or '')[:16]:16}"
+                    f"{oos:>11.3f}{dsr:>7.3f}{promo:>7}{r['accounting']:>6}  {(r['ts'] or '')[:19]}"
+                )
+
+        if args.strategy and args.symbols:
+            from src.engine.backtest import ACCOUNTING_VERSION
+
+            accounting = args.accounting if args.accounting is not None else ACCOUNTING_VERSION
+            n = store.family_count(args.strategy, args.symbols, accounting)
+            print(
+                f"\nCampaign n_trials for '{args.strategy}' over {', '.join(args.symbols)} "
+                f"(accounting v{accounting}): {n}"
+            )
+
+
 def cmd_mcp(args) -> None:
     """Serve TradeFlow over MCP (stdio). Opt-in; requires the ``mcp`` extra.
 
@@ -1204,6 +1302,24 @@ def _add_neutralize_factors_flag(parser, note: str = "") -> None:
     )
 
 
+def _add_cost_flags(parser) -> None:
+    """--gross/--commission-bps/--impact-eta/--borrow-bps, shared by every command
+    that can price a fill (backtest/optimize/walkforward) so a search or
+    validation is never silently gross by omission."""
+    parser.add_argument(
+        "--gross",
+        action="store_true",
+        help="Use GROSS returns (disable transaction cost; net is the default)",
+    )
+    parser.add_argument("--commission-bps", dest="commission_bps", type=float, default=1.0)
+    parser.add_argument(
+        "--impact-eta", dest="impact_eta", type=float, default=0.3, help="Market-impact coefficient"
+    )
+    parser.add_argument(
+        "--borrow-bps", dest="borrow_bps", type=float, default=50.0, help="Annual short borrow rate (bps)"
+    )
+
+
 def _date(value: str) -> datetime:
     return datetime.strptime(value, "%Y-%m-%d")
 
@@ -1246,18 +1362,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Scale position sizing inversely by each symbol's beta",
     )
     bt.add_argument("--benchmark", default="SPY", help="Benchmark symbol for beta")
-    bt.add_argument(
-        "--gross",
-        action="store_true",
-        help="Report GROSS metrics (disable transaction cost; net is the default)",
-    )
-    bt.add_argument("--commission-bps", dest="commission_bps", type=float, default=1.0)
-    bt.add_argument(
-        "--impact-eta", dest="impact_eta", type=float, default=0.3, help="Market-impact coefficient"
-    )
-    bt.add_argument(
-        "--borrow-bps", dest="borrow_bps", type=float, default=50.0, help="Annual short borrow rate (bps)"
-    )
+    _add_cost_flags(bt)
     bt.add_argument(
         "--chart",
         metavar="PATH",
@@ -1354,6 +1459,7 @@ def build_parser() -> argparse.ArgumentParser:
     opt.add_argument("--objective", default="sharpe_ratio")
     opt.add_argument("--max-evals", dest="max_evals", type=int, default=50)
     opt.add_argument("--output", default="optimization_results.csv")
+    _add_cost_flags(opt)
     add_no_journal(opt)
     opt.set_defaults(func=cmd_optimize)
 
@@ -1410,6 +1516,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Save the chosen config (with provenance) to this path",
     )
+    _add_cost_flags(wf)
     add_no_journal(wf)
     wf.set_defaults(func=cmd_walkforward)
 
@@ -1523,6 +1630,54 @@ def build_parser() -> argparse.ArgumentParser:
     risk.add_argument("--timeframe", default="1Day", help="Bar timeframe for returns")
     risk.add_argument("--lookback-days", dest="lookback_days", type=int, default=365)
     risk.set_defaults(func=cmd_risk)
+
+    def _add_db_flag(p) -> None:
+        p.add_argument("--db", default=None, help="Trial store DB path (default: logs/trials.db)")
+
+    trials = subparsers.add_parser(
+        "trials", help="Inspect the trial store — the queryable index over the research journal (spec 026)"
+    )
+    trials_sub = trials.add_subparsers(dest="trials_command", required=True)
+
+    t_status = trials_sub.add_parser("status", help="Row/journal-line counts and a drift check")
+    _add_db_flag(t_status)
+    t_status.add_argument(
+        "--journal", default=None, help="Journal path (default: logs/research_journal.jsonl)"
+    )
+
+    t_rebuild = trials_sub.add_parser(
+        "rebuild", help="Rebuild the index from the journal (derived — safe to delete the DB)"
+    )
+    _add_db_flag(t_rebuild)
+    t_rebuild.add_argument(
+        "--journal", default=None, help="Journal path (default: logs/research_journal.jsonl)"
+    )
+
+    t_query = trials_sub.add_parser("query", help="List recent trials, and a campaign's n_trials")
+    _add_db_flag(t_query)
+    t_query.add_argument("--strategy", default=None)
+    t_query.add_argument(
+        "--kind", default=None, choices=["backtest", "optimize", "walkforward", "alpha", "research"]
+    )
+    t_query.add_argument(
+        "--symbols",
+        type=_symbols,
+        default=None,
+        help="Universe — with --strategy, also prints campaign n_trials",
+    )
+    t_query.add_argument(
+        "--accounting", type=int, default=None, help="Filter to one accounting version (default: current)"
+    )
+    t_query.add_argument(
+        "--all-accounting",
+        dest="all_accounting",
+        action="store_true",
+        help="Show every accounting version, not just current — read the ACCOUNTING column "
+        "before comparing rows across versions",
+    )
+    t_query.add_argument("--limit", type=int, default=20)
+
+    trials.set_defaults(func=cmd_trials)
 
     mcp = subparsers.add_parser(
         "mcp", help="Serve TradeFlow over MCP for an agent (opt-in; needs the 'mcp' extra)"

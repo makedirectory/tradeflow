@@ -61,6 +61,30 @@ def _strategy(strategy_name: str, config: Optional[Dict[str, Any]] = None):
     return cls(params)
 
 
+def _build_cost_model(
+    gross: bool,
+    commission_bps: float,
+    impact_eta: float,
+    participation_cap: float,
+    borrow_bps: float,
+):
+    """Shared cost-model construction for run_backtest/run_optimization/
+    run_walk_forward - so a search or validation prices trades the same way a
+    live backtest does. ``None`` (i.e. ``gross=True``) reliably favors the
+    highest-turnover config, so this must reach every entrypoint that can run a
+    search or a validation, not just run_backtest."""
+    from src.costs import ParametricCostModel
+
+    if gross:
+        return None
+    return ParametricCostModel(
+        commission_bps=commission_bps,
+        impact_eta=impact_eta,
+        participation_cap=participation_cap,
+        annual_borrow_bps=borrow_bps,
+    )
+
+
 def run_scan(
     data_client: MarketDataClient,
     scanner: str,
@@ -101,22 +125,12 @@ def run_backtest(
     square-root impact); pass ``gross=True`` to disable cost for attribution. Trades
     are NOT inlined (could be thousands of rows); read the CSV if needed.
     """
-    from src.costs import ParametricCostModel
     from src.services.sizing import build_beta_sizer
 
     run_id = new_run_id()
     strat = _strategy(strategy, config)
     sizer = build_beta_sizer(data_client, strat, symbols, benchmark, as_of=start) if beta_sizing else None
-    cost_model = (
-        None
-        if gross
-        else ParametricCostModel(
-            commission_bps=commission_bps,
-            impact_eta=impact_eta,
-            participation_cap=participation_cap,
-            annual_borrow_bps=borrow_bps,
-        )
-    )
+    cost_model = _build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
     result = BacktestEngine(strat, data_client, sizer=sizer, cost_model=cost_model).run(
         symbols, start, end, capital
     )
@@ -156,16 +170,26 @@ def run_optimization(
     max_evals: int = 50,
     seed: int = 42,
     capital: float = 100_000.0,
+    gross: bool = False,
+    commission_bps: float = 1.0,
+    impact_eta: float = 0.3,
+    participation_cap: float = 0.10,
+    borrow_bps: float = 50.0,
 ) -> Dict[str, Any]:
     """Search a strategy's parameters IN-SAMPLE; return best params + top-N rows.
 
     WARNING for the caller: these are in-sample results from selecting the best of
     many configs - NOT evidence of edge. Validate with ``run_walk_forward`` before
     trusting any of this; ``best_score`` will almost always look good here.
+
+    Net of transaction cost by default (commission + half-spread + square-root
+    impact); pass ``gross=True`` to search gross returns instead - gross search
+    reliably favors the highest-turnover config.
     """
     run_id = new_run_id()
     cls = resolve_strategy_class(strategy)
-    opt = ParameterOptimizer(cls, data_client, initial_capital=capital, seed=seed)
+    cost_model = _build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
+    opt = ParameterOptimizer(cls, data_client, initial_capital=capital, seed=seed, cost_model=cost_model)
     if method == "grid":
         result = opt.grid_search(symbols, start, end, objective, max_evals=max_evals)
     elif method == "random":
@@ -196,6 +220,7 @@ def run_optimization(
         "truncated": max(total - len(top), 0),
         "results_csv": results_csv,
         "seed": seed,
+        "gross": gross,
         "note": "IN-SAMPLE. Selecting the best of many configs inflates these. "
         "Validate out-of-sample with run_walk_forward (it applies the Deflated Sharpe).",
     }
@@ -224,6 +249,11 @@ def run_walk_forward(
     leakage_probe: bool = False,
     gates: Optional[Dict[str, float]] = None,
     n_trials_offset: int = 0,
+    gross: bool = False,
+    commission_bps: float = 1.0,
+    impact_eta: float = 0.3,
+    participation_cap: float = 0.10,
+    borrow_bps: float = 50.0,
 ) -> Dict[str, Any]:
     """Honest evaluation: optimize IS, score OOS across folds, gate the verdict.
 
@@ -231,10 +261,17 @@ def run_walk_forward(
     degradation, per-fold summary, holdout (if requested), the Deflated Sharpe
     (with n_trials across all folds), and the promotion-gate pass/fail + overall
     ``promotable``. ``include_pbo`` is expensive and defaults off.
+
+    Net of transaction cost by default, in-sample and out - pass ``gross=True``
+    to validate gross returns instead, which systematically promotes turnover
+    the strategy could not afford live.
     """
     run_id = new_run_id()
     cls = resolve_strategy_class(strategy)
-    validator = WalkForwardValidator(cls, data_client, initial_capital=capital, seed=seed, gates=gates)
+    cost_model = _build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
+    validator = WalkForwardValidator(
+        cls, data_client, initial_capital=capital, seed=seed, gates=gates, cost_model=cost_model
+    )
     result = validator.run(
         symbols,
         start,
@@ -278,6 +315,7 @@ def run_walk_forward(
         "mode": mode,
         "objective": objective,
         "method": method,
+        "gross": gross,
         "folds": folds,
         "oos_aggregate": _jsonable(result.oos_aggregate),
         "efficiency": result.efficiency,

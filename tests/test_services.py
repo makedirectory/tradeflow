@@ -363,3 +363,91 @@ def test_cli_alphas_journals_a_readonly_trial(monkeypatch, tmp_path):
     # The window collapses to the single as-of date.
     assert rec["inputs"]["window"]["start"] == rec["inputs"]["window"]["end"]
     assert rec["resolved_config"]["ic"] == 0.05
+
+
+# --- trial store dual-write (spec 026) ---------------------------------------
+def test_cli_backtest_also_populates_the_trial_store(monkeypatch, tmp_path):
+    """Every journaled trial is dual-written into the sibling trial store, so a
+    campaign's n_trials can be counted from an index instead of replaying JSONL
+    by hand on every query."""
+    import main
+    from src.engine.backtest import ACCOUNTING_VERSION
+    from src.store.trials import TrialStore, db_path_for_journal
+
+    journal = _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB"])
+    args = main.build_parser().parse_args(
+        [
+            "backtest",
+            "--strategy",
+            "ma_crossover",
+            "--scanner",
+            "none",
+            "--symbols",
+            "AAA,BBB",
+            "--start",
+            "2024-01-02",
+            "--end",
+            "2024-06-01",
+        ]
+    )
+    args.func(args)
+
+    store = TrialStore(db_path_for_journal(journal))
+    rows = store.query(strategy="ma_crossover", kind="backtest")
+    assert len(rows) == 1
+    assert rows[0]["accounting"] == ACCOUNTING_VERSION
+    assert store.family_count("ma_crossover", ["AAA", "BBB"], ACCOUNTING_VERSION) == 1
+    status = store.status(journal)
+    assert status["drift"] is False
+
+
+def test_walkforward_gate_report_is_unaffected_by_a_broken_trial_store(monkeypatch, tmp_path, capsys):
+    """v1 is passive (spec 026 §2): the store only ever observes, so a walk-forward
+    run with a working trial store and one where the store is entirely broken must
+    produce the identical printed gate report - the dual-write is one-way and can
+    never feed back into a verdict."""
+    import main
+    from src.marketdata.client import MarketDataClient
+    from src.services import audit
+    from src.store import trials as trials_mod
+    from tests.fakes import FakeMarketData
+
+    client = MarketDataClient(FakeMarketData(["AAA", "BBB"], n=400, freq="1D"))
+    monkeypatch.setattr(main, "build_data_and_broker", lambda: (None, client))
+
+    def _run(journal_path):
+        monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", journal_path)
+        args = main.build_parser().parse_args(
+            [
+                "walkforward",
+                "--strategy",
+                "ma_crossover",
+                "--scanner",
+                "none",
+                "--symbols",
+                "AAA,BBB",
+                "--start",
+                "2024-01-02",
+                "--end",
+                "2025-06-01",
+                "--folds",
+                "3",
+                "--holdout-days",
+                "30",
+                "--method",
+                "grid",
+                "--max-evals",
+                "6",
+                "--seed",
+                "42",
+            ]
+        )
+        args.func(args)
+        return capsys.readouterr().out
+
+    working = _run(tmp_path / "a" / "journal.jsonl")
+
+    monkeypatch.setattr(trials_mod, "TrialStore", lambda *a, **k: (_ for _ in ()).throw(OSError("no store")))
+    broken = _run(tmp_path / "b" / "journal.jsonl")
+
+    assert working == broken

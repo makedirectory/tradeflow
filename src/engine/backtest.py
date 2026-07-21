@@ -107,6 +107,12 @@ class _Panel:
     adv: Optional[np.ndarray] = None
     vol: Optional[np.ndarray] = None
     last_timestamp: Any = None
+    #: This symbol's own last valid master-timeline step (where ``rows >= 0``) -
+    #: distinct from the merged panel's last step when this symbol's history is
+    #: shorter than the universe's. Force-close must age a position against this,
+    #: not the master timeline's length, or a short-history symbol gets charged
+    #: carry cost as if held through bars it never actually traded.
+    last_step: int = -1
 
 
 @dataclass
@@ -341,6 +347,7 @@ class BacktestEngine:
         else:
             adv = vol = None
 
+        rows = data.index.get_indexer(master)
         return _Panel(
             opens=data["open"].to_numpy(),
             timestamps=data.index.to_numpy(),
@@ -349,10 +356,11 @@ class BacktestEngine:
             closes=data["close"].to_numpy(),
             sig=sig,
             score=score,
-            rows=data.index.get_indexer(master),
+            rows=rows,
             adv=adv,
             vol=vol,
             last_timestamp=data.index[-1],
+            last_step=int(np.nonzero(rows >= 0)[0][-1]),
         )
 
     def _replay(self, panels: Dict[str, _Panel], master, initial_capital: float, trade_from=None):
@@ -442,13 +450,13 @@ class BacktestEngine:
                         book,
                         equity_now,
                         max_total_risk,
+                        panel.adv,
+                        panel.vol,
+                        i,
                     )
                     if pos is None:
                         continue
                     pos["entry_k"] = k
-                    pos["entry_cost"] = self._trade_cost(
-                        symbol, pos["size"], panel.opens[i], panel.adv, panel.vol, i
-                    )
                     book.cash -= pos["notional"] + pos["entry_cost"]
                     book.positions[symbol] = pos
 
@@ -463,7 +471,7 @@ class BacktestEngine:
             panel = panels[symbol]
             price = panel.closes[-1]
             final_cost = self._trade_cost(symbol, pos["size"], price, panel.adv, panel.vol, -1) + self._carry(
-                pos, n_steps - 1
+                pos, panel.last_step
             )
             closed = self._close(pos, price, panel.last_timestamp, "END_OF_PERIOD", final_cost)
             trades.append(closed)
@@ -498,6 +506,9 @@ class BacktestEngine:
         book: _Book,
         equity: float,
         max_total_risk: float,
+        adv: Optional[np.ndarray],
+        vol: Optional[np.ndarray],
+        i: int,
     ) -> Optional[Dict[str, Any]]:
         """Size and admit one candidate, or return None if the book cannot fund it."""
         # Free cash is the buying power; equity is the whole book. Sizing against
@@ -509,7 +520,13 @@ class BacktestEngine:
             portfolio_value=equity,
         )
         size = round_quantity(self.sizer.size(symbol, price, account))
-        if size <= 0 or size * price > book.cash:
+        if size <= 0:
+            return None
+        # The affordability check must include what this fill will cost to enter,
+        # not just its notional - otherwise a maximally-sized position can push
+        # cash negative once commission/spread/impact are subtracted.
+        entry_cost = self._trade_cost(symbol, size, price, adv, vol, i)
+        if size * price + entry_cost > book.cash:
             return None
 
         stop_pct = self.strategy.config["stop_loss"]
@@ -535,6 +552,7 @@ class BacktestEngine:
             "stop_loss": stop,
             "take_profit": take,
             "notional": size * price,
+            "entry_cost": entry_cost,
             "risk": risk,
             "last_price": price,
             # Running extremes while the position is open, seeded at entry.

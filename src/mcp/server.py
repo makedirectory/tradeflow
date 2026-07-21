@@ -178,13 +178,16 @@ def build_server(data_client=None):
         max_evals: int = 50,
         seed: int = 42,
         capital: float = 100_000.0,
+        gross: bool = False,
     ) -> Dict[str, Any]:
         """Search a strategy's parameters IN-SAMPLE (grid|random|bayesian).
 
         Returns best_params, best_score, and the top-10 configs (full grid -> CSV).
-        IMPORTANT: in-sample results from picking the best of many configs are
-        inflated and are NOT evidence of edge. Always validate with
-        run_walk_forward before trusting them.
+        NET of transaction cost by default (commission + half-spread + square-root
+        impact; pass gross=True to disable) — gross search reliably favors the
+        highest-turnover config. IMPORTANT: in-sample results from picking the
+        best of many configs are inflated and are NOT evidence of edge. Always
+        validate with run_walk_forward before trusting them.
         """
         inputs = {
             "strategy": strategy,
@@ -195,6 +198,7 @@ def build_server(data_client=None):
             "objective": objective,
             "max_evals": max_evals,
             "seed": seed,
+            "gross": gross,
         }
         result = analysis.run_optimization(
             dc,
@@ -207,6 +211,7 @@ def build_server(data_client=None):
             max_evals,
             seed,
             capital,
+            gross=gross,
         )
         return _logged("run_optimization", inputs, result)
 
@@ -228,6 +233,7 @@ def build_server(data_client=None):
         include_pbo: bool = False,
         parameter_sensitivity: bool = False,
         leakage_probe: bool = False,
+        gross: bool = False,
     ) -> Dict[str, Any]:
         """Honest out-of-sample evaluation across folds - your advancement criterion.
 
@@ -237,6 +243,9 @@ def build_server(data_client=None):
         all configs tried), and the PROMOTION-GATE verdict (pass/fail per gate +
         overall "promotable"). A config advances only if it is promotable - never
         on in-sample Sharpe. include_pbo is expensive; leave it off unless needed.
+        NET of transaction cost by default, in-sample and out (pass gross=True to
+        disable) — gross validation systematically promotes turnover the
+        strategy could not afford live.
         """
         inputs = {
             "strategy": strategy,
@@ -252,6 +261,7 @@ def build_server(data_client=None):
             "max_evals": max_evals,
             "seed": seed,
             "include_pbo": include_pbo,
+            "gross": gross,
         }
         result = analysis.run_walk_forward(
             dc,
@@ -271,6 +281,7 @@ def build_server(data_client=None):
             include_pbo=include_pbo,
             parameter_sensitivity=parameter_sensitivity,
             leakage_probe=leakage_probe,
+            gross=gross,
         )
         return _logged("run_walk_forward", inputs, result)
 

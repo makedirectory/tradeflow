@@ -141,7 +141,14 @@ class WalkForwardResult:
         median_pf = self.median_oos("profit_factor")
         median_wfe = self.median_efficiency()
         total_trades = self.total_oos_trades()
-        oos_dd = self.oos_aggregate.get("max_drawdown", 0.0)
+        # Both sides of this ratio must come from the same curve construction, or
+        # the ratio measures the construction gap, not real IS/OOS divergence.
+        # Per-fold IS/OOS metrics are always mark-to-market (each fold is one
+        # continuous BacktestEngine.run()); only the *aggregate* across folds
+        # falls back to a realized-P&L reconstruction (no single simulation spans
+        # multiple folds) - so median per-fold OOS drawdown, not the aggregate's,
+        # is what's actually comparable to median per-fold IS drawdown.
+        oos_dd = float(np.median([fr.oos_metrics.get("max_drawdown", 0.0) for fr in self.folds] or [0.0]))
         is_dd = float(np.median([fr.is_metrics.get("max_drawdown", 0.0) for fr in self.folds] or [0.0]))
         dsr = self.oos_aggregate.get("deflated_sharpe_ratio", 0.0)
 

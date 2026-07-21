@@ -219,6 +219,32 @@ def test_journal_records_session_and_trials(tmp_path):
         assert {"run_id", "timestamp", "git_sha"} <= set(rec)
 
 
+def test_duplicate_tune_proposal_is_deduped_via_the_trial_store(tmp_path):
+    """A repeated exact config is the same lottery ticket checked twice - reject
+    it before it burns a second walk-forward (spec 026), rather than letting it
+    count toward the campaign's multiple-testing total again."""
+    result = _agent(tmp_path, FixedProposer([_tune(3), _tune(3), _tune(5)]), max_dry_rounds=99).run(
+        SYMBOLS, START, END
+    )
+    # Only the two *distinct* configs count as trials — the repeat is a dedup hit.
+    assert result.n_trials_total == 2
+
+    lines = [json.loads(line) for line in (tmp_path / "journal.jsonl").read_text().splitlines()]
+    rejects = [rec["inputs"] for rec in lines if rec["tool"] == "research:reject"]
+    assert any("duplicate" in (r.get("reason") or "") for r in rejects)
+
+
+def test_research_trials_are_recorded_in_the_trial_store(tmp_path):
+    from src.engine.backtest import ACCOUNTING_VERSION
+
+    agent = _agent(tmp_path, FixedProposer([_tune(3), _tune(5)]))
+    agent.run(SYMBOLS, START, END)
+
+    rows = agent.trial_store.query(strategy="periodic", kind="research")
+    assert len(rows) == 2
+    assert agent.trial_store.family_count("periodic", SYMBOLS, ACCOUNTING_VERSION) == 2
+
+
 def test_proposer_context_excludes_holdout(tmp_path):
     """The proposer is only ever given the research window, never the holdout."""
     seen = {}

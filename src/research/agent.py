@@ -32,7 +32,7 @@ from statistics import median
 from typing import Any, Callable, Dict, List, Optional, Type
 
 from src.costs.base import CostModel
-from src.engine.backtest import BacktestError
+from src.engine.backtest import ACCOUNTING_VERSION, BacktestError
 from src.marketdata.client import MarketDataClient
 from src.optimization import config_store
 from src.optimization.walk_forward import WalkForwardValidator
@@ -40,6 +40,7 @@ from src.research.proposer import Proposal, ProposalContext, Proposer
 from src.research.sandbox import load_strategy_from_code, validate_hygiene
 from src.services.audit import DEFAULT_TRIAL_JOURNAL, audit_log, new_run_id
 from src.services.registry import resolve_strategy_class
+from src.store.trials import TrialStore, db_path_for_journal
 from src.strategies.base import Strategy
 
 logger = logging.getLogger(__name__)
@@ -119,6 +120,7 @@ class ResearchAgent:
         seed: int = 42,
         journal_path: str = DEFAULT_JOURNAL,
         observer: Optional[Callable[[str, Dict[str, Any]], None]] = None,
+        trial_store: Optional[TrialStore] = None,
     ):
         self.strategy_name = strategy_name
         self.data_client = data_client
@@ -130,6 +132,21 @@ class ResearchAgent:
         #: Purely observational - it cannot influence the loop or its decisions.
         self.observer = observer
         self.session_id = new_run_id()
+        #: The trial store (spec 026) this session dual-writes into and dedups
+        #: against - defaults to the store alongside this session's journal, so
+        #: redirecting ``journal_path`` (as tests do) isolates the store too.
+        #: Best-effort like every other trial-store touchpoint: the store is
+        #: derived, never authoritative, so a store-open failure (read-only
+        #: filesystem, disk full, sandboxed CI) degrades to no dedup/recording
+        #: rather than aborting the whole research session before it starts.
+        if trial_store is not None:
+            self.trial_store: Optional[TrialStore] = trial_store
+        else:
+            try:
+                self.trial_store = TrialStore(db_path_for_journal(journal_path), journal_path=journal_path)
+            except Exception:  # noqa: BLE001 - never let store setup block research
+                logger.warning("Trial store unavailable; continuing without dedup/recording", exc_info=True)
+                self.trial_store = None
 
     def run(self, symbols: List[str], start: datetime, end: datetime) -> ResearchResult:
         cfg = self.config
@@ -190,7 +207,8 @@ class ResearchAgent:
             rounds += 1
             tokens_used += proposal.tokens_used
 
-            verdict = self._evaluate(proposal, symbols, start, research_end, n_trials_cumulative)
+            n_trials_offset = n_trials_cumulative
+            verdict = self._evaluate(proposal, symbols, start, research_end, n_trials_offset)
             if verdict is None:
                 dry += 1
                 history.append({"round": rounds, "rejected": True})
@@ -209,7 +227,7 @@ class ResearchAgent:
             promotable = gate_report["promotable"]
             advanced = promotable and self._beats_incumbent(oos_sharpe, oos_dd, incumbent)
 
-            self._journal(
+            trial_run_id = self._journal(
                 "trial",
                 {
                     "session_id": self.session_id,
@@ -228,6 +246,23 @@ class ResearchAgent:
                     "n_trials_cumulative": n_trials_cumulative,
                     "tokens_used": tokens_used,
                 },
+            )
+            self._record_trial_row(
+                trial_run_id,
+                symbols,
+                start,
+                research_end,
+                full_params,
+                result,
+                # Same resolution _evaluate's dedup check used - a proposal naming
+                # a different registered strategy must be recorded (and later
+                # deduped) under that strategy, not the session's default.
+                strategy=proposal.strategy or self.strategy_name,
+                is_sharpe=is_sharpe,
+                oos_sharpe=oos_sharpe,
+                oos_dd=oos_dd,
+                promotable=promotable,
+                n_trials_offset=n_trials_offset,
             )
             history.append(
                 {
@@ -309,6 +344,30 @@ class ResearchAgent:
                 "reject", {"reason": reason, "hypothesis": proposal.hypothesis, "params": proposal.params}
             )
             return None
+
+        # Dedup (spec 026): a "tune" proposal that repeats an exact prior config
+        # for this strategy/universe/window is the same lottery ticket checked
+        # twice - reject it before it burns a walk-forward. Code proposals define
+        # a new mechanism each time, so params alone don't identify a repeat.
+        if proposal.kind != "code" and self.trial_store is not None:
+            full_params = self._full_params(cls, proposal.params)
+            if self.trial_store.seen(
+                strategy=proposal.strategy or self.strategy_name,
+                params=full_params,
+                symbols=symbols,
+                window_start=start,
+                window_end=research_end,
+                accounting=ACCOUNTING_VERSION,
+            ):
+                self._journal(
+                    "reject",
+                    {
+                        "reason": "duplicate: identical config already tried this campaign",
+                        "hypothesis": proposal.hypothesis,
+                        "params": full_params,
+                    },
+                )
+                return None
 
         try:
             return self._validate(proposal, cls, symbols, start, research_end, n_trials_offset)
@@ -443,11 +502,61 @@ class ResearchAgent:
             return f"{proposal.parent_id}->v"
         return incumbent.lineage + ".m" if incumbent else "root"
 
-    def _journal(self, event: str, payload: Dict[str, Any]) -> None:
-        audit_log(f"research:{event}", payload, path=self.journal_path)
+    def _journal(self, event: str, payload: Dict[str, Any]) -> str:
+        run_id = audit_log(f"research:{event}", payload, path=self.journal_path)
         if self.observer is not None:
             # An observer must never be able to break the research loop.
             try:
                 self.observer(event, payload)
             except Exception:  # noqa: BLE001 - narration is not load-bearing
                 logger.debug("research observer raised; continuing", exc_info=True)
+        return run_id
+
+    def _record_trial_row(
+        self,
+        run_id: str,
+        symbols,
+        start,
+        research_end,
+        full_params: Dict[str, Any],
+        result,
+        *,
+        strategy: str,
+        is_sharpe: float,
+        oos_sharpe: float,
+        oos_dd: float,
+        promotable: bool,
+        n_trials_offset: int,
+    ) -> None:
+        """Dual-write this round's trial into the trial store (spec 026), keyed
+        on the same ``run_id`` the journal line just got - so a later rebuild
+        replaying that line is a no-op, not a duplicate.
+
+        Best-effort: the store is derived, never authoritative, so a write
+        failure here must never break the research loop.
+        """
+        try:
+            self.trial_store.record(
+                id=run_id,
+                kind="research",
+                strategy=strategy,
+                symbols=symbols,
+                params=full_params,
+                accounting=ACCOUNTING_VERSION,
+                session_id=self.session_id,
+                window_start=start,
+                window_end=research_end,
+                is_sharpe=is_sharpe,
+                oos_sharpe=oos_sharpe,
+                oos_profit_factor=result.oos_aggregate.get("profit_factor"),
+                oos_max_dd=oos_dd,
+                deflated_sharpe=result.oos_aggregate.get("deflated_sharpe_ratio"),
+                efficiency=result.median_efficiency(),
+                oos_trades=result.oos_aggregate.get("total_trades"),
+                promotable=promotable,
+                n_trials_in_session=result.n_trials_total - n_trials_offset,
+                git_sha=config_store.current_git_sha(),
+                metrics_full=result.oos_aggregate,
+            )
+        except Exception:  # noqa: BLE001 - the journal append above already succeeded
+            logger.warning("Trial store dual-write failed for a research trial", exc_info=True)

@@ -120,14 +120,62 @@ def journal_trial(
     }
     if objective:
         inputs["objective"] = objective
-    return audit_log(
+    result_summary = {k: metrics[k] for k in _TRIAL_METRICS if k in metrics}
+    journal_path = path or DEFAULT_TRIAL_JOURNAL
+    run_id = audit_log(
         f"trial:{kind}",
         inputs,
         resolved_config=dict(params),
-        result_summary={k: metrics[k] for k in _TRIAL_METRICS if k in metrics},
-        path=path or DEFAULT_TRIAL_JOURNAL,
+        result_summary=result_summary,
+        path=journal_path,
         extra={"kind": kind, **(extra or {})},
     )
+    _index_trial(run_id, kind, inputs, params, result_summary, extra or {}, journal_path)
+    return run_id
+
+
+def _index_trial(
+    run_id: str,
+    kind: str,
+    inputs: Dict[str, Any],
+    params: Dict[str, Any],
+    metrics: Dict[str, Any],
+    extra: Dict[str, Any],
+    journal_path: Path,
+) -> None:
+    """Dual-write this trial into the trial store (spec 026), alongside the
+    journal append. Best-effort: the store is derived, never authoritative, so a
+    write failure here must never break the caller - ``trials rebuild`` resyncs
+    from the journal, which just succeeded.
+    """
+    try:
+        from src.store.trials import TrialStore, db_path_for_journal
+
+        window = inputs.get("window") or {}
+        with TrialStore(db_path_for_journal(journal_path), journal_path=journal_path) as store:
+            store.record(
+                id=run_id,
+                kind=kind,
+                strategy=inputs.get("strategy"),
+                symbols=inputs.get("symbols") or [],
+                params=params,
+                accounting=ACCOUNTING_VERSION,
+                ts=datetime.now(timezone.utc).isoformat(),
+                window_start=window.get("start"),
+                window_end=window.get("end"),
+                oos_sharpe=metrics.get("sharpe_ratio"),
+                oos_profit_factor=metrics.get("profit_factor"),
+                oos_max_dd=metrics.get("max_drawdown"),
+                deflated_sharpe=metrics.get("deflated_sharpe_ratio"),
+                oos_trades=metrics.get("total_trades"),
+                efficiency=extra.get("efficiency"),
+                promotable=extra.get("promotable"),
+                n_trials_in_session=extra.get("n_trials"),
+                git_sha=current_git_sha(),
+                metrics_full=metrics,
+            )
+    except Exception:  # noqa: BLE001 - the journal append above already succeeded
+        logger.warning("Trial store dual-write failed; `trials rebuild` will resync", exc_info=True)
 
 
 def _iso(when: Any) -> Optional[str]:
