@@ -221,12 +221,27 @@ def compute_backtest_metrics(
 
 def build_equity_curve(trades_df: pd.DataFrame, initial_capital: float) -> List[float]:
     """Build a daily equity curve by accumulating trade P&L at exit time."""
-    if trades_df.empty:
-        return [initial_capital]
+    dated = build_dated_equity_curve(trades_df, initial_capital)
+    return dated.tolist() if not dated.empty else [initial_capital]
 
+
+def build_dated_equity_curve(trades_df: pd.DataFrame, initial_capital: float) -> pd.Series:
+    """Like :func:`build_equity_curve`, but keeps the ``DatetimeIndex``.
+
+    ``build_equity_curve`` returns a plain ``List[float]`` because nothing on its
+    existing call paths ever needed the dates back. Spec 023's per-trial OOS
+    return series does: the Reality Check inner-joins trials on a common calendar
+    (`src.store.trials.TrialStore.returns_panel`), which needs real dates, not
+    just an ordered sequence.
+    """
+    if trades_df.empty or "exit_time" not in trades_df:
+        return pd.Series(dtype="float64")
     daily_pnl = trades_df.set_index("exit_time")["pnl"].resample("D").sum().fillna(0)
+    if daily_pnl.empty:
+        return pd.Series(dtype="float64")
     equity = initial_capital + daily_pnl.cumsum()
-    return [initial_capital, *equity.tolist()]
+    first_day = equity.index[0] - pd.Timedelta(days=1)
+    return pd.concat([pd.Series([initial_capital], index=[first_day]), equity])
 
 
 # --------------------------------------------------------------------------- #

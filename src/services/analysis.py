@@ -335,6 +335,118 @@ def run_walk_forward(
     }
 
 
+def compute_bootstrap_skill(
+    oos_returns: Optional[pd.Series],
+    strategy: str,
+    symbols: List[str],
+    n_trials_total: int,
+    oos_aggregate: Dict[str, float],
+    *,
+    accounting: Optional[int] = None,
+    B: int = 2000,
+    block_length: Optional[float] = None,
+    seed: int = 0,
+    min_overlap: int = 60,
+    journal_path: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """The bootstrap-skill report (spec 023 §3.3): this config's OWN zero-alpha
+    bootstrap p, always shown next to the FAMILY p from White's Reality Check
+    over every OOS return series the 026 trial store has recorded for
+    ``(strategy, universe, accounting)`` — replacing the Deflated Sharpe's
+    assumed ``E[max]``/effective-trial-count with the actual trials.
+
+    Call this AFTER the current trial has been journaled (``journal_trial``), so
+    the family query below includes it — the whole point of the family test is
+    to ask "is this trial's result still notable once every trial this campaign
+    has tried is priced in," which requires this trial to already be one of them.
+
+    Best-effort on the trial store, exactly like every other trial-store
+    touchpoint (spec 026): a store-open failure (or too few trials with a usable
+    stored return series) degrades to "own p only" — it never blocks the caller,
+    and the report says so rather than silently omitting the family half.
+    Own and family are always returned together (never one alone) — a great own
+    p and a terrible family p is exactly the selection-luck signature (spec 023
+    hidden factor 6).
+    """
+    from src.analytics import bootstrap as boot
+    from src.analytics.metrics import TRADING_DAYS_PER_YEAR
+
+    if oos_returns is None or len(oos_returns) < 8:
+        return {
+            "available": False,
+            "note": "Not enough OOS periods for a bootstrap (need >= 8 daily observations).",
+        }
+
+    own = boot.bootstrap_null(
+        oos_returns.to_numpy(), B=B, block_length=block_length, seed=seed, periods_per_year=TRADING_DAYS_PER_YEAR
+    )
+
+    family: Dict[str, Any] = {"available": False}
+    try:
+        from src.engine.backtest import ACCOUNTING_VERSION
+        from src.store.trials import DEFAULT_JOURNAL_PATH, TrialStore, db_path_for_journal
+
+        jpath = Path(journal_path) if journal_path else DEFAULT_JOURNAL_PATH
+        acct = accounting if accounting is not None else ACCOUNTING_VERSION
+        with TrialStore(db_path_for_journal(jpath), journal_path=jpath) as store:
+            panel = store.returns_panel(strategy, symbols, acct, min_overlap=min_overlap)
+        if panel["n_used"] >= 2:
+            matrix = np.array(panel["matrix"], dtype=float)
+            fam = boot.reality_check(
+                matrix, B=B, block_length=block_length, seed=seed,
+                periods_per_year=TRADING_DAYS_PER_YEAR, trial_ids=panel["trial_ids"],
+            )
+            fam.update(
+                available=True,
+                n_attempted=panel["n_attempted"],
+                n_with_returns=panel["n_with_returns"],
+                n_used=panel["n_used"],
+                n_excluded_short=panel["n_excluded_short"],
+            )
+            family = fam
+        else:
+            family = {
+                "available": False,
+                "n_attempted": panel["n_attempted"],
+                "n_with_returns": panel["n_with_returns"],
+                "n_used": panel["n_used"],
+                "note": "Fewer than 2 trials in this family have a usable stored return series "
+                "(need >= 2 sharing >= min_overlap common dates) — Reality Check needs a real panel.",
+            }
+    except Exception:  # noqa: BLE001 - best-effort, like every other trial-store touchpoint
+        logger.warning("Bootstrap-skill family check unavailable (trial store)", exc_info=True)
+
+    return {
+        "available": True,
+        "own": own,
+        "family": family,
+        "n_trials_total": n_trials_total,
+        "parametric_cross_check": {
+            "probabilistic_sharpe_ratio": oos_aggregate.get("probabilistic_sharpe_ratio", 0.0),
+            "deflated_sharpe_ratio": oos_aggregate.get("deflated_sharpe_ratio", 0.0),
+        },
+        "verdict": _bootstrap_skill_verdict(own, family),
+    }
+
+
+def _bootstrap_skill_verdict(own: Dict[str, Any], family: Dict[str, Any]) -> str:
+    if own.get("insufficient_data"):
+        return "insufficient data for a bootstrap verdict"
+    own_significant = own["p_value"] < 0.05
+    if not family.get("available"):
+        base = "individually significant" if own_significant else "NOT individually significant"
+        return f"{base} (own test only — family-of-trials test unavailable, see n_used/n_attempted)"
+    family_significant = family["family_p"] < 0.05
+    if own_significant and not family_significant:
+        return (
+            "individually significant, NOT significant as a selected maximum — "
+            "consistent with selection luck; needs fresh OOS data to distinguish."
+        )
+    if own_significant and family_significant:
+        return "significant both individually and as the family's best — the strongest verdict this test gives."
+    return "NOT individually significant (own test already fails; family test moot)."
+
+
 def summarize_bars(
     data_client: MarketDataClient,
     symbols: List[str],
@@ -817,6 +929,10 @@ def compute_attribution(
     detail: bool = False,
     conditional: Optional[str] = None,
     conditional_lambda: Optional[float] = None,
+    bootstrap_skill: bool = False,
+    bootstrap_b: int = 2000,
+    bootstrap_block_length: Optional[float] = None,
+    bootstrap_seed: int = 0,
 ) -> Dict[str, Any]:
     """Attribute realized active return to systematic timing, risk factors, signals,
     and stock-picking - and confront the attributed t-stats with the same
@@ -853,6 +969,14 @@ def compute_attribution(
     across vol regimes." This runs ONE Σ choice per call (conditional or not, not
     both side by side); the net-of-cost conditional-vs-unconditional comparison
     lives in ``run_conditional_risk_ab``.
+
+    ``bootstrap_skill`` (spec 023, default off) adds a nonparametric OWN p-value
+    next to the parametric ``SE{IR}≈1/√Y`` verdict: a stationary block bootstrap
+    of ``r_active_series`` under the imposed null (demeaned by its own estimated
+    alpha), reported as ``bootstrap`` in the result and folded into ``verdict``.
+    This is the *own* test only (a single track record, not a trial family) - the
+    family Reality Check needs the 026 trial store's stored trials and lives on
+    ``run_walk_forward``'s ``--bootstrap-skill`` instead.
     """
     from src.analytics import attribution as attr
     from src.analytics import information as info
@@ -1037,6 +1161,27 @@ def compute_attribution(
     best_row = max(skill_rows, key=lambda name: abs(rows[name].get("t_stat", 0.0)))
     te_by_regime = _te_by_regime(psi2_series, r_active_series, bench_vol_series, rebalances_per_year)
 
+    bootstrap_report = None
+    verdict = (
+        "distinguishable from luck" if abs(total_active_ir) / max(total_ir_se, 1e-9) >= 2 else
+        "NOT distinguishable from luck"
+    )
+    if bootstrap_skill:
+        from src.analytics import bootstrap as boot
+
+        bootstrap_report = boot.bootstrap_null(
+            np.asarray(r_active_series, dtype=float),
+            B=bootstrap_b,
+            block_length=bootstrap_block_length,
+            seed=bootstrap_seed,
+            periods_per_year=rebalances_per_year,
+        )
+        if not bootstrap_report["insufficient_data"]:
+            verdict += (
+                f"; bootstrap own-p={bootstrap_report['p_value']:.3f} "
+                f"(B={bootstrap_report['B']}, L={bootstrap_report['block_length']:.1f})"
+            )
+
     result_dict: Dict[str, Any] = {
         "run_id": run_id,
         "strategy": strategy,
@@ -1066,10 +1211,8 @@ def compute_attribution(
         "sanity_ceiling_breached": abs(total_active_ir) > 2.0,
         "prior_weight_t0": t0,
         "sigma2_prior_per_row": sigma2_prior_per_row,
-        "verdict": (
-            "distinguishable from luck" if abs(total_active_ir) / max(total_ir_se, 1e-9) >= 2 else
-            "NOT distinguishable from luck"
-        ),
+        "verdict": verdict,
+        "bootstrap": _jsonable(bootstrap_report) if bootstrap_report else None,
         "note": "Every attributed row sums exactly to the realized active return per period "
         "(regression identity); the systematic bucket further splits (in aggregate) into "
         "expected/surprise (not skill) and timing (real, but noisy - always check its own "

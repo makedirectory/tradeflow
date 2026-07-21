@@ -28,7 +28,7 @@ import asyncio
 import logging
 import sys
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from src.services.registry import STRATEGIES
 from src.utils.logging_config import setup_logging
@@ -118,11 +118,18 @@ def cmd_backtest(args) -> None:
     )
 
     if not args.no_journal:
+        from src.analytics.metrics import returns_from_equity
+        from src.analytics.performance import build_dated_equity_curve
         from src.services.audit import journal_trial
 
         # One backtest is one evaluated config = one trial. Record only the tunable
         # params (config also carries timeframe/limits/lookback, which are not knobs).
         tunable = {k: strategy.config[k] for k in strategy.PARAM_RANGES if k in strategy.config}
+        # Spec 023: persist this trial's own dated return series (daily-resampled,
+        # from realized trade P&L - the same construction every persisted trial
+        # kind uses) so it can later join a Reality Check family panel.
+        dated_equity = build_dated_equity_curve(result.trades, args.capital)
+        returns_series = returns_from_equity(dated_equity) if not dated_equity.empty else None
         journal_trial(
             "backtest",
             strategy=args.strategy,
@@ -131,6 +138,7 @@ def cmd_backtest(args) -> None:
             end=args.end,
             params=tunable,
             metrics=result.metrics,
+            returns=returns_series,
         )
 
     log_backtest_report(result.metrics, result.initial_capital, result.final_capital)
@@ -489,7 +497,23 @@ def cmd_walkforward(args) -> None:
                 "promotable": report["promotable"],
                 "efficiency": result.median_efficiency(),
             },
+            returns=result.oos_returns,
         )
+
+    if getattr(args, "bootstrap_skill", False) and result.folds:
+        from src.services.analysis import compute_bootstrap_skill
+
+        report = compute_bootstrap_skill(
+            result.oos_returns,
+            args.strategy,
+            universe,
+            result.n_trials_total,
+            result.oos_aggregate,
+            B=args.bootstrap_b,
+            block_length=args.bootstrap_block_length,
+            seed=args.bootstrap_seed,
+        )
+        _print_bootstrap_skill(report)
 
     if getattr(args, "chart", None):
         from src.analytics.charts import render_walkforward_chart
@@ -596,6 +620,45 @@ def _print_walkforward(result, objective: str) -> None:
         f"{result.median_efficiency():.2f}, {result.total_oos_trades()} OOS trades, "
         f"DSR {agg.get('deflated_sharpe_ratio', 0):.2f}"
     )
+
+
+def _print_bootstrap_skill(report: Dict[str, Any]) -> None:
+    """The bootstrap-skill report (`walkforward --bootstrap-skill`, spec 023):
+    own p next to family p, ALWAYS together — a great own p and a terrible
+    family p is exactly the selection-luck signature this test exists to catch."""
+    print("\n--- Bootstrap skill (spec 023) ---")
+    if not report.get("available"):
+        print(f"  {report.get('note', 'unavailable')}")
+        return
+    own = report["own"]
+    if own.get("insufficient_data"):
+        print(f"  {report['verdict']}")
+        return
+    print(
+        f"  this config: IR {own['ir_observed']:+.2f}, p={own['p_value']:.3f} (own, "
+        f"B={own['B']}, L={own['block_length']:.1f}, SE(p)≈{own['p_se']:.3f})"
+    )
+    family = report["family"]
+    if family.get("available"):
+        print(
+            f"  family: best of K={family['k_trials']} trials, p={family['family_p']:.3f} "
+            f"(used {family['n_used']}/{family['n_attempted']} attempted trials — "
+            f"{family['n_with_returns']} had a stored return series, "
+            f"{family['n_excluded_short']} excluded for too little date overlap)"
+        )
+        if family["block_sensitivity_flag"] or own["block_sensitivity_flag"]:
+            print(
+                "  ⚠ significance flips across L/2..2L — see block_sensitivity "
+                "(a p that flips there is not a result)"
+            )
+    else:
+        print(f"  family: unavailable — {family.get('note', 'see n_used/n_attempted')}")
+    cross = report["parametric_cross_check"]
+    print(
+        f"  parametric cross-check: PSR {cross['probabilistic_sharpe_ratio']:.2f}, "
+        f"DSR {cross['deflated_sharpe_ratio']:.2f} (n_trials={report['n_trials_total']})"
+    )
+    print(f"  verdict: {report['verdict']}")
 
 
 def cmd_research(args) -> None:
@@ -1045,6 +1108,7 @@ def _print_attribution_report(data_client, args) -> None:
         signals=getattr(args, "attribution_signals", None),
         conditional=getattr(args, "conditional", None),
         conditional_lambda=getattr(args, "conditional_lambda", None),
+        bootstrap_skill=getattr(args, "bootstrap_skill", False),
     )
     _print_attribution(r, args.strategy, args.start, args.end)
     te_by_regime = r.get("te_by_regime")
@@ -1915,6 +1979,31 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Shift the data feed forward to detect future-data leakage",
     )
+    wf.add_argument(
+        "--bootstrap-skill",
+        dest="bootstrap_skill",
+        action="store_true",
+        help="Spec 023: nonparametric skill check — this config's own zero-alpha "
+        "stationary bootstrap p, next to the FAMILY p from White's Reality Check "
+        "over every OOS return series the 026 trial store has recorded for this "
+        "(strategy, universe, accounting). Advisory only (not a promotion gate).",
+    )
+    wf.add_argument(
+        "--bootstrap-b",
+        dest="bootstrap_b",
+        type=int,
+        default=2000,
+        help="Bootstrap resamples B (default 2000)",
+    )
+    wf.add_argument(
+        "--bootstrap-block-length",
+        dest="bootstrap_block_length",
+        type=float,
+        default=None,
+        help="Override the stationary bootstrap's expected block length "
+        "(default: the Politis-White rule, auto-computed and reported)",
+    )
+    wf.add_argument("--bootstrap-seed", dest="bootstrap_seed", type=int, default=0)
     wf.add_argument("--results-csv", dest="results_csv", default=None, help="Write per-fold table to CSV")
     wf.add_argument(
         "--chart",
@@ -2041,6 +2130,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Research mode (spec 024 §3.2/§6): net-of-cost A/B — walk-forward the SAME "
         "alpha book against a conditional vs unconditional Σ, carrying weights forward, "
         "and compare realized net IR (not just TE-tracking).",
+    )
+    info.add_argument(
+        "--bootstrap-skill",
+        dest="bootstrap_skill",
+        action="store_true",
+        help="Spec 023: with --attribution, add a nonparametric OWN p-value (stationary "
+        "block bootstrap of the active-return series under the imposed null) next to "
+        "the parametric SE{IR}≈1/√Y verdict",
     )
     _add_neutralize_factors_flag(info, note="; measure the alpha you deploy")
     info.set_defaults(func=cmd_info)

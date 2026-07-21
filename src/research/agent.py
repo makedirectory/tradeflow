@@ -73,6 +73,10 @@ class ResearchConfig:
     drawdown_guard_tolerance: float = 0.25  # OOS max_dd may worsen at most this fraction
     allow_code_gen: bool = False
     gates: Optional[Dict[str, float]] = None
+    #: Spec 023, advisory only: annotate each shortlisted candidate with a
+    #: bootstrap-skill report (own + family p) after holdout scoring. Off by
+    #: default - it never influences keep/discard (guardrail 1 stays untouched).
+    bootstrap_skill: bool = False
     #: Charged on every simulated fill. Left ``None`` the loop selects on gross
     #: returns, which favors turnover the strategy could not afford live.
     cost_model: Optional[CostModel] = None
@@ -94,6 +98,15 @@ class Candidate:
     holdout_metrics: Optional[Dict[str, float]] = None
     saved_path: Optional[str] = None
     strategy_cls: Optional[Type[Strategy]] = field(default=None, repr=False)
+    #: This candidate's dated OOS return series (spec 023) - kept so
+    #: ``bootstrap_skill`` can be computed once the holdout score is in, without
+    #: re-running the walk-forward.
+    oos_returns: Optional[Any] = field(default=None, repr=False)
+    #: The bootstrap-skill report (spec 023), when ``ResearchConfig.bootstrap_skill``
+    #: is on - advisory only, computed after holdout scoring; never influences
+    #: ``_beats_incumbent`` or the keep/discard decision (guardrail 1: OOS-only,
+    #: gate-based fitness stays exactly as specced).
+    bootstrap_skill: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -227,26 +240,32 @@ class ResearchAgent:
             promotable = gate_report["promotable"]
             advanced = promotable and self._beats_incumbent(oos_sharpe, oos_dd, incumbent)
 
-            trial_run_id = self._journal(
-                "trial",
-                {
-                    "session_id": self.session_id,
-                    "round": rounds,
-                    "kind": proposal.kind,
-                    "hypothesis": proposal.hypothesis,
-                    "params": full_params,
-                    "is_sharpe": is_sharpe,
-                    "oos_sharpe": oos_sharpe,
-                    "efficiency": result.median_efficiency(),
-                    "oos_max_drawdown": oos_dd,
-                    "oos_aggregate": result.oos_aggregate,
-                    "gate_report": gate_report,
-                    "promotable": promotable,
-                    "advanced": advanced,
-                    "n_trials_cumulative": n_trials_cumulative,
-                    "tokens_used": tokens_used,
-                },
-            )
+            trial_payload = {
+                "session_id": self.session_id,
+                "round": rounds,
+                "kind": proposal.kind,
+                "hypothesis": proposal.hypothesis,
+                "params": full_params,
+                "is_sharpe": is_sharpe,
+                "oos_sharpe": oos_sharpe,
+                "efficiency": result.median_efficiency(),
+                "oos_max_drawdown": oos_dd,
+                "oos_aggregate": result.oos_aggregate,
+                "gate_report": gate_report,
+                "promotable": promotable,
+                "advanced": advanced,
+                "n_trials_cumulative": n_trials_cumulative,
+                "tokens_used": tokens_used,
+            }
+            # Spec 023: persist this round's own dated OOS return series in the
+            # journal too (not just the trial store) - rebuild() must be able to
+            # restore it from the journal alone, the sole source of truth.
+            if result.oos_returns is not None and len(result.oos_returns):
+                trial_payload["oos_returns"] = {
+                    "dates": [d.isoformat() for d in result.oos_returns.index],
+                    "values": [float(v) for v in result.oos_returns.to_numpy()],
+                }
+            trial_run_id = self._journal("trial", trial_payload)
             self._record_trial_row(
                 trial_run_id,
                 symbols,
@@ -286,6 +305,7 @@ class ResearchAgent:
                     gate_report=gate_report,
                     n_trials_at_selection=n_trials_cumulative,
                     strategy_cls=cls,
+                    oos_returns=result.oos_returns,
                 )
                 shortlist.append(candidate)
                 shortlist.sort(key=lambda c: c.oos_metrics.get("sharpe_ratio", 0.0), reverse=True)
@@ -463,6 +483,8 @@ class ResearchAgent:
             )
             candidate.saved_path = str(path)
             saved.append(str(path))
+            if self.config.bootstrap_skill:
+                candidate.bootstrap_skill = self._bootstrap_skill_for(candidate, symbols, n_trials_total)
             self._journal(
                 "holdout_score",
                 {
@@ -470,9 +492,30 @@ class ResearchAgent:
                     "candidate": candidate.id,
                     "holdout_metrics": candidate.holdout_metrics,
                     "saved": str(path),
+                    "bootstrap_skill": candidate.bootstrap_skill,
                 },
             )
         return saved
+
+    def _bootstrap_skill_for(self, candidate: Candidate, symbols, n_trials_total: int) -> Optional[Dict[str, Any]]:
+        """Advisory-only (spec 023): own p from this candidate's OOS return
+        series, next to the family p from every trial this session (and prior
+        sessions) has recorded for its strategy/universe. Never influences
+        keep/discard - a best-effort annotation on the final shortlist only."""
+        try:
+            from src.services.analysis import compute_bootstrap_skill
+
+            return compute_bootstrap_skill(
+                candidate.oos_returns,
+                candidate.strategy,
+                symbols,
+                n_trials_total,
+                candidate.oos_metrics,
+                journal_path=self.journal_path,
+            )
+        except Exception:  # noqa: BLE001 - advisory only, must never break finalize
+            logger.warning("Bootstrap-skill annotation failed for a shortlisted candidate", exc_info=True)
+            return None
 
     # ------------------------------------------------------------------ #
     # Helpers
@@ -558,5 +601,11 @@ class ResearchAgent:
                 git_sha=config_store.current_git_sha(),
                 metrics_full=result.oos_aggregate,
             )
+            if result.oos_returns is not None and len(result.oos_returns):
+                self.trial_store.record_returns(
+                    run_id,
+                    [d.isoformat() for d in result.oos_returns.index],
+                    [float(v) for v in result.oos_returns.to_numpy()],
+                )
         except Exception:  # noqa: BLE001 - the journal append above already succeeded
             logger.warning("Trial store dual-write failed for a research trial", exc_info=True)

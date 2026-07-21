@@ -245,6 +245,40 @@ def test_research_trials_are_recorded_in_the_trial_store(tmp_path):
     assert agent.trial_store.family_count("periodic", SYMBOLS, ACCOUNTING_VERSION) == 2
 
 
+# --- bootstrap skill (spec 023) ----------------------------------------------
+def test_research_trials_persist_oos_return_series_in_the_store(tmp_path):
+    """Spec 023 §4 hidden factor 1: the trial store must contain a genuine OOS
+    return series per trial (not just summary floats) for Reality Check to
+    resample - every recorded research trial gets one."""
+    agent = _agent(tmp_path, FixedProposer([_tune(3), _tune(5)]))
+    agent.run(SYMBOLS, START, END)
+
+    rows = agent.trial_store.query(strategy="periodic", kind="research")
+    assert len(rows) == 2
+    panel = agent.trial_store.returns_panel("periodic", SYMBOLS, rows[0]["accounting"], min_overlap=5)
+    assert panel["n_with_returns"] == 2
+
+
+def test_bootstrap_skill_annotation_is_advisory_and_off_by_default(tmp_path):
+    """Off by default: no candidate gets a bootstrap_skill annotation unless the
+    config explicitly asks for it - and turning it on never changes which
+    candidates advance (guardrail 1, OOS-only fitness, stays untouched)."""
+    (tmp_path / "off").mkdir()
+    (tmp_path / "on").mkdir()
+    off = _agent(tmp_path / "off", FixedProposer([_tune(3), _tune(5)])).run(SYMBOLS, START, END)
+    assert off.shortlist
+    assert all(c.bootstrap_skill is None for c in off.shortlist)
+
+    on = _agent(tmp_path / "on", FixedProposer([_tune(3), _tune(5)]), bootstrap_skill=True).run(
+        SYMBOLS, START, END
+    )
+    assert on.shortlist
+    assert all(c.bootstrap_skill is not None for c in on.shortlist)
+    for c in on.shortlist:
+        assert "own" in c.bootstrap_skill and "family" in c.bootstrap_skill
+    assert [c.params for c in on.shortlist] == [c.params for c in off.shortlist]
+
+
 def test_proposer_context_excludes_holdout(tmp_path):
     """The proposer is only ever given the research window, never the holdout."""
     seen = {}

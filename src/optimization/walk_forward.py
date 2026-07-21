@@ -34,7 +34,7 @@ import numpy as np
 import pandas as pd
 
 from src.analytics import performance
-from src.analytics.metrics import TRADING_DAYS_PER_YEAR
+from src.analytics.metrics import TRADING_DAYS_PER_YEAR, returns_from_equity
 from src.costs.base import CostModel
 from src.engine.backtest import BacktestEngine
 from src.marketdata.base import BarHandler, MarketDataProvider
@@ -116,6 +116,12 @@ class WalkForwardResult:
     pbo: Optional[float] = None
     monte_carlo: Optional[Dict[str, float]] = None
     diagnostics: Dict[str, Any] = field(default_factory=dict)
+    #: The concatenated OOS per-period return series (dated, daily-resampled -
+    #: same construction as the aggregate's realized-P&L fallback), when any OOS
+    #: trades exist. This is the "realized active-return series" spec 023's
+    #: bootstrap skill test resamples, and what gets persisted to the trial store
+    #: (spec 026) so a Reality Check has a real trial to join against later.
+    oos_returns: Optional[pd.Series] = None
 
     # --- derived summaries used by the gates ---
     def median_oos(self, key: str) -> float:
@@ -435,6 +441,7 @@ class WalkForwardValidator:
             degradation=degradation,
             n_trials_total=n_trials_total,
             objective=objective,
+            oos_returns=self._oos_return_series(oos_trade_frames),
         )
 
         # Optional, costlier diagnostics.
@@ -526,6 +533,7 @@ class WalkForwardValidator:
             degradation=self._degradation(fold_results),
             n_trials_total=n_trials_total,
             objective=objective,
+            oos_returns=self._oos_return_series(oos_trade_frames),
         )
 
     def score_window(
@@ -622,6 +630,18 @@ class WalkForwardValidator:
         span_start = min((f.oos_start for f in folds), default=None)
         span_end = max((f.oos_end for f in folds), default=None)
         return self._metrics_for_trades(trades, span_start, span_end, n_trials_total, var_trial_sr)
+
+    def _oos_return_series(self, oos_trade_frames) -> Optional[pd.Series]:
+        """The OOS aggregate's per-period return series, dated - the same
+        construction ``_aggregate_oos`` falls back to internally (concatenated
+        multi-fold trades have no single continuous simulation curve), kept here
+        with its ``DatetimeIndex`` rather than reduced to a metrics dict."""
+        trades = _concat_trades(oos_trade_frames)
+        equity = performance.build_dated_equity_curve(trades, self.initial_capital)
+        if equity.empty:
+            return None
+        returns = returns_from_equity(equity)
+        return returns if not returns.empty else None
 
     def _holdout(self, client, symbols, region_start, holdout, warmup_days, method, objective, max_evals):
         holdout_start, holdout_end = holdout

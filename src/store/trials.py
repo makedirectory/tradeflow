@@ -21,6 +21,16 @@ nothing. Two record shapes live in the journal and this module must parse both:
 v1 is passive: this module only records and answers queries. Nothing here changes
 a gate verdict (see spec 026 §3.5 - wiring campaign counts into the DSR is a
 deliberately separate, evidence-backed decision for later).
+
+**Return-series retention (spec 023).** v1 denormalized only summary floats
+(``oos_sharpe``, ``deflated_sharpe``, ...) onto each row - enough for the DSR, not
+enough for White's Reality Check, which needs every trial's actual OOS return
+*series* to jointly resample. The ``trial_returns`` companion table
+(:meth:`TrialStore.record_returns`, :meth:`TrialStore.returns_panel`) closes that
+gap: every trial that has one (not just the survivors - Reality Check over only
+the keepers is survivorship bias with extra steps) gets its dated per-period
+return series retained, joinable into a common-calendar panel per
+``(strategy, universe, accounting)`` family.
 """
 
 import hashlib
@@ -40,7 +50,13 @@ DEFAULT_JOURNAL_PATH = Path("logs") / "research_journal.jsonl"
 #: Bump when the schema changes shape. On mismatch the store rebuilds from the
 #: journal rather than running migration code - the journal is the source of truth,
 #: which is exactly what makes that cheap (spec 026 §4.5).
-SCHEMA_VERSION = 1
+#: v2 (spec 023): adds the ``trial_returns`` companion table - per-trial OOS
+#: return-series retention, the precondition Reality Check needs (spec 023 §4
+#: hidden factor 1: the trial store must contain the failures, not just summary
+#: floats). Trials recorded before v2 simply have no stored series (an honest
+#: "not used" in any family panel, not a fabricated one) - rebuilding replays the
+#: journal, and only journal lines written after this shipped carry a series.
+SCHEMA_VERSION = 2
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS trials (
@@ -71,6 +87,11 @@ CREATE TABLE IF NOT EXISTS trials (
 CREATE INDEX IF NOT EXISTS idx_trials_family ON trials(strategy, universe_hash, accounting);
 CREATE INDEX IF NOT EXISTS idx_trials_dedup  ON trials(params_hash, universe_hash, window_start, window_end);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS trial_returns (
+  trial_id     TEXT PRIMARY KEY,
+  dates_json   TEXT NOT NULL,
+  returns_json TEXT NOT NULL
+);
 """
 
 #: Trials excluded from a campaign's multiple-testing count: a forecast has no
@@ -277,6 +298,106 @@ class TrialStore:
         )
         self._conn.commit()
 
+    def record_returns(self, trial_id: str, dates: List[Any], values: List[Any]) -> None:
+        """Persist one trial's OOS return series - the per-trial input Reality
+        Check (spec 023) needs from the *whole* family, not just the survivors.
+
+        A companion table, not a column on ``trials``: the hot family/dedup/gate
+        queries (``family_count``, ``seen``, ``query``) scan the small ``trials``
+        row only; the (larger) series blob loads only when a Reality Check
+        actually runs. Best-effort shape validation only (mismatched/empty
+        lengths are silently skipped, matching this module's house style
+        elsewhere - :meth:`seen`'s "a lookup failure is not the caller's
+        problem") since a trial with no return series is still a valid trial row,
+        just one :meth:`returns_panel` will count as unusable.
+        """
+        if not dates or not values or len(dates) != len(values):
+            return
+        try:
+            values_f = [float(v) for v in values]
+        except (TypeError, ValueError):
+            return
+        self._conn.execute(
+            "INSERT OR REPLACE INTO trial_returns (trial_id, dates_json, returns_json) VALUES (?, ?, ?)",
+            (trial_id, json.dumps([str(d) for d in dates]), json.dumps(values_f)),
+        )
+        self._conn.commit()
+
+    def returns_panel(
+        self, strategy: str, symbols: Iterable[Any], accounting: int, *, min_overlap: int = 60
+    ) -> Dict[str, Any]:
+        """The T x K joint panel of stored OOS return series for a trial family,
+        on a common (inner-joined) calendar - the input White's Reality Check
+        (spec 023) needs.
+
+        Trials with no stored return series, or whose overlap with the reference
+        calendar is too small, are excluded and *counted*, never silently dropped
+        (spec 023 §4 hidden factors 1/2). The reference calendar is the longest
+        stored series (most inclusive), never the shortest - so the family can
+        never "improve" by conveniently losing an inconvenient trial's dates.
+        Returns a plain-list ``matrix`` (``T`` rows of ``K`` floats, no numpy
+        dependency in this module by design); the caller converts.
+        """
+        uh = universe_hash(symbols)
+        rows = self._conn.execute(
+            """
+            SELECT t.id AS id, r.dates_json AS dates_json, r.returns_json AS returns_json
+            FROM trials t JOIN trial_returns r ON r.trial_id = t.id
+            WHERE t.strategy = ? AND t.universe_hash = ? AND t.accounting = ?
+            """,
+            (strategy, uh, int(accounting)),
+        ).fetchall()
+        n_attempted = self.family_count(strategy, symbols, accounting)
+
+        series: Dict[str, Dict[str, float]] = {}
+        for row in rows:
+            try:
+                dates = json.loads(row["dates_json"])
+                values = json.loads(row["returns_json"])
+            except json.JSONDecodeError:
+                continue
+            series[row["id"]] = dict(zip(dates, values))
+
+        empty = {
+            "trial_ids": [],
+            "dates": [],
+            "matrix": [],
+            "n_attempted": n_attempted,
+            "n_with_returns": len(series),
+            "n_used": 0,
+            "n_excluded_short": 0,
+        }
+        if not series:
+            return empty
+
+        ref_id = max(series, key=lambda k: len(series[k]))
+        ref_dates = set(series[ref_id].keys())
+        included: Dict[str, Dict[str, float]] = {}
+        for trial_id, s in series.items():
+            if len(ref_dates & s.keys()) >= min_overlap:
+                included[trial_id] = s
+        excluded_short = len(series) - len(included)
+        if not included:
+            empty["n_excluded_short"] = excluded_short
+            return empty
+
+        common_dates = sorted(set.intersection(*(set(s.keys()) for s in included.values())))
+        if len(common_dates) < min_overlap:
+            empty["n_excluded_short"] = excluded_short
+            return empty
+
+        trial_ids = sorted(included)
+        matrix = [[included[tid][d] for tid in trial_ids] for d in common_dates]
+        return {
+            "trial_ids": trial_ids,
+            "dates": common_dates,
+            "matrix": matrix,
+            "n_attempted": n_attempted,
+            "n_with_returns": len(series),
+            "n_used": len(trial_ids),
+            "n_excluded_short": excluded_short,
+        }
+
     # ------------------------------------------------------------------ #
     # Rebuild (the proof that the store is derived, not authoritative)
     # ------------------------------------------------------------------ #
@@ -285,6 +406,7 @@ class TrialStore:
         twice in a row produces identical rows (dedup is keyed on ``run_id``)."""
         journal_path = Path(journal_path) if journal_path else self.journal_path
         self._conn.execute("DELETE FROM trials")
+        self._conn.execute("DELETE FROM trial_returns")
         self._conn.commit()
 
         n_lines = 0
@@ -315,8 +437,10 @@ class TrialStore:
         """Parse one journal line; insert a row if it represents a trial. Returns
         whether a row was inserted."""
         tool = record.get("tool", "")
+        returns_payload = None
         if tool.startswith("trial:"):
             kwargs = _row_kwargs_from_cli_trial(record)
+            returns_payload = record.get("returns")
         elif tool == "research:session_start":
             _update_session_context(record, session_ctx)
             return False
@@ -337,11 +461,14 @@ class TrialStore:
                     sid,
                 )
             kwargs = _row_kwargs_from_research_trial(record, ctx)
+            returns_payload = (record.get("inputs") or {}).get("oos_returns")
         else:
             return False
         if not kwargs or not kwargs.get("id"):
             return False
         self.record(**kwargs)
+        if returns_payload:
+            self.record_returns(kwargs["id"], returns_payload.get("dates") or [], returns_payload.get("values") or [])
         return True
 
     # ------------------------------------------------------------------ #

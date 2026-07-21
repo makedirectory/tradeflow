@@ -94,6 +94,7 @@ def journal_trial(
     metrics: Dict[str, Any],
     objective: Optional[str] = None,
     extra: Optional[Dict[str, Any]] = None,
+    returns: Optional[Any] = None,
     path: Optional[Path] = None,
 ) -> str:
     """Record one *evaluated configuration* as a trial in the research journal.
@@ -109,6 +110,16 @@ def journal_trial(
     ``extra`` carries record-level fields the flat ``(params, metrics)`` shape does
     not, such as a walk-forward's internal ``n_trials`` or a promotion verdict.
 
+    ``returns`` (spec 023, optional) is this trial's own dated per-period OOS
+    return series (a ``pandas.Series`` with a ``DatetimeIndex``) — when given, it
+    is journaled alongside the summary metrics (so ``rebuild()`` can restore it
+    from the journal, the sole source of truth) and dual-written into the trial
+    store's ``trial_returns`` table, which is what lets a later Reality Check
+    resample this trial jointly with every other trial in its family. Omit it
+    (the default) for trial kinds with no genuine OOS series — e.g. ``optimize``
+    rows are in-sample search configs, not OOS track records, so they are never
+    passed one.
+
     The universe is normalized (upper-cased, de-duplicated, sorted) so the same set
     of symbols keys identically regardless of how it was typed — a trial store's
     dedup and campaign counts depend on that.
@@ -122,16 +133,31 @@ def journal_trial(
         inputs["objective"] = objective
     result_summary = {k: metrics[k] for k in _TRIAL_METRICS if k in metrics}
     journal_path = path or DEFAULT_TRIAL_JOURNAL
+    extra_dict = dict(extra or {})
+    returns_payload = _serialize_returns(returns)
+    if returns_payload is not None:
+        extra_dict["returns"] = returns_payload
     run_id = audit_log(
         f"trial:{kind}",
         inputs,
         resolved_config=dict(params),
         result_summary=result_summary,
         path=journal_path,
-        extra={"kind": kind, **(extra or {})},
+        extra={"kind": kind, **extra_dict},
     )
-    _index_trial(run_id, kind, inputs, params, result_summary, extra or {}, journal_path)
+    _index_trial(run_id, kind, inputs, params, result_summary, extra_dict, journal_path)
     return run_id
+
+
+def _serialize_returns(returns: Optional[Any]) -> Optional[Dict[str, Any]]:
+    """A dated return series -> a JSON-safe ``{dates, values}`` payload, or
+    ``None`` when there's nothing to persist (never a zero-length record)."""
+    if returns is None or len(returns) == 0:
+        return None
+    return {
+        "dates": [_iso(d) for d in returns.index],
+        "values": [float(v) for v in returns.to_numpy()],
+    }
 
 
 def _index_trial(
@@ -174,6 +200,9 @@ def _index_trial(
                 git_sha=current_git_sha(),
                 metrics_full=metrics,
             )
+            returns_payload = extra.get("returns")
+            if returns_payload:
+                store.record_returns(run_id, returns_payload.get("dates") or [], returns_payload.get("values") or [])
     except Exception:  # noqa: BLE001 - the journal append above already succeeded
         logger.warning("Trial store dual-write failed; `trials rebuild` will resync", exc_info=True)
 
