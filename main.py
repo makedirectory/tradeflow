@@ -150,6 +150,8 @@ def cmd_backtest(args) -> None:
         except RuntimeError as exc:  # matplotlib (viz extra) not installed
             print(f"Chart skipped: {exc}")
 
+    _maybe_print_attribution_verdict(data_client, args.strategy, universe, args.start, args.end, args.benchmark)
+
 
 def cmd_scan(args) -> None:
     from src.scanners.symbol_scanner import SymbolScanner
@@ -513,6 +515,8 @@ def cmd_walkforward(args) -> None:
         )
         print(f"Chosen config saved to {path} (a human promotes it to live; nothing auto-flips)")
 
+    _maybe_print_attribution_verdict(data_client, args.strategy, universe, args.start, args.end)
+
 
 def _print_walkforward(result, objective: str) -> None:
     print("\n=== Walk-Forward Validation ===")
@@ -844,6 +848,9 @@ def cmd_info(args) -> None:
     if getattr(args, "scaling_ab", False):
         _print_scaling_ab(data_client, args)
         return
+    if getattr(args, "attribution", False):
+        _print_attribution_report(data_client, args)
+        return
 
     r = compute_information(
         data_client,
@@ -942,6 +949,99 @@ def _print_scaling_ab(data_client, args) -> None:
     agree = "agree" if r["agree"] else "DISAGREE"
     print(f"  regression picks {r['regression_pick']}, A/B picks {r['ab_pick']} — {agree}")
     print("  (compare the IR gap to its standard-error band before acting — a small gap is noise)")
+
+
+def _print_attribution_report(data_client, args) -> None:
+    """Full performance-attribution report (`info --attribution`, spec 019)."""
+    from src.services.analysis import compute_attribution
+
+    r = compute_attribution(
+        data_client,
+        args.strategy,
+        args.symbols,
+        args.start,
+        args.end,
+        source=args.source,
+        scanner=args.scanner,
+        benchmark=args.benchmark,
+        neutralize_factors=args.neutralize_factors,
+        horizon=args.horizon,
+        n_trials=args.n_trials,
+        signals=getattr(args, "attribution_signals", None),
+    )
+    _print_attribution(r, args.strategy, args.start, args.end)
+
+
+def _print_attribution(r, strategy: str, start, end) -> None:
+    """Render a ``compute_attribution`` report: per-row mean/IR/t/share-of-variance,
+    honest cumulation, and the skill-vs-luck verdict."""
+    if not r.get("periods"):
+        print(r.get("note", "No attribution report produced."))
+        return
+
+    print(f"\nPerformance attribution: '{strategy}' {start:%Y-%m-%d}..{end:%Y-%m-%d}")
+    print(f"  measured over {r['periods']} rebalances (horizon {r['horizon_bars']} bars)")
+    print(f"  {'row':28}{'mean/yr':>9}{'IR':>8}{'t':>8}{'share ψ²':>10}")
+
+    rows = r["rows"]
+
+    def _line(label: str, key: str, not_skill: bool = False) -> None:
+        row = rows[key]
+        if not_skill:
+            print(f"  {label:28}{'—':>9}{'—':>8}{'—':>8}{'(not skill)':>12}")
+        else:
+            print(
+                f"  {label:28}{row['annualized_mean'] * 100:>8.2f}%{row['ir']:>8.2f}"
+                f"{row['t_stat']:>8.2f}{row['share_of_variance'] * 100:>9.1f}%"
+            )
+
+    _line("active beta · expected", "beta_expected", not_skill=True)
+    _line("active beta · surprise", "beta_surprise", not_skill=True)
+    _line("timing (δβ·δr)", "timing")
+    for name in r["risk_factor_names"]:
+        _line(f"{name} factor", name)
+    for name in r["signal_names"]:
+        _line(name, name)
+    _line("specific (stock-picking)", "specific")
+
+    c = r["cumulation"]
+    warn = "  ⚠ large relative to attributed terms — degrade to per-period detail" if r["cumulation_unreliable"] else ""
+    print(
+        f"\n  cumulative active return: {c['honest_car'] * 100:+.2f}% "
+        f"(top-down parts {sum(c['linked_components'].values()) * 100:+.2f}% + "
+        f"δ_CP {c['delta_cp'] * 100:+.2f}%){warn}"
+    )
+    print(
+        f"  guardrails: {r['n_rows']} attributed rows, P(any |t|>2 in {r['n_trials']} trials) = "
+        f"{r['multiple_testing_inflation']:.2f}; best row '{r['best_row']}' t={r['best_row_t_stat']:+.2f}"
+        + ("  | ⚠ realized IR > 2 — suspect a bug/leak" if r["sanity_ceiling_breached"] else "")
+    )
+    print(
+        f"\n  Verdict: IR {r['total_active_ir']:+.2f} ± {r['total_active_ir_se']:.2f} "
+        f"(Y={r['years']:.1f}yr): {r['verdict']}; Y*≈{r['years_to_significance']:.0f}yr at this IR"
+    )
+
+
+def _maybe_print_attribution_verdict(data_client, strategy: str, symbols, start, end, benchmark: str = "SPY") -> None:
+    """A compact attribution verdict appended to backtest/walk-forward output once
+    there's enough history to trust it (spec 019 §7 lean: the verdict line belongs
+    on every backtest with >= 1 year of history, not gated behind a separate
+    `info --attribution` call). Silently skipped below a year or on insufficient data."""
+    if (end - start).days < 365:
+        return
+    from src.services.analysis import compute_attribution
+
+    r = compute_attribution(data_client, strategy, symbols, start, end, benchmark=benchmark, n_points=16)
+    if not r.get("periods"):
+        return
+    print(
+        f"\nAttribution verdict: IR {r['total_active_ir']:+.2f} ± {r['total_active_ir_se']:.2f} "
+        f"(Y={r['years']:.1f}yr): {r['verdict']}; Y*≈{r['years_to_significance']:.0f}yr at this IR"
+    )
+    print(
+        f"  best row '{r['best_row']}' t={r['best_row_t_stat']:+.2f} of {r['n_rows']} attributed rows "
+        f"(P(any |t|>2) = {r['multiple_testing_inflation']:.2f}) — run `info --attribution` for the full breakdown"
+    )
 
 
 def cmd_horizon(args) -> None:
@@ -1729,6 +1829,22 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Research mode: walk-forward the realized IR under Case-1 vs "
         "Case-2 scaling and compare against the regression's pick",
+    )
+    info.add_argument(
+        "--attribution",
+        action="store_true",
+        help="Performance attribution (spec 019): split realized active return into "
+        "systematic timing, risk factors, signals, and stock-picking, with per-row "
+        "t-stats and the skill-vs-luck verdict, instead of the IC/breadth report",
+    )
+    info.add_argument(
+        "--attribution-signals",
+        dest="attribution_signals",
+        type=lambda v: [s.strip() for s in v.split(",") if s.strip()],
+        default=None,
+        help="Extra strategies to attribute as additional signal columns "
+        "(comma-separated; the strategy's own alpha is always included) — "
+        "compare a 013 --combine weight against its realized counterpart",
     )
     _add_neutralize_factors_flag(info, note="; measure the alpha you deploy")
     info.set_defaults(func=cmd_info)

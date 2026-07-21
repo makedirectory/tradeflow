@@ -794,6 +794,297 @@ def compute_information(
     }
 
 
+def compute_attribution(
+    data_client: MarketDataClient,
+    strategy: str,
+    symbols: List[str],
+    start: datetime,
+    end: datetime,
+    source: str = "strategy",
+    scanner: str = "volume",
+    benchmark: str = "SPY",
+    neutralize_factors: Sequence[str] = (),
+    horizon: int = 5,
+    n_points: int = 24,
+    n_trials: int = 1,
+    timeframe: str = "1Day",
+    risk_model: str = "shrinkage",
+    benchmark_holdings: str = "equal",
+    benchmark_premium: float = 0.05,
+    signals: Optional[Sequence[str]] = None,
+    min_obs: int = 60,
+    detail: bool = False,
+) -> Dict[str, Any]:
+    """Attribute realized active return to systematic timing, risk factors, signals,
+    and stock-picking - and confront the attributed t-stats with the same
+    research-integrity guardrails 009/``compute_information`` apply to ICs.
+
+    Read-only research-clock diagnostic (spec 019). Mirrors ``compute_information``'s
+    pattern exactly: at sampled rebalances it rebuilds a leakage-safe cross-section
+    (bars strictly ``<= t``) - alpha (for the paper active book), risk-factor
+    exposures, and a per-period covariance Σ(t) (for the canonical Σ-implied beta,
+    spec 017's "one β, everywhere") - then pairs it with the forward realized return
+    over ``(t, t_fwd]``. There is no persisted weights/exposure history to consume
+    (see the module-level deviation note next to ``compute_information``); this
+    recomputes on the fly, the same as that function already does for alpha/IC.
+
+    Each rebalance's active return is split, by an exact regression identity
+    (:func:`src.analytics.attribution.attribute_period`), into: the systematic
+    benchmark-timing bucket (``β_a(t)·r_B(t)``, further decomposed in aggregate
+    into expected/surprise/timing per G&K 17.25-17.27), each risk factor
+    (market/momentum/volatility/size), the strategy's own alpha as a signal column
+    (plus any additional ``signals`` - other strategies' combined scores, so a
+    013 ``--combine`` weight can be checked against its realized counterpart), and
+    a specific (stock-picking) remainder. Every attributed t-stat uses a
+    Bayesian-blended risk (17A.12: short samples lean on the risk model instead of
+    a wild few-point sample SD) and the whole ranked table is deflated by the same
+    multiple-testing inflation ``compute_information`` applies to ICs - ranking ~8
+    attributed rows and quoting the best is exactly 009's trap, replayed here.
+    """
+    from src.analytics import attribution as attr
+    from src.analytics import information as info
+    from src.portfolio.benchmark import load_benchmark_weights, restrict_and_renormalize
+    from src.risk.exposures import FACTOR_NAMES, build_factor_exposures
+
+    run_id = new_run_id()
+    strat = _strategy(strategy, None)
+    periods_per_year = Timeframe.parse(timeframe).periods_per_year()
+    rebalances_per_year = periods_per_year / horizon
+
+    bars = ClientBarSource(data_client).scan([*symbols, benchmark], timeframe, end, _window_days(start, end))
+    bench = bars.get(benchmark)
+    universe_bars = {sym: bars[sym] for sym in symbols if sym in bars}
+    if bench is None or bench.empty or not universe_bars:
+        return {
+            "run_id": run_id,
+            "strategy": strategy,
+            "periods": 0,
+            "note": "Insufficient data: need a benchmark series and scored names.",
+        }
+
+    scorer = {
+        "strategy": lambda: strategy_scorer(strat),
+        "signal": lambda: signal_scorer(strat),
+        "scanner": lambda: scanner_scorer(_scanner(scanner)),
+    }[source]()
+    ctx = AlphaContext(ic=DEFAULT_IC, neutralize=True, neutralize_factors=tuple(neutralize_factors))
+    extra_scorers = {name: strategy_scorer(_strategy(name, None)) for name in (signals or ())}
+    own_signal_col = f"alpha:{strategy}"
+
+    index = bench.index
+    lo, hi = _to_ts(start, index), _to_ts(end, index)
+    window = index[(index >= lo) & (index <= hi)]
+    points = _rebalance_points(len(window), horizon, n_points)
+
+    risk_names = list(FACTOR_NAMES)
+    signal_names = [own_signal_col, *extra_scorers]
+    component_names = ["systematic", *risk_names, *signal_names, "specific"]
+    series: Dict[str, List[float]] = {name: [] for name in component_names}
+    r_active_series, r_bench_series, beta_a_series, psi2_series = [], [], [], []
+
+    for j in points:
+        t, t_fwd = window[j], window[j + horizon]
+        bars_t = {s: f.loc[f.index <= t] for s, f in universe_bars.items()}
+        bars_t = {s: f for s, f in bars_t.items() if len(f) >= 2}
+        bench_t = bench.loc[bench.index <= t]
+        if len(bars_t) < 3 or bench_t.empty:
+            continue
+
+        matrix = _build_covariance(risk_model, bars_t, bench_t, periods_per_year, min_obs)
+        if matrix is None or len(matrix.symbols) < 3:
+            continue
+        raw_bench_w = load_benchmark_weights(benchmark_holdings, matrix.symbols)
+        w_bench, _coverage = restrict_and_renormalize(raw_bench_w, matrix.symbols)
+        if not w_bench:
+            continue
+        beta_per_name = matrix.implied_beta(w_bench)
+
+        alpha = _alpha_cross_section(universe_bars, bench, scorer, periods_per_year, t, ctx)
+        z = alpha - alpha.mean()
+        if z.std() == 0 or z.dropna().empty:
+            continue
+        w_active = z / z.std()
+
+        risk_x = build_factor_exposures(bars_t, bench_t, factors=risk_names)
+        if risk_x.empty:
+            continue
+
+        signal_cols = {own_signal_col: z}
+        for name, sc in extra_scorers.items():
+            signal_cols[name] = _signal_cross_section(bars_t, sc)
+        signal_x = pd.DataFrame(signal_cols).dropna(how="any")
+        if signal_x.empty:
+            continue
+
+        r_raw = _forward_raw_return(universe_bars, t, t_fwd)
+        bench_close = bench["close"]
+        if t not in bench_close.index or t_fwd not in bench_close.index:
+            continue
+        r_bench = float(bench_close.loc[t_fwd] / bench_close.loc[t] - 1.0)
+
+        result = attr.attribute_period(w_active, risk_x, r_raw, beta_per_name, r_bench, signal_x=signal_x)
+        if result is None:
+            continue
+
+        series["systematic"].append(result.systematic)
+        for name in risk_names:
+            series[name].append(result.factor_contributions.get(name, 0.0))
+        for name in signal_names:
+            series[name].append(result.signal_contributions.get(name, 0.0))
+        series["specific"].append(result.specific)
+        r_active_series.append(result.r_active)
+        r_bench_series.append(r_bench)
+        beta_a_series.append(result.beta_a)
+        w_vec = w_active.reindex(matrix.symbols).fillna(0.0).to_numpy()
+        psi2_series.append(float(w_vec @ matrix.sigma @ w_vec))
+
+    periods = len(r_active_series)
+    if periods < 5:
+        return {
+            "run_id": run_id,
+            "strategy": strategy,
+            "periods": periods,
+            "note": "Insufficient overlapping history for attribution (need >= 5 rebalances "
+            "with a buildable Σ, benchmark weights, and factor exposures).",
+        }
+
+    # T_eff-honest T0 (hidden factor 7): the risk model's own min_obs, converted from
+    # bars to this attribution's rebalance-period units.
+    t0 = attr.prior_weight_t0(min_obs, horizon)
+    psi2_bar = float(np.mean(psi2_series)) if psi2_series else 0.0
+    n_rows = len(risk_names) + len(signal_names) + 2  # + timing + specific
+    sigma2_prior_per_row = psi2_bar / n_rows if n_rows else 0.0
+
+    rows: Dict[str, Any] = {}
+    mu_b_period = benchmark_premium * horizon / periods_per_year
+    split = attr.systematic_split(beta_a_series, r_bench_series, mu_b_period)
+    rows["beta_expected"] = {"total": split["expected"], "note": "not skill (assumed premium x mean active beta)"}
+    rows["beta_surprise"] = {
+        "total": split["surprise"],
+        "note": "not skill (benchmark outturn vs the assumed premium x mean active beta)",
+    }
+    rows["timing"] = {
+        "total": split["timing"],
+        **attr.series_stats(split["timing_series"], rebalances_per_year, sigma2_prior_per_row, t0),
+    }
+    for name in [*risk_names, *signal_names]:
+        rows[name] = {
+            "total": float(np.sum(series[name])),
+            **attr.series_stats(series[name], rebalances_per_year, sigma2_prior_per_row, t0),
+        }
+    rows["specific"] = {
+        "total": float(np.sum(series["specific"])),
+        **attr.series_stats(series["specific"], rebalances_per_year, sigma2_prior_per_row, t0),
+    }
+
+    # Share of variance across the "real" (skill-claiming) rows only - an
+    # approximation (rows correlate, so shares don't sum exactly to total ψ²).
+    skill_rows = ["timing", *risk_names, *signal_names, "specific"]
+    skill_series = {"timing": split["timing_series"], "specific": series["specific"]}
+    skill_series.update({name: series[name] for name in [*risk_names, *signal_names]})
+    variances = {
+        name: (float(np.var(vals, ddof=1)) if len(vals) > 1 else 0.0) for name, vals in skill_series.items()
+    }
+    total_var = sum(variances.values())
+    for name in skill_rows:
+        rows[name]["share_of_variance"] = float(variances[name] / total_var) if total_var > 0 else 0.0
+
+    r_portfolio_series = [rb + ra for rb, ra in zip(r_bench_series, r_active_series)]
+    cumulation = attr.cumulate_top_down(
+        {name: series[name] for name in ["systematic", *risk_names, *signal_names, "specific"]},
+        r_active_series,
+        r_portfolio_series,
+        r_bench_series,
+    )
+    cumulation_unreliable = bool(
+        abs(cumulation["honest_car"]) > 1e-9
+        and abs(cumulation["delta_cp"]) > 0.2 * abs(cumulation["honest_car"])
+    )
+
+    total_active_ir = 0.0
+    if periods > 1 and np.std(r_active_series) > 0:
+        total_active_ir = float(
+            np.mean(r_active_series) / np.std(r_active_series) * np.sqrt(rebalances_per_year)
+        )
+    years = max((end - start).days / 365.25, 1e-9)
+    total_ir_se = info.ir_standard_error(total_active_ir, years)
+    inflation = info.multiple_testing_inflation(n_trials)
+
+    best_row = max(skill_rows, key=lambda name: abs(rows[name].get("t_stat", 0.0)))
+
+    result_dict: Dict[str, Any] = {
+        "run_id": run_id,
+        "strategy": strategy,
+        "source": source,
+        "window": {"start": start.isoformat(), "end": end.isoformat()},
+        "horizon_bars": horizon,
+        "periods": periods,
+        "low_sample": periods < info.MIN_PERIODS,
+        "risk_factor_names": risk_names,
+        "signal_names": signal_names,
+        "rows": _jsonable(rows),
+        "systematic_split": _jsonable({k: v for k, v in split.items() if k != "timing_series"}),
+        "cumulation": _jsonable({k: v for k, v in cumulation.items()}),
+        "cumulation_unreliable": cumulation_unreliable,
+        "total_active_ir": total_active_ir,
+        "total_active_ir_se": total_ir_se,
+        "years": years,
+        "years_to_significance": attr.years_to_significance(total_active_ir),
+        "prob_positive_over_window": attr.prob_positive_over_years(total_active_ir, years),
+        "n_rows": n_rows,
+        "n_trials": n_trials,
+        "multiple_testing_inflation": inflation,
+        "best_row": best_row,
+        "best_row_t_stat": rows[best_row].get("t_stat", 0.0),
+        "sanity_ceiling_breached": abs(total_active_ir) > 2.0,
+        "prior_weight_t0": t0,
+        "sigma2_prior_per_row": sigma2_prior_per_row,
+        "verdict": (
+            "distinguishable from luck" if abs(total_active_ir) / max(total_ir_se, 1e-9) >= 2 else
+            "NOT distinguishable from luck"
+        ),
+        "note": "Every attributed row sums exactly to the realized active return per period "
+        "(regression identity); the systematic bucket further splits (in aggregate) into "
+        "expected/surprise (not skill) and timing (real, but noisy - always check its own "
+        "t-stat). Per-row risk is a Bayesian blend of the risk model's structural prior and "
+        "the row's own realized variance (17A.12); a ranked table of "
+        f"{n_rows} rows is a multiple-testing family - P(any |t|>2 in {n_trials} trials) = "
+        f"{inflation:.2f} - so quoting the single best row (here: {best_row}) without that "
+        "context is exactly the trap 009 guards ICs against. Cumulative active return is "
+        "ΠR_P - ΠR_B, never Π(1+r_active); cumulation.delta_cp is the honest leftover from "
+        "top-down chain-linking the per-period split, reported not hidden.",
+    }
+    if detail:
+        result_dict["detail"] = _jsonable(
+            {
+                "r_active": r_active_series,
+                "r_bench": r_bench_series,
+                "beta_a": beta_a_series,
+                **series,
+            }
+        )
+    return result_dict
+
+
+def _signal_cross_section(bars_t: Dict[str, pd.DataFrame], scorer) -> pd.Series:
+    """Cross-sectional z-score of a raw scorer's output at ``t`` (bars already
+    sliced to ``<= t`` by the caller) - the same winsorize -> zscore steps the
+    alpha pipeline applies, used here as a combined-signal exposure column."""
+    from src.alphas import refine
+
+    raw: Dict[str, float] = {}
+    for sym, frame in bars_t.items():
+        if len(frame) < 2:
+            continue
+        val = scorer(frame)
+        if val is not None and val == val:
+            raw[sym] = float(val)
+    s = pd.Series(raw)
+    if len(s) < 2 or s.std() == 0:
+        return pd.Series(dtype=float)
+    return refine.zscore(refine.winsorize(s))
+
+
 def run_scaling_ab(
     data_client: MarketDataClient,
     strategy: str,
