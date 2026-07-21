@@ -242,6 +242,8 @@ def _allocate_utility(args) -> None:
         book=book,
         gross_leverage=args.gross_leverage,
         short_max_weight=args.short_max_weight,
+        conditional=getattr(args, "conditional", None),
+        conditional_lambda=getattr(args, "conditional_lambda", None),
     )
     if not result["feasible"]:
         print(f"Infeasible: {result.get('binding_constraint') or result.get('note')}")
@@ -316,6 +318,12 @@ def _allocate_utility(args) -> None:
             )
     if "capacity_capital" in d:
         print(f"  capacity ≈ ${d['capacity_capital']:,.0f} (where √-impact erases the alpha)")
+    if "sigma_regime" in result:
+        regime = result["sigma_regime"]
+        print(
+            f"  conditional Σ ({regime['method']}, λ={regime['lambda']:.2f}): "
+            f"mean σ_t/σ_unconditional = {regime['mean_sigma_regime']:.2f}"
+        )
     print(f"\n{'SYMBOL':10}{'WEIGHT':>8}" + (f"{'DOLLARS':>14}{'SHARES':>10}" if result["holdings"] else ""))
     if result["holdings"]:
         for h in result["holdings"]:
@@ -800,9 +808,14 @@ def cmd_risk(args) -> None:
     shrinkage intensity, conditioning, mean correlation, equal-weight portfolio
     volatility, and the top risk contributors. Produces no orders.
     """
+    _, data_client = build_data_and_broker()
+
+    if getattr(args, "evaluate_conditional", False):
+        _print_conditional_evidence_gate(data_client, args)
+        return
+
     from src.services.analysis import compute_risk
 
-    _, data_client = build_data_and_broker()
     result = compute_risk(
         data_client,
         args.symbols,
@@ -811,6 +824,8 @@ def cmd_risk(args) -> None:
         benchmark=args.benchmark,
         lookback_days=args.lookback_days,
         timeframe=args.timeframe,
+        conditional=getattr(args, "conditional", None),
+        conditional_lambda=getattr(args, "conditional_lambda", None),
     )
     if not result.get("universe_size"):
         print(result.get("note", "No risk matrix produced."))
@@ -829,9 +844,48 @@ def cmd_risk(args) -> None:
             f"  risk split: {result['factor_risk_share']:.0%} factor / "
             f"{result['specific_risk_share']:.0%} specific  (factors: {', '.join(result['factor_names'])})"
         )
+    if "sigma_regime" in result:
+        regime = result["sigma_regime"]
+        print(
+            f"  conditional ({regime['method']}, λ={regime['lambda']:.2f}): "
+            f"mean σ_t/σ_unconditional = {regime['mean_sigma_regime']:.2f}"
+        )
     print(f"\n{'SYMBOL':10}{'VOL':>9}{'RISK CONTRIB':>14}")
     for row in result["top_risk_contributors"]:
         print(f"{row['symbol']:10}{row['volatility']:>8.1%}{row['risk_contribution']:>14.2%}")
+
+
+def _print_conditional_evidence_gate(data_client, args) -> None:
+    """The MZ/QLIKE evidence gate (`risk --evaluate-conditional`, spec 024 §4 hidden
+    factor 8) — the report that decides whether conditioning is worth turning on."""
+    from datetime import timedelta
+
+    from src.services.analysis import evaluate_conditional_risk
+
+    end = args.as_of
+    start = end - timedelta(days=args.lookback_days)
+    r = evaluate_conditional_risk(
+        data_client,
+        args.symbols,
+        start,
+        end,
+        timeframe=args.timeframe,
+        conditional_lambda=getattr(args, "conditional_lambda", None),
+    )
+    if not r.get("n_names"):
+        print(r.get("note", "No evidence-gate report produced."))
+        return
+
+    print(f"\nConditional-vol evidence gate: {start:%Y-%m-%d}..{end:%Y-%m-%d} ({r['n_names']} names)")
+    print(f"  {'method':16}{'QLIKE':>10}{'MZ a':>10}{'MZ b':>10}{'r2':>8}")
+    for method, stats in r["pooled"].items():
+        mz = stats["mincer_zarnowitz"]
+        print(f"  {method:16}{stats['qlike']:>10.4f}{mz['a']:>10.6f}{mz['b']:>10.3f}{mz['r2']:>8.3f}")
+    verdict = "PASSED — a conditional method beats unconditional on QLIKE" if r["gate_passed"] else (
+        "NOT passed — unconditional wins on QLIKE; the honest call is to leave --conditional off"
+    )
+    print(f"\n  best by pooled QLIKE: {r['best_method_pooled_qlike']}")
+    print(f"  Gate: {verdict}")
 
 
 def cmd_info(args) -> None:
@@ -847,6 +901,9 @@ def cmd_info(args) -> None:
 
     if getattr(args, "scaling_ab", False):
         _print_scaling_ab(data_client, args)
+        return
+    if getattr(args, "conditional_ab", False):
+        _print_conditional_ab(data_client, args)
         return
     if getattr(args, "attribution", False):
         _print_attribution_report(data_client, args)
@@ -968,8 +1025,58 @@ def _print_attribution_report(data_client, args) -> None:
         horizon=args.horizon,
         n_trials=args.n_trials,
         signals=getattr(args, "attribution_signals", None),
+        conditional=getattr(args, "conditional", None),
+        conditional_lambda=getattr(args, "conditional_lambda", None),
     )
     _print_attribution(r, args.strategy, args.start, args.end)
+    te_by_regime = r.get("te_by_regime")
+    if te_by_regime:
+        print(f"\n  predicted-vs-realized TE by regime (conditional={r.get('conditional')}):")
+        print(f"    {'regime':8}{'n':>5}{'predicted TE':>14}{'realized TE':>14}{'gap':>10}")
+        for label in ("low", "mid", "high"):
+            row = te_by_regime.get(label)
+            if not row or not row.get("n"):
+                continue
+            print(
+                f"    {label:8}{row['n']:>5}{row['predicted_te']:>13.1%}"
+                f"{row['realized_te']:>14.1%}{row['gap']:>+10.1%}"
+            )
+
+
+def _print_conditional_ab(data_client, args) -> None:
+    """The net-of-cost A/B (`info --conditional-ab`, spec 024 §3.2/§6)."""
+    from src.services.analysis import run_conditional_risk_ab
+
+    r = run_conditional_risk_ab(
+        data_client,
+        args.strategy,
+        args.symbols,
+        args.start,
+        args.end,
+        source=args.source,
+        scanner=args.scanner,
+        benchmark=args.benchmark,
+        neutralize_factors=args.neutralize_factors,
+        horizon=args.horizon,
+        conditional_method=getattr(args, "conditional", None) or "ewma",
+        conditional_lambda=getattr(args, "conditional_lambda", None),
+    )
+    if not r.get("periods"):
+        print(r.get("note", "No conditional-risk A/B produced."))
+        return
+
+    print(f"\nConditional-risk net-of-cost A/B: '{args.strategy}' {args.start:%Y-%m-%d}..{args.end:%Y-%m-%d}")
+    print(f"  measured over {r['periods']} rebalances (horizon {r['horizon_bars']} bars, method {r['conditional_method']})")
+    print(f"  {'variant':14}{'net IR':>9}{'realized TE':>13}{'pred TE':>10}{'turnover':>10}")
+    for name, s in r["summaries"].items():
+        if s.get("periods", 0) < 2:
+            continue
+        print(
+            f"  {name:14}{s['net_ir']:>+9.2f}{s['realized_te']:>13.1%}"
+            f"{s['mean_predicted_te']:>10.1%}{s['mean_turnover']:>10.1%}"
+        )
+    print(f"  winner (net IR): {r['winner_net_ir']}")
+    print("  (net of 016's actual cost — a Σ that tracks TE better but churns the book loses here)")
 
 
 def _print_attribution(r, strategy: str, start, end) -> None:
@@ -1688,6 +1795,21 @@ def build_parser() -> argparse.ArgumentParser:
         "(spec 018 §3.2). Uses --gross-leverage/--short-max-weight for the market-neutral leg "
         "(defaults 2.0 / 0.25 if not set).",
     )
+    alloc.add_argument(
+        "--conditional",
+        choices=["ewma", "har"],
+        default=None,
+        help="Spec 024 (utility): condition Σ's volatilities before the solve, so "
+        "target_te is measured against current, not trailing-average, risk. Default "
+        "off — see 'risk --evaluate-conditional' before turning this on.",
+    )
+    alloc.add_argument(
+        "--conditional-lambda",
+        dest="conditional_lambda",
+        type=float,
+        default=None,
+        help="Override the EWMA decay λ (utility; default RiskMetrics 0.94 daily / 0.97 weekly)",
+    )
     alloc.set_defaults(func=cmd_allocate)
 
     opt = subparsers.add_parser(
@@ -1846,6 +1968,29 @@ def build_parser() -> argparse.ArgumentParser:
         "(comma-separated; the strategy's own alpha is always included) — "
         "compare a 013 --combine weight against its realized counterpart",
     )
+    info.add_argument(
+        "--conditional",
+        choices=["ewma", "har"],
+        default=None,
+        help="Spec 024: with --attribution, condition the per-period Σ(t) and add a "
+        "predicted-vs-realized TE by regime table; with --conditional-ab, the "
+        "conditional method the A/B compares against unconditional (default ewma).",
+    )
+    info.add_argument(
+        "--conditional-lambda",
+        dest="conditional_lambda",
+        type=float,
+        default=None,
+        help="Override the EWMA decay λ (default RiskMetrics 0.94 daily / 0.97 weekly)",
+    )
+    info.add_argument(
+        "--conditional-ab",
+        dest="conditional_ab",
+        action="store_true",
+        help="Research mode (spec 024 §3.2/§6): net-of-cost A/B — walk-forward the SAME "
+        "alpha book against a conditional vs unconditional Σ, carrying weights forward, "
+        "and compare realized net IR (not just TE-tracking).",
+    )
     _add_neutralize_factors_flag(info, note="; measure the alpha you deploy")
     info.set_defaults(func=cmd_info)
 
@@ -1884,6 +2029,31 @@ def build_parser() -> argparse.ArgumentParser:
     risk.add_argument("--benchmark", default="SPY", help="Benchmark for the market factor / beta")
     risk.add_argument("--timeframe", default="1Day", help="Bar timeframe for returns")
     risk.add_argument("--lookback-days", dest="lookback_days", type=int, default=365)
+    risk.add_argument(
+        "--conditional",
+        choices=["ewma", "har"],
+        default=None,
+        help="Spec 024: condition Σ's volatilities (EWMA or HAR-lite), holding the "
+        "correlation structure fixed (Σ_t = D_t·R·D_t). Default off — see "
+        "'--evaluate-conditional' and specs/complete/024-conditional-risk.md's "
+        "as-built notes for the evidence-gate finding that decided the default.",
+    )
+    risk.add_argument(
+        "--conditional-lambda",
+        dest="conditional_lambda",
+        type=float,
+        default=None,
+        help="Override the EWMA decay λ (default: RiskMetrics 0.94 daily / 0.97 weekly)",
+    )
+    risk.add_argument(
+        "--evaluate-conditional",
+        dest="evaluate_conditional",
+        action="store_true",
+        help="Run the MZ/QLIKE evidence gate instead of the risk report: per-name and "
+        "pooled forecast quality of EWMA/HAR vs the unconditional trailing baseline, "
+        "by realized-vol regime — the report that decides whether --conditional is "
+        "worth turning on for this universe/window.",
+    )
     risk.set_defaults(func=cmd_risk)
 
     def _add_db_flag(p) -> None:

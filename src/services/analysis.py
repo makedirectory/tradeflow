@@ -814,6 +814,8 @@ def compute_attribution(
     signals: Optional[Sequence[str]] = None,
     min_obs: int = 60,
     detail: bool = False,
+    conditional: Optional[str] = None,
+    conditional_lambda: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Attribute realized active return to systematic timing, risk factors, signals,
     and stock-picking - and confront the attributed t-stats with the same
@@ -840,6 +842,16 @@ def compute_attribution(
     a wild few-point sample SD) and the whole ranked table is deflated by the same
     multiple-testing inflation ``compute_information`` applies to ICs - ranking ~8
     attributed rows and quoting the best is exactly 009's trap, replayed here.
+
+    ``conditional`` (spec 024, default ``None`` / off) threads an EWMA/HAR-conditioned
+    Σ(t) into the per-period covariance this function already rebuilds at every
+    sampled rebalance; when set, the report adds ``te_by_regime`` — predicted TE
+    (from Σ(t)) vs a realized-return-dispersion proxy, bucketed by the benchmark's
+    own trailing realized-vol tercile as of each rebalance (spec §3.3's regime
+    split) — the number that answers "does the tracking-error budget actually hold
+    across vol regimes." This runs ONE Σ choice per call (conditional or not, not
+    both side by side); the net-of-cost conditional-vs-unconditional comparison
+    lives in ``run_conditional_risk_ab``.
     """
     from src.analytics import attribution as attr
     from src.analytics import information as info
@@ -880,7 +892,7 @@ def compute_attribution(
     signal_names = [own_signal_col, *extra_scorers]
     component_names = ["systematic", *risk_names, *signal_names, "specific"]
     series: Dict[str, List[float]] = {name: [] for name in component_names}
-    r_active_series, r_bench_series, beta_a_series, psi2_series = [], [], [], []
+    r_active_series, r_bench_series, beta_a_series, psi2_series, bench_vol_series = [], [], [], [], []
 
     for j in points:
         t, t_fwd = window[j], window[j + horizon]
@@ -890,9 +902,19 @@ def compute_attribution(
         if len(bars_t) < 3 or bench_t.empty:
             continue
 
-        matrix = _build_covariance(risk_model, bars_t, bench_t, periods_per_year, min_obs)
+        matrix = _build_covariance(
+            risk_model, bars_t, bench_t, periods_per_year, min_obs, conditional, conditional_lambda
+        )
         if matrix is None or len(matrix.symbols) < 3:
             continue
+        # Trailing realized benchmark vol as of t (causal — no forward data) — the
+        # regime label spec 024 §3.3 wants for the predicted-vs-realized TE split.
+        bench_ret_t = bench_t["close"].pct_change().dropna()
+        trailing_vol = (
+            float(bench_ret_t.tail(max(horizon * 4, 20)).std() * np.sqrt(periods_per_year))
+            if len(bench_ret_t) >= 5
+            else float("nan")
+        )
         raw_bench_w = load_benchmark_weights(benchmark_holdings, matrix.symbols)
         w_bench, _coverage = restrict_and_renormalize(raw_bench_w, matrix.symbols)
         if not w_bench:
@@ -937,6 +959,7 @@ def compute_attribution(
         beta_a_series.append(result.beta_a)
         w_vec = w_active.reindex(matrix.symbols).fillna(0.0).to_numpy()
         psi2_series.append(float(w_vec @ matrix.sigma @ w_vec))
+        bench_vol_series.append(trailing_vol)
 
     periods = len(r_active_series)
     if periods < 5:
@@ -1011,6 +1034,7 @@ def compute_attribution(
     inflation = info.multiple_testing_inflation(n_trials)
 
     best_row = max(skill_rows, key=lambda name: abs(rows[name].get("t_stat", 0.0)))
+    te_by_regime = _te_by_regime(psi2_series, r_active_series, bench_vol_series, rebalances_per_year)
 
     result_dict: Dict[str, Any] = {
         "run_id": run_id,
@@ -1022,6 +1046,8 @@ def compute_attribution(
         "low_sample": periods < info.MIN_PERIODS,
         "risk_factor_names": risk_names,
         "signal_names": signal_names,
+        "conditional": conditional,
+        "te_by_regime": _jsonable(te_by_regime),
         "rows": _jsonable(rows),
         "systematic_split": _jsonable({k: v for k, v in split.items() if k != "timing_series"}),
         "cumulation": _jsonable({k: v for k, v in cumulation.items()}),
@@ -1052,7 +1078,10 @@ def compute_attribution(
         f"{inflation:.2f} - so quoting the single best row (here: {best_row}) without that "
         "context is exactly the trap 009 guards ICs against. Cumulative active return is "
         "ΠR_P - ΠR_B, never Π(1+r_active); cumulation.delta_cp is the honest leftover from "
-        "top-down chain-linking the per-period split, reported not hidden.",
+        "top-down chain-linking the per-period split, reported not hidden. te_by_regime "
+        "buckets rebalances by the benchmark's own trailing realized-vol tercile and shows "
+        "predicted TE (from Σ(t)) next to a realized-dispersion proxy per bucket (spec 024) — "
+        "the number that says whether the tracking-error budget holds through a stress regime.",
     }
     if detail:
         result_dict["detail"] = _jsonable(
@@ -1064,6 +1093,47 @@ def compute_attribution(
             }
         )
     return result_dict
+
+
+def _te_by_regime(
+    psi2_series: List[float], r_active_series: List[float], bench_vol_series: List[float], rebalances_per_year: float
+) -> Dict[str, Any]:
+    """Spec 024 §3.3: bucket rebalances by the benchmark's trailing realized-vol
+    tercile (ex-post labels, report-time only — no look-ahead in the model itself)
+    and compare, per bucket, the **predicted** TE (``sqrt(mean psi2)``, from the
+    per-period Σ(t) already built for attribution) against a **realized**
+    dispersion proxy (``std(r_active)·sqrt(rebalances_per_year)``) — the number
+    that answers whether the tracking-error budget holds through a stress regime,
+    or breaches it the way an unconditional Σ mechanically must (spec's own
+    motivation, §1).
+    """
+    vols = np.asarray(bench_vol_series, dtype=float)
+    finite = np.isfinite(vols)
+    if int(finite.sum()) < 6:
+        return {}
+    q1, q2 = np.quantile(vols[finite], [1 / 3, 2 / 3])
+    labels = np.where(vols <= q1, "low", np.where(vols <= q2, "mid", "high"))
+
+    psi2 = np.asarray(psi2_series, dtype=float)
+    r_active = np.asarray(r_active_series, dtype=float)
+    out: Dict[str, Any] = {}
+    for label in ("low", "mid", "high"):
+        mask = (labels == label) & finite
+        n = int(mask.sum())
+        if n == 0:
+            out[label] = {"n": 0}
+            continue
+        predicted_te = float(np.sqrt(max(np.mean(psi2[mask]), 0.0)))
+        realized_te = (
+            float(np.std(r_active[mask], ddof=1) * np.sqrt(rebalances_per_year)) if n > 1 else 0.0
+        )
+        out[label] = {
+            "n": n,
+            "predicted_te": predicted_te,
+            "realized_te": realized_te,
+            "gap": realized_te - predicted_te,
+        }
+    return out
 
 
 def _signal_cross_section(bars_t: Dict[str, pd.DataFrame], scorer) -> pd.Series:
@@ -1327,6 +1397,8 @@ def compute_risk(
     lookback_days: int = 365,
     timeframe: str = "1Day",
     min_obs: int = 60,
+    conditional: Optional[str] = None,
+    conditional_lambda: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Estimate the universe's covariance Σ and summarize its risk structure.
 
@@ -1336,6 +1408,15 @@ def compute_risk(
     summary - shrinkage δ, condition number, mean correlation, equal-weight portfolio
     volatility, top risk contributors, and (factor model) the factor-vs-specific risk
     split. Σ itself is not inlined; this is the diagnostic the optimizer consumes.
+
+    ``conditional`` (spec 024, default ``None`` / **off** — the MZ/QLIKE evidence
+    gate hasn't cleared this repo's own data yet, see
+    ``specs/complete/024-conditional-risk.md``) conditions Σ_t's volatilities via an
+    EWMA (``"ewma"``) or HAR-lite (``"har"``) per-name forecast, holding the
+    correlation structure fixed. When set, the report adds ``sigma_regime`` — the
+    current conditional/unconditional vol ratio per name, the "how stressed is the
+    book right now" diagnostic (008/016 consume Σ_t transparently; this is the
+    number a human reads).
     """
     from src.risk import COVARIANCE_MODELS
     from src.risk.factor import FactorRiskMatrix
@@ -1347,7 +1428,9 @@ def compute_risk(
     periods_per_year = Timeframe.parse(timeframe).periods_per_year()
     fetched = ClientBarSource(data_client).scan([*symbols, benchmark], timeframe, as_of, lookback_days)
     bars = {s: fetched[s] for s in symbols if s in fetched}
-    matrix = _build_covariance(model, bars, fetched.get(benchmark), periods_per_year, min_obs)
+    matrix = _build_covariance(
+        model, bars, fetched.get(benchmark), periods_per_year, min_obs, conditional, conditional_lambda
+    )
 
     if matrix is None:
         return {
@@ -1389,10 +1472,13 @@ def compute_risk(
         "mean_correlation": mean_corr,
         "equal_weight_volatility": matrix.volatility(weights),
         "top_risk_contributors": _jsonable(top),
+        "conditional": conditional,
         "note": "Σ is annualized and kept invertible (shrinkage δ, or a structural "
         "factor model). Risk is not additive — correlated names are one bet. This is "
         "the denominator the portfolio optimizer divides alpha by.",
     }
+    if matrix.conditional_diagnostics:
+        result["sigma_regime"] = _jsonable(matrix.conditional_diagnostics)
 
     # The factor model makes risk attributable: split the equal-weight portfolio's
     # variance into common-factor risk and idiosyncratic (specific) risk.
@@ -1404,6 +1490,101 @@ def compute_risk(
         result["specific_risk_share"] = float(1.0 - factor_var / total_var) if total_var > 0 else 0.0
 
     return result
+
+
+def evaluate_conditional_risk(
+    data_client: MarketDataClient,
+    symbols: List[str],
+    start: datetime,
+    end: datetime,
+    timeframe: str = "1Day",
+    min_obs: int = 60,
+    n_points: int = 60,
+    conditional_lambda: Optional[float] = None,
+) -> Dict[str, Any]:
+    """The MZ/QLIKE evidence gate (spec 024 §4 hidden factor 8, §6): per name AND
+    pooled across the universe, compare EWMA / HAR / unconditional (expanding
+    trailing) one-bar-ahead variance forecasts against realized ``r²`` — Mincer–
+    Zarnowitz (``b`` near 1 is well-calibrated) and QLIKE (lower is better), split
+    by realized-vol tercile. **This is the gate that decides whether
+    ``--conditional`` is worth turning on for this repo's own data** — not a
+    preference; see the "as-built" notes in
+    ``specs/complete/024-conditional-risk.md`` for what it found. Read-only, no
+    orders, no feedback into any model.
+    """
+    from src.risk.conditional import evaluate_vol_forecasts, mincer_zarnowitz, qlike_loss
+
+    run_id = new_run_id()
+    periods_per_year = Timeframe.parse(timeframe).periods_per_year()
+    bars = ClientBarSource(data_client).scan(symbols, timeframe, end, _window_days(start, end))
+
+    per_name: Dict[str, Any] = {}
+    pooled_realized: List[float] = []
+    pooled_forecasts: Dict[str, List[float]] = {"ewma": [], "har": [], "unconditional": []}
+    for sym in symbols:
+        frame = bars.get(sym)
+        if frame is None or len(frame) < min_obs + 10:
+            continue
+        returns = frame["close"].pct_change().dropna()
+        evaluation = evaluate_vol_forecasts(
+            returns, min_obs=min_obs, n_points=n_points, lambda_=conditional_lambda, periods_per_year=periods_per_year
+        )
+        if evaluation.n_points < 10:
+            continue
+        per_name[sym] = {
+            "n_points": evaluation.n_points,
+            "by_method": {
+                m: {"qlike": e["qlike"], "mincer_zarnowitz": e["mincer_zarnowitz"]}
+                for m, e in evaluation.by_method.items()
+            },
+        }
+        pooled_realized.extend(evaluation.realized.tolist())
+        for method in pooled_forecasts:
+            pooled_forecasts[method].extend(evaluation.forecasts[method].tolist())
+
+    if not per_name:
+        return {
+            "run_id": run_id,
+            "n_names": 0,
+            "note": "Insufficient history: no name has enough returns to evaluate "
+            f"(need >= min_obs({min_obs}) + 10).",
+        }
+
+    realized_arr = np.array(pooled_realized)
+    pooled: Dict[str, Any] = {}
+    for method, values in pooled_forecasts.items():
+        arr = np.array(values)
+        pooled[method] = {"mincer_zarnowitz": mincer_zarnowitz(realized_arr, arr), "qlike": qlike_loss(realized_arr, arr)}
+
+    ranked = sorted(pooled.items(), key=lambda kv: kv[1]["qlike"])
+    best_method = ranked[0][0]
+    uncond = pooled["unconditional"]
+    best = pooled[best_method]
+    # Both prongs, per the spec's own framing (§4 hidden factor 8) — QLIKE improvement
+    # ALONE isn't the gate: a method that "wins" on QLIKE while its calibration (MZ b)
+    # is farther from 1 than the unconditional baseline's is not honestly better, it's
+    # noise. Both must point the same way for gate_passed=True.
+    qlike_improves = best_method != "unconditional" and best["qlike"] < uncond["qlike"]
+    mz_improves = abs(best["mincer_zarnowitz"]["b"] - 1.0) < abs(uncond["mincer_zarnowitz"]["b"] - 1.0)
+    gate_passed = bool(qlike_improves and mz_improves)
+
+    return {
+        "run_id": run_id,
+        "window": {"start": start.isoformat(), "end": end.isoformat()},
+        "n_names": len(per_name),
+        "n_points_per_name": {s: v["n_points"] for s, v in per_name.items()},
+        "pooled": _jsonable(pooled),
+        "per_name": _jsonable(per_name),
+        "best_method_pooled_qlike": best_method,
+        "gate_passed": gate_passed,
+        "note": "The evidence gate (spec 024 §4 hidden factor 8): QLIKE lower is better, "
+        "Mincer-Zarnowitz b near 1.0 is well-calibrated. 'gate_passed' is TRUE only when "
+        "the best conditional method (ewma/har) BOTH pools a lower QLIKE AND a better-"
+        "calibrated MZ slope than the unconditional trailing baseline on THIS "
+        "universe/window — a QLIKE nudge with worse calibration is noise, not a win. If "
+        "it's FALSE, the honest reading is that conditioning doesn't earn its keep here, "
+        "not a bug to force past.",
+    }
 
 
 def construct_portfolio(
@@ -1432,6 +1613,8 @@ def construct_portfolio(
     book: str = "long_only",
     gross_leverage: Optional[float] = None,
     short_max_weight: float = 0.0,
+    conditional: Optional[str] = None,
+    conditional_lambda: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Construct the utility-maximizing portfolio from alphas (005) and Σ (006).
 
@@ -1468,6 +1651,15 @@ def construct_portfolio(
 
     Returns the proposed weights plus the Fundamental-Law report (IR*, predicted TE/IR,
     transfer coefficient, turnover, cost split). This is a **proposal** - no orders.
+
+    ``conditional`` (spec 024, default ``None`` / **off** — see
+    ``specs/complete/024-conditional-risk.md`` for the evidence-gate finding that
+    decided the default) conditions Σ's volatilities (EWMA/HAR) before the solve, so
+    ``target_te`` is measured against *current* risk, not the trailing-window
+    average — the whole point being that the optimizer sells into a vol spike to
+    hold the TE budget (spec's own hidden factor 1: mechanically correct, but it
+    pays 016's real transaction cost to do it; see ``sigma_regime`` in the
+    diagnostics for how stressed Σ_t is relative to the unconditional estimate).
     """
     from src.costs import ParametricCostModel
     from src.portfolio.optimizer import MeanVarianceOptimizer
@@ -1500,7 +1692,9 @@ def construct_portfolio(
     )
     refine_alpha(panel, alpha_ctx)
     alphas = panel_to_alphas(panel, alpha_ctx)
-    matrix = _build_covariance(risk_model, universe_bars, bench_frame, periods_per_year)
+    matrix = _build_covariance(
+        risk_model, universe_bars, bench_frame, periods_per_year, 60, conditional, conditional_lambda
+    )
 
     if not alphas or matrix is None:
         return {
@@ -1588,7 +1782,7 @@ def construct_portfolio(
                 }
             )
 
-    return {
+    out = {
         "run_id": run_id,
         "strategy": strategy,
         "source": source,
@@ -1600,6 +1794,7 @@ def construct_portfolio(
         "binding_constraint": result.binding_constraint,
         "universe_size": len(alphas),
         "risk_model": risk_model,
+        "conditional": conditional,
         "shrinkage": matrix.shrinkage,
         "weights": _jsonable(dict(sorted(result.weights.items(), key=lambda kv: kv[1], reverse=True))),
         "holdings": _jsonable(holdings),
@@ -1607,6 +1802,136 @@ def construct_portfolio(
         "benchmark_portfolio": _jsonable(benchmark_report),
         "note": "PROPOSAL, not an order. Maximizes αᵀw − λ·wᵀΣw at the target tracking "
         "error; the transfer coefficient shows how much of IR* survives the constraints.",
+    }
+    if matrix.conditional_diagnostics:
+        out["sigma_regime"] = _jsonable(matrix.conditional_diagnostics)
+    return out
+
+
+def run_conditional_risk_ab(
+    data_client: MarketDataClient,
+    strategy: str,
+    symbols: List[str],
+    start: datetime,
+    end: datetime,
+    source: str = "strategy",
+    scanner: str = "volume",
+    benchmark: str = "SPY",
+    neutralize_factors: Sequence[str] = (),
+    target_te: float = 0.04,
+    max_weight: float = 0.25,
+    risk_model: str = "shrinkage",
+    lookback_days: int = 365,
+    timeframe: str = "1Day",
+    horizon: int = 21,
+    n_points: int = 12,
+    capital: float = 1_000_000.0,
+    holding_period_years: Optional[float] = None,
+    conditional_method: str = "ewma",
+    conditional_lambda: Optional[float] = None,
+) -> Dict[str, Any]:
+    """The net-of-cost A/B (spec 024 §3.2/§6) — the one that decides commercial
+    adoption, not TE-tracking alone: walk ``[start, end]`` at spaced rebalances,
+    constructing the SAME alpha book (``construct_portfolio``, same target_te, same
+    cost model) against a conditional vs unconditional Σ, carrying each variant's
+    weights forward to the next rebalance, and pricing the REALIZED forward return
+    net of 016's actual cost (turnover cost annualized in the diagnostics, scaled
+    down to this rebalance's holding period). A conditional Σ that tracks TE better
+    but churns the book to death should — and, if the numbers say so, does — lose
+    the net-IR comparison here. Read-only research-clock harness; no orders.
+    """
+    run_id = new_run_id()
+    periods_per_year = Timeframe.parse(timeframe).periods_per_year()
+    holding_period = holding_period_years if holding_period_years is not None else horizon / periods_per_year
+
+    bars = ClientBarSource(data_client).scan([*symbols, benchmark], timeframe, end, _window_days(start, end))
+    bench = bars.get(benchmark)
+    if bench is None or bench.empty:
+        return {"run_id": run_id, "periods": 0, "note": "Insufficient data: need a benchmark series."}
+
+    index = bench.index
+    window = index[(index >= _to_ts(start, index)) & (index <= _to_ts(end, index))]
+    points = [j for j in _rebalance_points(len(window), horizon, n_points) if j + horizon < len(window)]
+    if len(points) < 2:
+        return {"run_id": run_id, "periods": 0, "note": "Insufficient rebalances in window for the A/B."}
+
+    variants = {"unconditional": None, "conditional": conditional_method}
+    current_weights: Dict[str, Optional[Dict[str, float]]] = {k: None for k in variants}
+    gross_returns: Dict[str, List[float]] = {k: [] for k in variants}
+    net_returns: Dict[str, List[float]] = {k: [] for k in variants}
+    turnovers: Dict[str, List[float]] = {k: [] for k in variants}
+    predicted_tes: Dict[str, List[float]] = {k: [] for k in variants}
+
+    for j in points:
+        t, t_fwd = window[j], window[j + horizon]
+        fwd = _forward_raw_return({s: bars[s] for s in symbols if s in bars}, t, t_fwd)
+        for name, cond in variants.items():
+            result = construct_portfolio(
+                data_client,
+                strategy,
+                symbols,
+                t.to_pydatetime(),
+                source=source,
+                scanner=scanner,
+                target_te=target_te,
+                max_weight=max_weight,
+                benchmark=benchmark,
+                neutralize_factors=neutralize_factors,
+                risk_model=risk_model,
+                lookback_days=lookback_days,
+                timeframe=timeframe,
+                capital=capital,
+                current_weights=current_weights[name],
+                holding_period_years=holding_period,
+                cost_aware=True,
+                conditional=cond,
+                conditional_lambda=conditional_lambda,
+            )
+            if not result["feasible"]:
+                continue
+            new_weights = result["weights"]
+            diag = result["diagnostics"]
+            gross = float(sum(w * fwd.get(s, 0.0) for s, w in new_weights.items()))
+            # The annualized one-way cost, scaled down to THIS rebalance's holding period.
+            period_cost = float(diag.get("cost_drag", 0.0)) * holding_period
+            gross_returns[name].append(gross)
+            net_returns[name].append(gross - period_cost)
+            turnovers[name].append(float(diag.get("turnover", 0.0)))
+            predicted_tes[name].append(float(diag.get("predicted_tracking_error", 0.0)))
+            current_weights[name] = new_weights
+
+    rebalances_per_year = periods_per_year / horizon
+
+    def _summary(name: str) -> Dict[str, Any]:
+        net = np.array(net_returns[name])
+        if len(net) < 2:
+            return {"periods": int(len(net))}
+        net_ir = float(np.mean(net) / np.std(net) * np.sqrt(rebalances_per_year)) if np.std(net) > 0 else 0.0
+        return {
+            "periods": int(len(net)),
+            "mean_net_return_per_period": float(np.mean(net)),
+            "mean_gross_return_per_period": float(np.mean(gross_returns[name])),
+            "net_ir": net_ir,
+            "realized_te": float(np.std(net) * np.sqrt(rebalances_per_year)),
+            "mean_predicted_te": float(np.mean(predicted_tes[name])) if predicted_tes[name] else 0.0,
+            "mean_turnover": float(np.mean(turnovers[name])) if turnovers[name] else 0.0,
+        }
+
+    summaries = {name: _summary(name) for name in variants}
+    winner = max(variants, key=lambda k: summaries[k].get("net_ir", float("-inf")))
+
+    return {
+        "run_id": run_id,
+        "window": {"start": start.isoformat(), "end": end.isoformat()},
+        "horizon_bars": horizon,
+        "periods": len(points),
+        "conditional_method": conditional_method,
+        "summaries": _jsonable(summaries),
+        "winner_net_ir": winner,
+        "note": "SAME alphas/target_te/cost model, conditional vs unconditional Σ, weights "
+        "carried forward rebalance to rebalance. 'winner_net_ir' picks by realized net "
+        "IR (net of 016's actual cost), not by TE-tracking alone — churn that tracking-"
+        "error-tracks-better-but-costs-more should lose, and this is where it would show.",
     }
 
 
@@ -1841,13 +2166,36 @@ def _capacity(weights, universe_bars, gross_alpha, holding_period_years) -> floa
     return 0.5 * (lo + hi)
 
 
-def _build_covariance(model, bars, benchmark_bars, periods_per_year, min_obs=60):
-    """Build a covariance RiskMatrix by model name (statistical estimator or factor)."""
+def _build_covariance(
+    model, bars, benchmark_bars, periods_per_year, min_obs=60, conditional=None, conditional_lambda=None
+):
+    """Build a covariance RiskMatrix by model name (statistical estimator or factor).
+
+    ``conditional`` (spec 024, default ``None`` / off) conditions Σ's diagonal (or,
+    for ``model='factor'``, both ``factor_cov`` and ``specific_var``) via an EWMA or
+    HAR-lite per-name volatility forecast, holding the correlation structure fixed —
+    see :mod:`src.risk.conditional`. Every caller of this helper reduces byte-for-byte
+    to its pre-024 behavior when ``conditional`` is left at the default.
+    """
     from src.risk import RISK_MODELS, build_factor_risk_matrix, build_risk_matrix
 
     if model == "factor":
-        return build_factor_risk_matrix(bars, benchmark_bars, periods_per_year, min_obs=min_obs)
-    return build_risk_matrix(RISK_MODELS[model](), bars, periods_per_year, min_obs=min_obs)
+        return build_factor_risk_matrix(
+            bars,
+            benchmark_bars,
+            periods_per_year,
+            min_obs=min_obs,
+            conditional=conditional,
+            conditional_lambda=conditional_lambda,
+        )
+    return build_risk_matrix(
+        RISK_MODELS[model](),
+        bars,
+        periods_per_year,
+        min_obs=min_obs,
+        conditional=conditional,
+        conditional_lambda=conditional_lambda,
+    )
 
 
 def _resolve_benchmark_portfolio(benchmark_holdings, benchmark_premium, matrix):
