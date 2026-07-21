@@ -212,6 +212,8 @@ def _allocate_utility(args) -> None:
         capital=args.capital,
         holding_period_years=args.holding_period,
         cost_aware=not args.gross_objective,
+        benchmark_holdings=args.benchmark_holdings,
+        benchmark_premium=args.benchmark_premium,
     )
     if not result["feasible"]:
         print(f"Infeasible: {result.get('binding_constraint') or result.get('note')}")
@@ -219,15 +221,44 @@ def _allocate_utility(args) -> None:
 
     d = result["diagnostics"]
     mode = "cost-aware" if d.get("cost_aware") else "gross (cost-blind)"
+    te_label = "active TE (vs w_B)" if d.get("has_benchmark") else "predicted TE"
     print(
         f"\nPortfolio for '{args.strategy}' as of {args.as_of:%Y-%m-%d} "
         f"(target TE {args.target_te:.0%}, {mode})"
     )
     print(
-        f"  IR* {d['ir_star']:.2f}  predicted TE {d['predicted_tracking_error']:.1%}  "
+        f"  IR* {d['ir_star']:.2f}  {te_label} {d['predicted_tracking_error']:.1%}  "
         f"predicted IR {d['predicted_ir']:.2f}  transfer coef {d['transfer_coefficient']:.2f}  "
         f"turnover {d['turnover']:.1%}"
     )
+    bp = result.get("benchmark_portfolio")
+    if bp:
+        print(
+            f"  benchmark '{bp['source']}': coverage {bp['coverage']:.0%}  "
+            f"active beta {d['active_beta']:+.2f}  residual risk {d['residual_risk']:.1%}  "
+            f"(ψ² = β_a²σ_B² + ω²: {d['active_beta'] ** 2 * d['benchmark_variance']:.5f} "
+            f"+ {d['residual_risk'] ** 2:.5f} = {d['predicted_tracking_error'] ** 2:.5f})"
+        )
+        if bp["uncovered_weight"] > 1e-6:
+            print(
+                f"  ! {bp['uncovered_weight']:.0%} of the benchmark file's weight isn't in the "
+                "trading universe — dropped and renormalized away, not reflected in TE"
+            )
+        if d.get("self_benchmark_warning"):
+            print("  ! current holdings ≈ benchmark — tracking error measures distance from yourself")
+        vai = bp.get("value_added_identity")
+        if vai:
+            print(
+                f"  value added: SR_B {vai['sr_benchmark']:.2f}  IR {vai['ir']:.2f}  "
+                f"=>  SR_P ≈ {vai['sr_portfolio_predicted']:.2f}  (SR_P² ≈ SR_B² + IR², predicted)"
+            )
+        print(
+            "  consensus returns (mu_B={:.0%}/yr; the zero-skill baseline your alpha deviates from):".format(
+                bp["premium"]
+            )
+        )
+        for sym, mu in sorted(bp["consensus_returns"].items(), key=lambda kv: kv[1], reverse=True)[:10]:
+            print(f"    {sym:10}mu {mu:+.2%}")
     if "round_trip_cost" in d:
         # Headline: the conservative round-trip haircut (enter + exit, amortized) - the
         # same cost model as capacity, so the two agree.
@@ -1448,6 +1479,22 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=1.0 / 12.0,
         help="Expected holding period in years, to annualize the in-objective cost (utility; default 1/12)",
+    )
+    alloc.add_argument(
+        "--benchmark-holdings",
+        dest="benchmark_holdings",
+        default=None,
+        help="Portfolio-level benchmark w_B (utility): 'equal' over the covered universe, "
+        "or a symbol,weight CSV/JSON holdings file. Moves TE/alpha-neutrality/transfer coefficient "
+        "into active space (w_a = w - w_B); omit for the cash-relative (pre-017) behavior.",
+    )
+    alloc.add_argument(
+        "--benchmark-premium",
+        dest="benchmark_premium",
+        type=float,
+        default=0.05,
+        help="mu_B: assumed annual benchmark excess return, for the reverse-optimization "
+        "consensus-returns report (utility; only used with --benchmark-holdings)",
     )
     alloc.set_defaults(func=cmd_allocate)
 

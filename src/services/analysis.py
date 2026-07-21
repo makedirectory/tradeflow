@@ -1136,6 +1136,8 @@ def construct_portfolio(
     current_weights: Optional[Dict[str, float]] = None,
     holding_period_years: float = 1.0 / 12.0,
     cost_aware: bool = True,
+    benchmark_holdings: Optional[str] = None,
+    benchmark_premium: float = 0.05,
 ) -> Dict[str, Any]:
     """Construct the utility-maximizing portfolio from alphas (005) and Σ (006).
 
@@ -1149,6 +1151,18 @@ def construct_portfolio(
     when ``capital`` is set, the √-impact term - so the optimizer trades a name's
     alpha against *that name's* cost and a no-trade band emerges from the cost itself.
     ``cost_aware=False`` recovers the cost-blind (gross) solve with an ex-post drag.
+
+    ``benchmark_holdings`` (spec 017) makes the benchmark a **portfolio** (``w_B``)
+    rather than the ``benchmark`` return series above (which stays a beta/vol
+    regression input, orthogonal to this): ``"equal"`` for uniform weight over the
+    Σ-covered universe, or a ``symbol,weight`` CSV/JSON holdings file. Tracking
+    error, alpha neutralization, and the transfer coefficient all move into active
+    space (``w_a = w − w_B``); ``benchmark_premium`` (``μ_B``, an assumed annual
+    benchmark excess return) drives the reverse-optimization report (the consensus
+    returns for which ``w_B`` is itself optimal). Without ``benchmark_holdings``
+    this is a no-op - every quantity reduces byte-for-byte to the cash-relative
+    (pre-017) behavior.
+
     Returns the proposed weights plus the Fundamental-Law report (IR*, predicted TE/IR,
     transfer coefficient, turnover, cost split). This is a **proposal** - no orders.
     """
@@ -1199,6 +1213,10 @@ def construct_portfolio(
     # same cost model the backtest uses - the optimizer and backtest share one model.
     cost_inputs = _cost_inputs(universe_bars, cost_model) if cost_aware else None
 
+    benchmark_weights, benchmark_report = _resolve_benchmark_portfolio(
+        benchmark_holdings, benchmark_premium, matrix
+    )
+
     optimizer = MeanVarianceOptimizer(max_weight=max_weight, min_weight=min_weight, max_names=max_names)
     result = optimizer.optimize(
         alphas,
@@ -1209,6 +1227,7 @@ def construct_portfolio(
         cost_inputs=cost_inputs,
         capital=capital,
         holding_period_years=holding_period_years,
+        benchmark_weights=benchmark_weights,
     )
 
     if result.feasible:
@@ -1229,6 +1248,19 @@ def construct_portfolio(
         result.diagnostics["capacity_capital"] = _capacity(
             result.weights, universe_bars, result.diagnostics["expected_active_return"], holding_period_years
         )
+        if benchmark_report is not None and result.diagnostics.get("has_benchmark"):
+            # Value-added identity (G&K eq. 5.12-adjacent): SR_P² ≈ SR_B² + IR² -
+            # active management adds to the benchmark's own Sharpe in quadrature.
+            # Predicted, not realized: SR_B from the assumed premium, IR from the
+            # optimizer's own predicted_ir.
+            sigma_b = float(np.sqrt(result.diagnostics["benchmark_variance"]))
+            sr_b = (benchmark_report["premium"] / sigma_b) if sigma_b > 0 else 0.0
+            ir = result.diagnostics["predicted_ir"]
+            benchmark_report["value_added_identity"] = {
+                "sr_benchmark": sr_b,
+                "ir": ir,
+                "sr_portfolio_predicted": float(np.sqrt(sr_b**2 + ir**2)),
+            }
 
     holdings = []
     if result.feasible and capital:
@@ -1263,6 +1295,7 @@ def construct_portfolio(
         "weights": _jsonable(dict(sorted(result.weights.items(), key=lambda kv: kv[1], reverse=True))),
         "holdings": _jsonable(holdings),
         "diagnostics": _jsonable(result.diagnostics),
+        "benchmark_portfolio": _jsonable(benchmark_report),
         "note": "PROPOSAL, not an order. Maximizes αᵀw − λ·wᵀΣw at the target tracking "
         "error; the transfer coefficient shows how much of IR* survives the constraints.",
     }
@@ -1364,6 +1397,32 @@ def _build_covariance(model, bars, benchmark_bars, periods_per_year, min_obs=60)
     if model == "factor":
         return build_factor_risk_matrix(bars, benchmark_bars, periods_per_year, min_obs=min_obs)
     return build_risk_matrix(RISK_MODELS[model](), bars, periods_per_year, min_obs=min_obs)
+
+
+def _resolve_benchmark_portfolio(benchmark_holdings, benchmark_premium, matrix):
+    """Load ``w_B`` (restricted to Σ's covered universe) plus the reverse-optimization
+    report, or ``(None, None)`` when no portfolio-level benchmark was requested -
+    the no-op path that keeps ``construct_portfolio`` byte-for-byte unchanged
+    without ``benchmark_holdings`` (spec 017).
+    """
+    if not benchmark_holdings:
+        return None, None
+
+    from src.portfolio.benchmark import implied_returns, load_benchmark_weights, restrict_and_renormalize
+
+    raw = load_benchmark_weights(benchmark_holdings, matrix.symbols)
+    raw_total = sum(raw.values())
+    restricted, coverage = restrict_and_renormalize(raw, matrix.symbols)
+    consensus = implied_returns(restricted, matrix, benchmark_premium) if restricted else {}
+    report = {
+        "source": benchmark_holdings,
+        "premium": benchmark_premium,
+        "coverage": coverage,  # fraction of raw weight mass inside Σ's universe
+        "uncovered_weight": max(0.0, 1.0 - coverage),
+        "raw_weight_sum": raw_total,  # far from 1 => the file implied a cash position (§4.6)
+        "consensus_returns": consensus,  # μ per name - print next to α (§3.2 corollary)
+    }
+    return (restricted or None), report
 
 
 def _scanner(scanner_name: str):

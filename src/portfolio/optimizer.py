@@ -102,6 +102,7 @@ class MeanVarianceOptimizer:
         cost_inputs: Optional[CostInputs] = None,
         capital: Optional[float] = None,
         holding_period_years: float = 1.0 / 12.0,
+        benchmark_weights: Optional[Dict[str, float]] = None,
     ) -> PortfolioResult:
         """Construct the utility-maximizing portfolio over the alpha/risk universe.
 
@@ -116,10 +117,22 @@ class MeanVarianceOptimizer:
         ``holding_period_years`` - matching the cost model's alpha-haircut and the
         ex-post cost drag. Without a cost model the solve is cost-blind (unchanged).
 
+        Pass ``benchmark_weights`` (``w_B``) to make the solve **benchmark-aware**
+        (Spec 017): risk and expected return are measured in *active* space
+        (``w_a = w − w_B``) rather than against cash, alpha is neutralized against
+        the Σ-implied benchmark beta (``αᵀw_B = 0``) so the optimizer carries no
+        implicit benchmark-timing view, and ``predicted_tracking_error`` becomes the
+        real thing instead of ``√(wᵀΣw)`` on a cash-relative book. Cost stays
+        anchored at ``w₀`` (current holdings) - risk and cost intentionally read
+        two different reference points. Without ``benchmark_weights`` (or with an
+        all-zero one) every quantity below reduces byte-for-byte to the cash-relative
+        (pre-017) behavior - the same "cost-blind reduces to today" pattern as 016.
+
         Returns the weights, the diagnostics (``IR*``, predicted TE/IR, transfer
         coefficient, value added, turnover, and - when cost-aware - the linear/impact
-        cost split and net expected return), and a feasibility verdict naming the
-        binding constraint when infeasible.
+        cost split and net expected return; when benchmark-aware, the active-beta /
+        residual-risk split), and a feasibility verdict naming the binding constraint
+        when infeasible.
         """
         symbols, alpha = self._align(alphas, risk)
         if len(symbols) == 0:
@@ -138,10 +151,29 @@ class MeanVarianceOptimizer:
             )
 
         sigma_inv = np.linalg.inv(sigma)
-        ir_star = float(np.sqrt(max(alpha @ sigma_inv @ alpha, 0.0)))
+
+        # Benchmark portfolio (Spec 017): β = Σw_B/(w_Bᵀ Σ w_B) is the one canonical
+        # beta (§4.3) - zero vector (and sigma_b2 = 0) when there is no benchmark, so
+        # every step below is a no-op and this reduces exactly to the cash-relative
+        # solve. Names in benchmark_weights but absent from `symbols` are silently
+        # excluded by `_vector` - the caller (spec 017 §4.1/§4.2) is responsible for
+        # restricting/renormalizing w_B to Σ's covered universe before calling in.
+        w_b = self._vector(benchmark_weights or {}, symbols)
+        sigma_b2 = float(w_b @ sigma @ w_b)
+        has_benchmark = sigma_b2 > 0
+        beta = (sigma @ w_b) / sigma_b2 if has_benchmark else np.zeros(n)
+        # α ← α − β·(αᵀw_B): after this, αᵀw_B = 0 exactly (§3.3) - no incentive to
+        # lean the book long/short of the benchmark; only constraints can now
+        # produce a nonzero active beta (surfaced below, not fought here).
+        alpha_neutral = alpha - beta * float(alpha @ w_b) if has_benchmark else alpha
+
+        ir_star = float(np.sqrt(max(alpha_neutral @ sigma_inv @ alpha_neutral, 0.0)))
 
         lam = self._risk_aversion(ir_star, target_te, risk_aversion)
-        unconstrained = (sigma_inv @ alpha) / (2.0 * lam)
+        # The unconstrained total holding: benchmark plus the unconstrained active
+        # bet (§3.1) - w_B + Σ⁻¹α_neutral/2λ. Reduces to the cash-relative closed
+        # form exactly when w_B = 0.
+        unconstrained = w_b + (sigma_inv @ alpha_neutral) / (2.0 * lam)
 
         w0 = self._vector(current_weights or {}, symbols)
         # Per-name cost coefficients (annualized), aligned to `symbols`. Both zero when
@@ -151,7 +183,14 @@ class MeanVarianceOptimizer:
         )
         cost_aware = bool(np.any(c_lin > 0) or np.any(k_imp > 0))
 
-        w = self._constrained_solve(alpha, sigma, lam, n, c_lin, k_imp, w0)
+        # Risk anchored at the benchmark, cost anchored at w₀ (§3.1, hidden factor 4):
+        # absorb the whole w_B risk-anchor effect into a shifted alpha so the
+        # existing box/budget/cost solver runs completely unchanged (the "two
+        # reference points, one solver" trick - see the module docstring's cost
+        # term for the analogous pattern in 016). Shift is exactly zero when there
+        # is no benchmark.
+        alpha_shifted = alpha_neutral + 2.0 * lam * (sigma @ w_b) if has_benchmark else alpha_neutral
+        w = self._constrained_solve(alpha_shifted, sigma, lam, n, c_lin, k_imp, w0)
 
         # Manual no-trade band (cost-free override): if every name moves less than the
         # band, don't churn. When cost-aware the band instead *emerges* from c_lin (a
@@ -159,7 +198,9 @@ class MeanVarianceOptimizer:
         if self.no_trade_band > 0 and np.max(np.abs(w - w0)) < self.no_trade_band:
             w = w0.copy()
 
-        diagnostics = self._diagnostics(alpha, sigma, w, w0, lam, ir_star, c_lin, k_imp, cost_aware)
+        diagnostics = self._diagnostics(
+            alpha_neutral, sigma, w, w0, lam, ir_star, c_lin, k_imp, cost_aware, w_b, beta, sigma_b2
+        )
         return PortfolioResult(
             weights={s: float(w[i]) for i, s in enumerate(symbols) if w[i] > 1e-9},
             feasible=True,
@@ -330,14 +371,22 @@ class MeanVarianceOptimizer:
             return ir_star / (2.0 * target_te)  # λ_A = IR* / (2·ψ_target)
         return 1.0  # neutral default when neither is usable
 
-    def _diagnostics(self, alpha, sigma, w, w0, lam, ir_star, c_lin, k_imp, cost_aware) -> Dict[str, float]:
-        sig_w = sigma @ w
-        active_variance = float(w @ sig_w)
-        te = float(np.sqrt(max(active_variance, 0.0)))
-        expected = float(alpha @ w)
+    def _diagnostics(
+        self, alpha, sigma, w, w0, lam, ir_star, c_lin, k_imp, cost_aware, w_b, beta, sigma_b2
+    ) -> Dict[str, float]:
+        """``alpha`` here is already benchmark-neutralized when ``w_b`` is nonzero
+        (§3.3) - the caller passes ``alpha_neutral``, never the raw forecast."""
+        # Active weights w_a = w - w_B (§3.1). w_b is the zero vector without a
+        # benchmark, so w_a = w and every quantity below is the pre-017 cash-relative
+        # one - unchanged.
+        w_a = w - w_b
+        sig_wa = sigma @ w_a
+        active_variance = float(w_a @ sig_wa)
+        te = float(np.sqrt(max(active_variance, 0.0)))  # ψ, the real tracking error
+        expected = float(alpha @ w_a)
         # Transfer coefficient: corr(α, Σ-adjusted active weights) ∈ [-1, 1].
-        tc = self._corr(alpha, sig_w)
-        dw = w - w0
+        tc = self._corr(alpha, sig_wa)
+        dw = w - w0  # cost is anchored at w₀, not w_B (§3.1 hidden factor 4) - unchanged
         diagnostics = {
             "ir_star": ir_star,
             "risk_aversion": float(lam),
@@ -350,6 +399,25 @@ class MeanVarianceOptimizer:
             "value_added": (ir_star**2) / (4.0 * lam) if lam > 0 else 0.0,
             "turnover": float(np.sum(np.abs(dw))),
         }
+        if sigma_b2 > 0:
+            # ψ² = β_a²·σ_B² + ω² (§3.3): the active-beta (benchmark-timing) share of
+            # tracking error vs the residual (stock-selection) share. β_a should be
+            # ~0 by construction (alpha is neutralized); a nonzero value here comes
+            # only from a binding constraint (box/cardinality), which is exactly what
+            # this diagnostic is for surfacing.
+            active_beta = float(beta @ w_a)
+            residual_risk = float(np.sqrt(max(te**2 - active_beta**2 * sigma_b2, 0.0)))
+            diagnostics.update(
+                {
+                    "has_benchmark": True,
+                    "benchmark_variance": sigma_b2,
+                    "active_beta": active_beta,
+                    "residual_risk": residual_risk,
+                    # A benchmark equal to current holdings makes ψ measure "distance
+                    # from myself" - legal but meaningless (§4.5).
+                    "self_benchmark_warning": bool(np.sum(np.abs(w0 - w_b)) < 1e-6),
+                }
+            )
         if cost_aware:
             # One-way cost of *this rebalance's* turnover - what the objective charged,
             # kept for continuity with the prior (pre-016) ex-post drag. Detail.

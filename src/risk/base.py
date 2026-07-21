@@ -65,6 +65,23 @@ class RiskMatrix:
         active = self._vector(weights) - self._vector(benchmark)
         return float(np.sqrt(max(active @ self.sigma @ active, 0.0)))
 
+    def implied_beta(self, benchmark: Weights) -> pd.Series:
+        """The Σ-implied benchmark beta per name: ``β = Σw_B / (w_Bᵀ Σ w_B)``.
+
+        The one canonical beta for anything benchmark-portfolio-relative (reverse
+        optimization, active-beta diagnostics, alpha neutralization) - spec 017 §4.3
+        calls this "one β, everywhere": per-name regression betas (the alpha
+        pipeline's ``beta`` feature) are a different, complementary quantity and
+        must not be mixed with this one. Zero vector when the benchmark carries no
+        risk (``w_B = 0`` or degenerate Σ), so callers reduce to "no benchmark"
+        rather than dividing by zero.
+        """
+        wb = self._vector(benchmark)
+        denom = float(wb @ self.sigma @ wb)
+        if denom <= 0:
+            return pd.Series(0.0, index=self.symbols)
+        return pd.Series((self.sigma @ wb) / denom, index=self.symbols)
+
     def marginal_contribution_to_risk(
         self, weights: Weights, benchmark: Optional[Weights] = None
     ) -> pd.Series:
