@@ -193,9 +193,32 @@ def cmd_allocate(args) -> None:
 
 def _allocate_utility(args) -> None:
     """Mean-variance portfolio construction (alpha + Σ) — a read-only proposal."""
-    from src.services.analysis import construct_portfolio
+    from src.services.analysis import construct_portfolio, longshort_report
 
     _, data_client = build_data_and_broker()
+    book = args.book.replace("-", "_")
+
+    if args.longshort_report:
+        report = longshort_report(
+            data_client,
+            args.strategy,
+            args.symbols,
+            args.as_of,
+            source=args.source,
+            scanner=args.scanner,
+            target_te=args.target_te,
+            max_weight=args.max_weight,
+            benchmark=args.benchmark,
+            neutralize_factors=args.neutralize_factors,
+            capital=args.capital,
+            holding_period_years=args.holding_period,
+            cost_aware=not args.gross_objective,
+            gross_leverage=args.gross_leverage or 2.0,
+            short_max_weight=args.short_max_weight,
+        )
+        _print_longshort_report(report, args)
+        return
+
     result = construct_portfolio(
         data_client,
         args.strategy,
@@ -214,6 +237,9 @@ def _allocate_utility(args) -> None:
         cost_aware=not args.gross_objective,
         benchmark_holdings=args.benchmark_holdings,
         benchmark_premium=args.benchmark_premium,
+        book=book,
+        gross_leverage=args.gross_leverage,
+        short_max_weight=args.short_max_weight,
     )
     if not result["feasible"]:
         print(f"Infeasible: {result.get('binding_constraint') or result.get('note')}")
@@ -259,6 +285,14 @@ def _allocate_utility(args) -> None:
         )
         for sym, mu in sorted(bp["consensus_returns"].items(), key=lambda kv: kv[1], reverse=True)[:10]:
             print(f"    {sym:10}mu {mu:+.2%}")
+    if d.get("book") == "market_neutral":
+        print(
+            f"  market-neutral: Σw residual {d['dollar_neutral_residual']:.2e}  "
+            f"gross leverage {d['gross_leverage']:.2f} / cap {d['gross_leverage_cap']:.2f}  "
+            f"borrow cost {d['borrow_cost']:.2%}/yr"
+        )
+        if not bp:
+            print("  ! no benchmark supplied — dollar-neutral is enforced, beta-neutrality is unverified")
     if "round_trip_cost" in d:
         # Headline: the conservative round-trip haircut (enter + exit, amortized) - the
         # same cost model as capacity, so the two agree.
@@ -287,6 +321,32 @@ def _allocate_utility(args) -> None:
     else:
         for sym, w in result["weights"].items():
             print(f"{sym:10}{w:>7.1%}")
+
+
+def _print_longshort_report(report, args) -> None:
+    """Spec 018 §3.2: the same alphas/Σ/costs solved long-only vs market-neutral."""
+    if not report["feasible"]:
+        print(f"Infeasible: {report.get('note')}")
+        return
+    print(f"\nLong-only price report for '{args.strategy}' as of {args.as_of:%Y-%m-%d}")
+    print(
+        f"  IR_LS (long/short) {report['ir_long_short']:.2f}   IR_LO (long-only) {report['ir_long_only']:.2f}   "
+        f"shrinkage {report['shrinkage_measured']:.2f}  (G&K reference line ≈ {report['shrinkage_reference_gk']:.2f})"
+    )
+    print(
+        f"  transfer coefficient: long-only {report['transfer_coefficient_long_only']:.2f}   "
+        f"long/short {report['transfer_coefficient_long_short']:.2f}"
+    )
+    lo_size, ls_size = report["size_exposure_long_only"], report["size_exposure_long_short"]
+    if lo_size is not None:
+        print(f"  size exposure: long-only {lo_size:+.3f}   long/short {ls_size:+.3f}")
+    print(
+        f"  long-only binding fraction {report['binding_fraction']:.0%}   "
+        f"long/short gross leverage {report['gross_leverage']:.2f}   "
+        f"Σw residual {report['dollar_neutral_residual']:.2e}   "
+        f"borrow cost {report['borrow_cost']:.2%}/yr"
+    )
+    print(f"  note: {report['note']}")
 
 
 def cmd_optimize(args) -> None:
@@ -1495,6 +1555,38 @@ def build_parser() -> argparse.ArgumentParser:
         default=0.05,
         help="mu_B: assumed annual benchmark excess return, for the reverse-optimization "
         "consensus-returns report (utility; only used with --benchmark-holdings)",
+    )
+    alloc.add_argument(
+        "--book",
+        choices=["long-only", "market-neutral"],
+        default="long-only",
+        help="Spec 018 (utility): 'long-only' (default) is the pre-018 box [0,cap]/budget "
+        "Σw=1 solve, unchanged. 'market-neutral' relaxes to box [-short-max-weight,cap], "
+        "budget Σw=0, and REQUIRES --gross-leverage (an unconstrained long/short book on "
+        "a noisy Σ is a leverage machine).",
+    )
+    alloc.add_argument(
+        "--gross-leverage",
+        dest="gross_leverage",
+        type=float,
+        default=None,
+        help="‖w‖1 <= L cap (utility, mandatory with --book market-neutral)",
+    )
+    alloc.add_argument(
+        "--short-max-weight",
+        dest="short_max_weight",
+        type=float,
+        default=0.25,
+        help="Per-name short-side box magnitude s_i (utility; --book market-neutral only, default 0.25)",
+    )
+    alloc.add_argument(
+        "--longshort-report",
+        dest="longshort_report",
+        action="store_true",
+        help="Also solve long-only and market-neutral on the SAME alphas/Σ/costs and report the "
+        "IR shrinkage, both transfer coefficients, and the long-only book's size exposure "
+        "(spec 018 §3.2). Uses --gross-leverage/--short-max-weight for the market-neutral leg "
+        "(defaults 2.0 / 0.25 if not set).",
     )
     alloc.set_defaults(func=cmd_allocate)
 

@@ -1138,6 +1138,9 @@ def construct_portfolio(
     cost_aware: bool = True,
     benchmark_holdings: Optional[str] = None,
     benchmark_premium: float = 0.05,
+    book: str = "long_only",
+    gross_leverage: Optional[float] = None,
+    short_max_weight: float = 0.0,
 ) -> Dict[str, Any]:
     """Construct the utility-maximizing portfolio from alphas (005) and Σ (006).
 
@@ -1162,6 +1165,15 @@ def construct_portfolio(
     returns for which ``w_B`` is itself optimal). Without ``benchmark_holdings``
     this is a no-op - every quantity reduces byte-for-byte to the cash-relative
     (pre-017) behavior.
+
+    ``book="market_neutral"`` (spec 018) relaxes the long-only box to
+    ``[−short_max_weight, max_weight]`` and the budget to ``Σw=0``; ``gross_leverage``
+    (``‖w‖₁ ≤ L``) is then mandatory - see
+    :meth:`~src.portfolio.optimizer.MeanVarianceOptimizer.optimize`. Borrow carry on
+    the short book is priced automatically from the cost model's flat default when
+    ``cost_aware``; a per-name override belongs in a future ``CostInputs.borrow`` feed
+    (v1 has no per-name borrow-rate source at the service layer). ``book="long_only"``
+    (the default) is unaffected.
 
     Returns the proposed weights plus the Fundamental-Law report (IR*, predicted TE/IR,
     transfer coefficient, turnover, cost split). This is a **proposal** - no orders.
@@ -1228,6 +1240,9 @@ def construct_portfolio(
         capital=capital,
         holding_period_years=holding_period_years,
         benchmark_weights=benchmark_weights,
+        book=book,
+        gross_leverage=gross_leverage,
+        short_max_weight=short_max_weight,
     )
 
     if result.feasible:
@@ -1235,11 +1250,14 @@ def construct_portfolio(
             # Cost-blind (gross) objective: still report the ex-post drag so the net figure
             # is visible. Same convention as the cost-aware path - a round-trip haircut on
             # the book for the headline (matching capacity), one-way rebalance drag in detail.
+            # The round-trip book size is gross exposure (Σ|w|) - equals Σw=1 for a
+            # long-only book, but a market-neutral book's Σw≈0 isn't the exposure to price.
             h = max(holding_period_years, 1e-9)
             rate = cost_model.turnover_cost_rate()
             expected = result.diagnostics["expected_active_return"]
+            gross_book = sum(abs(v) for v in result.weights.values())
             one_way = result.diagnostics["turnover"] * rate / h
-            round_trip = 2.0 * rate * sum(result.weights.values()) / h
+            round_trip = 2.0 * rate * gross_book / h
             result.diagnostics["cost_drag"] = one_way
             result.diagnostics["round_trip_cost"] = round_trip
             result.diagnostics["expected_active_return_net"] = expected - round_trip
@@ -1299,6 +1317,148 @@ def construct_portfolio(
         "note": "PROPOSAL, not an order. Maximizes αᵀw − λ·wᵀΣw at the target tracking "
         "error; the transfer coefficient shows how much of IR* survives the constraints.",
     }
+
+
+def longshort_report(
+    data_client: MarketDataClient,
+    strategy: str,
+    symbols: List[str],
+    as_of: datetime,
+    source: str = "strategy",
+    scanner: str = "volume",
+    target_te: float = 0.04,
+    max_weight: float = 0.25,
+    benchmark: str = "SPY",
+    neutralize_factors: Sequence[str] = (),
+    risk_model: str = "shrinkage",
+    lookback_days: int = 365,
+    timeframe: str = "1Day",
+    capital: Optional[float] = None,
+    holding_period_years: float = 1.0 / 12.0,
+    cost_aware: bool = True,
+    gross_leverage: float = 2.0,
+    short_max_weight: float = 0.25,
+) -> Dict[str, Any]:
+    """The long-only price report (Spec 018 §3.2): the SAME alphas, Σ, and costs
+    solved ``long_only`` vs ``market_neutral``, so the difference is attributable to
+    the constraint itself, not to a different universe or a different day's data.
+
+    Reports the measured IR shrinkage (``IR_LO / IR_LS``) next to G&K's ``(15.13)``-
+    style reference line (``γ(N) = (53+N)^0.57``) - explicitly *not* a verified
+    transcription of the textbook formula, just an illustrative comparison point, per
+    the spec's own framing - both transfer coefficients, and the long-only book's
+    incidental **size exposure** (the "size" factor already in
+    ``src/risk/exposures.py``, dotted with each book's weights) that a long/short
+    book, free to short the small names long-only can only zero out, does not carry.
+    """
+    common = dict(
+        source=source,
+        scanner=scanner,
+        target_te=target_te,
+        max_weight=max_weight,
+        benchmark=benchmark,
+        neutralize_factors=neutralize_factors,
+        risk_model=risk_model,
+        lookback_days=lookback_days,
+        timeframe=timeframe,
+        capital=capital,
+        holding_period_years=holding_period_years,
+        cost_aware=cost_aware,
+    )
+    lo = construct_portfolio(data_client, strategy, symbols, as_of, book="long_only", **common)
+    ls = construct_portfolio(
+        data_client,
+        strategy,
+        symbols,
+        as_of,
+        book="market_neutral",
+        gross_leverage=gross_leverage,
+        short_max_weight=short_max_weight,
+        **common,
+    )
+    if not lo["feasible"] or not ls["feasible"]:
+        return {
+            "as_of": as_of.isoformat(),
+            "strategy": strategy,
+            "feasible": False,
+            "note": "Long-only and/or market-neutral solve was infeasible; see long_only/"
+            "market_neutral for the binding constraint.",
+            "long_only": lo,
+            "market_neutral": ls,
+        }
+
+    ir_lo = lo["diagnostics"]["predicted_ir"]
+    ir_ls = ls["diagnostics"]["predicted_ir"]
+    shrinkage = (ir_lo / ir_ls) if ir_ls != 0 else 0.0
+    n = max(lo["universe_size"], 1)
+    gamma_n = (53.0 + n) ** 0.57
+    reference_shrinkage = 1.0 - 1.0 / gamma_n
+
+    size_exposure = _longshort_size_exposure(
+        data_client, symbols, benchmark, as_of, lookback_days, timeframe, lo, ls
+    )
+    binding_fraction = _binding_fraction(lo["weights"], symbols)
+
+    return {
+        "as_of": as_of.isoformat(),
+        "strategy": strategy,
+        "feasible": True,
+        "universe_size": lo["universe_size"],
+        "ir_long_short": ir_ls,
+        "ir_long_only": ir_lo,
+        "shrinkage_measured": shrinkage,
+        "shrinkage_reference_gk": reference_shrinkage,
+        "transfer_coefficient_long_only": lo["diagnostics"]["transfer_coefficient"],
+        "transfer_coefficient_long_short": ls["diagnostics"]["transfer_coefficient"],
+        "size_exposure_long_only": size_exposure["long_only"],
+        "size_exposure_long_short": size_exposure["long_short"],
+        "binding_fraction": binding_fraction,
+        "gross_leverage": ls["diagnostics"].get("gross_leverage"),
+        "dollar_neutral_residual": ls["diagnostics"].get("dollar_neutral_residual"),
+        "borrow_cost": ls["diagnostics"].get("borrow_cost"),
+        "long_only": lo,
+        "market_neutral": ls,
+        "note": "shrinkage_reference_gk is an illustrative G&K (15.13)-style γ(N) "
+        "reference line, not a verified transcription of the exact formula - compare "
+        "against shrinkage_measured, don't trust it as truth. binding_fraction is the "
+        "share of the long-only universe pinned at zero weight (a proxy for the "
+        "forced-underweight bound this spec relaxes), not the exact |z|-mass figure.",
+    }
+
+
+def _longshort_size_exposure(data_client, symbols, benchmark, as_of, lookback_days, timeframe, lo, ls):
+    """Each book's dot product with the cross-sectionally standardized size factor
+    (``log(price·ADV)``, ``src/risk/exposures.py``) - the incidental size bias a
+    long-only book picks up from being unable to short small, unattractive names
+    (spec 018 §2 goal, §6 "size bias" test).
+    """
+    from src.risk.exposures import build_factor_exposures
+
+    bars = ClientBarSource(data_client).scan([*symbols, benchmark], timeframe, as_of, lookback_days)
+    bench_frame = bars.get(benchmark)
+    universe_bars = {s: bars[s] for s in symbols if s in bars}
+    exposures = build_factor_exposures(universe_bars, bench_frame, factors=["size"])
+    if exposures.empty:
+        return {"long_only": None, "long_short": None}
+    size = exposures["size"]
+
+    def dot(weights: Dict[str, float]) -> float:
+        common = size.index.intersection(list(weights))
+        return float(sum(weights[s] * size[s] for s in common)) if len(common) else 0.0
+
+    return {"long_only": dot(lo["weights"]), "long_short": dot(ls["weights"])}
+
+
+def _binding_fraction(long_only_weights: Dict[str, float], symbols: List[str]) -> float:
+    """Share of the universe the long-only solve holds at exactly zero - a proxy for
+    names pinned at the long-only floor (``w_a = −w_B``, spec 017's underweight
+    bound). Not the spec's exact "|z| mass" figure (that needs the per-name alpha
+    z-score, which this report doesn't carry) - a documented simplification.
+    """
+    if not symbols:
+        return 0.0
+    pinned = sum(1 for s in symbols if long_only_weights.get(s, 0.0) <= 1e-9)
+    return pinned / len(symbols)
 
 
 # --------------------------------------------------------------------------- #
@@ -1361,7 +1521,7 @@ def _capacity(weights, universe_bars, gross_alpha, holding_period_years) -> floa
     liquidity = {}
     for sym, w in weights.items():
         frame = universe_bars.get(sym)
-        if frame is None or len(frame) < 2 or w <= 0:
+        if frame is None or len(frame) < 2 or w == 0:
             continue
         liquidity[sym] = (
             w,

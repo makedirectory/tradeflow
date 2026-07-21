@@ -77,6 +77,12 @@ class ParametricCostModel(CostModel):
             return 0.0
         return self.annual_borrow_rate * abs(notional) * holding_years
 
+    def borrow_rate(self, override: float = None) -> float:
+        """Annualized borrow rate - the flat ``annual_borrow_bps`` default, or a
+        per-name override (a locate-desk quote) when the caller has one.
+        """
+        return self.annual_borrow_rate if override is None else override
+
     def turnover_cost_rate(self, spread: float = None) -> float:
         """Linear cost per unit of turnover notional - the optimizer's L1 cost term.
 

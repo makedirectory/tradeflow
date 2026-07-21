@@ -15,6 +15,7 @@ from the broker; this models cost for *simulation*.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Optional
 
 
 @dataclass
@@ -89,6 +90,16 @@ class CostModel(ABC):
 
     def carry_cost(self, notional: float, is_short: bool, holding_years: float) -> float:
         """Financing cost of *holding* a position (borrow on shorts). Default: none."""
+        return 0.0
+
+    def borrow_rate(self, override: Optional[float] = None) -> float:
+        """Annualized borrow rate (fraction of notional per year) charged on a short
+        holding - the portfolio optimizer's per-name short-side cost tilt (Spec 018),
+        threaded the same way :meth:`turnover_cost_rate` threads the per-name spread.
+        ``override`` is a per-name rate from :class:`~src.portfolio.optimizer.CostInputs`
+        (a locate-desk quote or a manual hard-to-borrow override); a model with no
+        borrow cost returns 0 regardless of ``override``.
+        """
         return 0.0
 
     def annual_cost_rate(self, trade: Trade, holding_period_years: float) -> float:
