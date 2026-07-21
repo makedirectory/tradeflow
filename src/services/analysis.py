@@ -16,6 +16,7 @@ import pandas as pd
 
 from src.alphas import (
     DEFAULT_IC,
+    Alpha,
     AlphaContext,
     panel_to_alphas,
     refine_alpha,
@@ -1615,6 +1616,10 @@ def construct_portfolio(
     short_max_weight: float = 0.0,
     conditional: Optional[str] = None,
     conditional_lambda: Optional[float] = None,
+    posterior: Optional[str] = None,
+    posterior_ic: Optional[float] = None,
+    posterior_t_eff: Optional[float] = None,
+    posterior_tau: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Construct the utility-maximizing portfolio from alphas (005) and Σ (006).
 
@@ -1660,6 +1665,20 @@ def construct_portfolio(
     hold the TE budget (spec's own hidden factor 1: mechanically correct, but it
     pays 016's real transaction cost to do it; see ``sigma_regime`` in the
     diagnostics for how stressed Σ_t is relative to the unconditional estimate).
+
+    ``posterior="bl"`` (spec 021, default ``None`` / off until validated OOS)
+    blends the refined alphas with 017's consensus prior via Black–Litterman
+    before the solve: names with no signal get a real, Σ-propagated posterior
+    (G&K 11.25) instead of being excluded outright, and view confidence is tied to
+    ``posterior_ic``/``posterior_t_eff`` rather than baked only into magnitude.
+    ``posterior_t_eff`` is required when set (τ is pinned to ``1/T_eff``, never
+    tuned — pass the ``effective_t`` a prior ``compute_information`` call
+    measured); ``posterior_ic`` defaults to the same assumed IC the refinement
+    step used; ``posterior_tau`` overrides the pinned τ. The report gains a
+    ``posterior`` section (per-name consensus/view/posterior/source table, plus
+    τ-sensitivity) and ``shrink_chain`` gains a ``bl`` step - the IC-uncertainty
+    haircut moves from the refine step (which stays unshrunk for this path,
+    avoiding a double-shrink) into Ω.
     """
     from src.costs import ParametricCostModel
     from src.portfolio.optimizer import MeanVarianceOptimizer
@@ -1713,6 +1732,13 @@ def construct_portfolio(
     benchmark_weights, benchmark_report = _resolve_benchmark_portfolio(
         benchmark_holdings, benchmark_premium, matrix
     )
+
+    posterior_report = None
+    if posterior is not None:
+        alphas, posterior_report = _apply_bl_posterior(
+            panel, alphas, matrix, as_of, benchmark_report, posterior, posterior_ic, posterior_t_eff,
+            posterior_tau, alpha_ctx.ic,
+        )
 
     optimizer = MeanVarianceOptimizer(max_weight=max_weight, min_weight=min_weight, max_names=max_names)
     result = optimizer.optimize(
@@ -1800,6 +1826,8 @@ def construct_portfolio(
         "holdings": _jsonable(holdings),
         "diagnostics": _jsonable(result.diagnostics),
         "benchmark_portfolio": _jsonable(benchmark_report),
+        "posterior": _jsonable(posterior_report),
+        "shrink_chain": _jsonable(panel.meta.get("shrink_chain", [])),
         "note": "PROPOSAL, not an order. Maximizes αᵀw − λ·wᵀΣw at the target tracking "
         "error; the transfer coefficient shows how much of IR* survives the constraints.",
     }
@@ -2222,6 +2250,82 @@ def _resolve_benchmark_portfolio(benchmark_holdings, benchmark_premium, matrix):
         "consensus_returns": consensus,  # μ per name - print next to α (§3.2 corollary)
     }
     return (restricted or None), report
+
+
+def _apply_bl_posterior(
+    panel, alphas, matrix, as_of, benchmark_report, posterior, posterior_ic, posterior_t_eff, posterior_tau, scale_ic
+):
+    """Spec 021: blend ``alphas`` with 017's consensus prior via Black–Litterman.
+
+    Reads ``panel.meta["shrink_chain"]`` (populated by ``refine_alpha`` upstream,
+    where ``level_shrink`` stayed off - the raw, unshrunk alpha is exactly what BL's
+    Ω needs, spec 021 §4 hidden factor 1) and appends the ``bl`` step so the
+    IC-uncertainty haircut is auditably applied exactly once, here, not twice.
+    Returns the new (Σ-universe-spanning) alpha list and the report section
+    (per-name consensus/view/posterior/source table plus τ-sensitivity).
+    """
+    if posterior != "bl":
+        raise ValueError(f"posterior must be 'bl' or None, got {posterior!r}")
+    if posterior_t_eff is None:
+        raise ValueError(
+            "posterior_t_eff is required for posterior='bl' - tau is pinned to "
+            "1/T_eff (spec 021 §3.1), never tuned; pass the effective_t a prior "
+            "compute_information call measured for this strategy/window."
+        )
+
+    from src.portfolio.posterior import black_litterman_from_ic
+
+    ic_bl = posterior_ic if posterior_ic is not None else scale_ic
+    views = {a.symbol: a.alpha for a in alphas}
+    bl = black_litterman_from_ic(views, matrix, ic_bl, posterior_t_eff, tau=posterior_tau)
+
+    panel.meta.setdefault("shrink_chain", []).append(
+        {
+            "step": "bl",
+            "owner": "bl",
+            "ic": ic_bl,
+            "t_eff": posterior_t_eff,
+            "tau": bl.tau,
+            "note": "IC-uncertainty owned here (Ω), not re-applied upstream - the "
+            "refine step's level_shrink stayed off so the raw, unshrunk alpha feeds "
+            "Ω, never both (spec 021 §4 hidden factor 1).",
+        }
+    )
+
+    original_z = {a.symbol: a.raw_z for a in alphas}
+    original_vol = {a.symbol: a.residual_vol for a in alphas}
+    new_alphas = [
+        Alpha(
+            symbol=s,
+            alpha=bl.mu_post[s],
+            as_of=as_of,
+            residual_vol=original_vol.get(s, float(np.sqrt(max(matrix.sigma[i, i], 0.0)))),
+            ic=ic_bl,
+            raw_z=original_z.get(s, 0.0),
+        )
+        for i, s in enumerate(matrix.symbols)
+    ]
+
+    consensus = (benchmark_report or {}).get("consensus_returns", {}) or {}
+    per_name = [
+        {
+            "symbol": s,
+            "consensus_pi": consensus.get(s),
+            "view_q": bl.views.get(s),
+            "posterior_mu": bl.mu_post[s],
+            "source": bl.source[s],
+        }
+        for s in matrix.symbols
+    ]
+    report = {
+        "method": "bl",
+        "ic": ic_bl,
+        "t_eff": posterior_t_eff,
+        "tau": bl.tau,
+        "tau_sensitivity": bl.tau_sensitivity,
+        "per_name": per_name,
+    }
+    return new_alphas, report
 
 
 def _scanner(scanner_name: str):

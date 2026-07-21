@@ -244,6 +244,10 @@ def _allocate_utility(args) -> None:
         short_max_weight=args.short_max_weight,
         conditional=getattr(args, "conditional", None),
         conditional_lambda=getattr(args, "conditional_lambda", None),
+        posterior=getattr(args, "posterior", None),
+        posterior_ic=getattr(args, "posterior_ic", None),
+        posterior_t_eff=getattr(args, "posterior_t_eff", None),
+        posterior_tau=getattr(args, "posterior_tau", None),
     )
     if not result["feasible"]:
         print(f"Infeasible: {result.get('binding_constraint') or result.get('note')}")
@@ -324,6 +328,20 @@ def _allocate_utility(args) -> None:
             f"  conditional Σ ({regime['method']}, λ={regime['lambda']:.2f}): "
             f"mean σ_t/σ_unconditional = {regime['mean_sigma_regime']:.2f}"
         )
+    post = result.get("posterior")
+    if post:
+        propagated = sum(1 for row in post["per_name"] if row["source"] == "propagated")
+        print(
+            f"  Black-Litterman posterior (IC {post['ic']:.3f}, T_eff {post['t_eff']:.0f}, "
+            f"tau {post['tau']:.4f}): {propagated} name(s) propagated from correlated views"
+        )
+        for row in sorted(post["per_name"], key=lambda r: abs(r["posterior_mu"]), reverse=True)[:10]:
+            pi = f"{row['consensus_pi']:+.2%}" if row["consensus_pi"] is not None else "  —  "
+            q = f"{row['view_q']:+.2%}" if row["view_q"] is not None else "  —  "
+            print(
+                f"    {row['symbol']:10}pi {pi}  q {q}  mu_post {row['posterior_mu']:+.2%}  "
+                f"({row['source']})"
+            )
     print(f"\n{'SYMBOL':10}{'WEIGHT':>8}" + (f"{'DOLLARS':>14}{'SHARES':>10}" if result["holdings"] else ""))
     if result["holdings"]:
         for h in result["holdings"]:
@@ -1809,6 +1827,39 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help="Override the EWMA decay λ (utility; default RiskMetrics 0.94 daily / 0.97 weekly)",
+    )
+    alloc.add_argument(
+        "--posterior",
+        choices=["bl"],
+        default=None,
+        help="Spec 021 (utility): Black-Litterman-blend the alphas with 017's consensus "
+        "prior before the solve — uncovered names get a real, Σ-propagated posterior "
+        "instead of being excluded. Default off until validated OOS. Requires "
+        "--posterior-t-eff.",
+    )
+    alloc.add_argument(
+        "--posterior-ic",
+        dest="posterior_ic",
+        type=float,
+        default=None,
+        help="IC behind the BL view precision (utility; default: same assumed IC the "
+        "refine step used, spec 021)",
+    )
+    alloc.add_argument(
+        "--posterior-t-eff",
+        dest="posterior_t_eff",
+        type=float,
+        default=None,
+        help="Effective independent observations behind the BL view (utility; pins "
+        "tau=1/T_eff, spec 021 §3.1 — required with --posterior bl; see 'info' "
+        "--> effective_t for a measured value)",
+    )
+    alloc.add_argument(
+        "--tau",
+        dest="posterior_tau",
+        type=float,
+        default=None,
+        help="Override the pinned BL tau=1/T_eff (utility; spec 021 §3.1 sensitivity knob)",
     )
     alloc.set_defaults(func=cmd_allocate)
 
