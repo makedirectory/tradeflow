@@ -246,6 +246,12 @@ partial-adjustment policy — see [Multi-period trading](./multi-period-trading)
 the full derivation. **Default off**, same evidence-gated posture as
 Black–Litterman above.
 
+## No taxable-account support
+
+There is no after-tax objective, no lot-level tax-loss harvesting, and no
+wash-sale awareness anywhere in the optimizer. This is a deliberate scope call,
+not a missing feature: every account this stack targets is assumed non-taxable.
+
 ## Where it runs
 
 `services/analysis.py::construct_portfolio` scans the universe, builds
