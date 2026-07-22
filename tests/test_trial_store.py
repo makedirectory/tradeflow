@@ -1,4 +1,4 @@
-"""The trial store (spec 026): the queryable SQLite index over the research
+"""The trial store: the queryable SQLite index over the research
 journal. Exercises rebuild idempotence, crash recovery/drift detection, hash
 normalization, dedup, and campaign-level family counting - the property that is
 broken today (``n_trials`` resets every session).
@@ -173,7 +173,7 @@ def test_accounting_isolation(tmp_path):
 
 def test_query_defaults_to_current_accounting_version(tmp_path):
     """A listing that silently pools accounting versions invites comparing
-    incommensurable numbers (spec 026 §4.6) - query() must default-filter."""
+    incommensurable numbers - query() must default-filter."""
     store = TrialStore(tmp_path / "trials.db")
     store.record(id="old", kind="backtest", strategy="s", symbols=["A"], params={"x": 1}, accounting=1)
     store.record(

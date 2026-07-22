@@ -28,14 +28,14 @@ solved by the same 1-D budget bisection the cost-free projection already used, w
 external solver. When ``cᵢ = kᵢ = 0`` it reduces *exactly* to the cost-free projected
 gradient, so the cost-blind behavior is unchanged.
 
-``book="market_neutral"`` (Spec 018) relaxes the long-only box to ``[−s, cap]`` and the
+``book="market_neutral"`` relaxes the long-only box to ``[−s, cap]`` and the
 budget to ``Σw = 0``, adds a mandatory gross-leverage cap ``‖w‖₁ ≤ L`` (a second,
 outer dual - the inner budget bisection now runs once per trial value of the leverage
 dual, "one loop deeper" per name), and prices per-name borrow carry as a linear tilt on
 the short side only (``Σ borrowᵢ·max(−wᵢ, 0)``) - a *second* zero-anchored kink that
 composes with the turnover kink at ``w₀`` (see :meth:`_prox_step_short`). This is a
 wholly separate solve path from the long-only one above: ``book="long_only"`` (the
-default) runs the exact pre-018 code, unchanged, so every existing result is
+default) runs the exact prior code, unchanged, so every existing result is
 byte-for-byte identical.
 """
 
@@ -62,7 +62,7 @@ class CostInputs:
     spread: Dict[str, float] = field(default_factory=dict)
     adv_dollar: Dict[str, float] = field(default_factory=dict)
     daily_vol: Dict[str, float] = field(default_factory=dict)
-    #: Per-name annualized borrow rate override (Spec 018) - a locate-desk quote or a
+    #: Per-name annualized borrow rate override - a locate-desk quote or a
     #: manual hard-to-borrow rate; missing names fall back to the cost model's flat
     #: default (:meth:`~src.costs.base.CostModel.borrow_rate`). Only priced for
     #: ``book="market_neutral"`` (long-only books hold no shorts to carry).
@@ -128,15 +128,15 @@ class MeanVarianceOptimizer:
         error") *or* ``risk_aversion`` (``λ_A`` directly). ``current_weights`` (``w₀``)
         is where turnover is measured from.
 
-        Pass a ``cost_model`` + ``cost_inputs`` to make the solve **cost-aware** (Spec
-        016): the objective gains a name-specific linear turnover penalty and, when
+        Pass a ``cost_model`` + ``cost_inputs`` to make the solve **cost-aware**:
+        the objective gains a name-specific linear turnover penalty and, when
         ``capital`` is given, the √-impact term. Cost coefficients are *annualized* to
         the same units as the (annualized) alpha by dividing the one-way rate by
         ``holding_period_years`` - matching the cost model's alpha-haircut and the
         ex-post cost drag. Without a cost model the solve is cost-blind (unchanged).
 
-        Pass ``benchmark_weights`` (``w_B``) to make the solve **benchmark-aware**
-        (Spec 017): risk and expected return are measured in *active* space
+        Pass ``benchmark_weights`` (``w_B``) to make the solve **benchmark-aware**:
+        risk and expected return are measured in *active* space
         (``w_a = w − w_B``) rather than against cash, alpha is neutralized against
         the Σ-implied benchmark beta (``αᵀw_B = 0``) so the optimizer carries no
         implicit benchmark-timing view, and ``predicted_tracking_error`` becomes the
@@ -144,9 +144,9 @@ class MeanVarianceOptimizer:
         anchored at ``w₀`` (current holdings) - risk and cost intentionally read
         two different reference points. Without ``benchmark_weights`` (or with an
         all-zero one) every quantity below reduces byte-for-byte to the cash-relative
-        (pre-017) behavior - the same "cost-blind reduces to today" pattern as 016.
+        behavior - the same "cost-blind reduces to today" pattern as the cost-aware solve.
 
-        Pass ``book="market_neutral"`` (Spec 018) to relax the long-only box
+        Pass ``book="market_neutral"`` to relax the long-only box
         ``[0, cap]`` to ``[−short_max_weight, cap]`` and the budget from ``Σw = 1``
         to ``Σw = 0``. ``gross_leverage`` (``‖w‖₁ ≤ L``) is then *mandatory* - an
         unconstrained long/short mean-variance book on a noisy Σ is a leverage
@@ -154,7 +154,7 @@ class MeanVarianceOptimizer:
         ``cost_inputs.borrow`` prices a per-name annualized carry rate on the short
         side only, composing with the turnover cost as a second, asymmetric kink at
         ``w = 0`` (see :meth:`_prox_step_short`). ``book="long_only"`` (the default)
-        runs the exact pre-018 code path, so every existing result is unaffected.
+        runs the exact prior code path, so every existing result is unaffected.
 
         Returns the weights, the diagnostics (``IR*``, predicted TE/IR, transfer
         coefficient, value added, turnover, and - when cost-aware - the linear/impact
@@ -168,7 +168,7 @@ class MeanVarianceOptimizer:
                 raise ValueError(
                     "gross_leverage is mandatory for book='market_neutral' - an "
                     "unconstrained long/short book on a noisy Σ is a leverage machine "
-                    "(spec 018 hidden factor 1); pass an explicit ‖w‖₁ cap"
+                    "- pass an explicit ‖w‖₁ cap"
                 )
             if short_max_weight <= 0:
                 raise ValueError(
@@ -197,17 +197,17 @@ class MeanVarianceOptimizer:
 
         sigma_inv = np.linalg.inv(sigma)
 
-        # Benchmark portfolio (Spec 017): β = Σw_B/(w_Bᵀ Σ w_B) is the one canonical
-        # beta (§4.3) - zero vector (and sigma_b2 = 0) when there is no benchmark, so
+        # Benchmark portfolio: β = Σw_B/(w_Bᵀ Σ w_B) is the one canonical
+        # beta - zero vector (and sigma_b2 = 0) when there is no benchmark, so
         # every step below is a no-op and this reduces exactly to the cash-relative
         # solve. Names in benchmark_weights but absent from `symbols` are silently
-        # excluded by `_vector` - the caller (spec 017 §4.1/§4.2) is responsible for
+        # excluded by `_vector` - the caller is responsible for
         # restricting/renormalizing w_B to Σ's covered universe before calling in.
         w_b = self._vector(benchmark_weights or {}, symbols)
         sigma_b2 = float(w_b @ sigma @ w_b)
         has_benchmark = sigma_b2 > 0
         beta = (sigma @ w_b) / sigma_b2 if has_benchmark else np.zeros(n)
-        # α ← α − β·(αᵀw_B): after this, αᵀw_B = 0 exactly (§3.3) - no incentive to
+        # α ← α − β·(αᵀw_B): after this, αᵀw_B = 0 exactly - no incentive to
         # lean the book long/short of the benchmark; only constraints can now
         # produce a nonzero active beta (surfaced below, not fought here).
         alpha_neutral = alpha - beta * float(alpha @ w_b) if has_benchmark else alpha
@@ -216,7 +216,7 @@ class MeanVarianceOptimizer:
 
         lam = self._risk_aversion(ir_star, target_te, risk_aversion)
         # The unconstrained total holding: benchmark plus the unconstrained active
-        # bet (§3.1) - w_B + Σ⁻¹α_neutral/2λ. Reduces to the cash-relative closed
+        # bet - w_B + Σ⁻¹α_neutral/2λ. Reduces to the cash-relative closed
         # form exactly when w_B = 0.
         unconstrained = w_b + (sigma_inv @ alpha_neutral) / (2.0 * lam)
 
@@ -228,11 +228,11 @@ class MeanVarianceOptimizer:
         )
         cost_aware = bool(np.any(c_lin > 0) or np.any(k_imp > 0))
 
-        # Risk anchored at the benchmark, cost anchored at w₀ (§3.1, hidden factor 4):
+        # Risk anchored at the benchmark, cost anchored at w₀:
         # absorb the whole w_B risk-anchor effect into a shifted alpha so the
         # existing box/budget/cost solver runs completely unchanged (the "two
         # reference points, one solver" trick - see the module docstring's cost
-        # term for the analogous pattern in 016). Shift is exactly zero when there
+        # term for the analogous pattern. Shift is exactly zero when there
         # is no benchmark.
         alpha_shifted = alpha_neutral + 2.0 * lam * (sigma @ w_b) if has_benchmark else alpha_neutral
 
@@ -255,10 +255,10 @@ class MeanVarianceOptimizer:
             alpha_neutral, sigma, w, w0, lam, ir_star, c_lin, k_imp, cost_aware, w_b, beta, sigma_b2
         )
         if book == "market_neutral":
-            # Dollar- vs beta-neutrality (spec 018 §3.3, hidden factor 3): Σw and
+            # Dollar- vs beta-neutrality: Σw and
             # (when a benchmark/β source is supplied) βᵀw_a are different residuals
             # that diverge whenever betas are dispersed - `active_beta` above already
-            # reports the latter via the one canonical β (017's implied_beta), reused
+            # reports the latter via the one canonical β (implied_beta), reused
             # rather than redefined; this block adds the former plus the mandatory
             # leverage accounting and the short-side borrow carry.
             borrow_cost = float(np.sum(borrow * np.maximum(-w, 0.0)))
@@ -316,7 +316,7 @@ class MeanVarianceOptimizer:
 
     @staticmethod
     def _borrow_coefficients(cost_model, cost_inputs, symbols) -> np.ndarray:
-        """Per-name annualized borrow rate (Spec 018 §5): ``CostInputs.borrow``
+        """Per-name annualized borrow rate: ``CostInputs.borrow``
         overrides the cost model's flat default, threaded the same way
         :meth:`_cost_coefficients` threads spread/ADV/vol. Already annualized (no
         ``/h`` - it is a per-year *holding* rate, not a one-way turnover rate); zero
@@ -453,7 +453,7 @@ class MeanVarianceOptimizer:
         return np.sign(m) * u * u
 
     # ------------------------------------------------------------------ #
-    # Market-neutral solve (Spec 018) - a separate path from the long-only one
+    # Market-neutral solve - a separate path from the long-only one
     # above; book="long_only" never touches any of this.
     # ------------------------------------------------------------------ #
     def _constrained_solve_market_neutral(
@@ -491,14 +491,14 @@ class MeanVarianceOptimizer:
     def _solve_leveraged(
         self, alpha, sigma, lam, active, c_lin, k_imp, borrow, w0, short_cap, gross_leverage
     ) -> np.ndarray:
-        """The outer gross-leverage dual (spec 018 §3.1/§7): solve the box/budget/
+        """The outer gross-leverage dual: solve the box/budget/
         borrow program at ``μ=0`` first: since the leverage cap "only sometimes
         binds", most solves stop here. Only when ‖w‖₁ already exceeds the cap does
         the outer bisection on ``μ≥0`` run - each trial ``μ`` re-solves the *entire*
         inner proximal-gradient program to convergence ("one loop deeper" than the
         long-only path). Monotonicity of ‖w(μ)‖₁ (a stiffer zero-anchored threshold
         can only shrink every name toward 0) is verified empirically by the KKT
-        certificate test, not just assumed - spec 018 §7 flags this as the open risk.
+        certificate test, not just assumed - flagged as an open risk to revisit.
         """
         w = self._solve_market_neutral(alpha, sigma, lam, active, c_lin, k_imp, borrow, w0, short_cap, 0.0)
         gross = float(np.sum(np.abs(w)))
@@ -673,10 +673,10 @@ class MeanVarianceOptimizer:
     def _diagnostics(
         self, alpha, sigma, w, w0, lam, ir_star, c_lin, k_imp, cost_aware, w_b, beta, sigma_b2
     ) -> Dict[str, float]:
-        """``alpha`` here is already benchmark-neutralized when ``w_b`` is nonzero
-        (§3.3) - the caller passes ``alpha_neutral``, never the raw forecast."""
-        # Active weights w_a = w - w_B (§3.1). w_b is the zero vector without a
-        # benchmark, so w_a = w and every quantity below is the pre-017 cash-relative
+        """``alpha`` here is already benchmark-neutralized when ``w_b`` is nonzero -
+        the caller passes ``alpha_neutral``, never the raw forecast."""
+        # Active weights w_a = w - w_B. w_b is the zero vector without a
+        # benchmark, so w_a = w and every quantity below is the plain cash-relative
         # one - unchanged.
         w_a = w - w_b
         sig_wa = sigma @ w_a
@@ -685,7 +685,7 @@ class MeanVarianceOptimizer:
         expected = float(alpha @ w_a)
         # Transfer coefficient: corr(α, Σ-adjusted active weights) ∈ [-1, 1].
         tc = self._corr(alpha, sig_wa)
-        dw = w - w0  # cost is anchored at w₀, not w_B (§3.1 hidden factor 4) - unchanged
+        dw = w - w0  # cost is anchored at w₀, not w_B - unchanged
         diagnostics = {
             "ir_star": ir_star,
             "risk_aversion": float(lam),
@@ -699,7 +699,7 @@ class MeanVarianceOptimizer:
             "turnover": float(np.sum(np.abs(dw))),
         }
         if sigma_b2 > 0:
-            # ψ² = β_a²·σ_B² + ω² (§3.3): the active-beta (benchmark-timing) share of
+            # ψ² = β_a²·σ_B² + ω²: the active-beta (benchmark-timing) share of
             # tracking error vs the residual (stock-selection) share. β_a should be
             # ~0 by construction (alpha is neutralized); a nonzero value here comes
             # only from a binding constraint (box/cardinality), which is exactly what
@@ -713,13 +713,13 @@ class MeanVarianceOptimizer:
                     "active_beta": active_beta,
                     "residual_risk": residual_risk,
                     # A benchmark equal to current holdings makes ψ measure "distance
-                    # from myself" - legal but meaningless (§4.5).
+                    # from myself" - legal but meaningless.
                     "self_benchmark_warning": bool(np.sum(np.abs(w0 - w_b)) < 1e-6),
                 }
             )
         if cost_aware:
             # One-way cost of *this rebalance's* turnover - what the objective charged,
-            # kept for continuity with the prior (pre-016) ex-post drag. Detail.
+            # kept for continuity with the prior ex-post drag. Detail.
             linear_cost = float(np.sum(c_lin * np.abs(dw)))
             impact_cost = float(np.sum(k_imp * np.abs(dw) ** 1.5))
             rebalance_cost = linear_cost + impact_cost

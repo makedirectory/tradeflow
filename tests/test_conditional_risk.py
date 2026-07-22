@@ -1,6 +1,6 @@
-"""Tests for the conditional risk layer (spec 024): Σ_t = D_t·R·D_t.
+"""Tests for the conditional risk layer: Σ_t = D_t·R·D_t.
 
-Offline and deterministic. Works through the spec's §6 checklist in order:
+Offline and deterministic. Works through the checklist in order:
 forecast quality (MZ/QLIKE), TE tracking under a regime-switching synthetic world,
 the as-of property, PSD assembly under stress inputs (both backends), the churn
 guard (calm-regime turnover share + the λ=1 reduction), and — in
@@ -60,7 +60,7 @@ def _correlated_panel(t: int, n: int, seed: int = 0) -> pd.DataFrame:
 def test_ewma_beats_unconditional_on_vol_clustering_synthetic():
     """The honest evidence gate: on genuinely vol-clustered data, EWMA's QLIKE
     should be lower (better) than the flat unconditional trailing forecast, and its
-    MZ slope closer to 1. This is the scenario spec 024's whole premise rests on."""
+    MZ slope closer to 1. This is the scenario the whole premise rests on."""
     r = _vol_clustering_returns(1500, seed=3)
     result = evaluate_vol_forecasts(r, min_obs=60, n_points=200, periods_per_year=PPY)
     assert result.n_points > 50
@@ -113,7 +113,7 @@ def test_conditional_sigma_tracks_a_vol_regime_switch_better_than_unconditional(
     """A world that's calm for a long stretch then doubles in vol: the conditional
     Σ's diagonal should move toward the new regime; the unconditional (flat-window)
     Σ, estimated once over the whole mixed window, systematically understates the
-    stress-regime variance (exactly spec 024's motivating failure)."""
+    stress-regime variance (exactly the motivating failure)."""
     rng = np.random.default_rng(7)
     calm = rng.normal(0, 0.01, (300, 4))
     stress = rng.normal(0, 0.03, (100, 4))  # 3x vol

@@ -91,7 +91,7 @@ def build_factor_risk_matrix(
 ) -> Optional[FactorRiskMatrix]:
     """Build factor exposures from ``bars`` then estimate the factor covariance Σ.
 
-    ``conditional`` (spec 024, default ``None`` / off) conditions ``factor_cov`` AND
+    ``conditional`` (default ``None`` / off) conditions ``factor_cov`` AND
     ``specific_var`` together via the same EWMA/HAR family (never one without the
     other — a partial conditioning mis-splits the factor/specific attribution); see
     :func:`src.risk.conditional.condition_risk_matrix`. Loadings ``X`` stay slow.

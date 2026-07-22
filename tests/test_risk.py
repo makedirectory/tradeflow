@@ -75,7 +75,7 @@ def test_mcr_aggregates_to_portfolio_volatility():
     assert abs(total - m.volatility(w)) < 1e-12
 
 
-# --- implied (reverse-optimization) beta (spec 017) --------------------------
+# --- implied (reverse-optimization) beta ----------------------------------------
 def test_implied_beta_matches_closed_form():
     sigma = np.array([[0.04, 0.006, 0.002], [0.006, 0.09, 0.003], [0.002, 0.003, 0.05]])
     m = RiskMatrix(["A", "B", "C"], sigma)

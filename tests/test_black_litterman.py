@@ -1,6 +1,6 @@
-"""Tests for the Black-Litterman posterior (spec 021).
+"""Tests for the Black-Litterman posterior.
 
-Offline and deterministic. Covers the spec's own §6 checklist in order: no-views ⇒
+Offline and deterministic. Works through the checklist in order: no-views ⇒
 prior (and the optimizer round-trip through it), the calibration identity across an
 IC x T_eff grid, propagation sign/magnitude to a correlated name, the Ω/τ limits,
 the K=N degenerate blend identity, and the no-double-shrink audit trail at the
@@ -44,15 +44,20 @@ def test_no_views_returns_prior_exactly():
 
 
 def test_no_views_optimizer_round_trip_reduces_to_benchmark():
-    """empty P -> pi (here 0, residual space) -> optimize returns w = w_B (017's
-    round-trip, now through the BL posterior path)."""
+    """empty P -> pi (here 0, residual space) -> optimize returns w = w_B (the
+    benchmark-relative round-trip, now through the BL posterior path)."""
     w_b = {"A": 0.4, "B": 0.3, "C": 0.2, "D": 0.1}
-    risk = RiskMatrix(SYMS, np.array(
-        [[0.20, 0.02, 0.01, 0.00],
-         [0.02, 0.18, 0.01, 0.01],
-         [0.01, 0.01, 0.22, 0.02],
-         [0.00, 0.01, 0.02, 0.16]]
-    ))
+    risk = RiskMatrix(
+        SYMS,
+        np.array(
+            [
+                [0.20, 0.02, 0.01, 0.00],
+                [0.02, 0.18, 0.01, 0.01],
+                [0.01, 0.01, 0.22, 0.02],
+                [0.00, 0.01, 0.02, 0.16],
+            ]
+        ),
+    )
     post = black_litterman_from_ic({}, risk, ic=0.05, t_eff=60)
     alphas = [Alpha(s, post.mu_post[s], AS_OF, 0.2, 0.05, 0.0) for s in SYMS]
     result = MeanVarianceOptimizer(max_weight=1.0).optimize(
@@ -63,14 +68,15 @@ def test_no_views_optimizer_round_trip_reduces_to_benchmark():
         assert abs(result.weights.get(s, 0.0) - w_b[s]) < 1e-6
 
 
-# --- calibration identity (§3.2) ----------------------------------------------
+# --- calibration identity ------------------------------------------------------
 @pytest.mark.parametrize(
     "ic,t_eff",
     [(0.05, 60), (0.10, 120), (0.03, 40), (0.08, 300), (0.02, 20), (0.15, 500)],
 )
-def test_calibration_identity_matches_020_level_shrink(ic, t_eff):
-    """Single-view posterior on name A must equal the 020-shrunk alpha exactly
-    (to float precision) - the identity that decides Omega, not a preference."""
+def test_calibration_identity_matches_level_shrink(ic, t_eff):
+    """Single-view posterior on name A must equal the refinement's level-shrunk
+    alpha exactly (to float precision) - the identity that decides Omega, not a
+    preference."""
     risk = _diag_risk([0.04, 0.09, 0.16, 0.25])
     q_a = 0.05
     post = black_litterman_from_ic({"A": q_a}, risk, ic=ic, t_eff=t_eff)
@@ -79,8 +85,8 @@ def test_calibration_identity_matches_020_level_shrink(ic, t_eff):
     assert calibration_gap(post) == pytest.approx(0.0, abs=1e-9)
 
 
-def test_calibration_identity_anchors_match_table_11_4():
-    """The spec's own anchors (shared with 020's level_shrink_factor table)."""
+def test_calibration_identity_anchors_match_known_shrink_values():
+    """Anchors shared with the refinement's level_shrink_factor table."""
     r1 = RiskMatrix(["A"], np.diag([0.04]))
     post1 = black_litterman_from_ic({"A": 1.0}, r1, ic=0.05, t_eff=60)
     assert post1.mu_post["A"] == pytest.approx(0.13, abs=0.01)
@@ -93,7 +99,7 @@ def test_expected_single_view_weight_is_level_shrink_factor():
         assert expected_single_view_weight(ic, t_eff) == level_shrink_factor(ic, t_eff)
 
 
-# --- propagation (G&K 11.25) --------------------------------------------------
+# --- propagation ----------------------------------------------------------------
 def test_propagation_sign_and_magnitude_to_correlated_name():
     rho_ab = 0.5
     var_a, var_b = 0.04, 0.09
@@ -156,7 +162,7 @@ def test_ic_zero_view_is_dropped_not_infinite():
     assert not np.isfinite(view_variance(0.2, 0.0, 60))  # inf, as documented
 
 
-# --- K = N degenerate case (hidden factor 4) ----------------------------------
+# --- K = N degenerate case -------------------------------------------------------
 def test_k_equals_n_degenerate_blend_matches_calibration_identity():
     risk = _diag_risk([0.04, 0.09, 0.16, 0.25])
     ic, t_eff = 0.06, 80

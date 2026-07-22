@@ -349,9 +349,9 @@ def compute_bootstrap_skill(
     min_overlap: int = 60,
     journal_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
-    """The bootstrap-skill report (spec 023 §3.3): this config's OWN zero-alpha
-    bootstrap p, always shown next to the FAMILY p from White's Reality Check
-    over every OOS return series the 026 trial store has recorded for
+    """The bootstrap-skill report: this config's OWN zero-alpha bootstrap p,
+    always shown next to the FAMILY p from White's Reality Check over every OOS
+    return series the trial store has recorded for
     ``(strategy, universe, accounting)`` — replacing the Deflated Sharpe's
     assumed ``E[max]``/effective-trial-count with the actual trials.
 
@@ -360,13 +360,12 @@ def compute_bootstrap_skill(
     to ask "is this trial's result still notable once every trial this campaign
     has tried is priced in," which requires this trial to already be one of them.
 
-    Best-effort on the trial store, exactly like every other trial-store
-    touchpoint (spec 026): a store-open failure (or too few trials with a usable
-    stored return series) degrades to "own p only" — it never blocks the caller,
-    and the report says so rather than silently omitting the family half.
-    Own and family are always returned together (never one alone) — a great own
-    p and a terrible family p is exactly the selection-luck signature (spec 023
-    hidden factor 6).
+    Best-effort on the trial store, like every other trial-store touchpoint: a
+    store-open failure (or too few trials with a usable stored return series)
+    degrades to "own p only" — it never blocks the caller, and the report says
+    so rather than silently omitting the family half. Own and family are always
+    returned together (never one alone) — a great own p and a terrible family p
+    is exactly the selection-luck signature.
     """
     from src.analytics import bootstrap as boot
     from src.analytics.metrics import TRADING_DAYS_PER_YEAR
@@ -378,7 +377,11 @@ def compute_bootstrap_skill(
         }
 
     own = boot.bootstrap_null(
-        oos_returns.to_numpy(), B=B, block_length=block_length, seed=seed, periods_per_year=TRADING_DAYS_PER_YEAR
+        oos_returns.to_numpy(),
+        B=B,
+        block_length=block_length,
+        seed=seed,
+        periods_per_year=TRADING_DAYS_PER_YEAR,
     )
 
     family: Dict[str, Any] = {"available": False}
@@ -393,8 +396,12 @@ def compute_bootstrap_skill(
         if panel["n_used"] >= 2:
             matrix = np.array(panel["matrix"], dtype=float)
             fam = boot.reality_check(
-                matrix, B=B, block_length=block_length, seed=seed,
-                periods_per_year=TRADING_DAYS_PER_YEAR, trial_ids=panel["trial_ids"],
+                matrix,
+                B=B,
+                block_length=block_length,
+                seed=seed,
+                periods_per_year=TRADING_DAYS_PER_YEAR,
+                trial_ids=panel["trial_ids"],
             )
             fam.update(
                 available=True,
@@ -443,7 +450,9 @@ def _bootstrap_skill_verdict(own: Dict[str, Any], family: Dict[str, Any]) -> str
             "consistent with selection luck; needs fresh OOS data to distinguish."
         )
     if own_significant and family_significant:
-        return "significant both individually and as the family's best — the strongest verdict this test gives."
+        return (
+            "significant both individually and as the family's best — the strongest verdict this test gives."
+        )
     return "NOT individually significant (own test already fails; family test moot)."
 
 
@@ -887,7 +896,7 @@ def compute_information(
         "multiple_testing_inflation": info.multiple_testing_inflation(n_trials),
         "n_trials": n_trials,
         "sanity_ceiling_breached": abs(realized_ir) > 2.0,
-        "recommended_ic": stats["mean_ic"],  # feeds back into 005's scaling — a human applies it
+        "recommended_ic": stats["mean_ic"],  # feeds back into the alpha scaling — a human applies it
         "effective_t": t_eff,
         "level_shrink_factor": shrink_factor,  # keep this fraction of the naive alpha level
         "shrink_chain": _jsonable(shrink_chain),
@@ -936,46 +945,46 @@ def compute_attribution(
 ) -> Dict[str, Any]:
     """Attribute realized active return to systematic timing, risk factors, signals,
     and stock-picking - and confront the attributed t-stats with the same
-    research-integrity guardrails 009/``compute_information`` apply to ICs.
+    research-integrity guardrails ``compute_information`` applies to ICs.
 
-    Read-only research-clock diagnostic (spec 019). Mirrors ``compute_information``'s
-    pattern exactly: at sampled rebalances it rebuilds a leakage-safe cross-section
-    (bars strictly ``<= t``) - alpha (for the paper active book), risk-factor
-    exposures, and a per-period covariance Σ(t) (for the canonical Σ-implied beta,
-    spec 017's "one β, everywhere") - then pairs it with the forward realized return
-    over ``(t, t_fwd]``. There is no persisted weights/exposure history to consume
-    (see the module-level deviation note next to ``compute_information``); this
+    Read-only research-clock diagnostic. Mirrors ``compute_information``'s pattern
+    exactly: at sampled rebalances it rebuilds a leakage-safe cross-section (bars
+    strictly ``<= t``) - alpha (for the paper active book), risk-factor exposures,
+    and a per-period covariance Σ(t) (for the canonical Σ-implied beta, "one β,
+    everywhere") - then pairs it with the forward realized return over
+    ``(t, t_fwd]``. There is no persisted weights/exposure history to consume (see
+    the module-level deviation note next to ``compute_information``); this
     recomputes on the fly, the same as that function already does for alpha/IC.
 
     Each rebalance's active return is split, by an exact regression identity
     (:func:`src.analytics.attribution.attribute_period`), into: the systematic
-    benchmark-timing bucket (``β_a(t)·r_B(t)``, further decomposed in aggregate
-    into expected/surprise/timing per G&K 17.25-17.27), each risk factor
-    (market/momentum/volatility/size), the strategy's own alpha as a signal column
-    (plus any additional ``signals`` - other strategies' combined scores, so a
-    013 ``--combine`` weight can be checked against its realized counterpart), and
-    a specific (stock-picking) remainder. Every attributed t-stat uses a
-    Bayesian-blended risk (17A.12: short samples lean on the risk model instead of
-    a wild few-point sample SD) and the whole ranked table is deflated by the same
-    multiple-testing inflation ``compute_information`` applies to ICs - ranking ~8
-    attributed rows and quoting the best is exactly 009's trap, replayed here.
+    benchmark-timing bucket (``β_a(t)·r_B(t)``, further decomposed in aggregate into
+    expected/surprise/timing), each risk factor (market/momentum/volatility/size),
+    the strategy's own alpha as a signal column (plus any additional ``signals`` -
+    other strategies' combined scores, so a ``--combine`` weight can be checked
+    against its realized counterpart), and a specific (stock-picking) remainder.
+    Every attributed t-stat uses a Bayesian-blended risk (short samples lean on the
+    risk model instead of a wild few-point sample SD) and the whole ranked table is
+    deflated by the same multiple-testing inflation ``compute_information`` applies
+    to ICs - ranking ~8 attributed rows and quoting the best is exactly that trap,
+    replayed here.
 
-    ``conditional`` (spec 024, default ``None`` / off) threads an EWMA/HAR-conditioned
-    Σ(t) into the per-period covariance this function already rebuilds at every
-    sampled rebalance; when set, the report adds ``te_by_regime`` — predicted TE
-    (from Σ(t)) vs a realized-return-dispersion proxy, bucketed by the benchmark's
-    own trailing realized-vol tercile as of each rebalance (spec §3.3's regime
-    split) — the number that answers "does the tracking-error budget actually hold
-    across vol regimes." This runs ONE Σ choice per call (conditional or not, not
-    both side by side); the net-of-cost conditional-vs-unconditional comparison
-    lives in ``run_conditional_risk_ab``.
+    ``conditional`` (default ``None`` / off) threads an EWMA/HAR-conditioned Σ(t)
+    into the per-period covariance this function already rebuilds at every sampled
+    rebalance; when set, the report adds ``te_by_regime`` — predicted TE (from
+    Σ(t)) vs a realized-return-dispersion proxy, bucketed by the benchmark's own
+    trailing realized-vol tercile as of each rebalance — the number that answers
+    "does the tracking-error budget actually hold across vol regimes." This runs
+    ONE Σ choice per call (conditional or not, not both side by side); the
+    net-of-cost conditional-vs-unconditional comparison lives in
+    ``run_conditional_risk_ab``.
 
-    ``bootstrap_skill`` (spec 023, default off) adds a nonparametric OWN p-value
-    next to the parametric ``SE{IR}≈1/√Y`` verdict: a stationary block bootstrap
-    of ``r_active_series`` under the imposed null (demeaned by its own estimated
+    ``bootstrap_skill`` (default off) adds a nonparametric OWN p-value next to the
+    parametric ``SE{IR}≈1/√Y`` verdict: a stationary block bootstrap of
+    ``r_active_series`` under the imposed null (demeaned by its own estimated
     alpha), reported as ``bootstrap`` in the result and folded into ``verdict``.
     This is the *own* test only (a single track record, not a trial family) - the
-    family Reality Check needs the 026 trial store's stored trials and lives on
+    family Reality Check needs the trial store's stored trials and lives on
     ``run_walk_forward``'s ``--bootstrap-skill`` instead.
     """
     from src.analytics import attribution as attr
@@ -1033,7 +1042,7 @@ def compute_attribution(
         if matrix is None or len(matrix.symbols) < 3:
             continue
         # Trailing realized benchmark vol as of t (causal — no forward data) — the
-        # regime label spec 024 §3.3 wants for the predicted-vs-realized TE split.
+        # regime label the predicted-vs-realized TE split buckets by.
         bench_ret_t = bench_t["close"].pct_change().dropna()
         trailing_vol = (
             float(bench_ret_t.tail(max(horizon * 4, 20)).std() * np.sqrt(periods_per_year))
@@ -1096,7 +1105,7 @@ def compute_attribution(
             "with a buildable Σ, benchmark weights, and factor exposures).",
         }
 
-    # T_eff-honest T0 (hidden factor 7): the risk model's own min_obs, converted from
+    # T_eff-honest T0: the risk model's own min_obs, converted from
     # bars to this attribution's rebalance-period units.
     t0 = attr.prior_weight_t0(min_obs, horizon)
     psi2_bar = float(np.mean(psi2_series)) if psi2_series else 0.0
@@ -1106,7 +1115,10 @@ def compute_attribution(
     rows: Dict[str, Any] = {}
     mu_b_period = benchmark_premium * horizon / periods_per_year
     split = attr.systematic_split(beta_a_series, r_bench_series, mu_b_period)
-    rows["beta_expected"] = {"total": split["expected"], "note": "not skill (assumed premium x mean active beta)"}
+    rows["beta_expected"] = {
+        "total": split["expected"],
+        "note": "not skill (assumed premium x mean active beta)",
+    }
     rows["beta_surprise"] = {
         "total": split["surprise"],
         "note": "not skill (benchmark outturn vs the assumed premium x mean active beta)",
@@ -1163,8 +1175,9 @@ def compute_attribution(
 
     bootstrap_report = None
     verdict = (
-        "distinguishable from luck" if abs(total_active_ir) / max(total_ir_se, 1e-9) >= 2 else
-        "NOT distinguishable from luck"
+        "distinguishable from luck"
+        if abs(total_active_ir) / max(total_ir_se, 1e-9) >= 2
+        else "NOT distinguishable from luck"
     )
     if bootstrap_skill:
         from src.analytics import bootstrap as boot
@@ -1217,15 +1230,15 @@ def compute_attribution(
         "(regression identity); the systematic bucket further splits (in aggregate) into "
         "expected/surprise (not skill) and timing (real, but noisy - always check its own "
         "t-stat). Per-row risk is a Bayesian blend of the risk model's structural prior and "
-        "the row's own realized variance (17A.12); a ranked table of "
+        "the row's own realized variance; a ranked table of "
         f"{n_rows} rows is a multiple-testing family - P(any |t|>2 in {n_trials} trials) = "
         f"{inflation:.2f} - so quoting the single best row (here: {best_row}) without that "
-        "context is exactly the trap 009 guards ICs against. Cumulative active return is "
-        "ΠR_P - ΠR_B, never Π(1+r_active); cumulation.delta_cp is the honest leftover from "
-        "top-down chain-linking the per-period split, reported not hidden. te_by_regime "
+        "context is exactly the same trap the IC guardrails guard against. Cumulative active "
+        "return is ΠR_P - ΠR_B, never Π(1+r_active); cumulation.delta_cp is the honest leftover "
+        "from top-down chain-linking the per-period split, reported not hidden. te_by_regime "
         "buckets rebalances by the benchmark's own trailing realized-vol tercile and shows "
-        "predicted TE (from Σ(t)) next to a realized-dispersion proxy per bucket (spec 024) — "
-        "the number that says whether the tracking-error budget holds through a stress regime.",
+        "predicted TE (from Σ(t)) next to a realized-dispersion proxy per bucket — the number "
+        "that says whether the tracking-error budget holds through a stress regime.",
     }
     if detail:
         result_dict["detail"] = _jsonable(
@@ -1240,16 +1253,18 @@ def compute_attribution(
 
 
 def _te_by_regime(
-    psi2_series: List[float], r_active_series: List[float], bench_vol_series: List[float], rebalances_per_year: float
+    psi2_series: List[float],
+    r_active_series: List[float],
+    bench_vol_series: List[float],
+    rebalances_per_year: float,
 ) -> Dict[str, Any]:
-    """Spec 024 §3.3: bucket rebalances by the benchmark's trailing realized-vol
-    tercile (ex-post labels, report-time only — no look-ahead in the model itself)
-    and compare, per bucket, the **predicted** TE (``sqrt(mean psi2)``, from the
-    per-period Σ(t) already built for attribution) against a **realized**
-    dispersion proxy (``std(r_active)·sqrt(rebalances_per_year)``) — the number
-    that answers whether the tracking-error budget holds through a stress regime,
-    or breaches it the way an unconditional Σ mechanically must (spec's own
-    motivation, §1).
+    """Bucket rebalances by the benchmark's trailing realized-vol tercile (ex-post
+    labels, report-time only — no look-ahead in the model itself) and compare, per
+    bucket, the **predicted** TE (``sqrt(mean psi2)``, from the per-period Σ(t)
+    already built for attribution) against a **realized** dispersion proxy
+    (``std(r_active)·sqrt(rebalances_per_year)``) — the number that answers
+    whether the tracking-error budget holds through a stress regime, or breaches
+    it the way an unconditional Σ mechanically must.
     """
     vols = np.asarray(bench_vol_series, dtype=float)
     finite = np.isfinite(vols)
@@ -1268,9 +1283,7 @@ def _te_by_regime(
             out[label] = {"n": 0}
             continue
         predicted_te = float(np.sqrt(max(np.mean(psi2[mask]), 0.0)))
-        realized_te = (
-            float(np.std(r_active[mask], ddof=1) * np.sqrt(rebalances_per_year)) if n > 1 else 0.0
-        )
+        realized_te = float(np.std(r_active[mask], ddof=1) * np.sqrt(rebalances_per_year)) if n > 1 else 0.0
         out[label] = {
             "n": n,
             "predicted_te": predicted_te,
@@ -1529,8 +1542,8 @@ def compute_horizon(
         "half_life_lower": fit.get("half_life_lower"),
         "half_life_upper": fit.get("half_life_upper"),
         "decay_slope_se": fit.get("decay_slope_se"),
-        "blend_superseded_by": "022 (aim-in-front partial-adjustment policy, "
-        "'allocate --policy aim'): this lagged-blend recommendation is a special case "
+        "blend_superseded_by": "the aim-in-front partial-adjustment policy "
+        "('allocate --policy aim'): this lagged-blend recommendation is a special case "
         "of that policy's per-signal decay discount (a two-point blend vs a continuous "
         "κ/(κ+φ) discount) - prefer --policy aim for new work; this report stays "
         "accurate on its own terms either way.",
@@ -1563,14 +1576,14 @@ def compute_risk(
     volatility, top risk contributors, and (factor model) the factor-vs-specific risk
     split. Σ itself is not inlined; this is the diagnostic the optimizer consumes.
 
-    ``conditional`` (spec 024, default ``None`` / **off** — the MZ/QLIKE evidence
-    gate hasn't cleared this repo's own data yet, see
-    ``specs/complete/024-conditional-risk.md``) conditions Σ_t's volatilities via an
-    EWMA (``"ewma"``) or HAR-lite (``"har"``) per-name forecast, holding the
-    correlation structure fixed. When set, the report adds ``sigma_regime`` — the
-    current conditional/unconditional vol ratio per name, the "how stressed is the
-    book right now" diagnostic (008/016 consume Σ_t transparently; this is the
-    number a human reads).
+    ``conditional`` (default ``None`` / **off** — the MZ/QLIKE evidence gate hasn't
+    cleared this repo's own data yet, see ``evaluate_conditional_risk``) conditions
+    Σ_t's volatilities via an EWMA (``"ewma"``) or HAR-lite (``"har"``) per-name
+    forecast, holding the correlation structure fixed. When set, the report adds
+    ``sigma_regime`` — the current conditional/unconditional vol ratio per name,
+    the "how stressed is the book right now" diagnostic (the construction and
+    cost-aware optimizer both consume Σ_t transparently; this is the number a
+    human reads).
     """
     from src.risk import COVARIANCE_MODELS
     from src.risk.factor import FactorRiskMatrix
@@ -1656,15 +1669,13 @@ def evaluate_conditional_risk(
     n_points: int = 60,
     conditional_lambda: Optional[float] = None,
 ) -> Dict[str, Any]:
-    """The MZ/QLIKE evidence gate (spec 024 §4 hidden factor 8, §6): per name AND
-    pooled across the universe, compare EWMA / HAR / unconditional (expanding
-    trailing) one-bar-ahead variance forecasts against realized ``r²`` — Mincer–
-    Zarnowitz (``b`` near 1 is well-calibrated) and QLIKE (lower is better), split
-    by realized-vol tercile. **This is the gate that decides whether
-    ``--conditional`` is worth turning on for this repo's own data** — not a
-    preference; see the "as-built" notes in
-    ``specs/complete/024-conditional-risk.md`` for what it found. Read-only, no
-    orders, no feedback into any model.
+    """The MZ/QLIKE evidence gate: per name AND pooled across the universe,
+    compare EWMA / HAR / unconditional (expanding trailing) one-bar-ahead variance
+    forecasts against realized ``r²`` — Mincer–Zarnowitz (``b`` near 1 is
+    well-calibrated) and QLIKE (lower is better), split by realized-vol tercile.
+    **This is the gate that decides whether ``--conditional`` is worth turning on
+    for this repo's own data** — not a preference. Read-only, no orders, no
+    feedback into any model.
     """
     from src.risk.conditional import evaluate_vol_forecasts, mincer_zarnowitz, qlike_loss
 
@@ -1681,7 +1692,11 @@ def evaluate_conditional_risk(
             continue
         returns = frame["close"].pct_change().dropna()
         evaluation = evaluate_vol_forecasts(
-            returns, min_obs=min_obs, n_points=n_points, lambda_=conditional_lambda, periods_per_year=periods_per_year
+            returns,
+            min_obs=min_obs,
+            n_points=n_points,
+            lambda_=conditional_lambda,
+            periods_per_year=periods_per_year,
         )
         if evaluation.n_points < 10:
             continue
@@ -1708,13 +1723,16 @@ def evaluate_conditional_risk(
     pooled: Dict[str, Any] = {}
     for method, values in pooled_forecasts.items():
         arr = np.array(values)
-        pooled[method] = {"mincer_zarnowitz": mincer_zarnowitz(realized_arr, arr), "qlike": qlike_loss(realized_arr, arr)}
+        pooled[method] = {
+            "mincer_zarnowitz": mincer_zarnowitz(realized_arr, arr),
+            "qlike": qlike_loss(realized_arr, arr),
+        }
 
     ranked = sorted(pooled.items(), key=lambda kv: kv[1]["qlike"])
     best_method = ranked[0][0]
     uncond = pooled["unconditional"]
     best = pooled[best_method]
-    # Both prongs, per the spec's own framing (§4 hidden factor 8) — QLIKE improvement
+    # Both prongs required — QLIKE improvement
     # ALONE isn't the gate: a method that "wins" on QLIKE while its calibration (MZ b)
     # is farther from 1 than the unconditional baseline's is not honestly better, it's
     # noise. Both must point the same way for gate_passed=True.
@@ -1731,7 +1749,7 @@ def evaluate_conditional_risk(
         "per_name": _jsonable(per_name),
         "best_method_pooled_qlike": best_method,
         "gate_passed": gate_passed,
-        "note": "The evidence gate (spec 024 §4 hidden factor 8): QLIKE lower is better, "
+        "note": "The evidence gate: QLIKE lower is better, "
         "Mincer-Zarnowitz b near 1.0 is well-calibrated. 'gate_passed' is TRUE only when "
         "the best conditional method (ewma/har) BOTH pools a lower QLIKE AND a better-"
         "calibrated MZ slope than the unconditional trailing baseline on THIS "
@@ -1777,7 +1795,7 @@ def construct_portfolio(
     trade_rate: Optional[float] = None,
     decay_lookback_days: int = 365,
 ) -> Dict[str, Any]:
-    """Construct the utility-maximizing portfolio from alphas (005) and Σ (006).
+    """Construct the utility-maximizing portfolio from alphas and Σ.
 
     Read-only research-clock flow: scans the universe as of ``as_of``, builds
     benchmark-neutral alphas and an annualized covariance Σ, then maximizes
@@ -1790,18 +1808,18 @@ def construct_portfolio(
     alpha against *that name's* cost and a no-trade band emerges from the cost itself.
     ``cost_aware=False`` recovers the cost-blind (gross) solve with an ex-post drag.
 
-    ``benchmark_holdings`` (spec 017) makes the benchmark a **portfolio** (``w_B``)
-    rather than the ``benchmark`` return series above (which stays a beta/vol
-    regression input, orthogonal to this): ``"equal"`` for uniform weight over the
+    ``benchmark_holdings`` makes the benchmark a **portfolio** (``w_B``) rather
+    than the ``benchmark`` return series above (which stays a beta/vol regression
+    input, orthogonal to this): ``"equal"`` for uniform weight over the
     Σ-covered universe, or a ``symbol,weight`` CSV/JSON holdings file. Tracking
     error, alpha neutralization, and the transfer coefficient all move into active
     space (``w_a = w − w_B``); ``benchmark_premium`` (``μ_B``, an assumed annual
     benchmark excess return) drives the reverse-optimization report (the consensus
     returns for which ``w_B`` is itself optimal). Without ``benchmark_holdings``
     this is a no-op - every quantity reduces byte-for-byte to the cash-relative
-    (pre-017) behavior.
+    behavior.
 
-    ``book="market_neutral"`` (spec 018) relaxes the long-only box to
+    ``book="market_neutral"`` relaxes the long-only box to
     ``[−short_max_weight, max_weight]`` and the budget to ``Σw=0``; ``gross_leverage``
     (``‖w‖₁ ≤ L``) is then mandatory - see
     :meth:`~src.portfolio.optimizer.MeanVarianceOptimizer.optimize`. Borrow carry on
@@ -1813,19 +1831,19 @@ def construct_portfolio(
     Returns the proposed weights plus the Fundamental-Law report (IR*, predicted TE/IR,
     transfer coefficient, turnover, cost split). This is a **proposal** - no orders.
 
-    ``conditional`` (spec 024, default ``None`` / **off** — see
-    ``specs/complete/024-conditional-risk.md`` for the evidence-gate finding that
-    decided the default) conditions Σ's volatilities (EWMA/HAR) before the solve, so
-    ``target_te`` is measured against *current* risk, not the trailing-window
-    average — the whole point being that the optimizer sells into a vol spike to
-    hold the TE budget (spec's own hidden factor 1: mechanically correct, but it
-    pays 016's real transaction cost to do it; see ``sigma_regime`` in the
-    diagnostics for how stressed Σ_t is relative to the unconditional estimate).
+    ``conditional`` (default ``None`` / **off** — see ``evaluate_conditional_risk``
+    for the evidence-gate finding that decided the default) conditions Σ's
+    volatilities (EWMA/HAR) before the solve, so ``target_te`` is measured against
+    *current* risk, not the trailing-window average — the whole point being that
+    the optimizer sells into a vol spike to hold the TE budget (mechanically
+    correct, but it pays the real transaction cost to do it; see ``sigma_regime``
+    in the diagnostics for how stressed Σ_t is relative to the unconditional
+    estimate).
 
-    ``posterior="bl"`` (spec 021, default ``None`` / off until validated OOS)
-    blends the refined alphas with 017's consensus prior via Black–Litterman
-    before the solve: names with no signal get a real, Σ-propagated posterior
-    (G&K 11.25) instead of being excluded outright, and view confidence is tied to
+    ``posterior="bl"`` (default ``None`` / off until validated OOS) blends the
+    refined alphas with the consensus prior via Black–Litterman before the solve:
+    names with no signal get a real, Σ-propagated posterior instead of being
+    excluded outright, and view confidence is tied to
     ``posterior_ic``/``posterior_t_eff`` rather than baked only into magnitude.
     ``posterior_t_eff`` is required when set (τ is pinned to ``1/T_eff``, never
     tuned — pass the ``effective_t`` a prior ``compute_information`` call
@@ -1836,20 +1854,20 @@ def construct_portfolio(
     haircut moves from the refine step (which stays unshrunk for this path,
     avoiding a double-shrink) into Ω.
 
-    ``policy="aim"`` (spec 022, default ``None`` / off until validated OOS net of
-    cost against the plain myopic solve above - see ``info --policy-ab``) replaces
-    the myopic "jump to this period's optimum" with Gârleanu–Pedersen's aim-in-
-    front-of-the-target partial adjustment: the alpha is discounted by
-    ``κ/(κ+φ)`` (``φ`` the strategy's own measured decay rate, conservatively from
-    the *upper* half-life confidence bound over the trailing
-    ``decay_lookback_days``), the aim portfolio is 016's solve on that discounted
-    alpha with cost zeroed, and the trade is ``κ`` of the gap to the aim, banded by
-    016's own no-trade-band machinery. ``κ`` is derived from the book's risk-
-    aversion and cost curvature (see ``src/portfolio/policy.py``); ``trade_rate``
-    overrides it. Falls back to exactly the plain cost-aware solve above (not an
-    error) when the cost curvature can't be pinned (no ``capital``, or too little
-    turnover to fit one) - see ``diagnostics["aim_degraded"]``. Long-only only in
-    v1; incompatible with ``book="market_neutral"`` or ``benchmark_holdings``.
+    ``policy="aim"`` (default ``None`` / off until validated OOS net of cost
+    against the plain myopic solve above - see ``info --policy-ab``) replaces the
+    myopic "jump to this period's optimum" with an aim-in-front-of-the-target
+    partial adjustment: the alpha is discounted by ``κ/(κ+φ)`` (``φ`` the
+    strategy's own measured decay rate, conservatively from the *upper* half-life
+    confidence bound over the trailing ``decay_lookback_days``), the aim portfolio
+    is the cost-aware solve on that discounted alpha with cost zeroed, and the
+    trade is ``κ`` of the gap to the aim, banded by the same no-trade-band
+    machinery. ``κ`` is derived from the book's risk-aversion and cost curvature
+    (see ``src/portfolio/policy.py``); ``trade_rate`` overrides it. Falls back to
+    exactly the plain cost-aware solve above (not an error) when the cost
+    curvature can't be pinned (no ``capital``, or too little turnover to fit one)
+    - see ``diagnostics["aim_degraded"]``. Long-only only in v1; incompatible with
+    ``book="market_neutral"`` or ``benchmark_holdings``.
     """
     from src.costs import ParametricCostModel
     from src.portfolio.optimizer import MeanVarianceOptimizer
@@ -1907,15 +1925,23 @@ def construct_portfolio(
     posterior_report = None
     if posterior is not None:
         alphas, posterior_report = _apply_bl_posterior(
-            panel, alphas, matrix, as_of, benchmark_report, posterior, posterior_ic, posterior_t_eff,
-            posterior_tau, alpha_ctx.ic,
+            panel,
+            alphas,
+            matrix,
+            as_of,
+            benchmark_report,
+            posterior,
+            posterior_ic,
+            posterior_t_eff,
+            posterior_tau,
+            alpha_ctx.ic,
         )
 
     if policy is not None and policy != "aim":
         raise ValueError(f"policy must be 'aim' or None, got {policy!r}")
     if policy == "aim" and (book != "long_only" or benchmark_holdings is not None):
         raise ValueError(
-            "policy='aim' (spec 022) is long-only, cash-relative only in v1 - "
+            "policy='aim' is long-only, cash-relative only in v1 - "
             "incompatible with book='market_neutral' or benchmark_holdings"
         )
 
@@ -2006,7 +2032,7 @@ def construct_portfolio(
             result.weights, universe_bars, result.diagnostics["expected_active_return"], holding_period_years
         )
         if benchmark_report is not None and result.diagnostics.get("has_benchmark"):
-            # Value-added identity (G&K eq. 5.12-adjacent): SR_P² ≈ SR_B² + IR² -
+            # Value-added identity: SR_P² ≈ SR_B² + IR² -
             # active management adds to the benchmark's own Sharpe in quadrature.
             # Predicted, not realized: SR_B from the assumed premium, IR from the
             # optimizer's own predicted_ir.
@@ -2089,15 +2115,16 @@ def run_conditional_risk_ab(
     conditional_method: str = "ewma",
     conditional_lambda: Optional[float] = None,
 ) -> Dict[str, Any]:
-    """The net-of-cost A/B (spec 024 §3.2/§6) — the one that decides commercial
-    adoption, not TE-tracking alone: walk ``[start, end]`` at spaced rebalances,
-    constructing the SAME alpha book (``construct_portfolio``, same target_te, same
-    cost model) against a conditional vs unconditional Σ, carrying each variant's
-    weights forward to the next rebalance, and pricing the REALIZED forward return
-    net of 016's actual cost (turnover cost annualized in the diagnostics, scaled
-    down to this rebalance's holding period). A conditional Σ that tracks TE better
-    but churns the book to death should — and, if the numbers say so, does — lose
-    the net-IR comparison here. Read-only research-clock harness; no orders.
+    """The net-of-cost A/B — the one that decides commercial adoption, not
+    TE-tracking alone: walk ``[start, end]`` at spaced rebalances, constructing
+    the SAME alpha book (``construct_portfolio``, same target_te, same cost
+    model) against a conditional vs unconditional Σ, carrying each variant's
+    weights forward to the next rebalance, and pricing the REALIZED forward
+    return net of the real transaction cost (turnover cost annualized in the
+    diagnostics, scaled down to this rebalance's holding period). A conditional
+    Σ that tracks TE better but churns the book to death should — and, if the
+    numbers say so, does — lose the net-IR comparison here. Read-only
+    research-clock harness; no orders.
     """
     run_id = new_run_id()
     periods_per_year = Timeframe.parse(timeframe).periods_per_year()
@@ -2189,7 +2216,7 @@ def run_conditional_risk_ab(
         "winner_net_ir": winner,
         "note": "SAME alphas/target_te/cost model, conditional vs unconditional Σ, weights "
         "carried forward rebalance to rebalance. 'winner_net_ir' picks by realized net "
-        "IR (net of 016's actual cost), not by TE-tracking alone — churn that tracking-"
+        "IR (net of the real transaction cost), not by TE-tracking alone — churn that tracking-"
         "error-tracks-better-but-costs-more should lose, and this is where it would show.",
     }
 
@@ -2215,15 +2242,14 @@ def run_policy_ab(
     holding_period_years: Optional[float] = None,
     trade_rate: Optional[float] = None,
 ) -> Dict[str, Any]:
-    """The net-of-cost A/B (spec 022 §2/§6) that decides adoption: walk-forward the
-    myopic 016 policy vs the aim (spec 022) policy on the SAME alpha book, same
-    target_te, same cost model, carrying each variant's weights forward rebalance
-    to rebalance, and compare REALIZED net IR (turnover cost priced at each
-    rebalance's actual holding period) — mirrors :func:`run_conditional_risk_ab`
-    (spec 024) exactly, with 'myopic'/'aim' in place of 'unconditional'/
-    'conditional'. Read-only research-clock harness; no orders. If the aim policy
-    doesn't win here, that's a legitimate, complete outcome (ship nothing, spec's
-    own evidence-gated posture) — not a failure to keep iterating on.
+    """The net-of-cost A/B that decides adoption: walk-forward the myopic policy
+    vs the aim policy on the SAME alpha book, same target_te, same cost model,
+    carrying each variant's weights forward rebalance to rebalance, and compare
+    REALIZED net IR (turnover cost priced at each rebalance's actual holding
+    period) — mirrors :func:`run_conditional_risk_ab` exactly, with 'myopic'/
+    'aim' in place of 'unconditional'/'conditional'. Read-only research-clock
+    harness; no orders. If the aim policy doesn't win here, that's a legitimate,
+    complete outcome (ship nothing) — not a failure to keep iterating on.
     """
     run_id = new_run_id()
     periods_per_year = Timeframe.parse(timeframe).periods_per_year()
@@ -2318,10 +2344,10 @@ def run_policy_ab(
         "summaries": _jsonable(summaries),
         "winner_net_ir": winner,
         "over_damped": over_damped,
-        "note": "SAME alphas/target_te/cost model, myopic-016 vs aim-022 policy, weights "
+        "note": "SAME alphas/target_te/cost model, myopic vs aim policy, weights "
         "carried forward rebalance to rebalance. 'winner_net_ir' picks by realized net "
-        "IR (net of 016's actual cost). 'over_damped' flags the double-damping failure "
-        "mode (spec 022 hidden factor 3): lower turnover AND lower net IR together mean "
+        "IR (net of the real transaction cost). 'over_damped' flags the double-damping "
+        "failure mode: lower turnover AND lower net IR together mean "
         "the aim policy traded too little to capture what alpha there was, not that it "
         "improved anything.",
     }
@@ -2347,17 +2373,17 @@ def longshort_report(
     gross_leverage: float = 2.0,
     short_max_weight: float = 0.25,
 ) -> Dict[str, Any]:
-    """The long-only price report (Spec 018 §3.2): the SAME alphas, Σ, and costs
-    solved ``long_only`` vs ``market_neutral``, so the difference is attributable to
+    """The long-only price report: the SAME alphas, Σ, and costs solved
+    ``long_only`` vs ``market_neutral``, so the difference is attributable to
     the constraint itself, not to a different universe or a different day's data.
 
-    Reports the measured IR shrinkage (``IR_LO / IR_LS``) next to G&K's ``(15.13)``-
-    style reference line (``γ(N) = (53+N)^0.57``) - explicitly *not* a verified
-    transcription of the textbook formula, just an illustrative comparison point, per
-    the spec's own framing - both transfer coefficients, and the long-only book's
-    incidental **size exposure** (the "size" factor already in
-    ``src/risk/exposures.py``, dotted with each book's weights) that a long/short
-    book, free to short the small names long-only can only zero out, does not carry.
+    Reports the measured IR shrinkage (``IR_LO / IR_LS``) next to an illustrative
+    reference line (``γ(N) = (53+N)^0.57``) - explicitly *not* a verified
+    transcription of any published formula, just a comparison point - both
+    transfer coefficients, and the long-only book's incidental **size exposure**
+    (the "size" factor already in ``src/risk/exposures.py``, dotted with each
+    book's weights) that a long/short book, free to short the small names
+    long-only can only zero out, does not carry.
     """
     common = dict(
         source=source,
@@ -2415,7 +2441,7 @@ def longshort_report(
         "ir_long_short": ir_ls,
         "ir_long_only": ir_lo,
         "shrinkage_measured": shrinkage,
-        "shrinkage_reference_gk": reference_shrinkage,
+        "shrinkage_reference_curve": reference_shrinkage,
         "transfer_coefficient_long_only": lo["diagnostics"]["transfer_coefficient"],
         "transfer_coefficient_long_short": ls["diagnostics"]["transfer_coefficient"],
         "size_exposure_long_only": size_exposure["long_only"],
@@ -2426,19 +2452,19 @@ def longshort_report(
         "borrow_cost": ls["diagnostics"].get("borrow_cost"),
         "long_only": lo,
         "market_neutral": ls,
-        "note": "shrinkage_reference_gk is an illustrative G&K (15.13)-style γ(N) "
-        "reference line, not a verified transcription of the exact formula - compare "
+        "note": "shrinkage_reference_curve is an illustrative γ(N) reference line, "
+        "not a verified transcription of any published formula - compare "
         "against shrinkage_measured, don't trust it as truth. binding_fraction is the "
         "share of the long-only universe pinned at zero weight (a proxy for the "
-        "forced-underweight bound this spec relaxes), not the exact |z|-mass figure.",
+        "forced-underweight bound the long-only constraint imposes), not the exact "
+        "|z|-mass figure.",
     }
 
 
 def _longshort_size_exposure(data_client, symbols, benchmark, as_of, lookback_days, timeframe, lo, ls):
     """Each book's dot product with the cross-sectionally standardized size factor
     (``log(price·ADV)``, ``src/risk/exposures.py``) - the incidental size bias a
-    long-only book picks up from being unable to short small, unattractive names
-    (spec 018 §2 goal, §6 "size bias" test).
+    long-only book picks up from being unable to short small, unattractive names.
     """
     from src.risk.exposures import build_factor_exposures
 
@@ -2459,9 +2485,10 @@ def _longshort_size_exposure(data_client, symbols, benchmark, as_of, lookback_da
 
 def _binding_fraction(long_only_weights: Dict[str, float], symbols: List[str]) -> float:
     """Share of the universe the long-only solve holds at exactly zero - a proxy for
-    names pinned at the long-only floor (``w_a = −w_B``, spec 017's underweight
-    bound). Not the spec's exact "|z| mass" figure (that needs the per-name alpha
-    z-score, which this report doesn't carry) - a documented simplification.
+    names pinned at the long-only floor (``w_a = −w_B``, the underweight bound a
+    long-only book can't relax). Not an exact "|z| mass" figure (that needs the
+    per-name alpha z-score, which this report doesn't carry) - a documented
+    simplification.
     """
     if not symbols:
         return 0.0
@@ -2563,11 +2590,11 @@ def _build_covariance(
 ):
     """Build a covariance RiskMatrix by model name (statistical estimator or factor).
 
-    ``conditional`` (spec 024, default ``None`` / off) conditions Σ's diagonal (or,
+    ``conditional`` (default ``None`` / off) conditions Σ's diagonal (or,
     for ``model='factor'``, both ``factor_cov`` and ``specific_var``) via an EWMA or
     HAR-lite per-name volatility forecast, holding the correlation structure fixed —
     see :mod:`src.risk.conditional`. Every caller of this helper reduces byte-for-byte
-    to its pre-024 behavior when ``conditional`` is left at the default.
+    to its unconditional behavior when ``conditional`` is left at the default.
     """
     from src.risk import RISK_MODELS, build_factor_risk_matrix, build_risk_matrix
 
@@ -2594,7 +2621,7 @@ def _resolve_benchmark_portfolio(benchmark_holdings, benchmark_premium, matrix):
     """Load ``w_B`` (restricted to Σ's covered universe) plus the reverse-optimization
     report, or ``(None, None)`` when no portfolio-level benchmark was requested -
     the no-op path that keeps ``construct_portfolio`` byte-for-byte unchanged
-    without ``benchmark_holdings`` (spec 017).
+    without ``benchmark_holdings``.
     """
     if not benchmark_holdings:
         return None, None
@@ -2610,30 +2637,39 @@ def _resolve_benchmark_portfolio(benchmark_holdings, benchmark_premium, matrix):
         "premium": benchmark_premium,
         "coverage": coverage,  # fraction of raw weight mass inside Σ's universe
         "uncovered_weight": max(0.0, 1.0 - coverage),
-        "raw_weight_sum": raw_total,  # far from 1 => the file implied a cash position (§4.6)
-        "consensus_returns": consensus,  # μ per name - print next to α (§3.2 corollary)
+        "raw_weight_sum": raw_total,  # far from 1 => the file implied a cash position
+        "consensus_returns": consensus,  # mu per name - print next to alpha
     }
     return (restricted or None), report
 
 
 def _apply_bl_posterior(
-    panel, alphas, matrix, as_of, benchmark_report, posterior, posterior_ic, posterior_t_eff, posterior_tau, scale_ic
+    panel,
+    alphas,
+    matrix,
+    as_of,
+    benchmark_report,
+    posterior,
+    posterior_ic,
+    posterior_t_eff,
+    posterior_tau,
+    scale_ic,
 ):
-    """Spec 021: blend ``alphas`` with 017's consensus prior via Black–Litterman.
+    """Blend ``alphas`` with the consensus prior via Black–Litterman.
 
     Reads ``panel.meta["shrink_chain"]`` (populated by ``refine_alpha`` upstream,
     where ``level_shrink`` stayed off - the raw, unshrunk alpha is exactly what BL's
-    Ω needs, spec 021 §4 hidden factor 1) and appends the ``bl`` step so the
-    IC-uncertainty haircut is auditably applied exactly once, here, not twice.
-    Returns the new (Σ-universe-spanning) alpha list and the report section
-    (per-name consensus/view/posterior/source table plus τ-sensitivity).
+    Ω needs) and appends the ``bl`` step so the IC-uncertainty haircut is auditably
+    applied exactly once, here, not twice. Returns the new (Σ-universe-spanning)
+    alpha list and the report section (per-name consensus/view/posterior/source
+    table plus τ-sensitivity).
     """
     if posterior != "bl":
         raise ValueError(f"posterior must be 'bl' or None, got {posterior!r}")
     if posterior_t_eff is None:
         raise ValueError(
             "posterior_t_eff is required for posterior='bl' - tau is pinned to "
-            "1/T_eff (spec 021 §3.1), never tuned; pass the effective_t a prior "
+            "1/T_eff, never tuned; pass the effective_t a prior "
             "compute_information call measured for this strategy/window."
         )
 
@@ -2652,7 +2688,7 @@ def _apply_bl_posterior(
             "tau": bl.tau,
             "note": "IC-uncertainty owned here (Ω), not re-applied upstream - the "
             "refine step's level_shrink stayed off so the raw, unshrunk alpha feeds "
-            "Ω, never both (spec 021 §4 hidden factor 1).",
+            "Ω, never both.",
         }
     )
 

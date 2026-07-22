@@ -1,4 +1,4 @@
-"""The benchmark as a portfolio (Spec 017): loading ``w_B``, and reverse optimization.
+"""The benchmark as a portfolio: loading ``w_B``, and reverse optimization.
 
 Everywhere else in the stack a benchmark is a *return series* (e.g. SPY closes) -
 betas and residual vols regress against it. This module is the other half: a
@@ -22,12 +22,12 @@ def load_benchmark_weights(source: str, symbols: Iterable[str]) -> Dict[str, flo
 
     A file is CSV (``symbol,weight`` header + rows) or JSON (``{"symbol": weight}``).
     Cap-proxy weighting (shares outstanding) is deliberately not supported in v1 -
-    the spec's own lean is that ``equal`` + a user-supplied file covers it (§7).
+    ``equal`` + a user-supplied file covers it for now.
 
     Always renormalized to sum to 1: a benchmark that isn't fully invested (holds
     cash) is folded pro-rata into its named holdings rather than modeled as a
-    genuine zero-variance asset - a v1 simplification (spec 017 hidden factor 6),
-    not a hidden one - callers that care can compare against ``raw_weight_sum``
+    genuine zero-variance asset - a documented v1 simplification, not a hidden
+    one - callers that care can compare against ``raw_weight_sum``
     before renormalization.
     """
     symbols = list(symbols)
@@ -63,10 +63,10 @@ def restrict_and_renormalize(
 ) -> Tuple[Dict[str, float], float]:
     """Restrict ``w_B`` to names Σ actually covers, and renormalize to sum to 1.
 
-    Reverse optimization and tracking error need Σ to span the benchmark (spec 017
-    hidden factor 2); when it only spans the trading universe, the sanctioned v1
-    alternative to extending the panel is this - restrict and renormalize, *loudly*
-    (hidden factor 1): returns the coverage fraction (of raw weight mass) alongside
+    Reverse optimization and tracking error need Σ to span the benchmark; when it
+    only spans the trading universe, the sanctioned v1 alternative to extending
+    the panel is this - restrict and renormalize, *loudly*: returns the coverage
+    fraction (of raw weight mass) alongside
     the restricted weights, so a caller can warn when it's materially less than 1.
     """
     covered = set(covered_symbols)
@@ -80,10 +80,10 @@ def restrict_and_renormalize(
 
 
 def implied_returns(benchmark_weights: Dict[str, float], risk: RiskMatrix, mu_b: float) -> Dict[str, float]:
-    """Reverse optimization (G&K ch. 2, eq. 2A.3): the consensus returns for which
+    """Reverse optimization: the consensus returns for which
     the benchmark ``w_B`` is itself mean-variance optimal.
 
-    ``β = Σw_B/(w_Bᵀ Σ w_B)`` (the one canonical benchmark beta, spec 017 §4.3 -
+    ``β = Σw_B/(w_Bᵀ Σ w_B)`` (the one canonical benchmark beta -
     :meth:`RiskMatrix.implied_beta`), ``μ = β·μ_B`` for a stated benchmark premium
     ``μ_B``. Feeding ``μ`` back into :meth:`~src.portfolio.optimizer.MeanVarianceOptimizer.optimize`
     with this same ``w_B`` and zero cost returns ``w = w_B`` exactly - the sharpest

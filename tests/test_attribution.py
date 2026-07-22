@@ -1,6 +1,6 @@
 """Tests for performance attribution: adding-up, null calibration, planted skill,
-the cumulation trap, Bayesian-blend limits, and the years-to-significance formula
-(spec 019 §6's checklist, in order)."""
+the cumulation trap, Bayesian-blend limits, and the years-to-significance formula,
+in checklist order."""
 
 from datetime import datetime
 
@@ -62,7 +62,7 @@ def test_cross_sectional_regression_degenerate_returns_zero_b():
     assert np.allclose(resid, r)
 
 
-# --- adding-up (§6, first test) ----------------------------------------------
+# --- adding-up ----------------------------------------------------------------
 def test_attribute_period_adds_up_exactly():
     rng = np.random.default_rng(1)
     w, risk_x, r_raw, beta, r_bench, _ = _period(rng)
@@ -97,7 +97,7 @@ def test_attribute_period_too_few_names_returns_none():
     assert attribute_period(w, risk_x, r_raw, beta, 0.01) is None
 
 
-# --- null calibration (§6, second test) --------------------------------------
+# --- null calibration ----------------------------------------------------------
 def test_null_book_attribution_is_centered_on_zero():
     """A book with no true skill: random weights/exposures/returns every period.
     Averaged over many periods, every row's mean should be small relative to its
@@ -120,7 +120,7 @@ def test_null_book_attribution_is_centered_on_zero():
     stats = series_stats(specific_series, 12.0, sigma2_prior=np.var(specific_series), t0=0.0)
     beyond_2 += abs(stats["t_stat"]) > 2.0
     # 5 rows measured; with no true skill, seeing all of them "significant" would be
-    # the multiple-testing trap this spec exists to catch - assert we don't see that.
+    # the multiple-testing trap this module exists to catch - assert we don't see that.
     assert beyond_2 <= 2
 
 
@@ -143,7 +143,7 @@ def _planted_signal_period(rng, n=60, b_signal=0.04):
     return w, risk_x, r_raw, beta, r_bench, signal_x
 
 
-# --- planted skill (§6, third test) ------------------------------------------
+# --- planted skill --------------------------------------------------------------
 def test_planted_signal_skill_is_recovered_in_the_right_row():
     rng = np.random.default_rng(4)
     b_true = 0.04
@@ -157,7 +157,9 @@ def test_planted_signal_skill_is_recovered_in_the_right_row():
         factor_contribs.append(sum(result.factor_contributions.values()))
 
     planted_stats = series_stats(signal_contribs, 12.0, sigma2_prior=np.var(signal_contribs), t0=0.0)
-    noise_stats = series_stats(other_signal_contribs, 12.0, sigma2_prior=np.var(other_signal_contribs), t0=0.0)
+    noise_stats = series_stats(
+        other_signal_contribs, 12.0, sigma2_prior=np.var(other_signal_contribs), t0=0.0
+    )
     factor_stats = series_stats(factor_contribs, 12.0, sigma2_prior=np.var(factor_contribs), t0=0.0)
 
     assert planted_stats["t_stat"] > 4.0  # the planted signal lights up hard
@@ -176,7 +178,9 @@ def test_planted_timing_skill_lights_up_only_the_timing_row():
     beta_a_series = 1.0 + 2.0 * r_bench_series + rng.normal(0, 0.01, t)
     split = systematic_split(beta_a_series, r_bench_series, mu_b_period=0.0)
 
-    timing_stats = series_stats(split["timing_series"], 12.0, sigma2_prior=np.var(split["timing_series"]), t0=0.0)
+    timing_stats = series_stats(
+        split["timing_series"], 12.0, sigma2_prior=np.var(split["timing_series"]), t0=0.0
+    )
     assert timing_stats["t_stat"] > 4.0
     assert split["timing"] > 0
 
@@ -205,7 +209,7 @@ def test_systematic_split_empty():
     assert split["expected"] == 0.0 and split["timing"] == 0.0
 
 
-# --- the cumulation trap (§6, fourth test) -----------------------------------
+# --- the cumulation trap ---------------------------------------------------------
 def test_cumulate_top_down_identity():
     rng = np.random.default_rng(7)
     t = 24
@@ -222,7 +226,7 @@ def test_cumulate_top_down_identity():
 
 def test_cumulation_trap_naive_diverges_materially_from_honest():
     """Large per-period returns: compounding the additive split is NOT the same
-    as compounding the true portfolio/benchmark returns - the trap this spec
+    as compounding the true portfolio/benchmark returns - the trap this module
     exists to catch. delta_cp must be non-trivial in this constructed case."""
     t = 20
     rng = np.random.default_rng(8)
@@ -240,7 +244,7 @@ def test_cumulate_top_down_empty():
     assert result["honest_car"] == 0.0
 
 
-# --- Bayesian blend limits (§6, fifth test) ----------------------------------
+# --- Bayesian blend limits -------------------------------------------------------
 def test_bayesian_blend_limits():
     prior, realized = 0.02, 0.10
     # T -> 0: recovers the prior.
@@ -268,7 +272,7 @@ def test_series_stats_short_sample_leans_on_prior():
     assert stats["vol_blended"] < raw_sample_std * 0.3
 
 
-# --- years-to-significance vs the SE(IR) formula (§6, sixth test) -----------
+# --- years-to-significance vs the SE(IR) formula ---------------------------------
 def test_years_to_significance_solves_t_equals_2():
     for ir in (0.2, 0.5, 1.0):
         y_star = years_to_significance(ir)
@@ -341,9 +345,7 @@ def test_compute_attribution_cumulation_identity_holds():
     )
     linked_sum = sum(r["cumulation"]["linked_components"].values())
     assert abs(linked_sum - r["cumulation"]["naive_cumulative"]) < 1e-6
-    assert (
-        abs(linked_sum + r["cumulation"]["delta_cp"] - r["cumulation"]["honest_car"]) < 1e-6
-    )
+    assert abs(linked_sum + r["cumulation"]["delta_cp"] - r["cumulation"]["honest_car"]) < 1e-6
 
 
 def test_compute_attribution_with_extra_signals():

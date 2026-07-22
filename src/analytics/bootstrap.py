@@ -1,4 +1,4 @@
-"""Bootstrap skill inference (spec 023): simulate the null instead of assuming it.
+"""Bootstrap skill inference: simulate the null instead of assuming it.
 
 The rest of the stack's skill-vs-luck machinery is parametric: PSR/DSR
 (:mod:`src.analytics.metrics`) assume the Sharpe estimator's asymptotic
@@ -24,7 +24,7 @@ Two questions, two functions:
 
 Both report a Monte-Carlo standard error on the p-value (``sqrt(p(1-p)/B)``) and a
 block-length sensitivity check (p at L/2 and 2L) - a p-value that flips across that
-range is not a result (spec 023 hidden factor 3).
+range is not a result.
 """
 
 import math
@@ -69,7 +69,7 @@ def politis_white_block_length(returns: Numbers, *, max_lag: Optional[int] = Non
     block length for the stationary bootstrap (Politis & White 2004 eq. 4.1-4.2,
     the ``D_SB = 2*Ghat**2`` variant). Too short a block leaks autocorrelation into
     the resample and makes the p-value anti-conservative - the dangerous direction
-    (spec 023 hidden factor 3) - so this is the *reported*, always-overridable
+    - so this is the *reported*, always-overridable
     default, never a silent assumption.
 
     This is an engineering-faithful implementation of the published rule (the same
@@ -135,9 +135,7 @@ def politis_white_block_length(returns: Numbers, *, max_lag: Optional[int] = Non
 # --------------------------------------------------------------------------- #
 # Stationary (Politis-Romano 1994) block bootstrap
 # --------------------------------------------------------------------------- #
-def stationary_bootstrap_indices(
-    t: int, block_length: float, b: int, rng: np.random.Generator
-) -> np.ndarray:
+def stationary_bootstrap_indices(t: int, block_length: float, b: int, rng: np.random.Generator) -> np.ndarray:
     """``B`` rows of ``T`` circular resample indices with geometric block lengths
     (expected length ``block_length``), Politis & Romano's (1994) stationary
     bootstrap.
@@ -203,7 +201,7 @@ def bootstrap_null(
 
     Reports the Monte-Carlo SE of p, the block length used (default:
     :func:`politis_white_block_length`, always overridable and always reported),
-    and block-length sensitivity at L/2 and 2L (hidden factor 3: a p whose
+    and block-length sensitivity at L/2 and 2L (a p whose
     significance flips across that range is not a result, per
     ``block_sensitivity_flag``).
     """
@@ -323,7 +321,9 @@ def reality_check(
     def _run(length: float):
         rng = np.random.default_rng(seed)
         idx = stationary_bootstrap_indices(t, length, B, rng)  # (B, T)
-        resampled = resid[idx]  # (B, T, K) - one gather, one set of block indices/round, shared by every column
+        resampled = resid[
+            idx
+        ]  # (B, T, K) - one gather, one set of block indices/round, shared by every column
         ir = _annualized_ir(resampled, periods_per_year, axis=1)  # (B, K)
         null_max = ir.max(axis=1)  # (B,)
         p, se = _p_value(null_max, observed_max_ir, B)

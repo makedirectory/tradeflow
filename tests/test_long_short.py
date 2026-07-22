@@ -1,7 +1,7 @@
-"""Tests for long/short portfolio construction (Spec 018).
+"""Tests for long/short portfolio construction.
 
-Covers, in the spec's own §6 order: the reduction (book="long_only" is byte-for-byte
-the pre-018 solve), the market-neutral book's neutrality/leverage/box invariants, the
+Covers, in checklist order: the reduction (book="long_only" is byte-for-byte
+the prior long-only solve), the market-neutral book's neutrality/leverage/box invariants, the
 dominance of the relaxed constraint (measured via the transfer coefficient - see the
 docstring on ``test_dominance_*`` for why that metric and not a raw IR ratio), the
 long-only size bias vs long/short, carry (borrow) monotonically shrinking shorts, the
@@ -48,7 +48,7 @@ def _vec(result) -> np.ndarray:
     return np.array([result.weights.get(s, 0.0) for s in SYMS])
 
 
-# --- reduction: book="long_only" is the untouched pre-018 code path -----------
+# --- reduction: book="long_only" is the untouched prior code path -------------------
 def test_book_long_only_matches_omitting_book():
     default = MeanVarianceOptimizer(max_weight=0.5).optimize(_alphas(), _risk(), risk_aversion=LAM)
     explicit = MeanVarianceOptimizer(max_weight=0.5).optimize(
@@ -60,7 +60,7 @@ def test_book_long_only_matches_omitting_book():
 
 def test_book_long_only_matches_the_closed_form():
     # Same closed-form check as test_portfolio_optimizer.py's unconstrained test -
-    # book="long_only" must still reproduce it exactly (008/016's own math untouched).
+    # book="long_only" must still reproduce it exactly (the base construction's own math untouched).
     result = MeanVarianceOptimizer(max_weight=1.0).optimize(
         _alphas(), _risk(), risk_aversion=LAM, book="long_only"
     )
@@ -74,7 +74,7 @@ def test_unknown_book_raises():
         MeanVarianceOptimizer(max_weight=0.5).optimize(_alphas(), _risk(), risk_aversion=LAM, book="130/30")
 
 
-# --- mandatory guards (hidden factor 1) ---------------------------------------
+# --- mandatory guards -------------------------------------------------------------
 def test_market_neutral_requires_gross_leverage():
     with pytest.raises(ValueError, match="gross_leverage"):
         MeanVarianceOptimizer(max_weight=0.5).optimize(
@@ -138,7 +138,7 @@ def test_gross_leverage_is_monotone_in_the_cap():
     assert all(a <= b + 1e-9 for a, b in zip(realized, realized[1:]))  # non-decreasing as the cap loosens
 
 
-# --- dominance (spec 018 §6) ---------------------------------------------------
+# --- dominance ----------------------------------------------------------------------
 def test_dominance_transfer_coefficient_long_short_at_least_long_only():
     """On identical alpha/Σ/λ, relaxing the long-only floor can only help - but
     ``predicted_ir`` (expected active return / the BOOK'S OWN realized TE) isn't the
@@ -164,19 +164,19 @@ def test_dominance_transfer_coefficient_long_short_at_least_long_only():
         gross_leverage=2.0,
     )
     assert lo.diagnostics["ir_star"] == pytest.approx(ls.diagnostics["ir_star"])  # same λ-calibration input
-    assert lo.weights.get("D", 0.0) < 1e-9  # long-only: D pinned to 0 (the floor the spec relaxes)
+    assert lo.weights.get("D", 0.0) < 1e-9  # long-only: D pinned to 0 (the floor market-neutral relaxes)
     assert ls.weights["D"] < 0  # long/short: D can be genuinely shorted instead
     assert ls.diagnostics["transfer_coefficient"] >= lo.diagnostics["transfer_coefficient"] - 1e-9
     assert ls.diagnostics["ir_achieved"] >= lo.diagnostics["ir_achieved"] - 1e-9
 
 
-# --- size bias (spec 018 §6, §2 goal) ------------------------------------------
+# --- size bias ----------------------------------------------------------------------
 def test_long_only_shows_more_negative_size_exposure_than_long_short():
     """A cap-weighted w_B (log-normal caps) with alphas drawn independent of size
     (so any size tilt is *incidental*, not chosen): the long-only book's forced
     underweight in the smallest names should show up as a more negative size
     exposure than the long/short book's, which can short those names directly
-    instead of being pinned at their tiny w_B floor (spec 018 §1's "structural
+    instead of being pinned at their tiny w_B floor (the "structural
     negative size bias [long-only books] never chose").
     """
     rng = np.random.default_rng(6)
@@ -214,7 +214,7 @@ def test_long_only_shows_more_negative_size_exposure_than_long_short():
     assert ls_size > lo_size + 0.05  # long/short: materially less negative
 
 
-# --- carry bites (spec 018 §6) --------------------------------------------------
+# --- carry bites --------------------------------------------------------------------
 def test_raising_borrow_monotonically_shrinks_the_short_book():
     opt = MeanVarianceOptimizer(max_weight=0.5)
     ci = CostInputs(
@@ -320,10 +320,10 @@ def test_prox_step_short_reduces_without_borrow_or_leverage():
     assert np.allclose(got, expected)
 
 
-# --- KKT optimality certificate (spec 018 §6/§7) --------------------------------
+# --- KKT optimality certificate -------------------------------------------------------
 def test_no_feasible_perturbation_beats_the_market_neutral_optimum():
     """Verifies the FOUND point is optimal under box + budget + leverage + borrow,
-    empirically certifying the nested (nu, tau) bisection (spec §7's open risk) -
+    empirically certifying the nested (nu, tau) bisection (a known open risk) -
     not just that it converges, but that it converges to the right answer."""
     model = ParametricCostModel(annual_borrow_bps=200.0)
     ci = CostInputs(

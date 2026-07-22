@@ -1,12 +1,13 @@
 """Performance attribution - where the realized active return came from, and
 whether the track record means anything.
 
-009 measures skill **ex ante** (IC, breadth, predicted IR) and splits realized
-return **once**, pooled, into factor vs specific. This module generalizes that
-split **per period, per factor**, adds a systematic benchmark-timing split (G&K
-17.25-17.27), and applies 009's own honesty gates (t-stats, Bayesian-blended risk,
-multiple-testing inflation) to the attributed series themselves - so a ranked
-table of ~8 return buckets can't be read the way a single lucky backtest can't.
+The information-analysis module measures skill **ex ante** (IC, breadth,
+predicted IR) and splits realized return **once**, pooled, into factor vs
+specific. This module generalizes that split **per period, per factor**, adds a
+systematic benchmark-timing split (expected/surprise/timing), and applies the
+same honesty gates (t-stats, Bayesian-blended risk, multiple-testing inflation)
+to the attributed series themselves - so a ranked table of ~8 return buckets
+can't be read the way a single lucky backtest can't.
 
 Everything here is pure math on already-computed exposures/weights/returns; the
 data wiring (sampling rebalances, building leakage-safe cross-sections) lives in
@@ -46,7 +47,7 @@ def cross_sectional_regression(x: np.ndarray, r: np.ndarray):
 @dataclass
 class PeriodAttribution:
     """One rebalance's attributed active return - every field sums exactly to
-    ``r_active`` (the regression-identity adding-up spec 019 §6 tests for)."""
+    ``r_active`` (the regression-identity adding-up this module tests for)."""
 
     r_active: float
     beta_a: float
@@ -74,8 +75,8 @@ def attribute_period(
     ``risk_x`` = start-of-period risk-factor exposures (market/momentum/
     volatility/size, :func:`src.risk.exposures.build_factor_exposures`);
     ``beta_per_name`` = the canonical Σ-implied per-name beta
-    (:meth:`~src.risk.base.RiskMatrix.implied_beta`, spec 017's "one β,
-    everywhere"), known at the start of the period; ``r_raw`` = realized
+    (:meth:`~src.risk.base.RiskMatrix.implied_beta`, the one canonical β
+    used everywhere), known at the start of the period; ``r_raw`` = realized
     per-name raw returns over the period; ``r_bench`` = realized benchmark
     return; ``signal_x`` = optional per-name combined-signal z-scores.
 
@@ -87,10 +88,9 @@ def attribute_period(
        aggregate is exactly ``β_a(t)·r_B(t)`` - not fit to this period's data,
        just the already-known tilt times the realized benchmark move.
     2. **Risk factors + signals, JOINTLY**: one cross-sectional regression of
-       the beta-adjusted return on ``[risk_x, signal_x]`` together. §7 of the
-       spec leaned toward signals as a *second pass* on the risk-factor
-       residual ("cleaner ownership"); that was tried and reverted (see the
-       module docstring / spec Implementation Notes) - a second pass leaves an
+       the beta-adjusted return on ``[risk_x, signal_x]`` together. Signals as a
+       *second pass* on the risk-factor residual ("cleaner ownership") was tried
+       and reverted - a second pass leaves an
        **omitted-variable bias** that does not vanish with more names: when
        active weights are built from a signal that is not yet among the
        regressors doing the fitting (exactly how a paper book is built
@@ -100,7 +100,7 @@ def attribute_period(
        integrity bug, not sampling noise around zero (measured at |t| > 60 in
        a 2000-trial check during development). Fitting both blocks in one
        regression removes the omission and the bias disappears (measured
-       |t| < 1). The tradeoff named in §7 (signals correlated with risk
+       |t| < 1). The remaining tradeoff (signals correlated with risk
        factors destabilize a joint fit) is real but smaller and disclosable
        (report the condition number); the omitted-variable bias was not
        disclosable - it looks exactly like real factor timing.
@@ -140,9 +140,7 @@ def attribute_period(
     b_factors, b_signals = b_joint[:n_risk], b_joint[n_risk:]
 
     factor_returns = {col: float(b_factors[j]) for j, col in enumerate(risk_x.columns)}
-    factor_contributions = {
-        col: float(w @ (x[:, j] * b_factors[j])) for j, col in enumerate(risk_x.columns)
-    }
+    factor_contributions = {col: float(w @ (x[:, j] * b_factors[j])) for j, col in enumerate(risk_x.columns)}
     signal_returns: Dict[str, float] = {}
     signal_contributions: Dict[str, float] = {}
     if has_signals:
@@ -173,7 +171,7 @@ def attribute_period(
 
 
 # --------------------------------------------------------------------------- #
-# The systematic split (G&K 17.25-17.27): expected / surprise / timing
+# The systematic split: expected / surprise / timing
 # --------------------------------------------------------------------------- #
 def systematic_split(
     beta_a_series: Sequence[float], r_bench_series: Sequence[float], mu_b_period: float
@@ -220,11 +218,11 @@ def systematic_split(
 
 
 # --------------------------------------------------------------------------- #
-# Bayesian blend (17A.12) - the honest risk for a short attributed series
+# Bayesian blend - the honest risk for a short attributed series
 # --------------------------------------------------------------------------- #
 def prior_weight_t0(min_obs: int, bars_per_period: float) -> float:
     """``T₀`` in REBALANCE-PERIOD units, derived from the risk model's own
-    estimation window (spec 019 hidden factor 7).
+    estimation window.
 
     The risk model needs ``min_obs`` *bars* of history before it trusts Σ
     (:func:`src.risk.base.build_risk_matrix`, default 60); at this attribution's
@@ -232,7 +230,7 @@ def prior_weight_t0(min_obs: int, bars_per_period: float) -> float:
     ``min_obs / bars_per_period`` PERIODS worth of prior confidence - i.e. "the
     risk model itself wouldn't trust an estimate from fewer periods than this,
     so neither should the attribution". This mapping isn't specified anywhere
-    else in the codebase; it is the documented judgment call the spec asked for.
+    else in the codebase; it is a documented judgment call.
     """
     return float(min_obs) / max(bars_per_period, 1e-9)
 
@@ -284,7 +282,7 @@ def series_stats(
 
 
 # --------------------------------------------------------------------------- #
-# Track-record calculus (G&K's sobering arithmetic)
+# Track-record calculus
 # --------------------------------------------------------------------------- #
 def years_to_significance(ir: float) -> float:
     """``Y* = (2/IR)²`` - years until a real IR's t-stat would reach 2, under the
@@ -304,7 +302,7 @@ def prob_positive_over_years(ir: float, years: float) -> float:
 
 
 # --------------------------------------------------------------------------- #
-# Honest cumulation (hidden factor 5: the "cumulation trap")
+# Honest cumulation (the "cumulation trap")
 # --------------------------------------------------------------------------- #
 def cumulate_top_down(
     component_series: Dict[str, Sequence[float]],
@@ -323,8 +321,8 @@ def cumulate_top_down(
     ``Σ_component linked_component == Π_t(1+r_a(t)) − 1`` (``naive_cumulative``)
     exactly. The gap between that naive linked total and the honest
     ``ΠR_P − ΠR_B`` (``honest_car``) is ``delta_cp``; by construction
-    ``Σ linked_components + delta_cp == honest_car`` exactly - the identity spec
-    019 §6 tests for.
+    ``Σ linked_components + delta_cp == honest_car`` exactly - the identity this
+    module tests for.
     """
     r_a = np.asarray(r_active_series, dtype=float)
     r_p = np.asarray(r_portfolio_series, dtype=float)

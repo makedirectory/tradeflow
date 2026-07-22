@@ -1,14 +1,14 @@
-"""Multi-period trading: aim in front of the target (Spec 022).
+"""Multi-period trading: aim in front of the target.
 
-Spec 016 made the single-period solve honestly cost-aware, but it is still
-**myopic**: every rebalance it pays real cost to reach *this period's* optimum,
-ignoring that (1) alphas decay, so some of what it trades into is gone by the time
-it fully arrives, and (2) today's trade sets tomorrow's starting point, so a chain
-of myopic solves over-trades relative to the true dynamic optimum whenever alphas
-are persistent.
+The plain single-period solve (:class:`~src.portfolio.optimizer.MeanVarianceOptimizer`)
+is honestly cost-aware, but it is still **myopic**: every rebalance it pays real
+cost to reach *this period's* optimum, ignoring that (1) alphas decay, so some of
+what it trades into is gone by the time it fully arrives, and (2) today's trade
+sets tomorrow's starting point, so a chain of myopic solves over-trades relative
+to the true dynamic optimum whenever alphas are persistent.
 
-Gârleanu & Pedersen (2013) showed that with quadratic trading costs and
-exponentially-decaying signals, the dynamic program collapses to two rules:
+With quadratic trading costs and exponentially-decaying signals, the dynamic
+program collapses to two rules:
 
 - **The aim portfolio** - the Markowitz solve on alphas *discounted* by
   ``κ/(κ+φ)`` per signal (``φ`` its decay rate, ``κ`` the trading rate below) -
@@ -19,22 +19,22 @@ exponentially-decaying signals, the dynamic program collapses to two rules:
   decreasing in cost.
 
 This module derives ``κ`` from the book's own risk-aversion/variance and cost
-curvature (a closed form checked against GP's limiting cases below), applies the
-decay discount, and composes the partial-adjustment step with 016's own no-trade
-band via 016's *existing* proximal-projection machinery - it wraps
+curvature (a closed form checked against limiting cases below), applies the decay
+discount, and composes the partial-adjustment step with the optimizer's own
+no-trade band via its *existing* proximal-projection machinery - it wraps
 :class:`~src.portfolio.optimizer.MeanVarianceOptimizer`, never modifies it. A cost
 curvature that can't be estimated (no capital, or a trade too small to pin the
-√-impact term) is not an error - the policy degrades gracefully to exactly 016's
-myopic, cost-aware solve (see :func:`derive_kappa`).
+√-impact term) is not an error - the policy degrades gracefully to exactly the
+plain myopic, cost-aware solve (see :func:`derive_kappa`).
 
-**κ derivation (the PR's own math).** Single-asset discrete-time LQ control with
-quadratic risk ``λσ²w²`` and quadratic trading cost ``(c₂/2)Δw²`` (our real cost is
-linear + 3/2-power; ``c₂`` is its local curvature at the book's typical trade size,
-see :func:`src.costs.parametric.cost_curvature` - hidden factor 4, an approximation
-validated by the net-of-cost A/B, not asserted exact). The Bellman value function
+**κ derivation.** Single-asset discrete-time LQ control with quadratic risk
+``λσ²w²`` and quadratic trading cost ``(c₂/2)Δw²`` (our real cost is linear +
+3/2-power; ``c₂`` is its local curvature at the book's typical trade size, see
+:func:`src.costs.parametric.cost_curvature` - an approximation validated by the
+net-of-cost A/B, not asserted exact). The Bellman value function
 ``V(w,f) = -Aw² + Bwf - Cf²`` for a signal decaying as ``f_{t+1} = δf_t`` gives, by
-matching quadratic coefficients (worked in full in the spec's PR discussion):
-``L := λσ² + A`` solves ``L² - λσ²·L - λσ²c₂/2 = 0``, so with ``s = λσ²``:
+matching quadratic coefficients: ``L := λσ² + A`` solves
+``L² - λσ²·L - λσ²c₂/2 = 0``, so with ``s = λσ²``:
 
     L = (s + √(s² + 2·s·c₂)) / 2         κ = 2L/(2L + c₂)
 
@@ -43,8 +43,8 @@ on φ** in κ itself (φ only enters the discount, below): the trading *speed*
 depends on risk/cost alone; *what you aim at* depends on decay. Limiting cases,
 both exact and tested (``test_kappa_limits``): ``c₂ → 0 ⇒ κ → 1`` (costless: no
 curvature to solve against - see the fallback note below); ``c₂ → ∞ ⇒ κ → 0``;
-monotone (``∂κ/∂c₂ < 0`` for all ``c₂ ≥ 0``, proof in the PR) ⇒ κ increasing in
-``s = λ_A·σ²``, decreasing in cost.
+monotone (``∂κ/∂c₂ < 0`` for all ``c₂ ≥ 0``) ⇒ κ increasing in ``s = λ_A·σ²``,
+decreasing in cost.
 
 Solving the *other* coefficient-matching equation (the ``B``/``wf`` coefficient)
 exactly - using the algebraic identity ``2Lθ = c₂·a`` that falls out of the same
@@ -58,7 +58,7 @@ caught by ``test_synthetic_gp_world...`` disagreeing with a direct value-
 iteration solve of the Bellman recursion at large φ). Since the exact form costs
 nothing extra to evaluate, :func:`discount_factor` uses it directly.
 
-**Why "costless ⇒ exact 016" is a fallback, not a limit.** Plugging ``c₂ = 0``
+**Why "costless ⇒ exact myopic" is a fallback, not a limit.** Plugging ``c₂ = 0``
 into the closed form gives ``κ = 1`` exactly, and at ``κ=1`` the exact discount
 formula above *does* correctly give 1 (``δ(1−1) = 0``) for any φ - so the
 costless case is consistent either way here. The fallback is still needed for a
@@ -70,9 +70,9 @@ recognize "no curvature to fit" and hand
 back the exact myopic solve, undiscounted, rather than apply a discount formula
 whose derivation assumed a nonzero cost. :func:`derive_kappa` returns ``None``
 whenever the cost curvature is undefined (no impact term, or too small a typical
-trade to pin it), and :func:`build_aim_portfolio` treats ``None`` as "run 016
-exactly, band-only" - this is what makes the costless limiting case an *exact*,
-tested reduction (``test_costless_reduces_to_exact_016``) instead of an asymptote.
+trade to pin it), and :func:`build_aim_portfolio` treats ``None`` as "run the
+plain solve exactly, band-only" - this is what makes the costless limiting case
+an *exact*, tested reduction (``test_costless_reduces_to_exact_myopic``) instead of an asymptote.
 """
 
 import math
@@ -85,8 +85,8 @@ from src.alphas.base import Alpha
 from src.portfolio.optimizer import MeanVarianceOptimizer, PortfolioResult
 from src.risk.base import RiskMatrix
 
-#: Floor on the typical per-name trade size fed to the curvature fit (Spec 022
-#: §3.2) - avoids a near-zero denominator manufacturing an absurd κ when the myopic
+#: Floor on the typical per-name trade size fed to the curvature fit -
+#: avoids a near-zero denominator manufacturing an absurd κ when the myopic
 #: reference solve traded almost nothing (e.g. it was already near its no-trade band).
 MIN_TYPICAL_TRADE = 1e-4
 
@@ -95,9 +95,9 @@ MIN_TYPICAL_TRADE = 1e-4
 # Pure math: decay units, the discount, and the trading rate κ
 # --------------------------------------------------------------------------- #
 def phi_from_half_life(half_life_periods: float, min_half_life: float = 1.0) -> float:
-    """Per-rebalance decay rate ``φ = ln2 / HL``, floored at ``min_half_life`` (Spec
-    022 hidden factor 1: can't measure decay faster than the rebalance frequency
-    itself - a floor of 1 rebalance is the fastest a half-life can mean anything).
+    """Per-rebalance decay rate ``φ = ln2 / HL``, floored at ``min_half_life``
+    (can't measure decay faster than the rebalance frequency itself - a floor of
+    1 rebalance is the fastest a half-life can mean anything).
     A permanent signal (``HL = inf``) has ``φ = 0`` - no discount at any κ.
     """
     if not math.isfinite(half_life_periods):
@@ -106,12 +106,11 @@ def phi_from_half_life(half_life_periods: float, min_half_life: float = 1.0) -> 
 
 
 def half_life_in_rebalance_units(half_life_periods: float, periods_per_rebalance: float) -> float:
-    """Convert a half-life measured in raw bars (012's unit) into rebalance units
-    (022's unit) - the unit-discipline hidden factor: silently mixing bars and
-    rebalances would misprice every discount by the cadence factor.
-    ``periods_per_rebalance`` is the bar count between rebalances (e.g. ~21 for a
-    monthly cadence on daily bars). A non-finite half-life (permanent signal) or a
-    non-positive cadence passes through unchanged.
+    """Convert a half-life measured in raw bars into rebalance units - silently
+    mixing bars and rebalances would misprice every discount by the cadence
+    factor. ``periods_per_rebalance`` is the bar count between rebalances (e.g.
+    ~21 for a monthly cadence on daily bars). A non-finite half-life (permanent
+    signal) or a non-positive cadence passes through unchanged.
     """
     if not math.isfinite(half_life_periods) or periods_per_rebalance <= 0:
         return half_life_periods
@@ -119,7 +118,7 @@ def half_life_in_rebalance_units(half_life_periods: float, periods_per_rebalance
 
 
 def discount_factor(kappa: float, phi: float) -> float:
-    """The aim-alpha decay discount (Spec 022 §3.1), the **exact** closed form:
+    """The aim-alpha decay discount, the **exact** closed form:
 
         discount = κ / (1 − δ·(1−κ)),   δ = e^(−φ)
 
@@ -157,8 +156,8 @@ def derive_kappa(risk_aversion: float, variance: float, cost_curvature: Optional
     Returns ``None`` - the "cost curvature ill-defined" signal - when ``c₂`` is
     missing/non-positive (no impact term, or a trade too small to pin it) or when
     ``risk_aversion·variance`` itself is non-positive. The caller
-    (:func:`build_aim_portfolio`) treats ``None`` as "fall back to 016 exactly,
-    band-only" (Spec 022 §3.2's own documented fallback), not an error.
+    (:func:`build_aim_portfolio`) treats ``None`` as "fall back to the plain
+    myopic solve exactly, band-only" (a documented fallback), not an error.
     """
     if cost_curvature is None or not (cost_curvature > 0):
         return None
@@ -170,8 +169,8 @@ def derive_kappa(risk_aversion: float, variance: float, cost_curvature: Optional
 
 
 def trading_half_life(kappa: float) -> float:
-    """Implied trading half-life, in rebalances: ``ln2/κ`` (Spec 022 §3.2's own
-    reported diagnostic). Infinite when κ is non-positive (frozen book)."""
+    """Implied trading half-life, in rebalances: ``ln2/κ`` - a reported
+    diagnostic. Infinite when κ is non-positive (frozen book)."""
     return math.log(2) / kappa if kappa > 0 else float("inf")
 
 
@@ -193,36 +192,36 @@ def build_aim_portfolio(
     capital: Optional[float] = None,
     holding_period_years: float = 1.0 / 12.0,
 ) -> PortfolioResult:
-    """The Spec 022 policy: derive κ, discount the alphas by ``κ/(κ+φ)``, solve the
-    cost-free aim (016 with the cost term zeroed), take the κ-fraction step from
-    ``current_weights``, and pass the result through 016's own proximal band
-    projection (the *same* box/budget/no-trade-band machinery a real cost-aware
-    016 solve would apply - reused via :meth:`MeanVarianceOptimizer._prox_project`,
-    never re-derived) so the band and κ compose rather than stack independently
-    (Spec 022 hidden factor 3).
+    """The aim-in-front-of-the-target policy: derive κ, discount the alphas by
+    ``κ/(κ+φ)``, solve the cost-free aim (the plain optimizer with the cost term
+    zeroed), take the κ-fraction step from ``current_weights``, and pass the
+    result through the optimizer's own proximal band projection (the *same*
+    box/budget/no-trade-band machinery a real cost-aware solve would apply -
+    reused via :meth:`MeanVarianceOptimizer._prox_project`, never re-derived) so
+    the band and κ compose rather than stack independently.
 
     ``phi`` is the (already per-rebalance, already CI-adjusted) decay rate for
     this alpha vector - a single scalar, since v1 is a single combined signal per
-    call (Spec 022 §7: scalar κ/φ is the v1 lean; per-signal only matters upstream
-    of 013's combination, where :func:`discount_factor` is the same one-line vector
-    scale applied per signal before ``combine_scores`` - no change needed here).
+    call (scalar κ/φ is the v1 lean; per-signal only matters upstream of
+    multi-signal combination, where :func:`discount_factor` is the same one-line
+    vector scale applied per signal before ``combine_scores`` - no change needed
+    here).
 
     ``trade_rate`` overrides the derived κ (the CLI's ``--trade-rate``). Without a
     usable cost curvature (no capital, or the myopic reference solve traded too
     little to pin one) and no override, this **falls back to exactly the plain
-    016 cost-aware solve** - the costless/undefined-curvature reduction is exact,
+    cost-aware solve** - the costless/undefined-curvature reduction is exact,
     not asymptotic (see the module docstring). Position constraints (box,
     cardinality, min-weight) are enforced on the *aim* solve itself (it is a full
-    016 solve), satisfying hidden factor 6 - the final κ-adjusted-and-banded trade
-    then respects the box via the proximal projection, though a rebalance whose
-    ``current_weights`` and aim disagree sharply on *which* names to hold can, in
-    principle, transiently exceed ``max_names`` until the next full re-solve (a
-    documented v1 limitation, not exercised when ``max_names`` is unset).
+    solve), so the final κ-adjusted-and-banded trade then respects the box via
+    the proximal projection, though a rebalance whose ``current_weights`` and
+    aim disagree sharply on *which* names to hold can, in principle, transiently
+    exceed ``max_names`` until the next full re-solve (a documented v1
+    limitation, not exercised when ``max_names`` is unset).
 
-    Book scope: **long-only only** in v1 (the spec is silent on market-neutral;
-    the final banding step reuses the long-only proximal projection). Benchmark-
-    relative (Spec 017) books are also out of v1's scope - the aim/myopic split
-    here works in cash-relative space only.
+    Book scope: **long-only only** in v1 (the final banding step reuses the
+    long-only proximal projection). Benchmark-relative books are also out of
+    v1's scope - the aim/myopic split here works in cash-relative space only.
     """
     myopic = optimizer.optimize(
         alphas,
@@ -272,7 +271,7 @@ def build_aim_portfolio(
                 "aim_degraded": True,
                 "fallback_reason": "cost curvature undefined (no capital/impact term, or "
                 "trade too small to pin c2) and no --trade-rate override; degraded to "
-                "016's plain cost-aware solve",
+                "the plain cost-aware solve",
                 "cost_curvature": c2,
                 "kappa_derived": kappa_derived,
                 "typical_trade_size": typical_trade,

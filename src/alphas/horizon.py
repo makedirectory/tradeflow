@@ -34,9 +34,9 @@ def fit_decay(ic_by_lag: Mapping[int, float], ci_z: float = 1.96) -> Dict[str, f
 
     Also fits the OLS standard error of the decay slope and reports the
     ``ci_z``-sigma confidence band on the half-life (``half_life_lower``,
-    ``half_life_upper``) - short histories give wide CIs on 012's own half-life, and
-    Spec 022's aim discount uses this band rather than trusting the point estimate
-    (its hidden factor 2). ``half_life_upper`` (a less-negative slope, i.e. slower
+    ``half_life_upper``) - short histories give wide CIs on the half-life, and
+    the multi-period trading policy's aim discount uses this band rather than
+    trusting the point estimate. ``half_life_upper`` (a less-negative slope, i.e. slower
     decay) is the direction that avoids prematurely discounting a genuinely
     persistent signal on a noisy short history; ``half_life_lower`` is the
     faster-decay end. Both collapse to the point estimate when the slope's SE isn't

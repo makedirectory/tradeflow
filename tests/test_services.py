@@ -188,7 +188,7 @@ def test_build_server_smoke():
     assert built is not None
 
 
-# --- CLI trial journaling (spec 026 precondition) ---------------------------
+# --- CLI trial journaling -------------------------------------------------------
 def _fake_cli_env(monkeypatch, tmp_path, symbols):
     """Point the CLI at fake data and a temp journal; return the journal path."""
     import main
@@ -365,7 +365,7 @@ def test_cli_alphas_journals_a_readonly_trial(monkeypatch, tmp_path):
     assert rec["resolved_config"]["ic"] == 0.05
 
 
-# --- trial store dual-write (spec 026) ---------------------------------------
+# --- trial store dual-write -----------------------------------------------------
 def test_cli_backtest_also_populates_the_trial_store(monkeypatch, tmp_path):
     """Every journaled trial is dual-written into the sibling trial store, so a
     campaign's n_trials can be counted from an index instead of replaying JSONL
@@ -402,7 +402,7 @@ def test_cli_backtest_also_populates_the_trial_store(monkeypatch, tmp_path):
 
 
 def test_walkforward_gate_report_is_unaffected_by_a_broken_trial_store(monkeypatch, tmp_path, capsys):
-    """v1 is passive (spec 026 §2): the store only ever observes, so a walk-forward
+    """v1 is passive: the store only ever observes, so a walk-forward
     run with a working trial store and one where the store is entirely broken must
     produce the identical printed gate report - the dual-write is one-way and can
     never feed back into a verdict."""

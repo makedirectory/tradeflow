@@ -125,7 +125,7 @@ def cmd_backtest(args) -> None:
         # One backtest is one evaluated config = one trial. Record only the tunable
         # params (config also carries timeframe/limits/lookback, which are not knobs).
         tunable = {k: strategy.config[k] for k in strategy.PARAM_RANGES if k in strategy.config}
-        # Spec 023: persist this trial's own dated return series (daily-resampled,
+        # Persist this trial's own dated return series (daily-resampled,
         # from realized trade P&L - the same construction every persisted trial
         # kind uses) so it can later join a Reality Check family panel.
         dated_equity = build_dated_equity_curve(result.trades, args.capital)
@@ -158,7 +158,9 @@ def cmd_backtest(args) -> None:
         except RuntimeError as exc:  # matplotlib (viz extra) not installed
             print(f"Chart skipped: {exc}")
 
-    _maybe_print_attribution_verdict(data_client, args.strategy, universe, args.start, args.end, args.benchmark)
+    _maybe_print_attribution_verdict(
+        data_client, args.strategy, universe, args.start, args.end, args.benchmark
+    )
 
 
 def cmd_scan(args) -> None:
@@ -341,7 +343,7 @@ def _allocate_utility(args) -> None:
     if d.get("policy") == "aim":
         pr = result.get("policy_report") or {}
         if d.get("aim_degraded"):
-            print(f"  policy 'aim': degraded to plain 016 — {d.get('fallback_reason')}")
+            print(f"  policy 'aim': degraded to the plain myopic solve — {d.get('fallback_reason')}")
         else:
             print(
                 f"  policy 'aim': κ {d['kappa']:.3f}"
@@ -369,8 +371,7 @@ def _allocate_utility(args) -> None:
             pi = f"{row['consensus_pi']:+.2%}" if row["consensus_pi"] is not None else "  —  "
             q = f"{row['view_q']:+.2%}" if row["view_q"] is not None else "  —  "
             print(
-                f"    {row['symbol']:10}pi {pi}  q {q}  mu_post {row['posterior_mu']:+.2%}  "
-                f"({row['source']})"
+                f"    {row['symbol']:10}pi {pi}  q {q}  mu_post {row['posterior_mu']:+.2%}  ({row['source']})"
             )
     print(f"\n{'SYMBOL':10}{'WEIGHT':>8}" + (f"{'DOLLARS':>14}{'SHARES':>10}" if result["holdings"] else ""))
     if result["holdings"]:
@@ -382,14 +383,15 @@ def _allocate_utility(args) -> None:
 
 
 def _print_longshort_report(report, args) -> None:
-    """Spec 018 §3.2: the same alphas/Σ/costs solved long-only vs market-neutral."""
+    """The same alphas/Σ/costs solved long-only vs market-neutral."""
     if not report["feasible"]:
         print(f"Infeasible: {report.get('note')}")
         return
     print(f"\nLong-only price report for '{args.strategy}' as of {args.as_of:%Y-%m-%d}")
     print(
         f"  IR_LS (long/short) {report['ir_long_short']:.2f}   IR_LO (long-only) {report['ir_long_only']:.2f}   "
-        f"shrinkage {report['shrinkage_measured']:.2f}  (G&K reference line ≈ {report['shrinkage_reference_gk']:.2f})"
+        f"shrinkage {report['shrinkage_measured']:.2f}  "
+        f"(reference line ≈ {report['shrinkage_reference_curve']:.2f})"
     )
     print(
         f"  transfer coefficient: long-only {report['transfer_coefficient_long_only']:.2f}   "
@@ -437,7 +439,7 @@ def cmd_optimize(args) -> None:
 
         # Each evaluated config is a distinct trial — a 50-point search is 50 trials,
         # not one. Recording them per-config is what makes a campaign-level Deflated
-        # Sharpe honest (spec 026); the search columns are the params, the rest metrics.
+        # Sharpe honest; the search columns are the params, the rest metrics.
         searchable = optimizer.space.searchable
         defaults = optimizer.space.defaults
         for row in result.results.to_dict("records"):
@@ -645,10 +647,10 @@ def _print_walkforward(result, objective: str) -> None:
 
 
 def _print_bootstrap_skill(report: Dict[str, Any]) -> None:
-    """The bootstrap-skill report (`walkforward --bootstrap-skill`, spec 023):
+    """The bootstrap-skill report (`walkforward --bootstrap-skill`):
     own p next to family p, ALWAYS together — a great own p and a terrible
     family p is exactly the selection-luck signature this test exists to catch."""
-    print("\n--- Bootstrap skill (spec 023) ---")
+    print("\n--- Bootstrap skill ---")
     if not report.get("available"):
         print(f"  {report.get('note', 'unavailable')}")
         return
@@ -747,7 +749,7 @@ def _journal_alpha(args, strategy_label: str, source: str, result: dict) -> None
 
     An alpha run is a point-in-time forecast, not a backtest — it has no Sharpe to
     deflate, so it is journaled under ``kind="alpha"`` for dedup and future IC /
-    bootstrap work (specs 009, 023), and a multiple-testing count skips this kind.
+    bootstrap work, and a multiple-testing count skips this kind.
     The window collapses to the single as-of date.
     """
     if args.no_journal:
@@ -959,8 +961,8 @@ def cmd_risk(args) -> None:
 
 
 def _print_conditional_evidence_gate(data_client, args) -> None:
-    """The MZ/QLIKE evidence gate (`risk --evaluate-conditional`, spec 024 §4 hidden
-    factor 8) — the report that decides whether conditioning is worth turning on."""
+    """The MZ/QLIKE evidence gate (`risk --evaluate-conditional`) — the report
+    that decides whether conditioning is worth turning on."""
     from datetime import timedelta
 
     from src.services.analysis import evaluate_conditional_risk
@@ -984,8 +986,10 @@ def _print_conditional_evidence_gate(data_client, args) -> None:
     for method, stats in r["pooled"].items():
         mz = stats["mincer_zarnowitz"]
         print(f"  {method:16}{stats['qlike']:>10.4f}{mz['a']:>10.6f}{mz['b']:>10.3f}{mz['r2']:>8.3f}")
-    verdict = "PASSED — a conditional method beats unconditional on QLIKE" if r["gate_passed"] else (
-        "NOT passed — unconditional wins on QLIKE; the honest call is to leave --conditional off"
+    verdict = (
+        "PASSED — a conditional method beats unconditional on QLIKE"
+        if r["gate_passed"]
+        else ("NOT passed — unconditional wins on QLIKE; the honest call is to leave --conditional off")
     )
     print(f"\n  best by pooled QLIKE: {r['best_method_pooled_qlike']}")
     print(f"  Gate: {verdict}")
@@ -1115,7 +1119,7 @@ def _print_scaling_ab(data_client, args) -> None:
 
 
 def _print_attribution_report(data_client, args) -> None:
-    """Full performance-attribution report (`info --attribution`, spec 019)."""
+    """Full performance-attribution report (`info --attribution`)."""
     from src.services.analysis import compute_attribution
 
     r = compute_attribution(
@@ -1151,7 +1155,7 @@ def _print_attribution_report(data_client, args) -> None:
 
 
 def _print_conditional_ab(data_client, args) -> None:
-    """The net-of-cost A/B (`info --conditional-ab`, spec 024 §3.2/§6)."""
+    """The net-of-cost A/B (`info --conditional-ab`)."""
     from src.services.analysis import run_conditional_risk_ab
 
     r = run_conditional_risk_ab(
@@ -1173,7 +1177,9 @@ def _print_conditional_ab(data_client, args) -> None:
         return
 
     print(f"\nConditional-risk net-of-cost A/B: '{args.strategy}' {args.start:%Y-%m-%d}..{args.end:%Y-%m-%d}")
-    print(f"  measured over {r['periods']} rebalances (horizon {r['horizon_bars']} bars, method {r['conditional_method']})")
+    print(
+        f"  measured over {r['periods']} rebalances (horizon {r['horizon_bars']} bars, method {r['conditional_method']})"
+    )
     print(f"  {'variant':14}{'net IR':>9}{'realized TE':>13}{'pred TE':>10}{'turnover':>10}")
     for name, s in r["summaries"].items():
         if s.get("periods", 0) < 2:
@@ -1183,11 +1189,11 @@ def _print_conditional_ab(data_client, args) -> None:
             f"{s['mean_predicted_te']:>10.1%}{s['mean_turnover']:>10.1%}"
         )
     print(f"  winner (net IR): {r['winner_net_ir']}")
-    print("  (net of 016's actual cost — a Σ that tracks TE better but churns the book loses here)")
+    print("  (net of the real transaction cost — a Σ that tracks TE better but churns the book loses here)")
 
 
 def _print_policy_ab(data_client, args) -> None:
-    """The net-of-cost A/B (`info --policy-ab`, spec 022 §2/§6): myopic 016 vs aim 022."""
+    """The net-of-cost A/B (`info --policy-ab`): myopic vs aim policy."""
     from src.services.analysis import run_policy_ab
 
     r = run_policy_ab(
@@ -1208,8 +1214,7 @@ def _print_policy_ab(data_client, args) -> None:
         return
 
     print(
-        f"\nMulti-period policy net-of-cost A/B: '{args.strategy}' "
-        f"{args.start:%Y-%m-%d}..{args.end:%Y-%m-%d}"
+        f"\nMulti-period policy net-of-cost A/B: '{args.strategy}' {args.start:%Y-%m-%d}..{args.end:%Y-%m-%d}"
     )
     print(f"  measured over {r['periods']} rebalances (horizon {r['horizon_bars']} bars)")
     print(f"  {'variant':10}{'net IR':>9}{'realized TE':>13}{'pred TE':>10}{'turnover':>10}")
@@ -1224,7 +1229,7 @@ def _print_policy_ab(data_client, args) -> None:
     if r.get("over_damped"):
         print("  ⚠ over-damped: aim traded less AND scored a lower net IR — not an improvement")
     print(
-        "  (net of 016's actual cost — an aim policy that tracks decay but churns less "
+        "  (net of the real transaction cost — an aim policy that tracks decay but churns less "
         "yet still loses net IR should, and does, lose here)"
     )
 
@@ -1262,7 +1267,11 @@ def _print_attribution(r, strategy: str, start, end) -> None:
     _line("specific (stock-picking)", "specific")
 
     c = r["cumulation"]
-    warn = "  ⚠ large relative to attributed terms — degrade to per-period detail" if r["cumulation_unreliable"] else ""
+    warn = (
+        "  ⚠ large relative to attributed terms — degrade to per-period detail"
+        if r["cumulation_unreliable"]
+        else ""
+    )
     print(
         f"\n  cumulative active return: {c['honest_car'] * 100:+.2f}% "
         f"(top-down parts {sum(c['linked_components'].values()) * 100:+.2f}% + "
@@ -1279,9 +1288,11 @@ def _print_attribution(r, strategy: str, start, end) -> None:
     )
 
 
-def _maybe_print_attribution_verdict(data_client, strategy: str, symbols, start, end, benchmark: str = "SPY") -> None:
+def _maybe_print_attribution_verdict(
+    data_client, strategy: str, symbols, start, end, benchmark: str = "SPY"
+) -> None:
     """A compact attribution verdict appended to backtest/walk-forward output once
-    there's enough history to trust it (spec 019 §7 lean: the verdict line belongs
+    there's enough history to trust it (the verdict line belongs
     on every backtest with >= 1 year of history, not gated behind a separate
     `info --attribution` call). Silently skipped below a year or on insufficient data."""
     if (end - start).days < 365:
@@ -1338,7 +1349,7 @@ def cmd_horizon(args) -> None:
     print(f"  decay δ {r['decay_delta']:.3f}  half-life {hl_str}  fit R² {r['decay_r_squared']:.2f}")
     print(
         f"    CI (±1.96 SE on the fit): [{_hl_str(r.get('half_life_lower'))}, "
-        f"{_hl_str(r.get('half_life_upper'))}] periods — spec 022's aim policy discounts "
+        f"{_hl_str(r.get('half_life_upper'))}] periods — the aim policy discounts "
         "using the upper bound (conservative against killing a good signal)"
     )
     print(
@@ -1355,7 +1366,7 @@ def cmd_horizon(args) -> None:
 
 
 def cmd_trials(args) -> None:
-    """Inspect the trial store (spec 026): the queryable index over the research
+    """Inspect the trial store: the queryable index over the research
     journal that lets a campaign-level Deflated Sharpe count every config you've
     ever tried, not just the ones from this process.
     """
@@ -1390,7 +1401,7 @@ def cmd_trials(args) -> None:
             )
             return
 
-        # query — defaults to the current accounting version (spec 026 §4.6);
+        # query — defaults to the current accounting version;
         # --all-accounting opts into a listing that spans versions.
         rows = store.query(
             strategy=args.strategy,
@@ -1802,7 +1813,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     def add_no_journal(p) -> None:
         # Trials are journaled so a campaign-level Deflated Sharpe can count them
-        # (spec 026). Opt out for throwaway/reproducibility runs you don't want
+        # Opt out for throwaway/reproducibility runs you don't want
         # inflating the multiple-testing total.
         p.add_argument(
             "--no-journal",
@@ -1897,7 +1908,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--gross-objective",
         dest="gross_objective",
         action="store_true",
-        help="Cost-blind solve (utility): drop 007's cost from the objective, report it ex-post only. "
+        help="Cost-blind solve (utility): drop the transaction cost from the objective, report it ex-post only. "
         "Default is cost-aware (name-specific turnover + √-impact in the objective).",
     )
     alloc.add_argument(
@@ -1913,7 +1924,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Portfolio-level benchmark w_B (utility): 'equal' over the covered universe, "
         "or a symbol,weight CSV/JSON holdings file. Moves TE/alpha-neutrality/transfer coefficient "
-        "into active space (w_a = w - w_B); omit for the cash-relative (pre-017) behavior.",
+        "into active space (w_a = w - w_B); omit for the cash-relative behavior.",
     )
     alloc.add_argument(
         "--benchmark-premium",
@@ -1927,7 +1938,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--book",
         choices=["long-only", "market-neutral"],
         default="long-only",
-        help="Spec 018 (utility): 'long-only' (default) is the pre-018 box [0,cap]/budget "
+        help="'long-only' (default) is the standard box [0,cap]/budget "
         "Σw=1 solve, unchanged. 'market-neutral' relaxes to box [-short-max-weight,cap], "
         "budget Σw=0, and REQUIRES --gross-leverage (an unconstrained long/short book on "
         "a noisy Σ is a leverage machine).",
@@ -1952,14 +1963,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Also solve long-only and market-neutral on the SAME alphas/Σ/costs and report the "
         "IR shrinkage, both transfer coefficients, and the long-only book's size exposure "
-        "(spec 018 §3.2). Uses --gross-leverage/--short-max-weight for the market-neutral leg "
+        "Uses --gross-leverage/--short-max-weight for the market-neutral leg "
         "(defaults 2.0 / 0.25 if not set).",
     )
     alloc.add_argument(
         "--conditional",
         choices=["ewma", "har"],
         default=None,
-        help="Spec 024 (utility): condition Σ's volatilities before the solve, so "
+        help="Condition Σ's volatilities before the solve, so "
         "target_te is measured against current, not trailing-average, risk. Default "
         "off — see 'risk --evaluate-conditional' before turning this on.",
     )
@@ -1974,7 +1985,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--posterior",
         choices=["bl"],
         default=None,
-        help="Spec 021 (utility): Black-Litterman-blend the alphas with 017's consensus "
+        help="Black-Litterman-blend the alphas with the consensus "
         "prior before the solve — uncovered names get a real, Σ-propagated posterior "
         "instead of being excluded. Default off until validated OOS. Requires "
         "--posterior-t-eff.",
@@ -1984,8 +1995,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="posterior_ic",
         type=float,
         default=None,
-        help="IC behind the BL view precision (utility; default: same assumed IC the "
-        "refine step used, spec 021)",
+        help="IC behind the BL view precision (utility; default: same assumed IC the refine step used)",
     )
     alloc.add_argument(
         "--posterior-t-eff",
@@ -1993,7 +2003,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help="Effective independent observations behind the BL view (utility; pins "
-        "tau=1/T_eff, spec 021 §3.1 — required with --posterior bl; see 'info' "
+        "tau=1/T_eff — required with --posterior bl; see 'info' "
         "--> effective_t for a measured value)",
     )
     alloc.add_argument(
@@ -2001,16 +2011,16 @@ def build_parser() -> argparse.ArgumentParser:
         dest="posterior_tau",
         type=float,
         default=None,
-        help="Override the pinned BL tau=1/T_eff (utility; spec 021 §3.1 sensitivity knob)",
+        help="Override the pinned BL tau=1/T_eff (utility; sensitivity knob)",
     )
     alloc.add_argument(
         "--policy",
         choices=["aim"],
         default=None,
-        help="Spec 022 (utility): 'aim' replaces the myopic jump-to-target with "
+        help="'aim' replaces the myopic jump-to-target with "
         "Gârleanu-Pedersen partial adjustment - alpha discounted by κ/(κ+φ) (φ from "
         "the strategy's own measured decay), aim solved cost-free, traded κ of the "
-        "gap each rebalance, banded by 016's own no-trade band. Default off until "
+        "gap each rebalance, banded by the optimizer's own no-trade band. Default off until "
         "validated OOS net of cost — see 'info --policy-ab'. Long-only only; "
         "incompatible with --book market-neutral or --benchmark-holdings.",
     )
@@ -2019,7 +2029,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="trade_rate",
         type=float,
         default=None,
-        help="Override the derived κ (utility; spec 022, only with --policy aim)",
+        help="Override the derived κ (utility; only with --policy aim)",
     )
     alloc.set_defaults(func=cmd_allocate)
 
@@ -2079,9 +2089,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--bootstrap-skill",
         dest="bootstrap_skill",
         action="store_true",
-        help="Spec 023: nonparametric skill check — this config's own zero-alpha "
+        help="Nonparametric skill check — this config's own zero-alpha "
         "stationary bootstrap p, next to the FAMILY p from White's Reality Check "
-        "over every OOS return series the 026 trial store has recorded for this "
+        "over every OOS return series the trial store has recorded for this "
         "(strategy, universe, accounting). Advisory only (not a promotion gate).",
     )
     wf.add_argument(
@@ -2191,7 +2201,7 @@ def build_parser() -> argparse.ArgumentParser:
     info.add_argument(
         "--attribution",
         action="store_true",
-        help="Performance attribution (spec 019): split realized active return into "
+        help="Performance attribution: split realized active return into "
         "systematic timing, risk factors, signals, and stock-picking, with per-row "
         "t-stats and the skill-vs-luck verdict, instead of the IC/breadth report",
     )
@@ -2202,13 +2212,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Extra strategies to attribute as additional signal columns "
         "(comma-separated; the strategy's own alpha is always included) — "
-        "compare a 013 --combine weight against its realized counterpart",
+        "compare a --combine weight against its realized counterpart",
     )
     info.add_argument(
         "--conditional",
         choices=["ewma", "har"],
         default=None,
-        help="Spec 024: with --attribution, condition the per-period Σ(t) and add a "
+        help="With --attribution, condition the per-period Σ(t) and add a "
         "predicted-vs-realized TE by regime table; with --conditional-ab, the "
         "conditional method the A/B compares against unconditional (default ewma).",
     )
@@ -2223,7 +2233,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--conditional-ab",
         dest="conditional_ab",
         action="store_true",
-        help="Research mode (spec 024 §3.2/§6): net-of-cost A/B — walk-forward the SAME "
+        help="Research mode: net-of-cost A/B — walk-forward the SAME "
         "alpha book against a conditional vs unconditional Σ, carrying weights forward, "
         "and compare realized net IR (not just TE-tracking).",
     )
@@ -2231,7 +2241,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--bootstrap-skill",
         dest="bootstrap_skill",
         action="store_true",
-        help="Spec 023: with --attribution, add a nonparametric OWN p-value (stationary "
+        help="With --attribution, add a nonparametric OWN p-value (stationary "
         "block bootstrap of the active-return series under the imposed null) next to "
         "the parametric SE{IR}≈1/√Y verdict",
     )
@@ -2239,8 +2249,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--policy-ab",
         dest="policy_ab",
         action="store_true",
-        help="Research mode (spec 022 §2/§6): net-of-cost A/B — walk-forward the myopic "
-        "016 policy vs the aim (022) policy on the SAME alpha book, carrying weights "
+        help="Research mode: net-of-cost A/B — walk-forward the myopic "
+        "policy vs the aim policy on the SAME alpha book, carrying weights "
         "forward, and compare realized net IR and turnover (the promotion gate).",
     )
     info.add_argument(
@@ -2248,7 +2258,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="trade_rate",
         type=float,
         default=None,
-        help="Override the derived κ (spec 022; only used with --policy-ab)",
+        help="Override the derived κ (only used with --policy-ab)",
     )
     _add_neutralize_factors_flag(info, note="; measure the alpha you deploy")
     info.set_defaults(func=cmd_info)
@@ -2292,9 +2302,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--conditional",
         choices=["ewma", "har"],
         default=None,
-        help="Spec 024: condition Σ's volatilities (EWMA or HAR-lite), holding the "
+        help="Condition Σ's volatilities (EWMA or HAR-lite), holding the "
         "correlation structure fixed (Σ_t = D_t·R·D_t). Default off — see "
-        "'--evaluate-conditional' and specs/complete/024-conditional-risk.md's "
+        "'--evaluate-conditional' before turning this on; the evidence gate's "
         "as-built notes for the evidence-gate finding that decided the default.",
     )
     risk.add_argument(
@@ -2319,7 +2329,7 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--db", default=None, help="Trial store DB path (default: logs/trials.db)")
 
     trials = subparsers.add_parser(
-        "trials", help="Inspect the trial store — the queryable index over the research journal (spec 026)"
+        "trials", help="Inspect the trial store — the queryable index over the research journal"
     )
     trials_sub = trials.add_subparsers(dest="trials_command", required=True)
 

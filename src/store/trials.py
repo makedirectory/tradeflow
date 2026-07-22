@@ -1,4 +1,4 @@
-"""The trial store (spec 026): a queryable SQLite index over the research journal.
+"""The trial store: a queryable SQLite index over the research journal.
 
 The journal (``logs/research_journal.jsonl``) is the source of truth - append-only,
 human-readable. This module builds a derived, disposable index over it so a campaign
@@ -19,10 +19,10 @@ nothing. Two record shapes live in the journal and this module must parse both:
   per-session state as it walks the journal in order.
 
 v1 is passive: this module only records and answers queries. Nothing here changes
-a gate verdict (see spec 026 §3.5 - wiring campaign counts into the DSR is a
-deliberately separate, evidence-backed decision for later).
+a gate verdict - wiring campaign counts into the DSR is a
+deliberately separate, evidence-backed decision for later.
 
-**Return-series retention (spec 023).** v1 denormalized only summary floats
+**Return-series retention.** v1 denormalized only summary floats
 (``oos_sharpe``, ``deflated_sharpe``, ...) onto each row - enough for the DSR, not
 enough for White's Reality Check, which needs every trial's actual OOS return
 *series* to jointly resample. The ``trial_returns`` companion table
@@ -49,10 +49,10 @@ DEFAULT_JOURNAL_PATH = Path("logs") / "research_journal.jsonl"
 
 #: Bump when the schema changes shape. On mismatch the store rebuilds from the
 #: journal rather than running migration code - the journal is the source of truth,
-#: which is exactly what makes that cheap (spec 026 §4.5).
-#: v2 (spec 023): adds the ``trial_returns`` companion table - per-trial OOS
-#: return-series retention, the precondition Reality Check needs (spec 023 §4
-#: hidden factor 1: the trial store must contain the failures, not just summary
+#: which is exactly what makes that cheap.
+#: v2 adds the ``trial_returns`` companion table - per-trial OOS
+#: return-series retention, the precondition Reality Check needs (the trial store
+#: must contain the failures, not just summary
 #: floats). Trials recorded before v2 simply have no stored series (an honest
 #: "not used" in any family panel, not a fabricated one) - rebuilding replays the
 #: journal, and only journal lines written after this shipped carry a series.
@@ -95,11 +95,11 @@ CREATE TABLE IF NOT EXISTS trial_returns (
 """
 
 #: Trials excluded from a campaign's multiple-testing count: a forecast has no
-#: Sharpe to deflate (spec 026 §4.7).
+#: Sharpe to deflate.
 _EXCLUDED_FROM_FAMILY_COUNT = ("alpha",)
 #: Kinds whose row carries an internal trial count to SUM rather than 1 to COUNT -
 #: a walk-forward validates many inner configs per row, as does a research round
-#: that let the optimizer search internally (spec 026 §4.7).
+#: that let the optimizer search internally.
 _SUMMED_KINDS = ("walkforward", "research")
 
 
@@ -125,8 +125,7 @@ def universe_hash(symbols: Iterable[Any]) -> str:
 def params_hash(params: Optional[Dict[str, Any]]) -> str:
     """A hash stable across key order and int/float spelling of the same value.
 
-    ``{"a": 1}`` and ``{"a": 1.0}`` must hash alike or dedup silently fragments
-    (spec 026 §4.4).
+    ``{"a": 1}`` and ``{"a": 1.0}`` must hash alike or dedup silently fragments.
     """
     canon = _canon_value(dict(params or {}))
     blob = json.dumps(canon, sort_keys=True, separators=(",", ":"))
@@ -263,7 +262,7 @@ class TrialStore:
 
         Keyed on ``id`` - the journal's ``run_id`` - so recording the same trial
         twice (a live write, then a later rebuild replaying it) is a no-op, not a
-        duplicate (spec 026 §3.3).
+        duplicate.
         """
         row = {
             "id": id,
@@ -300,7 +299,7 @@ class TrialStore:
 
     def record_returns(self, trial_id: str, dates: List[Any], values: List[Any]) -> None:
         """Persist one trial's OOS return series - the per-trial input Reality
-        Check (spec 023) needs from the *whole* family, not just the survivors.
+        Check needs from the *whole* family, not just the survivors.
 
         A companion table, not a column on ``trials``: the hot family/dedup/gate
         queries (``family_count``, ``seen``, ``query``) scan the small ``trials``
@@ -328,11 +327,11 @@ class TrialStore:
     ) -> Dict[str, Any]:
         """The T x K joint panel of stored OOS return series for a trial family,
         on a common (inner-joined) calendar - the input White's Reality Check
-        (spec 023) needs.
+        needs.
 
         Trials with no stored return series, or whose overlap with the reference
-        calendar is too small, are excluded and *counted*, never silently dropped
-        (spec 023 §4 hidden factors 1/2). The reference calendar is the longest
+        calendar is too small, are excluded and *counted*, never silently dropped.
+        The reference calendar is the longest
         stored series (most inclusive), never the shortest - so the family can
         never "improve" by conveniently losing an inconvenient trial's dates.
         Returns a plain-list ``matrix`` (``T`` rows of ``K`` floats, no numpy
@@ -449,7 +448,7 @@ class TrialStore:
             ctx = session_ctx.setdefault(sid, {"last_cumulative": 0}) if sid else {"last_cumulative": 0}
             if "strategy" not in ctx:
                 # No (or not-yet-seen) research:session_start for this session_id -
-                # a truncated/corrupted/out-of-order journal (spec 026 §4.1/§4.2).
+                # a truncated/corrupted/out-of-order journal.
                 # The row still gets recorded (never silently drop a trial), but
                 # with strategy=None it would otherwise vanish from every
                 # family_count()/query(strategy=...) with no trace - loud beats
@@ -468,7 +467,9 @@ class TrialStore:
             return False
         self.record(**kwargs)
         if returns_payload:
-            self.record_returns(kwargs["id"], returns_payload.get("dates") or [], returns_payload.get("values") or [])
+            self.record_returns(
+                kwargs["id"], returns_payload.get("dates") or [], returns_payload.get("values") or []
+            )
         return True
 
     # ------------------------------------------------------------------ #
@@ -551,7 +552,7 @@ class TrialStore:
 
         Defaults to the current engine's ``ACCOUNTING_VERSION`` - a listing that
         silently pools rows from different accounting versions invites comparing
-        incommensurable numbers (spec 026 §4.6). Pass ``all_accounting=True`` to
+        incommensurable numbers. Pass ``all_accounting=True`` to
         see every version, or ``accounting=N`` for one specific other version.
         """
         if accounting is None and not all_accounting:
@@ -600,8 +601,8 @@ class TrialStore:
         n_rows = self._conn.execute("SELECT COUNT(*) FROM trials").fetchone()[0]
         # A row with no strategy is a trial that's invisible to every family_count()/
         # query(strategy=...) - a research:trial replayed with no matching
-        # session_start (truncated/corrupted/out-of-order journal, spec 026
-        # §4.1/§4.2). Row count vs line count alone can't see this (the row still
+        # session_start (truncated/corrupted/out-of-order journal).
+        # Row count vs line count alone can't see this (the row still
         # exists), so it needs its own check.
         n_orphaned = self._conn.execute("SELECT COUNT(*) FROM trials WHERE strategy IS NULL").fetchone()[0]
         schema_version = self._get_meta("schema_version")

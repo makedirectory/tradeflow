@@ -1,6 +1,6 @@
-"""Tests for bootstrap skill inference (spec 023).
+"""Tests for bootstrap skill inference.
 
-Offline and deterministic. Works through the spec's own §6 checklist in order:
+Offline and deterministic. Works through the checklist in order:
 calibration (own-p and family-p both ~Uniform(0,1) under a zero-skill correlated
 world, with the parametric PSR's miscalibration under the same fat tails
 demonstrated alongside), power, the selection-luck reproduction (K=200 null
@@ -25,11 +25,11 @@ from src.analytics.metrics import probabilistic_sharpe_ratio
 
 def _ks_uniform_ok(samples, alpha=0.01):
     """One-sample KS test against Uniform(0,1), hand-rolled (no scipy dependency
-    in the base install, per spec 001 §2's own lean). Returns whether the
+    in the base install). Returns whether the
     two-sided KS statistic clears the asymptotic critical value
     ``c(alpha)/sqrt(n)`` with ``c(alpha) = sqrt(-0.5*ln(alpha/2))`` - i.e. "not
     distinguishable from Uniform(0,1) at this level," which is exactly the
-    calibration property under test (§6's own framing: a well-calibrated p-value
+    calibration property under test (a well-calibrated p-value
     is Uniform(0,1) under the null)."""
     x = np.sort(np.asarray(samples, dtype=float))
     n = len(x)
@@ -137,7 +137,7 @@ def test_parametric_psr_miscalibrated_under_fat_tails_the_motivating_gap():
     boot = bootstrap_null(returns, B=1000, seed=0, periods_per_year=252)
     # Both are legitimate readings of the same zero-skill series; the point is
     # that they need not agree - the bootstrap's own-p carries no distributional
-    # assumption, so it is the one this spec trusts for exactly this world.
+    # assumption, so it is the one trusted for exactly this world.
     assert 0.0 <= psr <= 1.0
     assert 0.0 <= boot["p_value"] <= 1.0
 

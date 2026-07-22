@@ -113,13 +113,13 @@ class ParametricCostModel(CostModel):
 
 def cost_curvature(k_imp: float, typical_trade: float) -> Optional[float]:
     """Local quadratic curvature ``c2 = d2cost/dDeltaw2`` of the √-impact term at a
-    representative trade size (Spec 022 §3.2): ``cost(Δw) = k·|Δw|^{3/2}`` (impact
+    representative trade size: ``cost(Δw) = k·|Δw|^{3/2}`` (impact
     only - the linear term is a kink, not curvature, at any Δw != 0), so
-    ``d2/dΔw2 = (3/4)·k·|Δw|^{-1/2}``. This is the curvature Gårleanu-Pedersen's
-    quadratic-cost closed form needs to derive the trading rate κ
+    ``d2/dΔw2 = (3/4)·k·|Δw|^{-1/2}``. This is the curvature a quadratic-cost
+    closed form needs to derive the trading rate κ
     (:func:`src.portfolio.policy.derive_kappa`); our cost is linear+3/2-power, so
-    this is a *calibrated-at-realistic-size* approximation, not exact (spec 022
-    hidden factor 4) - validated empirically by the net-of-cost A/B, not asserted.
+    this is a *calibrated-at-realistic-size* approximation, not exact -
+    validated empirically by the net-of-cost A/B, not asserted.
 
     Returns ``None`` (curvature undefined) when there is no impact term
     (``k_imp <= 0``, e.g. no capital/ADV so the solve is linear-only) or the trade

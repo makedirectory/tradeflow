@@ -1,40 +1,40 @@
-"""Conditional risk: a Σ that knows what month it is (spec 024).
+"""Conditional risk: a Σ that knows what month it is.
 
-006's Σ is **unconditional over its trailing window** — a flat, equal-weighted
-average since the start of the estimation window. The fix here is old and cheap:
-**condition the volatilities, keep the correlation structure slow.**
+The base risk model's Σ is **unconditional over its trailing window** — a flat,
+equal-weighted average since the start of the estimation window. The fix here is
+old and cheap: **condition the volatilities, keep the correlation structure slow.**
 
     Σ_t = D_t · R · D_t
 
-``R`` is 006's own (shrunk/factor) correlation structure on the long window; ``D_t``
-is a diagonal of *conditional* per-name variances from an EWMA (RiskMetrics
-λ≈0.94 daily / 0.97 weekly) or HAR-lite forecast. This is **not** a multivariate
-GARCH — correlations stay slow on purpose (conditioning them buys little at this
-horizon and costs stability, spec §2 non-goals).
+``R`` is the base model's own (shrunk/factor) correlation structure on the long
+window; ``D_t`` is a diagonal of *conditional* per-name variances from an EWMA
+(RiskMetrics λ≈0.94 daily / 0.97 weekly) or HAR-lite forecast. This is **not** a
+multivariate GARCH — correlations stay slow on purpose (conditioning them buys
+little at this horizon and costs stability).
 
-Two backends compose with 006's two estimators:
+Two backends compose with the base model's two estimators:
 
 - **Shrinkage/sample** (:class:`~src.risk.base.RiskMatrix`): condition the diagonal,
   keep the LW-shrunk (or raw) correlation matrix fixed — :func:`condition_risk_matrix`.
 - **Factor** (:class:`~src.risk.factor.FactorRiskMatrix`): condition *both*
   ``factor_cov`` (via an EWMA covariance on factor returns — small, ``K×K``, PSD by
   construction) and ``specific_var`` (via the same per-name EWMA/HAR family used by
-  the shrinkage path) — never one without the other (hidden factor 5: a partial
-  conditioning mis-splits the factor/specific attribution).
+  the shrinkage path) — never one without the other (a partial conditioning would
+  mis-split the factor/specific attribution).
 
 Everything here is an **as-of forward pass**: state at bar ``t`` is seeded from the
-first ``min_obs`` rows of the panel handed in (the 006 window) and then updated row
-by row through the rest of the panel — so the result depends only on rows at or
-before the panel's last timestamp, never on what comes after (hidden factor 6;
-verified by a property test in ``tests/test_conditional_risk.py``, not just a code
+first ``min_obs`` rows of the panel handed in (the base model's window) and then
+updated row by row through the rest of the panel — so the result depends only on
+rows at or before the panel's last timestamp, never on what comes after (verified
+by a property test in ``tests/test_conditional_risk.py``, not just a code
 review). This mirrors the streaming accumulator shape of :mod:`src.risk.streaming`
-(015) — a small O(N) / O(K²) state updated one row at a time — though, like
+— a small O(N) / O(K²) state updated one row at a time — though, like
 Ledoit–Wolf itself, the estimator here runs eagerly over a materialized panel; wiring
 it to stream out of the Parquet store is future work, not done here.
 
-**The alpha/risk vol seam (hidden factor 3).** :func:`src.data.features.add_risk_features`
+**The alpha/risk vol seam.** :func:`src.data.features.add_risk_features`
 computes a *different*, deliberately unconditional ``residual_vol`` that scales alphas
-(``α = ω·IC·z``, Case 1) and 020's Case logic — that vol must stay slow. Only the
+(``α = ω·IC·z``, Case 1) and the refinement's Case logic — that vol must stay slow. Only the
 *risk*-model Σ used for portfolio construction / tracking-error conditions here. Do
 not let the two merge into one "vol" concept.
 """
@@ -48,8 +48,8 @@ import pandas as pd
 from src.risk.base import RiskMatrix
 from src.risk.factor import FactorRiskMatrix
 
-#: RiskMetrics defaults, by cadence (spec §3.1). Global, not per-name (§7 lean —
-#: cross-sectional λ fitting overfits small histories).
+#: RiskMetrics defaults, by cadence. Global, not per-name (cross-sectional λ
+#: fitting overfits small histories).
 EWMA_LAMBDA_DAILY = 0.94
 EWMA_LAMBDA_WEEKLY = 0.97
 
@@ -72,7 +72,7 @@ def ewma_variance_series(x: np.ndarray, lambda_: float, min_obs: int) -> np.ndar
     as-of property.
 
     Seeded from the raw (mean-zero-assumed) population variance of the first
-    ``min_obs`` rows (006's own window), then folded forward one row at a time via
+    ``min_obs`` rows (the base model's own window), then folded forward one row at a time via
     the RiskMetrics recursion ``var_t = λ·var_{t-1} + (1-λ)·r_t²``. With ``λ = 1``
     the recursion never updates past the seed, so ``D_t`` stays exactly the seed
     window's variance no matter how much more data follows — the reduction test.
@@ -111,7 +111,7 @@ def ewma_variance_path(returns: pd.DataFrame, lambda_: float, min_obs: int) -> O
 def ewma_covariance_path(returns: pd.DataFrame, lambda_: float, min_obs: int) -> Optional[np.ndarray]:
     """Final ``K×K`` EWMA covariance (per-bar) as of ``returns``' last row — the
     small-matrix analogue of :func:`ewma_variance_path`, used to condition a factor
-    model's ``factor_cov`` (hidden factor 5: PSD by construction, a convex
+    model's ``factor_cov`` (PSD by construction, a convex
     combination of PSD matrices, never eigenvalue surgery). Raw (not demeaned)
     returns, same convention as :func:`ewma_variance_path`.
     """
@@ -130,8 +130,8 @@ def ewma_covariance_path(returns: pd.DataFrame, lambda_: float, min_obs: int) ->
 def har_variance_forecast(returns: pd.Series, min_obs: int = 60) -> Optional[float]:
     """HAR-lite one-step-ahead variance forecast (Corsi's Heterogeneous Autoregressive
     model, daily/weekly(5)/monthly(22) realized-variance regressors) — the
-    term-structure-aware alternative to the EWMA's flat term structure (hidden
-    factor 4). OLS-fit on the trailing window handed in, forecasting the *next* bar's
+    term-structure-aware alternative to the EWMA's flat term structure.
+    OLS-fit on the trailing window handed in, forecasting the *next* bar's
     ``r²`` from the current (day, week, month) realized-variance triple. ``None``
     below ``min_obs`` usable rows.
     """
@@ -175,9 +175,11 @@ def _forecast_variance(panel: pd.DataFrame, method: str, min_obs: int, lambda_: 
 # --------------------------------------------------------------------------- #
 # Σ_t = D_t R D_t assembly
 # --------------------------------------------------------------------------- #
-def _assemble_d_r_d(sigma: np.ndarray, unconditional_var: np.ndarray, conditional_var: np.ndarray) -> np.ndarray:
+def _assemble_d_r_d(
+    sigma: np.ndarray, unconditional_var: np.ndarray, conditional_var: np.ndarray
+) -> np.ndarray:
     """Rescale ``sigma`` to carry ``conditional_var`` on the diagonal, holding its
-    implied correlation fixed. ``D R D`` with ``R`` PSD is PSD (hidden factor 5) —
+    implied correlation fixed. ``D R D`` with ``R`` PSD is PSD —
     a diagonal congruence transform preserves the sign of every eigenvalue.
     Zero-variance (dead-flat) names get zero correlation with everything else
     rather than a NaN — the same "independent" treatment the ragged-panel fallback
@@ -193,9 +195,13 @@ def _assemble_d_r_d(sigma: np.ndarray, unconditional_var: np.ndarray, conditiona
 
 
 def _sigma_regime(
-    symbols: List[str], unconditional_var: np.ndarray, conditional_var: np.ndarray, method: str, lambda_: float
+    symbols: List[str],
+    unconditional_var: np.ndarray,
+    conditional_var: np.ndarray,
+    method: str,
+    lambda_: float,
 ) -> Dict[str, Any]:
-    """The §5 diagnostic: current D_t vs the unconditional diagonal, as a ratio."""
+    """The reported diagnostic: current D_t vs the unconditional diagonal, as a ratio."""
     ratio = np.ones_like(conditional_var)
     positive = unconditional_var > 0
     ratio[positive] = conditional_var[positive] / unconditional_var[positive]
@@ -226,7 +232,7 @@ def condition_risk_matrix(
     reassembles ``X F_t Xᵀ + Δ_t`` (factor); it never re-estimates the correlation
     structure or the exposures. Dispatches on ``matrix``'s type: a
     :class:`~src.risk.factor.FactorRiskMatrix` conditions ``factor_cov``/``specific_var``
-    coherently (hidden factor 5); any other :class:`RiskMatrix` conditions the plain
+    coherently; any other :class:`RiskMatrix` conditions the plain
     diagonal, keeping the correlation matrix fixed (``Σ_t = D_t R D_t``).
     """
     if not method:
@@ -303,7 +309,7 @@ def _condition_factor(
     sigma_t = x @ factor_cov_t @ x.T + np.diag(conditional_specific)
 
     diag = _sigma_regime(names, unconditional_specific, conditional_specific, method, lam)
-    diag["factor_cov_conditioning"] = "ewma"  # F_t always conditions via EWMA (hidden factor 5's "same family")
+    diag["factor_cov_conditioning"] = "ewma"  # F_t always conditions via EWMA ("same family" as specific_var)
 
     return FactorRiskMatrix(
         symbols=names,
@@ -318,7 +324,7 @@ def _condition_factor(
 
 
 # --------------------------------------------------------------------------- #
-# Evidence gate: Mincer–Zarnowitz and QLIKE (spec §4 hidden factor 8, §6)
+# Evidence gate: Mincer-Zarnowitz and QLIKE
 # --------------------------------------------------------------------------- #
 def mincer_zarnowitz(realized_var: np.ndarray, forecast_var: np.ndarray) -> Dict[str, float]:
     """OLS of ``realized_var = a + b*forecast_var``. A well-calibrated forecast has
@@ -355,9 +361,9 @@ def qlike_loss(realized_var: np.ndarray, forecast_var: np.ndarray) -> float:
 
 @dataclass
 class VolForecastEvaluation:
-    """Per-method forecast-quality evaluation (spec §6): MZ + QLIKE, pooled and by
+    """Per-method forecast-quality evaluation: MZ + QLIKE, pooled and by
     ex-post realized-vol tercile — the gate that decides whether conditioning is
-    adopted (§4 hidden factor 8), never a preference. ``realized``/``forecasts``
+    adopted, never a preference. ``realized``/``forecasts``
     are the raw per-point arrays (one entry per sampled rebalance), kept so a
     caller can pool several names' points into one cross-sectional evaluation
     (:func:`src.services.analysis.evaluate_conditional_risk`)."""
@@ -378,7 +384,7 @@ def evaluate_vol_forecasts(
     """Walk one name's return series forward, comparing EWMA / HAR / unconditional
     (expanding trailing) one-bar-ahead variance forecasts against the realized
     ``r_{t+1}²`` — Mincer–Zarnowitz and QLIKE, pooled and split by the realized-vol
-    tercile the forecast landed in (ex-post labels only, §3.3 — never fed back into
+    tercile the forecast landed in (ex-post labels only — never fed back into
     the model). All forecasts at ``t`` use only ``returns[:t+1]``.
     """
     x = returns.to_numpy(dtype=float)
@@ -437,7 +443,7 @@ def _tercile_labels(values: np.ndarray) -> np.ndarray:
 
 
 # --------------------------------------------------------------------------- #
-# Churn guard: risk-driven vs alpha-driven turnover (hidden factor 2)
+# Churn guard: risk-driven vs alpha-driven turnover
 # --------------------------------------------------------------------------- #
 def turnover_risk_share(
     optimizer,
@@ -447,7 +453,7 @@ def turnover_risk_share(
     matrix_prev: RiskMatrix,
     **optimize_kwargs,
 ) -> Dict[str, float]:
-    """Decompose realized turnover into alpha-driven vs Σ-driven (hidden factor 2):
+    """Decompose realized turnover into alpha-driven vs Σ-driven:
     rerun the same solve with ``matrix_prev`` (Σ frozen at the prior rebalance) in
     place of ``matrix_t`` (today's conditioned Σ), holding alphas/cost/current_weights
     fixed. The gap between the two turnovers is turnover the frozen-Σ solve would NOT

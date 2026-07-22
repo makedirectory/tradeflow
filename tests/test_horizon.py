@@ -34,7 +34,7 @@ def test_fit_decay_handles_degenerate_profile():
     assert fit_decay({0: 0.05})["delta"] != fit_decay({0: 0.05})["delta"]  # NaN (too few points)
 
 
-# --- decay confidence interval (spec 022 hidden factor 2) --------------------
+# --- decay confidence interval ------------------------------------------------
 def test_fit_decay_ci_brackets_the_point_estimate():
     ic0, delta = 0.08, 0.85
     profile = {n: ic0 * delta**n for n in range(0, 10)}

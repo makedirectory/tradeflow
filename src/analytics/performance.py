@@ -229,7 +229,7 @@ def build_dated_equity_curve(trades_df: pd.DataFrame, initial_capital: float) ->
     """Like :func:`build_equity_curve`, but keeps the ``DatetimeIndex``.
 
     ``build_equity_curve`` returns a plain ``List[float]`` because nothing on its
-    existing call paths ever needed the dates back. Spec 023's per-trial OOS
+    existing call paths ever needed the dates back. The per-trial OOS
     return series does: the Reality Check inner-joins trials on a common calendar
     (`src.store.trials.TrialStore.returns_panel`), which needs real dates, not
     just an ordered sequence.

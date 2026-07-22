@@ -186,7 +186,7 @@ def test_one_bad_symbol_still_completes_the_run():
 
 
 # --------------------------------------------------------------------------- #
-# Portfolio accounting (spec 025)
+# Portfolio accounting
 # --------------------------------------------------------------------------- #
 def _multi(frames: Dict[str, pd.DataFrame], per_bar_signals: List[str], capital=100_000):
     strategy = ScriptedStrategy(per_bar_signals)
@@ -204,7 +204,7 @@ _ROUND_TRIP = [
 
 
 def test_metrics_do_not_scale_with_universe_size():
-    """The bug that motivated spec 025: N copies of a symbol must not multiply returns.
+    """The bug that motivated portfolio-level accounting: N copies of a symbol must not multiply returns.
 
     With max_positions=1 the book can only ever hold one of the duplicates, so a
     universe of N identical names must produce exactly the single-name result.

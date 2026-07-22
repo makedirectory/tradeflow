@@ -116,7 +116,7 @@ def test_min_weight_must_not_exceed_max_weight():
         MeanVarianceOptimizer(max_weight=0.2, min_weight=0.3)
 
 
-# --- capacity (009) ----------------------------------------------------------
+# --- capacity ------------------------------------------------------------------
 def test_capacity_is_liquidity_sensitive():
     from src.services.analysis import _capacity
     from tests.fakes import make_ohlcv
@@ -148,13 +148,13 @@ def test_construct_portfolio_independent_of_post_as_of_bars():
     assert a["diagnostics"] == b["diagnostics"]
 
 
-# --- benchmark-relative construction (spec 017) ------------------------------
+# --- benchmark-relative construction --------------------------------------------
 W_B = {"A": 0.4, "B": 0.3, "C": 0.2, "D": 0.1}
 
 
 def test_reduction_no_benchmark_matches_todays_behavior():
     """Without benchmark_weights every quantity is byte-identical to the
-    pre-017 cash-relative solve - the 016-pattern reduction."""
+    plain cash-relative solve - the same reduction pattern."""
     plain = MeanVarianceOptimizer(max_weight=1.0).optimize(_alphas(), _risk(), risk_aversion=2.0)
     zero_bench = MeanVarianceOptimizer(max_weight=1.0).optimize(
         _alphas(), _risk(), risk_aversion=2.0, benchmark_weights={s: 0.0 for s in SYMS}
@@ -165,7 +165,7 @@ def test_reduction_no_benchmark_matches_todays_behavior():
 
 
 def test_round_trip_implied_returns_recovers_the_benchmark():
-    """optimize(implied_returns(w_B, Σ, μ_B), Σ, w_B) -> w = w_B (spec 017 §6)."""
+    """optimize(implied_returns(w_B, Σ, μ_B), Σ, w_B) -> w = w_B."""
     from src.portfolio.benchmark import implied_returns
 
     mu = implied_returns(W_B, _risk(), mu_b=0.05)
@@ -221,7 +221,7 @@ def test_neutralization_alpha_dot_wb_is_zero_and_unconstrained_beta_vanishes():
 
 def test_te_truth_and_the_beta_residual_split():
     """Reported ψ equals √(w_aᵀΣw_a) recomputed independently; β_a²σ_B² + ω² sums
-    exactly to ψ² (spec 017 §6 "TE truth")."""
+    exactly to ψ² (the "TE truth" property)."""
     result = MeanVarianceOptimizer(max_weight=0.5).optimize(
         _alphas(), _risk(), target_te=0.05, benchmark_weights=W_B
     )
@@ -238,7 +238,7 @@ def test_te_truth_and_the_beta_residual_split():
 
 def test_underweight_bound_pins_active_weight_to_minus_benchmark():
     """A strongly negative alpha on a small-w_B name pins w = 0, hence
-    w_a = -w_B (the constraint spec 018 will relax) - spec 017 §6."""
+    w_a = -w_B (the constraint a market-neutral book relaxes)."""
     hostile = ALPHA.copy()
     hostile[3] = -1.0  # symbol D, w_B=0.1: make it maximally unattractive
     result = MeanVarianceOptimizer(max_weight=0.5).optimize(
@@ -260,10 +260,10 @@ def test_self_benchmark_degeneracy_warns():
     assert elsewhere.diagnostics["self_benchmark_warning"] is False
 
 
-# --- construct_portfolio integration (spec 017) -------------------------------
+# --- construct_portfolio integration ---------------------------------------------
 def test_construct_portfolio_reduction_without_benchmark_holdings():
-    """No benchmark_holdings -> byte-identical to pre-017 (the 016-pattern
-    reduction, at the service layer)."""
+    """No benchmark_holdings -> byte-identical to the cash-relative solve (the
+    same reduction pattern, at the service layer)."""
     symbols = [f"S{i}" for i in range(8)]
     bars = {s: make_ohlcv(n=400, seed=i, freq="1D") for i, s in enumerate([*symbols, "SPY"])}
     as_of = bars["S0"].index[-1].to_pydatetime()
@@ -290,7 +290,7 @@ def test_construct_portfolio_equal_benchmark_is_fully_covered():
     assert result["diagnostics"]["has_benchmark"] is True
     assert set(bp["consensus_returns"]) == set(symbols)
 
-    # Value-added identity (SR_P² ≈ SR_B² + IR², §2 goal 4) is reported and self-consistent.
+    # Value-added identity (SR_P² ≈ SR_B² + IR²) is reported and self-consistent.
     vai = bp["value_added_identity"]
     assert vai["sr_portfolio_predicted"] == pytest.approx((vai["sr_benchmark"] ** 2 + vai["ir"] ** 2) ** 0.5)
 
@@ -313,7 +313,7 @@ def test_construct_portfolio_file_benchmark_reports_partial_coverage(tmp_path):
     assert "NOT_IN_UNIVERSE" not in bp["consensus_returns"]
 
 
-# --- CLI (spec 017) ------------------------------------------------------------
+# --- CLI --------------------------------------------------------------------------
 def test_cli_allocate_utility_with_benchmark_holdings(monkeypatch, tmp_path, capsys):
     import main
 

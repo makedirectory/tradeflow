@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_AUDIT_PATH = Path("logs") / "mcp_audit.jsonl"
 
 #: The shared research/trial journal: the append-only source of truth a trial store
-#: (spec 026) indexes so multiple-testing counts can span a campaign, not one run.
+#: indexes so multiple-testing counts can span a campaign, not one run.
 #: The research agent and CLI ``backtest``/``optimize`` all append here, so they must
 #: name the *same* file — see :data:`src.research.agent.DEFAULT_JOURNAL`.
 DEFAULT_TRIAL_JOURNAL = Path("logs") / "research_journal.jsonl"
@@ -110,7 +110,7 @@ def journal_trial(
     ``extra`` carries record-level fields the flat ``(params, metrics)`` shape does
     not, such as a walk-forward's internal ``n_trials`` or a promotion verdict.
 
-    ``returns`` (spec 023, optional) is this trial's own dated per-period OOS
+    ``returns`` (optional) is this trial's own dated per-period OOS
     return series (a ``pandas.Series`` with a ``DatetimeIndex``) — when given, it
     is journaled alongside the summary metrics (so ``rebuild()`` can restore it
     from the journal, the sole source of truth) and dual-written into the trial
@@ -169,7 +169,7 @@ def _index_trial(
     extra: Dict[str, Any],
     journal_path: Path,
 ) -> None:
-    """Dual-write this trial into the trial store (spec 026), alongside the
+    """Dual-write this trial into the trial store, alongside the
     journal append. Best-effort: the store is derived, never authoritative, so a
     write failure here must never break the caller - ``trials rebuild`` resyncs
     from the journal, which just succeeded.
@@ -202,7 +202,9 @@ def _index_trial(
             )
             returns_payload = extra.get("returns")
             if returns_payload:
-                store.record_returns(run_id, returns_payload.get("dates") or [], returns_payload.get("values") or [])
+                store.record_returns(
+                    run_id, returns_payload.get("dates") or [], returns_payload.get("values") or []
+                )
     except Exception:  # noqa: BLE001 - the journal append above already succeeded
         logger.warning("Trial store dual-write failed; `trials rebuild` will resync", exc_info=True)
 

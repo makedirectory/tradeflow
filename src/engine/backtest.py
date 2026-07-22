@@ -16,7 +16,7 @@ signals arrive than the book can fund they are admitted in conviction order
 This is what makes absolute metrics mean anything. Simulating each symbol
 independently over its whole history - the engine's original shape - summed N
 full-capital single-name backtests onto one capital base, so return and Sharpe
-both scaled with universe size. See spec 025.
+both scaled with universe size.
 """
 
 import logging
@@ -44,11 +44,11 @@ logger = logging.getLogger(__name__)
 #: incommensurable with earlier ones, so a stored record can never be compared to a
 #: newer one as though the two measured the same thing.
 #:
-#: * **1** — pre-spec-025. Each symbol was simulated independently over its whole
+#: * **1** — the original model. Each symbol was simulated independently over its whole
 #:   history against the full capital base, and the equity curve accumulated realized
 #:   P&L at exit, resampled to calendar days. Absolute return and Sharpe scaled with
 #:   universe size, and position limits were per-symbol.
-#: * **2** — spec 025. One merged timeline, one shared capital pool, portfolio-level
+#: * **2** — the current model. One merged timeline, one shared capital pool, portfolio-level
 #:   position limits, and a per-bar mark-to-market equity curve.
 #:
 #: Records written before this field existed carry no version; absence means 1.

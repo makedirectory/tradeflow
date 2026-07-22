@@ -1,8 +1,8 @@
-"""Tests for the multi-period trading policy (spec 022): aim in front of the
-target. Offline and deterministic. Works through the spec's §6 checklist in
-order: the unit-discipline property, limiting cases (costless reduction,
+"""Tests for the multi-period trading policy: aim in front of the target.
+Offline and deterministic. Works through the checklist in order: the
+unit-discipline property, limiting cases (costless reduction,
 κ→0/permanent-signal discount extremes), κ's monotonicity, a synthetic
-Gârleanu-Pedersen world (the theorem this spec reproduces numerically), the
+Gârleanu-Pedersen world (the theorem this reproduces numerically), the
 fast-signal discount, no-double-damping, and — at the bottom — the service/CLI
 integration (``construct_portfolio(policy="aim")`` and ``run_policy_ab``).
 """
@@ -58,7 +58,7 @@ def test_cost_curvature_is_undefined_without_impact_or_trade_size():
     assert cost_curvature(-0.01, 0.01) is None
 
 
-# --- unit discipline (hidden factor 1) ---------------------------------------
+# --- unit discipline -------------------------------------------------------------
 def test_phi_from_half_life_is_the_ln2_over_hl_property():
     for hl in (1.0, 5.0, 21.0, 100.0):
         phi = phi_from_half_life(hl)
@@ -89,7 +89,7 @@ def test_trading_half_life_is_ln2_over_kappa():
     assert trading_half_life(0.0) == float("inf")
 
 
-# --- limiting cases (§3.1) ----------------------------------------------------
+# --- limiting cases --------------------------------------------------------------
 def test_discount_factor_permanent_signal_has_no_discount_at_any_kappa():
     for kappa in (0.001, 0.1, 0.5, 1.0):
         assert discount_factor(kappa, 0.0) == 1.0
@@ -138,10 +138,10 @@ def test_kappa_monotonicity_grid():
         assert all(a > b for a, b in zip(kappas, kappas[1:]))
 
 
-def test_costless_reduces_to_exact_016(monkeypatch=None):
-    """§3.1's own limiting check, made exact (not asymptotic - see the module
+def test_costless_reduces_to_exact_myopic(monkeypatch=None):
+    """The limiting check, made exact (not asymptotic - see the module
     docstring): with no cost model at all, build_aim_portfolio falls back to
-    literally the plain 016 solve, byte-identical weights."""
+    literally the plain myopic solve, byte-identical weights."""
     symbols = ["A", "B", "C"]
     alphas = [_alpha(s, v) for s, v in zip(symbols, [0.10, 0.05, 0.02])]
     risk = _risk(symbols)
@@ -157,7 +157,7 @@ def test_costless_reduces_to_exact_016(monkeypatch=None):
 def test_cost_aware_but_no_capital_also_falls_back():
     """No capital => k_imp is all zero => cost curvature is undefined (only the
     3/2-power term has curvature) => same exact fallback, even though a cost
-    model IS supplied (the linear-only regime, §3.2's own documented case)."""
+    model IS supplied (the linear-only regime, a documented case)."""
     symbols = ["A", "B", "C"]
     alphas = [_alpha(s, v) for s, v in zip(symbols, [0.10, 0.05, 0.02])]
     risk = _risk(symbols)
@@ -218,7 +218,7 @@ def test_discount_factor_matches_value_iteration():
 
 # --- synthetic Gârleanu-Pedersen world -----------------------------------------
 def test_synthetic_gp_world_aim_beats_myopic_and_gap_grows_with_decay():
-    """The theorem this spec reproduces numerically: with quadratic cost and an
+    """The theorem this module reproduces numerically: with quadratic cost and an
     exponentially-decaying signal, the aim policy's realized utility >= the
     myopic policy's, and the gap grows as decay gets faster (more to gain from
     anticipating it). Exercises the derived closed forms directly in the exact
@@ -297,7 +297,7 @@ def test_fast_signal_discount_matches_kappa_over_kappa_plus_phi():
     assert fast_shrink < slow_shrink  # the fast signal's own turnover contribution drops more
 
 
-# --- no double damping (hidden factor 3) --------------------------------------
+# --- no double damping -----------------------------------------------------------
 def test_no_double_damping_kappa_and_band_together_dont_over_trade():
     symbols = ["A", "B", "C", "D"]
     alphas = [_alpha(s, v) for s, v in zip(symbols, [0.30, 0.10, 0.10, 0.10])]
@@ -428,12 +428,12 @@ def test_run_policy_ab_insufficient_window_reports_note():
 
 
 # --- compute_horizon's blend-superseded note -----------------------------------
-def test_compute_horizon_notes_022_supersedes_the_blend():
+def test_compute_horizon_notes_the_aim_policy_supersedes_the_blend():
     symbols = [f"S{i}" for i in range(10)]
     data = {s: make_ohlcv(n=600, seed=i, freq="1D") for i, s in enumerate([*symbols, "SPY"])}
     client = MarketDataClient(DictMarketData(data))
     r = analysis.compute_horizon(
         client, "volume_spike", symbols, datetime(2023, 1, 1), datetime(2024, 12, 31), max_lag=8
     )
-    assert "022" in r["blend_superseded_by"]
+    assert "aim-in-front" in r["blend_superseded_by"]
     assert "half_life_upper" in r

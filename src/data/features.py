@@ -37,10 +37,10 @@ def add_risk_features(
     available it falls back to total volatility (beta unknown, set to 1.0) and
     records ``benchmark_available=False`` in the panel meta.
 
-    **The alpha/risk vol seam (spec 024 hidden factor 3).** This ``residual_vol`` is
+    **The alpha/risk vol seam.** This ``residual_vol`` is
     computed **unconditionally** (a flat trailing-window figure) and deliberately
-    stays that way — it scales alpha magnitude (``α = ω·IC·z``, Case 1) and 020's
-    Case logic, and an alpha shouldn't double in size just because last week was
+    stays that way — it scales alpha magnitude (``α = ω·IC·z``, Case 1) and the
+    refinement's Case logic, and an alpha shouldn't double in size just because last week was
     wild. Only the *risk-model* Σ used for portfolio construction / tracking-error
     (:mod:`src.risk.conditional`) conditions on recent volatility. Do not "unify"
     the two into one vol-squared concept — that reintroduces exactly the position-

@@ -28,7 +28,7 @@ class RiskMatrix:
     symbols: List[str]
     sigma: np.ndarray  # N×N annualized covariance, positive-definite
     shrinkage: Optional[float] = None  # δ used (Ledoit–Wolf), for audit
-    #: Set when Σ was conditioned (spec 024): method, λ, per-name D_t vs the
+    #: Set when Σ was conditioned: method, λ, per-name D_t vs the
     #: unconditional diagonal (the "sigma_regime" diagnostic). ``None`` unconditional.
     conditional_diagnostics: Optional[Dict[str, Any]] = None
 
@@ -72,8 +72,8 @@ class RiskMatrix:
         """The Σ-implied benchmark beta per name: ``β = Σw_B / (w_Bᵀ Σ w_B)``.
 
         The one canonical beta for anything benchmark-portfolio-relative (reverse
-        optimization, active-beta diagnostics, alpha neutralization) - spec 017 §4.3
-        calls this "one β, everywhere": per-name regression betas (the alpha
+        optimization, active-beta diagnostics, alpha neutralization) - this is
+        "one β, everywhere": per-name regression betas (the alpha
         pipeline's ``beta`` feature) are a different, complementary quantity and
         must not be mixed with this one. Zero vector when the benchmark carries no
         risk (``w_B = 0`` or degenerate Σ), so callers reduce to "no benchmark"
@@ -167,7 +167,7 @@ def build_risk_matrix(
     full universe and stays positive-definite rather than dropping names silently.
     Returns ``None`` if no name has enough history.
 
-    ``conditional`` (spec 024, default ``None`` / off) conditions the well-sampled
+    ``conditional`` (default ``None`` / off) conditions the well-sampled
     block's diagonal via an EWMA (``"ewma"``) or HAR-lite (``"har"``) per-name
     volatility forecast, keeping the correlation structure fixed
     (``Σ_t = D_t·R·D_t`` - see :mod:`src.risk.conditional`), *before* the
@@ -211,5 +211,8 @@ def build_risk_matrix(
         if sa in under_sampled:
             full[a, a] = median_var
     return RiskMatrix(
-        symbols=order, sigma=full, shrinkage=matrix.shrinkage, conditional_diagnostics=matrix.conditional_diagnostics
+        symbols=order,
+        sigma=full,
+        shrinkage=matrix.shrinkage,
+        conditional_diagnostics=matrix.conditional_diagnostics,
     )

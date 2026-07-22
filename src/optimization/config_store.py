@@ -40,8 +40,9 @@ class Provenance:
     timestamp: Optional[str] = None
     notes: str = ""
     #: Engine accounting model behind ``oos_metrics``. Defaults to 1 so a config
-    #: written before this field existed loads as pre-025 — which is exactly what it
-    #: is. :func:`build_provenance` always stamps the current version.
+    #: written before this field existed loads as the original accounting model —
+    #: which is exactly what it is. :func:`build_provenance` always stamps the
+    #: current version.
     accounting: int = 1
 
 

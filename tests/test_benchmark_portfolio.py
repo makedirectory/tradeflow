@@ -1,4 +1,4 @@
-"""Tests for the benchmark-as-a-portfolio helpers (spec 017): loading w_B,
+"""Tests for the benchmark-as-a-portfolio helpers: loading w_B,
 restricting/renormalizing to Σ's covered universe, and reverse optimization.
 
 Offline and deterministic.

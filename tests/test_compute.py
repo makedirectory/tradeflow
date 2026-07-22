@@ -2,7 +2,7 @@
 
 Skipped automatically unless the ``store`` extra (pyarrow + polars + duckdb) is
 installed. These prove the lazy ports are *faithful*: each migrated op is checked
-against its legacy pandas implementation (the equivalence oracle), plus the spec's
+against its legacy pandas implementation (the equivalence oracle), plus the
 cross-cutting properties — as-of pushdown, Arrow round-trip, determinism, streaming
 == eager, and bounded-memory accumulation.
 """

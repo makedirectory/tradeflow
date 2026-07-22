@@ -1,11 +1,9 @@
-"""Service-layer wiring for the conditional risk model (spec 024): compute_risk /
+"""Service-layer wiring for the conditional risk model: compute_risk /
 construct_portfolio / compute_attribution's ``conditional`` flag, the MZ/QLIKE
 evidence-gate service function, and the net-of-cost A/B harness. Offline and
 deterministic — built on the same ``DictMarketData``/``make_ohlcv`` fakes as the
 rest of the suite.
 """
-
-
 
 from src.marketdata.client import MarketDataClient
 from src.services import analysis
@@ -147,9 +145,7 @@ def test_run_conditional_risk_ab_produces_both_variants():
     start = data["S0"].index[100].to_pydatetime()
     end = data["S0"].index[800].to_pydatetime()
 
-    r = analysis.run_conditional_risk_ab(
-        client, "volume_spike", symbols, start, end, n_points=10, horizon=21
-    )
+    r = analysis.run_conditional_risk_ab(client, "volume_spike", symbols, start, end, n_points=10, horizon=21)
     assert r["periods"] >= 2
     assert set(r["summaries"]) == {"unconditional", "conditional"}
     for name, s in r["summaries"].items():

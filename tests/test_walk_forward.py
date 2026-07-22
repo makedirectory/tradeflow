@@ -220,7 +220,7 @@ def test_cost_model_reaches_both_in_sample_and_out_of_sample_backtests():
 
 
 def test_provenance_stamps_the_accounting_model(tmp_path):
-    """Saved metrics record which engine accounting produced them (spec 025 §3.4)."""
+    """Saved metrics record which engine accounting produced them."""
     from src.engine.backtest import ACCOUNTING_VERSION
 
     provenance = config_store.build_provenance(
@@ -237,7 +237,7 @@ def test_provenance_stamps_the_accounting_model(tmp_path):
 
 
 def test_config_predating_the_stamp_is_flagged_not_silently_reused(tmp_path, caplog):
-    """A record with no accounting field is pre-025, and saying so is the whole point."""
+    """A record with no accounting field predates the field, and saying so is the whole point."""
     import json
 
     legacy = {

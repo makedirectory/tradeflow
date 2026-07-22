@@ -14,7 +14,7 @@ Two engines, sharing Arrow so it isn't either/or:
 - **DuckDB SQL** (:func:`sql_query`) for set-based work over the Parquet store
   (aggregations, joins) — its out-of-core engine streams the scan too.
 
-Three disciplines the spec calls out and this module keeps:
+Three disciplines this module keeps:
 
 1. **Pushdown survives the plan.** A lazy scan reads only the columns/row-ranges it
    needs and the ``as_of`` predicate is pushed into the Parquet reader — never a
@@ -56,7 +56,7 @@ TS = "ts"
 SYMBOL = "symbol"
 
 #: Canonical output ordering. Pinning an explicit sort makes a multithreaded collect
-#: byte-identical run to run (hidden factor 2 — determinism).
+#: byte-identical run to run (determinism).
 CANONICAL_SORT = [TS, SYMBOL]
 
 

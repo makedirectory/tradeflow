@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 #: without code changes; uses *median* (not mean) for WFE/Sharpe so one lucky
 #: fold can't inflate the verdict.
 #:
-#: Calibration note (spec 025). Portfolio accounting changed how two of these are
+#: Calibration note. Portfolio accounting changed how two of these are
 #: *measured*, so some thresholds had to move just to keep meaning what they meant:
 #:
 #: * **Sharpe scale shifted ~1.19x.** Measured over 12 runs (2 strategies x 3
@@ -118,9 +118,9 @@ class WalkForwardResult:
     diagnostics: Dict[str, Any] = field(default_factory=dict)
     #: The concatenated OOS per-period return series (dated, daily-resampled -
     #: same construction as the aggregate's realized-P&L fallback), when any OOS
-    #: trades exist. This is the "realized active-return series" spec 023's
+    #: trades exist. This is the "realized active-return series" the
     #: bootstrap skill test resamples, and what gets persisted to the trial store
-    #: (spec 026) so a Reality Check has a real trial to join against later.
+    #: so a Reality Check has a real trial to join against later.
     oos_returns: Optional[pd.Series] = None
 
     # --- derived summaries used by the gates ---

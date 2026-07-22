@@ -73,7 +73,7 @@ class ResearchConfig:
     drawdown_guard_tolerance: float = 0.25  # OOS max_dd may worsen at most this fraction
     allow_code_gen: bool = False
     gates: Optional[Dict[str, float]] = None
-    #: Spec 023, advisory only: annotate each shortlisted candidate with a
+    #: Advisory only: annotate each shortlisted candidate with a
     #: bootstrap-skill report (own + family p) after holdout scoring. Off by
     #: default - it never influences keep/discard (guardrail 1 stays untouched).
     bootstrap_skill: bool = False
@@ -98,11 +98,11 @@ class Candidate:
     holdout_metrics: Optional[Dict[str, float]] = None
     saved_path: Optional[str] = None
     strategy_cls: Optional[Type[Strategy]] = field(default=None, repr=False)
-    #: This candidate's dated OOS return series (spec 023) - kept so
+    #: This candidate's dated OOS return series - kept so
     #: ``bootstrap_skill`` can be computed once the holdout score is in, without
     #: re-running the walk-forward.
     oos_returns: Optional[Any] = field(default=None, repr=False)
-    #: The bootstrap-skill report (spec 023), when ``ResearchConfig.bootstrap_skill``
+    #: The bootstrap-skill report, when ``ResearchConfig.bootstrap_skill``
     #: is on - advisory only, computed after holdout scoring; never influences
     #: ``_beats_incumbent`` or the keep/discard decision (guardrail 1: OOS-only,
     #: gate-based fitness stays exactly as specced).
@@ -145,7 +145,7 @@ class ResearchAgent:
         #: Purely observational - it cannot influence the loop or its decisions.
         self.observer = observer
         self.session_id = new_run_id()
-        #: The trial store (spec 026) this session dual-writes into and dedups
+        #: The trial store this session dual-writes into and dedups
         #: against - defaults to the store alongside this session's journal, so
         #: redirecting ``journal_path`` (as tests do) isolates the store too.
         #: Best-effort like every other trial-store touchpoint: the store is
@@ -257,7 +257,7 @@ class ResearchAgent:
                 "n_trials_cumulative": n_trials_cumulative,
                 "tokens_used": tokens_used,
             }
-            # Spec 023: persist this round's own dated OOS return series in the
+            # Persist this round's own dated OOS return series in the
             # journal too (not just the trial store) - rebuild() must be able to
             # restore it from the journal alone, the sole source of truth.
             if result.oos_returns is not None and len(result.oos_returns):
@@ -365,7 +365,7 @@ class ResearchAgent:
             )
             return None
 
-        # Dedup (spec 026): a "tune" proposal that repeats an exact prior config
+        # Dedup: a "tune" proposal that repeats an exact prior config
         # for this strategy/universe/window is the same lottery ticket checked
         # twice - reject it before it burns a walk-forward. Code proposals define
         # a new mechanism each time, so params alone don't identify a repeat.
@@ -497,8 +497,10 @@ class ResearchAgent:
             )
         return saved
 
-    def _bootstrap_skill_for(self, candidate: Candidate, symbols, n_trials_total: int) -> Optional[Dict[str, Any]]:
-        """Advisory-only (spec 023): own p from this candidate's OOS return
+    def _bootstrap_skill_for(
+        self, candidate: Candidate, symbols, n_trials_total: int
+    ) -> Optional[Dict[str, Any]]:
+        """Advisory-only: own p from this candidate's OOS return
         series, next to the family p from every trial this session (and prior
         sessions) has recorded for its strategy/universe. Never influences
         keep/discard - a best-effort annotation on the final shortlist only."""
@@ -571,7 +573,7 @@ class ResearchAgent:
         promotable: bool,
         n_trials_offset: int,
     ) -> None:
-        """Dual-write this round's trial into the trial store (spec 026), keyed
+        """Dual-write this round's trial into the trial store, keyed
         on the same ``run_id`` the journal line just got - so a later rebuild
         replaying that line is a no-op, not a duplicate.
 

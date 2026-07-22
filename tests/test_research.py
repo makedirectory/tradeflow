@@ -221,7 +221,7 @@ def test_journal_records_session_and_trials(tmp_path):
 
 def test_duplicate_tune_proposal_is_deduped_via_the_trial_store(tmp_path):
     """A repeated exact config is the same lottery ticket checked twice - reject
-    it before it burns a second walk-forward (spec 026), rather than letting it
+    it before it burns a second walk-forward, rather than letting it
     count toward the campaign's multiple-testing total again."""
     result = _agent(tmp_path, FixedProposer([_tune(3), _tune(3), _tune(5)]), max_dry_rounds=99).run(
         SYMBOLS, START, END
@@ -245,9 +245,9 @@ def test_research_trials_are_recorded_in_the_trial_store(tmp_path):
     assert agent.trial_store.family_count("periodic", SYMBOLS, ACCOUNTING_VERSION) == 2
 
 
-# --- bootstrap skill (spec 023) ----------------------------------------------
+# --- bootstrap skill ------------------------------------------------------------
 def test_research_trials_persist_oos_return_series_in_the_store(tmp_path):
-    """Spec 023 §4 hidden factor 1: the trial store must contain a genuine OOS
+    """The trial store must contain a genuine OOS
     return series per trial (not just summary floats) for Reality Check to
     resample - every recorded research trial gets one."""
     agent = _agent(tmp_path, FixedProposer([_tune(3), _tune(5)]))
