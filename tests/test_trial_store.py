@@ -226,6 +226,149 @@ def test_seen_dedup_lookup(tmp_path):
     )
 
 
+def test_find_returns_the_full_row_or_none(tmp_path):
+    store = TrialStore(tmp_path / "trials.db")
+    store.record(
+        id="d1",
+        kind="backtest",
+        strategy="s",
+        symbols=["A", "B"],
+        params={"buy_every": 3},
+        accounting=2,
+        ts="2024-06-01T00:00:00",
+        window_start=datetime(2024, 1, 1),
+        window_end=datetime(2024, 6, 1),
+        oos_sharpe=1.5,
+    )
+    found = store.find(
+        strategy="s",
+        params={"buy_every": 3},
+        symbols=["A", "B"],
+        window_start=datetime(2024, 1, 1),
+        window_end=datetime(2024, 6, 1),
+        accounting=2,
+    )
+    assert found is not None
+    assert found["id"] == "d1"
+    assert found["oos_sharpe"] == 1.5
+    assert (
+        store.find(
+            strategy="s",
+            params={"buy_every": 999},
+            symbols=["A", "B"],
+            window_start=datetime(2024, 1, 1),
+            window_end=datetime(2024, 6, 1),
+            accounting=2,
+        )
+        is None
+    )
+
+
+def test_find_most_recent_match_when_several_exist(tmp_path):
+    """--force appends rather than overwrites; find() should serve the freshest."""
+    store = TrialStore(tmp_path / "trials.db")
+    for run_id, ts in (("old", "2024-01-01T00:00:00"), ("new", "2024-06-01T00:00:00")):
+        store.record(
+            id=run_id,
+            kind="backtest",
+            strategy="s",
+            symbols=["A"],
+            params={"x": 1},
+            accounting=2,
+            ts=ts,
+            window_start=datetime(2024, 1, 1),
+            window_end=datetime(2024, 6, 1),
+        )
+    found = store.find(
+        strategy="s",
+        params={"x": 1},
+        symbols=["A"],
+        window_start=datetime(2024, 1, 1),
+        window_end=datetime(2024, 6, 1),
+        accounting=2,
+    )
+    assert found["id"] == "new"
+
+
+def test_find_git_sha_mismatch_is_a_miss_but_unrecorded_sha_still_hits(tmp_path):
+    store = TrialStore(tmp_path / "trials.db")
+    store.record(
+        id="known",
+        kind="backtest",
+        strategy="s",
+        symbols=["A"],
+        params={"x": 1},
+        accounting=2,
+        window_start=datetime(2024, 1, 1),
+        window_end=datetime(2024, 6, 1),
+        git_sha="abc123",
+    )
+    store.record(
+        id="legacy",
+        kind="backtest",
+        strategy="s2",
+        symbols=["A"],
+        params={"x": 1},
+        accounting=2,
+        window_start=datetime(2024, 1, 1),
+        window_end=datetime(2024, 6, 1),
+        git_sha=None,
+    )
+    kwargs = dict(
+        params={"x": 1},
+        symbols=["A"],
+        window_start=datetime(2024, 1, 1),
+        window_end=datetime(2024, 6, 1),
+        accounting=2,
+    )
+    # A known, differing SHA invalidates the match - the code may have changed.
+    assert store.find(strategy="s", git_sha="def456", **kwargs) is None
+    # The matching SHA still hits.
+    assert store.find(strategy="s", git_sha="abc123", **kwargs) is not None
+    # An unrecorded (legacy) SHA is not a *known* mismatch - still hits.
+    assert store.find(strategy="s2", git_sha="def456", **kwargs) is not None
+
+
+def test_record_hash_params_overrides_dedup_hash_but_not_display(tmp_path):
+    """A kind whose identity isn't its displayed params (walk-forward's top-level
+    recipe-based dedup) hashes on `hash_params`, stores `params`."""
+    store = TrialStore(tmp_path / "trials.db")
+    store.record(
+        id="wf1",
+        kind="walkforward",
+        strategy="s",
+        symbols=["A"],
+        params={"chosen_period": 10},
+        hash_params={"mode": "anchored", "seed": 42},
+        accounting=2,
+        window_start=datetime(2024, 1, 1),
+        window_end=datetime(2024, 6, 1),
+    )
+    # A lookup by the recipe (what identifies a repeat) hits...
+    found = store.find(
+        strategy="s",
+        params={"mode": "anchored", "seed": 42},
+        symbols=["A"],
+        window_start=datetime(2024, 1, 1),
+        window_end=datetime(2024, 6, 1),
+        accounting=2,
+    )
+    assert found is not None
+    assert found["params_json"] == '{"chosen_period": 10}'  # displayed params unaffected
+    # ...but a lookup by the displayed (chosen) params does not.
+    assert (
+        store.find(
+            strategy="s",
+            params={"chosen_period": 10},
+            symbols=["A"],
+            window_start=datetime(2024, 1, 1),
+            window_end=datetime(2024, 6, 1),
+            accounting=2,
+        )
+        is None
+    )
+
+
 # --- research-session replay (two journal granularities) ---------------------
 def test_rebuild_parses_research_session_context(tmp_path):
     """``research:trial`` records carry no strategy/universe/window of their own -

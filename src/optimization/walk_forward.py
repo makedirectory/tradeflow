@@ -246,6 +246,12 @@ class WalkForwardValidator:
         seed: int = 42,
         gates: Optional[Dict[str, float]] = None,
         cost_model: Optional[CostModel] = None,
+        *,
+        trial_store: Optional[Any] = None,
+        strategy_name: Optional[str] = None,
+        cost_key: Optional[Dict[str, Any]] = None,
+        accounting: Optional[int] = None,
+        force: bool = False,
     ):
         self.strategy_class = strategy_class
         self.data_client = data_client
@@ -255,6 +261,14 @@ class WalkForwardValidator:
         #: Charged on every simulated fill, in-sample and out. Gross-return validation
         #: systematically promotes turnover the strategy could not afford live.
         self.cost_model = cost_model
+        #: Forwarded to every internal `ParameterOptimizer` (per-fold IS search) so
+        #: a repeated candidate is served from the trial store instead of
+        #: re-simulated - same mechanism `optimize` uses standalone.
+        self.trial_store = trial_store
+        self.strategy_name = strategy_name
+        self.cost_key = cost_key
+        self.accounting = accounting
+        self.force = force
 
         # Read timeframe + lookback from a default instance (drives warmup/embargo).
         defaults = {
@@ -324,6 +338,23 @@ class WalkForwardValidator:
         bars_per_day = self._bars_per_day()
         return max(math.ceil(self.lookback_bars / bars_per_day), 1)
 
+    def _make_optimizer(self, data_client: MarketDataClient) -> ParameterOptimizer:
+        """A `ParameterOptimizer` for one fold/holdout's IS search, carrying this
+        validator's memoization context - so a repeated IS candidate (across
+        folds, or a re-run of this validation) is served from the trial store."""
+        return ParameterOptimizer(
+            self.strategy_class,
+            data_client,
+            self.initial_capital,
+            self.seed,
+            self.cost_model,
+            trial_store=self.trial_store,
+            strategy_name=self.strategy_name,
+            cost_key=self.cost_key,
+            accounting=self.accounting,
+            force=self.force,
+        )
+
     def _bars_per_day(self) -> float:
         tf = self.timeframe
         if tf.unit == "day":
@@ -381,9 +412,7 @@ class WalkForwardValidator:
         oos_trade_frames: List[pd.DataFrame] = []
 
         for fold in folds:
-            opt = ParameterOptimizer(
-                self.strategy_class, sliced, self.initial_capital, self.seed, self.cost_model
-            )
+            opt = self._make_optimizer(sliced)
             is_result = self._optimize(opt, symbols, fold.is_start, fold.is_end, method, objective, max_evals)
             if not is_result.best_params:
                 logger.warning("Fold %d produced no valid IS config; skipping", fold.index)
@@ -646,9 +675,7 @@ class WalkForwardValidator:
     def _holdout(self, client, symbols, region_start, holdout, warmup_days, method, objective, max_evals):
         holdout_start, holdout_end = holdout
         # Optimize over everything before the holdout (the production training set).
-        opt = ParameterOptimizer(
-            self.strategy_class, client, self.initial_capital, self.seed, self.cost_model
-        )
+        opt = self._make_optimizer(client)
         final = self._optimize(opt, symbols, region_start, holdout_start, method, objective, max_evals)
         if not final.best_params:
             return None, None

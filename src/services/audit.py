@@ -96,6 +96,7 @@ def journal_trial(
     extra: Optional[Dict[str, Any]] = None,
     returns: Optional[Any] = None,
     path: Optional[Path] = None,
+    dedup_params: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Record one *evaluated configuration* as a trial in the research journal.
 
@@ -123,6 +124,12 @@ def journal_trial(
     The universe is normalized (upper-cased, de-duplicated, sorted) so the same set
     of symbols keys identically regardless of how it was typed — a trial store's
     dedup and campaign counts depend on that.
+
+    ``dedup_params`` (optional) overrides what the trial store's dedup hash is
+    computed from, when a kind's *identity* (what makes a repeat a repeat) isn't
+    the same thing as ``params`` (what's useful to display). Persisted alongside
+    the record so a later ``trials rebuild`` reconstructs the identical hash from
+    the journal alone. Most kinds omit it — ``params`` already serves both roles.
     """
     inputs: Dict[str, Any] = {
         "strategy": strategy,
@@ -134,6 +141,8 @@ def journal_trial(
     result_summary = {k: metrics[k] for k in _TRIAL_METRICS if k in metrics}
     journal_path = path or DEFAULT_TRIAL_JOURNAL
     extra_dict = dict(extra or {})
+    if dedup_params is not None:
+        extra_dict["dedup_params"] = dedup_params
     returns_payload = _serialize_returns(returns)
     if returns_payload is not None:
         extra_dict["returns"] = returns_payload
@@ -199,6 +208,7 @@ def _index_trial(
                 n_trials_in_session=extra.get("n_trials"),
                 git_sha=current_git_sha(),
                 metrics_full=metrics,
+                hash_params=extra.get("dedup_params"),
             )
             returns_payload = extra.get("returns")
             if returns_payload:

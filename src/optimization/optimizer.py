@@ -56,6 +56,12 @@ class ParameterOptimizer:
         initial_capital: float = 100_000.0,
         seed: int = 42,
         cost_model: Optional[CostModel] = None,
+        *,
+        trial_store: Optional[Any] = None,
+        strategy_name: Optional[str] = None,
+        cost_key: Optional[Dict[str, Any]] = None,
+        accounting: Optional[int] = None,
+        force: bool = False,
     ):
         self.strategy_class = strategy_class
         self.data_client = data_client
@@ -65,6 +71,17 @@ class ParameterOptimizer:
         self.cost_model = cost_model
         self.space = ParameterSpace(strategy_class.PARAM_RANGES)
         self._rng = np.random.default_rng(seed)
+        #: Optional per-candidate memoization: a
+        #: search that re-evaluates a config already scored this campaign - a
+        #: real possibility with random sampling, or a resumed/extended search -
+        #: is served from the trial store instead of re-simulated. All-or-nothing:
+        #: `trial_store` is `None` unless the caller opts in (CLI/MCP wiring), so
+        #: every other caller (tests, ad hoc scripts) is unaffected.
+        self.trial_store = trial_store
+        self.strategy_name = strategy_name
+        self.cost_key = cost_key or {}
+        self.accounting = accounting
+        self.force = force
 
     # ------------------------------------------------------------------ #
     # Search methods
@@ -151,19 +168,60 @@ class ParameterOptimizer:
     def _score_config(self, params, symbols, start, end, objective):
         """Backtest one config; return (objective_score, results_row) or (-inf, None)."""
         try:
-            metrics = self._backtest(params, symbols, start, end)
+            metrics = self._backtest(params, symbols, start, end, objective)
         except Exception as exc:  # noqa: BLE001
             logger.error("Evaluation failed for %s: %s", params, exc)
             return float("-inf"), None
         row = {**{k: params[k] for k in self.space.searchable}, **metrics}
         return self._finite(metrics.get(objective, float("-inf"))), row
 
-    def _backtest(self, params: Dict[str, Any], symbols, start: datetime, end: datetime) -> Dict[str, float]:
+    def _backtest(
+        self, params: Dict[str, Any], symbols, start: datetime, end: datetime, objective: Optional[str] = None
+    ) -> Dict[str, float]:
+        cached = self._find_cached(params, symbols, start, end, objective)
+        if cached is not None:
+            return cached
         strategy = self.strategy_class(dict(params))
         result = BacktestEngine(strategy, self.data_client, cost_model=self.cost_model).run(
             symbols, start, end, self.initial_capital
         )
         return result.metrics
+
+    def _find_cached(
+        self, params: Dict[str, Any], symbols, start, end, objective: Optional[str]
+    ) -> Optional[Dict[str, float]]:
+        """A stored metrics dict for this exact candidate, or ``None``.
+
+        Only serves a memo when the requested ``objective`` is one of the trial
+        store's denormalized headline fields - the store only ever persists a
+        fixed subset (see ``src.store.trials``), so silently serving a memo
+        missing the requested objective would make a real candidate look like
+        ``-inf`` and drop out of the ranking. An objective the memo can't answer
+        is treated as a miss (a real run), never a wrong answer.
+        """
+        if self.trial_store is None or self.force or not self.strategy_name:
+            return None
+        from src.optimization.config_store import current_git_sha
+
+        found = self.trial_store.find(
+            strategy=self.strategy_name,
+            params={**params, "_cost": self.cost_key},
+            symbols=symbols,
+            window_start=start,
+            window_end=end,
+            accounting=self.accounting,
+            git_sha=current_git_sha(),
+        )
+        if found is None:
+            return None
+        import json
+
+        metrics = dict(json.loads(found["metrics_json"] or "{}"))
+        if not metrics or (objective is not None and objective not in metrics):
+            return None
+        metrics["_memoized_from"] = found["id"]
+        metrics["_memoized_ts"] = found["ts"]
+        return metrics
 
     def _build_result(self, rows: List[Dict[str, Any]], objective: str) -> OptimizationResult:
         df = pd.DataFrame(rows)

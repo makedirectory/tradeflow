@@ -6,6 +6,8 @@ dict. Large outputs (trade tables, full optimization grids) are written to an
 artifact file and referenced by path - never inlined.
 """
 
+import contextlib
+import json
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -32,7 +34,7 @@ from src.data import (
     add_risk_features,
     add_score_feature,
 )
-from src.engine.backtest import BacktestEngine
+from src.engine.backtest import ACCOUNTING_VERSION, BacktestEngine
 from src.marketdata.client import MarketDataClient
 from src.marketdata.timeframe import Timeframe
 from src.optimization.optimizer import ParameterOptimizer
@@ -86,6 +88,71 @@ def _build_cost_model(
     )
 
 
+def _cost_key(gross: bool, commission_bps: float, impact_eta: float, borrow_bps: float) -> Dict[str, Any]:
+    """The cost-model assumptions folded into a trial's dedup key - same shape as
+    the CLI's ``main._cost_key`` so a trial recorded via one surface is found by
+    the other. Two runs differing only in a cost flag must never collide as "the
+    same trial"."""
+    if gross:
+        return {"gross": True}
+    return {
+        "gross": False,
+        "commission_bps": commission_bps,
+        "impact_eta": impact_eta,
+        "borrow_bps": borrow_bps,
+    }
+
+
+def _tunable_params(strategy) -> Dict[str, Any]:
+    """The strategy's own tunable knobs (its ``config`` narrowed to
+    ``PARAM_RANGES`` keys) - what identifies a trial, not the incidental config
+    keys (timeframe, lookback, position limits) a strategy also carries."""
+    return {k: strategy.config[k] for k in strategy.PARAM_RANGES if k in strategy.config}
+
+
+@contextlib.contextmanager
+def _open_trial_store():
+    """A trial store against the current journal, or ``None`` on any failure to
+    open one - same fail-safe contract as the CLI's ``main._open_trial_store``.
+    v1 of the trial store is passive and derived: a broken store must never
+    break the command it's attached to, memoization included."""
+    from src.services import audit
+    from src.store.trials import TrialStore, db_path_for_journal
+
+    journal_path = audit.DEFAULT_TRIAL_JOURNAL
+    try:
+        store = TrialStore(db_path_for_journal(journal_path), journal_path=journal_path)
+    except Exception:  # noqa: BLE001
+        logger.warning("Trial store unavailable; memoization disabled for this run", exc_info=True)
+        yield None
+        return
+    try:
+        yield store
+    finally:
+        store.close()
+
+
+def _find_cached_trial(
+    strategy: str, params: Dict[str, Any], symbols, start, end, accounting: int
+) -> Optional[Dict[str, Any]]:
+    """Same lookup CLI's ``main._find_cached_trial`` does, so a trial run over
+    MCP and one run over the CLI dedup against each other identically."""
+    from src.optimization.config_store import current_git_sha
+
+    with _open_trial_store() as store:
+        if store is None:
+            return None
+        return store.find(
+            strategy=strategy,
+            params=params,
+            symbols=symbols,
+            window_start=start,
+            window_end=end,
+            accounting=accounting,
+            git_sha=current_git_sha(),
+        )
+
+
 def run_scan(
     data_client: MarketDataClient,
     scanner: str,
@@ -119,21 +186,62 @@ def run_backtest(
     impact_eta: float = 0.3,
     participation_cap: float = 0.10,
     borrow_bps: float = 50.0,
+    force: bool = False,
 ) -> Dict[str, Any]:
     """Backtest a strategy; return the full metrics dict + a path to the trades CSV.
 
     Metrics are **net of transaction cost** by default (commission + half-spread +
     square-root impact); pass ``gross=True`` to disable cost for attribution. Trades
     are NOT inlined (could be thousands of rows); read the CSV if needed.
+
+    Journals one trial into the research journal / trial store (the same one
+    ``python main.py backtest`` writes) so this run counts toward the campaign's
+    multiple-testing total — an agent driving this over MCP is still bound by the
+    same Deflated Sharpe honesty as the CLI. Before running, an exact prior trial
+    is served instead (labeled ``memoized``) unless ``force=True``, which re-runs
+    and appends a new trial rather than overwriting.
     """
     from src.services.sizing import build_beta_sizer
 
     run_id = new_run_id()
     strat = _strategy(strategy, config)
+    dedup_params = {
+        **_tunable_params(strat),
+        "_cost": _cost_key(gross, commission_bps, impact_eta, borrow_bps),
+    }
+
+    if not force:
+        cached = _find_cached_trial(strategy, dedup_params, symbols, start, end, ACCOUNTING_VERSION)
+        if cached is not None:
+            metrics = json.loads(cached["metrics_json"] or "{}")
+            return {
+                "run_id": run_id,
+                "strategy": strategy,
+                "symbols": list(symbols),
+                "window": {"start": start.isoformat(), "end": end.isoformat()},
+                "memoized": True,
+                "trial_id": cached["id"],
+                "trial_ts": cached["ts"],
+                "note": "Served from an identical prior trial, not re-run. Pass force=True to re-verify.",
+                "metrics": _jsonable(metrics),
+            }
+
     sizer = build_beta_sizer(data_client, strat, symbols, benchmark, as_of=start) if beta_sizing else None
     cost_model = _build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
     result = BacktestEngine(strat, data_client, sizer=sizer, cost_model=cost_model).run(
         symbols, start, end, capital
+    )
+
+    from src.services.audit import journal_trial
+
+    journal_trial(
+        "backtest",
+        strategy=strategy,
+        symbols=symbols,
+        start=start,
+        end=end,
+        params=dedup_params,
+        metrics=result.metrics,
     )
 
     trades_csv = None
@@ -176,6 +284,7 @@ def run_optimization(
     impact_eta: float = 0.3,
     participation_cap: float = 0.10,
     borrow_bps: float = 50.0,
+    force: bool = False,
 ) -> Dict[str, Any]:
     """Search a strategy's parameters IN-SAMPLE; return best params + top-N rows.
 
@@ -186,26 +295,68 @@ def run_optimization(
     Net of transaction cost by default (commission + half-spread + square-root
     impact); pass ``gross=True`` to search gross returns instead - gross search
     reliably favors the highest-turnover config.
+
+    Each evaluated config is journaled as its own trial (a 50-point search is 50
+    trials, matching ``python main.py optimize``), unless it's served from the
+    trial store first (an identical prior candidate - real with random sampling
+    or a resumed search) - ``force=True`` disables that per-candidate memoization.
     """
+    from src.services.audit import journal_trial
+
     run_id = new_run_id()
     cls = resolve_strategy_class(strategy)
     cost_model = _build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
-    opt = ParameterOptimizer(cls, data_client, initial_capital=capital, seed=seed, cost_model=cost_model)
-    if method == "grid":
-        result = opt.grid_search(symbols, start, end, objective, max_evals=max_evals)
-    elif method == "random":
-        result = opt.random_search(symbols, start, end, objective, n_samples=max_evals)
-    else:
-        result = opt.optimize_bayesian(symbols, start, end, objective)
+    cost_key = _cost_key(gross, commission_bps, impact_eta, borrow_bps)
+    with _open_trial_store() as trial_store:
+        opt = ParameterOptimizer(
+            cls,
+            data_client,
+            initial_capital=capital,
+            seed=seed,
+            cost_model=cost_model,
+            trial_store=trial_store,
+            strategy_name=strategy,
+            cost_key=cost_key,
+            accounting=ACCOUNTING_VERSION,
+            force=force,
+        )
+        if method == "grid":
+            result = opt.grid_search(symbols, start, end, objective, max_evals=max_evals)
+        elif method == "random":
+            result = opt.random_search(symbols, start, end, objective, n_samples=max_evals)
+        else:
+            result = opt.optimize_bayesian(symbols, start, end, objective)
 
     results_csv = None
     total = len(result.results)
     top: List[Dict[str, Any]] = []
+    n_memoized = 0
     if not result.results.empty:
         ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
         results_csv = str(ARTIFACT_DIR / f"optimize_{run_id}.csv")
         result.results.to_csv(results_csv, index=False)
         top = [_jsonable(row) for row in result.results.head(TOP_N).to_dict("records")]
+
+        searchable = opt.space.searchable
+        defaults = opt.space.defaults
+        for row in result.results.to_dict("records"):
+            if "_memoized_from" in row:
+                # Already exists as its own trial; re-journaling it would double-count
+                # the exact repeat this spec exists to stop.
+                n_memoized += 1
+                continue
+            searched = {k: row[k] for k in searchable if k in row}
+            metrics = {k: v for k, v in row.items() if k not in searchable}
+            journal_trial(
+                "optimize",
+                strategy=strategy,
+                symbols=symbols,
+                start=start,
+                end=end,
+                params={**defaults, **searched, "_cost": cost_key},
+                metrics=metrics,
+                objective=objective,
+            )
 
     return {
         "run_id": run_id,
@@ -217,6 +368,7 @@ def run_optimization(
         "best_params": _jsonable(result.best_params),
         "best_score": result.best_score,
         "n_trials": total,
+        "n_memoized": n_memoized,
         "top": top,
         "truncated": max(total - len(top), 0),
         "results_csv": results_csv,
@@ -255,6 +407,7 @@ def run_walk_forward(
     impact_eta: float = 0.3,
     participation_cap: float = 0.10,
     borrow_bps: float = 50.0,
+    force: bool = False,
 ) -> Dict[str, Any]:
     """Honest evaluation: optimize IS, score OOS across folds, gate the verdict.
 
@@ -266,32 +419,118 @@ def run_walk_forward(
     Net of transaction cost by default, in-sample and out - pass ``gross=True``
     to validate gross returns instead, which systematically promotes turnover
     the strategy could not afford live.
+
+    Journals one *validated* trial (the OOS aggregate — matching
+    ``python main.py walkforward``), unless an identical prior validation is
+    served instead (same recipe: mode/folds/method/objective/max_evals/seed/cost
+    over the same window — the chosen params aren't known until the search runs,
+    so those, not params, are what identifies a repeat here). ``force=True``
+    bypasses that and re-runs, appending a new trial.
     """
+    from src.optimization.config_store import current_git_sha
+    from src.services.audit import journal_trial
+
     run_id = new_run_id()
     cls = resolve_strategy_class(strategy)
     cost_model = _build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
-    validator = WalkForwardValidator(
-        cls, data_client, initial_capital=capital, seed=seed, gates=gates, cost_model=cost_model
-    )
-    result = validator.run(
-        symbols,
-        start,
-        end,
-        mode=mode,
-        n_folds=n_folds,
-        train_days=train_days,
-        test_days=test_days,
-        embargo_days=embargo_days,
-        holdout_days=holdout_days,
-        method=method,
-        objective=objective,
-        max_evals=max_evals,
-        pbo=include_pbo,
-        monte_carlo=include_monte_carlo,
-        parameter_sensitivity=parameter_sensitivity,
-        leakage_probe=leakage_probe,
-        n_trials_offset=n_trials_offset,
-    )
+    cost_key = _cost_key(gross, commission_bps, impact_eta, borrow_bps)
+    recipe = {
+        "mode": mode,
+        "n_folds": n_folds,
+        "train_days": train_days,
+        "test_days": test_days,
+        "embargo_days": embargo_days,
+        "holdout_days": holdout_days,
+        "method": method,
+        "objective": objective,
+        "max_evals": max_evals,
+        "seed": seed,
+        "_cost": cost_key,
+    }
+
+    with _open_trial_store() as trial_store:
+        if not force and trial_store is not None:
+            cached = trial_store.find(
+                strategy=strategy,
+                params=recipe,
+                symbols=symbols,
+                window_start=start,
+                window_end=end,
+                accounting=ACCOUNTING_VERSION,
+                git_sha=current_git_sha(),
+            )
+            if cached is not None:
+                metrics = json.loads(cached["metrics_json"] or "{}")
+                return {
+                    "run_id": run_id,
+                    "strategy": strategy,
+                    "symbols": list(symbols),
+                    "window": {"start": start.isoformat(), "end": end.isoformat()},
+                    "memoized": True,
+                    "trial_id": cached["id"],
+                    "trial_ts": cached["ts"],
+                    "note": "Served from an identical prior validation (same recipe), not re-run. "
+                    "Pass force=True to re-verify — per-fold detail isn't retained, only the "
+                    "OOS aggregate below.",
+                    "oos_aggregate": _jsonable(metrics),
+                    "promotable": bool(cached["promotable"]) if cached["promotable"] is not None else None,
+                    "efficiency": cached["efficiency"],
+                    "n_trials_total": cached["n_trials_in_session"],
+                }
+
+        validator = WalkForwardValidator(
+            cls,
+            data_client,
+            initial_capital=capital,
+            seed=seed,
+            gates=gates,
+            cost_model=cost_model,
+            trial_store=trial_store,
+            strategy_name=strategy,
+            cost_key=cost_key,
+            accounting=ACCOUNTING_VERSION,
+            force=force,
+        )
+        result = validator.run(
+            symbols,
+            start,
+            end,
+            mode=mode,
+            n_folds=n_folds,
+            train_days=train_days,
+            test_days=test_days,
+            embargo_days=embargo_days,
+            holdout_days=holdout_days,
+            method=method,
+            objective=objective,
+            max_evals=max_evals,
+            pbo=include_pbo,
+            monte_carlo=include_monte_carlo,
+            parameter_sensitivity=parameter_sensitivity,
+            leakage_probe=leakage_probe,
+            n_trials_offset=n_trials_offset,
+        )
+
+    if result.folds:
+        chosen = result.holdout_params or result.folds[-1].is_best_params
+        gate_report = result.gate_report(gates)
+        journal_trial(
+            "walkforward",
+            strategy=strategy,
+            symbols=symbols,
+            start=start,
+            end=end,
+            params=dict(chosen),
+            metrics=result.oos_aggregate,
+            objective=objective,
+            extra={
+                "n_trials": result.n_trials_total,
+                "promotable": gate_report["promotable"],
+                "efficiency": result.median_efficiency(),
+            },
+            returns=result.oos_returns,
+            dedup_params=recipe,
+        )
 
     folds = [
         {

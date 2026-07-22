@@ -25,6 +25,7 @@ for preconfigured combos (``make demo``, ``make backtest``, ...).
 
 import argparse
 import asyncio
+import contextlib
 import logging
 import sys
 from datetime import datetime, timedelta
@@ -95,17 +96,136 @@ def build_cost_model(args):
     )
 
 
+def _cost_key(args) -> Dict[str, Any]:
+    """The cost-model assumptions folded into a trial's dedup key (see
+    :func:`_dedup_params`) - two runs differing only in ``--commission-bps`` (or
+    any other cost flag) must never collide as "the same trial"."""
+    if args.gross:
+        return {"gross": True}
+    return {
+        "gross": False,
+        "commission_bps": args.commission_bps,
+        "impact_eta": args.impact_eta,
+        "borrow_bps": args.borrow_bps,
+    }
+
+
+def _dedup_params(params: Dict[str, Any], args) -> Dict[str, Any]:
+    """``params`` plus the cost-model assumptions, folded under a reserved key so
+    the dedup hash (and the journaled/displayed config) reflects everything that
+    can change a trial's outcome, not just the strategy's own tunable params."""
+    return {**params, "_cost": _cost_key(args)}
+
+
+@contextlib.contextmanager
+def _open_trial_store(journal_path: Optional[Any] = None):
+    """A trial store against ``journal_path`` (default: the current
+    ``audit.DEFAULT_TRIAL_JOURNAL``), or ``None`` on any failure to open one.
+
+    v1 of the trial store is passive and derived (see ``src.store.trials``): a
+    broken store must never break the command it's attached to, memoization
+    included - every caller here treats ``None`` as "skip memoization, run
+    normally," never as an error to propagate.
+    """
+    from src.services import audit
+    from src.store.trials import TrialStore, db_path_for_journal
+
+    path = journal_path or audit.DEFAULT_TRIAL_JOURNAL
+    try:
+        store = TrialStore(db_path_for_journal(path), journal_path=path)
+    except Exception:  # noqa: BLE001
+        logger.warning("Trial store unavailable; memoization disabled for this run", exc_info=True)
+        yield None
+        return
+    try:
+        yield store
+    finally:
+        store.close()
+
+
+def _find_cached_trial(
+    strategy: str,
+    params: Dict[str, Any],
+    symbols: List[str],
+    start: Any,
+    end: Any,
+    accounting: int,
+) -> Optional[Dict[str, Any]]:
+    """Look up an exact prior trial via the trial store; ``None`` if none exists
+    (including when the store itself is unavailable - see :func:`_open_trial_store`).
+    """
+    from src.optimization.config_store import current_git_sha
+
+    with _open_trial_store() as store:
+        if store is None:
+            return None
+        return store.find(
+            strategy=strategy,
+            params=params,
+            symbols=symbols,
+            window_start=start,
+            window_end=end,
+            accounting=accounting,
+            git_sha=current_git_sha(),
+        )
+
+
+def _load_strategy_from_config(path: str):
+    """Load a saved config (``walkforward --save-config``) and construct the
+    strategy directly from its params - the ``--config`` path shared by
+    ``backtest``/``live``. Returns ``(strategy, strategy_name, scanner_name)``.
+
+    Construction goes through ``Strategy.__init__`` exactly as
+    ``create_with_defaults()`` does, so out-of-range/unrecognized params raise
+    loudly (:meth:`Strategy._validate_parameters`) rather than silently
+    trading on a config an older strategy version can no longer honor.
+    """
+    from src.optimization.config_store import load_config
+    from src.services.registry import resolve_strategy_class
+
+    payload = load_config(path)
+    strategy_name = payload["strategy"]
+    cls = resolve_strategy_class(strategy_name)
+    strategy = cls(dict(payload.get("params") or {}))
+    return strategy, strategy_name, payload.get("scanner")
+
+
 # ---------------------------------------------------------------------------- #
 # Commands
 # ---------------------------------------------------------------------------- #
 def cmd_backtest(args) -> None:
-    from src.analytics.reporting import log_backtest_report
-    from src.engine.backtest import BacktestEngine
+    import json
+
+    from src.analytics.reporting import format_backtest_report, format_cached_notice, log_backtest_report
+    from src.engine.backtest import ACCOUNTING_VERSION, BacktestEngine
     from src.services.sizing import build_beta_sizer
 
+    scanner = args.scanner
+    if args.config:
+        strategy, strategy_name, cfg_scanner = _load_strategy_from_config(args.config)
+        if cfg_scanner:
+            scanner = cfg_scanner
+        print(f"Loaded config {args.config} -> strategy={strategy_name!r} scanner={scanner!r}")
+    else:
+        strategy_name = args.strategy
+        strategy = STRATEGIES[strategy_name].create_with_defaults()
+
     _, data_client = build_data_and_broker()
-    universe = resolve_universe(data_client, args.scanner, args.symbols)
-    strategy = STRATEGIES[args.strategy].create_with_defaults()
+    universe = resolve_universe(data_client, scanner, args.symbols)
+
+    tunable = {k: strategy.config[k] for k in strategy.PARAM_RANGES if k in strategy.config}
+    dedup_params = _dedup_params(tunable, args)
+
+    if not args.force:
+        cached = _find_cached_trial(
+            strategy_name, dedup_params, universe, args.start, args.end, ACCOUNTING_VERSION
+        )
+        if cached is not None:
+            print(format_cached_notice(cached, current_accounting=ACCOUNTING_VERSION))
+            metrics = json.loads(cached["metrics_json"])
+            final_capital = args.capital * (1.0 + metrics.get("total_return", 0.0) / 100.0)
+            print(format_backtest_report(metrics, args.capital, final_capital, title="Backtest Results"))
+            return
 
     sizer = None
     if args.beta_sizing:
@@ -122,9 +242,6 @@ def cmd_backtest(args) -> None:
         from src.analytics.performance import build_dated_equity_curve
         from src.services.audit import journal_trial
 
-        # One backtest is one evaluated config = one trial. Record only the tunable
-        # params (config also carries timeframe/limits/lookback, which are not knobs).
-        tunable = {k: strategy.config[k] for k in strategy.PARAM_RANGES if k in strategy.config}
         # Persist this trial's own dated return series (daily-resampled,
         # from realized trade P&L - the same construction every persisted trial
         # kind uses) so it can later join a Reality Check family panel.
@@ -132,11 +249,11 @@ def cmd_backtest(args) -> None:
         returns_series = returns_from_equity(dated_equity) if not dated_equity.empty else None
         journal_trial(
             "backtest",
-            strategy=args.strategy,
+            strategy=strategy_name,
             symbols=universe,
             start=args.start,
             end=args.end,
-            params=tunable,
+            params=dedup_params,
             metrics=result.metrics,
             returns=returns_series,
         )
@@ -153,13 +270,13 @@ def cmd_backtest(args) -> None:
         from src.analytics.charts import render_backtest_chart
 
         try:
-            path = render_backtest_chart(result, args.chart, title=f"{args.strategy} — backtest")
+            path = render_backtest_chart(result, args.chart, title=f"{strategy_name} — backtest")
             print(f"Chart saved to {path}")
         except RuntimeError as exc:  # matplotlib (viz extra) not installed
             print(f"Chart skipped: {exc}")
 
     _maybe_print_attribution_verdict(
-        data_client, args.strategy, universe, args.start, args.end, args.benchmark
+        data_client, strategy_name, universe, args.start, args.end, args.benchmark
     )
 
 
@@ -410,30 +527,41 @@ def _print_longshort_report(report, args) -> None:
 
 
 def cmd_optimize(args) -> None:
+    from src.engine.backtest import ACCOUNTING_VERSION
     from src.optimization.optimizer import ParameterOptimizer
 
     _, data_client = build_data_and_broker()
     universe = resolve_universe(data_client, args.scanner, args.symbols)
     # Net of transaction cost by default; --gross searches on gross returns, which
     # reliably favors the highest-turnover config.
-    optimizer = ParameterOptimizer(
-        STRATEGIES[args.strategy],
-        data_client,
-        initial_capital=args.capital,
-        cost_model=build_cost_model(args),
-    )
-
-    if args.method == "grid":
-        result = optimizer.grid_search(
-            universe, args.start, args.end, args.objective, max_evals=args.max_evals
+    with _open_trial_store() as trial_store:
+        # Per-candidate memoization: a candidate this campaign already
+        # scored is served from the store instead of re-simulated - real with
+        # random sampling, or a resumed/extended search.
+        optimizer = ParameterOptimizer(
+            STRATEGIES[args.strategy],
+            data_client,
+            initial_capital=args.capital,
+            cost_model=build_cost_model(args),
+            trial_store=trial_store,
+            strategy_name=args.strategy,
+            cost_key=_cost_key(args),
+            accounting=ACCOUNTING_VERSION,
+            force=args.force,
         )
-    elif args.method == "random":
-        result = optimizer.random_search(
-            universe, args.start, args.end, args.objective, n_samples=args.max_evals
-        )
-    else:  # bayesian
-        result = optimizer.optimize_bayesian(universe, args.start, args.end, args.objective)
 
+        if args.method == "grid":
+            result = optimizer.grid_search(
+                universe, args.start, args.end, args.objective, max_evals=args.max_evals
+            )
+        elif args.method == "random":
+            result = optimizer.random_search(
+                universe, args.start, args.end, args.objective, n_samples=args.max_evals
+            )
+        else:  # bayesian
+            result = optimizer.optimize_bayesian(universe, args.start, args.end, args.objective)
+
+    n_memoized = 0
     if not args.no_journal and not result.results.empty:
         from src.services.audit import journal_trial
 
@@ -443,6 +571,11 @@ def cmd_optimize(args) -> None:
         searchable = optimizer.space.searchable
         defaults = optimizer.space.defaults
         for row in result.results.to_dict("records"):
+            if "_memoized_from" in row:
+                # Already exists as its own trial; journaling it again here would
+                # double-count the exact repeat this spec exists to stop.
+                n_memoized += 1
+                continue
             searched = {k: row[k] for k in searchable if k in row}
             metrics = {k: v for k, v in row.items() if k not in searchable}
             journal_trial(
@@ -451,11 +584,13 @@ def cmd_optimize(args) -> None:
                 symbols=universe,
                 start=args.start,
                 end=args.end,
-                params={**defaults, **searched},
+                params={**defaults, **searched, "_cost": _cost_key(args)},
                 metrics=metrics,
                 objective=args.objective,
             )
 
+    if n_memoized:
+        print(f"{n_memoized}/{len(result.results)} candidate(s) reused from the trial store (not re-run)")
     print(f"\nBest {result.objective}: {result.best_score:.4f}")
     print(f"Best parameters: {result.best_params}")
     if not result.results.empty:
@@ -464,38 +599,82 @@ def cmd_optimize(args) -> None:
 
 
 def cmd_walkforward(args) -> None:
-    from src.optimization.config_store import build_provenance, save_config
+    from src.analytics.reporting import format_cached_notice
+    from src.engine.backtest import ACCOUNTING_VERSION
+    from src.optimization.config_store import build_provenance, current_git_sha, save_config
     from src.optimization.walk_forward import WalkForwardValidator
 
     _, data_client = build_data_and_broker()
     universe = resolve_universe(data_client, args.scanner, args.symbols)
-    # Net of transaction cost by default; --gross validates on gross returns, which
-    # systematically promotes turnover the strategy could not afford live.
-    validator = WalkForwardValidator(
-        STRATEGIES[args.strategy],
-        data_client,
-        initial_capital=args.capital,
-        seed=args.seed,
-        cost_model=build_cost_model(args),
-    )
-    result = validator.run(
-        universe,
-        args.start,
-        args.end,
-        mode=args.mode,
-        n_folds=args.folds,
-        train_days=args.train_days,
-        test_days=args.test_days,
-        embargo_days=args.embargo_days,
-        holdout_days=args.holdout_days,
-        method=args.method,
-        objective=args.objective,
-        max_evals=args.max_evals,
-        pbo=args.pbo,
-        monte_carlo=args.monte_carlo,
-        parameter_sensitivity=args.param_sensitivity,
-        leakage_probe=args.leakage_probe,
-    )
+
+    # Top-level memoization key: the *validation recipe*, not the chosen params —
+    # those aren't known until the search runs. Same seed + same recipe + same
+    # window is deterministic, so serving a prior result is honest, not a
+    # shortcut.
+    recipe = {
+        "mode": args.mode,
+        "n_folds": args.folds,
+        "train_days": args.train_days,
+        "test_days": args.test_days,
+        "embargo_days": args.embargo_days,
+        "holdout_days": args.holdout_days,
+        "method": args.method,
+        "objective": args.objective,
+        "max_evals": args.max_evals,
+        "seed": args.seed,
+        "_cost": _cost_key(args),
+    }
+
+    with _open_trial_store() as trial_store:
+        if not args.force and trial_store is not None:
+            cached = trial_store.find(
+                strategy=args.strategy,
+                params=recipe,
+                symbols=universe,
+                window_start=args.start,
+                window_end=args.end,
+                accounting=ACCOUNTING_VERSION,
+                git_sha=current_git_sha(),
+            )
+            if cached is not None:
+                print(format_cached_notice(cached, current_accounting=ACCOUNTING_VERSION))
+                _print_cached_walkforward(cached)
+                return
+
+        # Net of transaction cost by default; --gross validates on gross returns, which
+        # systematically promotes turnover the strategy could not afford live.
+        # Per-candidate memoization (a fold's IS search) is threaded through the
+        # same trial store as top-level.
+        validator = WalkForwardValidator(
+            STRATEGIES[args.strategy],
+            data_client,
+            initial_capital=args.capital,
+            seed=args.seed,
+            cost_model=build_cost_model(args),
+            trial_store=trial_store,
+            strategy_name=args.strategy,
+            cost_key=_cost_key(args),
+            accounting=ACCOUNTING_VERSION,
+            force=args.force,
+        )
+        result = validator.run(
+            universe,
+            args.start,
+            args.end,
+            mode=args.mode,
+            n_folds=args.folds,
+            train_days=args.train_days,
+            test_days=args.test_days,
+            embargo_days=args.embargo_days,
+            holdout_days=args.holdout_days,
+            method=args.method,
+            objective=args.objective,
+            max_evals=args.max_evals,
+            pbo=args.pbo,
+            monte_carlo=args.monte_carlo,
+            parameter_sensitivity=args.param_sensitivity,
+            leakage_probe=args.leakage_probe,
+        )
     _print_walkforward(result, args.objective)
 
     if not args.no_journal and result.folds:
@@ -522,6 +701,7 @@ def cmd_walkforward(args) -> None:
                 "efficiency": result.median_efficiency(),
             },
             returns=result.oos_returns,
+            dedup_params=recipe,
         )
 
     if getattr(args, "bootstrap_skill", False) and result.folds:
@@ -590,6 +770,27 @@ def cmd_walkforward(args) -> None:
         print(f"Chosen config saved to {path} (a human promotes it to live; nothing auto-flips)")
 
     _maybe_print_attribution_verdict(data_client, args.strategy, universe, args.start, args.end)
+
+
+def _print_cached_walkforward(row: Dict[str, Any]) -> None:
+    """The reduced report served for a memoized walk-forward: the OOS aggregate
+    and verdict the trial store denormalized, not the full per-fold table (that
+    detail isn't persisted). Re-run with --force for it."""
+    print("\n=== Walk-Forward Validation (cached — per-fold detail not stored) ===")
+    print(
+        f"  OOS Sharpe {row.get('oos_sharpe') or 0:.3f}  MaxDD {row.get('oos_max_dd') or 0:.2f}%  "
+        f"PF {row.get('oos_profit_factor') or 0:.2f}  DSR {row.get('deflated_sharpe') or 0:.3f}  "
+        f"trades {row.get('oos_trades') or 0}"
+    )
+    efficiency = row.get("efficiency")
+    n_trials = row.get("n_trials_in_session")
+    print(
+        f"  Efficiency (OOS/IS): {'n/a' if efficiency is None else f'{efficiency:.3f}'}  "
+        f"trials total: {'n/a' if n_trials is None else n_trials}"
+    )
+    promotable = row.get("promotable")
+    verdict = "PROMOTABLE" if promotable else ("NOT promotable" if promotable is not None else "unknown")
+    print(f"\nVerdict: {verdict} (from the original run — pass --force to re-verify the promotion gates)")
 
 
 def _print_walkforward(result, objective: str) -> None:
@@ -1454,9 +1655,17 @@ def cmd_live(args) -> None:
     from src.execution.live_trader import LiveTrader
     from src.services.sizing import build_beta_sizer, build_portfolio_weight_sizer
 
+    scanner = args.scanner
+    if args.config:
+        strategy, strategy_name, cfg_scanner = _load_strategy_from_config(args.config)
+        if cfg_scanner:
+            scanner = cfg_scanner
+        logger.info("Loaded config %s -> strategy=%r scanner=%r", args.config, strategy_name, scanner)
+    else:
+        strategy = STRATEGIES[args.strategy].create_with_defaults()
+
     broker, data_client = build_data_and_broker()
-    universe = resolve_universe(data_client, args.scanner, args.symbols)
-    strategy = STRATEGIES[args.strategy].create_with_defaults()
+    universe = resolve_universe(data_client, scanner, args.symbols)
 
     sizer = None
     if args.portfolio:
@@ -1822,8 +2031,31 @@ def build_parser() -> argparse.ArgumentParser:
             help="Do not record this run's trial(s) in the research journal",
         )
 
+    def add_force(p) -> None:
+        # An identical prior trial is served from the trial store instead of
+        # re-run by default (see `trials query`); --force/--rerun re-verifies and
+        # APPENDS a new trial rather than overwriting the memoized one.
+        p.add_argument(
+            "--force",
+            "--rerun",
+            dest="force",
+            action="store_true",
+            help="Re-run even if an identical trial already exists, instead of serving it from the trial "
+            "store; appends a new trial rather than overwriting the prior one",
+        )
+
+    def add_config_flag(p) -> None:
+        p.add_argument(
+            "--config",
+            metavar="PATH",
+            default=None,
+            help="Load strategy/scanner/params from a saved config (e.g. `walkforward --save-config`); "
+            "takes precedence over --strategy/--scanner when given",
+        )
+
     bt = subparsers.add_parser("backtest", help="Run a historical backtest (did the idea ever work?)")
     add_common(bt, with_dates=True)
+    add_config_flag(bt)
     bt.add_argument(
         "--beta-sizing",
         dest="beta_sizing",
@@ -1839,10 +2071,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="render the equity curve + metrics to an image (needs the viz extra: matplotlib)",
     )
     add_no_journal(bt)
+    add_force(bt)
     bt.set_defaults(func=cmd_backtest)
 
     live = subparsers.add_parser("live", help="Run live/paper trading (paper by default, for your own good)")
     add_common(live, with_dates=False)
+    add_config_flag(live)
     live.add_argument(
         "--portfolio",
         action="store_true",
@@ -2043,6 +2277,7 @@ def build_parser() -> argparse.ArgumentParser:
     opt.add_argument("--output", default="optimization_results.csv")
     _add_cost_flags(opt)
     add_no_journal(opt)
+    add_force(opt)
     opt.set_defaults(func=cmd_optimize)
 
     wf = subparsers.add_parser(
@@ -2125,6 +2360,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_cost_flags(wf)
     add_no_journal(wf)
+    add_force(wf)
     wf.set_defaults(func=cmd_walkforward)
 
     alphas = subparsers.add_parser(

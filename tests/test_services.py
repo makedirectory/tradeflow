@@ -7,13 +7,14 @@ the server refuses a non-data client).
 """
 
 import json
+import re
 from datetime import datetime
 
 import pytest
 
 from src.analytics.performance import FLAG_KEYS, METRIC_KEYS
 from src.marketdata.client import MarketDataClient
-from src.services import analysis, glossary, registry
+from src.services import analysis, audit, glossary, registry
 from src.services.audit import audit_log
 from tests.fakes import FakeMarketData
 
@@ -27,8 +28,12 @@ def _client():
 
 @pytest.fixture(autouse=True)
 def _artifacts_in_tmp(tmp_path, monkeypatch):
-    """Keep test artifacts out of the repo working tree."""
+    """Keep test artifacts, the research journal, and the trial store it dual-
+    writes to out of the repo working tree - `analysis.run_backtest` et al. now
+    journal every run, so without this a test run pollutes (and, worse, can
+    memoize against) the real `logs/research_journal.jsonl`."""
     monkeypatch.setattr(analysis, "ARTIFACT_DIR", tmp_path / "artifacts")
+    monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", tmp_path / "journal.jsonl")
 
 
 # --- discovery --------------------------------------------------------------
@@ -451,3 +456,231 @@ def test_walkforward_gate_report_is_unaffected_by_a_broken_trial_store(monkeypat
     broken = _run(tmp_path / "b" / "journal.jsonl")
 
     assert working == broken
+
+
+# --- memoization + --config (CLI) --------------------------------------
+_BT_ARGV = [
+    "backtest",
+    "--strategy",
+    "ma_crossover",
+    "--scanner",
+    "none",
+    "--symbols",
+    "AAA,BBB",
+    "--start",
+    "2024-01-02",
+    "--end",
+    "2024-06-01",
+]
+
+
+def test_cli_backtest_memoizes_identical_run_without_resimulating(monkeypatch, tmp_path, capsys):
+    import main
+    from src.engine.backtest import BacktestEngine
+
+    journal = _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB"])
+    args1 = main.build_parser().parse_args(_BT_ARGV)
+    args1.func(args1)
+    assert len(_trials(journal)) == 1
+
+    calls = {"n": 0}
+    original_run = BacktestEngine.run
+
+    def counting_run(self, *a, **k):
+        calls["n"] += 1
+        return original_run(self, *a, **k)
+
+    monkeypatch.setattr(BacktestEngine, "run", counting_run)
+
+    args2 = main.build_parser().parse_args(_BT_ARGV)
+    args2.func(args2)
+    out = capsys.readouterr().out
+
+    assert calls["n"] == 0  # served from the trial store, never re-simulated
+    assert "REUSED" in out
+    assert re.search(r"from \d{4}-\d{2}-\d{2}T", out)  # the original run's timestamp, unmistakably
+    assert len(_trials(journal)) == 1  # the re-display did not double-count
+
+
+def test_cli_backtest_commission_bps_change_is_a_distinct_trial(monkeypatch, tmp_path):
+    """Regression test: two runs differing only in a cost flag must not collide
+    as 'the same trial'."""
+    import main
+
+    journal = _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB"])
+    args1 = main.build_parser().parse_args(_BT_ARGV + ["--commission-bps", "1.0"])
+    args1.func(args1)
+    args2 = main.build_parser().parse_args(_BT_ARGV + ["--commission-bps", "5.0"])
+    args2.func(args2)
+    assert len(_trials(journal)) == 2
+
+
+def test_cli_backtest_force_reruns_and_appends_rather_than_overwrites(monkeypatch, tmp_path):
+    import main
+
+    journal = _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB"])
+    args1 = main.build_parser().parse_args(_BT_ARGV)
+    args1.func(args1)
+    args2 = main.build_parser().parse_args(_BT_ARGV + ["--force"])
+    args2.func(args2)
+
+    trials = _trials(journal)
+    assert len(trials) == 2
+    assert trials[0]["run_id"] != trials[1]["run_id"]
+
+
+def test_walkforward_memoizes_identical_recipe_without_rerunning(monkeypatch, tmp_path, capsys):
+    import main
+    from src.optimization.walk_forward import WalkForwardValidator
+
+    journal = _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB"])
+    wf_argv = [
+        "walkforward",
+        "--strategy",
+        "ma_crossover",
+        "--scanner",
+        "none",
+        "--symbols",
+        "AAA,BBB",
+        "--start",
+        "2024-01-02",
+        "--end",
+        "2025-06-01",
+        "--folds",
+        "3",
+        "--holdout-days",
+        "30",
+        "--method",
+        "grid",
+        "--max-evals",
+        "6",
+        "--seed",
+        "42",
+    ]
+    args1 = main.build_parser().parse_args(wf_argv)
+    args1.func(args1)
+    assert len(_trials(journal)) == 1
+
+    calls = {"n": 0}
+    original_run = WalkForwardValidator.run
+
+    def counting_run(self, *a, **k):
+        calls["n"] += 1
+        return original_run(self, *a, **k)
+
+    monkeypatch.setattr(WalkForwardValidator, "run", counting_run)
+
+    args2 = main.build_parser().parse_args(wf_argv)
+    args2.func(args2)
+    out = capsys.readouterr().out
+
+    assert calls["n"] == 0
+    assert "REUSED" in out
+    assert len(_trials(journal)) == 1
+
+
+def test_walkforward_save_config_then_backtest_config_round_trips(monkeypatch, tmp_path):
+    import main
+
+    journal = _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB"])
+    config_path = tmp_path / "cfg.json"
+    wf_args = main.build_parser().parse_args(
+        [
+            "walkforward",
+            "--strategy",
+            "ma_crossover",
+            "--scanner",
+            "none",
+            "--symbols",
+            "AAA,BBB",
+            "--start",
+            "2024-01-02",
+            "--end",
+            "2025-06-01",
+            "--folds",
+            "3",
+            "--holdout-days",
+            "30",
+            "--method",
+            "grid",
+            "--max-evals",
+            "6",
+            "--save-config",
+            str(config_path),
+        ]
+    )
+    wf_args.func(wf_args)
+    assert config_path.exists()
+    saved = json.loads(config_path.read_text())
+
+    bt_args = main.build_parser().parse_args(
+        [
+            "backtest",
+            "--config",
+            str(config_path),
+            "--scanner",
+            "none",
+            "--symbols",
+            "AAA,BBB",
+            "--start",
+            "2024-06-01",
+            "--end",
+            "2024-12-01",
+        ]
+    )
+    bt_args.func(bt_args)
+
+    backtest_trials = [t for t in _trials(journal) if t["tool"] == "trial:backtest"]
+    assert len(backtest_trials) == 1
+    resolved = {k: v for k, v in backtest_trials[0]["resolved_config"].items() if k != "_cost"}
+    assert resolved == saved["params"]
+
+
+def test_backtest_config_out_of_range_param_fails_loudly(tmp_path):
+    import main
+    from src.services.registry import resolve_strategy_class
+
+    cls = resolve_strategy_class("ma_crossover")
+    params = {name: spec["default"] for name, spec in cls.PARAM_RANGES.items()}
+    params["fast_ema_period"] = 9999  # out of PARAM_RANGES bounds
+    config_path = tmp_path / "bad.json"
+    config_path.write_text(json.dumps({"strategy": "ma_crossover", "scanner": None, "params": params}))
+
+    args = main.build_parser().parse_args(
+        [
+            "backtest",
+            "--config",
+            str(config_path),
+            "--scanner",
+            "none",
+            "--symbols",
+            "AAA,BBB",
+            "--start",
+            "2024-01-02",
+            "--end",
+            "2024-06-01",
+        ]
+    )
+    with pytest.raises(ValueError):
+        args.func(args)
+
+
+# --- MCP parity ---------------------------------------------------------
+def test_analysis_run_backtest_journals_a_trial_and_memoizes_a_repeat():
+    """Regression test for a gap found while wiring memoization: MCP's
+    analysis.run_backtest never journaled a trial at all, so nothing an agent ran
+    over MCP ever counted toward the campaign's multiple-testing total."""
+    result1 = analysis.run_backtest(_client(), "volume_spike", SYMBOLS, START, END)
+    assert not result1.get("memoized")
+    trials = _trials(audit.DEFAULT_TRIAL_JOURNAL)
+    assert len(trials) == 1
+    assert trials[0]["tool"] == "trial:backtest"
+
+    result2 = analysis.run_backtest(_client(), "volume_spike", SYMBOLS, START, END)
+    assert result2["memoized"] is True
+    assert result2["trial_id"] == trials[0]["run_id"]
+    assert len(_trials(audit.DEFAULT_TRIAL_JOURNAL)) == 1  # not double-counted
+
+    result3 = analysis.run_backtest(_client(), "volume_spike", SYMBOLS, START, END, force=True)
+    assert not result3.get("memoized")
+    assert len(_trials(audit.DEFAULT_TRIAL_JOURNAL)) == 2

@@ -257,12 +257,20 @@ class TrialStore:
         git_sha: Optional[str] = None,
         seed: Optional[int] = None,
         metrics_full: Optional[Dict[str, Any]] = None,
+        hash_params: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Insert (or idempotently replace) one trial row.
 
         Keyed on ``id`` - the journal's ``run_id`` - so recording the same trial
         twice (a live write, then a later rebuild replaying it) is a no-op, not a
         duplicate.
+
+        ``hash_params``, when given, is what ``params_hash`` is computed from
+        instead of ``params`` - for a trial kind whose *identity* (what makes a
+        repeat a repeat) isn't the same thing as what's useful to display. A
+        walk-forward's dedup identity is its validation recipe (known before it
+        runs); ``params`` stays the chosen tuned config (only known after) so
+        ``trials query``/the journal still show what was actually promoted.
         """
         row = {
             "id": id,
@@ -273,7 +281,7 @@ class TrialStore:
             "universe_hash": universe_hash(symbols),
             "window_start": _iso(window_start),
             "window_end": _iso(window_end),
-            "params_hash": params_hash(params),
+            "params_hash": params_hash(hash_params if hash_params is not None else params),
             "params_json": json.dumps(_jsonable(params), sort_keys=True),
             "is_sharpe": is_sharpe,
             "oos_sharpe": oos_sharpe,
@@ -508,11 +516,51 @@ class TrialStore:
         window_start: Optional[Any] = None,
         window_end: Optional[Any] = None,
         accounting: Optional[int] = None,
+        git_sha: Optional[str] = None,
     ) -> bool:
         """Has this exact ``(strategy, params, universe, window[, accounting])``
         already been recorded? Best-effort: a lookup failure is treated as "not
         seen" (a false negative just means one redundant walk-forward, not a
         wrongly-skipped new config) - never let this block the caller.
+        """
+        return (
+            self.find(
+                strategy=strategy,
+                params=params,
+                symbols=symbols,
+                window_start=window_start,
+                window_end=window_end,
+                accounting=accounting,
+                git_sha=git_sha,
+            )
+            is not None
+        )
+
+    def find(
+        self,
+        *,
+        strategy: str,
+        params: Dict[str, Any],
+        symbols: Iterable[Any],
+        window_start: Optional[Any] = None,
+        window_end: Optional[Any] = None,
+        accounting: Optional[int] = None,
+        git_sha: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """The most recent stored trial matching this exact
+        ``(strategy, params, universe, window[, accounting])``, or ``None``.
+
+        Same filter shape as :meth:`seen`, but returns the full row (denormalized
+        metrics + provenance) so a caller can *serve* the prior answer instead of
+        just rejecting a repeat. Best-effort, same as :meth:`seen`: a lookup
+        failure is treated as "no match" - a caller falling back to a fresh run
+        is always safe, silently skipping one never is.
+
+        ``git_sha``, when given, restricts the match to rows whose stored
+        ``git_sha`` is either unrecorded (a legacy row, or git unavailable at
+        record time) or equal to it - a *known* mismatch means the strategy's
+        math may have changed since, so it's treated as no match at all (the
+        conservative reading of "a fixed bug looking already tested and fine").
         """
         try:
             ph = params_hash(params)
@@ -529,15 +577,21 @@ class TrialStore:
             if accounting is not None:
                 clauses.append("accounting = ?")
                 args.append(int(accounting))
-            cur = self._conn.execute(f"SELECT 1 FROM trials WHERE {' AND '.join(clauses)} LIMIT 1", args)
-            return cur.fetchone() is not None
+            if git_sha is not None:
+                clauses.append("(git_sha IS NULL OR git_sha = ?)")
+                args.append(git_sha)
+            cur = self._conn.execute(
+                f"SELECT * FROM trials WHERE {' AND '.join(clauses)} ORDER BY ts DESC LIMIT 1", args
+            )
+            row = cur.fetchone()
+            return dict(row) if row is not None else None
         except (sqlite3.Error, TypeError, ValueError):
             # TypeError/ValueError: params_hash()/universe_hash() above can raise on
             # a value json.dumps can't serialize. The docstring promises this never
             # blocks the caller, so the catch must cover hashing failures too, not
             # just the query itself.
             logger.warning("Trial store dedup lookup failed; treating as unseen", exc_info=True)
-            return False
+            return None
 
     def query(
         self,
@@ -649,6 +703,7 @@ def _row_kwargs_from_cli_trial(record: Dict[str, Any]) -> Optional[Dict[str, Any
         "n_trials_in_session": record.get("n_trials"),
         "git_sha": record.get("git_sha"),
         "metrics_full": metrics,
+        "hash_params": record.get("dedup_params"),
     }
 
 
