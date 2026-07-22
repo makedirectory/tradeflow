@@ -380,7 +380,7 @@ def build_server(data_client=None):
         benchmark: str = "SPY",
         max_lag: int = 10,
     ) -> Dict[str, Any]:
-        """Measure an alpha's decay/half-life and recommend cadence + lagged blend (012).
+        """Measure an alpha's decay/half-life and recommend cadence + lagged blend.
 
         Measures the IC-vs-lag profile (alpha at t vs residual return n periods later),
         fits the per-period decay δ and half-life, derives the rebalance cadence that
@@ -442,7 +442,7 @@ def build_server(data_client=None):
         benchmark: str = "SPY",
         capital: Optional[float] = None,
     ) -> Dict[str, Any]:
-        """Construct the mean-variance optimal portfolio from alphas (005) and Σ (006).
+        """Construct the mean-variance optimal portfolio from alphas and Σ.
 
         Maximizes αᵀw − λ·wᵀΣw over long-only, box-bounded, budgeted (optionally
         cardinality-capped) weights, calibrating λ to `target_te`. Returns the proposed

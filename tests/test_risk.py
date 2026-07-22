@@ -136,7 +136,7 @@ def test_sample_covariance_runs_and_is_symmetric():
     assert np.allclose(sigma, sigma.T)
 
 
-# --- factor model (006 v2) ---------------------------------------------------
+# --- factor model --------------------------------------------------------------
 def test_factor_model_recovers_known_factor_covariance():
     from src.risk import FactorRiskMatrix, estimate_factor_model
 

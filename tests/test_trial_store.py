@@ -215,7 +215,7 @@ def test_seen_dedup_lookup(tmp_path):
         window_end=datetime(2024, 6, 1),
         accounting=2,
     )
-    # A different accounting version is not the same trial (025's problem, again).
+    # A different accounting version is not the same trial (the same problem, again).
     assert not store.seen(
         strategy="s",
         params={"buy_every": 3},

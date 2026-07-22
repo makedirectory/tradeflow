@@ -50,9 +50,12 @@ Full results written to optimization_results.csv
 ```
 
 Every evaluated configuration is also recorded as one **trial** in
-`logs/research_journal.jsonl` — a 50-point search is 50 trials, which is exactly
-what a campaign-level [deflated Sharpe](../engineering/walk-forward#known-limit-n_trials-counts-a-run-not-a-campaign)
-needs to count. Pass `--no-journal` to keep an exploratory sweep out of that total.
+`logs/research_journal.jsonl` and the queryable
+[trial store](../engineering/walk-forward#the-trial-store) — a 50-point search is
+50 trials, which is exactly what a campaign-level deflated Sharpe needs to count
+(the store makes that count queryable by hand; wiring it into the gate itself is
+a [separate, open item](../engineering/walk-forward#n_trials-still-counts-a-run-at-gate-time-not-a-campaign)).
+Pass `--no-journal` to keep an exploratory sweep out of that total.
 
 :::tip Avoid overfitting
 A configuration that looks great in-sample often disappoints out-of-sample.

@@ -77,6 +77,7 @@ the concatenation of every fold's OOS trades, not an average of per-fold numbers
 | `--monte-carlo` | Block-bootstrap the OOS trades for a 5th-percentile Sharpe. |
 | `--param-sensitivity` | Perturb the chosen params ±10% and re-test robustness. |
 | `--leakage-probe` | Shift the data feed forward to detect future-data leakage. |
+| `--bootstrap-skill` | Nonparametric own p-value (stationary block bootstrap) next to the FAMILY p from White's Reality Check over every OOS return series the trial store has recorded for this strategy/universe/accounting — advisory only, not a gate. See [below](#nonparametric-skill-check). |
 | `--save-config PATH` | Save the chosen config (with provenance) for a human to review. |
 | `--results-csv PATH` | Write the per-fold table to CSV. |
 
@@ -92,6 +93,39 @@ Sharpe, and — when requested — parameter sensitivity and the leakage probe).
 > Saving a config never changes live behavior. It writes a JSON file to a
 > gitignored `configs/` directory; promoting it to live trading is a manual human
 > step.
+
+## Nonparametric skill check
+
+`--bootstrap-skill` adds a second, assumption-free verdict next to the deflated
+Sharpe: an **own** p-value from a stationary block bootstrap of this run's OOS
+returns (no assumption about the return distribution's shape), always reported
+next to the **family** p-value from White's Reality Check over every other
+trial recorded for the same strategy/universe/accounting in the
+[trial store](#the-trial-store) — a great own p and a terrible family p is
+exactly the selection-luck signature this test exists to catch. Family scoring
+is advisory, not a hard gate. See
+[Evaluation metrics — bootstrap skill inference](../engineering/evaluation-metrics#bootstrap-skill-inference).
+
+## The trial store
+
+Every walk-forward run (and every `backtest`/`optimize`/`alphas` run, and the
+research agent) is dual-written into a queryable SQLite index over the research
+journal — `logs/trials.db`. It's what makes campaign-wide counts answerable
+without reading the whole journal:
+
+```bash
+python main.py trials query --strategy volume_spike --symbols NVDA,AAPL,META
+python main.py trials status      # row/journal-line counts + a drift check
+python main.py trials rebuild     # rebuild from the journal — safe, it's derived
+```
+
+`trials query --strategy ... --symbols ...` prints the campaign's real
+`n_trials` — useful to check by hand, since the promotion gate above still only
+counts the current run (deliberately: wiring the campaign count into the gate
+automatically would make every gate strictly harder and reclassify configs
+already saved as promotable — an open, evidence-backed decision, not an
+oversight). See
+[Walk-forward validation — the trial store (engineering)](../engineering/walk-forward#the-trial-store).
 
 See the engineering wiki's **Walk-forward validation** page for the design,
 fold geometry, and the leakage-safety guarantees.

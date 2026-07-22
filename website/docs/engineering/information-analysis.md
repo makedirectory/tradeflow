@@ -79,8 +79,11 @@ place, two more diagnostics close the loop:
   cross-section is projected onto the factor exposures; the portfolio's return splits
   into a *factor* part (`w·fitted`) and a *specific* part (`w·(R−fitted)`) that sum to
   it exactly. This answers "was my return from cheap factor tilts (momentum, size) or
-  genuine name selection?" — and checks whether 005's neutralization actually worked.
-  Reported as `factor_return` / `specific_return` per rebalance.
+  genuine name selection?" — and checks whether the [alpha pipeline's](./alphas)
+  neutralization actually worked. Reported as `factor_return` / `specific_return`
+  per rebalance. The full, **per-source, per-period** version of this — with
+  systematic benchmark timing split out and Bayesian-blended t-stats on every row
+  — is [Performance attribution](./attribution).
 - **Capacity.** As capital scales, square-root impact cost grows ∝ √capital, so the net
   alpha is monotone-decreasing in capital. `construct_portfolio` reports the
   `capacity_capital` — the size at which net active return crosses zero — by bisection

@@ -135,8 +135,9 @@ residual returns — measure on out-of-sample data for an honest combination. Se
 
 - **The absolute scale is only as good as the assumed IC.** With no measured IC,
   treat the magnitudes as indicative; the *ranking* across names is robust regardless
-  (IC is a common scalar). A future information-analysis step will measure IC and feed
-  it back.
+  (IC is a common scalar). [`info`](information) measures IC from realized outcomes
+  and recommends a value to feed back in — a human applies it, nothing auto-tunes
+  `--ic`.
 - **`low_confidence`** is flagged when the universe is thinner than ~10 names: the
   cross-sectional z-score is unstable, so the tool falls back to demean-only (no
   scaling) and says so.

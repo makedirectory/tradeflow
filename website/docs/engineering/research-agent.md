@@ -32,9 +32,12 @@ goal ─▶ propose (Proposer) ─▶ hygiene gate ─▶ validate OUT-OF-SAMPLE
    session (via `n_trials_offset`) and feeds the deflated Sharpe — the more the
    agent tries, the higher the bar each new config must clear. The count is
    **per session**: it resets when the process exits, so trials from earlier
-   sessions do not raise the bar for this one. Read a deflated Sharpe as a lower
-   bound on the deflation warranted — see
-   [the scope limit](walk-forward.md#known-limit-n_trials-counts-a-run-not-a-campaign).
+   sessions do not raise the bar for this one at gate time. Every round is also
+   dual-written into the [trial store](walk-forward.md#the-trial-store), so the
+   campaign-wide count is queryable by hand (`trials query`) even though it
+   isn't wired into the gate itself — see
+   [the open item](walk-forward.md#n_trials-still-counts-a-run-at-gate-time-not-a-campaign).
+   Read a deflated Sharpe as a lower bound on the deflation warranted.
 3. **Sacred holdout.** Reserved up front, never passed to any search, scored once
    at the end on the final shortlist.
 4. **Budgets + dryness stop.** Hard caps on trials and tokens, plus a

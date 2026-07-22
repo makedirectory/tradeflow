@@ -67,13 +67,15 @@ factor, walk-forward efficiency, OOS-vs-IS drawdown ratio, a minimum-OOS-trades
 floor, the deflated Sharpe, and — when computed — parameter sensitivity and the
 leakage probe. A config is `promotable` only if it clears **every** gate.
 
-### Known limit: `n_trials` counts a run, not a campaign
+### `n_trials` still counts a run at gate time, not a campaign
 
 The Deflated Sharpe raises the bar as you try more configurations — the more
 lottery tickets you buy, the better your best one must be before it counts as
-skill. Today `n_trials` **resets when the process exits**: walk-forward accumulates
-across folds, and the research agent accumulates across a session, and then the
-count starts over.
+skill. The `n_trials` a gate check *uses* still **resets when the process
+exits**: walk-forward accumulates across folds, and the research agent
+accumulates across a session, and then the count starts over — even though the
+[trial store](#the-trial-store) below now has the campaign's full history
+available to query.
 
 So a researcher on their tenth session is deflating against that session's few
 dozen trials rather than the campaign's few thousand. The error runs in the
@@ -85,23 +87,58 @@ dangerous direction — the correction gets *weaker* the harder you search:
 | 370 | 0.69 | PASS |
 | 3700 (a real campaign) | 0.43 | **FAIL** |
 
-Treat a reported deflated Sharpe as a **lower bound on how much deflation is
-warranted**, and remember that configs tried in earlier sessions are invisible to it.
+Treat a gate-reported deflated Sharpe as a **lower bound on how much deflation
+is warranted**. `trials query --strategy ... --symbols ...` prints the real
+campaign-wide `n_trials` on demand — worth checking by hand before trusting a
+gate pass — but wiring that number automatically into the gate itself is a
+separate, deliberately deferred decision: doing so makes every gate strictly
+harder and would reclassify configs already saved as promotable. One gap also
+remains on the statistics side: `var_of_trial_sr`, the DSR's other input, is
+still estimated per run rather than from the real distribution of tried
+configs — the family-level [bootstrap Reality
+Check](evaluation-metrics.md#bootstrap-skill-inference) is the assumption-free
+alternative for that question, and it *does* read the whole campaign.
 
-What *is* recorded: every research-clock entrypoint journals to the same
-`logs/research_journal.jsonl` — the research agent, and CLI `backtest` (one trial),
-`optimize` (one per evaluated config, so a 50-point search is 50 rows), `walkforward`
-(one validated config, carrying its internal search count `n_trials`), and `alphas`
-(a read-only forecast under `kind="alpha"`, which a multiple-testing count skips
-since it has no Sharpe to cherry-pick). Pass `--no-journal` to keep a throwaway run
-out of the total. One gap remains: `var_of_trial_sr`, the DSR's other input, is still
-estimated per run rather than from the real distribution of tried configs.
+## The trial store
 
-The journal now records the trials; **nothing reads them back yet**. Closing the
-loop needs a queryable index over it — planned as a trial store: record first
-(done), then a separate, evidence-backed decision about wiring campaign counts into
-the gates, since doing so makes every gate strictly harder and would reclassify
-configs already saved as promotable.
+Every research-clock entrypoint journals to `logs/research_journal.jsonl` — the
+research agent, and CLI `backtest` (one trial), `optimize` (one per evaluated
+config, so a 50-point search is 50 rows), `walkforward` (one validated config,
+carrying its internal search count `n_trials`), and `alphas` (a read-only
+forecast under `kind="alpha"`, which a multiple-testing count skips since it has
+no Sharpe to cherry-pick). Pass `--no-journal` to keep a throwaway run out of the
+total.
+
+The journal alone answers "what happened" only by reading every line — `O(n)`
+per query. `src/store/trials.py` builds a **derived, disposable** SQLite index
+over it (`logs/trials.db`) so a campaign can be asked "how many configs have I
+really tried against this strategy+universe, across every session I've ever
+run?" with an index lookup instead. **Derived, never authoritative**: `trials
+rebuild` reconstructs the whole table by replaying the journal from scratch, so
+deleting the database file loses nothing. Two record shapes live in the journal
+and the store parses both — per-config `trial:{kind}` rows and the research
+agent's cumulative `research:trial` rows (which carry no strategy/universe of
+their own; that lives on a sibling `research:session_start` record for the same
+session, so replay tracks per-session state as it walks the journal in order).
+
+**Return-series retention.** Early on the store recorded only summary floats
+(`oos_sharpe`, `deflated_sharpe`, ...) — enough for the Deflated Sharpe, not
+enough for White's Reality Check, which needs every trial's actual OOS return
+*series* to jointly resample. A companion `trial_returns` table now retains the
+dated per-period return series for every trial that has one (not just the
+survivors — Reality Check over only the keepers would be survivorship bias with
+extra steps), joinable into a common-calendar panel per
+`(strategy, universe, accounting)` family. This is exactly what powers the
+family half of [bootstrap skill
+inference](evaluation-metrics.md#bootstrap-skill-inference).
+
+`python main.py trials status` reports row/journal-line counts and flags drift
+(a truncated or out-of-order journal); `trials rebuild` resyncs from scratch;
+`trials query --strategy ... --symbols ...` lists recent trials and, with both
+flags, the campaign's real `n_trials`. `--accounting` filters to one engine
+[accounting version](#the-accounting-stamp) (default: the current one) — pass
+`--all-accounting` to see every version, but read the column before comparing
+rows across them; the numbers aren't on the same footing.
 
 ### Why the thresholds are what they are
 

@@ -19,7 +19,7 @@ Two questions, two functions:
    (White 2000) resamples the same block indices across every trial's column at
    once, so the cross-trial correlation structure is preserved by construction
    (DSR has to *assume* a trial-Sharpe variance to approximate this; this replays
-   the actual trials from the 026 trial store) - the null distribution of "the best
+   the actual trials from the trial store) - the null distribution of "the best
    IR among K correlated tries," compared against the actual observed best.
 
 Both report a Monte-Carlo standard error on the p-value (``sqrt(p(1-p)/B)``) and a
