@@ -8,6 +8,9 @@ configs/
 # MCP audit log, research journal, and run artifacts (Spec 003/004)
 logs/
 
+# Persistent bar cache (Spec 010) - derived from Alpaca, safe to delete
+cache/
+
 # Docs site (Docusaurus)
 website/node_modules/
 website/build/

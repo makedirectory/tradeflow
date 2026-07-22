@@ -134,7 +134,9 @@ def _age_str(ts: Optional[str]) -> str:
     return f"{seconds / 86400:.1f} days"
 
 
-def format_cached_notice(row: Dict[str, Any], *, current_accounting: Optional[int] = None) -> str:
+def format_cached_notice(
+    row: Dict[str, Any], *, current_accounting: Optional[int] = None, vintage_available: bool = False
+) -> str:
     """A prominent, unmistakable "this is a memo, not a fresh verification" banner.
 
     Every command that can serve a memoized trial (``backtest``/``optimize``/
@@ -142,6 +144,14 @@ def format_cached_notice(row: Dict[str, Any], *, current_accounting: Optional[in
     so the reused case looks visually distinct everywhere, not just wherever it
     was first implemented. Always names the original run's id and timestamp/age -
     never let a stale number pass as freshly checked.
+
+    ``vintage_available`` is ``True`` only when *this* lookup was itself keyed on
+    a bar-cache data-vintage stamp and still matched - which, by construction,
+    means the match's underlying data vintage is identical to the stored trial's
+    (that's what made the dedup hash match). In that case the data caveat below is
+    replaced with a positive statement rather than dropped silently; a run without
+    the bar cache (``--cache``/``--offline``) still gets the original caveat, since
+    for it nothing has actually changed.
     """
     ts = row.get("ts")
     lines = [
@@ -154,8 +164,15 @@ def format_cached_notice(row: Dict[str, Any], *, current_accounting: Optional[in
             f"(!) stored under accounting v{row_accounting}, engine is v{current_accounting} — "
             "its metrics are NOT comparable to a fresh run"
         )
-    lines.append(
-        "(i) reused on 'same requested inputs' only — not yet guaranteed identical underlying data "
-        "(no data-vintage stamp yet); a rare vendor correction/backfill since the original run could differ"
-    )
+    if vintage_available:
+        lines.append(
+            "(i) data vintage confirmed: the bar cache's fetch stamp for this exact window matches the "
+            "original run's — this reuse is vintage-safe, not just same-inputs"
+        )
+    else:
+        lines.append(
+            "(i) reused on 'same requested inputs' only — not yet guaranteed identical underlying data "
+            "(no data-vintage stamp; re-run with --cache/--offline for a vintage-safe reuse); a rare vendor "
+            "correction/backfill since the original run could differ"
+        )
     return "\n".join(lines)

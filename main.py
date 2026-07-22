@@ -18,6 +18,7 @@ the MCP server, and the research agent run the same code):
     mcp          serve TradeFlow to an agent over MCP (read-only)
     research     autonomous, offline research loop -> shortlist of configs
     trials       inspect the trial store: campaign n_trials, recent trials, drift check
+    cache        inspect/warm the persistent bar cache (backtest/optimize/walkforward --cache)
 
 Run ``python main.py <command> --help`` for options, or use the Makefile targets
 for preconfigured combos (``make demo``, ``make backtest``, ...).
@@ -31,6 +32,7 @@ import sys
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
+from src.marketdata.base import MarketDataProvider
 from src.services.registry import STRATEGIES
 from src.utils.logging_config import setup_logging
 
@@ -43,14 +45,19 @@ DEFAULT_UNIVERSE = ["NVDA", "RIVN", "NFLX", "META", "BAC", "MS", "TSLA", "GS", "
 # ---------------------------------------------------------------------------- #
 # Wiring
 # ---------------------------------------------------------------------------- #
-def build_data_and_broker():
-    """Construct the Alpaca-backed broker and market-data client from settings."""
-    from alpaca.data.historical import StockHistoricalDataClient
+def build_data_and_broker(cache: bool = False, offline: bool = False, cache_dir: Optional[Any] = None):
+    """Construct the Alpaca-backed broker and market-data client from settings.
+
+    ``cache``/``offline``/``cache_dir`` are forwarded to
+    :func:`src.services.data.build_data_client`, which owns the actual provider
+    construction (and its opt-in bar-cache wrapping) - kept in one place so the
+    CLI and the read-only MCP/research path never diverge on how a data client
+    gets built.
+    """
     from alpaca.trading.client import TradingClient
 
     from src.brokers.alpaca.broker import AlpacaBroker
-    from src.brokers.alpaca.market_data import AlpacaMarketData
-    from src.marketdata.client import MarketDataClient
+    from src.services.data import build_data_client
     from src.settings import load_settings
 
     settings = load_settings()
@@ -59,10 +66,8 @@ def build_data_and_broker():
         secret_key=settings.alpaca_secret,
         paper=settings.paper_trade,
     )
-    historical = StockHistoricalDataClient(settings.alpaca_key, settings.alpaca_secret)
-
     broker = AlpacaBroker(trading_client, settings.alpaca_key, settings.alpaca_secret, settings.paper_trade)
-    data_client = MarketDataClient(AlpacaMarketData(historical, settings.alpaca_key, settings.alpaca_secret))
+    data_client = build_data_client(cache=cache, offline=offline, cache_dir=cache_dir)
     return broker, data_client
 
 
@@ -96,25 +101,54 @@ def build_cost_model(args):
     )
 
 
-def _cost_key(args) -> Dict[str, Any]:
-    """The cost-model assumptions folded into a trial's dedup key (see
-    :func:`_dedup_params`) - two runs differing only in ``--commission-bps`` (or
-    any other cost flag) must never collide as "the same trial"."""
-    if args.gross:
-        return {"gross": True}
-    return {
-        "gross": False,
-        "commission_bps": args.commission_bps,
-        "impact_eta": args.impact_eta,
-        "borrow_bps": args.borrow_bps,
-    }
+def _cost_key(args, vintage: Optional[str] = None) -> Dict[str, Any]:
+    """The cost-model assumptions (plus, when given, a data-vintage stamp) folded
+    into a trial's dedup key (see :func:`_dedup_params`) - two runs differing only
+    in ``--commission-bps`` (or any other cost flag) must never collide as "the
+    same trial", and - once the bar cache is in play - neither must two runs whose
+    underlying data actually differs (a corporate-action backfill since the
+    original run). ``vintage`` is omitted whenever the data client isn't
+    cache-backed (see :func:`_vintage_stamp`), so a non-cached run's dedup hash is
+    byte-identical to before this existed - a non-breaking addition."""
+    key = (
+        {"gross": True}
+        if args.gross
+        else {
+            "gross": False,
+            "commission_bps": args.commission_bps,
+            "impact_eta": args.impact_eta,
+            "borrow_bps": args.borrow_bps,
+        }
+    )
+    if vintage is not None:
+        key["_vintage"] = vintage
+    return key
 
 
-def _dedup_params(params: Dict[str, Any], args) -> Dict[str, Any]:
+def _dedup_params(params: Dict[str, Any], args, vintage: Optional[str] = None) -> Dict[str, Any]:
     """``params`` plus the cost-model assumptions, folded under a reserved key so
     the dedup hash (and the journaled/displayed config) reflects everything that
     can change a trial's outcome, not just the strategy's own tunable params."""
-    return {**params, "_cost": _cost_key(args)}
+    return {**params, "_cost": _cost_key(args, vintage)}
+
+
+def _vintage_stamp(data_client, universe: List[str], timeframe: str, start: Any, end: Any) -> Optional[str]:
+    """The bar cache's data-vintage stamp for this exact fetch, or ``None`` when
+    the data client isn't cache-backed (today's behavior - no vintage guarantee).
+
+    Calling this ensures ``[start, end]`` is cached for ``universe`` (see
+    :meth:`~src.store.bars.CachedMarketData.vintage_stamp`) - it warms the cache
+    as a side effect, which is why callers compute it once, up front, and reuse
+    the same value for both the memoization lookup and the eventual record: the
+    two must use an identical dedup key or a matching prior trial would never be
+    found.
+    """
+    from src.store.bars import CachedMarketData
+
+    provider = getattr(data_client, "provider", None)
+    if not isinstance(provider, CachedMarketData):
+        return None
+    return provider.vintage_stamp(universe, timeframe, start, end)
 
 
 @contextlib.contextmanager
@@ -210,18 +244,27 @@ def cmd_backtest(args) -> None:
         strategy_name = args.strategy
         strategy = STRATEGIES[strategy_name].create_with_defaults()
 
-    _, data_client = build_data_and_broker()
+    _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
     universe = resolve_universe(data_client, scanner, args.symbols)
 
+    # Computed once, up front: it warms the cache as a side effect (when
+    # cache-backed) and must match exactly between the lookup below and the
+    # eventual journal_trial() record, or a matching prior trial would never be
+    # found - see _vintage_stamp's own docstring.
+    vintage = _vintage_stamp(data_client, universe, strategy.config["timeframe"], args.start, args.end)
     tunable = {k: strategy.config[k] for k in strategy.PARAM_RANGES if k in strategy.config}
-    dedup_params = _dedup_params(tunable, args)
+    dedup_params = _dedup_params(tunable, args, vintage)
 
     if not args.force:
         cached = _find_cached_trial(
             strategy_name, dedup_params, universe, args.start, args.end, ACCOUNTING_VERSION
         )
         if cached is not None:
-            print(format_cached_notice(cached, current_accounting=ACCOUNTING_VERSION))
+            print(
+                format_cached_notice(
+                    cached, current_accounting=ACCOUNTING_VERSION, vintage_available=vintage is not None
+                )
+            )
             metrics = json.loads(cached["metrics_json"])
             final_capital = args.capital * (1.0 + metrics.get("total_return", 0.0) / 100.0)
             print(format_backtest_report(metrics, args.capital, final_capital, title="Backtest Results"))
@@ -530,8 +573,10 @@ def cmd_optimize(args) -> None:
     from src.engine.backtest import ACCOUNTING_VERSION
     from src.optimization.optimizer import ParameterOptimizer
 
-    _, data_client = build_data_and_broker()
+    _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
     universe = resolve_universe(data_client, args.scanner, args.symbols)
+    timeframe = STRATEGIES[args.strategy].create_with_defaults().config["timeframe"]
+    vintage = _vintage_stamp(data_client, universe, timeframe, args.start, args.end)
     # Net of transaction cost by default; --gross searches on gross returns, which
     # reliably favors the highest-turnover config.
     with _open_trial_store() as trial_store:
@@ -545,7 +590,7 @@ def cmd_optimize(args) -> None:
             cost_model=build_cost_model(args),
             trial_store=trial_store,
             strategy_name=args.strategy,
-            cost_key=_cost_key(args),
+            cost_key=_cost_key(args, vintage),
             accounting=ACCOUNTING_VERSION,
             force=args.force,
         )
@@ -584,7 +629,7 @@ def cmd_optimize(args) -> None:
                 symbols=universe,
                 start=args.start,
                 end=args.end,
-                params={**defaults, **searched, "_cost": _cost_key(args)},
+                params={**defaults, **searched, "_cost": _cost_key(args, vintage)},
                 metrics=metrics,
                 objective=args.objective,
             )
@@ -604,8 +649,10 @@ def cmd_walkforward(args) -> None:
     from src.optimization.config_store import build_provenance, current_git_sha, save_config
     from src.optimization.walk_forward import WalkForwardValidator
 
-    _, data_client = build_data_and_broker()
+    _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
     universe = resolve_universe(data_client, args.scanner, args.symbols)
+    timeframe = STRATEGIES[args.strategy].create_with_defaults().config["timeframe"]
+    vintage = _vintage_stamp(data_client, universe, timeframe, args.start, args.end)
 
     # Top-level memoization key: the *validation recipe*, not the chosen params —
     # those aren't known until the search runs. Same seed + same recipe + same
@@ -622,7 +669,7 @@ def cmd_walkforward(args) -> None:
         "objective": args.objective,
         "max_evals": args.max_evals,
         "seed": args.seed,
-        "_cost": _cost_key(args),
+        "_cost": _cost_key(args, vintage),
     }
 
     with _open_trial_store() as trial_store:
@@ -637,7 +684,11 @@ def cmd_walkforward(args) -> None:
                 git_sha=current_git_sha(),
             )
             if cached is not None:
-                print(format_cached_notice(cached, current_accounting=ACCOUNTING_VERSION))
+                print(
+                    format_cached_notice(
+                        cached, current_accounting=ACCOUNTING_VERSION, vintage_available=vintage is not None
+                    )
+                )
                 _print_cached_walkforward(cached)
                 return
 
@@ -653,7 +704,7 @@ def cmd_walkforward(args) -> None:
             cost_model=build_cost_model(args),
             trial_store=trial_store,
             strategy_name=args.strategy,
-            cost_key=_cost_key(args),
+            cost_key=_cost_key(args, vintage),
             accounting=ACCOUNTING_VERSION,
             force=args.force,
         )
@@ -1566,6 +1617,71 @@ def cmd_horizon(args) -> None:
     print(f"  ({r['blend_superseded_by']})")
 
 
+def cmd_cache(args) -> None:
+    """Inspect/warm the bar cache: persistent OHLCV bars behind
+    ``MarketDataProvider``, so a repeated backtest/optimize/walkforward request
+    reuses previously-fetched data instead of re-hitting Alpaca.
+    """
+    from src.services.data import build_data_client
+    from src.store.bars import CachedMarketData
+
+    if args.cache_command == "status":
+        # No network needed - open the cache directly.
+        cached = CachedMarketData(_NullProvider(), cache_dir=args.cache_dir, offline=True)
+        info = cached.status(symbols=args.symbols, timeframe=args.timeframe)
+        print(f"Cache dir : {info['cache_dir']}")
+        print(f"Coverage DB: {info['db_path']}")
+        if not info["entries"]:
+            print("No cached symbols.")
+        else:
+            print(f"{'SYMBOL':10}{'TIMEFRAME':12}{'COVERED FROM':26}{'COVERED TO':26}LAST FETCHED")
+            for e in info["entries"]:
+                print(f"{e['symbol']:10}{e['timeframe']:12}{e['lo']:26}{e['hi']:26}{e['last_fetch']}")
+        if info["drift"]:
+            print(
+                f"\nDRIFT DETECTED — coverage claims data no longer on disk for: {', '.join(info['drift'])}"
+            )
+            print("Run `cache refresh` for those symbols.")
+        else:
+            print("\nOK — no drift detected.")
+        return
+
+    data_client = build_data_client(cache=True, cache_dir=args.cache_dir)
+    provider = data_client.provider
+    assert isinstance(provider, CachedMarketData)  # build_data_client(cache=True) guarantees this
+
+    if args.cache_command == "warm":
+        universe = resolve_universe(data_client, args.scanner, args.symbols)
+        summary = provider.warm(universe, args.timeframe, args.start, args.end)
+        for symbol, s in summary.items():
+            state = "already cached" if s["already_cached"] else f"fetched {s['gaps_fetched']} gap(s)"
+            print(f"{symbol}: {state}")
+        return
+
+    # refresh
+    summary = provider.refresh(args.symbols, args.timeframe, args.start, args.end)
+    for symbol, s in summary.items():
+        if s["refreshed"]:
+            print(f"{symbol}: refreshed [{s['start']}, {s['end']}]")
+        else:
+            print(f"{symbol}: skipped — {s['reason']}")
+
+
+class _NullProvider(MarketDataProvider):
+    """A stand-in upstream for `cache status`, which never fetches (offline=True
+    on the ``CachedMarketData`` it's wrapped in) - so inspecting the local cache
+    needs no Alpaca credentials at all."""
+
+    def get_bars(self, symbols, timeframe, start, end):  # pragma: no cover - never called
+        raise RuntimeError("cache status does not fetch")
+
+    async def stream_bars(self, symbols, handler):  # pragma: no cover - never called
+        raise RuntimeError("cache status does not stream")
+
+    def supports_streaming(self) -> bool:
+        return False
+
+
 def cmd_trials(args) -> None:
     """Inspect the trial store: the queryable index over the research
     journal that lets a campaign-level Deflated Sharpe count every config you've
@@ -1998,6 +2114,32 @@ def _add_cost_flags(parser) -> None:
     )
 
 
+def _add_cache_flags(parser) -> None:
+    """--cache/--offline/--cache-dir, shared by backtest/optimize/walkforward -
+    the same selectivity as :func:`_add_cost_flags` (not live/research/scan/...).
+
+    ``--cache`` wraps the data client in the persistent bar cache
+    (``src.store.bars.CachedMarketData``): a repeated request for the same
+    symbols/window is served from local Parquet instead of re-fetched. ``--offline``
+    additionally forbids any network call and implies ``--cache`` on its own — a
+    byte-reproducible, cache-only run.
+    """
+    parser.add_argument(
+        "--cache",
+        action="store_true",
+        help="Cache fetched bars locally and reuse them on repeat requests (see `cache warm/status/refresh`)",
+    )
+    parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="Cache-only: never touch the network; fail loudly if the requested range isn't cached "
+        "(implies --cache)",
+    )
+    parser.add_argument(
+        "--cache-dir", dest="cache_dir", default=None, help="Bar cache directory (default: cache/bars)"
+    )
+
+
 def _date(value: str) -> datetime:
     return datetime.strptime(value, "%Y-%m-%d")
 
@@ -2064,6 +2206,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bt.add_argument("--benchmark", default="SPY", help="Benchmark symbol for beta")
     _add_cost_flags(bt)
+    _add_cache_flags(bt)
     bt.add_argument(
         "--chart",
         metavar="PATH",
@@ -2276,6 +2419,7 @@ def build_parser() -> argparse.ArgumentParser:
     opt.add_argument("--max-evals", dest="max_evals", type=int, default=50)
     opt.add_argument("--output", default="optimization_results.csv")
     _add_cost_flags(opt)
+    _add_cache_flags(opt)
     add_no_journal(opt)
     add_force(opt)
     opt.set_defaults(func=cmd_optimize)
@@ -2359,6 +2503,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Save the chosen config (with provenance) to this path",
     )
     _add_cost_flags(wf)
+    _add_cache_flags(wf)
     add_no_journal(wf)
     add_force(wf)
     wf.set_defaults(func=cmd_walkforward)
@@ -2561,6 +2706,42 @@ def build_parser() -> argparse.ArgumentParser:
     )
     risk.set_defaults(func=cmd_risk)
 
+    def _add_cache_dir_flag(p) -> None:
+        p.add_argument(
+            "--cache-dir", dest="cache_dir", default=None, help="Bar cache directory (default: cache/bars)"
+        )
+
+    cache = subparsers.add_parser(
+        "cache", help="Inspect/warm the persistent bar cache behind backtest/optimize/walkforward"
+    )
+    cache_sub = cache.add_subparsers(dest="cache_command", required=True)
+
+    c_warm = cache_sub.add_parser("warm", help="Prefetch and cache bars for a universe/window")
+    _add_cache_dir_flag(c_warm)
+    c_warm.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
+    c_warm.add_argument("--scanner", default="none", help="Universe scanner ('none' to skip)")
+    c_warm.add_argument("--timeframe", default="1Day")
+    c_warm.add_argument("--start", type=_date, default=datetime.now() - timedelta(days=365))
+    c_warm.add_argument("--end", type=_date, default=datetime.now())
+
+    c_status = cache_sub.add_parser("status", help="Coverage summary and a drift check — no network")
+    _add_cache_dir_flag(c_status)
+    c_status.add_argument("--symbols", type=_symbols, default=None, help="Filter to these symbols")
+    c_status.add_argument("--timeframe", default=None, help="Filter to one timeframe")
+
+    c_refresh = cache_sub.add_parser(
+        "refresh", help="Invalidate and re-fetch symbols (corporate actions / stale data)"
+    )
+    _add_cache_dir_flag(c_refresh)
+    c_refresh.add_argument("--symbols", type=_symbols, required=True)
+    c_refresh.add_argument("--timeframe", default="1Day")
+    c_refresh.add_argument(
+        "--start", type=_date, default=None, help="Defaults to the symbol's previously-cached extent"
+    )
+    c_refresh.add_argument("--end", type=_date, default=None)
+
+    cache.set_defaults(func=cmd_cache)
+
     def _add_db_flag(p) -> None:
         p.add_argument("--db", default=None, help="Trial store DB path (default: logs/trials.db)")
 
@@ -2705,12 +2886,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     from src.settings import SettingsError
+    from src.store.bars import CacheMiss
 
     setup_logging()
     args = build_parser().parse_args()
     try:
         args.func(args)
-    except SettingsError as exc:
+    except (SettingsError, CacheMiss) as exc:
         sys.exit(str(exc))
 
 

@@ -26,6 +26,12 @@ class MarketDataClient:
     def __init__(self, provider: MarketDataProvider):
         self._provider = provider
 
+    @property
+    def provider(self) -> MarketDataProvider:
+        """The underlying provider - lets a caller detect e.g. a cache wrapper
+        without reaching into a private attribute."""
+        return self._provider
+
     def get_bars(
         self,
         symbols: List[str],

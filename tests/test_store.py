@@ -171,6 +171,21 @@ def test_windowed_scan_data_correct_across_years(tmp_path):
     assert scanned["close"].to_numpy() == pytest.approx(expected["close"].to_numpy())
 
 
+def test_delete_symbol_removes_its_subtree_only(tmp_path):
+    store = ParquetBarStore(tmp_path)
+    store.write(_bars(), timeframe="1Day")  # AAA, BBB, CCC
+    store.delete_symbol("AAA", "1Day")
+
+    assert not (tmp_path / TF_DIR / "symbol=AAA").exists()
+    scanned = store.scan(SYMBOLS, "1Day", datetime(2025, 1, 1, tzinfo=timezone.utc), lookback_days=10_000)
+    assert set(scanned) == {"BBB", "CCC"}
+
+
+def test_delete_symbol_on_missing_symbol_is_a_no_op(tmp_path):
+    store = ParquetBarStore(tmp_path)
+    store.delete_symbol("ZZZ", "1Day")  # must not raise
+
+
 def test_rewrite_replaces_stale_year_partitions(tmp_path):
     # Re-writing a symbol with a shorter history must not leave stale year partitions.
     store = ParquetBarStore(tmp_path)

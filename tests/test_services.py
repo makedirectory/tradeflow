@@ -202,7 +202,7 @@ def _fake_cli_env(monkeypatch, tmp_path, symbols):
     from tests.fakes import FakeMarketData
 
     client = MarketDataClient(FakeMarketData(symbols, n=400, freq="1D"))
-    monkeypatch.setattr(main, "build_data_and_broker", lambda: (None, client))
+    monkeypatch.setattr(main, "build_data_and_broker", lambda **kwargs: (None, client))
     journal = tmp_path / "journal.jsonl"
     monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", journal)
     return journal
@@ -418,7 +418,7 @@ def test_walkforward_gate_report_is_unaffected_by_a_broken_trial_store(monkeypat
     from tests.fakes import FakeMarketData
 
     client = MarketDataClient(FakeMarketData(["AAA", "BBB"], n=400, freq="1D"))
-    monkeypatch.setattr(main, "build_data_and_broker", lambda: (None, client))
+    monkeypatch.setattr(main, "build_data_and_broker", lambda **kwargs: (None, client))
 
     def _run(journal_path):
         monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", journal_path)
@@ -527,6 +527,177 @@ def test_cli_backtest_force_reruns_and_appends_rather_than_overwrites(monkeypatc
     trials = _trials(journal)
     assert len(trials) == 2
     assert trials[0]["run_id"] != trials[1]["run_id"]
+
+
+# --- bar cache (--cache/--offline) + data-vintage dedup -----------------------
+pytest.importorskip("pyarrow")
+
+
+def _fake_cli_env_with_cache(monkeypatch, tmp_path, symbols, cache_dir=None):
+    """Like _fake_cli_env, but the injected data client is cache-backed
+    (CachedMarketData wrapping FakeMarketData), so --cache/vintage wiring can be
+    exercised without needing real Alpaca settings."""
+    import main
+    from src.services import audit
+    from src.store.bars import CachedMarketData
+
+    cache_dir = cache_dir or (tmp_path / "cache" / "bars")
+    provider = CachedMarketData(FakeMarketData(symbols, n=400, freq="1D"), cache_dir=cache_dir)
+    client = MarketDataClient(provider)
+    monkeypatch.setattr(main, "build_data_and_broker", lambda **kwargs: (None, client))
+    journal = tmp_path / "journal.jsonl"
+    monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", journal)
+    return journal, provider
+
+
+def test_cli_backtest_with_cache_records_vintage_and_reuse_is_vintage_safe(monkeypatch, tmp_path, capsys):
+    import main
+
+    journal, _ = _fake_cli_env_with_cache(monkeypatch, tmp_path, ["AAA", "BBB"])
+    args1 = main.build_parser().parse_args(_BT_ARGV + ["--cache"])
+    args1.func(args1)
+    trials = _trials(journal)
+    assert len(trials) == 1
+    assert trials[0]["resolved_config"]["_cost"]["_vintage"]  # present and non-empty
+
+    args2 = main.build_parser().parse_args(_BT_ARGV + ["--cache"])
+    args2.func(args2)
+    out = capsys.readouterr().out
+    assert "REUSED" in out
+    assert "data vintage confirmed" in out
+    assert "no data-vintage stamp" not in out
+    assert len(_trials(journal)) == 1  # still memoized, not double-counted
+
+
+def test_cli_backtest_refresh_between_cache_runs_is_a_new_trial(monkeypatch, tmp_path):
+    import main
+
+    journal, provider = _fake_cli_env_with_cache(monkeypatch, tmp_path, ["AAA", "BBB"])
+    args1 = main.build_parser().parse_args(_BT_ARGV + ["--cache"])
+    args1.func(args1)
+    assert len(_trials(journal)) == 1
+
+    provider.refresh(["AAA", "BBB"], "1Day", datetime(2024, 1, 2), datetime(2024, 6, 1))
+
+    args2 = main.build_parser().parse_args(_BT_ARGV + ["--cache"])
+    args2.func(args2)
+    trials = _trials(journal)
+    assert len(trials) == 2  # the underlying data vintage moved - not the same trial
+
+
+def test_cli_backtest_without_cache_keeps_the_no_vintage_caveat(monkeypatch, tmp_path, capsys):
+    import main
+
+    _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB"])
+    args1 = main.build_parser().parse_args(_BT_ARGV)
+    args1.func(args1)
+    args2 = main.build_parser().parse_args(_BT_ARGV)
+    args2.func(args2)
+    out = capsys.readouterr().out
+    assert "REUSED" in out
+    assert "no data-vintage stamp" in out
+
+
+def test_build_data_client_cache_flag_wraps_provider(monkeypatch, tmp_path):
+    monkeypatch.setenv("APCA_API_KEY_ID", "fake")
+    monkeypatch.setenv("APCA_API_SECRET_KEY", "fake")
+    from src.services.data import build_data_client
+    from src.store.bars import CachedMarketData
+
+    cached = build_data_client(cache=True, cache_dir=tmp_path / "bars")
+    assert isinstance(cached.provider, CachedMarketData)
+
+    plain = build_data_client()
+    assert not isinstance(plain.provider, CachedMarketData)
+
+
+def test_build_data_and_broker_forwards_cache_flags(monkeypatch, tmp_path):
+    monkeypatch.setenv("APCA_API_KEY_ID", "fake")
+    monkeypatch.setenv("APCA_API_SECRET_KEY", "fake")
+    import main
+    from src.store.bars import CachedMarketData
+
+    _, client = main.build_data_and_broker(cache=True, cache_dir=tmp_path / "bars")
+    assert isinstance(client.provider, CachedMarketData)
+
+    _, plain_client = main.build_data_and_broker()
+    assert not isinstance(plain_client.provider, CachedMarketData)
+
+
+# --- `cache` CLI subcommand ------------------------------------------------
+def test_cache_status_on_empty_dir_prints_a_sane_empty_state(tmp_path, capsys):
+    import main
+
+    args = main.build_parser().parse_args(["cache", "status", "--cache-dir", str(tmp_path / "bars")])
+    args.func(args)
+    out = capsys.readouterr().out
+    assert "No cached symbols." in out
+    assert "OK — no drift detected." in out
+
+
+def _mock_cached_build_data_client(monkeypatch, cache_dir, symbols=("AAA",)):
+    from src.store.bars import CachedMarketData
+
+    def _build(cache=False, offline=False, cache_dir=None):
+        return MarketDataClient(
+            CachedMarketData(FakeMarketData(list(symbols), n=200, freq="1D"), cache_dir=cache_dir)
+        )
+
+    monkeypatch.setattr("src.services.data.build_data_client", _build)
+
+
+def test_cache_warm_then_status_round_trips(monkeypatch, tmp_path, capsys):
+    import main
+
+    cache_dir = tmp_path / "bars"
+    _mock_cached_build_data_client(monkeypatch, cache_dir)
+
+    warm_args = main.build_parser().parse_args(
+        [
+            "cache",
+            "warm",
+            "--symbols",
+            "AAA",
+            "--cache-dir",
+            str(cache_dir),
+            "--start",
+            "2024-01-02",
+            "--end",
+            "2024-03-01",
+        ]
+    )
+    warm_args.func(warm_args)
+    assert "AAA" in capsys.readouterr().out
+
+    status_args = main.build_parser().parse_args(["cache", "status", "--cache-dir", str(cache_dir)])
+    status_args.func(status_args)
+    out = capsys.readouterr().out
+    assert "AAA" in out
+    assert "OK — no drift detected." in out
+
+
+def test_cache_refresh_reports_per_symbol(monkeypatch, tmp_path, capsys):
+    import main
+
+    cache_dir = tmp_path / "bars"
+    _mock_cached_build_data_client(monkeypatch, cache_dir)
+
+    refresh_args = main.build_parser().parse_args(
+        [
+            "cache",
+            "refresh",
+            "--symbols",
+            "AAA",
+            "--cache-dir",
+            str(cache_dir),
+            "--start",
+            "2024-01-02",
+            "--end",
+            "2024-03-01",
+        ]
+    )
+    refresh_args.func(refresh_args)
+    assert "refreshed" in capsys.readouterr().out
 
 
 def test_walkforward_memoizes_identical_recipe_without_rerunning(monkeypatch, tmp_path, capsys):
