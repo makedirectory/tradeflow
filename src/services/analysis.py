@@ -1526,9 +1526,19 @@ def compute_horizon(
         "blend_regime": "diversify" if w_lag > 1e-6 else "hedge" if w_lag < -1e-6 else "latest-only",
         "blend_annual_cost": blend_cost,
         "blend_recommended": blend_recommended,
-        "note": "δ is the per-period IC decay (HL = half-life). Rebalance near the "
-        "cadence that maximizes IC·√(1/Δt); amortize cost over the half-life. The lagged "
-        "blend is recommended only when it diversifies and its turnover cost is modest.",
+        "half_life_lower": fit.get("half_life_lower"),
+        "half_life_upper": fit.get("half_life_upper"),
+        "decay_slope_se": fit.get("decay_slope_se"),
+        "blend_superseded_by": "022 (aim-in-front partial-adjustment policy, "
+        "'allocate --policy aim'): this lagged-blend recommendation is a special case "
+        "of that policy's per-signal decay discount (a two-point blend vs a continuous "
+        "κ/(κ+φ) discount) - prefer --policy aim for new work; this report stays "
+        "accurate on its own terms either way.",
+        "note": "δ is the per-period IC decay (HL = half-life, with a "
+        "half_life_lower/half_life_upper confidence band from the fit's own slope SE). "
+        "Rebalance near the cadence that maximizes IC·√(1/Δt); amortize cost over the "
+        "half-life. The lagged blend is recommended only when it diversifies and its "
+        "turnover cost is modest.",
     }
 
 
@@ -1763,6 +1773,9 @@ def construct_portfolio(
     posterior_ic: Optional[float] = None,
     posterior_t_eff: Optional[float] = None,
     posterior_tau: Optional[float] = None,
+    policy: Optional[str] = None,
+    trade_rate: Optional[float] = None,
+    decay_lookback_days: int = 365,
 ) -> Dict[str, Any]:
     """Construct the utility-maximizing portfolio from alphas (005) and Σ (006).
 
@@ -1822,6 +1835,21 @@ def construct_portfolio(
     τ-sensitivity) and ``shrink_chain`` gains a ``bl`` step - the IC-uncertainty
     haircut moves from the refine step (which stays unshrunk for this path,
     avoiding a double-shrink) into Ω.
+
+    ``policy="aim"`` (spec 022, default ``None`` / off until validated OOS net of
+    cost against the plain myopic solve above - see ``info --policy-ab``) replaces
+    the myopic "jump to this period's optimum" with Gârleanu–Pedersen's aim-in-
+    front-of-the-target partial adjustment: the alpha is discounted by
+    ``κ/(κ+φ)`` (``φ`` the strategy's own measured decay rate, conservatively from
+    the *upper* half-life confidence bound over the trailing
+    ``decay_lookback_days``), the aim portfolio is 016's solve on that discounted
+    alpha with cost zeroed, and the trade is ``κ`` of the gap to the aim, banded by
+    016's own no-trade-band machinery. ``κ`` is derived from the book's risk-
+    aversion and cost curvature (see ``src/portfolio/policy.py``); ``trade_rate``
+    overrides it. Falls back to exactly the plain cost-aware solve above (not an
+    error) when the cost curvature can't be pinned (no ``capital``, or too little
+    turnover to fit one) - see ``diagnostics["aim_degraded"]``. Long-only only in
+    v1; incompatible with ``book="market_neutral"`` or ``benchmark_holdings``.
     """
     from src.costs import ParametricCostModel
     from src.portfolio.optimizer import MeanVarianceOptimizer
@@ -1883,21 +1911,78 @@ def construct_portfolio(
             posterior_tau, alpha_ctx.ic,
         )
 
+    if policy is not None and policy != "aim":
+        raise ValueError(f"policy must be 'aim' or None, got {policy!r}")
+    if policy == "aim" and (book != "long_only" or benchmark_holdings is not None):
+        raise ValueError(
+            "policy='aim' (spec 022) is long-only, cash-relative only in v1 - "
+            "incompatible with book='market_neutral' or benchmark_holdings"
+        )
+
     optimizer = MeanVarianceOptimizer(max_weight=max_weight, min_weight=min_weight, max_names=max_names)
-    result = optimizer.optimize(
-        alphas,
-        matrix,
-        target_te=target_te,
-        current_weights=current_weights,
-        cost_model=cost_model if cost_aware else None,
-        cost_inputs=cost_inputs,
-        capital=capital,
-        holding_period_years=holding_period_years,
-        benchmark_weights=benchmark_weights,
-        book=book,
-        gross_leverage=gross_leverage,
-        short_max_weight=short_max_weight,
-    )
+    policy_report = None
+    if policy == "aim":
+        from src.portfolio import policy as policy_mod
+
+        # Calendar-day arithmetic on a naive datetime - subtracting a timedelta from
+        # a tz-AWARE as_of would shift the absolute instant across DST boundaries and
+        # can land on a locally-ambiguous wall-clock hour (a real crash seen with the
+        # synthetic demo provider); date_client-facing datetimes are naive elsewhere
+        # in this module, and _to_ts() re-localizes downstream regardless.
+        as_of_naive = as_of.replace(tzinfo=None) if as_of.tzinfo is not None else as_of
+        decay = compute_horizon(
+            data_client,
+            strategy,
+            symbols,
+            as_of_naive - timedelta(days=decay_lookback_days),
+            as_of_naive,
+            source=source,
+            scanner=scanner,
+            benchmark=benchmark,
+            neutralize_factors=neutralize_factors,
+            timeframe=tf,
+        )
+        periods_per_rebalance = max(holding_period_years * periods_per_year, 1.0)
+        hl_upper_bars = decay.get("half_life_upper", float("nan"))
+        if hl_upper_bars != hl_upper_bars:  # NaN: too little decay history - no discount
+            hl_upper_bars = float("inf")
+        hl_upper_rebalances = policy_mod.half_life_in_rebalance_units(hl_upper_bars, periods_per_rebalance)
+        phi = policy_mod.phi_from_half_life(hl_upper_rebalances)
+        result = policy_mod.build_aim_portfolio(
+            optimizer,
+            alphas,
+            matrix,
+            phi=phi,
+            trade_rate=trade_rate,
+            target_te=target_te,
+            current_weights=current_weights,
+            cost_model=cost_model if cost_aware else None,
+            cost_inputs=cost_inputs,
+            capital=capital,
+            holding_period_years=holding_period_years,
+        )
+        policy_report = {
+            "phi_per_rebalance": phi,
+            "periods_per_rebalance": periods_per_rebalance,
+            "decay_half_life_bars": decay.get("half_life"),
+            "decay_half_life_upper_bars": decay.get("half_life_upper"),
+            "decay_r_squared": decay.get("decay_r_squared"),
+        }
+    else:
+        result = optimizer.optimize(
+            alphas,
+            matrix,
+            target_te=target_te,
+            current_weights=current_weights,
+            cost_model=cost_model if cost_aware else None,
+            cost_inputs=cost_inputs,
+            capital=capital,
+            holding_period_years=holding_period_years,
+            benchmark_weights=benchmark_weights,
+            book=book,
+            gross_leverage=gross_leverage,
+            short_max_weight=short_max_weight,
+        )
 
     if result.feasible:
         if not result.diagnostics.get("cost_aware"):
@@ -1964,6 +2049,7 @@ def construct_portfolio(
         "universe_size": len(alphas),
         "risk_model": risk_model,
         "conditional": conditional,
+        "policy": policy,
         "shrinkage": matrix.shrinkage,
         "weights": _jsonable(dict(sorted(result.weights.items(), key=lambda kv: kv[1], reverse=True))),
         "holdings": _jsonable(holdings),
@@ -1976,6 +2062,8 @@ def construct_portfolio(
     }
     if matrix.conditional_diagnostics:
         out["sigma_regime"] = _jsonable(matrix.conditional_diagnostics)
+    if policy_report is not None:
+        out["policy_report"] = _jsonable(policy_report)
     return out
 
 
@@ -2103,6 +2191,139 @@ def run_conditional_risk_ab(
         "carried forward rebalance to rebalance. 'winner_net_ir' picks by realized net "
         "IR (net of 016's actual cost), not by TE-tracking alone — churn that tracking-"
         "error-tracks-better-but-costs-more should lose, and this is where it would show.",
+    }
+
+
+def run_policy_ab(
+    data_client: MarketDataClient,
+    strategy: str,
+    symbols: List[str],
+    start: datetime,
+    end: datetime,
+    source: str = "strategy",
+    scanner: str = "volume",
+    benchmark: str = "SPY",
+    neutralize_factors: Sequence[str] = (),
+    target_te: float = 0.04,
+    max_weight: float = 0.25,
+    risk_model: str = "shrinkage",
+    lookback_days: int = 365,
+    timeframe: str = "1Day",
+    horizon: int = 21,
+    n_points: int = 12,
+    capital: float = 1_000_000.0,
+    holding_period_years: Optional[float] = None,
+    trade_rate: Optional[float] = None,
+) -> Dict[str, Any]:
+    """The net-of-cost A/B (spec 022 §2/§6) that decides adoption: walk-forward the
+    myopic 016 policy vs the aim (spec 022) policy on the SAME alpha book, same
+    target_te, same cost model, carrying each variant's weights forward rebalance
+    to rebalance, and compare REALIZED net IR (turnover cost priced at each
+    rebalance's actual holding period) — mirrors :func:`run_conditional_risk_ab`
+    (spec 024) exactly, with 'myopic'/'aim' in place of 'unconditional'/
+    'conditional'. Read-only research-clock harness; no orders. If the aim policy
+    doesn't win here, that's a legitimate, complete outcome (ship nothing, spec's
+    own evidence-gated posture) — not a failure to keep iterating on.
+    """
+    run_id = new_run_id()
+    periods_per_year = Timeframe.parse(timeframe).periods_per_year()
+    holding_period = holding_period_years if holding_period_years is not None else horizon / periods_per_year
+
+    bars = ClientBarSource(data_client).scan([*symbols, benchmark], timeframe, end, _window_days(start, end))
+    bench = bars.get(benchmark)
+    if bench is None or bench.empty:
+        return {"run_id": run_id, "periods": 0, "note": "Insufficient data: need a benchmark series."}
+
+    index = bench.index
+    window = index[(index >= _to_ts(start, index)) & (index <= _to_ts(end, index))]
+    points = [j for j in _rebalance_points(len(window), horizon, n_points) if j + horizon < len(window)]
+    if len(points) < 2:
+        return {"run_id": run_id, "periods": 0, "note": "Insufficient rebalances in window for the A/B."}
+
+    variants = {"myopic": None, "aim": "aim"}
+    current_weights: Dict[str, Optional[Dict[str, float]]] = {k: None for k in variants}
+    gross_returns: Dict[str, List[float]] = {k: [] for k in variants}
+    net_returns: Dict[str, List[float]] = {k: [] for k in variants}
+    turnovers: Dict[str, List[float]] = {k: [] for k in variants}
+    predicted_tes: Dict[str, List[float]] = {k: [] for k in variants}
+
+    for j in points:
+        t, t_fwd = window[j], window[j + horizon]
+        fwd = _forward_raw_return({s: bars[s] for s in symbols if s in bars}, t, t_fwd)
+        for name, pol in variants.items():
+            result = construct_portfolio(
+                data_client,
+                strategy,
+                symbols,
+                t.to_pydatetime(),
+                source=source,
+                scanner=scanner,
+                target_te=target_te,
+                max_weight=max_weight,
+                benchmark=benchmark,
+                neutralize_factors=neutralize_factors,
+                risk_model=risk_model,
+                lookback_days=lookback_days,
+                timeframe=timeframe,
+                capital=capital,
+                current_weights=current_weights[name],
+                holding_period_years=holding_period,
+                cost_aware=True,
+                policy=pol,
+                trade_rate=trade_rate if pol == "aim" else None,
+            )
+            if not result["feasible"]:
+                continue
+            new_weights = result["weights"]
+            diag = result["diagnostics"]
+            gross = float(sum(w * fwd.get(s, 0.0) for s, w in new_weights.items()))
+            period_cost = float(diag.get("cost_drag", 0.0)) * holding_period
+            gross_returns[name].append(gross)
+            net_returns[name].append(gross - period_cost)
+            turnovers[name].append(float(diag.get("turnover", 0.0)))
+            predicted_tes[name].append(float(diag.get("predicted_tracking_error", 0.0)))
+            current_weights[name] = new_weights
+
+    rebalances_per_year = periods_per_year / horizon
+
+    def _summary(name: str) -> Dict[str, Any]:
+        net = np.array(net_returns[name])
+        if len(net) < 2:
+            return {"periods": int(len(net))}
+        net_ir = float(np.mean(net) / np.std(net) * np.sqrt(rebalances_per_year)) if np.std(net) > 0 else 0.0
+        return {
+            "periods": int(len(net)),
+            "mean_net_return_per_period": float(np.mean(net)),
+            "mean_gross_return_per_period": float(np.mean(gross_returns[name])),
+            "net_ir": net_ir,
+            "realized_te": float(np.std(net) * np.sqrt(rebalances_per_year)),
+            "mean_predicted_te": float(np.mean(predicted_tes[name])) if predicted_tes[name] else 0.0,
+            "mean_turnover": float(np.mean(turnovers[name])) if turnovers[name] else 0.0,
+        }
+
+    summaries = {name: _summary(name) for name in variants}
+    winner = max(variants, key=lambda k: summaries[k].get("net_ir", float("-inf")))
+    over_damped = (
+        summaries["aim"].get("periods", 0) >= 2
+        and summaries["myopic"].get("periods", 0) >= 2
+        and summaries["aim"]["net_ir"] < summaries["myopic"]["net_ir"]
+        and summaries["aim"]["mean_turnover"] < summaries["myopic"]["mean_turnover"]
+    )
+
+    return {
+        "run_id": run_id,
+        "window": {"start": start.isoformat(), "end": end.isoformat()},
+        "horizon_bars": horizon,
+        "periods": len(points),
+        "summaries": _jsonable(summaries),
+        "winner_net_ir": winner,
+        "over_damped": over_damped,
+        "note": "SAME alphas/target_te/cost model, myopic-016 vs aim-022 policy, weights "
+        "carried forward rebalance to rebalance. 'winner_net_ir' picks by realized net "
+        "IR (net of 016's actual cost). 'over_damped' flags the double-damping failure "
+        "mode (spec 022 hidden factor 3): lower turnover AND lower net IR together mean "
+        "the aim policy traded too little to capture what alpha there was, not that it "
+        "improved anything.",
     }
 
 

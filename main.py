@@ -256,6 +256,8 @@ def _allocate_utility(args) -> None:
         posterior_ic=getattr(args, "posterior_ic", None),
         posterior_t_eff=getattr(args, "posterior_t_eff", None),
         posterior_tau=getattr(args, "posterior_tau", None),
+        policy=getattr(args, "policy", None),
+        trade_rate=getattr(args, "trade_rate", None),
     )
     if not result["feasible"]:
         print(f"Infeasible: {result.get('binding_constraint') or result.get('note')}")
@@ -336,6 +338,26 @@ def _allocate_utility(args) -> None:
             f"  conditional Σ ({regime['method']}, λ={regime['lambda']:.2f}): "
             f"mean σ_t/σ_unconditional = {regime['mean_sigma_regime']:.2f}"
         )
+    if d.get("policy") == "aim":
+        pr = result.get("policy_report") or {}
+        if d.get("aim_degraded"):
+            print(f"  policy 'aim': degraded to plain 016 — {d.get('fallback_reason')}")
+        else:
+            print(
+                f"  policy 'aim': κ {d['kappa']:.3f}"
+                + (" (overridden)" if d.get("kappa_overridden") else f" (derived {d['kappa_derived']:.3f})")
+                + f"  trading half-life {d['trading_half_life_rebalances']:.1f} rebalances  "
+                f"φ {d['phi_per_rebalance']:.3f}/rebalance  discount {d['signal_discount']:.2f}"
+            )
+            hl = pr.get("decay_half_life_bars")
+            hl_upper = pr.get("decay_half_life_upper_bars")
+            hl_str = f"{hl:.1f}" if isinstance(hl, (int, float)) else str(hl)
+            hl_upper_str = f"{hl_upper:.1f}" if isinstance(hl_upper, (int, float)) else str(hl_upper)
+            if hl is not None:
+                print(
+                    f"    decay half-life {hl_str} bars (upper CI bound {hl_upper_str}, "
+                    f"fit R² {pr.get('decay_r_squared') or 0.0:.2f}, used conservatively)"
+                )
     post = result.get("posterior")
     if post:
         propagated = sum(1 for row in post["per_name"] if row["source"] == "propagated")
@@ -986,6 +1008,9 @@ def cmd_info(args) -> None:
     if getattr(args, "conditional_ab", False):
         _print_conditional_ab(data_client, args)
         return
+    if getattr(args, "policy_ab", False):
+        _print_policy_ab(data_client, args)
+        return
     if getattr(args, "attribution", False):
         _print_attribution_report(data_client, args)
         return
@@ -1161,6 +1186,49 @@ def _print_conditional_ab(data_client, args) -> None:
     print("  (net of 016's actual cost — a Σ that tracks TE better but churns the book loses here)")
 
 
+def _print_policy_ab(data_client, args) -> None:
+    """The net-of-cost A/B (`info --policy-ab`, spec 022 §2/§6): myopic 016 vs aim 022."""
+    from src.services.analysis import run_policy_ab
+
+    r = run_policy_ab(
+        data_client,
+        args.strategy,
+        args.symbols,
+        args.start,
+        args.end,
+        source=args.source,
+        scanner=args.scanner,
+        benchmark=args.benchmark,
+        neutralize_factors=args.neutralize_factors,
+        horizon=args.horizon,
+        trade_rate=getattr(args, "trade_rate", None),
+    )
+    if not r.get("periods"):
+        print(r.get("note", "No policy A/B produced."))
+        return
+
+    print(
+        f"\nMulti-period policy net-of-cost A/B: '{args.strategy}' "
+        f"{args.start:%Y-%m-%d}..{args.end:%Y-%m-%d}"
+    )
+    print(f"  measured over {r['periods']} rebalances (horizon {r['horizon_bars']} bars)")
+    print(f"  {'variant':10}{'net IR':>9}{'realized TE':>13}{'pred TE':>10}{'turnover':>10}")
+    for name, s in r["summaries"].items():
+        if s.get("periods", 0) < 2:
+            continue
+        print(
+            f"  {name:10}{s['net_ir']:>+9.2f}{s['realized_te']:>13.1%}"
+            f"{s['mean_predicted_te']:>10.1%}{s['mean_turnover']:>10.1%}"
+        )
+    print(f"  winner (net IR): {r['winner_net_ir']}")
+    if r.get("over_damped"):
+        print("  ⚠ over-damped: aim traded less AND scored a lower net IR — not an improvement")
+    print(
+        "  (net of 016's actual cost — an aim policy that tracks decay but churns less "
+        "yet still loses net IR should, and does, lose here)"
+    )
+
+
 def _print_attribution(r, strategy: str, start, end) -> None:
     """Render a ``compute_attribution`` report: per-row mean/IR/t/share-of-variance,
     honest cumulation, and the skill-vs-luck verdict."""
@@ -1261,9 +1329,18 @@ def cmd_horizon(args) -> None:
 
     print(f"\nInformation horizon: '{args.strategy}' {args.start:%Y-%m-%d}..{args.end:%Y-%m-%d}")
     print("  IC by lag: " + "  ".join(f"{n}:{ic:+.3f}" for n, ic in sorted(r["ic_by_lag"].items())))
+
+    def _hl_str(v) -> str:
+        return f"{v:.1f}" if isinstance(v, (int, float)) and v == v and v != float("inf") else "∞"
+
     hl = r["half_life"]
-    hl_str = f"{hl:.1f} periods" if hl == hl and hl != float("inf") else "∞ (no decay detected)"
+    hl_str = f"{_hl_str(hl)} periods" if hl == hl and hl != float("inf") else "∞ (no decay detected)"
     print(f"  decay δ {r['decay_delta']:.3f}  half-life {hl_str}  fit R² {r['decay_r_squared']:.2f}")
+    print(
+        f"    CI (±1.96 SE on the fit): [{_hl_str(r.get('half_life_lower'))}, "
+        f"{_hl_str(r.get('half_life_upper'))}] periods — spec 022's aim policy discounts "
+        "using the upper bound (conservative against killing a good signal)"
+    )
     print(
         f"  recommended cadence: every {r['recommended_cadence']} periods  "
         f"(best return horizon ≈ {r['peak_return_horizon']:.1f})"
@@ -1274,6 +1351,7 @@ def cmd_horizon(args) -> None:
         f"w_lagged {r['blend_weight_lagged']:+.2f}  (ρ {r['signal_autocorrelation']:.2f}, "
         f"cost {r['blend_annual_cost']:.2%}/yr → {rec})"
     )
+    print(f"  ({r['blend_superseded_by']})")
 
 
 def cmd_trials(args) -> None:
@@ -1925,6 +2003,24 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Override the pinned BL tau=1/T_eff (utility; spec 021 §3.1 sensitivity knob)",
     )
+    alloc.add_argument(
+        "--policy",
+        choices=["aim"],
+        default=None,
+        help="Spec 022 (utility): 'aim' replaces the myopic jump-to-target with "
+        "Gârleanu-Pedersen partial adjustment - alpha discounted by κ/(κ+φ) (φ from "
+        "the strategy's own measured decay), aim solved cost-free, traded κ of the "
+        "gap each rebalance, banded by 016's own no-trade band. Default off until "
+        "validated OOS net of cost — see 'info --policy-ab'. Long-only only; "
+        "incompatible with --book market-neutral or --benchmark-holdings.",
+    )
+    alloc.add_argument(
+        "--trade-rate",
+        dest="trade_rate",
+        type=float,
+        default=None,
+        help="Override the derived κ (utility; spec 022, only with --policy aim)",
+    )
     alloc.set_defaults(func=cmd_allocate)
 
     opt = subparsers.add_parser(
@@ -2138,6 +2234,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Spec 023: with --attribution, add a nonparametric OWN p-value (stationary "
         "block bootstrap of the active-return series under the imposed null) next to "
         "the parametric SE{IR}≈1/√Y verdict",
+    )
+    info.add_argument(
+        "--policy-ab",
+        dest="policy_ab",
+        action="store_true",
+        help="Research mode (spec 022 §2/§6): net-of-cost A/B — walk-forward the myopic "
+        "016 policy vs the aim (022) policy on the SAME alpha book, carrying weights "
+        "forward, and compare realized net IR and turnover (the promotion gate).",
+    )
+    info.add_argument(
+        "--trade-rate",
+        dest="trade_rate",
+        type=float,
+        default=None,
+        help="Override the derived κ (spec 022; only used with --policy-ab)",
     )
     _add_neutralize_factors_flag(info, note="; measure the alpha you deploy")
     info.set_defaults(func=cmd_info)

@@ -24,32 +24,69 @@ import numpy as np
 PEAK_HORIZON_RATIO = 1.2566
 
 
-def fit_decay(ic_by_lag: Mapping[int, float]) -> Dict[str, float]:
+def fit_decay(ic_by_lag: Mapping[int, float], ci_z: float = 1.96) -> Dict[str, float]:
     """Fit the per-period decay ``δ`` from an IC-vs-lag profile by log-linear regression.
 
     Models ``IC(n) = IC₀ · δ^n`` ⇒ ``ln IC(n) = ln IC₀ + n·ln δ``, fit on the lags with
     a positive IC (the reliable, same-sign region). Returns ``δ``, the half-life
     ``HL = −ln2 / ln δ``, the fitted ``IC₀``, and the fit ``R²`` (low R² ⇒ the decay
     isn't a clean exponential - don't over-trust the half-life).
+
+    Also fits the OLS standard error of the decay slope and reports the
+    ``ci_z``-sigma confidence band on the half-life (``half_life_lower``,
+    ``half_life_upper``) - short histories give wide CIs on 012's own half-life, and
+    Spec 022's aim discount uses this band rather than trusting the point estimate
+    (its hidden factor 2). ``half_life_upper`` (a less-negative slope, i.e. slower
+    decay) is the direction that avoids prematurely discounting a genuinely
+    persistent signal on a noisy short history; ``half_life_lower`` is the
+    faster-decay end. Both collapse to the point estimate when the slope's SE isn't
+    defined (fewer than 3 usable lags).
     """
     lags = sorted(n for n, ic in ic_by_lag.items() if ic > 0 and n >= 0)
     if len(lags) < 2:
-        return {"delta": float("nan"), "half_life": float("nan"), "ic0": float("nan"), "r_squared": 0.0}
+        return {
+            "delta": float("nan"),
+            "half_life": float("nan"),
+            "ic0": float("nan"),
+            "r_squared": 0.0,
+            "half_life_lower": float("nan"),
+            "half_life_upper": float("nan"),
+            "decay_slope_se": float("nan"),
+        }
 
     x = np.array(lags, dtype=float)
     y = np.log(np.array([ic_by_lag[n] for n in lags], dtype=float))
     slope, intercept = np.polyfit(x, y, 1)
     delta = float(math.exp(slope))
-    ss_res = float(np.sum((y - (slope * x + intercept)) ** 2))
+    resid = y - (slope * x + intercept)
+    ss_res = float(np.sum(resid**2))
     ss_tot = float(np.sum((y - y.mean()) ** 2))
     r_squared = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
 
     half_life = -math.log(2) / math.log(delta) if 0 < delta < 1 else float("inf")
+
+    n = len(lags)
+    sxx = float(np.sum((x - x.mean()) ** 2))
+    slope_se = math.sqrt(ss_res / (n - 2) / sxx) if n > 2 and sxx > 0 else float("nan")
+
+    def _half_life_at(s: float) -> float:
+        return -math.log(2) / s if s < 0 else float("inf")
+
+    if slope_se == slope_se:  # not NaN
+        half_life_upper = _half_life_at(slope + ci_z * slope_se)  # less negative -> slower decay
+        half_life_lower = _half_life_at(slope - ci_z * slope_se)  # more negative -> faster decay
+    else:
+        half_life_upper = half_life
+        half_life_lower = half_life
+
     return {
         "delta": delta,
         "half_life": half_life,
         "ic0": float(math.exp(intercept)),
         "r_squared": r_squared,
+        "half_life_lower": half_life_lower,
+        "half_life_upper": half_life_upper,
+        "decay_slope_se": slope_se,
     }
 
 
