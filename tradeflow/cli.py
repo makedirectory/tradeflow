@@ -2200,11 +2200,69 @@ def cmd_live(args) -> None:
     elif args.beta_sizing:
         sizer = build_beta_sizer(data_client, strategy, universe, args.benchmark)
 
-    engine = LiveEngine(strategy, data_client, LiveTrader(broker, strategy, sizer=sizer))
+    from tradeflow.engine.barcheck import BarChecks, BarQualityFilter
+    from tradeflow.execution.ledger import PositionLedger
+    from tradeflow.marketdata.timeframe import Timeframe
+
+    # Guards and the ledger are on by default: the live path is the only place a
+    # bad bar or a missed fill costs money, and both are opt-*out* for that reason.
+    bar_filter = None
+    if not args.no_bar_checks:
+        timeframe = Timeframe.parse(strategy.config["timeframe"])
+        bar_filter = BarQualityFilter(
+            checks=BarChecks(max_return=args.max_bar_return),
+            interval=timeframe.duration(),
+        )
+    ledger = None if args.no_ledger else PositionLedger()
+
+    engine = LiveEngine(
+        strategy,
+        data_client,
+        LiveTrader(broker, strategy, sizer=sizer),
+        bar_filter=bar_filter,
+        ledger=ledger,
+        reconcile_every=args.reconcile_every,
+    )
     try:
         asyncio.run(engine.start(universe))
     except KeyboardInterrupt:
         logger.info("Interrupted; shutting down live engine.")
+    finally:
+        if bar_filter is not None:
+            report = bar_filter.report()
+            logger.info(
+                "Bar quality: %d of %d rejected (%.1f%%) %s",
+                report["rejected"],
+                report["seen"],
+                report["rate"] * 100,
+                report["by_reason"] or "",
+            )
+            if report["elevated"]:
+                logger.error(
+                    "ELEVATED bar-rejection rate — this is a data-feed problem wearing "
+                    "a quiet market's clothes. Investigate before trusting these results."
+                )
+
+
+def cmd_reconcile(args) -> None:
+    """Compare the position ledger against the broker's actual account state.
+
+    Answers "is my book what I think it is" on demand. Read-only and advisory: the
+    broker is authoritative, and nothing is ever corrected automatically — an
+    automated fix for a missed fill is how a position gets doubled unattended.
+    """
+    import json
+
+    from tradeflow.execution.ledger import PositionLedger
+
+    broker, _ = build_data_and_broker()
+    report = PositionLedger(args.ledger).reconcile(broker)
+    if args.json:
+        print(json.dumps(report.as_dict(), indent=2))
+    else:
+        print(report.summary())
+    if not report.clean:
+        raise SystemExit(1)
 
 
 def cmd_demo(args) -> None:
@@ -2739,7 +2797,46 @@ def build_parser() -> argparse.ArgumentParser:
     live.add_argument("--benchmark", default="SPY", help="Benchmark symbol for beta")
     live.add_argument("--max-positions", dest="max_positions", type=int, default=5)
     live.add_argument("--max-weight", dest="max_weight", type=float, default=0.25)
+    # Guards are opt-OUT. The live loop is the only place a corrupt bar or a missed
+    # fill costs money, so the safe configuration is the default one.
+    live.add_argument(
+        "--no-bar-checks",
+        dest="no_bar_checks",
+        action="store_true",
+        help="Disable bar-quality guards (staleness, spikes, inconsistent OHLC, out-of-order). "
+        "Guards reject a bad bar; they never repair one",
+    )
+    live.add_argument(
+        "--max-bar-return",
+        dest="max_bar_return",
+        type=float,
+        default=0.35,
+        help="Reject a single-bar move larger than this fraction (default 0.35). Deliberately "
+        "loose: a guard that vetoes real moves removes the strategy's best opportunities",
+    )
+    live.add_argument(
+        "--no-ledger",
+        dest="no_ledger",
+        action="store_true",
+        help="Do not record intended orders and observed fills for reconciliation",
+    )
+    live.add_argument(
+        "--reconcile-every",
+        dest="reconcile_every",
+        type=float,
+        default=300.0,
+        help="Seconds between position-reconciliation sweeps (0 disables). Reports divergence "
+        "from the broker's account state; never corrects it",
+    )
     live.set_defaults(func=cmd_live)
+
+    reconcile = subparsers.add_parser(
+        "reconcile",
+        help="Check the position ledger against the broker's actual account state — read-only",
+    )
+    reconcile.add_argument("--ledger", default=None, help="Ledger path (default: logs/position_ledger.jsonl)")
+    reconcile.add_argument("--json", action="store_true", help="Emit the report as JSON")
+    reconcile.set_defaults(func=cmd_reconcile)
 
     scan = subparsers.add_parser("scan", help="Run the universe scanner only")
     scan.add_argument("--scanner", default="volume")

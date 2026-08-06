@@ -260,7 +260,8 @@ promoted automatically — is what stays constant.
 | `scan` | Run the universe scanner and print flagged symbols |
 | `verdict` | The whole cross-sectional pipeline in one command — scan → alphas → portfolio → information over one universe, one window, one cost model — ending in one gate-derived verdict (read-only) |
 | `backtest` | Scan → run a strategy over history → performance report |
-| `live` | Scan → warm up indicators → stream bars → place paper/live orders |
+| `live` | Scan → warm up indicators → stream bars → place paper/live orders. Bar-quality guards (staleness, spikes, inconsistent OHLC, out-of-order) veto bad bars — rejecting, never repairing — and a position ledger records intent vs. observed fills |
+| `reconcile` | Check the position ledger against the broker's actual account state. Reports divergence; never corrects it (read-only) |
 | `optimize` | Search strategy parameters by backtest objective (grid / random / Bayesian); `--workers N` evaluates candidates in parallel — wall-clock only, same trials and same winner |
 | `allocate` | Weight a portfolio: scalar-score sizing (OR-Tools), or `--objective utility` for mean-variance construction from alpha + Σ |
 | `alphas` | Rank a universe by continuous alpha — a comparable, annualized residual-return forecast per name; `--combine` blends several signals, `--neutralize-factors` regresses out the risk model's factor exposures (read-only) |
@@ -314,6 +315,7 @@ that honest, here's what's load-bearing versus what's still maturing:
 | Parameter optimization — Bayesian | 🧪 Experimental |
 | Portfolio allocation (OR-Tools) | 🧪 Experimental |
 | Live paper trading | 🧪 Experimental |
+| Bar-quality guards + position reconciliation | 🧪 Experimental |
 | MCP server | 🧪 Experimental |
 | Research agent | 🧪 Experimental |
 

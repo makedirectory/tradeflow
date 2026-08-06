@@ -8,6 +8,7 @@ value object onto its own SDK type.
 
 import re
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import ClassVar, Dict
 
 # Canonical unit names.
@@ -67,6 +68,21 @@ class Timeframe:
     def to_pandas_offset(self) -> str:
         """Return the pandas offset alias, e.g. ``"5min"``, ``"1D"``."""
         return f"{self.amount}{self._PANDAS_OFFSET[self.unit]}"
+
+    def duration(self) -> timedelta:
+        """The wall-clock length of one bar.
+
+        Deliberately calendar duration, not trading duration: this answers "how long
+        until the next bar should arrive", which is what a staleness check needs. A
+        daily bar is 24 hours here even though the session is 6.5 — the next one
+        genuinely does not arrive for a day.
+        """
+        return {
+            MINUTE: lambda n: timedelta(minutes=n),
+            HOUR: lambda n: timedelta(hours=n),
+            DAY: lambda n: timedelta(days=n),
+            WEEK: lambda n: timedelta(weeks=n),
+        }[self.unit](self.amount)
 
     def periods_per_year(self) -> float:
         """How many bars of this timeframe occur in a trading year.

@@ -80,3 +80,75 @@ make close-positions    # liquidate all positions (also cancels orders)
 
 The full real-time path is described in **[The Engine](../engineering/engine)** and
 **[Broker Abstraction](../engineering/broker-abstraction)**.
+
+## Bar-quality guards
+
+The live loop validates every bar before the strategy sees it. Guards are **on by
+default** — the live path is the only place a corrupt bar costs money.
+
+| Check | Rejects |
+|---|---|
+| OHLC consistency | `high < low`, open/close outside the range, non-positive prices, negative volume |
+| Ordering | a timestamp at or before the last accepted bar for that symbol |
+| Staleness | a bar arriving more than ~3 intervals late |
+| Spike | a single-bar move beyond `--max-bar-return` (default 35%) |
+| Zero volume | no volume on a symbol that has traded before |
+
+**A guard rejects; it never repairs.** Nothing is interpolated, gap-filled, or
+corrected. The moment the live path fixes its inputs it stops being the thing the
+backtest validated, and every historical result quietly stops describing what will
+happen. A rejected bar is skipped and logged with the offending values; the strategy
+simply never sees it.
+
+**The threshold is deliberately loose.** A 35% single-bar move is news, and the
+strategy should act on it. The spike check exists to catch a decimal-point error or
+a crossed quote, not a violent day — a guard tight enough to catch every bad tick
+also removes the strategy's best opportunities.
+
+At shutdown the loop reports what it discarded, and flags an elevated rejection rate
+loudly. A guard quietly eating a third of the feed looks, from the strategy's side,
+exactly like a quiet market.
+
+```bash
+python main.py live --symbols NVDA,AAPL             # guards on
+python main.py live --symbols NVDA --max-bar-return 0.15   # stricter
+python main.py live --symbols NVDA --no-bar-checks         # off (not recommended)
+```
+
+## Position reconciliation
+
+Orders used to be submitted and forgotten, so a partial fill, a rejection, or a
+position closed by hand in the broker's UI was discovered by reading the P&L and
+being surprised.
+
+The live loop now keeps an append-only ledger of **intent** (what was submitted) and
+**observation** (what the broker reported), and sweeps it against the broker's actual
+account state on a timer. Check it any time:
+
+```bash
+python main.py reconcile          # or: reconcile --json
+```
+
+```
+RECONCILIATION FOUND 2 DIVERGENCE(S):
+  [quantity_drift] NVDA: ledger expects +10, broker holds +4 — likely a partial fill
+  [unexpected] TSLA: broker holds +7 that this ledger never ordered — opened manually
+The broker's state is authoritative. Nothing has been corrected automatically.
+```
+
+Three rules govern it, and the first two are what keep it safe:
+
+- **The broker is authoritative, always.** The ledger records what we believed so a
+  difference can be *noticed*. When they disagree, the broker is right and the
+  ledger is a question for a human.
+- **It reports; it never remediates.** No corrective order is ever placed. An
+  automated system that notices a missed fill and fixes it is one that can double a
+  position at 3am while nobody is watching.
+- **Append-only.** Entries are never edited or deleted, and the file *is* the state —
+  a restarted process recovers its expectation by replaying it.
+
+The sweep costs one `list_positions` call, never one per symbol, because it runs
+inside the trade-clock loop. Exit code is non-zero when divergence is found, so a
+scheduled `reconcile` can page you.
+
+`--no-ledger` disables recording; `--reconcile-every 0` disables the in-loop sweep.
