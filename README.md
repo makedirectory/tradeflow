@@ -235,6 +235,7 @@ promoted automatically — is what stays constant.
 | `demo` | Run the whole pipeline on **synthetic data** — no keys, no network — ending in an honest promotion verdict |
 | `demo-agent` | Narrate one AI research session on **real market data**: proposal → sandbox → walk-forward → gates → holdout |
 | `scan` | Run the universe scanner and print flagged symbols |
+| `verdict` | The whole cross-sectional pipeline in one command — scan → alphas → portfolio → information over one universe, one window, one cost model — ending in one gate-derived verdict (read-only) |
 | `backtest` | Scan → run a strategy over history → performance report |
 | `live` | Scan → warm up indicators → stream bars → place paper/live orders |
 | `optimize` | Search strategy parameters by backtest objective (grid / random / Bayesian) |
@@ -242,9 +243,11 @@ promoted automatically — is what stays constant.
 | `alphas` | Rank a universe by continuous alpha — a comparable, annualized residual-return forecast per name; `--combine` blends several signals, `--neutralize-factors` regresses out the risk model's factor exposures (read-only) |
 | `risk` | Estimate the universe covariance Σ (Ledoit–Wolf shrinkage) and summarize its risk structure (read-only) |
 | `info` | Information report: measure IC, breadth, and predicted-vs-realized IR — skill vs luck (read-only) |
+| `--html PATH` | On `verdict`/`backtest`/`walkforward`/`info`: write a self-contained HTML report of the run — inline charts, zero external requests, provenance and honesty warnings first-class |
 | `horizon` | Measure alpha decay / half-life; recommend rebalance cadence + current/lagged blend (read-only) |
 | `walkforward` | Out-of-sample validation: optimize in-sample, score out-of-sample across folds, with a sacred holdout and promotion gates |
-| `mcp` | Serve TradeFlow over MCP so an agent (Claude Code / Desktop) can drive scan/backtest/optimize/walk-forward/alphas/risk/portfolio/info — read-only, no live trading |
+| `trials` | Browse the campaign's memory: `list` (filters, sorting, paging), `show` (one trial in full), `best` (a DSR-ranked leaderboard that always shows the family's `n_trials`) — read-only |
+| `mcp` | Serve TradeFlow over MCP so an agent (Claude Code / Desktop) can drive verdict/scan/backtest/optimize/walk-forward/alphas/risk/portfolio/info — read-only, no live trading |
 
 Three strategies ship today — pick one with `--strategy`. Each defines a single
 continuous **score** (its conviction); the trade clock's `BUY/SELL/HOLD` and the

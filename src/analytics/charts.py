@@ -185,6 +185,105 @@ def _save(fig, out_path: str) -> str:
     return out_path
 
 
+def _to_png(fig) -> bytes:
+    """Render a figure to PNG bytes and close it.
+
+    The in-memory sibling of :func:`_save`, for callers embedding a chart rather
+    than writing a file. Closing is not optional: a library-mode renderer that
+    leaks figures will exhaust matplotlib's warning threshold and then memory,
+    across a test suite as easily as across a long session.
+    """
+    import io
+
+    import matplotlib.pyplot as plt
+
+    buffer = io.BytesIO()
+    try:
+        fig.savefig(buffer, format="png", facecolor="white")
+    finally:
+        plt.close(fig)
+    return buffer.getvalue()
+
+
+# --------------------------------------------------------------------------- #
+# In-memory renderers (same panels, PNG bytes instead of a file)
+# --------------------------------------------------------------------------- #
+#: Deliberately modest: an embedded chart is base64'd into a single-file report,
+#: where every byte costs ~4/3 bytes of document. These keep one chart around
+#: 60-120 KB rather than the 300 KB a print-resolution figure would cost.
+EMBED_DPI = 96
+EMBED_SIZE = (9.0, 4.2)
+
+
+def render_gate_png(
+    checks: Dict[str, Dict[str, Any]],
+    *,
+    promotable: bool,
+    title: str = "VERDICT",
+    stats: Optional[List[tuple]] = None,
+) -> bytes:
+    """Render a pass/fail gate scorecard from plain check data, as PNG bytes.
+
+    Takes the ``{name: {value, threshold, passed}}`` shape every gate report in the
+    project already produces, so a report renders the same scorecard whether the
+    checks came from a walk-forward's promotion gates or a composite verdict's.
+    """
+    plt, _ = _mpl()
+    fig = plt.figure(figsize=(7.5, 4.8), dpi=EMBED_DPI, facecolor="white")
+    ax = fig.add_subplot(1, 1, 1)
+    rows = stats or []
+    _verdict_panel(
+        ax,
+        promotable=promotable,
+        checks=checks,
+        oos_sharpe=rows[0][1] if len(rows) > 0 else 0.0,
+        efficiency=rows[1][1] if len(rows) > 1 else 0.0,
+        oos_trades=rows[2][1] if len(rows) > 2 else 0,
+        title=title,
+    )
+    fig.subplots_adjust(top=0.95, bottom=0.05, left=0.05, right=0.95)
+    return _to_png(fig)
+
+
+def render_equity_png(
+    equity_curve: List[float], *, title: str = "Equity", subtitle: Optional[str] = None
+) -> bytes:
+    """Render an equity curve from a plain list of values, as PNG bytes."""
+    plt, _ = _mpl()
+    fig = plt.figure(figsize=EMBED_SIZE, dpi=EMBED_DPI, facecolor="white")
+    _equity_panel(fig.add_subplot(1, 1, 1), list(equity_curve), title=title, subtitle=subtitle)
+    fig.subplots_adjust(top=0.9, bottom=0.13, left=0.1, right=0.97)
+    return _to_png(fig)
+
+
+def render_bars_png(labels: List[str], values: List[float], *, title: str, value_label: str = "") -> bytes:
+    """Render a labeled horizontal bar chart (alphas, weights) as PNG bytes.
+
+    Presentation of values a step already computed - it ranks and draws, it does
+    not derive.
+    """
+    plt, _ = _mpl()
+    height = max(2.2, 0.34 * len(labels) + 1.2)
+    fig = plt.figure(figsize=(EMBED_SIZE[0], height), dpi=EMBED_DPI, facecolor="white")
+    ax = fig.add_subplot(1, 1, 1)
+    ax.set_facecolor("white")
+    positions = list(range(len(labels)))[::-1]
+    colors = [_ACCENT if v >= 0 else _FAIL for v in values]
+    ax.barh(positions, values, color=colors, height=0.62)
+    ax.set_yticks(positions)
+    ax.set_yticklabels(labels, fontsize=10)
+    ax.axvline(0.0, color=_MUTED, linewidth=0.8)
+    ax.grid(True, axis="x", color=_GRID, linewidth=0.8)
+    for side in ("top", "right", "left"):
+        ax.spines[side].set_visible(False)
+    ax.set_title(title, fontsize=13, fontweight="bold", loc="left", pad=10)
+    if value_label:
+        ax.set_xlabel(value_label, color=_MUTED)
+    ax.tick_params(colors=_MUTED)
+    fig.subplots_adjust(top=0.88, bottom=0.16, left=0.14, right=0.97)
+    return _to_png(fig)
+
+
 # --------------------------------------------------------------------------- #
 # Public renderers (operate on engine result objects — reusable for any run)
 # --------------------------------------------------------------------------- #

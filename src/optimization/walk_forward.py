@@ -103,6 +103,18 @@ class FoldResult:
     n_trials: int
 
 
+def _concat_trades(frames: List[pd.DataFrame]) -> Optional[pd.DataFrame]:
+    """Every fold's OOS trades as one frame, or ``None`` when there were none.
+
+    ``None`` rather than an empty frame: "this validation produced no trades" and
+    "no trade detail was kept" are different facts about a run.
+    """
+    usable = [f for f in frames if f is not None and not f.empty]
+    if not usable:
+        return None
+    return pd.concat(usable, ignore_index=True)
+
+
 @dataclass
 class WalkForwardResult:
     folds: List[FoldResult]
@@ -122,6 +134,11 @@ class WalkForwardResult:
     #: bootstrap skill test resamples, and what gets persisted to the trial store
     #: so a Reality Check has a real trial to join against later.
     oos_returns: Optional[pd.Series] = None
+    #: Every out-of-sample trade across all folds, concatenated - the per-trade
+    #: detail behind the aggregate. Held only so a caller that asked to keep it
+    #: (trade-table persistence is opt-in) has something to keep; nothing in the
+    #: gates or the metrics reads it.
+    oos_trade_table: Optional[pd.DataFrame] = None
 
     # --- derived summaries used by the gates ---
     def median_oos(self, key: str) -> float:
@@ -471,6 +488,7 @@ class WalkForwardValidator:
             n_trials_total=n_trials_total,
             objective=objective,
             oos_returns=self._oos_return_series(oos_trade_frames),
+            oos_trade_table=_concat_trades(oos_trade_frames),
         )
 
         # Optional, costlier diagnostics.
@@ -563,6 +581,7 @@ class WalkForwardValidator:
             n_trials_total=n_trials_total,
             objective=objective,
             oos_returns=self._oos_return_series(oos_trade_frames),
+            oos_trade_table=_concat_trades(oos_trade_frames),
         )
 
     def score_window(

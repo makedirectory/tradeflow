@@ -9,7 +9,7 @@ END      ?= 2024-04-01
 CAPITAL ?= 100000
 PY       = uv run python main.py
 
-.PHONY: help demo demo-agent demo-agent-live install install-optimize backtest backtest-no-scan scan live \
+.PHONY: help demo demo-agent demo-agent-live install install-optimize verdict backtest backtest-no-scan scan live \
         allocate allocate-utility alphas risk info horizon optimize optimize-bayesian cancel-orders close-positions \
         test check-links docs docs-build docker-build docker-run clean
 
@@ -41,6 +41,9 @@ install-portfolio:  ## Install with the optional OR-Tools portfolio extra
 	uv sync --extra portfolio
 
 # --- preconfigured trading combos ------------------------------------------
+verdict:  ## The whole pipeline in one command: scan -> alphas -> portfolio -> information
+	$(PY) verdict --strategy volume_spike --scanner volume --symbols $(SYMBOLS) --start $(START) --end $(END) --capital $(CAPITAL)
+
 backtest:  ## Backtest: volume scanner -> volume_spike strategy
 	$(PY) backtest --strategy volume_spike --scanner volume --symbols $(SYMBOLS) --start $(START) --end $(END) --capital $(CAPITAL)
 

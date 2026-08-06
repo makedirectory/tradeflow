@@ -250,6 +250,63 @@ def run_backtest(
         trades_csv = str(ARTIFACT_DIR / f"backtest_{run_id}.csv")
         result.trades.to_csv(trades_csv, index=False)
 
+    return backtest_payload(
+        result,
+        run_id=run_id,
+        strategy=strategy,
+        symbols=symbols,
+        start=start,
+        end=end,
+        capital=capital,
+        gross=gross,
+        trades_csv=trades_csv,
+    )
+
+
+def trades_payload(frame, *, max_rows: int = 5000) -> Optional[Dict[str, Any]]:
+    """A trade DataFrame as the ``{columns, rows}`` payload the trial store keeps.
+
+    ``None`` when there is no frame at all - distinct from a run that genuinely
+    made no trades, which is an empty ``rows`` list.
+
+    ``max_rows`` is a deliberate ceiling on what one trial may store, and hitting
+    it is *recorded* (``truncated``/``total_rows``), never silent: a truncated
+    table that looks complete is worse than no table.
+    """
+    if frame is None:
+        return None
+    total = int(len(frame))
+    kept = frame.head(max_rows) if total > max_rows else frame
+    payload = {
+        "columns": [str(c) for c in kept.columns],
+        "rows": _jsonable(kept.values.tolist()),
+        "total_rows": total,
+    }
+    if total > max_rows:
+        payload["truncated"] = True
+    return payload
+
+
+def backtest_payload(
+    result,
+    *,
+    run_id: str,
+    strategy: str,
+    symbols: Sequence[str],
+    start: datetime,
+    end: datetime,
+    capital: float,
+    gross: bool,
+    trades_csv: Optional[str] = None,
+) -> Dict[str, Any]:
+    """A ``BacktestResult`` as the JSON-serializable dict every surface consumes.
+
+    One shape, one place: the CLI holds the result *object* and the service returns
+    a *dict*, and before this they built that dict twice. Anything that renders a
+    backtest - the terminal, an HTML report, an agent over MCP - now sees exactly
+    the same fields. Trades stay out of it (thousands of rows) and go to the CSV
+    path instead.
+    """
     return {
         "run_id": run_id,
         "strategy": strategy,
@@ -532,6 +589,43 @@ def run_walk_forward(
             dedup_params=recipe,
         )
 
+    return walk_forward_payload(
+        result,
+        run_id=run_id,
+        strategy=strategy,
+        symbols=symbols,
+        start=start,
+        end=end,
+        mode=mode,
+        objective=objective,
+        method=method,
+        gross=gross,
+        seed=seed,
+        gates=gates,
+    )
+
+
+def walk_forward_payload(
+    result,
+    *,
+    run_id: str,
+    strategy: str,
+    symbols: Sequence[str],
+    start: datetime,
+    end: datetime,
+    mode: str,
+    objective: str,
+    method: str,
+    gross: bool,
+    seed: Optional[int] = None,
+    gates: Optional[Dict[str, float]] = None,
+) -> Dict[str, Any]:
+    """A ``WalkForwardResult`` as the JSON-serializable dict every surface consumes.
+
+    The counterpart to :func:`backtest_payload`, and for the same reason: the CLI
+    runs the validator directly and the service returns a dict, so a renderer that
+    wants "the walk-forward result" has to get the identical object either way.
+    """
     folds = [
         {
             "index": fr.fold.index,
@@ -1153,6 +1247,522 @@ def compute_information(
         "recommended_ic LEVEL for its own estimation error (T_eff deflates for horizon "
         "overlap); risk_bucket_diagnostic flags a residual-vol tilt from mis-scaling.",
     }
+
+
+#: The composite result's shape identifier. A consumer that renders or serializes
+#: this object checks it rather than guessing from the keys present, so a shape
+#: change fails loudly instead of half-rendering.
+VERDICT_SCHEMA = "verdict/1"
+
+#: Steps of the composite pipeline, in the order they run. ``combination`` is
+#: conditional on more than one signal being given.
+_VERDICT_STEPS = ("scan", "alphas", "combination", "portfolio", "information")
+
+
+def run_verdict(
+    data_client: MarketDataClient,
+    strategy: str,
+    symbols: List[str],
+    start: datetime,
+    end: datetime,
+    *,
+    scanner: str = "volume",
+    signals: Optional[Sequence[str]] = None,
+    source: str = "strategy",
+    benchmark: str = "SPY",
+    timeframe: str = "1Day",
+    capital: Optional[float] = None,
+    horizon: int = 5,
+    n_points: int = 24,
+    target_te: float = 0.04,
+    max_weight: float = 0.25,
+    max_names: Optional[int] = None,
+    neutralize_factors: Sequence[str] = (),
+    risk_model: str = "shrinkage",
+    lookback_days: int = 365,
+    gross: bool = False,
+    commission_bps: float = 1.0,
+    impact_eta: float = 0.3,
+    participation_cap: float = 0.10,
+    borrow_bps: float = 50.0,
+    force: bool = False,
+    journal: bool = True,
+) -> Dict[str, Any]:
+    """Run the whole cross-sectional pipeline once and return one composite answer.
+
+    Scan the universe, refine the signal into alphas, combine several signals when
+    given, construct the cost-aware portfolio, and measure the information content
+    - all against **one** resolved universe, one window, and one cost model, so the
+    sections of the report are guaranteed to be describing the same thing. Running
+    the five steps by hand gives no such guarantee: each command re-resolves its own
+    universe and applies its own defaults, and the joined-up story can silently be
+    five different stories.
+
+    Answers "what does the cross-sectional pipeline say about this universe now" -
+    a forecast and a proposed book, not a historical simulation. For "did this ever
+    work", that is ``run_backtest``/``run_walk_forward``.
+
+    A step that fails does not kill the run: the composite records what ran, what
+    did not, and why, and the overall verdict for any incomplete run is
+    ``incomplete`` - never a verdict assembled from the steps that happened to
+    succeed. The verdict line itself is derived from the gates the steps already
+    compute (the IC t-stat and its band, the sanity ceiling, expected active return
+    net of cost), never from a fresh heuristic invented for the summary.
+
+    The whole composite journals as **one** trial (kind ``verdict``), not one per
+    step - five journal rows per run would inflate a campaign's multiple-testing
+    total five-fold. An identical prior run is served from the trial store instead
+    of re-run unless ``force``, on the same terms as the single-step commands.
+
+    Returns a JSON-serializable dict with stable top-level keys: ``schema``,
+    ``run_id``, ``inputs``, ``steps``, ``scan``, ``alphas``, ``combination``,
+    ``portfolio``, ``information``, ``verdict``.
+    """
+    from src.engine.backtest import ACCOUNTING_VERSION
+    from src.marketdata.session import session_client
+
+    run_id = new_run_id()
+    signal_list = [s for s in (signals or []) if s]
+    inputs = {
+        "strategy": strategy,
+        "signals": signal_list,
+        "source": source,
+        "scanner": scanner,
+        "candidates": list(symbols),
+        "window": {"start": start.isoformat(), "end": end.isoformat()},
+        "timeframe": timeframe,
+        "benchmark": benchmark,
+        "capital": capital,
+        "horizon": horizon,
+        "risk_model": risk_model,
+        "target_te": target_te,
+        "neutralize_factors": list(neutralize_factors),
+        "cost": _cost_key(gross, commission_bps, impact_eta, borrow_bps),
+    }
+
+    # Every input any step reads goes into the identity, not just the ones a caller
+    # is likely to vary - two materially different composites must never collide as
+    # "the same trial" just because the flags they differ on live inside a step.
+    dedup_params = {
+        **_tunable_params(_strategy(strategy, None)),
+        "_verdict": {
+            "signals": sorted(signal_list),
+            "source": source,
+            "scanner": scanner,
+            "benchmark": benchmark,
+            "timeframe": timeframe,
+            "horizon": horizon,
+            "n_points": n_points,
+            "risk_model": risk_model,
+            "target_te": target_te,
+            "max_weight": max_weight,
+            "max_names": max_names,
+            "lookback_days": lookback_days,
+            "neutralize_factors": sorted(neutralize_factors),
+            "capital": capital,
+        },
+        "_cost": _cost_key(gross, commission_bps, impact_eta, borrow_bps),
+    }
+
+    if not force:
+        cached = _find_cached_trial(strategy, dedup_params, symbols, start, end, ACCOUNTING_VERSION)
+        if cached is not None:
+            memoized = _load_verdict_artifact(cached["id"])
+            if memoized is not None:
+                memoized["memoized"] = True
+                memoized["trial_id"] = cached["id"]
+                memoized["trial_ts"] = cached["ts"]
+                memoized["note"] = (
+                    "Served from an identical prior verdict run, not re-run. Pass force=True to re-verify."
+                )
+                return memoized
+
+    client, cache = session_client(data_client)
+    result: Dict[str, Any] = {
+        "schema": VERDICT_SCHEMA,
+        "kind": "verdict",
+        "run_id": run_id,
+        "memoized": False,
+        "inputs": inputs,
+        "steps": {},
+        "scan": None,
+        "alphas": None,
+        "combination": None,
+        "portfolio": None,
+        "information": None,
+    }
+    steps: Dict[str, Any] = result["steps"]
+
+    def _step(name: str, fn):
+        """Run one step, recording its outcome. A failure is reported, not raised -
+        a 30-second pipeline must not lose four completed sections to the fifth."""
+        try:
+            value = fn()
+        except Exception as exc:  # noqa: BLE001 - any step failure is data, not a crash
+            logger.warning("Verdict step %r failed", name, exc_info=True)
+            steps[name] = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
+            return None
+        steps[name] = {"status": "ok"}
+        return value
+
+    # 1. One universe, resolved once, used by every step below. Every later step is
+    #    handed this list rather than the candidates, so no step can quietly re-scan
+    #    into a different universe than the one the report's header claims.
+    if not scanner or scanner == "none":
+        steps["scan"] = {"status": "skipped", "reason": "no scanner — candidates used as-is"}
+        scan, universe = None, list(symbols)
+    else:
+        scan = _step("scan", lambda: run_scan(client, scanner, list(symbols)))
+        universe = [row["symbol"] for row in (scan or {}).get("flagged", [])]
+        if not universe:
+            # Same fallback the single-step commands use: an empty scan means "nothing
+            # stood out today", not "there is nothing to analyze".
+            universe = list(symbols)
+            if scan is not None:
+                scan["fell_back_to_candidates"] = True
+    result["scan"] = scan
+    inputs["universe"] = universe
+
+    # 2. The forecast: one signal refined, or several combined.
+    result["alphas"] = _step(
+        "alphas",
+        lambda: compute_alphas(
+            client,
+            strategy,
+            universe,
+            end,
+            source=source,
+            scanner=scanner,
+            benchmark=benchmark,
+            neutralize_factors=neutralize_factors,
+            lookback_days=lookback_days,
+            timeframe=timeframe,
+        ),
+    )
+    if len(signal_list) > 1:
+        result["combination"] = _step(
+            "combination",
+            lambda: compute_combined_alphas(
+                client,
+                list(signal_list),
+                universe,
+                end,
+                benchmark=benchmark,
+                neutralize_factors=neutralize_factors,
+                lookback_days=lookback_days,
+                timeframe=timeframe,
+                horizon=horizon,
+            ),
+        )
+    else:
+        steps["combination"] = {"status": "skipped", "reason": "one signal — nothing to combine"}
+
+    # 3. The proposed book, priced with the same cost model as everything else.
+    result["portfolio"] = _step(
+        "portfolio",
+        lambda: construct_portfolio(
+            client,
+            strategy,
+            universe,
+            end,
+            source=source,
+            scanner=scanner,
+            target_te=target_te,
+            max_weight=max_weight,
+            max_names=max_names,
+            benchmark=benchmark,
+            neutralize_factors=neutralize_factors,
+            risk_model=risk_model,
+            lookback_days=lookback_days,
+            timeframe=timeframe,
+            capital=capital,
+            cost_aware=not gross,
+            commission_bps=commission_bps,
+            impact_eta=impact_eta,
+            participation_cap=participation_cap,
+            borrow_bps=borrow_bps,
+        ),
+    )
+
+    # 4. Is the forecast information or luck? The campaign's own trial count is what
+    #    makes the multiple-testing guardrail mean anything, so it comes from the
+    #    store rather than from a caller's guess.
+    n_trials = _campaign_trials(strategy, universe, ACCOUNTING_VERSION)
+    result["information"] = _step(
+        "information",
+        lambda: compute_information(
+            client,
+            strategy,
+            universe,
+            start,
+            end,
+            source=source,
+            scanner=scanner,
+            benchmark=benchmark,
+            neutralize_factors=neutralize_factors,
+            horizon=horizon,
+            n_points=n_points,
+            n_trials=n_trials,
+            timeframe=timeframe,
+            risk_model=risk_model,
+        ),
+    )
+
+    result["verdict"] = _verdict_gates(result)
+    result["provenance"] = _verdict_provenance(inputs, cache, n_trials)
+
+    if journal:
+        _journal_verdict(result, strategy, universe, start, end, dedup_params)
+    return result
+
+
+def _campaign_trials(strategy: str, symbols: Sequence[str], accounting: int) -> int:
+    """How many trials this ``(strategy, universe)`` family has already seen, plus
+    the one about to run.
+
+    Counting the current run makes the multiple-testing guardrail strictly
+    conservative - the honest direction when the alternative is understating how
+    many attempts produced the number on screen. Falls back to 1 when the store is
+    unavailable: the guardrail degrades to "this is the only trial I can see",
+    which is what it would have said before a store existed.
+    """
+    with _open_trial_store() as store:
+        if store is None:
+            return 1
+        try:
+            return int(store.family_count(strategy, symbols, accounting)) + 1
+        except Exception:  # noqa: BLE001 - a passive store never breaks its caller
+            logger.warning("Campaign trial count unavailable; using 1", exc_info=True)
+            return 1
+
+
+def _verdict_provenance(inputs: Dict[str, Any], cache, n_trials: int) -> Dict[str, Any]:
+    """What a reader needs to not misread this run a month later: the git SHA, the
+    campaign's trial count, and the measured proof that the steps really did share
+    one fetch (requests issued vs. requests that reached the provider)."""
+    from src.optimization.config_store import current_git_sha
+
+    return {
+        "git_sha": current_git_sha(),
+        "generated_at": datetime.now().isoformat(),
+        "n_trials": n_trials,
+        "universe_size": len(inputs.get("universe") or []),
+        "bar_requests": cache.stats() if cache is not None else None,
+    }
+
+
+def _verdict_gates(result: Dict[str, Any]) -> Dict[str, Any]:
+    """Assemble the verdict from the gates the steps already computed.
+
+    Every check here reads a number some step produced and compares it to that
+    step's own threshold - nothing is re-derived, nothing is averaged. When the
+    checks disagree the verdict is ``mixed`` and every check is shown; a summary
+    that collapses disagreement into a single reassuring number is exactly the
+    failure mode a one-line verdict invites.
+    """
+    from src.analytics import information as info
+
+    steps = result.get("steps") or {}
+    failed = [name for name, s in steps.items() if s.get("status") == "failed"]
+    checks: Dict[str, Dict[str, Any]] = {}
+    inf = result.get("information") or {}
+    pf = result.get("portfolio") or {}
+    diagnostics = pf.get("diagnostics") or {}
+
+    if inf.get("periods"):
+        tstat = float(inf.get("ic_tstat") or 0.0)
+        checks["ic_tstat"] = {
+            "value": tstat,
+            "threshold": 2.0,
+            "passed": abs(tstat) >= 2.0,
+            "note": "IC t-stat below 2 is not distinguishable from luck",
+        }
+        realized, se = float(inf.get("realized_ir") or 0.0), float(inf.get("ir_standard_error") or 0.0)
+        checks["ir_above_noise"] = {
+            "value": realized,
+            "threshold": se,
+            "passed": abs(realized) > se,
+            "note": "realized IR inside its own standard-error band is indistinguishable from zero",
+        }
+        checks["sanity_ceiling"] = {
+            "value": realized,
+            "threshold": 2.0,
+            "passed": not bool(inf.get("sanity_ceiling_breached")),
+            "note": "a realized IR above 2 on public data means suspect a bug or a leak, not skill",
+        }
+        checks["sample_size"] = {
+            "value": int(inf.get("periods") or 0),
+            "threshold": int(info.MIN_PERIODS),
+            "passed": not bool(inf.get("low_sample")),
+            "note": "too few rebalances to measure an IC with any confidence",
+        }
+
+    if pf.get("feasible"):
+        net = diagnostics.get("expected_active_return_net")
+        if net is None:
+            net = diagnostics.get("expected_active_return")
+        checks["net_of_cost_alpha"] = {
+            "value": float(net or 0.0),
+            "threshold": 0.0,
+            "passed": float(net or 0.0) > 0.0,
+            "note": "expected active return after the cost of trading into the book",
+        }
+    elif "portfolio" in steps and steps["portfolio"].get("status") == "ok":
+        checks["portfolio_feasible"] = {
+            "value": False,
+            "threshold": True,
+            "passed": False,
+            "note": pf.get("binding_constraint") or "no feasible portfolio at these constraints",
+        }
+
+    if failed:
+        # A report where the portfolio printed but the information step did not is an
+        # invitation to act on unvalidated weights. There is no partial verdict.
+        return {
+            "verdict": "incomplete",
+            "promotable": None,
+            "summary": "incomplete — no verdict (steps failed: " + ", ".join(sorted(failed)) + ")",
+            "failed_steps": sorted(failed),
+            "checks": checks,
+        }
+    if not checks:
+        return {
+            "verdict": "incomplete",
+            "promotable": None,
+            "summary": "incomplete — no verdict (no gate produced a number)",
+            "failed_steps": [],
+            "checks": checks,
+        }
+    if "ic_tstat" not in checks:
+        # The information step ran but measured nothing (too short a window, too few
+        # sampleable rebalances). Whatever the portfolio says, there is no evidence
+        # of skill to weigh it against - and a book with no skill evidence behind it
+        # must never read as a pass.
+        return {
+            "verdict": "needs more data",
+            "promotable": False,
+            "summary": "needs more data — no measurable rebalances, so skill was never tested",
+            "failed_steps": [],
+            "checks": checks,
+        }
+
+    passed = [name for name, c in checks.items() if c["passed"]]
+    failed_checks = [name for name, c in checks.items() if not c["passed"]]
+    if not checks.get("sample_size", {"passed": True})["passed"]:
+        verdict, summary = "needs more data", "needs more data — too few rebalances to judge"
+    elif not failed_checks:
+        verdict, summary = "promotable", "promotable — every gate passed"
+    elif not passed:
+        verdict, summary = "not promotable", "not promotable — no gate passed"
+    else:
+        verdict = "mixed"
+        summary = (
+            "mixed — passed: " + ", ".join(sorted(passed)) + "; failed: " + ", ".join(sorted(failed_checks))
+        )
+    return {
+        "verdict": verdict,
+        "promotable": verdict == "promotable",
+        "summary": summary,
+        "failed_steps": [],
+        "checks": checks,
+    }
+
+
+def _verdict_weights_payload(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The book this run proposed, in the shape the trial store persists.
+
+    Journaling the weights and the factor-exposure vector alongside the trial is
+    what makes a result's holdings recoverable later without re-running the
+    optimizer.
+    """
+    pf = result.get("portfolio") or {}
+    weights = pf.get("weights")
+    if not pf.get("feasible") or not weights:
+        return None
+    payload = {
+        "as_of": pf.get("as_of"),
+        "weights": {str(k): float(v) for k, v in weights.items()},
+    }
+    active = pf.get("active_weights")
+    if active:
+        payload["active_weights"] = {str(k): float(v) for k, v in active.items()}
+    exposures = pf.get("exposures")
+    if exposures:
+        payload["exposures"] = _jsonable(exposures)
+    return payload
+
+
+def _verdict_artifact_path(trial_id: str) -> Path:
+    """Where a journaled verdict's full composite object lives.
+
+    Derived from the trial id rather than recorded anywhere, so nothing has to stay
+    in sync: given a trial, its artifact is at a known place or it is absent.
+    """
+    return ARTIFACT_DIR / f"verdict_{trial_id}.json"
+
+
+def _load_verdict_artifact(trial_id: str) -> Optional[Dict[str, Any]]:
+    """A prior run's composite object, or ``None`` if it is missing or unreadable.
+
+    ``None`` sends the caller down the re-run path, which is always safe; serving a
+    half-loaded composite never is.
+    """
+    path = _verdict_artifact_path(trial_id)
+    try:
+        with path.open() as fh:
+            payload = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if payload.get("schema") == VERDICT_SCHEMA else None
+
+
+def _journal_verdict(
+    result: Dict[str, Any],
+    strategy: str,
+    universe: Sequence[str],
+    start: datetime,
+    end: datetime,
+    dedup_params: Dict[str, Any],
+) -> None:
+    """Record the composite as exactly one trial, and keep its full object beside it.
+
+    One row, not five: the steps ran as library calls, and journaling each one would
+    quintuple the campaign's multiple-testing total for a single command.
+    """
+    from src.services.audit import journal_trial
+
+    verdict = result.get("verdict") or {}
+    inf = result.get("information") or {}
+    diagnostics = (result.get("portfolio") or {}).get("diagnostics") or {}
+    metrics = {
+        "ic_tstat": inf.get("ic_tstat"),
+        "mean_ic": inf.get("mean_ic"),
+        "predicted_ir": inf.get("predicted_ir"),
+        "realized_ir": inf.get("realized_ir"),
+        "expected_active_return_net": diagnostics.get("expected_active_return_net"),
+    }
+    try:
+        trial_id = journal_trial(
+            "verdict",
+            strategy=strategy,
+            symbols=universe,
+            start=start,
+            end=end,
+            params=_jsonable(dedup_params),
+            metrics={k: v for k, v in metrics.items() if v is not None},
+            extra={"verdict": verdict.get("verdict"), "promotable": verdict.get("promotable")},
+            weights=_verdict_weights_payload(result),
+        )
+    except Exception:  # noqa: BLE001 - journaling is bookkeeping, not the answer
+        logger.warning("Verdict trial journaling failed", exc_info=True)
+        return
+    result["trial_id"] = trial_id
+    try:
+        ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+        with _verdict_artifact_path(trial_id).open("w") as fh:
+            json.dump(_jsonable(result), fh)
+    except (OSError, TypeError, ValueError):
+        logger.warning("Verdict artifact could not be written; a rerun will recompute", exc_info=True)
 
 
 def compute_attribution(
@@ -2033,6 +2643,10 @@ def construct_portfolio(
     policy: Optional[str] = None,
     trade_rate: Optional[float] = None,
     decay_lookback_days: int = 365,
+    commission_bps: float = 1.0,
+    impact_eta: float = 0.3,
+    participation_cap: float = 0.10,
+    borrow_bps: float = 50.0,
 ) -> Dict[str, Any]:
     """Construct the utility-maximizing portfolio from alphas and Σ.
 
@@ -2107,6 +2721,12 @@ def construct_portfolio(
     curvature can't be pinned (no ``capital``, or too little turnover to fit one)
     - see ``diagnostics["aim_degraded"]``. Long-only only in v1; incompatible with
     ``book="market_neutral"`` or ``benchmark_holdings``.
+
+    ``commission_bps``/``impact_eta``/``participation_cap``/``borrow_bps`` set the
+    cost assumptions the objective prices turnover with. They default to the cost
+    model's own defaults, so omitting them is exactly the previous behavior; a
+    composite run passes the same values it gives every other step, so one report
+    never mixes two cost worlds.
     """
     from src.costs import ParametricCostModel
     from src.portfolio.optimizer import MeanVarianceOptimizer
@@ -2152,7 +2772,15 @@ def construct_portfolio(
             "note": "Insufficient data for alphas and/or a covariance matrix.",
         }
 
-    cost_model = ParametricCostModel()
+    # The cost assumptions are parameters, not constants, so a caller running this
+    # step alongside a backtest can price both the same way - the defaults are the
+    # model's own, so an unparameterized call behaves exactly as before.
+    cost_model = ParametricCostModel(
+        commission_bps=commission_bps,
+        impact_eta=impact_eta,
+        participation_cap=participation_cap,
+        annual_borrow_bps=borrow_bps,
+    )
     # Per-name, as-of liquidity context (spread proxy, ADV$, daily vol) priced by the
     # same cost model the backtest uses - the optimizer and backtest share one model.
     cost_inputs = _cost_inputs(universe_bars, cost_model) if cost_aware else None
@@ -2317,6 +2945,8 @@ def construct_portfolio(
         "policy": policy,
         "shrinkage": matrix.shrinkage,
         "weights": _jsonable(dict(sorted(result.weights.items(), key=lambda kv: kv[1], reverse=True))),
+        "active_weights": _jsonable(_active_weights(result.weights, benchmark_weights)),
+        "exposures": _jsonable(_portfolio_exposures(panel, result.weights)),
         "holdings": _jsonable(holdings),
         "diagnostics": _jsonable(result.diagnostics),
         "benchmark_portfolio": _jsonable(benchmark_report),
@@ -2330,6 +2960,46 @@ def construct_portfolio(
     if policy_report is not None:
         out["policy_report"] = _jsonable(policy_report)
     return out
+
+
+def _active_weights(
+    weights: Dict[str, float], benchmark_weights: Optional[Dict[str, float]]
+) -> Optional[Dict[str, float]]:
+    """``w − w_B`` per name, or ``None`` when the run had no benchmark portfolio.
+
+    ``None`` and "all zeros" are different facts - the first means nobody asked for
+    active space, the second means the book *is* the benchmark - so the absent case
+    stays absent rather than becoming a vector of zeros.
+    """
+    if not benchmark_weights:
+        return None
+    names = set(weights) | set(benchmark_weights)
+    return {sym: float(weights.get(sym, 0.0)) - float(benchmark_weights.get(sym, 0.0)) for sym in names}
+
+
+def _portfolio_exposures(panel, weights: Dict[str, float]) -> Optional[Dict[str, float]]:
+    """The book's factor exposures, ``Xᵀw`` over the panel's exposure block.
+
+    A weighted sum of exposure columns that were already built for the risk model -
+    an aggregation of the book, not a second definition of what a factor is. Returns
+    ``None`` when the run built no exposure block (no factors requested, or too few
+    qualifying names), so a reader can tell "not measured" from "flat".
+    """
+    from src.data.features import EXPOSURE_PREFIX
+
+    columns = [c for c in panel.columns if c.startswith(EXPOSURE_PREFIX)]
+    if not columns or not weights:
+        return None
+    exposures: Dict[str, float] = {}
+    for column in columns:
+        values = panel.get(column)
+        total = 0.0
+        for symbol, weight in weights.items():
+            value = values.get(symbol) if symbol in values.index else None
+            if value is not None and not pd.isna(value):
+                total += float(weight) * float(value)
+        exposures[column[len(EXPOSURE_PREFIX) :]] = total
+    return exposures
 
 
 def run_conditional_risk_ab(

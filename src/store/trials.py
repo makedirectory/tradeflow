@@ -56,7 +56,16 @@ DEFAULT_JOURNAL_PATH = Path("logs") / "research_journal.jsonl"
 #: floats). Trials recorded before v2 simply have no stored series (an honest
 #: "not used" in any family panel, not a fabricated one) - rebuilding replays the
 #: journal, and only journal lines written after this shipped carry a series.
-SCHEMA_VERSION = 2
+#: v3 adds ``trial_weights`` on the same journal-first pattern - the proposed
+#: holdings and factor exposures a portfolio-producing trial arrived at, so a
+#: result's book is recoverable without re-running the optimizer. Absent for
+#: every row recorded before it, which readers must render as "not recorded"
+#: rather than as an empty book.
+#: v4 adds ``trial_trades``, the same pattern again for a run's trade table.
+#: Opt-in at the point of recording, not here: a long optimization campaign
+#: multiplying thousands of candidates by hundreds of trades each is exactly the
+#: storage nobody asked for, so only runs you intend to inspect journal one.
+SCHEMA_VERSION = 4
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS trials (
@@ -92,7 +101,35 @@ CREATE TABLE IF NOT EXISTS trial_returns (
   dates_json   TEXT NOT NULL,
   returns_json TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS trial_weights (
+  trial_id             TEXT PRIMARY KEY,
+  as_of                TEXT,
+  weights_json         TEXT NOT NULL,
+  active_weights_json  TEXT,
+  exposures_json       TEXT
+);
+CREATE TABLE IF NOT EXISTS trial_trades (
+  trial_id     TEXT PRIMARY KEY,
+  columns_json TEXT NOT NULL,
+  rows_json    TEXT NOT NULL
+);
 """
+
+#: Printed beside a leaderboard, in the payload as well as the terminal. Ranking a
+#: campaign's trials and showing the winner is selection bias by construction; the
+#: only honest version says so next to the number, every time.
+_LEADERBOARD_CAVEAT = {
+    "dsr": (
+        "Ranked by DEFLATED Sharpe, which already discounts for how many configs the "
+        "family tried. Each row's family n_trials is shown: the larger it is, the more "
+        "of the leader's edge is selection."
+    ),
+    "sharpe": (
+        "Ranked by RAW Sharpe — the best of N tried configs is a biased estimate of "
+        "its own future performance, and this ranking does not correct for it. Compare "
+        "each row's deflated Sharpe and its family n_trials before believing the order."
+    ),
+}
 
 #: Trials excluded from a campaign's multiple-testing count: a forecast has no
 #: Sharpe to deflate.
@@ -330,6 +367,103 @@ class TrialStore:
         )
         self._conn.commit()
 
+    def record_weights(self, trial_id: str, payload: Optional[Dict[str, Any]]) -> None:
+        """Persist one trial's proposed book: the weights it arrived at, its active
+        weights against a benchmark portfolio (when it had one), and its factor
+        exposures.
+
+        A companion table for the same reason ``trial_returns`` is one - the hot
+        family/dedup queries never need a book, and a per-name vector is far
+        larger than the summary floats on the row. Same best-effort contract too:
+        a payload with no weights is skipped rather than stored as an empty book,
+        because "this trial proposed nothing" and "this trial's weights were never
+        recorded" must not become the same row.
+        """
+        if not payload:
+            return
+        weights = payload.get("weights")
+        if not weights:
+            return
+        try:
+            weights_json = json.dumps(_jsonable(weights), sort_keys=True)
+            active = payload.get("active_weights")
+            exposures = payload.get("exposures")
+            active_json = json.dumps(_jsonable(active), sort_keys=True) if active else None
+            exposures_json = json.dumps(_jsonable(exposures), sort_keys=True) if exposures else None
+        except (TypeError, ValueError):
+            return
+        self._conn.execute(
+            "INSERT OR REPLACE INTO trial_weights "
+            "(trial_id, as_of, weights_json, active_weights_json, exposures_json) VALUES (?, ?, ?, ?, ?)",
+            (trial_id, _iso(payload.get("as_of")), weights_json, active_json, exposures_json),
+        )
+        self._conn.commit()
+
+    def record_trades(self, trial_id: str, payload: Optional[Dict[str, Any]]) -> None:
+        """Persist one trial's trade table: ``{columns: [...], rows: [[...], ...]}``.
+
+        Opt-in at the caller, and stored as a companion for the same reason the
+        return series and the book are: it is the largest thing a trial can carry
+        and the hot queries never want it.
+        """
+        if not payload:
+            return
+        columns, rows = payload.get("columns"), payload.get("rows")
+        if not columns or rows is None:
+            return
+        try:
+            columns_json = json.dumps([str(c) for c in columns])
+            rows_json = json.dumps(_jsonable(rows))
+        except (TypeError, ValueError):
+            return
+        self._conn.execute(
+            "INSERT OR REPLACE INTO trial_trades (trial_id, columns_json, rows_json) VALUES (?, ?, ?)",
+            (trial_id, columns_json, rows_json),
+        )
+        self._conn.commit()
+
+    def trades_for(self, trial_id: str) -> Optional[Dict[str, Any]]:
+        """One trial's stored trade table, or ``None`` when it has none.
+
+        ``None`` means *not recorded* - the run did not opt in, or predates this
+        table. It never means "this run made no trades"; that is an empty ``rows``.
+        """
+        row = self._conn.execute(
+            "SELECT columns_json, rows_json FROM trial_trades WHERE trial_id = ?", (trial_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            return {"columns": json.loads(row["columns_json"]), "rows": json.loads(row["rows_json"])}
+        except json.JSONDecodeError:
+            return None
+
+    def weights_for(self, trial_id: str) -> Optional[Dict[str, Any]]:
+        """One trial's stored book, or ``None`` when it has none.
+
+        ``None`` means *not recorded* - every trial predating this table has one,
+        as does every trial kind that proposes no portfolio. Callers render that
+        distinctly from a book that happens to be empty.
+        """
+        row = self._conn.execute(
+            "SELECT as_of, weights_json, active_weights_json, exposures_json "
+            "FROM trial_weights WHERE trial_id = ?",
+            (trial_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            return {
+                "as_of": row["as_of"],
+                "weights": json.loads(row["weights_json"]),
+                "active_weights": json.loads(row["active_weights_json"])
+                if row["active_weights_json"]
+                else None,
+                "exposures": json.loads(row["exposures_json"]) if row["exposures_json"] else None,
+            }
+        except json.JSONDecodeError:
+            return None
+
     def returns_panel(
         self, strategy: str, symbols: Iterable[Any], accounting: int, *, min_overlap: int = 60
     ) -> Dict[str, Any]:
@@ -414,6 +548,8 @@ class TrialStore:
         journal_path = Path(journal_path) if journal_path else self.journal_path
         self._conn.execute("DELETE FROM trials")
         self._conn.execute("DELETE FROM trial_returns")
+        self._conn.execute("DELETE FROM trial_weights")
+        self._conn.execute("DELETE FROM trial_trades")
         self._conn.commit()
 
         n_lines = 0
@@ -445,9 +581,13 @@ class TrialStore:
         whether a row was inserted."""
         tool = record.get("tool", "")
         returns_payload = None
+        weights_payload = None
+        trades_payload = None
         if tool.startswith("trial:"):
             kwargs = _row_kwargs_from_cli_trial(record)
             returns_payload = record.get("returns")
+            weights_payload = record.get("weights")
+            trades_payload = record.get("trades")
         elif tool == "research:session_start":
             _update_session_context(record, session_ctx)
             return False
@@ -478,6 +618,10 @@ class TrialStore:
             self.record_returns(
                 kwargs["id"], returns_payload.get("dates") or [], returns_payload.get("values") or []
             )
+        if weights_payload:
+            self.record_weights(kwargs["id"], weights_payload)
+        if trades_payload:
+            self.record_trades(kwargs["id"], trades_payload)
         return True
 
     # ------------------------------------------------------------------ #
@@ -490,7 +634,16 @@ class TrialStore:
         validated one config's inner search); every other counted kind is 1 to
         COUNT. ``alpha`` rows never count - a forecast has no Sharpe to deflate.
         """
-        uh = universe_hash(symbols)
+        return self.family_count_by_hash(strategy, universe_hash(symbols), accounting)
+
+    def family_count_by_hash(self, strategy: str, uh: str, accounting: int) -> int:
+        """:meth:`family_count` keyed on the stored universe hash directly.
+
+        A stored row carries the hash, not the symbol list it was made from, and a
+        hash cannot be inverted - so anything asking "how big is *this row's*
+        family" (a leaderboard, a detail view) needs this entry point rather than
+        re-hashing symbols it does not have.
+        """
         placeholders = ", ".join("?" for _ in _SUMMED_KINDS)
         excluded_placeholders = ", ".join("?" for _ in _EXCLUDED_FROM_FAMILY_COUNT)
         cur = self._conn.execute(
@@ -628,6 +781,202 @@ class TrialStore:
             f"SELECT * FROM trials {where} ORDER BY ts DESC LIMIT ?", [*args, int(limit)]
         )
         return [dict(row) for row in cur.fetchall()]
+
+    def _filter_sql(
+        self,
+        *,
+        strategy: Optional[str] = None,
+        kind: Optional[str] = None,
+        symbols: Optional[Iterable[Any]] = None,
+        since: Optional[Any] = None,
+        until: Optional[Any] = None,
+        min_sharpe: Optional[float] = None,
+        promotable: Optional[bool] = None,
+        accounting: Optional[int] = None,
+        all_accounting: bool = False,
+    ) -> tuple:
+        """The shared ``WHERE`` clause behind listing, counting, and ranking.
+
+        One definition of what a filter *means*, so a listing and its own "n of N"
+        count can never disagree about which rows matched.
+        """
+        if accounting is None and not all_accounting:
+            from src.engine.backtest import ACCOUNTING_VERSION
+
+            accounting = ACCOUNTING_VERSION
+
+        clauses: List[str] = []
+        args: List[Any] = []
+        if strategy:
+            clauses.append("strategy = ?")
+            args.append(strategy)
+        if kind:
+            clauses.append("kind = ?")
+            args.append(kind)
+        if symbols is not None:
+            # The normalized universe hash, never string matching: "NVDA,MSFT" and
+            # "msft, nvda" are one universe, and this is the definition dedup and
+            # the campaign count already use.
+            clauses.append("universe_hash = ?")
+            args.append(universe_hash(symbols))
+        if since is not None:
+            clauses.append("ts >= ?")
+            args.append(_iso(since))
+        if until is not None:
+            clauses.append("ts <= ?")
+            args.append(_iso(until))
+        if min_sharpe is not None:
+            clauses.append("oos_sharpe IS NOT NULL AND oos_sharpe >= ?")
+            args.append(float(min_sharpe))
+        if promotable is not None:
+            clauses.append("promotable = ?")
+            args.append(int(bool(promotable)))
+        if accounting is not None:
+            clauses.append("accounting = ?")
+            args.append(int(accounting))
+        return (f"WHERE {' AND '.join(clauses)}" if clauses else ""), args
+
+    def list_trials(
+        self, *, sort: str = "date", limit: int = 20, offset: int = 0, **filters: Any
+    ) -> List[Dict[str, Any]]:
+        """Filtered, sorted, paginated rows - the query surface a browser needs.
+
+        Paging happens in SQL (``LIMIT``/``OFFSET`` over indexed columns), never by
+        loading everything and slicing in Python: a long campaign holds tens of
+        thousands of rows, and a browser that reads them all to show twenty is a
+        browser that stops working exactly when the store gets interesting.
+
+        Sorting by ``sharpe``/``dsr`` puts NULLs **last** rather than treating an
+        unrecorded metric as the worst possible value - a trial kind with no Sharpe
+        did not score zero.
+        """
+        order = {
+            "date": "ts DESC",
+            "sharpe": "oos_sharpe IS NULL, oos_sharpe DESC",
+            "dsr": "deflated_sharpe IS NULL, deflated_sharpe DESC",
+        }.get(sort)
+        if order is None:
+            raise ValueError(f"sort must be one of date/sharpe/dsr, got {sort!r}")
+        where, args = self._filter_sql(**filters)
+        cur = self._conn.execute(
+            f"SELECT * FROM trials {where} ORDER BY {order}, id LIMIT ? OFFSET ?",
+            [*args, int(limit), int(offset)],
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+    def count_trials(self, **filters: Any) -> int:
+        """How many rows these filters match in total, ignoring paging - so a
+        listing can say "20 of 4,318" rather than implying it showed everything."""
+        where, args = self._filter_sql(**filters)
+        return int(self._conn.execute(f"SELECT COUNT(*) FROM trials {where}", args).fetchone()[0])
+
+    def get_trial(self, trial_id: str) -> Optional[Dict[str, Any]]:
+        """Everything the store knows about one trial, or ``None`` if there is no
+        such row.
+
+        Assembles the row with its companion records: whether a return series was
+        persisted (and how long a window it covers), the proposed book if one was,
+        and which later trials were served from this one. Absent companions stay
+        ``None`` - a trial recorded before a companion table existed did not *fail*
+        to record one.
+        """
+        row = self._conn.execute("SELECT * FROM trials WHERE id = ?", (trial_id,)).fetchone()
+        if row is None:
+            return None
+        trial = dict(row)
+        try:
+            trial["params"] = json.loads(trial.get("params_json") or "{}")
+        except json.JSONDecodeError:
+            trial["params"] = {}
+        try:
+            trial["metrics"] = json.loads(trial.get("metrics_json") or "{}")
+        except json.JSONDecodeError:
+            trial["metrics"] = {}
+        trial["returns"] = self._returns_summary(trial_id)
+        trial["weights"] = self.weights_for(trial_id)
+        trial["trades"] = self.trades_for(trial_id)
+        trial["reused_by"] = self.reused_by(trial)
+        return trial
+
+    def _returns_summary(self, trial_id: str) -> Optional[Dict[str, Any]]:
+        """Length and date span of a trial's stored return series, without loading
+        the values - `show` reports that one exists, not what is in it."""
+        row = self._conn.execute(
+            "SELECT dates_json FROM trial_returns WHERE trial_id = ?", (trial_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            dates = json.loads(row["dates_json"])
+        except json.JSONDecodeError:
+            return None
+        if not dates:
+            return None
+        return {"periods": len(dates), "start": dates[0], "end": dates[-1]}
+
+    def reused_by(self, trial: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Later trials that share this one's dedup identity - the reverse of the
+        memoization lookup.
+
+        A number served from the store should be traceable in both directions: from
+        the reuse back to its origin, and from the origin forward to everything it
+        was reused for.
+        """
+        cur = self._conn.execute(
+            """
+            SELECT id, ts, kind FROM trials
+            WHERE params_hash = ? AND universe_hash = ?
+              AND IFNULL(window_start,'') = ? AND IFNULL(window_end,'') = ?
+              AND accounting = ? AND id != ? AND IFNULL(ts,'') > IFNULL(?, '')
+            ORDER BY ts
+            """,
+            (
+                trial.get("params_hash"),
+                trial.get("universe_hash"),
+                trial.get("window_start") or "",
+                trial.get("window_end") or "",
+                int(trial.get("accounting") or 0),
+                trial.get("id"),
+                trial.get("ts"),
+            ),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+    def best(
+        self,
+        *,
+        rank_by: str = "dsr",
+        limit: int = 10,
+        **filters: Any,
+    ) -> Dict[str, Any]:
+        """The store's leaderboard, with the context that makes one honest.
+
+        Ranks by **deflated** Sharpe by default. Ranking a research campaign's
+        trials by raw Sharpe and showing the winner is the selection-bias trap this
+        project exists to fight; doing it inside our own tooling would be worse
+        than doing it by hand, because the tool would lend it authority.
+
+        The return value always carries each row's family ``n_trials`` alongside it,
+        so the count travels with the data rather than living in one surface's
+        formatting - an agent reading this over a wire sees the same caveat a human
+        reads in the terminal.
+        """
+        if rank_by not in ("dsr", "sharpe"):
+            raise ValueError(f"rank_by must be 'dsr' or 'sharpe', got {rank_by!r}")
+        rows = self.list_trials(sort=rank_by, limit=limit, **filters)
+        for row in rows:
+            row["family_n_trials"] = (
+                self.family_count_by_hash(row["strategy"], row["universe_hash"], row["accounting"])
+                if row.get("strategy")
+                else None
+            )
+        counts = [r["family_n_trials"] for r in rows if r.get("family_n_trials")]
+        return {
+            "rank_by": rank_by,
+            "rows": rows,
+            "max_family_n_trials": max(counts) if counts else 0,
+            "caveat": _LEADERBOARD_CAVEAT[rank_by],
+        }
 
     def status(self, journal_path: Optional[Any] = None) -> Dict[str, Any]:
         """Row/journal-line counts and a drift check.

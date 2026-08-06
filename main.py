@@ -197,6 +197,25 @@ def _find_cached_trial(
         )
 
 
+def _write_html(args, result: Dict[str, Any], kind: str, extras: Optional[Dict[str, Any]] = None) -> None:
+    """Write the ``--html`` report when the flag was given, else do nothing.
+
+    Renders the dict the command already produced - never a second computation, so
+    the file and the terminal can never disagree. A rendering failure is reported
+    and swallowed: the report is an artifact of the run, and losing it must not
+    lose the run.
+    """
+    path = getattr(args, "html", None)
+    if not path:
+        return
+    from src.analytics.htmlreport import write_html
+
+    try:
+        print(f"HTML report written to {write_html(result, kind, path, extras=extras)}")
+    except (OSError, ValueError) as exc:
+        print(f"HTML report skipped: {exc}")
+
+
 def _load_strategy_from_config(path: str):
     """Load a saved config (``walkforward --save-config``) and construct the
     strategy directly from its params - the ``--config`` path shared by
@@ -261,6 +280,22 @@ def cmd_backtest(args) -> None:
             metrics = json.loads(cached["metrics_json"])
             final_capital = args.capital * (1.0 + metrics.get("total_return", 0.0) / 100.0)
             print(format_backtest_report(metrics, args.capital, final_capital, title="Backtest Results"))
+            _write_html(
+                args,
+                {
+                    "strategy": strategy_name,
+                    "symbols": universe,
+                    "window": {"start": args.start.isoformat(), "end": args.end.isoformat()},
+                    "initial_capital": args.capital,
+                    "final_capital": final_capital,
+                    "gross": args.gross,
+                    "metrics": metrics,
+                    "memoized": True,
+                    "trial_id": cached["id"],
+                    "trial_ts": cached["ts"],
+                },
+                "backtest",
+            )
             return
 
     sizer = None
@@ -283,6 +318,8 @@ def cmd_backtest(args) -> None:
         # kind uses) so it can later join a Reality Check family panel.
         dated_equity = build_dated_equity_curve(result.trades, args.capital)
         returns_series = returns_from_equity(dated_equity) if not dated_equity.empty else None
+        from src.services.analysis import trades_payload
+
         journal_trial(
             "backtest",
             strategy=strategy_name,
@@ -292,6 +329,9 @@ def cmd_backtest(args) -> None:
             params=dedup_params,
             metrics=result.metrics,
             returns=returns_series,
+            # Opt-in: a campaign's worth of trade tables is storage nobody asked
+            # for, so only a run you intend to inspect keeps one.
+            trades=trades_payload(result.trades) if args.record_trades else None,
         )
 
     log_backtest_report(result.metrics, result.initial_capital, result.final_capital)
@@ -310,6 +350,29 @@ def cmd_backtest(args) -> None:
             print(f"Chart saved to {path}")
         except RuntimeError as exc:  # matplotlib (viz extra) not installed
             print(f"Chart skipped: {exc}")
+
+    if getattr(args, "html", None):
+        from src.services.analysis import backtest_payload
+        from src.services.audit import new_run_id
+
+        _write_html(
+            args,
+            backtest_payload(
+                result,
+                run_id=new_run_id(),
+                strategy=strategy_name,
+                symbols=universe,
+                start=args.start,
+                end=args.end,
+                capital=args.capital,
+                gross=args.gross,
+            ),
+            "backtest",
+            # The equity curve is not in the result dict (it can run to tens of
+            # thousands of points), but the CLI is holding it, so the chart can be
+            # drawn here without changing what any surface returns.
+            extras={"equity_curve": result.equity_curve},
+        )
 
     _maybe_print_attribution_verdict(
         data_client, strategy_name, universe, args.start, args.end, args.benchmark
@@ -721,7 +784,29 @@ def cmd_walkforward(args) -> None:
         )
     _print_walkforward(result, args.objective)
 
+    if getattr(args, "html", None):
+        from src.services.analysis import walk_forward_payload
+        from src.services.audit import new_run_id
+
+        _write_html(
+            args,
+            walk_forward_payload(
+                result,
+                run_id=new_run_id(),
+                strategy=args.strategy,
+                symbols=universe,
+                start=args.start,
+                end=args.end,
+                mode=args.mode,
+                objective=args.objective,
+                method=args.method,
+                gross=args.gross,
+            ),
+            "walkforward",
+        )
+
     if not args.no_journal and result.folds:
+        from src.services.analysis import trades_payload
         from src.services.audit import journal_trial
 
         # One walk-forward is one *validated* config — the OOS aggregate is the
@@ -745,6 +830,7 @@ def cmd_walkforward(args) -> None:
                 "efficiency": result.median_efficiency(),
             },
             returns=result.oos_returns,
+            trades=trades_payload(result.oos_trade_table) if args.record_trades else None,
             dedup_params=recipe,
         )
 
@@ -1023,6 +1109,73 @@ def _journal_alpha(args, strategy_label: str, source: str, result: dict) -> None
             "low_confidence": result.get("low_confidence"),
         },
     )
+
+
+def cmd_verdict(args) -> None:
+    """Run the whole cross-sectional pipeline once and print one consolidated answer.
+
+    Scan, alphas (combined when several signals are given), portfolio construction,
+    and information analysis over one universe, one window, and one cost model - the
+    joined-up story the individual commands can only approximate by agreeing with
+    each other by hand. Read-only research clock: proposes a book, places no orders.
+
+    Exits non-zero when a step failed, so a scripted caller can tell a partial run
+    from a complete one without parsing the report.
+    """
+    import json
+
+    from src.analytics.reporting import format_cached_notice, format_verdict_report
+    from src.services.analysis import run_verdict
+
+    _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
+
+    result = run_verdict(
+        data_client,
+        args.strategy,
+        args.symbols,
+        args.start,
+        args.end,
+        scanner=args.scanner,
+        signals=args.combine,
+        source=args.source,
+        benchmark=args.benchmark,
+        timeframe=args.timeframe,
+        capital=args.capital,
+        horizon=args.horizon,
+        target_te=args.target_te,
+        max_weight=args.max_weight,
+        max_names=args.max_names,
+        neutralize_factors=args.neutralize_factors,
+        risk_model=args.risk_model,
+        lookback_days=args.lookback_days,
+        gross=args.gross,
+        commission_bps=args.commission_bps,
+        impact_eta=args.impact_eta,
+        borrow_bps=args.borrow_bps,
+        force=args.force,
+        journal=not args.no_journal,
+    )
+
+    if result.get("memoized"):
+        print(
+            format_cached_notice(
+                {"id": result.get("trial_id"), "ts": result.get("trial_ts")},
+                vintage_available=False,
+            )
+        )
+    print(format_verdict_report(result))
+
+    if args.json:
+        with open(args.json, "w") as fh:
+            json.dump(result, fh, indent=2)
+        print(f"Structured result written to {args.json}")
+    _write_html(args, result, "verdict")
+
+    # Any incomplete run exits non-zero, not just one with a named step failure: a
+    # run that produced no gate at all is equally not something to act on, and a
+    # caller checking the exit code should not have to know the difference.
+    if (result.get("verdict") or {}).get("verdict") == "incomplete":
+        raise SystemExit(1)
 
 
 def cmd_alphas(args) -> None:
@@ -1317,6 +1470,7 @@ def cmd_info(args) -> None:
             f"  After the IC-uncertainty level shrink, deploy IC ≈ "
             f"{r['recommended_ic'] * r.get('level_shrink_factor', 1.0):.4f}"
         )
+    _write_html(args, r, "info")
 
 
 def _print_bucket_diagnostic(diag) -> None:
@@ -1711,39 +1865,85 @@ def cmd_trials(args) -> None:
             )
             return
 
-        # query — defaults to the current accounting version;
+        if args.trials_command == "show":
+            _print_trial_detail(store, args)
+            return
+
+        if args.trials_command == "best":
+            _print_leaderboard(store, args)
+            return
+
+        # list (and the `query` alias) — defaults to the current accounting version;
         # --all-accounting opts into a listing that spans versions.
-        rows = store.query(
-            strategy=args.strategy,
-            kind=args.kind,
-            accounting=args.accounting,
-            all_accounting=args.all_accounting,
-            limit=args.limit,
+        _print_trials_list(store, args)
+
+
+def _trial_filters(args) -> Dict[str, Any]:
+    """The filter kwargs shared by `trials list` and `trials best`."""
+    return {
+        "strategy": args.strategy,
+        "kind": args.kind,
+        "symbols": args.symbols,
+        "since": args.since,
+        "until": args.until,
+        "min_sharpe": args.min_sharpe,
+        "promotable": args.gates_passed,
+        "accounting": args.accounting,
+        "all_accounting": args.all_accounting,
+    }
+
+
+def _print_trials_list(store, args) -> None:
+    import json
+
+    from src.analytics.reporting import format_trials_table
+
+    filters = _trial_filters(args)
+    rows = store.list_trials(sort=args.sort, limit=args.limit, offset=args.offset, **filters)
+    total = store.count_trials(**filters)
+    if args.json:
+        print(json.dumps({"rows": rows, "total": total}, indent=2, default=str))
+        return
+    print(format_trials_table(rows, total=total))
+    if args.strategy and args.symbols:
+        from src.engine.backtest import ACCOUNTING_VERSION
+
+        accounting = args.accounting if args.accounting is not None else ACCOUNTING_VERSION
+        n = store.family_count(args.strategy, args.symbols, accounting)
+        print(
+            f"\nCampaign n_trials for '{args.strategy}' over {', '.join(args.symbols)} "
+            f"(accounting v{accounting}): {n}"
         )
-        if not rows:
-            print("No trials matched.")
-        else:
-            print(
-                f"{'ID':14}{'KIND':12}{'STRATEGY':16}{'OOS SHARPE':>11}{'DSR':>7}{'PROMO':>7}{'ACCT':>6}  TS"
-            )
-            for r in rows:
-                oos = r["oos_sharpe"] if r["oos_sharpe"] is not None else 0.0
-                dsr = r["deflated_sharpe"] if r["deflated_sharpe"] is not None else 0.0
-                promo = "-" if r["promotable"] is None else ("yes" if r["promotable"] else "no")
-                print(
-                    f"{r['id']:14}{r['kind']:12}{(r['strategy'] or '')[:16]:16}"
-                    f"{oos:>11.3f}{dsr:>7.3f}{promo:>7}{r['accounting']:>6}  {(r['ts'] or '')[:19]}"
-                )
 
-        if args.strategy and args.symbols:
-            from src.engine.backtest import ACCOUNTING_VERSION
 
-            accounting = args.accounting if args.accounting is not None else ACCOUNTING_VERSION
-            n = store.family_count(args.strategy, args.symbols, accounting)
-            print(
-                f"\nCampaign n_trials for '{args.strategy}' over {', '.join(args.symbols)} "
-                f"(accounting v{accounting}): {n}"
-            )
+def _print_trial_detail(store, args) -> None:
+    import json
+
+    from src.analytics.reporting import format_trial_detail, format_trial_trades
+
+    trial = store.get_trial(args.trial_id)
+    if trial is None:
+        sys.exit(f"No trial with id {args.trial_id!r}. Try `trials list` to see what is recorded.")
+    if args.json:
+        print(json.dumps(trial, indent=2, default=str))
+        return
+    print(format_trial_detail(trial))
+    if trial.get("trades"):
+        print(format_trial_trades(trial["trades"], limit=args.trades_limit))
+
+
+def _print_leaderboard(store, args) -> None:
+    import json
+
+    from src.analytics.reporting import format_leaderboard
+
+    board = store.best(rank_by=args.rank_by, limit=args.limit, **_trial_filters(args))
+    if args.json:
+        # The honesty rules live in the payload, not only in the formatting: an agent
+        # reading this over a wire must see the family counts and the caveat too.
+        print(json.dumps(board, indent=2, default=str))
+        return
+    print(format_leaderboard(board))
 
 
 def cmd_mcp(args) -> None:
@@ -2188,6 +2388,29 @@ def build_parser() -> argparse.ArgumentParser:
             "takes precedence over --strategy/--scanner when given",
         )
 
+    def add_record_trades_flag(p) -> None:
+        # Opt-in, not default: a long optimization campaign multiplying thousands of
+        # candidates by hundreds of trades each is exactly the storage nobody asked
+        # for. This is for the runs you intend to open again.
+        p.add_argument(
+            "--record-trades",
+            dest="record_trades",
+            action="store_true",
+            help="Persist this run's trade table with its trial, so `trials show` can render it",
+        )
+
+    def add_html_flag(p) -> None:
+        # One self-contained file per run: inline CSS, charts embedded as data URIs,
+        # zero external requests when opened. Renders the same result object the
+        # terminal report does, so the two can never disagree.
+        p.add_argument(
+            "--html",
+            metavar="PATH",
+            default=None,
+            help="Write a self-contained HTML report of this run (no external requests; "
+            "charts need the viz extra, and degrade to tables without it)",
+        )
+
     bt = subparsers.add_parser("backtest", help="Run a historical backtest (did the idea ever work?)")
     add_common(bt, with_dates=True)
     add_config_flag(bt)
@@ -2206,6 +2429,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="render the equity curve + metrics to an image (needs the viz extra: matplotlib)",
     )
+    add_html_flag(bt)
+    add_record_trades_flag(bt)
     add_no_journal(bt)
     add_force(bt)
     bt.set_defaults(func=cmd_backtest)
@@ -2497,9 +2722,65 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_cost_flags(wf)
     _add_cache_flags(wf)
+    add_html_flag(wf)
+    add_record_trades_flag(wf)
     add_no_journal(wf)
     add_force(wf)
     wf.set_defaults(func=cmd_walkforward)
+
+    # The shared knobs, once. Step-specific tuning stays on the individual commands:
+    # `verdict` is the honest default path through the pipeline, not a superset of
+    # every flag the five steps between them accept.
+    verdict = subparsers.add_parser(
+        "verdict",
+        help="The whole pipeline in one command: scan → alphas → portfolio → information, "
+        "one universe, one window, one consolidated verdict — read-only",
+    )
+    verdict.add_argument("--strategy", choices=STRATEGIES, default="volume_spike")
+    verdict.add_argument("--scanner", default="volume", help="Universe scanner ('none' to skip)")
+    verdict.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
+    verdict.add_argument("--start", type=_date, default=datetime.now() - timedelta(days=365))
+    verdict.add_argument("--end", type=_date, default=datetime.now())
+    verdict.add_argument("--capital", type=float, default=100_000.0)
+    verdict.add_argument(
+        "--source", choices=["strategy", "signal", "scanner"], default="strategy", help="Alpha score origin"
+    )
+    verdict.add_argument(
+        "--combine",
+        type=lambda v: [s.strip() for s in v.split(",") if s.strip()],
+        default=None,
+        help="Combine several strategies' signals into one alpha (comma-separated); "
+        "with one or none, the single-signal path runs",
+    )
+    verdict.add_argument("--benchmark", default="SPY", help="Benchmark for residual vol / beta")
+    verdict.add_argument("--timeframe", default="1Day", help="Bar timeframe")
+    verdict.add_argument("--horizon", type=int, default=5, help="Forward-return horizon in bars")
+    verdict.add_argument("--lookback-days", dest="lookback_days", type=int, default=365)
+    verdict.add_argument(
+        "--risk-model",
+        dest="risk_model",
+        choices=["shrinkage", "sample", "factor"],
+        default="shrinkage",
+        help="Covariance model: shrinkage (Ledoit–Wolf), sample (raw), or factor (XFXᵀ+Δ)",
+    )
+    verdict.add_argument("--target-te", dest="target_te", type=float, default=0.04)
+    verdict.add_argument("--max-weight", dest="max_weight", type=float, default=0.25)
+    verdict.add_argument(
+        "--max-names", dest="max_names", type=int, default=None, help="Cardinality cap on the book"
+    )
+    _add_neutralize_factors_flag(verdict)
+    _add_cost_flags(verdict)
+    _add_cache_flags(verdict)
+    verdict.add_argument(
+        "--json",
+        metavar="PATH",
+        default=None,
+        help="Also write the structured result object (the same one the report renders) to a JSON file",
+    )
+    add_html_flag(verdict)
+    add_no_journal(verdict)
+    add_force(verdict)
+    verdict.set_defaults(func=cmd_verdict)
 
     alphas = subparsers.add_parser(
         "alphas",
@@ -2635,6 +2916,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override the derived κ (only used with --policy-ab)",
     )
     _add_neutralize_factors_flag(info, note="; measure the alpha you deploy")
+    add_html_flag(info)
     info.set_defaults(func=cmd_info)
 
     hz = subparsers.add_parser(
@@ -2757,29 +3039,99 @@ def build_parser() -> argparse.ArgumentParser:
         "--journal", default=None, help="Journal path (default: logs/research_journal.jsonl)"
     )
 
-    t_query = trials_sub.add_parser("query", help="List recent trials, and a campaign's n_trials")
-    _add_db_flag(t_query)
-    t_query.add_argument("--strategy", default=None)
-    t_query.add_argument(
-        "--kind", default=None, choices=["backtest", "optimize", "walkforward", "alpha", "research"]
+    def add_trial_filters(p) -> None:
+        """The filters `list` and `best` share, so the two can never disagree about
+        what a filter means."""
+        _add_db_flag(p)
+        p.add_argument("--strategy", default=None)
+        p.add_argument(
+            "--kind",
+            default=None,
+            choices=["backtest", "optimize", "walkforward", "alpha", "research", "verdict"],
+        )
+        p.add_argument(
+            "--symbols",
+            type=_symbols,
+            default=None,
+            help="Universe — matched on the normalized universe, so symbol order and case "
+            "never change what is found; with --strategy, also prints campaign n_trials",
+        )
+        p.add_argument("--since", type=_date, default=None, help="Only trials recorded on/after this date")
+        p.add_argument("--until", type=_date, default=None, help="Only trials recorded on/before this date")
+        p.add_argument(
+            "--min-sharpe",
+            dest="min_sharpe",
+            type=float,
+            default=None,
+            help="Only trials with a recorded OOS Sharpe at or above this",
+        )
+        p.add_argument(
+            "--gates-passed",
+            dest="gates_passed",
+            action="store_const",
+            const=True,
+            default=None,
+            help="Only trials recorded as promotable",
+        )
+        p.add_argument(
+            "--accounting", type=int, default=None, help="Filter to one accounting version (default: current)"
+        )
+        p.add_argument(
+            "--all-accounting",
+            dest="all_accounting",
+            action="store_true",
+            help="Show every accounting version, not just current — read the ACCT column "
+            "before comparing rows across versions",
+        )
+        p.add_argument("--json", action="store_true", help="Emit JSON instead of a table")
+
+    def add_list_args(p) -> None:
+        add_trial_filters(p)
+        p.add_argument(
+            "--sort",
+            choices=["date", "sharpe", "dsr"],
+            default="date",
+            help="Sort order; unrecorded metrics sort last, never as zero",
+        )
+        p.add_argument("--limit", type=int, default=20)
+        p.add_argument("--offset", type=int, default=0, help="Skip this many rows (paging)")
+
+    t_list = trials_sub.add_parser(
+        "list", help="List trials with filters, sorting, and paging — the campaign's memory"
     )
-    t_query.add_argument(
-        "--symbols",
-        type=_symbols,
-        default=None,
-        help="Universe — with --strategy, also prints campaign n_trials",
+    add_list_args(t_list)
+
+    # `query` predates `list` and is kept as an alias for one release so existing
+    # muscle memory and scripts keep working; the docs describe `list` only.
+    t_query = trials_sub.add_parser("query", help="Alias for `trials list` (kept for compatibility)")
+    add_list_args(t_query)
+
+    t_show = trials_sub.add_parser("show", help="Everything the store knows about one trial")
+    _add_db_flag(t_show)
+    t_show.add_argument("trial_id", help="The trial id (see `trials list`)")
+    t_show.add_argument("--json", action="store_true", help="Emit JSON instead of a report")
+    t_show.add_argument(
+        "--trades-limit",
+        dest="trades_limit",
+        type=int,
+        default=25,
+        help="How many stored trades to print (the rest are reported as not shown)",
     )
-    t_query.add_argument(
-        "--accounting", type=int, default=None, help="Filter to one accounting version (default: current)"
+
+    t_best = trials_sub.add_parser(
+        "best", help="The honest leaderboard: DSR-ranked, family n_trials always shown"
     )
-    t_query.add_argument(
-        "--all-accounting",
-        dest="all_accounting",
-        action="store_true",
-        help="Show every accounting version, not just current — read the ACCOUNTING column "
-        "before comparing rows across versions",
+    add_trial_filters(t_best)
+    t_best.add_argument(
+        "--rank-by",
+        dest="rank_by",
+        choices=["dsr", "sharpe"],
+        default="dsr",
+        help="Ranking metric. 'dsr' (default) already discounts how many configs were tried; "
+        "'sharpe' does not, and prints a caveat saying so",
     )
-    t_query.add_argument("--limit", type=int, default=20)
+    t_best.add_argument("--limit", type=int, default=10)
+    t_best.add_argument("--offset", type=int, default=0, help=argparse.SUPPRESS)
 
     trials.set_defaults(func=cmd_trials)
 

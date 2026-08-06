@@ -95,6 +95,8 @@ def journal_trial(
     objective: Optional[str] = None,
     extra: Optional[Dict[str, Any]] = None,
     returns: Optional[Any] = None,
+    weights: Optional[Dict[str, Any]] = None,
+    trades: Optional[Dict[str, Any]] = None,
     path: Optional[Path] = None,
     dedup_params: Optional[Dict[str, Any]] = None,
 ) -> str:
@@ -125,6 +127,19 @@ def journal_trial(
     of symbols keys identically regardless of how it was typed — a trial store's
     dedup and campaign counts depend on that.
 
+    ``weights`` (optional) is the book this trial proposed - a
+    ``{as_of, weights, active_weights, exposures}`` payload from a trial kind that
+    constructs a portfolio. Journaled on the record and mirrored into the trial
+    store's ``trial_weights`` table on the same journal-first terms as ``returns``,
+    so a result's holdings and factor exposures survive without re-running the
+    optimizer. Trial kinds that propose no portfolio omit it.
+
+    ``trades`` (optional) is this run's trade table as
+    ``{columns: [...], rows: [[...], ...]}``, journaled and mirrored into the trial
+    store's ``trial_trades`` table on the same journal-first terms. Opt-in at the
+    caller: a search evaluating thousands of candidates, each with hundreds of
+    trades, is storage nobody asked for, so only runs meant to be inspected pass it.
+
     ``dedup_params`` (optional) overrides what the trial store's dedup hash is
     computed from, when a kind's *identity* (what makes a repeat a repeat) isn't
     the same thing as ``params`` (what's useful to display). Persisted alongside
@@ -146,6 +161,10 @@ def journal_trial(
     returns_payload = _serialize_returns(returns)
     if returns_payload is not None:
         extra_dict["returns"] = returns_payload
+    if weights:
+        extra_dict["weights"] = _safe(weights)
+    if trades:
+        extra_dict["trades"] = _safe(trades)
     run_id = audit_log(
         f"trial:{kind}",
         inputs,
@@ -215,6 +234,8 @@ def _index_trial(
                 store.record_returns(
                     run_id, returns_payload.get("dates") or [], returns_payload.get("values") or []
                 )
+            store.record_weights(run_id, extra.get("weights"))
+            store.record_trades(run_id, extra.get("trades"))
     except Exception:  # noqa: BLE001 - the journal append above already succeeded
         logger.warning("Trial store dual-write failed; `trials rebuild` will resync", exc_info=True)
 
