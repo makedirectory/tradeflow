@@ -61,7 +61,9 @@ adapter maps SDK objects to these.
 ## The Alpaca adapter
 
 `src/brokers/alpaca/` is the **only** place `import alpaca` appears
-(`AlpacaBroker`, `AlpacaMarketData`). `AlpacaMarketData` also converts the
+(`AlpacaBroker`, `AlpacaMarketData`, and `factory.py`, whose `build_broker` /
+`build_market_data` construct them from credentials — entry points call the
+factories and never touch SDK clients). `AlpacaMarketData` also converts the
 project's `Timeframe` into Alpaca's `TimeFrame` and normalizes bars into
 per-symbol, New-York-localized OHLCV frames.
 

@@ -1,6 +1,7 @@
 """Alpaca implementation of the :class:`Broker` interface.
 
-This is the single place where ``alpaca-py`` trading types are imported. It maps
+Along with :mod:`src.brokers.alpaca.factory`, this is the only place where
+``alpaca-py`` trading types are imported. It maps
 Alpaca SDK objects to the broker-agnostic domain types in
 :mod:`src.brokers.base` so the rest of the system stays vendor-neutral.
 """

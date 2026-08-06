@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -2782,7 +2782,7 @@ wheels = [
 
 [[package]]
 name = "tradeflow"
-version = "0.3.0"
+version = "1.0.0"
 source = { virtual = "." }
 dependencies = [
     { name = "alpaca-py" },

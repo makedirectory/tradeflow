@@ -1,6 +1,7 @@
 """Alpaca implementation of the :class:`MarketDataProvider` interface.
 
-The single place where ``alpaca-py`` market-data types are imported. Converts
+Along with :mod:`src.brokers.alpaca.factory`, the only place where ``alpaca-py``
+market-data types are imported. Converts
 the project's :class:`Timeframe` into Alpaca's ``TimeFrame`` and normalizes the
 returned bars into per-symbol, NY-localized OHLCV frames.
 """
