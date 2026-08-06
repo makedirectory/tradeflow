@@ -8,7 +8,7 @@ already established for the research journal:
   be rebuilt (approximately) from the Parquet store it indexes.
 - :class:`CachedMarketData` — a :class:`~src.marketdata.base.MarketDataProvider` that
   wraps an upstream provider with :class:`~src.data.store.ParquetBarStore`
-  (spec 011's columnar substrate) and a :class:`BarCoverage`, so ``get_bars`` becomes
+  (the columnar substrate) and a :class:`BarCoverage`, so ``get_bars`` becomes
   *check cache, fetch only the missing sub-ranges, write back, return*. A run can pin
   to cache-only (``offline=True``) for a byte-reproducible, network-free result.
 
@@ -274,7 +274,7 @@ class BarCoverage:
 
 class CachedMarketData(MarketDataProvider):
     """A :class:`MarketDataProvider` that transparently caches OHLCV bars on the
-    Parquet/DuckDB substrate (spec 011), fetching only missing date ranges.
+    Parquet/DuckDB substrate, fetching only missing date ranges.
 
     ``offline=True`` forbids any network call: a request touching an uncached
     range raises :class:`CacheMiss` instead of falling through to ``upstream`` -

@@ -43,6 +43,29 @@ live. Each step:
 Anything still open at the end is force-closed (`END_OF_PERIOD`). P&L is
 `(exit − entry) × size × direction`, less costs on both legs.
 
+**Shorts are fully cash-collateralized.** Opening debits the whole notional whichever
+way the position faces, rather than crediting short proceeds against margin the way a
+real margin account would. This is deliberate: a short costs the same buying power as
+the equivalent long, so the book can never quietly take on leverage the engine isn't
+modelling. The trade-off to keep in mind when reading results is that short capacity
+is understated, so a long-short configuration and a long-only one are not compared on
+exactly equal footing. Entry and exit are symmetric, so realized P&L is unaffected.
+
+### Annualizing per-step quantities
+
+The merged timeline is the **union** of every symbol's timestamps, so it is at least as
+dense as any single symbol's bars and strictly denser whenever symbols don't share one
+grid — halts, differing listing calendars, a mixed-venue universe. Two things are
+measured in steps on that timeline: the equity curve and short carry accrual.
+
+Annualizing them at the strategy's timeframe rate would therefore assume a coarser
+sampling frequency than the series actually has, inflating Sharpe and volatility by
+`√density` and understating carry by `density`. The engine instead scales the timeframe
+rate by the observed density (merged steps ÷ the densest symbol's bars). For a universe
+whose symbols share a grid that ratio is exactly 1, so ordinary backtests are unchanged;
+it corrects only the ragged case, which was previously wrong in the flattering
+direction.
+
 This matters more than it sounds. The engine originally simulated each symbol
 independently across its whole history and summed the P&L onto one capital base —
 so symbol A's positions returned their capital before symbol B started, and two

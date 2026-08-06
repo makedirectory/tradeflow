@@ -132,6 +132,22 @@ extra steps), joinable into a common-calendar panel per
 family half of [bootstrap skill
 inference](evaluation-metrics.md#bootstrap-skill-inference).
 
+**Serving a stored trial.** An exact match on
+`(strategy, params, universe, window, accounting)` can be *served* from the store
+rather than re-run. Because a match means "this same question was already answered",
+it must also mean "by the same code" — so the lookup additionally requires the stored
+`git_sha` to be absent (a legacy row) or equal to the current one. A *known* mismatch
+counts as no match at all, on the reading that the strategy's math may have changed
+since.
+
+That identifier covers the **working tree**, not just `HEAD`: uncommitted edits get a
+`-dirty` suffix, which matches no stored row and forces a fresh run. Without it, a
+strategy edited but not yet committed would match its own pre-edit result and be served
+as though the change had been evaluated — a fixed bug looking already tested and fine,
+and precisely while iterating, which is when the tree is dirty. Every step of this
+lookup fails toward a redundant run, never toward a skipped one; `--force` bypasses it
+entirely.
+
 `python main.py trials status` reports row/journal-line counts and flags drift
 (a truncated or out-of-order journal); `trials rebuild` resyncs from scratch;
 `trials query --strategy ... --symbols ...` lists recent trials and, with both
@@ -182,9 +198,13 @@ Saving a config never alters live behavior — it's a file a human chooses to pr
 Metrics only mean something relative to how capital was accounted for, so every
 provenance block records the engine's `ACCOUNTING_VERSION`:
 
-- **1** — pre-[spec 025](engine.md#portfolio-accounting): each symbol simulated
-  independently against full capital, equity accumulated from realized P&L at exit.
-- **2** — current: one merged timeline, one capital pool, per-bar mark-to-market.
+- **1** — before [portfolio accounting](engine.md#portfolio-accounting): each symbol
+  simulated independently against full capital, equity accumulated from realized P&L
+  at exit.
+- **2** — one merged timeline, one capital pool, per-bar mark-to-market, with per-step
+  quantities annualized at the strategy's single-symbol timeframe rate.
+- **3** — current: per-step quantities annualize on the
+  [merged timeline's own rate](engine.md#annualizing-per-step-quantities).
 
 Records written before the field existed carry no version, so absence reads as 1 —
 which is exactly what they are. `load_config` warns when a stored version differs

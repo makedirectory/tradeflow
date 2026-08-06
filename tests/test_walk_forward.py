@@ -255,3 +255,47 @@ def test_config_predating_the_stamp_is_flagged_not_silently_reused(tmp_path, cap
     assert "not comparable" in caplog.text.lower()
     # The params are still perfectly usable; only the recorded metrics are stale.
     assert loaded["params"]["buy_every"] == 3
+
+
+def test_git_sha_marks_a_dirty_working_tree(monkeypatch):
+    """A dirty tree must not reuse a clean tree's identifier.
+
+    Regression: the identifier came from ``rev-parse HEAD`` alone, so uncommitted
+    edits kept the same SHA. Callers use it to decide whether a stored trial may be
+    served instead of re-run, so an edited-but-uncommitted strategy would match its
+    own pre-edit result and be served as though the change had been evaluated.
+    """
+    import subprocess
+
+    def fake_run(cmd, **kwargs):
+        if "status" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, stdout=" M src/strategies/base.py\n", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="abc1234\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert config_store.current_git_sha() == "abc1234-dirty"
+
+
+def test_git_sha_is_bare_when_the_tree_is_clean(monkeypatch):
+    """The suffix must appear only when there is something uncommitted - otherwise
+    every ordinary run would miss the cache it is meant to protect."""
+    import subprocess
+
+    def fake_run(cmd, **kwargs):
+        if "status" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="abc1234\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert config_store.current_git_sha() == "abc1234"
+
+
+def test_git_sha_is_none_when_git_is_unavailable(monkeypatch):
+    """Still best-effort: no git means no identifier, not a crash."""
+    import subprocess
+
+    def fake_run(cmd, **kwargs):
+        raise OSError("git not found")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert config_store.current_git_sha() is None

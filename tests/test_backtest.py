@@ -295,3 +295,47 @@ def test_trade_from_warms_up_without_trading():
     assert gated.trades["entry_time"].iloc[0] >= index[3]
     # And its curve covers only the traded span, not the warmup.
     assert len(gated.equity_curve) < len(full.equity_curve)
+
+
+def test_ragged_grid_annualizes_on_the_merged_timeline():
+    """A symbol that trades on off-grid timestamps must not inflate Sharpe.
+
+    Regression: per-step quantities were annualized at the strategy's single-symbol
+    timeframe rate. The merged timeline is the union of every symbol's timestamps, so
+    a universe whose symbols don't share a bar grid produces more steps than that rate
+    assumes, scaling Sharpe and volatility by sqrt(density).
+    """
+    rows = _ROUND_TRIP + _ROUND_TRIP
+    aligned = _frame(rows)
+    # Same bars, shifted half a day off the shared grid: the union is twice as dense
+    # while neither symbol's own history got any denser.
+    offset = aligned.copy()
+    offset.index = aligned.index + pd.Timedelta(hours=12)
+
+    engine = BacktestEngine(
+        ScriptedStrategy(["BUY", "HOLD", "CLOSE_BUY"] * 2),
+        MarketDataClient(DictMarketData({"AAA": aligned, "BBB": offset})),
+    )
+    engine.run(["AAA", "BBB"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000)
+
+    base = engine._periods_per_year
+    # Two interleaved copies of one grid: ~2x the steps, so ~2x the annualization rate.
+    assert engine._step_periods_per_year == pytest.approx(2 * base, rel=0.15)
+    assert engine._step_periods_per_year > base
+
+
+def test_aligned_grid_keeps_the_timeframe_rate():
+    """The density correction must be inert for the common case.
+
+    Symbols sharing one grid make the merged timeline exactly as dense as any single
+    symbol's, so the rate has to come out at the timeframe's own value - otherwise the
+    fix would silently restate every ordinary backtest.
+    """
+    rows = _ROUND_TRIP + _ROUND_TRIP
+    frames = {"AAA": _frame(rows), "BBB": _frame(rows)}
+    engine = BacktestEngine(
+        ScriptedStrategy(["BUY", "HOLD", "CLOSE_BUY"] * 2),
+        MarketDataClient(DictMarketData(frames)),
+    )
+    engine.run(["AAA", "BBB"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000)
+    assert engine._step_periods_per_year == pytest.approx(engine._periods_per_year)

@@ -1,4 +1,4 @@
-"""Tests for the persistent bar cache (spec 010): `BarCoverage` gap computation
+"""Tests for the persistent bar cache: `BarCoverage` gap computation
 and `CachedMarketData`'s gap-fill/offline/refresh behavior.
 
 Skipped automatically if the optional `store` extra (pyarrow) isn't installed,

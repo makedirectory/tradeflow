@@ -48,11 +48,16 @@ logger = logging.getLogger(__name__)
 #:   history against the full capital base, and the equity curve accumulated realized
 #:   P&L at exit, resampled to calendar days. Absolute return and Sharpe scaled with
 #:   universe size, and position limits were per-symbol.
-#: * **2** — the current model. One merged timeline, one shared capital pool, portfolio-level
-#:   position limits, and a per-bar mark-to-market equity curve.
+#: * **2** — one merged timeline, one shared capital pool, portfolio-level position limits,
+#:   and a per-bar mark-to-market equity curve. Per-step quantities (the equity curve, short
+#:   carry) were annualized at the strategy's single-symbol timeframe rate, which understates
+#:   the merged timeline's sampling rate whenever symbols don't share one bar grid.
+#: * **3** — the current model. Per-step quantities annualize on the merged timeline's own
+#:   rate. Identical to 2 for a universe whose symbols share a grid; corrects inflated
+#:   Sharpe/volatility and understated carry when they don't.
 #:
 #: Records written before this field existed carry no version; absence means 1.
-ACCOUNTING_VERSION = 2
+ACCOUNTING_VERSION = 3
 
 
 class BacktestError(RuntimeError):
@@ -241,6 +246,9 @@ class BacktestEngine:
     def _simulate(self, symbol_bars, start, end, initial_capital: float, trade_from=None) -> BacktestResult:
         """Simulate the whole universe on one clock against one capital pool."""
         panels, market_data, master = self._prepare(symbol_bars)
+        # A merged-timeline step is the unit for *both* carry accrual and the equity
+        # curve, so both have to annualize on the merged timeline's own rate.
+        self._step_periods_per_year = self._step_rate(panels, master)
         all_trades, equity_curve = self._replay(panels, master, initial_capital, trade_from)
 
         trades_df = pd.DataFrame(all_trades)
@@ -258,9 +266,9 @@ class BacktestEngine:
             market_data,
             start=start,
             end=end,
-            # The curve is now sampled per *bar*, so it must be annualized on the
-            # strategy's own timeframe rather than the daily default.
-            periods_per_year=getattr(self, "_periods_per_year", None) or m.TRADING_DAYS_PER_YEAR,
+            # The curve is sampled per merged-timeline step, so it annualizes on that
+            # timeline's rate — not the daily default, and not the raw timeframe.
+            periods_per_year=self._step_periods_per_year,
         )
 
         return BacktestResult(
@@ -325,6 +333,30 @@ class BacktestEngine:
         if attempted and len(failures) == attempted:
             raise BacktestError(f"backtest failed for all {attempted} symbol(s); first error - {failures[0]}")
         return panels, market_data, master
+
+    def _step_rate(self, panels: Dict[str, _Panel], master: pd.DatetimeIndex) -> float:
+        """Steps-per-year of the merged timeline, for annualizing per-step quantities.
+
+        The strategy's timeframe gives the rate of a *single* symbol's bars. The
+        merged timeline is the union of every symbol's timestamps, so it is at least
+        as dense and is strictly denser whenever symbols don't share one grid —
+        halts, differing listing calendars, a mixed-venue universe. Annualizing a
+        per-step series at the single-symbol rate would then understate the sampling
+        frequency, inflating Sharpe and volatility by ``sqrt(density)`` and
+        understating short carry by ``density``.
+
+        Correcting by the observed density keeps an aligned universe (the common
+        case) exactly at its timeframe rate, since the ratio is then 1.
+        """
+        base = getattr(self, "_periods_per_year", None) or m.TRADING_DAYS_PER_YEAR
+        if not panels or len(master) < 2:
+            return float(base)
+        # The densest symbol is the best available estimate of one symbol's own grid;
+        # any symbol with a shorter history would overstate the density.
+        densest = max(len(p.opens) for p in panels.values())
+        if densest < 2:
+            return float(base)
+        return float(base) * (len(master) - 1) / (densest - 1)
 
     def _panel_for(self, symbol: str, data: pd.DataFrame, master: pd.DatetimeIndex) -> _Panel:
         """Build one symbol's master-aligned arrays."""
@@ -493,7 +525,10 @@ class BacktestEngine:
         """Financing (borrow) cost of holding ``position`` until ``exit_bar`` - shorts only."""
         if self.cost_model is None:
             return 0.0
-        held_years = max(exit_bar - position.get("entry_k", exit_bar), 0) / self._periods_per_year
+        # entry_k/exit_bar are merged-timeline steps, so the divisor must be the
+        # merged timeline's rate rather than a single symbol's timeframe rate.
+        rate = getattr(self, "_step_periods_per_year", None) or self._periods_per_year
+        held_years = max(exit_bar - position.get("entry_k", exit_bar), 0) / rate
         notional = position["size"] * position["entry_price"]
         return self.cost_model.carry_cost(notional, position["side"] == signals.SELL, held_years)
 
@@ -510,7 +545,17 @@ class BacktestEngine:
         vol: Optional[np.ndarray],
         i: int,
     ) -> Optional[Dict[str, Any]]:
-        """Size and admit one candidate, or return None if the book cannot fund it."""
+        """Size and admit one candidate, or return None if the book cannot fund it.
+
+        **Shorts are fully cash-collateralized.** Opening debits the whole notional
+        regardless of side, rather than crediting short proceeds against margin as a
+        real margin account would. This is deliberate and conservative: it charges a
+        short the same buying power as the equivalent long, so the book can never
+        take on leverage the engine isn't modelling. The consequence to keep in mind
+        is that short capacity is understated, and a long-short configuration is
+        therefore compared against a long-only one on slightly unequal footing.
+        Entry and exit are symmetric, so realized P&L is unaffected either way.
+        """
         # Free cash is the buying power; equity is the whole book. Sizing against
         # cash is what makes positions actually compete for the same dollars.
         account = AccountSnapshot(

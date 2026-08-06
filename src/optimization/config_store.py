@@ -47,7 +47,19 @@ class Provenance:
 
 
 def current_git_sha() -> Optional[str]:
-    """Best-effort short git SHA of the working tree; ``None`` if unavailable."""
+    """Best-effort identifier for the code that produced a result; ``None`` if unavailable.
+
+    This is a *working-tree* identifier, not just ``HEAD``. Callers use it to decide
+    whether a stored trial may be served instead of re-run, and HEAD alone cannot
+    answer that: uncommitted edits leave the SHA untouched, so a strategy edited but
+    not committed would match its own pre-edit result and be served as though the
+    change had been evaluated. That is the one thing the guard exists to prevent, and
+    it would fire exactly when iterating, which is when the tree is dirty.
+
+    So a dirty tree gets a ``-dirty`` suffix, which matches no stored row and forces a
+    fresh run. Failing toward a redundant run is always safe; silently skipping one
+    never is.
+    """
     try:
         out = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
@@ -56,7 +68,17 @@ def current_git_sha() -> Optional[str]:
             timeout=5,
             check=True,
         )
-        return out.stdout.strip() or None
+        sha = out.stdout.strip()
+        if not sha:
+            return None
+        status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+        return f"{sha}-dirty" if status.stdout.strip() else sha
     except (subprocess.SubprocessError, OSError):
         return None
 
