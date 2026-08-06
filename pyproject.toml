@@ -1,6 +1,6 @@
 [project]
 name = "tradeflow"
-version = "1.0.0"
+version = "1.0.1"
 license = "MIT"
 description = "A simple, layered, broker-agnostic algorithmic trading engine (Alpaca adapter included; backtest + live)."
 readme = "README.md"
