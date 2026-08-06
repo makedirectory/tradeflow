@@ -15,7 +15,11 @@ import pytest
 
 from tradeflow import settings
 
-PYPROJECT = 'name = "tradeflow"\nversion = "1.0.1"\n'
+#: Built from the real distribution name rather than hand-written. A literal here
+#: kept passing after the distribution was renamed, while checkout detection had
+#: silently broken — a fixture that agrees with the test instead of with the code
+#: proves nothing.
+PYPROJECT = f'name = "{settings.DISTRIBUTION_NAME}"\n'
 
 
 # --- the entry point --------------------------------------------------------
@@ -41,6 +45,35 @@ def test_the_declared_entry_point_matches_reality():
     manifest = tomllib.loads(Path("pyproject.toml").read_text())
     assert manifest["project"]["scripts"]["tradeflow"] == "tradeflow.cli:main"
     assert manifest["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == ["tradeflow"]
+
+
+def test_the_repo_itself_is_recognized_as_a_checkout():
+    """The regression guard for the rename that broke this once. Running from the
+    repo must resolve state to the repo — the alternative is a developer's journal
+    silently moving to ~/.tradeflow while their old one sits in the checkout."""
+    assert settings._looks_like_checkout(Path.cwd())
+    assert settings.state_root() == Path.cwd()
+
+
+def test_the_distribution_name_matches_what_is_packaged():
+    """Checkout detection reads this out of pyproject.toml; if the two disagree,
+    every state path silently relocates."""
+    import tomllib
+
+    manifest = tomllib.loads(Path("pyproject.toml").read_text())
+    assert manifest["project"]["name"] == settings.DISTRIBUTION_NAME
+
+
+def test_the_version_has_exactly_one_source():
+    """A packaged version and a printed version that can disagree will."""
+    import tomllib
+
+    import tradeflow
+
+    manifest = tomllib.loads(Path("pyproject.toml").read_text())
+    assert "version" in manifest["project"].get("dynamic", []), "version must be dynamic"
+    assert manifest["tool"]["hatch"]["version"]["path"] == "tradeflow/__init__.py"
+    assert tradeflow.__version__
 
 
 def test_help_exits_clean_through_the_shim():

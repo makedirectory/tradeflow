@@ -29,16 +29,24 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
+#: The distribution name in ``pyproject.toml``. A checkout is identified by this
+#: rather than by the mere presence of a ``pyproject.toml`` — every Python project
+#: has one of those, and mistaking someone else's for ours would put our journal in
+#: their repository.
+DISTRIBUTION_NAME = "tradeflow-engine"
+
+
 def _looks_like_checkout(path: Path) -> bool:
     """Whether ``path`` is a TradeFlow working copy rather than any old directory.
 
-    Checked by reading ``pyproject.toml`` for this project's name, not by the
-    presence of a file called ``pyproject.toml`` — every Python project has one of
-    those, and mistaking someone else's for ours would put our journal in their repo.
+    Matched against :data:`DISTRIBUTION_NAME` so a rename cannot silently break
+    detection: getting this wrong sends a developer's journal to ``~/.tradeflow``
+    while their repo still holds the old one, which is the split-campaign failure
+    :func:`state_root` exists to prevent — and it fails silently, with no error.
     """
     manifest = path / "pyproject.toml"
     try:
-        return 'name = "tradeflow"' in manifest.read_text()
+        return f'name = "{DISTRIBUTION_NAME}"' in manifest.read_text()
     except OSError:
         return False
 

@@ -19,4 +19,6 @@ exploratory, and LLM-assisted; it only ever *proposes*. The trade clock
 a manual human step.
 """
 
-__version__ = "1.0.1"
+#: The single source of truth for the version — packaging reads it from here, so a
+#: published artifact and what `tradeflow --version` reports cannot drift apart.
+__version__ = "2.0.0"

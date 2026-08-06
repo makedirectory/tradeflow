@@ -2633,14 +2633,12 @@ def _version_banner() -> str:
     import tradeflow
     from tradeflow.settings import state_root
 
-    try:
-        from importlib.metadata import version
-
-        installed = version("tradeflow")
-    except Exception:  # noqa: BLE001 - a checkout has no installed distribution
-        installed = tradeflow.__version__
+    # The package's own __version__, not importlib.metadata: the code that is
+    # actually running is what the reader needs to know, and a metadata lookup can
+    # resolve a stale or entirely different distribution that happens to share a
+    # name.
     return (
-        f"tradeflow {installed}\n"
+        f"tradeflow {tradeflow.__version__}\n"
         f"  running from : {Path(tradeflow.__file__).parent}\n"
         f"  state root   : {state_root()}"
     )

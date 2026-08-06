@@ -2782,7 +2782,6 @@ wheels = [
 
 [[package]]
 name = "tradeflow-engine"
-version = "1.0.1"
 source = { editable = "." }
 dependencies = [
     { name = "alpaca-py" },
@@ -2856,7 +2855,7 @@ requires-dist = [
     { name = "scikit-learn", marker = "extra == 'dev'", specifier = ">=1.4" },
     { name = "scikit-learn", marker = "extra == 'optimize'", specifier = ">=1.4" },
 ]
-provides-extras = ["optimize", "portfolio", "mcp", "ai", "openai", "viz", "store", "dev"]
+provides-extras = ["ai", "dev", "mcp", "openai", "optimize", "portfolio", "store", "viz"]
 
 [[package]]
 name = "typing-extensions"

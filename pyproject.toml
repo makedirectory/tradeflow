@@ -4,7 +4,9 @@
 # `tradeflow-engine` while the importable package stays `tradeflow`. Installing both
 # would collide at import; nothing prevents that, so it is called out in the README.
 name = "tradeflow-engine"
-version = "1.0.1"
+# Read from tradeflow/__init__.py — one place, so the packaged version and the one
+# `--version` prints can never disagree.
+dynamic = ["version"]
 license = "MIT"
 description = "A layered, broker-agnostic algorithmic-trading research engine that is honest about how hard making money is."
 readme = "README.md"
@@ -69,10 +71,14 @@ Homepage = "https://tradeflow.mk-dir.com/"
 Documentation = "https://tradeflow.mk-dir.com/"
 Source = "https://github.com/makedirectory/tradeflow"
 Issues = "https://github.com/makedirectory/tradeflow/issues"
+Changelog = "https://github.com/makedirectory/tradeflow/blob/main/CHANGELOG.md"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "tradeflow/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 # Only the package ships. `main.py` is a checkout convenience, and the tests, docs,
