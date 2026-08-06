@@ -625,6 +625,24 @@ def _print_longshort_report(report, args) -> None:
     print(f"  note: {report['note']}")
 
 
+def _worker_data_spec(args):
+    """How worker processes should build their own data clients, or ``None`` for a
+    sequential run.
+
+    Parallel execution is cache-backed by construction: a live data client cannot be
+    pickled to a spawned worker, and N workers independently fetching identical bars
+    is strictly worse than one warmed local cache. Asking for workers therefore opts
+    into the bar cache whether or not `--cache` was passed, and says so.
+    """
+    from src.optimization.parallel import DataSpec, resolve_workers
+
+    if resolve_workers(getattr(args, "workers", None)) <= 1:
+        return None
+    if not args.cache and not args.offline:
+        print("--workers implies the bar cache (workers read local Parquet, not the API).")
+    return DataSpec(kind="cache", cache_dir=args.cache_dir, offline=args.offline)
+
+
 def cmd_optimize(args) -> None:
     from src.engine.backtest import ACCOUNTING_VERSION
     from src.optimization.optimizer import ParameterOptimizer
@@ -633,6 +651,14 @@ def cmd_optimize(args) -> None:
     universe = resolve_universe(data_client, args.scanner, args.symbols)
     timeframe = STRATEGIES[args.strategy].create_with_defaults().config["timeframe"]
     vintage = _vintage_stamp(data_client, universe, timeframe, args.start, args.end)
+    # Workers, when asked for, read bars from the local cache rather than the API —
+    # warmed once here, before dispatch, so N cold workers cannot stampede the vendor
+    # for the same ranges simultaneously.
+    data_spec = _worker_data_spec(args)
+    if data_spec is not None:
+        from src.optimization.parallel import warm_for
+
+        warm_for(data_spec, universe, timeframe, args.start, args.end)
     # Net of transaction cost by default; --gross searches on gross returns, which
     # reliably favors the highest-turnover config.
     with _open_trial_store() as trial_store:
@@ -649,6 +675,8 @@ def cmd_optimize(args) -> None:
             cost_key=_cost_key(args, vintage),
             accounting=ACCOUNTING_VERSION,
             force=args.force,
+            workers=args.workers,
+            data_spec=data_spec,
         )
 
         if args.method == "grid":
@@ -752,6 +780,11 @@ def cmd_walkforward(args) -> None:
         # systematically promotes turnover the strategy could not afford live.
         # Per-candidate memoization (a fold's IS search) is threaded through the
         # same trial store as top-level.
+        data_spec = _worker_data_spec(args)
+        if data_spec is not None:
+            from src.optimization.parallel import warm_for
+
+            warm_for(data_spec, universe, timeframe, args.start, args.end)
         validator = WalkForwardValidator(
             STRATEGIES[args.strategy],
             data_client,
@@ -763,6 +796,8 @@ def cmd_walkforward(args) -> None:
             cost_key=_cost_key(args, vintage),
             accounting=ACCOUNTING_VERSION,
             force=args.force,
+            workers=args.workers,
+            data_spec=data_spec,
         )
         result = validator.run(
             universe,
@@ -2556,6 +2591,18 @@ def build_parser() -> argparse.ArgumentParser:
             "takes precedence over --strategy/--scanner when given",
         )
 
+    def add_workers_flag(p) -> None:
+        # Default 1: sequential is not "a pool of one", it is the original code path
+        # untouched. Memory scales with workers x per-worker bar frames, so the cap is
+        # deliberately conservative and raising it is an explicit act.
+        p.add_argument(
+            "--workers",
+            type=int,
+            default=1,
+            help="Evaluate candidates across N worker processes (default 1 = sequential). "
+            "Implies the bar cache; memory scales with N x the per-worker bar footprint",
+        )
+
     def add_record_trades_flag(p) -> None:
         # Opt-in, not default: a long optimization campaign multiplying thousands of
         # candidates by hundreds of trades each is exactly the storage nobody asked
@@ -2806,6 +2853,7 @@ def build_parser() -> argparse.ArgumentParser:
     opt.add_argument("--output", default="optimization_results.csv")
     _add_cost_flags(opt)
     _add_cache_flags(opt)
+    add_workers_flag(opt)
     add_no_journal(opt)
     add_force(opt)
     opt.set_defaults(func=cmd_optimize)
@@ -2891,6 +2939,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_cost_flags(wf)
     _add_cache_flags(wf)
     add_html_flag(wf)
+    add_workers_flag(wf)
     add_record_trades_flag(wf)
     add_no_journal(wf)
     add_force(wf)

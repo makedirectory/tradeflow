@@ -133,6 +133,17 @@ def _trial_store():
         store.close()
 
 
+#: Appended where a tool accepts `workers`. Parallelism is a throughput choice, and
+#: an agent should know it changes nothing else about the answer.
+_WORKERS_NOTE = (
+    "`workers` (default 1) evaluates candidates across that many processes. It changes "
+    "wall-clock only: the same seed produces the same trials, the same winner, and the "
+    "same campaign trial count as a sequential run, because workers only execute — this "
+    "server still does every journal write itself. Memory scales with workers x the "
+    "per-worker bar footprint, and parallel runs read from the local bar cache."
+)
+
+
 def _describe(doc: Optional[str], *metric_keys: str, notes: Optional[List[str]] = None) -> str:
     """A tool's description: its docstring, plus the glossary's own words for any
     metric it reports.
@@ -309,7 +320,7 @@ def build_server(data_client=None):
         )
         return _logged("run_backtest", inputs, result)
 
-    @tool("sharpe_ratio", "deflated_sharpe_ratio", notes=[_JOURNALING_NOTE])
+    @tool("sharpe_ratio", "deflated_sharpe_ratio", notes=[_JOURNALING_NOTE, _WORKERS_NOTE])
     def run_optimization(
         strategy: str,
         symbols: List[str],
@@ -322,6 +333,7 @@ def build_server(data_client=None):
         capital: float = 100_000.0,
         gross: bool = False,
         force: bool = False,
+        workers: int = 1,
     ) -> Dict[str, Any]:
         """Search a strategy's parameters IN-SAMPLE (grid|random|bayesian).
 
@@ -362,6 +374,7 @@ def build_server(data_client=None):
             capital,
             gross=gross,
             force=force,
+            workers=workers,
         )
         return _logged("run_optimization", inputs, result)
 
@@ -370,7 +383,7 @@ def build_server(data_client=None):
         "deflated_sharpe_ratio",
         "profit_factor",
         "max_drawdown",
-        notes=[_JOURNALING_NOTE],
+        notes=[_JOURNALING_NOTE, _WORKERS_NOTE],
     )
     def run_walk_forward(
         strategy: str,
@@ -391,6 +404,7 @@ def build_server(data_client=None):
         leakage_probe: bool = False,
         gross: bool = False,
         force: bool = False,
+        workers: int = 1,
     ) -> Dict[str, Any]:
         """Honest out-of-sample evaluation across folds - your advancement criterion.
 
@@ -446,6 +460,7 @@ def build_server(data_client=None):
             leakage_probe=leakage_probe,
             gross=gross,
             force=force,
+            workers=workers,
         )
         return _logged("run_walk_forward", inputs, result)
 

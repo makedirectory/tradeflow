@@ -129,3 +129,15 @@ oversight). See
 
 See the engineering wiki's **Walk-forward validation** page for the design,
 fold geometry, and the leakage-safety guarantees.
+
+## Running folds faster (`--workers N`)
+
+`--workers` parallelizes each fold's in-sample candidate search across worker
+processes. Folds stay sequential — the candidates are where the work is, and
+per-fold progress stays readable.
+
+It changes wall-clock only: the same seed produces the same folds, the same chosen
+config, and the same campaign trial count as a sequential run, because workers only
+execute and this process still does every journal write. See
+[parallel candidates](optimization#running-candidates-in-parallel---workers-n) for
+the full contract and its costs.

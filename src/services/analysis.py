@@ -325,6 +325,22 @@ def backtest_payload(
     }
 
 
+def _worker_data_spec(workers: Optional[int], cache_dir: Optional[Any], offline: bool):
+    """How worker processes should build their own data clients, or ``None`` when
+    the run is sequential.
+
+    Parallel execution is **cache-backed by construction**: a live client cannot
+    cross a process boundary, and N workers independently fetching the same bars
+    from the vendor is strictly worse than one warmed local cache. So asking for
+    workers implies the bar cache, whether or not the caller passed ``--cache``.
+    """
+    from src.optimization.parallel import DataSpec, resolve_workers
+
+    if resolve_workers(workers) <= 1:
+        return None
+    return DataSpec(kind="cache", cache_dir=str(cache_dir) if cache_dir else None, offline=offline)
+
+
 def run_optimization(
     data_client: MarketDataClient,
     strategy: str,
@@ -342,6 +358,9 @@ def run_optimization(
     participation_cap: float = 0.10,
     borrow_bps: float = 50.0,
     force: bool = False,
+    workers: Optional[int] = None,
+    cache_dir: Optional[Any] = None,
+    offline: bool = False,
 ) -> Dict[str, Any]:
     """Search a strategy's parameters IN-SAMPLE; return best params + top-N rows.
 
@@ -357,6 +376,13 @@ def run_optimization(
     trials, matching ``python main.py optimize``), unless it's served from the
     trial store first (an identical prior candidate - real with random sampling
     or a resumed search) - ``force=True`` disables that per-candidate memoization.
+
+    ``workers`` (default sequential) evaluates candidates across that many worker
+    processes. Only *execution* parallelizes: memoization is still resolved here
+    before dispatch, and every journal write still happens in this process after the
+    results come back, so the campaign's trial count is unaffected by how the work
+    was scheduled. A parallel run and a sequential run of the same search produce
+    the same trials and the same winner.
     """
     from src.services.audit import journal_trial
 
@@ -364,6 +390,15 @@ def run_optimization(
     cls = resolve_strategy_class(strategy)
     cost_model = _build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
     cost_key = _cost_key(gross, commission_bps, impact_eta, borrow_bps)
+    data_spec = _worker_data_spec(workers, cache_dir, offline)
+    if data_spec is not None:
+        # Warm once, in this process, before any dispatch: N cold workers would
+        # otherwise request the same ranges simultaneously, multiplying the API
+        # calls (and the rate-limit exposure) by N for one set of bars.
+        from src.optimization.parallel import warm_for
+
+        timeframe = cls.create_with_defaults().config.get("timeframe", "1Day")
+        warm_for(data_spec, symbols, timeframe, start, end)
     with _open_trial_store() as trial_store:
         opt = ParameterOptimizer(
             cls,
@@ -376,6 +411,8 @@ def run_optimization(
             cost_key=cost_key,
             accounting=ACCOUNTING_VERSION,
             force=force,
+            workers=workers,
+            data_spec=data_spec,
         )
         if method == "grid":
             result = opt.grid_search(symbols, start, end, objective, max_evals=max_evals)
@@ -465,6 +502,9 @@ def run_walk_forward(
     participation_cap: float = 0.10,
     borrow_bps: float = 50.0,
     force: bool = False,
+    workers: Optional[int] = None,
+    cache_dir: Optional[Any] = None,
+    offline: bool = False,
 ) -> Dict[str, Any]:
     """Honest evaluation: optimize IS, score OOS across folds, gate the verdict.
 
@@ -483,6 +523,11 @@ def run_walk_forward(
     over the same window — the chosen params aren't known until the search runs,
     so those, not params, are what identifies a repeat here). ``force=True``
     bypasses that and re-runs, appending a new trial.
+
+    ``workers`` parallelizes each fold's in-sample candidate search — folds
+    themselves stay sequential, since the candidates are where the work is and the
+    per-fold progress stays readable. Journaling is unaffected: this process still
+    records exactly one validated trial when the whole run finishes.
     """
     from src.optimization.config_store import current_git_sha
     from src.services.audit import journal_trial
@@ -491,6 +536,12 @@ def run_walk_forward(
     cls = resolve_strategy_class(strategy)
     cost_model = _build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
     cost_key = _cost_key(gross, commission_bps, impact_eta, borrow_bps)
+    wf_data_spec = _worker_data_spec(workers, cache_dir, offline)
+    if wf_data_spec is not None:
+        from src.optimization.parallel import warm_for
+
+        timeframe = cls.create_with_defaults().config.get("timeframe", "1Day")
+        warm_for(wf_data_spec, symbols, timeframe, start, end)
     recipe = {
         "mode": mode,
         "n_folds": n_folds,
@@ -547,6 +598,8 @@ def run_walk_forward(
             cost_key=cost_key,
             accounting=ACCOUNTING_VERSION,
             force=force,
+            workers=workers,
+            data_spec=wf_data_spec,
         )
         result = validator.run(
             symbols,

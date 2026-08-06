@@ -62,6 +62,8 @@ class ParameterOptimizer:
         cost_key: Optional[Dict[str, Any]] = None,
         accounting: Optional[int] = None,
         force: bool = False,
+        workers: Optional[int] = None,
+        data_spec: Optional[Any] = None,
     ):
         self.strategy_class = strategy_class
         self.data_client = data_client
@@ -82,6 +84,18 @@ class ParameterOptimizer:
         self.cost_key = cost_key or {}
         self.accounting = accounting
         self.force = force
+        #: Candidate evaluation is embarrassingly parallel, but only *execution*
+        #: parallelizes: memoization is still checked here, in the parent, before
+        #: anything is dispatched, and nothing a worker returns is written by the
+        #: worker. ``workers <= 1`` runs the original sequential path untouched.
+        from src.optimization.parallel import resolve_workers
+
+        self.workers = resolve_workers(workers)
+        #: How a worker builds its own data client (a live one cannot be pickled to
+        #: a spawned process). Required for parallel execution; without it, a
+        #: parallel request degrades to sequential rather than guessing.
+        self.data_spec = data_spec
+        self.seed = seed
 
     # ------------------------------------------------------------------ #
     # Search methods
@@ -135,27 +149,68 @@ class ParameterOptimizer:
             logger.warning("No successful initial evaluations; aborting Bayesian search")
             return self._build_result(rows, objective)
 
-        for i in range(n_iterations):
+        # The surrogate proposes one point at a time by design, so parallelism comes
+        # from asking it for a *batch* per round: propose `workers` points, evaluate
+        # them together, refit, repeat. Same evaluation budget, fewer rounds.
+        batch = self.workers if self._parallel_available() else 1
+        remaining = n_iterations
+        round_index = 0
+        while remaining > 0:
             gp.fit(np.vstack(x_obs), self._standardize(y_obs))
-            candidates = self._rng.random((n_candidates, self.space.dimensions))
-            mean, std = gp.predict(candidates, return_std=True)
-            best = candidates[int(np.argmax(mean + exploration * std))]
+            picks = self._propose_batch(gp, min(batch, remaining), exploration, n_candidates)
+            round_index += 1
 
-            params = self.space.from_unit_vector(best)
-            score, row = self._score_config(params, symbols, start, end, objective)
-            logger.info("Bayesian iter %d/%d -> %s=%.4f", i + 1, n_iterations, objective, score)
-            if row is not None:
-                rows.append(row)
-                x_obs.append(best)
-                y_obs.append(score)
+            if len(picks) == 1:
+                params = self.space.from_unit_vector(picks[0])
+                score, row = self._score_config(params, symbols, start, end, objective)
+                logger.info("Bayesian round %d -> %s=%.4f", round_index, objective, score)
+                if row is not None:
+                    rows.append(row)
+                    x_obs.append(picks[0])
+                    y_obs.append(score)
+            else:
+                combos = [self.space.from_unit_vector(pick) for pick in picks]
+                batch_rows = self._evaluate_parallel(combos, symbols, start, end, objective)
+                logger.info("Bayesian round %d evaluated %d candidates", round_index, len(batch_rows))
+                for pick, row in zip(picks, batch_rows):
+                    rows.append(row)
+                    x_obs.append(pick)
+                    y_obs.append(self._finite(row.get(objective, float("-inf"))))
+            remaining -= len(picks)
 
         return self._build_result(rows, objective)
+
+    def _propose_batch(self, gp, size: int, exploration: float, n_candidates: int) -> List[np.ndarray]:
+        """Propose ``size`` distinct points from one surrogate fit.
+
+        The acquisition function has no memory of what it just proposed, so asking it
+        `size` times returns the same point `size` times. This applies the standard
+        constant-liar trick: after picking a point, penalize its neighborhood so the
+        next pick explores elsewhere, exactly as a sequential run would once that
+        point's (unknown) result came back.
+        """
+        candidates = self._rng.random((n_candidates, self.space.dimensions))
+        mean, std = gp.predict(candidates, return_std=True)
+        acquisition = mean + exploration * std
+        picks: List[np.ndarray] = []
+        for _ in range(size):
+            index = int(np.argmax(acquisition))
+            picks.append(candidates[index])
+            # The lie: assume this point comes back unremarkable, and suppress the
+            # region around it so the batch spreads rather than clustering.
+            distance = np.linalg.norm(candidates - candidates[index], axis=1)
+            acquisition = acquisition - np.exp(-((distance / 0.1) ** 2)) * (acquisition.max() + 1.0)
+        return picks
 
     # ------------------------------------------------------------------ #
     # Evaluation helpers
     # ------------------------------------------------------------------ #
     def _evaluate_all(self, combos, symbols, start, end, objective) -> OptimizationResult:
         logger.info("Evaluating %d parameter configs on %d symbols", len(combos), len(symbols))
+        if self._parallel_available():
+            return self._build_result(
+                self._evaluate_parallel(combos, symbols, start, end, objective), objective
+            )
         rows: List[Dict[str, Any]] = []
         for i, params in enumerate(combos, 1):
             _, row = self._score_config(params, symbols, start, end, objective)
@@ -164,6 +219,68 @@ class ParameterOptimizer:
             if i % 10 == 0 or i == len(combos):
                 logger.info("  ... %d/%d evaluated", i, len(combos))
         return self._build_result(rows, objective)
+
+    def _parallel_available(self) -> bool:
+        """Whether this search can actually run in parallel.
+
+        A worker builds its own data client from a picklable recipe, so without one
+        there is nothing to build. Falling back to sequential is the right failure:
+        the answer is identical, only slower, and silently guessing at how to
+        reconstruct someone's data client is how a parallel run ends up reading
+        different bars than the sequential one did.
+        """
+        return self.workers > 1 and self.data_spec is not None
+
+    def _evaluate_parallel(self, combos, symbols, start, end, objective) -> List[Dict[str, Any]]:
+        """Dispatch candidates to workers; keep every write here in the parent.
+
+        Memoization is resolved *before* dispatch, so a candidate already scored this
+        campaign costs no compute and no worker slot. Workers only ever run the
+        candidates that genuinely need running.
+        """
+        from src.optimization.parallel import EvalRequest, candidate_key, cost_spec, run_pool, summarize
+
+        rows: List[Dict[str, Any]] = []
+        requests: List[EvalRequest] = []
+        spec = cost_spec(self.cost_model)
+        for params in combos:
+            cached = self._find_cached(params, symbols, start, end, objective)
+            if cached is not None:
+                rows.append({**{k: params[k] for k in self.space.searchable}, **cached})
+                continue
+            requests.append(
+                EvalRequest(
+                    key=candidate_key(self.strategy_name or "", params, symbols, start, end),
+                    strategy=self.strategy_name or "",
+                    params=dict(params),
+                    symbols=tuple(symbols),
+                    start=start,
+                    end=end,
+                    capital=self.initial_capital,
+                    cost=spec,
+                    data=self.data_spec,
+                    base_seed=self.seed,
+                )
+            )
+
+        done = [0]
+
+        def _progress(_result) -> None:
+            done[0] += 1
+            if done[0] % 10 == 0 or done[0] == len(requests):
+                logger.info("  ... %d/%d evaluated (%d workers)", done[0], len(requests), self.workers)
+
+        report = run_pool(requests, self.workers, on_result=_progress)
+        logger.info("Parallel evaluation: %s", summarize(report))
+        for result in report.results:
+            if result.get("error"):
+                # A crashed candidate is still a configuration that was tried; it is
+                # reported, not hidden, and it does not stop the campaign.
+                logger.error("Evaluation failed for %s: %s", result["params"], result["error"])
+                continue
+            searched = {k: result["params"][k] for k in self.space.searchable if k in result["params"]}
+            rows.append({**searched, **result["metrics"]})
+        return rows
 
     def _score_config(self, params, symbols, start, end, objective):
         """Backtest one config; return (objective_score, results_row) or (-inf, None)."""
@@ -227,7 +344,17 @@ class ParameterOptimizer:
         df = pd.DataFrame(rows)
         if df.empty or objective not in df.columns:
             return OptimizationResult({}, float("-inf"), objective, df)
-        df = df.sort_values(objective, ascending=False).reset_index(drop=True)
+        # A total order, not just a sort by score. Ranking on the objective alone
+        # leaves tied candidates in whatever order they were evaluated, so a parallel
+        # run completing in a different order could pick a different "best" config
+        # from an identical set of results. Breaking ties on the searched parameter
+        # values makes the winner a property of the results, not of the schedule.
+        tie_break = [k for k in self.space.searchable if k in df.columns]
+        df = df.sort_values(
+            [objective, *tie_break],
+            ascending=[False, *[True] * len(tie_break)],
+            kind="mergesort",
+        ).reset_index(drop=True)
         best = df.iloc[0]
         # Layer the searched values over the full defaults: callers construct a
         # strategy straight from best_params, so dropping *pinned* params (declared

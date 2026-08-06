@@ -269,6 +269,8 @@ class WalkForwardValidator:
         cost_key: Optional[Dict[str, Any]] = None,
         accounting: Optional[int] = None,
         force: bool = False,
+        workers: Optional[int] = None,
+        data_spec: Optional[Any] = None,
     ):
         self.strategy_class = strategy_class
         self.data_client = data_client
@@ -286,6 +288,13 @@ class WalkForwardValidator:
         self.cost_key = cost_key
         self.accounting = accounting
         self.force = force
+        #: Forwarded to each fold's IS search. Parallelism goes *inside* a fold, not
+        #: across folds: the candidates are where the work is (one fold evaluates
+        #: `max_evals` of them), and nesting a pool inside a pool risks deadlock for
+        #: no additional throughput. Folds stay sequential, so the per-fold progress
+        #: a reader relies on stays in order.
+        self.workers = workers
+        self.data_spec = data_spec
 
         # Read timeframe + lookback from a default instance (drives warmup/embargo).
         defaults = {
@@ -370,6 +379,8 @@ class WalkForwardValidator:
             cost_key=self.cost_key,
             accounting=self.accounting,
             force=self.force,
+            workers=self.workers,
+            data_spec=self.data_spec,
         )
 
     def _bars_per_day(self) -> float:
