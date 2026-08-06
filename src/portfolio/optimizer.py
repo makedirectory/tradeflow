@@ -27,6 +27,16 @@ linear cost; a quadratic-in-√ root for the √-impact) - so the whole conic pr
 solved by the same 1-D budget bisection the cost-free projection already used, with no
 external solver. When ``cᵢ = kᵢ = 0`` it reduces *exactly* to the cost-free projected
 gradient, so the cost-blind behavior is unchanged.
+
+``book="market_neutral"`` relaxes the long-only box to ``[−s, cap]`` and the
+budget to ``Σw = 0``, adds a mandatory gross-leverage cap ``‖w‖₁ ≤ L`` (a second,
+outer dual - the inner budget bisection now runs once per trial value of the leverage
+dual, "one loop deeper" per name), and prices per-name borrow carry as a linear tilt on
+the short side only (``Σ borrowᵢ·max(−wᵢ, 0)``) - a *second* zero-anchored kink that
+composes with the turnover kink at ``w₀`` (see :meth:`_prox_step_short`). This is a
+wholly separate solve path from the long-only one above: ``book="long_only"`` (the
+default) runs the exact prior code, unchanged, so every existing result is
+byte-for-byte identical.
 """
 
 from dataclasses import dataclass, field
@@ -52,6 +62,11 @@ class CostInputs:
     spread: Dict[str, float] = field(default_factory=dict)
     adv_dollar: Dict[str, float] = field(default_factory=dict)
     daily_vol: Dict[str, float] = field(default_factory=dict)
+    #: Per-name annualized borrow rate override - a locate-desk quote or a
+    #: manual hard-to-borrow rate; missing names fall back to the cost model's flat
+    #: default (:meth:`~src.costs.base.CostModel.borrow_rate`). Only priced for
+    #: ``book="market_neutral"`` (long-only books hold no shorts to carry).
+    borrow: Dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -102,6 +117,10 @@ class MeanVarianceOptimizer:
         cost_inputs: Optional[CostInputs] = None,
         capital: Optional[float] = None,
         holding_period_years: float = 1.0 / 12.0,
+        benchmark_weights: Optional[Dict[str, float]] = None,
+        book: str = "long_only",
+        short_max_weight: float = 0.0,
+        gross_leverage: Optional[float] = None,
     ) -> PortfolioResult:
         """Construct the utility-maximizing portfolio over the alpha/risk universe.
 
@@ -109,18 +128,56 @@ class MeanVarianceOptimizer:
         error") *or* ``risk_aversion`` (``λ_A`` directly). ``current_weights`` (``w₀``)
         is where turnover is measured from.
 
-        Pass a ``cost_model`` + ``cost_inputs`` to make the solve **cost-aware** (Spec
-        016): the objective gains a name-specific linear turnover penalty and, when
+        Pass a ``cost_model`` + ``cost_inputs`` to make the solve **cost-aware**:
+        the objective gains a name-specific linear turnover penalty and, when
         ``capital`` is given, the √-impact term. Cost coefficients are *annualized* to
         the same units as the (annualized) alpha by dividing the one-way rate by
         ``holding_period_years`` - matching the cost model's alpha-haircut and the
         ex-post cost drag. Without a cost model the solve is cost-blind (unchanged).
 
+        Pass ``benchmark_weights`` (``w_B``) to make the solve **benchmark-aware**:
+        risk and expected return are measured in *active* space
+        (``w_a = w − w_B``) rather than against cash, alpha is neutralized against
+        the Σ-implied benchmark beta (``αᵀw_B = 0``) so the optimizer carries no
+        implicit benchmark-timing view, and ``predicted_tracking_error`` becomes the
+        real thing instead of ``√(wᵀΣw)`` on a cash-relative book. Cost stays
+        anchored at ``w₀`` (current holdings) - risk and cost intentionally read
+        two different reference points. Without ``benchmark_weights`` (or with an
+        all-zero one) every quantity below reduces byte-for-byte to the cash-relative
+        behavior - the same "cost-blind reduces to today" pattern as the cost-aware solve.
+
+        Pass ``book="market_neutral"`` to relax the long-only box
+        ``[0, cap]`` to ``[−short_max_weight, cap]`` and the budget from ``Σw = 1``
+        to ``Σw = 0``. ``gross_leverage`` (``‖w‖₁ ≤ L``) is then *mandatory* - an
+        unconstrained long/short mean-variance book on a noisy Σ is a leverage
+        machine (error maximization un-truncated by the long-only bound) - and
+        ``cost_inputs.borrow`` prices a per-name annualized carry rate on the short
+        side only, composing with the turnover cost as a second, asymmetric kink at
+        ``w = 0`` (see :meth:`_prox_step_short`). ``book="long_only"`` (the default)
+        runs the exact prior code path, so every existing result is unaffected.
+
         Returns the weights, the diagnostics (``IR*``, predicted TE/IR, transfer
         coefficient, value added, turnover, and - when cost-aware - the linear/impact
-        cost split and net expected return), and a feasibility verdict naming the
-        binding constraint when infeasible.
+        cost split and net expected return; when benchmark-aware, the active-beta /
+        residual-risk split; when market-neutral, the dollar-neutral residual and
+        realized gross leverage), and a feasibility verdict naming the binding
+        constraint when infeasible.
         """
+        if book == "market_neutral":
+            if gross_leverage is None:
+                raise ValueError(
+                    "gross_leverage is mandatory for book='market_neutral' - an "
+                    "unconstrained long/short book on a noisy Σ is a leverage machine "
+                    "- pass an explicit ‖w‖₁ cap"
+                )
+            if short_max_weight <= 0:
+                raise ValueError(
+                    "short_max_weight must be > 0 for book='market_neutral' - "
+                    "otherwise no name can be shorted and Σw=0 forces an all-cash book"
+                )
+        elif book != "long_only":
+            raise ValueError(f"book must be 'long_only' or 'market_neutral', got {book!r}")
+
         symbols, alpha = self._align(alphas, risk)
         if len(symbols) == 0:
             return PortfolioResult(weights={}, feasible=False, binding_constraint="empty universe")
@@ -128,20 +185,40 @@ class MeanVarianceOptimizer:
         sigma = self._submatrix(risk, symbols)
         n = len(symbols)
 
-        # Cardinality + box can make the budget unreachable: name the binding bound.
-        k_cap = min(self.max_names or n, n)
-        if k_cap * self.max_weight < 1.0 - 1e-9:
-            return PortfolioResult(
-                weights={},
-                feasible=False,
-                binding_constraint=f"max_weight*{k_cap} < 1 (cardinality/weight cap can't fund the book)",
-            )
+        if book == "long_only":
+            # Cardinality + box can make the budget unreachable: name the binding bound.
+            k_cap = min(self.max_names or n, n)
+            if k_cap * self.max_weight < 1.0 - 1e-9:
+                return PortfolioResult(
+                    weights={},
+                    feasible=False,
+                    binding_constraint=f"max_weight*{k_cap} < 1 (cardinality/weight cap can't fund the book)",
+                )
 
         sigma_inv = np.linalg.inv(sigma)
-        ir_star = float(np.sqrt(max(alpha @ sigma_inv @ alpha, 0.0)))
+
+        # Benchmark portfolio: β = Σw_B/(w_Bᵀ Σ w_B) is the one canonical
+        # beta - zero vector (and sigma_b2 = 0) when there is no benchmark, so
+        # every step below is a no-op and this reduces exactly to the cash-relative
+        # solve. Names in benchmark_weights but absent from `symbols` are silently
+        # excluded by `_vector` - the caller is responsible for
+        # restricting/renormalizing w_B to Σ's covered universe before calling in.
+        w_b = self._vector(benchmark_weights or {}, symbols)
+        sigma_b2 = float(w_b @ sigma @ w_b)
+        has_benchmark = sigma_b2 > 0
+        beta = (sigma @ w_b) / sigma_b2 if has_benchmark else np.zeros(n)
+        # α ← α − β·(αᵀw_B): after this, αᵀw_B = 0 exactly - no incentive to
+        # lean the book long/short of the benchmark; only constraints can now
+        # produce a nonzero active beta (surfaced below, not fought here).
+        alpha_neutral = alpha - beta * float(alpha @ w_b) if has_benchmark else alpha
+
+        ir_star = float(np.sqrt(max(alpha_neutral @ sigma_inv @ alpha_neutral, 0.0)))
 
         lam = self._risk_aversion(ir_star, target_te, risk_aversion)
-        unconstrained = (sigma_inv @ alpha) / (2.0 * lam)
+        # The unconstrained total holding: benchmark plus the unconstrained active
+        # bet - w_B + Σ⁻¹α_neutral/2λ. Reduces to the cash-relative closed
+        # form exactly when w_B = 0.
+        unconstrained = w_b + (sigma_inv @ alpha_neutral) / (2.0 * lam)
 
         w0 = self._vector(current_weights or {}, symbols)
         # Per-name cost coefficients (annualized), aligned to `symbols`. Both zero when
@@ -151,7 +228,22 @@ class MeanVarianceOptimizer:
         )
         cost_aware = bool(np.any(c_lin > 0) or np.any(k_imp > 0))
 
-        w = self._constrained_solve(alpha, sigma, lam, n, c_lin, k_imp, w0)
+        # Risk anchored at the benchmark, cost anchored at w₀:
+        # absorb the whole w_B risk-anchor effect into a shifted alpha so the
+        # existing box/budget/cost solver runs completely unchanged (the "two
+        # reference points, one solver" trick - see the module docstring's cost
+        # term for the analogous pattern. Shift is exactly zero when there
+        # is no benchmark.
+        alpha_shifted = alpha_neutral + 2.0 * lam * (sigma @ w_b) if has_benchmark else alpha_neutral
+
+        borrow = None
+        if book == "long_only":
+            w = self._constrained_solve(alpha_shifted, sigma, lam, n, c_lin, k_imp, w0)
+        else:
+            borrow = self._borrow_coefficients(cost_model, cost_inputs, symbols)
+            w = self._constrained_solve_market_neutral(
+                alpha_shifted, sigma, lam, n, c_lin, k_imp, borrow, w0, short_max_weight, gross_leverage
+            )
 
         # Manual no-trade band (cost-free override): if every name moves less than the
         # band, don't churn. When cost-aware the band instead *emerges* from c_lin (a
@@ -159,9 +251,32 @@ class MeanVarianceOptimizer:
         if self.no_trade_band > 0 and np.max(np.abs(w - w0)) < self.no_trade_band:
             w = w0.copy()
 
-        diagnostics = self._diagnostics(alpha, sigma, w, w0, lam, ir_star, c_lin, k_imp, cost_aware)
+        diagnostics = self._diagnostics(
+            alpha_neutral, sigma, w, w0, lam, ir_star, c_lin, k_imp, cost_aware, w_b, beta, sigma_b2
+        )
+        if book == "market_neutral":
+            # Dollar- vs beta-neutrality: Σw and
+            # (when a benchmark/β source is supplied) βᵀw_a are different residuals
+            # that diverge whenever betas are dispersed - `active_beta` above already
+            # reports the latter via the one canonical β (implied_beta), reused
+            # rather than redefined; this block adds the former plus the mandatory
+            # leverage accounting and the short-side borrow carry.
+            borrow_cost = float(np.sum(borrow * np.maximum(-w, 0.0)))
+            diagnostics.update(
+                {
+                    "book": "market_neutral",
+                    "dollar_neutral_residual": float(abs(np.sum(w))),
+                    "gross_leverage": float(np.sum(np.abs(w))),
+                    "gross_leverage_cap": float(gross_leverage),
+                    "borrow_cost": borrow_cost,
+                }
+            )
+            if "expected_active_return_net" in diagnostics:
+                diagnostics["expected_active_return_net"] -= borrow_cost
+                diagnostics["expected_active_return_net_oneway"] -= borrow_cost
+
         return PortfolioResult(
-            weights={s: float(w[i]) for i, s in enumerate(symbols) if w[i] > 1e-9},
+            weights={s: float(w[i]) for i, s in enumerate(symbols) if abs(w[i]) > 1e-9},
             feasible=True,
             diagnostics=diagnostics,
             unconstrained_weights={s: float(unconstrained[i]) for i, s in enumerate(symbols)},
@@ -198,6 +313,23 @@ class MeanVarianceOptimizer:
         c_lin = np.where(np.isfinite(c_lin), c_lin, 0.0)
         k_imp = np.where(np.isfinite(k_imp), k_imp, 0.0)
         return c_lin, k_imp
+
+    @staticmethod
+    def _borrow_coefficients(cost_model, cost_inputs, symbols) -> np.ndarray:
+        """Per-name annualized borrow rate: ``CostInputs.borrow``
+        overrides the cost model's flat default, threaded the same way
+        :meth:`_cost_coefficients` threads spread/ADV/vol. Already annualized (no
+        ``/h`` - it is a per-year *holding* rate, not a one-way turnover rate); zero
+        when there is no cost model.
+        """
+        n = len(symbols)
+        borrow = np.zeros(n)
+        if cost_model is None:
+            return borrow
+        overrides = cost_inputs.borrow if cost_inputs is not None else {}
+        for i, s in enumerate(symbols):
+            borrow[i] = cost_model.borrow_rate(overrides.get(s))
+        return np.where(np.isfinite(borrow), borrow, 0.0)
 
     # ------------------------------------------------------------------ #
     # Solve
@@ -321,6 +453,214 @@ class MeanVarianceOptimizer:
         return np.sign(m) * u * u
 
     # ------------------------------------------------------------------ #
+    # Market-neutral solve - a separate path from the long-only one
+    # above; book="long_only" never touches any of this.
+    # ------------------------------------------------------------------ #
+    def _constrained_solve_market_neutral(
+        self, alpha, sigma, lam, n, c_lin, k_imp, borrow, w0, short_cap, gross_leverage
+    ) -> np.ndarray:
+        """Box ``[−short_cap, cap]`` + budget ``Σw=0`` + gross-leverage program, plus
+        cardinality/dust-floor by re-solving - the same re-solve pattern as
+        :meth:`_constrained_solve`, generalized to magnitude (``|w|``) since a large
+        short is as much a "position" as a large long.
+        """
+        active = np.arange(n)
+        w = self._solve_leveraged(
+            alpha, sigma, lam, active, c_lin, k_imp, borrow, w0, short_cap, gross_leverage
+        )
+
+        if self.max_names is not None and int(np.sum(np.abs(w) > 1e-9)) > self.max_names:
+            active = np.argsort(np.abs(w))[::-1][: self.max_names]
+            w = self._solve_leveraged(
+                alpha, sigma, lam, active, c_lin, k_imp, borrow, w0, short_cap, gross_leverage
+            )
+
+        while self.min_weight > 0:
+            held = np.where(np.abs(w) > 1e-9)[0]
+            keep = held[np.abs(w[held]) >= self.min_weight]
+            if len(keep) == len(held):
+                break  # every held name clears the floor
+            if len(keep) == 0:
+                return np.zeros(n)  # dust floor emptied the book - a valid (if useless) all-cash result
+            active = keep
+            w = self._solve_leveraged(
+                alpha, sigma, lam, active, c_lin, k_imp, borrow, w0, short_cap, gross_leverage
+            )
+        return w
+
+    def _solve_leveraged(
+        self, alpha, sigma, lam, active, c_lin, k_imp, borrow, w0, short_cap, gross_leverage
+    ) -> np.ndarray:
+        """The outer gross-leverage dual: solve the box/budget/
+        borrow program at ``μ=0`` first: since the leverage cap "only sometimes
+        binds", most solves stop here. Only when ‖w‖₁ already exceeds the cap does
+        the outer bisection on ``μ≥0`` run - each trial ``μ`` re-solves the *entire*
+        inner proximal-gradient program to convergence ("one loop deeper" than the
+        long-only path). Monotonicity of ‖w(μ)‖₁ (a stiffer zero-anchored threshold
+        can only shrink every name toward 0) is verified empirically by the KKT
+        certificate test, not just assumed - flagged as an open risk to revisit.
+        """
+        w = self._solve_market_neutral(alpha, sigma, lam, active, c_lin, k_imp, borrow, w0, short_cap, 0.0)
+        gross = float(np.sum(np.abs(w)))
+        if gross <= gross_leverage + 1e-9:
+            return w
+
+        def gross_at(mu: float) -> float:
+            wm = self._solve_market_neutral(
+                alpha, sigma, lam, active, c_lin, k_imp, borrow, w0, short_cap, mu
+            )
+            return float(np.sum(np.abs(wm)))
+
+        lo_mu, hi_mu = 0.0, 1.0
+        guard = 0
+        while gross_at(hi_mu) > gross_leverage and guard < 60:
+            hi_mu *= 2.0
+            guard += 1
+        for _ in range(40):
+            mid = 0.5 * (lo_mu + hi_mu)
+            if gross_at(mid) > gross_leverage:
+                lo_mu = mid
+            else:
+                hi_mu = mid
+        return self._solve_market_neutral(
+            alpha, sigma, lam, active, c_lin, k_imp, borrow, w0, short_cap, 0.5 * (lo_mu + hi_mu)
+        )
+
+    def _solve_market_neutral(
+        self, alpha, sigma, lam, active, c_lin, k_imp, borrow, w0, short_cap, mu
+    ) -> np.ndarray:
+        """Proximal-gradient solve at a FIXED leverage dual ``μ`` - otherwise the same
+        iteration structure as :meth:`_solve`, over the market-neutral box/budget."""
+        n = len(alpha)
+        if len(active) == 0:
+            return np.zeros(n)
+        a = alpha[active]
+        s = sigma[np.ix_(active, active)]
+        c = c_lin[active]
+        k = k_imp[active]
+        b = borrow[active]
+        w0a = w0[active]
+        cap = self.max_weight
+        lower = -short_cap
+        lmax = float(np.linalg.eigvalsh(s).max())
+        step = 1.0 / (2.0 * lam * lmax) if lmax > 0 else 1.0
+        thr = step * c
+        kthr = step * k
+        bthr = step * b
+        # Warm-start via a cost-blind box+budget projection (mu=0), same spirit as _solve.
+        start = w0a if np.abs(w0a).sum() > 1e-9 else np.zeros(len(active))
+        w = self._prox_project_market_neutral(
+            start, np.zeros_like(thr), np.zeros_like(kthr), np.zeros_like(bthr), 0.0, w0a, lower, cap
+        )
+        for _ in range(self.max_iter):
+            grad = -a + 2.0 * lam * (s @ w)
+            nxt = self._prox_project_market_neutral(w - step * grad, thr, kthr, bthr, mu, w0a, lower, cap)
+            if np.max(np.abs(nxt - w)) < self.tol:
+                w = nxt
+                break
+            w = nxt
+        full = np.zeros(n)
+        full[active] = w
+        return full
+
+    def _prox_project_market_neutral(self, y, thr, kthr, borrow, mu, w0, lower, cap) -> np.ndarray:
+        """Budget-dual (Σw=0) bisection over the market-neutral box, at a fixed
+        leverage dual ``μ`` - mirrors :meth:`_prox_project` exactly, just with
+        budget 0 instead of 1, box ``[lower, cap]`` instead of ``[0, cap]``, and the
+        short/leverage-aware per-name step (:meth:`_prox_step_short`).
+        """
+
+        def total(tau: float) -> float:
+            w = self._prox_step_short(y - tau, thr, kthr, borrow, mu, w0)
+            return float(np.clip(w, lower, cap).sum())
+
+        pad = float(thr.max()) if thr.size else 0.0
+        lo = float(y.min() - cap - pad)
+        hi = float(y.max() + pad)
+        guard = 0
+        while total(lo) < 0.0 and guard < 200:
+            lo -= abs(lo) + 1.0
+            guard += 1
+        guard = 0
+        while total(hi) > 0.0 and guard < 200:
+            hi += abs(hi) + 1.0
+            guard += 1
+        for _ in range(100):
+            tau = 0.5 * (lo + hi)
+            if total(tau) > 0.0:
+                lo = tau
+            else:
+                hi = tau
+        tau = 0.5 * (lo + hi)
+        w = self._prox_step_short(y - tau, thr, kthr, borrow, mu, w0)
+        return np.clip(w, lower, cap)
+
+    @classmethod
+    def _prox_step_short(cls, m, thr, kthr, borrow, mu, w0) -> np.ndarray:
+        """Per-name proximal step for the market-neutral book: minimizes, over ``w``,
+
+            ½(w−y)² + cᵢ|w−w₀ⁱ| + kᵢ|w−w₀ⁱ|^{3/2} + borrowᵢ·max(−w,0) + μ|w|
+
+        (``y = m + w₀``, ``μ`` the leverage dual). Unlike :meth:`_prox_step` this
+        has *two* kinks - the turnover kink at ``w = w₀`` and a second, zero-anchored
+        one where the short-side borrow and the (symmetric) leverage threshold turn
+        on at ``w = 0``. The function is still convex and piecewise, so the true
+        minimizer is one of a small set of closed-form candidates: the unconstrained
+        stationary point of each of the (up to 4) smooth pieces the two kinks carve
+        out, plus the two kinks themselves. Evaluating the objective at all six and
+        keeping the best is exact (no iterative search) and, unlike hand-selecting
+        which piece is "active", needs no case analysis on the sign of ``w₀`` -
+        convexity guarantees the argmin is correct regardless of which candidates
+        happen to be infeasible for their own piece.
+
+        With ``borrow = μ = 0`` the six candidates collapse to exactly
+        :meth:`_prox_step`'s two branches (plus dominated duplicates), but this
+        method is never called from the long-only path, so that path's numerics are
+        untouched.
+        """
+        w1 = w0 + cls._branch_pos(m, thr + mu, kthr)  # region w >= max(w0, 0)
+        w2 = w0 + cls._branch_neg(m, thr + borrow + mu, kthr)  # region w <= min(w0, 0)
+        w3 = np.where(w0 > 0, w0 + cls._branch_neg(m, thr - mu, kthr), w0)  # region 0 <= w <= w0 (w0>0 only)
+        w4 = np.where(
+            w0 < 0, w0 + cls._branch_pos(m, thr - borrow - mu, kthr), w0
+        )  # region w0 <= w <= 0 (w0<0 only)
+        zeros = np.zeros_like(w0)
+        candidates = np.stack([w1, w2, w3, w4, zeros, w0])
+
+        y_eff = m + w0
+        dw = candidates - w0
+        obj = (
+            0.5 * (candidates - y_eff) ** 2
+            + thr * np.abs(dw)
+            + kthr * np.abs(dw) ** 1.5
+            + borrow * np.maximum(-candidates, 0.0)
+            + mu * np.abs(candidates)
+        )
+        best = np.argmin(obj, axis=0)
+        return np.take_along_axis(candidates, best[None, :], axis=0)[0]
+
+    @staticmethod
+    def _branch_pos(m, thr, kthr) -> np.ndarray:
+        """Stationary point (``d = w−w₀ ≥ 0`` branch, extended to all reals) of
+        ``½(d−m)² + thr·d + kthr·d^{3/2}`` - the same closed form as
+        :meth:`_prox_step`'s ``m ≥ 0`` branch, factored out so :meth:`_prox_step_short`
+        can reuse it with a shifted threshold (borrow/leverage add to ``thr`` here).
+        """
+        b = 1.5 * kthr
+        residual = np.maximum(m - thr, 0.0)
+        u = (-b + np.sqrt(b * b + 4.0 * residual)) / 2.0
+        return u * u
+
+    @staticmethod
+    def _branch_neg(m, thr, kthr) -> np.ndarray:
+        """Stationary point (``d = w−w₀ ≤ 0`` branch) - the mirror of
+        :meth:`_branch_pos`, matching :meth:`_prox_step`'s ``m < 0`` branch."""
+        b = 1.5 * kthr
+        residual = np.maximum(-(m + thr), 0.0)
+        u = (-b + np.sqrt(b * b + 4.0 * residual)) / 2.0
+        return -(u * u)
+
+    # ------------------------------------------------------------------ #
     # Calibration & diagnostics
     # ------------------------------------------------------------------ #
     def _risk_aversion(self, ir_star, target_te, risk_aversion) -> float:
@@ -330,14 +670,22 @@ class MeanVarianceOptimizer:
             return ir_star / (2.0 * target_te)  # λ_A = IR* / (2·ψ_target)
         return 1.0  # neutral default when neither is usable
 
-    def _diagnostics(self, alpha, sigma, w, w0, lam, ir_star, c_lin, k_imp, cost_aware) -> Dict[str, float]:
-        sig_w = sigma @ w
-        active_variance = float(w @ sig_w)
-        te = float(np.sqrt(max(active_variance, 0.0)))
-        expected = float(alpha @ w)
+    def _diagnostics(
+        self, alpha, sigma, w, w0, lam, ir_star, c_lin, k_imp, cost_aware, w_b, beta, sigma_b2
+    ) -> Dict[str, float]:
+        """``alpha`` here is already benchmark-neutralized when ``w_b`` is nonzero -
+        the caller passes ``alpha_neutral``, never the raw forecast."""
+        # Active weights w_a = w - w_B. w_b is the zero vector without a
+        # benchmark, so w_a = w and every quantity below is the plain cash-relative
+        # one - unchanged.
+        w_a = w - w_b
+        sig_wa = sigma @ w_a
+        active_variance = float(w_a @ sig_wa)
+        te = float(np.sqrt(max(active_variance, 0.0)))  # ψ, the real tracking error
+        expected = float(alpha @ w_a)
         # Transfer coefficient: corr(α, Σ-adjusted active weights) ∈ [-1, 1].
-        tc = self._corr(alpha, sig_w)
-        dw = w - w0
+        tc = self._corr(alpha, sig_wa)
+        dw = w - w0  # cost is anchored at w₀, not w_B - unchanged
         diagnostics = {
             "ir_star": ir_star,
             "risk_aversion": float(lam),
@@ -350,9 +698,28 @@ class MeanVarianceOptimizer:
             "value_added": (ir_star**2) / (4.0 * lam) if lam > 0 else 0.0,
             "turnover": float(np.sum(np.abs(dw))),
         }
+        if sigma_b2 > 0:
+            # ψ² = β_a²·σ_B² + ω²: the active-beta (benchmark-timing) share of
+            # tracking error vs the residual (stock-selection) share. β_a should be
+            # ~0 by construction (alpha is neutralized); a nonzero value here comes
+            # only from a binding constraint (box/cardinality), which is exactly what
+            # this diagnostic is for surfacing.
+            active_beta = float(beta @ w_a)
+            residual_risk = float(np.sqrt(max(te**2 - active_beta**2 * sigma_b2, 0.0)))
+            diagnostics.update(
+                {
+                    "has_benchmark": True,
+                    "benchmark_variance": sigma_b2,
+                    "active_beta": active_beta,
+                    "residual_risk": residual_risk,
+                    # A benchmark equal to current holdings makes ψ measure "distance
+                    # from myself" - legal but meaningless.
+                    "self_benchmark_warning": bool(np.sum(np.abs(w0 - w_b)) < 1e-6),
+                }
+            )
         if cost_aware:
             # One-way cost of *this rebalance's* turnover - what the objective charged,
-            # kept for continuity with the prior (pre-016) ex-post drag. Detail.
+            # kept for continuity with the prior ex-post drag. Detail.
             linear_cost = float(np.sum(c_lin * np.abs(dw)))
             impact_cost = float(np.sum(k_imp * np.abs(dw) ** 1.5))
             rebalance_cost = linear_cost + impact_cost

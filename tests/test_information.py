@@ -49,7 +49,7 @@ def test_synthetic_skill_is_recovered():
     assert predicted_ir(stats["mean_ic"], effective_breadth(50, 12, 0.0)["br_eff"]) > 0
 
 
-# --- alignment / look-ahead (hidden factor 2) --------------------------------
+# --- alignment / look-ahead ----------------------------------------------------
 def test_ic_detects_alignment():
     rng = np.random.default_rng(2)
     realized = pd.Series(rng.normal(0, 1, 50))

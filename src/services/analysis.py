@@ -6,6 +6,8 @@ dict. Large outputs (trade tables, full optimization grids) are written to an
 artifact file and referenced by path - never inlined.
 """
 
+import contextlib
+import json
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -16,6 +18,7 @@ import pandas as pd
 
 from src.alphas import (
     DEFAULT_IC,
+    Alpha,
     AlphaContext,
     panel_to_alphas,
     refine_alpha,
@@ -31,7 +34,7 @@ from src.data import (
     add_risk_features,
     add_score_feature,
 )
-from src.engine.backtest import BacktestEngine
+from src.engine.backtest import ACCOUNTING_VERSION, BacktestEngine
 from src.marketdata.client import MarketDataClient
 from src.marketdata.timeframe import Timeframe
 from src.optimization.optimizer import ParameterOptimizer
@@ -59,6 +62,95 @@ def _strategy(strategy_name: str, config: Optional[Dict[str, Any]] = None):
     if config:
         params.update(config)
     return cls(params)
+
+
+def _build_cost_model(
+    gross: bool,
+    commission_bps: float,
+    impact_eta: float,
+    participation_cap: float,
+    borrow_bps: float,
+):
+    """Shared cost-model construction for run_backtest/run_optimization/
+    run_walk_forward - so a search or validation prices trades the same way a
+    live backtest does. ``None`` (i.e. ``gross=True``) reliably favors the
+    highest-turnover config, so this must reach every entrypoint that can run a
+    search or a validation, not just run_backtest."""
+    from src.costs import ParametricCostModel
+
+    if gross:
+        return None
+    return ParametricCostModel(
+        commission_bps=commission_bps,
+        impact_eta=impact_eta,
+        participation_cap=participation_cap,
+        annual_borrow_bps=borrow_bps,
+    )
+
+
+def _cost_key(gross: bool, commission_bps: float, impact_eta: float, borrow_bps: float) -> Dict[str, Any]:
+    """The cost-model assumptions folded into a trial's dedup key - same shape as
+    the CLI's ``main._cost_key`` so a trial recorded via one surface is found by
+    the other. Two runs differing only in a cost flag must never collide as "the
+    same trial"."""
+    if gross:
+        return {"gross": True}
+    return {
+        "gross": False,
+        "commission_bps": commission_bps,
+        "impact_eta": impact_eta,
+        "borrow_bps": borrow_bps,
+    }
+
+
+def _tunable_params(strategy) -> Dict[str, Any]:
+    """The strategy's own tunable knobs (its ``config`` narrowed to
+    ``PARAM_RANGES`` keys) - what identifies a trial, not the incidental config
+    keys (timeframe, lookback, position limits) a strategy also carries."""
+    return {k: strategy.config[k] for k in strategy.PARAM_RANGES if k in strategy.config}
+
+
+@contextlib.contextmanager
+def _open_trial_store():
+    """A trial store against the current journal, or ``None`` on any failure to
+    open one - same fail-safe contract as the CLI's ``main._open_trial_store``.
+    v1 of the trial store is passive and derived: a broken store must never
+    break the command it's attached to, memoization included."""
+    from src.services import audit
+    from src.store.trials import TrialStore, db_path_for_journal
+
+    journal_path = audit.DEFAULT_TRIAL_JOURNAL
+    try:
+        store = TrialStore(db_path_for_journal(journal_path), journal_path=journal_path)
+    except Exception:  # noqa: BLE001
+        logger.warning("Trial store unavailable; memoization disabled for this run", exc_info=True)
+        yield None
+        return
+    try:
+        yield store
+    finally:
+        store.close()
+
+
+def _find_cached_trial(
+    strategy: str, params: Dict[str, Any], symbols, start, end, accounting: int
+) -> Optional[Dict[str, Any]]:
+    """Same lookup CLI's ``main._find_cached_trial`` does, so a trial run over
+    MCP and one run over the CLI dedup against each other identically."""
+    from src.optimization.config_store import current_git_sha
+
+    with _open_trial_store() as store:
+        if store is None:
+            return None
+        return store.find(
+            strategy=strategy,
+            params=params,
+            symbols=symbols,
+            window_start=start,
+            window_end=end,
+            accounting=accounting,
+            git_sha=current_git_sha(),
+        )
 
 
 def run_scan(
@@ -94,31 +186,62 @@ def run_backtest(
     impact_eta: float = 0.3,
     participation_cap: float = 0.10,
     borrow_bps: float = 50.0,
+    force: bool = False,
 ) -> Dict[str, Any]:
     """Backtest a strategy; return the full metrics dict + a path to the trades CSV.
 
     Metrics are **net of transaction cost** by default (commission + half-spread +
     square-root impact); pass ``gross=True`` to disable cost for attribution. Trades
     are NOT inlined (could be thousands of rows); read the CSV if needed.
+
+    Journals one trial into the research journal / trial store (the same one
+    ``python main.py backtest`` writes) so this run counts toward the campaign's
+    multiple-testing total — an agent driving this over MCP is still bound by the
+    same Deflated Sharpe honesty as the CLI. Before running, an exact prior trial
+    is served instead (labeled ``memoized``) unless ``force=True``, which re-runs
+    and appends a new trial rather than overwriting.
     """
-    from src.costs import ParametricCostModel
     from src.services.sizing import build_beta_sizer
 
     run_id = new_run_id()
     strat = _strategy(strategy, config)
+    dedup_params = {
+        **_tunable_params(strat),
+        "_cost": _cost_key(gross, commission_bps, impact_eta, borrow_bps),
+    }
+
+    if not force:
+        cached = _find_cached_trial(strategy, dedup_params, symbols, start, end, ACCOUNTING_VERSION)
+        if cached is not None:
+            metrics = json.loads(cached["metrics_json"] or "{}")
+            return {
+                "run_id": run_id,
+                "strategy": strategy,
+                "symbols": list(symbols),
+                "window": {"start": start.isoformat(), "end": end.isoformat()},
+                "memoized": True,
+                "trial_id": cached["id"],
+                "trial_ts": cached["ts"],
+                "note": "Served from an identical prior trial, not re-run. Pass force=True to re-verify.",
+                "metrics": _jsonable(metrics),
+            }
+
     sizer = build_beta_sizer(data_client, strat, symbols, benchmark, as_of=start) if beta_sizing else None
-    cost_model = (
-        None
-        if gross
-        else ParametricCostModel(
-            commission_bps=commission_bps,
-            impact_eta=impact_eta,
-            participation_cap=participation_cap,
-            annual_borrow_bps=borrow_bps,
-        )
-    )
+    cost_model = _build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
     result = BacktestEngine(strat, data_client, sizer=sizer, cost_model=cost_model).run(
         symbols, start, end, capital
+    )
+
+    from src.services.audit import journal_trial
+
+    journal_trial(
+        "backtest",
+        strategy=strategy,
+        symbols=symbols,
+        start=start,
+        end=end,
+        params=dedup_params,
+        metrics=result.metrics,
     )
 
     trades_csv = None
@@ -156,31 +279,84 @@ def run_optimization(
     max_evals: int = 50,
     seed: int = 42,
     capital: float = 100_000.0,
+    gross: bool = False,
+    commission_bps: float = 1.0,
+    impact_eta: float = 0.3,
+    participation_cap: float = 0.10,
+    borrow_bps: float = 50.0,
+    force: bool = False,
 ) -> Dict[str, Any]:
     """Search a strategy's parameters IN-SAMPLE; return best params + top-N rows.
 
     WARNING for the caller: these are in-sample results from selecting the best of
     many configs - NOT evidence of edge. Validate with ``run_walk_forward`` before
     trusting any of this; ``best_score`` will almost always look good here.
+
+    Net of transaction cost by default (commission + half-spread + square-root
+    impact); pass ``gross=True`` to search gross returns instead - gross search
+    reliably favors the highest-turnover config.
+
+    Each evaluated config is journaled as its own trial (a 50-point search is 50
+    trials, matching ``python main.py optimize``), unless it's served from the
+    trial store first (an identical prior candidate - real with random sampling
+    or a resumed search) - ``force=True`` disables that per-candidate memoization.
     """
+    from src.services.audit import journal_trial
+
     run_id = new_run_id()
     cls = resolve_strategy_class(strategy)
-    opt = ParameterOptimizer(cls, data_client, initial_capital=capital, seed=seed)
-    if method == "grid":
-        result = opt.grid_search(symbols, start, end, objective, max_evals=max_evals)
-    elif method == "random":
-        result = opt.random_search(symbols, start, end, objective, n_samples=max_evals)
-    else:
-        result = opt.optimize_bayesian(symbols, start, end, objective)
+    cost_model = _build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
+    cost_key = _cost_key(gross, commission_bps, impact_eta, borrow_bps)
+    with _open_trial_store() as trial_store:
+        opt = ParameterOptimizer(
+            cls,
+            data_client,
+            initial_capital=capital,
+            seed=seed,
+            cost_model=cost_model,
+            trial_store=trial_store,
+            strategy_name=strategy,
+            cost_key=cost_key,
+            accounting=ACCOUNTING_VERSION,
+            force=force,
+        )
+        if method == "grid":
+            result = opt.grid_search(symbols, start, end, objective, max_evals=max_evals)
+        elif method == "random":
+            result = opt.random_search(symbols, start, end, objective, n_samples=max_evals)
+        else:
+            result = opt.optimize_bayesian(symbols, start, end, objective)
 
     results_csv = None
     total = len(result.results)
     top: List[Dict[str, Any]] = []
+    n_memoized = 0
     if not result.results.empty:
         ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
         results_csv = str(ARTIFACT_DIR / f"optimize_{run_id}.csv")
         result.results.to_csv(results_csv, index=False)
         top = [_jsonable(row) for row in result.results.head(TOP_N).to_dict("records")]
+
+        searchable = opt.space.searchable
+        defaults = opt.space.defaults
+        for row in result.results.to_dict("records"):
+            if "_memoized_from" in row:
+                # Already exists as its own trial; re-journaling it would double-count
+                # the exact repeat this spec exists to stop.
+                n_memoized += 1
+                continue
+            searched = {k: row[k] for k in searchable if k in row}
+            metrics = {k: v for k, v in row.items() if k not in searchable}
+            journal_trial(
+                "optimize",
+                strategy=strategy,
+                symbols=symbols,
+                start=start,
+                end=end,
+                params={**defaults, **searched, "_cost": cost_key},
+                metrics=metrics,
+                objective=objective,
+            )
 
     return {
         "run_id": run_id,
@@ -192,10 +368,12 @@ def run_optimization(
         "best_params": _jsonable(result.best_params),
         "best_score": result.best_score,
         "n_trials": total,
+        "n_memoized": n_memoized,
         "top": top,
         "truncated": max(total - len(top), 0),
         "results_csv": results_csv,
         "seed": seed,
+        "gross": gross,
         "note": "IN-SAMPLE. Selecting the best of many configs inflates these. "
         "Validate out-of-sample with run_walk_forward (it applies the Deflated Sharpe).",
     }
@@ -224,6 +402,12 @@ def run_walk_forward(
     leakage_probe: bool = False,
     gates: Optional[Dict[str, float]] = None,
     n_trials_offset: int = 0,
+    gross: bool = False,
+    commission_bps: float = 1.0,
+    impact_eta: float = 0.3,
+    participation_cap: float = 0.10,
+    borrow_bps: float = 50.0,
+    force: bool = False,
 ) -> Dict[str, Any]:
     """Honest evaluation: optimize IS, score OOS across folds, gate the verdict.
 
@@ -231,29 +415,122 @@ def run_walk_forward(
     degradation, per-fold summary, holdout (if requested), the Deflated Sharpe
     (with n_trials across all folds), and the promotion-gate pass/fail + overall
     ``promotable``. ``include_pbo`` is expensive and defaults off.
+
+    Net of transaction cost by default, in-sample and out - pass ``gross=True``
+    to validate gross returns instead, which systematically promotes turnover
+    the strategy could not afford live.
+
+    Journals one *validated* trial (the OOS aggregate — matching
+    ``python main.py walkforward``), unless an identical prior validation is
+    served instead (same recipe: mode/folds/method/objective/max_evals/seed/cost
+    over the same window — the chosen params aren't known until the search runs,
+    so those, not params, are what identifies a repeat here). ``force=True``
+    bypasses that and re-runs, appending a new trial.
     """
+    from src.optimization.config_store import current_git_sha
+    from src.services.audit import journal_trial
+
     run_id = new_run_id()
     cls = resolve_strategy_class(strategy)
-    validator = WalkForwardValidator(cls, data_client, initial_capital=capital, seed=seed, gates=gates)
-    result = validator.run(
-        symbols,
-        start,
-        end,
-        mode=mode,
-        n_folds=n_folds,
-        train_days=train_days,
-        test_days=test_days,
-        embargo_days=embargo_days,
-        holdout_days=holdout_days,
-        method=method,
-        objective=objective,
-        max_evals=max_evals,
-        pbo=include_pbo,
-        monte_carlo=include_monte_carlo,
-        parameter_sensitivity=parameter_sensitivity,
-        leakage_probe=leakage_probe,
-        n_trials_offset=n_trials_offset,
-    )
+    cost_model = _build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
+    cost_key = _cost_key(gross, commission_bps, impact_eta, borrow_bps)
+    recipe = {
+        "mode": mode,
+        "n_folds": n_folds,
+        "train_days": train_days,
+        "test_days": test_days,
+        "embargo_days": embargo_days,
+        "holdout_days": holdout_days,
+        "method": method,
+        "objective": objective,
+        "max_evals": max_evals,
+        "seed": seed,
+        "_cost": cost_key,
+    }
+
+    with _open_trial_store() as trial_store:
+        if not force and trial_store is not None:
+            cached = trial_store.find(
+                strategy=strategy,
+                params=recipe,
+                symbols=symbols,
+                window_start=start,
+                window_end=end,
+                accounting=ACCOUNTING_VERSION,
+                git_sha=current_git_sha(),
+            )
+            if cached is not None:
+                metrics = json.loads(cached["metrics_json"] or "{}")
+                return {
+                    "run_id": run_id,
+                    "strategy": strategy,
+                    "symbols": list(symbols),
+                    "window": {"start": start.isoformat(), "end": end.isoformat()},
+                    "memoized": True,
+                    "trial_id": cached["id"],
+                    "trial_ts": cached["ts"],
+                    "note": "Served from an identical prior validation (same recipe), not re-run. "
+                    "Pass force=True to re-verify — per-fold detail isn't retained, only the "
+                    "OOS aggregate below.",
+                    "oos_aggregate": _jsonable(metrics),
+                    "promotable": bool(cached["promotable"]) if cached["promotable"] is not None else None,
+                    "efficiency": cached["efficiency"],
+                    "n_trials_total": cached["n_trials_in_session"],
+                }
+
+        validator = WalkForwardValidator(
+            cls,
+            data_client,
+            initial_capital=capital,
+            seed=seed,
+            gates=gates,
+            cost_model=cost_model,
+            trial_store=trial_store,
+            strategy_name=strategy,
+            cost_key=cost_key,
+            accounting=ACCOUNTING_VERSION,
+            force=force,
+        )
+        result = validator.run(
+            symbols,
+            start,
+            end,
+            mode=mode,
+            n_folds=n_folds,
+            train_days=train_days,
+            test_days=test_days,
+            embargo_days=embargo_days,
+            holdout_days=holdout_days,
+            method=method,
+            objective=objective,
+            max_evals=max_evals,
+            pbo=include_pbo,
+            monte_carlo=include_monte_carlo,
+            parameter_sensitivity=parameter_sensitivity,
+            leakage_probe=leakage_probe,
+            n_trials_offset=n_trials_offset,
+        )
+
+    if result.folds:
+        chosen = result.holdout_params or result.folds[-1].is_best_params
+        gate_report = result.gate_report(gates)
+        journal_trial(
+            "walkforward",
+            strategy=strategy,
+            symbols=symbols,
+            start=start,
+            end=end,
+            params=dict(chosen),
+            metrics=result.oos_aggregate,
+            objective=objective,
+            extra={
+                "n_trials": result.n_trials_total,
+                "promotable": gate_report["promotable"],
+                "efficiency": result.median_efficiency(),
+            },
+            returns=result.oos_returns,
+            dedup_params=recipe,
+        )
 
     folds = [
         {
@@ -278,6 +555,7 @@ def run_walk_forward(
         "mode": mode,
         "objective": objective,
         "method": method,
+        "gross": gross,
         "folds": folds,
         "oos_aggregate": _jsonable(result.oos_aggregate),
         "efficiency": result.efficiency,
@@ -294,6 +572,127 @@ def run_walk_forward(
         "monte_carlo": _jsonable(result.monte_carlo) if result.monte_carlo else None,
         "seed": seed,
     }
+
+
+def compute_bootstrap_skill(
+    oos_returns: Optional[pd.Series],
+    strategy: str,
+    symbols: List[str],
+    n_trials_total: int,
+    oos_aggregate: Dict[str, float],
+    *,
+    accounting: Optional[int] = None,
+    B: int = 2000,
+    block_length: Optional[float] = None,
+    seed: int = 0,
+    min_overlap: int = 60,
+    journal_path: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """The bootstrap-skill report: this config's OWN zero-alpha bootstrap p,
+    always shown next to the FAMILY p from White's Reality Check over every OOS
+    return series the trial store has recorded for
+    ``(strategy, universe, accounting)`` — replacing the Deflated Sharpe's
+    assumed ``E[max]``/effective-trial-count with the actual trials.
+
+    Call this AFTER the current trial has been journaled (``journal_trial``), so
+    the family query below includes it — the whole point of the family test is
+    to ask "is this trial's result still notable once every trial this campaign
+    has tried is priced in," which requires this trial to already be one of them.
+
+    Best-effort on the trial store, like every other trial-store touchpoint: a
+    store-open failure (or too few trials with a usable stored return series)
+    degrades to "own p only" — it never blocks the caller, and the report says
+    so rather than silently omitting the family half. Own and family are always
+    returned together (never one alone) — a great own p and a terrible family p
+    is exactly the selection-luck signature.
+    """
+    from src.analytics import bootstrap as boot
+    from src.analytics.metrics import TRADING_DAYS_PER_YEAR
+
+    if oos_returns is None or len(oos_returns) < 8:
+        return {
+            "available": False,
+            "note": "Not enough OOS periods for a bootstrap (need >= 8 daily observations).",
+        }
+
+    own = boot.bootstrap_null(
+        oos_returns.to_numpy(),
+        B=B,
+        block_length=block_length,
+        seed=seed,
+        periods_per_year=TRADING_DAYS_PER_YEAR,
+    )
+
+    family: Dict[str, Any] = {"available": False}
+    try:
+        from src.engine.backtest import ACCOUNTING_VERSION
+        from src.store.trials import DEFAULT_JOURNAL_PATH, TrialStore, db_path_for_journal
+
+        jpath = Path(journal_path) if journal_path else DEFAULT_JOURNAL_PATH
+        acct = accounting if accounting is not None else ACCOUNTING_VERSION
+        with TrialStore(db_path_for_journal(jpath), journal_path=jpath) as store:
+            panel = store.returns_panel(strategy, symbols, acct, min_overlap=min_overlap)
+        if panel["n_used"] >= 2:
+            matrix = np.array(panel["matrix"], dtype=float)
+            fam = boot.reality_check(
+                matrix,
+                B=B,
+                block_length=block_length,
+                seed=seed,
+                periods_per_year=TRADING_DAYS_PER_YEAR,
+                trial_ids=panel["trial_ids"],
+            )
+            fam.update(
+                available=True,
+                n_attempted=panel["n_attempted"],
+                n_with_returns=panel["n_with_returns"],
+                n_used=panel["n_used"],
+                n_excluded_short=panel["n_excluded_short"],
+            )
+            family = fam
+        else:
+            family = {
+                "available": False,
+                "n_attempted": panel["n_attempted"],
+                "n_with_returns": panel["n_with_returns"],
+                "n_used": panel["n_used"],
+                "note": "Fewer than 2 trials in this family have a usable stored return series "
+                "(need >= 2 sharing >= min_overlap common dates) — Reality Check needs a real panel.",
+            }
+    except Exception:  # noqa: BLE001 - best-effort, like every other trial-store touchpoint
+        logger.warning("Bootstrap-skill family check unavailable (trial store)", exc_info=True)
+
+    return {
+        "available": True,
+        "own": own,
+        "family": family,
+        "n_trials_total": n_trials_total,
+        "parametric_cross_check": {
+            "probabilistic_sharpe_ratio": oos_aggregate.get("probabilistic_sharpe_ratio", 0.0),
+            "deflated_sharpe_ratio": oos_aggregate.get("deflated_sharpe_ratio", 0.0),
+        },
+        "verdict": _bootstrap_skill_verdict(own, family),
+    }
+
+
+def _bootstrap_skill_verdict(own: Dict[str, Any], family: Dict[str, Any]) -> str:
+    if own.get("insufficient_data"):
+        return "insufficient data for a bootstrap verdict"
+    own_significant = own["p_value"] < 0.05
+    if not family.get("available"):
+        base = "individually significant" if own_significant else "NOT individually significant"
+        return f"{base} (own test only — family-of-trials test unavailable, see n_used/n_attempted)"
+    family_significant = family["family_p"] < 0.05
+    if own_significant and not family_significant:
+        return (
+            "individually significant, NOT significant as a selected maximum — "
+            "consistent with selection luck; needs fresh OOS data to distinguish."
+        )
+    if own_significant and family_significant:
+        return (
+            "significant both individually and as the family's best — the strongest verdict this test gives."
+        )
+    return "NOT individually significant (own test already fails; family test moot)."
 
 
 def summarize_bars(
@@ -736,7 +1135,7 @@ def compute_information(
         "multiple_testing_inflation": info.multiple_testing_inflation(n_trials),
         "n_trials": n_trials,
         "sanity_ceiling_breached": abs(realized_ir) > 2.0,
-        "recommended_ic": stats["mean_ic"],  # feeds back into 005's scaling — a human applies it
+        "recommended_ic": stats["mean_ic"],  # feeds back into the alpha scaling — a human applies it
         "effective_t": t_eff,
         "level_shrink_factor": shrink_factor,  # keep this fraction of the naive alpha level
         "shrink_chain": _jsonable(shrink_chain),
@@ -754,6 +1153,402 @@ def compute_information(
         "recommended_ic LEVEL for its own estimation error (T_eff deflates for horizon "
         "overlap); risk_bucket_diagnostic flags a residual-vol tilt from mis-scaling.",
     }
+
+
+def compute_attribution(
+    data_client: MarketDataClient,
+    strategy: str,
+    symbols: List[str],
+    start: datetime,
+    end: datetime,
+    source: str = "strategy",
+    scanner: str = "volume",
+    benchmark: str = "SPY",
+    neutralize_factors: Sequence[str] = (),
+    horizon: int = 5,
+    n_points: int = 24,
+    n_trials: int = 1,
+    timeframe: str = "1Day",
+    risk_model: str = "shrinkage",
+    benchmark_holdings: str = "equal",
+    benchmark_premium: float = 0.05,
+    signals: Optional[Sequence[str]] = None,
+    min_obs: int = 60,
+    detail: bool = False,
+    conditional: Optional[str] = None,
+    conditional_lambda: Optional[float] = None,
+    bootstrap_skill: bool = False,
+    bootstrap_b: int = 2000,
+    bootstrap_block_length: Optional[float] = None,
+    bootstrap_seed: int = 0,
+) -> Dict[str, Any]:
+    """Attribute realized active return to systematic timing, risk factors, signals,
+    and stock-picking - and confront the attributed t-stats with the same
+    research-integrity guardrails ``compute_information`` applies to ICs.
+
+    Read-only research-clock diagnostic. Mirrors ``compute_information``'s pattern
+    exactly: at sampled rebalances it rebuilds a leakage-safe cross-section (bars
+    strictly ``<= t``) - alpha (for the paper active book), risk-factor exposures,
+    and a per-period covariance Σ(t) (for the canonical Σ-implied beta, "one β,
+    everywhere") - then pairs it with the forward realized return over
+    ``(t, t_fwd]``. There is no persisted weights/exposure history to consume (see
+    the module-level deviation note next to ``compute_information``); this
+    recomputes on the fly, the same as that function already does for alpha/IC.
+
+    Each rebalance's active return is split, by an exact regression identity
+    (:func:`src.analytics.attribution.attribute_period`), into: the systematic
+    benchmark-timing bucket (``β_a(t)·r_B(t)``, further decomposed in aggregate into
+    expected/surprise/timing), each risk factor (market/momentum/volatility/size),
+    the strategy's own alpha as a signal column (plus any additional ``signals`` -
+    other strategies' combined scores, so a ``--combine`` weight can be checked
+    against its realized counterpart), and a specific (stock-picking) remainder.
+    Every attributed t-stat uses a Bayesian-blended risk (short samples lean on the
+    risk model instead of a wild few-point sample SD) and the whole ranked table is
+    deflated by the same multiple-testing inflation ``compute_information`` applies
+    to ICs - ranking ~8 attributed rows and quoting the best is exactly that trap,
+    replayed here.
+
+    ``conditional`` (default ``None`` / off) threads an EWMA/HAR-conditioned Σ(t)
+    into the per-period covariance this function already rebuilds at every sampled
+    rebalance; when set, the report adds ``te_by_regime`` — predicted TE (from
+    Σ(t)) vs a realized-return-dispersion proxy, bucketed by the benchmark's own
+    trailing realized-vol tercile as of each rebalance — the number that answers
+    "does the tracking-error budget actually hold across vol regimes." This runs
+    ONE Σ choice per call (conditional or not, not both side by side); the
+    net-of-cost conditional-vs-unconditional comparison lives in
+    ``run_conditional_risk_ab``.
+
+    ``bootstrap_skill`` (default off) adds a nonparametric OWN p-value next to the
+    parametric ``SE{IR}≈1/√Y`` verdict: a stationary block bootstrap of
+    ``r_active_series`` under the imposed null (demeaned by its own estimated
+    alpha), reported as ``bootstrap`` in the result and folded into ``verdict``.
+    This is the *own* test only (a single track record, not a trial family) - the
+    family Reality Check needs the trial store's stored trials and lives on
+    ``run_walk_forward``'s ``--bootstrap-skill`` instead.
+    """
+    from src.analytics import attribution as attr
+    from src.analytics import information as info
+    from src.portfolio.benchmark import load_benchmark_weights, restrict_and_renormalize
+    from src.risk.exposures import FACTOR_NAMES, build_factor_exposures
+
+    run_id = new_run_id()
+    strat = _strategy(strategy, None)
+    periods_per_year = Timeframe.parse(timeframe).periods_per_year()
+    rebalances_per_year = periods_per_year / horizon
+
+    bars = ClientBarSource(data_client).scan([*symbols, benchmark], timeframe, end, _window_days(start, end))
+    bench = bars.get(benchmark)
+    universe_bars = {sym: bars[sym] for sym in symbols if sym in bars}
+    if bench is None or bench.empty or not universe_bars:
+        return {
+            "run_id": run_id,
+            "strategy": strategy,
+            "periods": 0,
+            "note": "Insufficient data: need a benchmark series and scored names.",
+        }
+
+    scorer = {
+        "strategy": lambda: strategy_scorer(strat),
+        "signal": lambda: signal_scorer(strat),
+        "scanner": lambda: scanner_scorer(_scanner(scanner)),
+    }[source]()
+    ctx = AlphaContext(ic=DEFAULT_IC, neutralize=True, neutralize_factors=tuple(neutralize_factors))
+    extra_scorers = {name: strategy_scorer(_strategy(name, None)) for name in (signals or ())}
+    own_signal_col = f"alpha:{strategy}"
+
+    index = bench.index
+    lo, hi = _to_ts(start, index), _to_ts(end, index)
+    window = index[(index >= lo) & (index <= hi)]
+    points = _rebalance_points(len(window), horizon, n_points)
+
+    risk_names = list(FACTOR_NAMES)
+    signal_names = [own_signal_col, *extra_scorers]
+    component_names = ["systematic", *risk_names, *signal_names, "specific"]
+    series: Dict[str, List[float]] = {name: [] for name in component_names}
+    r_active_series, r_bench_series, beta_a_series, psi2_series, bench_vol_series = [], [], [], [], []
+
+    for j in points:
+        t, t_fwd = window[j], window[j + horizon]
+        bars_t = {s: f.loc[f.index <= t] for s, f in universe_bars.items()}
+        bars_t = {s: f for s, f in bars_t.items() if len(f) >= 2}
+        bench_t = bench.loc[bench.index <= t]
+        if len(bars_t) < 3 or bench_t.empty:
+            continue
+
+        matrix = _build_covariance(
+            risk_model, bars_t, bench_t, periods_per_year, min_obs, conditional, conditional_lambda
+        )
+        if matrix is None or len(matrix.symbols) < 3:
+            continue
+        # Trailing realized benchmark vol as of t (causal — no forward data) — the
+        # regime label the predicted-vs-realized TE split buckets by.
+        bench_ret_t = bench_t["close"].pct_change().dropna()
+        trailing_vol = (
+            float(bench_ret_t.tail(max(horizon * 4, 20)).std() * np.sqrt(periods_per_year))
+            if len(bench_ret_t) >= 5
+            else float("nan")
+        )
+        raw_bench_w = load_benchmark_weights(benchmark_holdings, matrix.symbols)
+        w_bench, _coverage = restrict_and_renormalize(raw_bench_w, matrix.symbols)
+        if not w_bench:
+            continue
+        beta_per_name = matrix.implied_beta(w_bench)
+
+        alpha = _alpha_cross_section(universe_bars, bench, scorer, periods_per_year, t, ctx)
+        z = alpha - alpha.mean()
+        if z.std() == 0 or z.dropna().empty:
+            continue
+        w_active = z / z.std()
+
+        risk_x = build_factor_exposures(bars_t, bench_t, factors=risk_names)
+        if risk_x.empty:
+            continue
+
+        signal_cols = {own_signal_col: z}
+        for name, sc in extra_scorers.items():
+            signal_cols[name] = _signal_cross_section(bars_t, sc)
+        signal_x = pd.DataFrame(signal_cols).dropna(how="any")
+        if signal_x.empty:
+            continue
+
+        r_raw = _forward_raw_return(universe_bars, t, t_fwd)
+        bench_close = bench["close"]
+        if t not in bench_close.index or t_fwd not in bench_close.index:
+            continue
+        r_bench = float(bench_close.loc[t_fwd] / bench_close.loc[t] - 1.0)
+
+        result = attr.attribute_period(w_active, risk_x, r_raw, beta_per_name, r_bench, signal_x=signal_x)
+        if result is None:
+            continue
+
+        series["systematic"].append(result.systematic)
+        for name in risk_names:
+            series[name].append(result.factor_contributions.get(name, 0.0))
+        for name in signal_names:
+            series[name].append(result.signal_contributions.get(name, 0.0))
+        series["specific"].append(result.specific)
+        r_active_series.append(result.r_active)
+        r_bench_series.append(r_bench)
+        beta_a_series.append(result.beta_a)
+        w_vec = w_active.reindex(matrix.symbols).fillna(0.0).to_numpy()
+        psi2_series.append(float(w_vec @ matrix.sigma @ w_vec))
+        bench_vol_series.append(trailing_vol)
+
+    periods = len(r_active_series)
+    if periods < 5:
+        return {
+            "run_id": run_id,
+            "strategy": strategy,
+            "periods": periods,
+            "note": "Insufficient overlapping history for attribution (need >= 5 rebalances "
+            "with a buildable Σ, benchmark weights, and factor exposures).",
+        }
+
+    # T_eff-honest T0: the risk model's own min_obs, converted from
+    # bars to this attribution's rebalance-period units.
+    t0 = attr.prior_weight_t0(min_obs, horizon)
+    psi2_bar = float(np.mean(psi2_series)) if psi2_series else 0.0
+    n_rows = len(risk_names) + len(signal_names) + 2  # + timing + specific
+    sigma2_prior_per_row = psi2_bar / n_rows if n_rows else 0.0
+
+    rows: Dict[str, Any] = {}
+    mu_b_period = benchmark_premium * horizon / periods_per_year
+    split = attr.systematic_split(beta_a_series, r_bench_series, mu_b_period)
+    rows["beta_expected"] = {
+        "total": split["expected"],
+        "note": "not skill (assumed premium x mean active beta)",
+    }
+    rows["beta_surprise"] = {
+        "total": split["surprise"],
+        "note": "not skill (benchmark outturn vs the assumed premium x mean active beta)",
+    }
+    rows["timing"] = {
+        "total": split["timing"],
+        **attr.series_stats(split["timing_series"], rebalances_per_year, sigma2_prior_per_row, t0),
+    }
+    for name in [*risk_names, *signal_names]:
+        rows[name] = {
+            "total": float(np.sum(series[name])),
+            **attr.series_stats(series[name], rebalances_per_year, sigma2_prior_per_row, t0),
+        }
+    rows["specific"] = {
+        "total": float(np.sum(series["specific"])),
+        **attr.series_stats(series["specific"], rebalances_per_year, sigma2_prior_per_row, t0),
+    }
+
+    # Share of variance across the "real" (skill-claiming) rows only - an
+    # approximation (rows correlate, so shares don't sum exactly to total ψ²).
+    skill_rows = ["timing", *risk_names, *signal_names, "specific"]
+    skill_series = {"timing": split["timing_series"], "specific": series["specific"]}
+    skill_series.update({name: series[name] for name in [*risk_names, *signal_names]})
+    variances = {
+        name: (float(np.var(vals, ddof=1)) if len(vals) > 1 else 0.0) for name, vals in skill_series.items()
+    }
+    total_var = sum(variances.values())
+    for name in skill_rows:
+        rows[name]["share_of_variance"] = float(variances[name] / total_var) if total_var > 0 else 0.0
+
+    r_portfolio_series = [rb + ra for rb, ra in zip(r_bench_series, r_active_series)]
+    cumulation = attr.cumulate_top_down(
+        {name: series[name] for name in ["systematic", *risk_names, *signal_names, "specific"]},
+        r_active_series,
+        r_portfolio_series,
+        r_bench_series,
+    )
+    cumulation_unreliable = bool(
+        abs(cumulation["honest_car"]) > 1e-9
+        and abs(cumulation["delta_cp"]) > 0.2 * abs(cumulation["honest_car"])
+    )
+
+    total_active_ir = 0.0
+    if periods > 1 and np.std(r_active_series) > 0:
+        total_active_ir = float(
+            np.mean(r_active_series) / np.std(r_active_series) * np.sqrt(rebalances_per_year)
+        )
+    years = max((end - start).days / 365.25, 1e-9)
+    total_ir_se = info.ir_standard_error(total_active_ir, years)
+    inflation = info.multiple_testing_inflation(n_trials)
+
+    best_row = max(skill_rows, key=lambda name: abs(rows[name].get("t_stat", 0.0)))
+    te_by_regime = _te_by_regime(psi2_series, r_active_series, bench_vol_series, rebalances_per_year)
+
+    bootstrap_report = None
+    verdict = (
+        "distinguishable from luck"
+        if abs(total_active_ir) / max(total_ir_se, 1e-9) >= 2
+        else "NOT distinguishable from luck"
+    )
+    if bootstrap_skill:
+        from src.analytics import bootstrap as boot
+
+        bootstrap_report = boot.bootstrap_null(
+            np.asarray(r_active_series, dtype=float),
+            B=bootstrap_b,
+            block_length=bootstrap_block_length,
+            seed=bootstrap_seed,
+            periods_per_year=rebalances_per_year,
+        )
+        if not bootstrap_report["insufficient_data"]:
+            verdict += (
+                f"; bootstrap own-p={bootstrap_report['p_value']:.3f} "
+                f"(B={bootstrap_report['B']}, L={bootstrap_report['block_length']:.1f})"
+            )
+
+    result_dict: Dict[str, Any] = {
+        "run_id": run_id,
+        "strategy": strategy,
+        "source": source,
+        "window": {"start": start.isoformat(), "end": end.isoformat()},
+        "horizon_bars": horizon,
+        "periods": periods,
+        "low_sample": periods < info.MIN_PERIODS,
+        "risk_factor_names": risk_names,
+        "signal_names": signal_names,
+        "conditional": conditional,
+        "te_by_regime": _jsonable(te_by_regime),
+        "rows": _jsonable(rows),
+        "systematic_split": _jsonable({k: v for k, v in split.items() if k != "timing_series"}),
+        "cumulation": _jsonable({k: v for k, v in cumulation.items()}),
+        "cumulation_unreliable": cumulation_unreliable,
+        "total_active_ir": total_active_ir,
+        "total_active_ir_se": total_ir_se,
+        "years": years,
+        "years_to_significance": attr.years_to_significance(total_active_ir),
+        "prob_positive_over_window": attr.prob_positive_over_years(total_active_ir, years),
+        "n_rows": n_rows,
+        "n_trials": n_trials,
+        "multiple_testing_inflation": inflation,
+        "best_row": best_row,
+        "best_row_t_stat": rows[best_row].get("t_stat", 0.0),
+        "sanity_ceiling_breached": abs(total_active_ir) > 2.0,
+        "prior_weight_t0": t0,
+        "sigma2_prior_per_row": sigma2_prior_per_row,
+        "verdict": verdict,
+        "bootstrap": _jsonable(bootstrap_report) if bootstrap_report else None,
+        "note": "Every attributed row sums exactly to the realized active return per period "
+        "(regression identity); the systematic bucket further splits (in aggregate) into "
+        "expected/surprise (not skill) and timing (real, but noisy - always check its own "
+        "t-stat). Per-row risk is a Bayesian blend of the risk model's structural prior and "
+        "the row's own realized variance; a ranked table of "
+        f"{n_rows} rows is a multiple-testing family - P(any |t|>2 in {n_trials} trials) = "
+        f"{inflation:.2f} - so quoting the single best row (here: {best_row}) without that "
+        "context is exactly the same trap the IC guardrails guard against. Cumulative active "
+        "return is ΠR_P - ΠR_B, never Π(1+r_active); cumulation.delta_cp is the honest leftover "
+        "from top-down chain-linking the per-period split, reported not hidden. te_by_regime "
+        "buckets rebalances by the benchmark's own trailing realized-vol tercile and shows "
+        "predicted TE (from Σ(t)) next to a realized-dispersion proxy per bucket — the number "
+        "that says whether the tracking-error budget holds through a stress regime.",
+    }
+    if detail:
+        result_dict["detail"] = _jsonable(
+            {
+                "r_active": r_active_series,
+                "r_bench": r_bench_series,
+                "beta_a": beta_a_series,
+                **series,
+            }
+        )
+    return result_dict
+
+
+def _te_by_regime(
+    psi2_series: List[float],
+    r_active_series: List[float],
+    bench_vol_series: List[float],
+    rebalances_per_year: float,
+) -> Dict[str, Any]:
+    """Bucket rebalances by the benchmark's trailing realized-vol tercile (ex-post
+    labels, report-time only — no look-ahead in the model itself) and compare, per
+    bucket, the **predicted** TE (``sqrt(mean psi2)``, from the per-period Σ(t)
+    already built for attribution) against a **realized** dispersion proxy
+    (``std(r_active)·sqrt(rebalances_per_year)``) — the number that answers
+    whether the tracking-error budget holds through a stress regime, or breaches
+    it the way an unconditional Σ mechanically must.
+    """
+    vols = np.asarray(bench_vol_series, dtype=float)
+    finite = np.isfinite(vols)
+    if int(finite.sum()) < 6:
+        return {}
+    q1, q2 = np.quantile(vols[finite], [1 / 3, 2 / 3])
+    labels = np.where(vols <= q1, "low", np.where(vols <= q2, "mid", "high"))
+
+    psi2 = np.asarray(psi2_series, dtype=float)
+    r_active = np.asarray(r_active_series, dtype=float)
+    out: Dict[str, Any] = {}
+    for label in ("low", "mid", "high"):
+        mask = (labels == label) & finite
+        n = int(mask.sum())
+        if n == 0:
+            out[label] = {"n": 0}
+            continue
+        predicted_te = float(np.sqrt(max(np.mean(psi2[mask]), 0.0)))
+        realized_te = float(np.std(r_active[mask], ddof=1) * np.sqrt(rebalances_per_year)) if n > 1 else 0.0
+        out[label] = {
+            "n": n,
+            "predicted_te": predicted_te,
+            "realized_te": realized_te,
+            "gap": realized_te - predicted_te,
+        }
+    return out
+
+
+def _signal_cross_section(bars_t: Dict[str, pd.DataFrame], scorer) -> pd.Series:
+    """Cross-sectional z-score of a raw scorer's output at ``t`` (bars already
+    sliced to ``<= t`` by the caller) - the same winsorize -> zscore steps the
+    alpha pipeline applies, used here as a combined-signal exposure column."""
+    from src.alphas import refine
+
+    raw: Dict[str, float] = {}
+    for sym, frame in bars_t.items():
+        if len(frame) < 2:
+            continue
+        val = scorer(frame)
+        if val is not None and val == val:
+            raw[sym] = float(val)
+    s = pd.Series(raw)
+    if len(s) < 2 or s.std() == 0:
+        return pd.Series(dtype=float)
+    return refine.zscore(refine.winsorize(s))
 
 
 def run_scaling_ab(
@@ -983,9 +1778,19 @@ def compute_horizon(
         "blend_regime": "diversify" if w_lag > 1e-6 else "hedge" if w_lag < -1e-6 else "latest-only",
         "blend_annual_cost": blend_cost,
         "blend_recommended": blend_recommended,
-        "note": "δ is the per-period IC decay (HL = half-life). Rebalance near the "
-        "cadence that maximizes IC·√(1/Δt); amortize cost over the half-life. The lagged "
-        "blend is recommended only when it diversifies and its turnover cost is modest.",
+        "half_life_lower": fit.get("half_life_lower"),
+        "half_life_upper": fit.get("half_life_upper"),
+        "decay_slope_se": fit.get("decay_slope_se"),
+        "blend_superseded_by": "the aim-in-front partial-adjustment policy "
+        "('allocate --policy aim'): this lagged-blend recommendation is a special case "
+        "of that policy's per-signal decay discount (a two-point blend vs a continuous "
+        "κ/(κ+φ) discount) - prefer --policy aim for new work; this report stays "
+        "accurate on its own terms either way.",
+        "note": "δ is the per-period IC decay (HL = half-life, with a "
+        "half_life_lower/half_life_upper confidence band from the fit's own slope SE). "
+        "Rebalance near the cadence that maximizes IC·√(1/Δt); amortize cost over the "
+        "half-life. The lagged blend is recommended only when it diversifies and its "
+        "turnover cost is modest.",
     }
 
 
@@ -998,6 +1803,8 @@ def compute_risk(
     lookback_days: int = 365,
     timeframe: str = "1Day",
     min_obs: int = 60,
+    conditional: Optional[str] = None,
+    conditional_lambda: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Estimate the universe's covariance Σ and summarize its risk structure.
 
@@ -1007,6 +1814,15 @@ def compute_risk(
     summary - shrinkage δ, condition number, mean correlation, equal-weight portfolio
     volatility, top risk contributors, and (factor model) the factor-vs-specific risk
     split. Σ itself is not inlined; this is the diagnostic the optimizer consumes.
+
+    ``conditional`` (default ``None`` / **off** — the MZ/QLIKE evidence gate hasn't
+    cleared this repo's own data yet, see ``evaluate_conditional_risk``) conditions
+    Σ_t's volatilities via an EWMA (``"ewma"``) or HAR-lite (``"har"``) per-name
+    forecast, holding the correlation structure fixed. When set, the report adds
+    ``sigma_regime`` — the current conditional/unconditional vol ratio per name,
+    the "how stressed is the book right now" diagnostic (the construction and
+    cost-aware optimizer both consume Σ_t transparently; this is the number a
+    human reads).
     """
     from src.risk import COVARIANCE_MODELS
     from src.risk.factor import FactorRiskMatrix
@@ -1018,7 +1834,9 @@ def compute_risk(
     periods_per_year = Timeframe.parse(timeframe).periods_per_year()
     fetched = ClientBarSource(data_client).scan([*symbols, benchmark], timeframe, as_of, lookback_days)
     bars = {s: fetched[s] for s in symbols if s in fetched}
-    matrix = _build_covariance(model, bars, fetched.get(benchmark), periods_per_year, min_obs)
+    matrix = _build_covariance(
+        model, bars, fetched.get(benchmark), periods_per_year, min_obs, conditional, conditional_lambda
+    )
 
     if matrix is None:
         return {
@@ -1060,10 +1878,13 @@ def compute_risk(
         "mean_correlation": mean_corr,
         "equal_weight_volatility": matrix.volatility(weights),
         "top_risk_contributors": _jsonable(top),
+        "conditional": conditional,
         "note": "Σ is annualized and kept invertible (shrinkage δ, or a structural "
         "factor model). Risk is not additive — correlated names are one bet. This is "
         "the denominator the portfolio optimizer divides alpha by.",
     }
+    if matrix.conditional_diagnostics:
+        result["sigma_regime"] = _jsonable(matrix.conditional_diagnostics)
 
     # The factor model makes risk attributable: split the equal-weight portfolio's
     # variance into common-factor risk and idiosyncratic (specific) risk.
@@ -1075,6 +1896,106 @@ def compute_risk(
         result["specific_risk_share"] = float(1.0 - factor_var / total_var) if total_var > 0 else 0.0
 
     return result
+
+
+def evaluate_conditional_risk(
+    data_client: MarketDataClient,
+    symbols: List[str],
+    start: datetime,
+    end: datetime,
+    timeframe: str = "1Day",
+    min_obs: int = 60,
+    n_points: int = 60,
+    conditional_lambda: Optional[float] = None,
+) -> Dict[str, Any]:
+    """The MZ/QLIKE evidence gate: per name AND pooled across the universe,
+    compare EWMA / HAR / unconditional (expanding trailing) one-bar-ahead variance
+    forecasts against realized ``r²`` — Mincer–Zarnowitz (``b`` near 1 is
+    well-calibrated) and QLIKE (lower is better), split by realized-vol tercile.
+    **This is the gate that decides whether ``--conditional`` is worth turning on
+    for this repo's own data** — not a preference. Read-only, no orders, no
+    feedback into any model.
+    """
+    from src.risk.conditional import evaluate_vol_forecasts, mincer_zarnowitz, qlike_loss
+
+    run_id = new_run_id()
+    periods_per_year = Timeframe.parse(timeframe).periods_per_year()
+    bars = ClientBarSource(data_client).scan(symbols, timeframe, end, _window_days(start, end))
+
+    per_name: Dict[str, Any] = {}
+    pooled_realized: List[float] = []
+    pooled_forecasts: Dict[str, List[float]] = {"ewma": [], "har": [], "unconditional": []}
+    for sym in symbols:
+        frame = bars.get(sym)
+        if frame is None or len(frame) < min_obs + 10:
+            continue
+        returns = frame["close"].pct_change().dropna()
+        evaluation = evaluate_vol_forecasts(
+            returns,
+            min_obs=min_obs,
+            n_points=n_points,
+            lambda_=conditional_lambda,
+            periods_per_year=periods_per_year,
+        )
+        if evaluation.n_points < 10:
+            continue
+        per_name[sym] = {
+            "n_points": evaluation.n_points,
+            "by_method": {
+                m: {"qlike": e["qlike"], "mincer_zarnowitz": e["mincer_zarnowitz"]}
+                for m, e in evaluation.by_method.items()
+            },
+        }
+        pooled_realized.extend(evaluation.realized.tolist())
+        for method in pooled_forecasts:
+            pooled_forecasts[method].extend(evaluation.forecasts[method].tolist())
+
+    if not per_name:
+        return {
+            "run_id": run_id,
+            "n_names": 0,
+            "note": "Insufficient history: no name has enough returns to evaluate "
+            f"(need >= min_obs({min_obs}) + 10).",
+        }
+
+    realized_arr = np.array(pooled_realized)
+    pooled: Dict[str, Any] = {}
+    for method, values in pooled_forecasts.items():
+        arr = np.array(values)
+        pooled[method] = {
+            "mincer_zarnowitz": mincer_zarnowitz(realized_arr, arr),
+            "qlike": qlike_loss(realized_arr, arr),
+        }
+
+    ranked = sorted(pooled.items(), key=lambda kv: kv[1]["qlike"])
+    best_method = ranked[0][0]
+    uncond = pooled["unconditional"]
+    best = pooled[best_method]
+    # Both prongs required — QLIKE improvement
+    # ALONE isn't the gate: a method that "wins" on QLIKE while its calibration (MZ b)
+    # is farther from 1 than the unconditional baseline's is not honestly better, it's
+    # noise. Both must point the same way for gate_passed=True.
+    qlike_improves = best_method != "unconditional" and best["qlike"] < uncond["qlike"]
+    mz_improves = abs(best["mincer_zarnowitz"]["b"] - 1.0) < abs(uncond["mincer_zarnowitz"]["b"] - 1.0)
+    gate_passed = bool(qlike_improves and mz_improves)
+
+    return {
+        "run_id": run_id,
+        "window": {"start": start.isoformat(), "end": end.isoformat()},
+        "n_names": len(per_name),
+        "n_points_per_name": {s: v["n_points"] for s, v in per_name.items()},
+        "pooled": _jsonable(pooled),
+        "per_name": _jsonable(per_name),
+        "best_method_pooled_qlike": best_method,
+        "gate_passed": gate_passed,
+        "note": "The evidence gate: QLIKE lower is better, "
+        "Mincer-Zarnowitz b near 1.0 is well-calibrated. 'gate_passed' is TRUE only when "
+        "the best conditional method (ewma/har) BOTH pools a lower QLIKE AND a better-"
+        "calibrated MZ slope than the unconditional trailing baseline on THIS "
+        "universe/window — a QLIKE nudge with worse calibration is noise, not a win. If "
+        "it's FALSE, the honest reading is that conditioning doesn't earn its keep here, "
+        "not a bug to force past.",
+    }
 
 
 def construct_portfolio(
@@ -1098,8 +2019,22 @@ def construct_portfolio(
     current_weights: Optional[Dict[str, float]] = None,
     holding_period_years: float = 1.0 / 12.0,
     cost_aware: bool = True,
+    benchmark_holdings: Optional[str] = None,
+    benchmark_premium: float = 0.05,
+    book: str = "long_only",
+    gross_leverage: Optional[float] = None,
+    short_max_weight: float = 0.0,
+    conditional: Optional[str] = None,
+    conditional_lambda: Optional[float] = None,
+    posterior: Optional[str] = None,
+    posterior_ic: Optional[float] = None,
+    posterior_t_eff: Optional[float] = None,
+    posterior_tau: Optional[float] = None,
+    policy: Optional[str] = None,
+    trade_rate: Optional[float] = None,
+    decay_lookback_days: int = 365,
 ) -> Dict[str, Any]:
-    """Construct the utility-maximizing portfolio from alphas (005) and Σ (006).
+    """Construct the utility-maximizing portfolio from alphas and Σ.
 
     Read-only research-clock flow: scans the universe as of ``as_of``, builds
     benchmark-neutral alphas and an annualized covariance Σ, then maximizes
@@ -1111,8 +2046,67 @@ def construct_portfolio(
     when ``capital`` is set, the √-impact term - so the optimizer trades a name's
     alpha against *that name's* cost and a no-trade band emerges from the cost itself.
     ``cost_aware=False`` recovers the cost-blind (gross) solve with an ex-post drag.
+
+    ``benchmark_holdings`` makes the benchmark a **portfolio** (``w_B``) rather
+    than the ``benchmark`` return series above (which stays a beta/vol regression
+    input, orthogonal to this): ``"equal"`` for uniform weight over the
+    Σ-covered universe, or a ``symbol,weight`` CSV/JSON holdings file. Tracking
+    error, alpha neutralization, and the transfer coefficient all move into active
+    space (``w_a = w − w_B``); ``benchmark_premium`` (``μ_B``, an assumed annual
+    benchmark excess return) drives the reverse-optimization report (the consensus
+    returns for which ``w_B`` is itself optimal). Without ``benchmark_holdings``
+    this is a no-op - every quantity reduces byte-for-byte to the cash-relative
+    behavior.
+
+    ``book="market_neutral"`` relaxes the long-only box to
+    ``[−short_max_weight, max_weight]`` and the budget to ``Σw=0``; ``gross_leverage``
+    (``‖w‖₁ ≤ L``) is then mandatory - see
+    :meth:`~src.portfolio.optimizer.MeanVarianceOptimizer.optimize`. Borrow carry on
+    the short book is priced automatically from the cost model's flat default when
+    ``cost_aware``; a per-name override belongs in a future ``CostInputs.borrow`` feed
+    (v1 has no per-name borrow-rate source at the service layer). ``book="long_only"``
+    (the default) is unaffected.
+
     Returns the proposed weights plus the Fundamental-Law report (IR*, predicted TE/IR,
     transfer coefficient, turnover, cost split). This is a **proposal** - no orders.
+
+    ``conditional`` (default ``None`` / **off** — see ``evaluate_conditional_risk``
+    for the evidence-gate finding that decided the default) conditions Σ's
+    volatilities (EWMA/HAR) before the solve, so ``target_te`` is measured against
+    *current* risk, not the trailing-window average — the whole point being that
+    the optimizer sells into a vol spike to hold the TE budget (mechanically
+    correct, but it pays the real transaction cost to do it; see ``sigma_regime``
+    in the diagnostics for how stressed Σ_t is relative to the unconditional
+    estimate).
+
+    ``posterior="bl"`` (default ``None`` / off until validated OOS) blends the
+    refined alphas with the consensus prior via Black–Litterman before the solve:
+    names with no signal get a real, Σ-propagated posterior instead of being
+    excluded outright, and view confidence is tied to
+    ``posterior_ic``/``posterior_t_eff`` rather than baked only into magnitude.
+    ``posterior_t_eff`` is required when set (τ is pinned to ``1/T_eff``, never
+    tuned — pass the ``effective_t`` a prior ``compute_information`` call
+    measured); ``posterior_ic`` defaults to the same assumed IC the refinement
+    step used; ``posterior_tau`` overrides the pinned τ. The report gains a
+    ``posterior`` section (per-name consensus/view/posterior/source table, plus
+    τ-sensitivity) and ``shrink_chain`` gains a ``bl`` step - the IC-uncertainty
+    haircut moves from the refine step (which stays unshrunk for this path,
+    avoiding a double-shrink) into Ω.
+
+    ``policy="aim"`` (default ``None`` / off until validated OOS net of cost
+    against the plain myopic solve above - see ``info --policy-ab``) replaces the
+    myopic "jump to this period's optimum" with an aim-in-front-of-the-target
+    partial adjustment: the alpha is discounted by ``κ/(κ+φ)`` (``φ`` the
+    strategy's own measured decay rate, conservatively from the *upper* half-life
+    confidence bound over the trailing ``decay_lookback_days``), the aim portfolio
+    is the cost-aware solve on that discounted alpha with cost zeroed, and the
+    trade is ``κ`` of the gap to the aim, banded by the same no-trade-band
+    machinery. ``κ`` is derived from the book's risk-aversion and cost curvature
+    (see ``src/portfolio/policy.py``); ``trade_rate`` overrides it. Falls back to
+    exactly the plain cost-aware solve above (not an error) when the cost
+    curvature can't be pinned (no ``capital``, or too little turnover to fit one)
+    - see ``diagnostics["aim_degraded"]``. Long-only only in v1; incompatible with
+    ``book="market_neutral"`` or ``benchmark_holdings``.
     """
     from src.costs import ParametricCostModel
     from src.portfolio.optimizer import MeanVarianceOptimizer
@@ -1145,7 +2139,9 @@ def construct_portfolio(
     )
     refine_alpha(panel, alpha_ctx)
     alphas = panel_to_alphas(panel, alpha_ctx)
-    matrix = _build_covariance(risk_model, universe_bars, bench_frame, periods_per_year)
+    matrix = _build_covariance(
+        risk_model, universe_bars, bench_frame, periods_per_year, 60, conditional, conditional_lambda
+    )
 
     if not alphas or matrix is None:
         return {
@@ -1161,28 +2157,111 @@ def construct_portfolio(
     # same cost model the backtest uses - the optimizer and backtest share one model.
     cost_inputs = _cost_inputs(universe_bars, cost_model) if cost_aware else None
 
-    optimizer = MeanVarianceOptimizer(max_weight=max_weight, min_weight=min_weight, max_names=max_names)
-    result = optimizer.optimize(
-        alphas,
-        matrix,
-        target_te=target_te,
-        current_weights=current_weights,
-        cost_model=cost_model if cost_aware else None,
-        cost_inputs=cost_inputs,
-        capital=capital,
-        holding_period_years=holding_period_years,
+    benchmark_weights, benchmark_report = _resolve_benchmark_portfolio(
+        benchmark_holdings, benchmark_premium, matrix
     )
+
+    posterior_report = None
+    if posterior is not None:
+        alphas, posterior_report = _apply_bl_posterior(
+            panel,
+            alphas,
+            matrix,
+            as_of,
+            benchmark_report,
+            posterior,
+            posterior_ic,
+            posterior_t_eff,
+            posterior_tau,
+            alpha_ctx.ic,
+        )
+
+    if policy is not None and policy != "aim":
+        raise ValueError(f"policy must be 'aim' or None, got {policy!r}")
+    if policy == "aim" and (book != "long_only" or benchmark_holdings is not None):
+        raise ValueError(
+            "policy='aim' is long-only, cash-relative only in v1 - "
+            "incompatible with book='market_neutral' or benchmark_holdings"
+        )
+
+    optimizer = MeanVarianceOptimizer(max_weight=max_weight, min_weight=min_weight, max_names=max_names)
+    policy_report = None
+    if policy == "aim":
+        from src.portfolio import policy as policy_mod
+
+        # Calendar-day arithmetic on a naive datetime - subtracting a timedelta from
+        # a tz-AWARE as_of would shift the absolute instant across DST boundaries and
+        # can land on a locally-ambiguous wall-clock hour (a real crash seen with the
+        # synthetic demo provider); date_client-facing datetimes are naive elsewhere
+        # in this module, and _to_ts() re-localizes downstream regardless.
+        as_of_naive = as_of.replace(tzinfo=None) if as_of.tzinfo is not None else as_of
+        decay = compute_horizon(
+            data_client,
+            strategy,
+            symbols,
+            as_of_naive - timedelta(days=decay_lookback_days),
+            as_of_naive,
+            source=source,
+            scanner=scanner,
+            benchmark=benchmark,
+            neutralize_factors=neutralize_factors,
+            timeframe=tf,
+        )
+        periods_per_rebalance = max(holding_period_years * periods_per_year, 1.0)
+        hl_upper_bars = decay.get("half_life_upper", float("nan"))
+        if hl_upper_bars != hl_upper_bars:  # NaN: too little decay history - no discount
+            hl_upper_bars = float("inf")
+        hl_upper_rebalances = policy_mod.half_life_in_rebalance_units(hl_upper_bars, periods_per_rebalance)
+        phi = policy_mod.phi_from_half_life(hl_upper_rebalances)
+        result = policy_mod.build_aim_portfolio(
+            optimizer,
+            alphas,
+            matrix,
+            phi=phi,
+            trade_rate=trade_rate,
+            target_te=target_te,
+            current_weights=current_weights,
+            cost_model=cost_model if cost_aware else None,
+            cost_inputs=cost_inputs,
+            capital=capital,
+            holding_period_years=holding_period_years,
+        )
+        policy_report = {
+            "phi_per_rebalance": phi,
+            "periods_per_rebalance": periods_per_rebalance,
+            "decay_half_life_bars": decay.get("half_life"),
+            "decay_half_life_upper_bars": decay.get("half_life_upper"),
+            "decay_r_squared": decay.get("decay_r_squared"),
+        }
+    else:
+        result = optimizer.optimize(
+            alphas,
+            matrix,
+            target_te=target_te,
+            current_weights=current_weights,
+            cost_model=cost_model if cost_aware else None,
+            cost_inputs=cost_inputs,
+            capital=capital,
+            holding_period_years=holding_period_years,
+            benchmark_weights=benchmark_weights,
+            book=book,
+            gross_leverage=gross_leverage,
+            short_max_weight=short_max_weight,
+        )
 
     if result.feasible:
         if not result.diagnostics.get("cost_aware"):
             # Cost-blind (gross) objective: still report the ex-post drag so the net figure
             # is visible. Same convention as the cost-aware path - a round-trip haircut on
             # the book for the headline (matching capacity), one-way rebalance drag in detail.
+            # The round-trip book size is gross exposure (Σ|w|) - equals Σw=1 for a
+            # long-only book, but a market-neutral book's Σw≈0 isn't the exposure to price.
             h = max(holding_period_years, 1e-9)
             rate = cost_model.turnover_cost_rate()
             expected = result.diagnostics["expected_active_return"]
+            gross_book = sum(abs(v) for v in result.weights.values())
             one_way = result.diagnostics["turnover"] * rate / h
-            round_trip = 2.0 * rate * sum(result.weights.values()) / h
+            round_trip = 2.0 * rate * gross_book / h
             result.diagnostics["cost_drag"] = one_way
             result.diagnostics["round_trip_cost"] = round_trip
             result.diagnostics["expected_active_return_net"] = expected - round_trip
@@ -1191,6 +2270,19 @@ def construct_portfolio(
         result.diagnostics["capacity_capital"] = _capacity(
             result.weights, universe_bars, result.diagnostics["expected_active_return"], holding_period_years
         )
+        if benchmark_report is not None and result.diagnostics.get("has_benchmark"):
+            # Value-added identity: SR_P² ≈ SR_B² + IR² -
+            # active management adds to the benchmark's own Sharpe in quadrature.
+            # Predicted, not realized: SR_B from the assumed premium, IR from the
+            # optimizer's own predicted_ir.
+            sigma_b = float(np.sqrt(result.diagnostics["benchmark_variance"]))
+            sr_b = (benchmark_report["premium"] / sigma_b) if sigma_b > 0 else 0.0
+            ir = result.diagnostics["predicted_ir"]
+            benchmark_report["value_added_identity"] = {
+                "sr_benchmark": sr_b,
+                "ir": ir,
+                "sr_portfolio_predicted": float(np.sqrt(sr_b**2 + ir**2)),
+            }
 
     holdings = []
     if result.feasible and capital:
@@ -1209,7 +2301,7 @@ def construct_portfolio(
                 }
             )
 
-    return {
+    out = {
         "run_id": run_id,
         "strategy": strategy,
         "source": source,
@@ -1221,13 +2313,426 @@ def construct_portfolio(
         "binding_constraint": result.binding_constraint,
         "universe_size": len(alphas),
         "risk_model": risk_model,
+        "conditional": conditional,
+        "policy": policy,
         "shrinkage": matrix.shrinkage,
         "weights": _jsonable(dict(sorted(result.weights.items(), key=lambda kv: kv[1], reverse=True))),
         "holdings": _jsonable(holdings),
         "diagnostics": _jsonable(result.diagnostics),
+        "benchmark_portfolio": _jsonable(benchmark_report),
+        "posterior": _jsonable(posterior_report),
+        "shrink_chain": _jsonable(panel.meta.get("shrink_chain", [])),
         "note": "PROPOSAL, not an order. Maximizes αᵀw − λ·wᵀΣw at the target tracking "
         "error; the transfer coefficient shows how much of IR* survives the constraints.",
     }
+    if matrix.conditional_diagnostics:
+        out["sigma_regime"] = _jsonable(matrix.conditional_diagnostics)
+    if policy_report is not None:
+        out["policy_report"] = _jsonable(policy_report)
+    return out
+
+
+def run_conditional_risk_ab(
+    data_client: MarketDataClient,
+    strategy: str,
+    symbols: List[str],
+    start: datetime,
+    end: datetime,
+    source: str = "strategy",
+    scanner: str = "volume",
+    benchmark: str = "SPY",
+    neutralize_factors: Sequence[str] = (),
+    target_te: float = 0.04,
+    max_weight: float = 0.25,
+    risk_model: str = "shrinkage",
+    lookback_days: int = 365,
+    timeframe: str = "1Day",
+    horizon: int = 21,
+    n_points: int = 12,
+    capital: float = 1_000_000.0,
+    holding_period_years: Optional[float] = None,
+    conditional_method: str = "ewma",
+    conditional_lambda: Optional[float] = None,
+) -> Dict[str, Any]:
+    """The net-of-cost A/B — the one that decides commercial adoption, not
+    TE-tracking alone: walk ``[start, end]`` at spaced rebalances, constructing
+    the SAME alpha book (``construct_portfolio``, same target_te, same cost
+    model) against a conditional vs unconditional Σ, carrying each variant's
+    weights forward to the next rebalance, and pricing the REALIZED forward
+    return net of the real transaction cost (turnover cost annualized in the
+    diagnostics, scaled down to this rebalance's holding period). A conditional
+    Σ that tracks TE better but churns the book to death should — and, if the
+    numbers say so, does — lose the net-IR comparison here. Read-only
+    research-clock harness; no orders.
+    """
+    run_id = new_run_id()
+    periods_per_year = Timeframe.parse(timeframe).periods_per_year()
+    holding_period = holding_period_years if holding_period_years is not None else horizon / periods_per_year
+
+    bars = ClientBarSource(data_client).scan([*symbols, benchmark], timeframe, end, _window_days(start, end))
+    bench = bars.get(benchmark)
+    if bench is None or bench.empty:
+        return {"run_id": run_id, "periods": 0, "note": "Insufficient data: need a benchmark series."}
+
+    index = bench.index
+    window = index[(index >= _to_ts(start, index)) & (index <= _to_ts(end, index))]
+    points = [j for j in _rebalance_points(len(window), horizon, n_points) if j + horizon < len(window)]
+    if len(points) < 2:
+        return {"run_id": run_id, "periods": 0, "note": "Insufficient rebalances in window for the A/B."}
+
+    variants = {"unconditional": None, "conditional": conditional_method}
+    current_weights: Dict[str, Optional[Dict[str, float]]] = {k: None for k in variants}
+    gross_returns: Dict[str, List[float]] = {k: [] for k in variants}
+    net_returns: Dict[str, List[float]] = {k: [] for k in variants}
+    turnovers: Dict[str, List[float]] = {k: [] for k in variants}
+    predicted_tes: Dict[str, List[float]] = {k: [] for k in variants}
+
+    for j in points:
+        t, t_fwd = window[j], window[j + horizon]
+        fwd = _forward_raw_return({s: bars[s] for s in symbols if s in bars}, t, t_fwd)
+        for name, cond in variants.items():
+            result = construct_portfolio(
+                data_client,
+                strategy,
+                symbols,
+                t.to_pydatetime(),
+                source=source,
+                scanner=scanner,
+                target_te=target_te,
+                max_weight=max_weight,
+                benchmark=benchmark,
+                neutralize_factors=neutralize_factors,
+                risk_model=risk_model,
+                lookback_days=lookback_days,
+                timeframe=timeframe,
+                capital=capital,
+                current_weights=current_weights[name],
+                holding_period_years=holding_period,
+                cost_aware=True,
+                conditional=cond,
+                conditional_lambda=conditional_lambda,
+            )
+            if not result["feasible"]:
+                continue
+            new_weights = result["weights"]
+            diag = result["diagnostics"]
+            gross = float(sum(w * fwd.get(s, 0.0) for s, w in new_weights.items()))
+            # The annualized one-way cost, scaled down to THIS rebalance's holding period.
+            period_cost = float(diag.get("cost_drag", 0.0)) * holding_period
+            gross_returns[name].append(gross)
+            net_returns[name].append(gross - period_cost)
+            turnovers[name].append(float(diag.get("turnover", 0.0)))
+            predicted_tes[name].append(float(diag.get("predicted_tracking_error", 0.0)))
+            current_weights[name] = new_weights
+
+    rebalances_per_year = periods_per_year / horizon
+
+    def _summary(name: str) -> Dict[str, Any]:
+        net = np.array(net_returns[name])
+        if len(net) < 2:
+            return {"periods": int(len(net))}
+        net_ir = float(np.mean(net) / np.std(net) * np.sqrt(rebalances_per_year)) if np.std(net) > 0 else 0.0
+        return {
+            "periods": int(len(net)),
+            "mean_net_return_per_period": float(np.mean(net)),
+            "mean_gross_return_per_period": float(np.mean(gross_returns[name])),
+            "net_ir": net_ir,
+            "realized_te": float(np.std(net) * np.sqrt(rebalances_per_year)),
+            "mean_predicted_te": float(np.mean(predicted_tes[name])) if predicted_tes[name] else 0.0,
+            "mean_turnover": float(np.mean(turnovers[name])) if turnovers[name] else 0.0,
+        }
+
+    summaries = {name: _summary(name) for name in variants}
+    winner = max(variants, key=lambda k: summaries[k].get("net_ir", float("-inf")))
+
+    return {
+        "run_id": run_id,
+        "window": {"start": start.isoformat(), "end": end.isoformat()},
+        "horizon_bars": horizon,
+        "periods": len(points),
+        "conditional_method": conditional_method,
+        "summaries": _jsonable(summaries),
+        "winner_net_ir": winner,
+        "note": "SAME alphas/target_te/cost model, conditional vs unconditional Σ, weights "
+        "carried forward rebalance to rebalance. 'winner_net_ir' picks by realized net "
+        "IR (net of the real transaction cost), not by TE-tracking alone — churn that tracking-"
+        "error-tracks-better-but-costs-more should lose, and this is where it would show.",
+    }
+
+
+def run_policy_ab(
+    data_client: MarketDataClient,
+    strategy: str,
+    symbols: List[str],
+    start: datetime,
+    end: datetime,
+    source: str = "strategy",
+    scanner: str = "volume",
+    benchmark: str = "SPY",
+    neutralize_factors: Sequence[str] = (),
+    target_te: float = 0.04,
+    max_weight: float = 0.25,
+    risk_model: str = "shrinkage",
+    lookback_days: int = 365,
+    timeframe: str = "1Day",
+    horizon: int = 21,
+    n_points: int = 12,
+    capital: float = 1_000_000.0,
+    holding_period_years: Optional[float] = None,
+    trade_rate: Optional[float] = None,
+) -> Dict[str, Any]:
+    """The net-of-cost A/B that decides adoption: walk-forward the myopic policy
+    vs the aim policy on the SAME alpha book, same target_te, same cost model,
+    carrying each variant's weights forward rebalance to rebalance, and compare
+    REALIZED net IR (turnover cost priced at each rebalance's actual holding
+    period) — mirrors :func:`run_conditional_risk_ab` exactly, with 'myopic'/
+    'aim' in place of 'unconditional'/'conditional'. Read-only research-clock
+    harness; no orders. If the aim policy doesn't win here, that's a legitimate,
+    complete outcome (ship nothing) — not a failure to keep iterating on.
+    """
+    run_id = new_run_id()
+    periods_per_year = Timeframe.parse(timeframe).periods_per_year()
+    holding_period = holding_period_years if holding_period_years is not None else horizon / periods_per_year
+
+    bars = ClientBarSource(data_client).scan([*symbols, benchmark], timeframe, end, _window_days(start, end))
+    bench = bars.get(benchmark)
+    if bench is None or bench.empty:
+        return {"run_id": run_id, "periods": 0, "note": "Insufficient data: need a benchmark series."}
+
+    index = bench.index
+    window = index[(index >= _to_ts(start, index)) & (index <= _to_ts(end, index))]
+    points = [j for j in _rebalance_points(len(window), horizon, n_points) if j + horizon < len(window)]
+    if len(points) < 2:
+        return {"run_id": run_id, "periods": 0, "note": "Insufficient rebalances in window for the A/B."}
+
+    variants = {"myopic": None, "aim": "aim"}
+    current_weights: Dict[str, Optional[Dict[str, float]]] = {k: None for k in variants}
+    gross_returns: Dict[str, List[float]] = {k: [] for k in variants}
+    net_returns: Dict[str, List[float]] = {k: [] for k in variants}
+    turnovers: Dict[str, List[float]] = {k: [] for k in variants}
+    predicted_tes: Dict[str, List[float]] = {k: [] for k in variants}
+
+    for j in points:
+        t, t_fwd = window[j], window[j + horizon]
+        fwd = _forward_raw_return({s: bars[s] for s in symbols if s in bars}, t, t_fwd)
+        for name, pol in variants.items():
+            result = construct_portfolio(
+                data_client,
+                strategy,
+                symbols,
+                t.to_pydatetime(),
+                source=source,
+                scanner=scanner,
+                target_te=target_te,
+                max_weight=max_weight,
+                benchmark=benchmark,
+                neutralize_factors=neutralize_factors,
+                risk_model=risk_model,
+                lookback_days=lookback_days,
+                timeframe=timeframe,
+                capital=capital,
+                current_weights=current_weights[name],
+                holding_period_years=holding_period,
+                cost_aware=True,
+                policy=pol,
+                trade_rate=trade_rate if pol == "aim" else None,
+            )
+            if not result["feasible"]:
+                continue
+            new_weights = result["weights"]
+            diag = result["diagnostics"]
+            gross = float(sum(w * fwd.get(s, 0.0) for s, w in new_weights.items()))
+            period_cost = float(diag.get("cost_drag", 0.0)) * holding_period
+            gross_returns[name].append(gross)
+            net_returns[name].append(gross - period_cost)
+            turnovers[name].append(float(diag.get("turnover", 0.0)))
+            predicted_tes[name].append(float(diag.get("predicted_tracking_error", 0.0)))
+            current_weights[name] = new_weights
+
+    rebalances_per_year = periods_per_year / horizon
+
+    def _summary(name: str) -> Dict[str, Any]:
+        net = np.array(net_returns[name])
+        if len(net) < 2:
+            return {"periods": int(len(net))}
+        net_ir = float(np.mean(net) / np.std(net) * np.sqrt(rebalances_per_year)) if np.std(net) > 0 else 0.0
+        return {
+            "periods": int(len(net)),
+            "mean_net_return_per_period": float(np.mean(net)),
+            "mean_gross_return_per_period": float(np.mean(gross_returns[name])),
+            "net_ir": net_ir,
+            "realized_te": float(np.std(net) * np.sqrt(rebalances_per_year)),
+            "mean_predicted_te": float(np.mean(predicted_tes[name])) if predicted_tes[name] else 0.0,
+            "mean_turnover": float(np.mean(turnovers[name])) if turnovers[name] else 0.0,
+        }
+
+    summaries = {name: _summary(name) for name in variants}
+    winner = max(variants, key=lambda k: summaries[k].get("net_ir", float("-inf")))
+    over_damped = (
+        summaries["aim"].get("periods", 0) >= 2
+        and summaries["myopic"].get("periods", 0) >= 2
+        and summaries["aim"]["net_ir"] < summaries["myopic"]["net_ir"]
+        and summaries["aim"]["mean_turnover"] < summaries["myopic"]["mean_turnover"]
+    )
+
+    return {
+        "run_id": run_id,
+        "window": {"start": start.isoformat(), "end": end.isoformat()},
+        "horizon_bars": horizon,
+        "periods": len(points),
+        "summaries": _jsonable(summaries),
+        "winner_net_ir": winner,
+        "over_damped": over_damped,
+        "note": "SAME alphas/target_te/cost model, myopic vs aim policy, weights "
+        "carried forward rebalance to rebalance. 'winner_net_ir' picks by realized net "
+        "IR (net of the real transaction cost). 'over_damped' flags the double-damping "
+        "failure mode: lower turnover AND lower net IR together mean "
+        "the aim policy traded too little to capture what alpha there was, not that it "
+        "improved anything.",
+    }
+
+
+def longshort_report(
+    data_client: MarketDataClient,
+    strategy: str,
+    symbols: List[str],
+    as_of: datetime,
+    source: str = "strategy",
+    scanner: str = "volume",
+    target_te: float = 0.04,
+    max_weight: float = 0.25,
+    benchmark: str = "SPY",
+    neutralize_factors: Sequence[str] = (),
+    risk_model: str = "shrinkage",
+    lookback_days: int = 365,
+    timeframe: str = "1Day",
+    capital: Optional[float] = None,
+    holding_period_years: float = 1.0 / 12.0,
+    cost_aware: bool = True,
+    gross_leverage: float = 2.0,
+    short_max_weight: float = 0.25,
+) -> Dict[str, Any]:
+    """The long-only price report: the SAME alphas, Σ, and costs solved
+    ``long_only`` vs ``market_neutral``, so the difference is attributable to
+    the constraint itself, not to a different universe or a different day's data.
+
+    Reports the measured IR shrinkage (``IR_LO / IR_LS``) next to an illustrative
+    reference line (``γ(N) = (53+N)^0.57``) - explicitly *not* a verified
+    transcription of any published formula, just a comparison point - both
+    transfer coefficients, and the long-only book's incidental **size exposure**
+    (the "size" factor already in ``src/risk/exposures.py``, dotted with each
+    book's weights) that a long/short book, free to short the small names
+    long-only can only zero out, does not carry.
+    """
+    common = dict(
+        source=source,
+        scanner=scanner,
+        target_te=target_te,
+        max_weight=max_weight,
+        benchmark=benchmark,
+        neutralize_factors=neutralize_factors,
+        risk_model=risk_model,
+        lookback_days=lookback_days,
+        timeframe=timeframe,
+        capital=capital,
+        holding_period_years=holding_period_years,
+        cost_aware=cost_aware,
+    )
+    lo = construct_portfolio(data_client, strategy, symbols, as_of, book="long_only", **common)
+    ls = construct_portfolio(
+        data_client,
+        strategy,
+        symbols,
+        as_of,
+        book="market_neutral",
+        gross_leverage=gross_leverage,
+        short_max_weight=short_max_weight,
+        **common,
+    )
+    if not lo["feasible"] or not ls["feasible"]:
+        return {
+            "as_of": as_of.isoformat(),
+            "strategy": strategy,
+            "feasible": False,
+            "note": "Long-only and/or market-neutral solve was infeasible; see long_only/"
+            "market_neutral for the binding constraint.",
+            "long_only": lo,
+            "market_neutral": ls,
+        }
+
+    ir_lo = lo["diagnostics"]["predicted_ir"]
+    ir_ls = ls["diagnostics"]["predicted_ir"]
+    shrinkage = (ir_lo / ir_ls) if ir_ls != 0 else 0.0
+    n = max(lo["universe_size"], 1)
+    gamma_n = (53.0 + n) ** 0.57
+    reference_shrinkage = 1.0 - 1.0 / gamma_n
+
+    size_exposure = _longshort_size_exposure(
+        data_client, symbols, benchmark, as_of, lookback_days, timeframe, lo, ls
+    )
+    binding_fraction = _binding_fraction(lo["weights"], symbols)
+
+    return {
+        "as_of": as_of.isoformat(),
+        "strategy": strategy,
+        "feasible": True,
+        "universe_size": lo["universe_size"],
+        "ir_long_short": ir_ls,
+        "ir_long_only": ir_lo,
+        "shrinkage_measured": shrinkage,
+        "shrinkage_reference_curve": reference_shrinkage,
+        "transfer_coefficient_long_only": lo["diagnostics"]["transfer_coefficient"],
+        "transfer_coefficient_long_short": ls["diagnostics"]["transfer_coefficient"],
+        "size_exposure_long_only": size_exposure["long_only"],
+        "size_exposure_long_short": size_exposure["long_short"],
+        "binding_fraction": binding_fraction,
+        "gross_leverage": ls["diagnostics"].get("gross_leverage"),
+        "dollar_neutral_residual": ls["diagnostics"].get("dollar_neutral_residual"),
+        "borrow_cost": ls["diagnostics"].get("borrow_cost"),
+        "long_only": lo,
+        "market_neutral": ls,
+        "note": "shrinkage_reference_curve is an illustrative γ(N) reference line, "
+        "not a verified transcription of any published formula - compare "
+        "against shrinkage_measured, don't trust it as truth. binding_fraction is the "
+        "share of the long-only universe pinned at zero weight (a proxy for the "
+        "forced-underweight bound the long-only constraint imposes), not the exact "
+        "|z|-mass figure.",
+    }
+
+
+def _longshort_size_exposure(data_client, symbols, benchmark, as_of, lookback_days, timeframe, lo, ls):
+    """Each book's dot product with the cross-sectionally standardized size factor
+    (``log(price·ADV)``, ``src/risk/exposures.py``) - the incidental size bias a
+    long-only book picks up from being unable to short small, unattractive names.
+    """
+    from src.risk.exposures import build_factor_exposures
+
+    bars = ClientBarSource(data_client).scan([*symbols, benchmark], timeframe, as_of, lookback_days)
+    bench_frame = bars.get(benchmark)
+    universe_bars = {s: bars[s] for s in symbols if s in bars}
+    exposures = build_factor_exposures(universe_bars, bench_frame, factors=["size"])
+    if exposures.empty:
+        return {"long_only": None, "long_short": None}
+    size = exposures["size"]
+
+    def dot(weights: Dict[str, float]) -> float:
+        common = size.index.intersection(list(weights))
+        return float(sum(weights[s] * size[s] for s in common)) if len(common) else 0.0
+
+    return {"long_only": dot(lo["weights"]), "long_short": dot(ls["weights"])}
+
+
+def _binding_fraction(long_only_weights: Dict[str, float], symbols: List[str]) -> float:
+    """Share of the universe the long-only solve holds at exactly zero - a proxy for
+    names pinned at the long-only floor (``w_a = −w_B``, the underweight bound a
+    long-only book can't relax). Not an exact "|z| mass" figure (that needs the
+    per-name alpha z-score, which this report doesn't carry) - a documented
+    simplification.
+    """
+    if not symbols:
+        return 0.0
+    pinned = sum(1 for s in symbols if long_only_weights.get(s, 0.0) <= 1e-9)
+    return pinned / len(symbols)
 
 
 # --------------------------------------------------------------------------- #
@@ -1290,7 +2795,7 @@ def _capacity(weights, universe_bars, gross_alpha, holding_period_years) -> floa
     liquidity = {}
     for sym, w in weights.items():
         frame = universe_bars.get(sym)
-        if frame is None or len(frame) < 2 or w <= 0:
+        if frame is None or len(frame) < 2 or w == 0:
             continue
         liquidity[sym] = (
             w,
@@ -1319,13 +2824,147 @@ def _capacity(weights, universe_bars, gross_alpha, holding_period_years) -> floa
     return 0.5 * (lo + hi)
 
 
-def _build_covariance(model, bars, benchmark_bars, periods_per_year, min_obs=60):
-    """Build a covariance RiskMatrix by model name (statistical estimator or factor)."""
+def _build_covariance(
+    model, bars, benchmark_bars, periods_per_year, min_obs=60, conditional=None, conditional_lambda=None
+):
+    """Build a covariance RiskMatrix by model name (statistical estimator or factor).
+
+    ``conditional`` (default ``None`` / off) conditions Σ's diagonal (or,
+    for ``model='factor'``, both ``factor_cov`` and ``specific_var``) via an EWMA or
+    HAR-lite per-name volatility forecast, holding the correlation structure fixed —
+    see :mod:`src.risk.conditional`. Every caller of this helper reduces byte-for-byte
+    to its unconditional behavior when ``conditional`` is left at the default.
+    """
     from src.risk import RISK_MODELS, build_factor_risk_matrix, build_risk_matrix
 
     if model == "factor":
-        return build_factor_risk_matrix(bars, benchmark_bars, periods_per_year, min_obs=min_obs)
-    return build_risk_matrix(RISK_MODELS[model](), bars, periods_per_year, min_obs=min_obs)
+        return build_factor_risk_matrix(
+            bars,
+            benchmark_bars,
+            periods_per_year,
+            min_obs=min_obs,
+            conditional=conditional,
+            conditional_lambda=conditional_lambda,
+        )
+    return build_risk_matrix(
+        RISK_MODELS[model](),
+        bars,
+        periods_per_year,
+        min_obs=min_obs,
+        conditional=conditional,
+        conditional_lambda=conditional_lambda,
+    )
+
+
+def _resolve_benchmark_portfolio(benchmark_holdings, benchmark_premium, matrix):
+    """Load ``w_B`` (restricted to Σ's covered universe) plus the reverse-optimization
+    report, or ``(None, None)`` when no portfolio-level benchmark was requested -
+    the no-op path that keeps ``construct_portfolio`` byte-for-byte unchanged
+    without ``benchmark_holdings``.
+    """
+    if not benchmark_holdings:
+        return None, None
+
+    from src.portfolio.benchmark import implied_returns, load_benchmark_weights, restrict_and_renormalize
+
+    raw = load_benchmark_weights(benchmark_holdings, matrix.symbols)
+    raw_total = sum(raw.values())
+    restricted, coverage = restrict_and_renormalize(raw, matrix.symbols)
+    consensus = implied_returns(restricted, matrix, benchmark_premium) if restricted else {}
+    report = {
+        "source": benchmark_holdings,
+        "premium": benchmark_premium,
+        "coverage": coverage,  # fraction of raw weight mass inside Σ's universe
+        "uncovered_weight": max(0.0, 1.0 - coverage),
+        "raw_weight_sum": raw_total,  # far from 1 => the file implied a cash position
+        "consensus_returns": consensus,  # mu per name - print next to alpha
+    }
+    return (restricted or None), report
+
+
+def _apply_bl_posterior(
+    panel,
+    alphas,
+    matrix,
+    as_of,
+    benchmark_report,
+    posterior,
+    posterior_ic,
+    posterior_t_eff,
+    posterior_tau,
+    scale_ic,
+):
+    """Blend ``alphas`` with the consensus prior via Black–Litterman.
+
+    Reads ``panel.meta["shrink_chain"]`` (populated by ``refine_alpha`` upstream,
+    where ``level_shrink`` stayed off - the raw, unshrunk alpha is exactly what BL's
+    Ω needs) and appends the ``bl`` step so the IC-uncertainty haircut is auditably
+    applied exactly once, here, not twice. Returns the new (Σ-universe-spanning)
+    alpha list and the report section (per-name consensus/view/posterior/source
+    table plus τ-sensitivity).
+    """
+    if posterior != "bl":
+        raise ValueError(f"posterior must be 'bl' or None, got {posterior!r}")
+    if posterior_t_eff is None:
+        raise ValueError(
+            "posterior_t_eff is required for posterior='bl' - tau is pinned to "
+            "1/T_eff, never tuned; pass the effective_t a prior "
+            "compute_information call measured for this strategy/window."
+        )
+
+    from src.portfolio.posterior import black_litterman_from_ic
+
+    ic_bl = posterior_ic if posterior_ic is not None else scale_ic
+    views = {a.symbol: a.alpha for a in alphas}
+    bl = black_litterman_from_ic(views, matrix, ic_bl, posterior_t_eff, tau=posterior_tau)
+
+    panel.meta.setdefault("shrink_chain", []).append(
+        {
+            "step": "bl",
+            "owner": "bl",
+            "ic": ic_bl,
+            "t_eff": posterior_t_eff,
+            "tau": bl.tau,
+            "note": "IC-uncertainty owned here (Ω), not re-applied upstream - the "
+            "refine step's level_shrink stayed off so the raw, unshrunk alpha feeds "
+            "Ω, never both.",
+        }
+    )
+
+    original_z = {a.symbol: a.raw_z for a in alphas}
+    original_vol = {a.symbol: a.residual_vol for a in alphas}
+    new_alphas = [
+        Alpha(
+            symbol=s,
+            alpha=bl.mu_post[s],
+            as_of=as_of,
+            residual_vol=original_vol.get(s, float(np.sqrt(max(matrix.sigma[i, i], 0.0)))),
+            ic=ic_bl,
+            raw_z=original_z.get(s, 0.0),
+        )
+        for i, s in enumerate(matrix.symbols)
+    ]
+
+    consensus = (benchmark_report or {}).get("consensus_returns", {}) or {}
+    per_name = [
+        {
+            "symbol": s,
+            "consensus_pi": consensus.get(s),
+            "view_q": bl.views.get(s),
+            "posterior_mu": bl.mu_post[s],
+            "source": bl.source[s],
+        }
+        for s in matrix.symbols
+    ]
+    report = {
+        "method": "bl",
+        "ic": ic_bl,
+        "t_eff": posterior_t_eff,
+        "tau": bl.tau,
+        "tau_sensitivity": bl.tau_sensitivity,
+        "per_name": per_name,
+    }
+    return new_alphas, report
 
 
 def _scanner(scanner_name: str):

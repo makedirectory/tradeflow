@@ -1,6 +1,6 @@
 """Information analysis - measure skill (IC), scope (breadth), and reconcile the IR.
 
-Specs 005-008 *assume* an information coefficient and *predict* an information
+The rest of the stack *assumes* an information coefficient and *predicts* an information
 ratio. This module **measures** them and confronts the prediction with reality - the
 most honest diagnostic in the whole system. Classical information analysis is
 cross-sectional and decompositional: how much skill (IC), across how many

@@ -219,6 +219,66 @@ def test_journal_records_session_and_trials(tmp_path):
         assert {"run_id", "timestamp", "git_sha"} <= set(rec)
 
 
+def test_duplicate_tune_proposal_is_deduped_via_the_trial_store(tmp_path):
+    """A repeated exact config is the same lottery ticket checked twice - reject
+    it before it burns a second walk-forward, rather than letting it
+    count toward the campaign's multiple-testing total again."""
+    result = _agent(tmp_path, FixedProposer([_tune(3), _tune(3), _tune(5)]), max_dry_rounds=99).run(
+        SYMBOLS, START, END
+    )
+    # Only the two *distinct* configs count as trials — the repeat is a dedup hit.
+    assert result.n_trials_total == 2
+
+    lines = [json.loads(line) for line in (tmp_path / "journal.jsonl").read_text().splitlines()]
+    rejects = [rec["inputs"] for rec in lines if rec["tool"] == "research:reject"]
+    assert any("duplicate" in (r.get("reason") or "") for r in rejects)
+
+
+def test_research_trials_are_recorded_in_the_trial_store(tmp_path):
+    from src.engine.backtest import ACCOUNTING_VERSION
+
+    agent = _agent(tmp_path, FixedProposer([_tune(3), _tune(5)]))
+    agent.run(SYMBOLS, START, END)
+
+    rows = agent.trial_store.query(strategy="periodic", kind="research")
+    assert len(rows) == 2
+    assert agent.trial_store.family_count("periodic", SYMBOLS, ACCOUNTING_VERSION) == 2
+
+
+# --- bootstrap skill ------------------------------------------------------------
+def test_research_trials_persist_oos_return_series_in_the_store(tmp_path):
+    """The trial store must contain a genuine OOS
+    return series per trial (not just summary floats) for Reality Check to
+    resample - every recorded research trial gets one."""
+    agent = _agent(tmp_path, FixedProposer([_tune(3), _tune(5)]))
+    agent.run(SYMBOLS, START, END)
+
+    rows = agent.trial_store.query(strategy="periodic", kind="research")
+    assert len(rows) == 2
+    panel = agent.trial_store.returns_panel("periodic", SYMBOLS, rows[0]["accounting"], min_overlap=5)
+    assert panel["n_with_returns"] == 2
+
+
+def test_bootstrap_skill_annotation_is_advisory_and_off_by_default(tmp_path):
+    """Off by default: no candidate gets a bootstrap_skill annotation unless the
+    config explicitly asks for it - and turning it on never changes which
+    candidates advance (guardrail 1, OOS-only fitness, stays untouched)."""
+    (tmp_path / "off").mkdir()
+    (tmp_path / "on").mkdir()
+    off = _agent(tmp_path / "off", FixedProposer([_tune(3), _tune(5)])).run(SYMBOLS, START, END)
+    assert off.shortlist
+    assert all(c.bootstrap_skill is None for c in off.shortlist)
+
+    on = _agent(tmp_path / "on", FixedProposer([_tune(3), _tune(5)]), bootstrap_skill=True).run(
+        SYMBOLS, START, END
+    )
+    assert on.shortlist
+    assert all(c.bootstrap_skill is not None for c in on.shortlist)
+    for c in on.shortlist:
+        assert "own" in c.bootstrap_skill and "family" in c.bootstrap_skill
+    assert [c.params for c in on.shortlist] == [c.params for c in off.shortlist]
+
+
 def test_proposer_context_excludes_holdout(tmp_path):
     """The proposer is only ever given the research window, never the holdout."""
     seen = {}
@@ -300,3 +360,76 @@ def test_build_proposer_accepts_injected_client():
         goal="g", strategy="periodic", param_ranges={}, history=[], incumbent=None, round_index=0
     )
     assert proposer.propose(ctx).hypothesis == "x"
+
+
+def test_sandbox_rejects_strategy_missing_execution_config():
+    """A strategy the execution path cannot size is rejected, not silently zero-trade.
+
+    Sizing and exit handling read ``risk_per_trade``/``stop_loss``/``take_profit`` off
+    the config on every bar. Without this check the strategy validates cleanly and then
+    raises on the first bar, which the gates would score as "no edge".
+    """
+    missing = _VALID_CODE.replace('        config.setdefault("stop_loss", 0.05)\n', "")
+    with pytest.raises(sandbox.HygieneError, match="stop_loss"):
+        sandbox.load_strategy_from_code(missing)
+
+
+def test_llm_proposer_emits_code_proposals_when_enabled():
+    """With code-gen on, a ``kind: "code"`` response becomes a code proposal."""
+    from src.research.llm import LLMResponse
+    from src.research.proposer import LLMProposer
+
+    class CodeClient:
+        model = "stub"
+
+        def complete(self, system, user, max_tokens=1024):
+            assert "PARAM_RANGES" in system  # the contract is stated to the model
+            return LLMResponse('{"kind": "code", "hypothesis": "h", "code": "src"}', tokens=7)
+
+    ctx = ProposalContext(
+        goal="g", strategy="periodic", param_ranges={}, history=[], incumbent=None, round_index=0
+    )
+    proposal = LLMProposer(CodeClient(), allow_code_gen=True).propose(ctx)
+    assert proposal.kind == "code"
+    assert proposal.code == "src"
+    assert proposal.tokens_used == 7
+
+
+def test_llm_proposer_still_parses_tune_proposals_with_code_gen_enabled():
+    from src.research.llm import LLMResponse
+    from src.research.proposer import LLMProposer
+
+    class TuneClient:
+        model = "stub"
+
+        def complete(self, system, user, max_tokens=1024):
+            return LLMResponse('{"kind": "tune", "hypothesis": "h", "params": {"period": 5}}', tokens=2)
+
+    ctx = ProposalContext(
+        goal="g", strategy="periodic", param_ranges={}, history=[], incumbent=None, round_index=0
+    )
+    proposal = LLMProposer(TuneClient(), allow_code_gen=True).propose(ctx)
+    assert proposal.kind == "tune"
+    assert proposal.params == {"period": 5}
+
+
+def test_observer_sees_events_and_cannot_break_the_loop(tmp_path):
+    """The narration hook is observational: it receives events and its errors are contained."""
+    seen = []
+
+    def boom(event, payload):
+        seen.append(event)
+        raise RuntimeError("observer exploded")
+
+    agent = ResearchAgent(
+        "periodic",
+        MarketDataClient(FakeMarketData(SYMBOLS, n=600, freq="1D")),
+        FixedProposer([_tune(3)]),
+        ResearchConfig(goal="g", n_folds=3, max_trials=1, gates=RELAXED_GATES),
+        seed=42,
+        journal_path=str(tmp_path / "journal.jsonl"),
+        observer=boom,
+    )
+    result = agent.run(SYMBOLS, START, END)  # must not raise
+    assert "session_start" in seen and "session_end" in seen
+    assert result.rounds == 1

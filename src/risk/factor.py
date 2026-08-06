@@ -81,13 +81,39 @@ def estimate_factor_model(
 
 
 def build_factor_risk_matrix(
-    bars, benchmark_bars, periods_per_year: float, min_obs: int = 60
+    bars,
+    benchmark_bars,
+    periods_per_year: float,
+    min_obs: int = 60,
+    conditional: Optional[str] = None,
+    conditional_lambda: Optional[float] = None,
+    conditional_horizon: int = 1,
 ) -> Optional[FactorRiskMatrix]:
-    """Build factor exposures from ``bars`` then estimate the factor covariance Σ."""
+    """Build factor exposures from ``bars`` then estimate the factor covariance Σ.
+
+    ``conditional`` (default ``None`` / off) conditions ``factor_cov`` AND
+    ``specific_var`` together via the same EWMA/HAR family (never one without the
+    other — a partial conditioning mis-splits the factor/specific attribution); see
+    :func:`src.risk.conditional.condition_risk_matrix`. Loadings ``X`` stay slow.
+    """
     exposures = build_factor_exposures(bars, benchmark_bars)
     if exposures.empty:
         return None
     panel, _ = build_return_panel(bars, min_obs=min_obs)
     if panel.empty:
         return None
-    return estimate_factor_model(panel, exposures, periods_per_year)
+    matrix = estimate_factor_model(panel, exposures, periods_per_year)
+    if matrix is None or not conditional:
+        return matrix
+
+    from src.risk.conditional import condition_risk_matrix
+
+    return condition_risk_matrix(
+        matrix,
+        panel,
+        conditional,
+        periods_per_year,
+        min_obs=min_obs,
+        lambda_=conditional_lambda,
+        horizon=conditional_horizon,
+    )

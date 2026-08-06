@@ -60,6 +60,16 @@ cost and the gross final capital alongside. Pass `--gross` to disable the charge
 attribution — "how much did costs cost me?"), and tune `--commission-bps` / `--impact-eta`.
 High-turnover strategies degrade sharply once costs are on; that's the point.
 
+## Trial journaling
+
+Each run records one **trial** — the config it evaluated, on this universe and
+window — to `logs/research_journal.jsonl`, and is dual-written into the
+[trial store](../engineering/walk-forward#the-trial-store) (`logs/trials.db`) so
+`trials query` can report the real campaign-wide trial count on demand — the
+gate itself still counts only the current run (see the
+[open item](../engineering/walk-forward#n_trials-still-counts-a-run-at-gate-time-not-a-campaign)).
+Pass `--no-journal` to keep a throwaway or reproducibility run out of that total.
+
 ## Tuning the strategy
 
 Once a backtest runs, search for better parameters with

@@ -88,6 +88,54 @@ Two estimators behind one `RiskModel.estimate(returns)` interface:
   cross-sectional **median variance** and zero correlation (a documented fallback,
   not a silent drop), so Σ spans the full universe and stays PD.
 
+## Conditional risk
+
+Both estimators above are **unconditional over their trailing window** — a flat,
+equal-weighted average since the start of the estimation window. When realized
+vol doubles in a stress month, a book targeting a fixed tracking error against
+that average blows its *actual* risk budget exactly when breaching it is most
+expensive — and has room to spare in the quiet months. `src/risk/conditional.py`
+fixes the cheap, well-supported part of this: **condition the volatilities, keep
+the correlation structure slow.**
+
+```
+Σ_t = D_t · R · D_t
+```
+
+`R` is the estimator's own (shrunk/factor) correlation structure on the long
+window; `D_t` is a diagonal of *conditional* per-name variances from an EWMA
+(RiskMetrics λ≈0.94 daily / 0.97 weekly) or HAR-lite forecast. This is
+deliberately **not** a multivariate GARCH — correlations stay slow (conditioning
+them buys little at this horizon and costs stability). Both backends condition:
+shrinkage/sample rescales the diagonal and holds the implied correlation fixed (a
+diagonal congruence transform — PSD-preserving by construction); factor
+conditions *both* `factor_cov` (an EWMA covariance on factor returns, small and
+PSD by construction) and `specific_var` (the same per-name EWMA/HAR family) —
+never one without the other, since a partial conditioning mis-splits the
+factor/specific attribution.
+
+**An evidence gate decides adoption, not preference.** Mincer–Zarnowitz
+regressions (`realized² = a + b·forecast²`, want `b` near 1) and QLIKE loss,
+conditional vs unconditional, both required to point the same way — a QLIKE
+win with worse calibration is noise dressed as an improvement. A net-of-cost A/B
+(walk-forward, weights carried forward, conditional vs unconditional Σ on the
+*same* alpha book) is the harness that actually decides commercial adoption:
+a Σ that tracks TE better but churns the book to death should lose there, and
+does, if the numbers say so.
+
+On this repo's own demo data the gate does **not** clear — the series is a
+deliberately constant-volatility random walk with no regime structure to
+condition on, so both prongs read as a wash. That is the expected, honest result
+on data built to have no vol clustering, not evidence against the method: a
+regime-switching synthetic world shows EWMA/HAR beating the unconditional
+baseline cleanly on both QLIKE and calibration. **Default off** pending a
+regime-bearing history to re-run the gate against.
+
+`--conditional {ewma,har}` threads through `risk`, `allocate --objective
+utility`, and `info --attribution` (adds a predicted-vs-realized TE-by-regime
+table); `risk --evaluate-conditional` runs the evidence gate instead of the risk
+report; `info --conditional-ab` runs the net-of-cost A/B.
+
 ## Where it runs
 
 `services/analysis.py::compute_risk` scans returns as of a date, estimates Σ, and

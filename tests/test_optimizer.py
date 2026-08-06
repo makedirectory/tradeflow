@@ -40,3 +40,23 @@ def test_bayesian_search_runs():
     )
     assert result.objective == "sharpe_ratio"
     assert not result.results.empty
+
+
+def test_best_params_retains_pinned_parameters():
+    """Pinned params (default, no min/max/step) survive into ``best_params``.
+
+    Callers construct a strategy directly from ``best_params``; dropping the pinned
+    entries would hand back a config the strategy cannot be built from - which shows
+    up much later as a walk-forward run that mysteriously places no trades.
+    """
+    from src.optimization.param_space import ParameterSpace
+
+    ranges = {
+        "searched": {"type": "int", "min": 1, "max": 3, "step": 1, "default": 2},
+        "pinned": {"type": "float", "default": 0.02},
+    }
+    space = ParameterSpace(ranges)
+    assert space.searchable == ["searched"]
+
+    grid = space.grid()
+    assert all(combo["pinned"] == 0.02 for combo in grid)

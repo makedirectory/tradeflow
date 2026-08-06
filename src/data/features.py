@@ -36,6 +36,15 @@ def add_risk_features(
     the ``sigma`` the alpha-scaling identity needs. With no benchmark series
     available it falls back to total volatility (beta unknown, set to 1.0) and
     records ``benchmark_available=False`` in the panel meta.
+
+    **The alpha/risk vol seam.** This ``residual_vol`` is
+    computed **unconditionally** (a flat trailing-window figure) and deliberately
+    stays that way — it scales alpha magnitude (``α = ω·IC·z``, Case 1) and the
+    refinement's Case logic, and an alpha shouldn't double in size just because last week was
+    wild. Only the *risk-model* Σ used for portfolio construction / tracking-error
+    (:mod:`src.risk.conditional`) conditions on recent volatility. Do not "unify"
+    the two into one vol-squared concept — that reintroduces exactly the position-
+    doubling-in-a-vol-spike bug this separation exists to prevent.
     """
     available = benchmark_bars is not None and not benchmark_bars.empty
     betas: Dict[str, float] = {}

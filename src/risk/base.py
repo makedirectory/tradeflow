@@ -13,7 +13,7 @@ for sizing conviction, never consulted to place an order.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Dict, List, Mapping, Optional, Tuple, Union
+from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -28,6 +28,9 @@ class RiskMatrix:
     symbols: List[str]
     sigma: np.ndarray  # N×N annualized covariance, positive-definite
     shrinkage: Optional[float] = None  # δ used (Ledoit–Wolf), for audit
+    #: Set when Σ was conditioned: method, λ, per-name D_t vs the
+    #: unconditional diagonal (the "sigma_regime" diagnostic). ``None`` unconditional.
+    conditional_diagnostics: Optional[Dict[str, Any]] = None
 
     def __post_init__(self) -> None:
         self._index = {sym: i for i, sym in enumerate(self.symbols)}
@@ -64,6 +67,23 @@ class RiskMatrix:
         """Tracking error ``√(w_aᵀ Σ w_a)`` for active weights ``w_a = w − w_B``."""
         active = self._vector(weights) - self._vector(benchmark)
         return float(np.sqrt(max(active @ self.sigma @ active, 0.0)))
+
+    def implied_beta(self, benchmark: Weights) -> pd.Series:
+        """The Σ-implied benchmark beta per name: ``β = Σw_B / (w_Bᵀ Σ w_B)``.
+
+        The one canonical beta for anything benchmark-portfolio-relative (reverse
+        optimization, active-beta diagnostics, alpha neutralization) - this is
+        "one β, everywhere": per-name regression betas (the alpha
+        pipeline's ``beta`` feature) are a different, complementary quantity and
+        must not be mixed with this one. Zero vector when the benchmark carries no
+        risk (``w_B = 0`` or degenerate Σ), so callers reduce to "no benchmark"
+        rather than dividing by zero.
+        """
+        wb = self._vector(benchmark)
+        denom = float(wb @ self.sigma @ wb)
+        if denom <= 0:
+            return pd.Series(0.0, index=self.symbols)
+        return pd.Series((self.sigma @ wb) / denom, index=self.symbols)
 
     def marginal_contribution_to_risk(
         self, weights: Weights, benchmark: Optional[Weights] = None
@@ -135,6 +155,9 @@ def build_risk_matrix(
     bars: Dict[str, pd.DataFrame],
     periods_per_year: float,
     min_obs: int = 60,
+    conditional: Optional[str] = None,
+    conditional_lambda: Optional[float] = None,
+    conditional_horizon: int = 1,
 ) -> Optional[RiskMatrix]:
     """Estimate an annualized :class:`RiskMatrix` over a universe's scanned bars.
 
@@ -143,6 +166,13 @@ def build_risk_matrix(
     cross-sectional **median variance** and zero correlation - so the matrix spans the
     full universe and stays positive-definite rather than dropping names silently.
     Returns ``None`` if no name has enough history.
+
+    ``conditional`` (default ``None`` / off) conditions the well-sampled
+    block's diagonal via an EWMA (``"ewma"``) or HAR-lite (``"har"``) per-name
+    volatility forecast, keeping the correlation structure fixed
+    (``Σ_t = D_t·R·D_t`` - see :mod:`src.risk.conditional`), *before* the
+    under-sampled splice below - so thin-history names keep the same
+    unconditional-fallback treatment regardless of conditioning.
     """
     panel, under_sampled = build_return_panel(bars, min_obs=min_obs)
     universe = [sym for sym in bars if not bars[sym].empty]
@@ -152,19 +182,37 @@ def build_risk_matrix(
     sigma_bar, shrinkage = model.estimate(panel)
     sigma = sigma_bar * periods_per_year
     kept = list(panel.columns)
+    matrix = RiskMatrix(symbols=kept, sigma=sigma, shrinkage=shrinkage)
+    if conditional:
+        from src.risk.conditional import condition_risk_matrix
+
+        matrix = condition_risk_matrix(
+            matrix,
+            panel,
+            conditional,
+            periods_per_year,
+            min_obs=min_obs,
+            lambda_=conditional_lambda,
+            horizon=conditional_horizon,
+        )
 
     if not under_sampled:
-        return RiskMatrix(symbols=kept, sigma=sigma, shrinkage=shrinkage)
+        return matrix
 
     # Fallback for thin-history names: independent, at the median estimated variance.
-    median_var = float(np.median(np.diag(sigma))) if sigma.size else 0.0
+    median_var = float(np.median(np.diag(matrix.sigma))) if matrix.sigma.size else 0.0
     order = [sym for sym in universe if sym in kept or sym in under_sampled]
     idx = {sym: i for i, sym in enumerate(kept)}
     full = np.zeros((len(order), len(order)))
     for a, sa in enumerate(order):
         for b, sb in enumerate(order):
             if sa in idx and sb in idx:
-                full[a, b] = sigma[idx[sa], idx[sb]]
+                full[a, b] = matrix.sigma[idx[sa], idx[sb]]
         if sa in under_sampled:
             full[a, a] = median_var
-    return RiskMatrix(symbols=order, sigma=full, shrinkage=shrinkage)
+    return RiskMatrix(
+        symbols=order,
+        sigma=full,
+        shrinkage=matrix.shrinkage,
+        conditional_diagnostics=matrix.conditional_diagnostics,
+    )

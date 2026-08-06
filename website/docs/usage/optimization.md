@@ -49,9 +49,22 @@ Best parameters: {'rsi_period': 10, 'volume_threshold': 1.4, ...}
 Full results written to optimization_results.csv
 ```
 
+Every evaluated configuration is also recorded as one **trial** in
+`logs/research_journal.jsonl` and the queryable
+[trial store](../engineering/walk-forward#the-trial-store) — a 50-point search is
+50 trials, which is exactly what a campaign-level deflated Sharpe needs to count
+(the store makes that count queryable by hand; wiring it into the gate itself is
+a [separate, open item](../engineering/walk-forward#n_trials-still-counts-a-run-at-gate-time-not-a-campaign)).
+Pass `--no-journal` to keep an exploratory sweep out of that total.
+
 :::tip Avoid overfitting
 A configuration that looks great in-sample often disappoints out-of-sample.
 Validate the winner on a *different* date range before trusting it.
+
+This is also the multiple-testing trap: try enough configs and one looks good by
+luck. The journaled trial count is what lets the deflated Sharpe raise the bar
+accordingly — so `--no-journal` on a real search understates how many tickets you
+bought.
 :::
 
 How the search avoids materializing astronomically large grids, and how the

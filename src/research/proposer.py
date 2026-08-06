@@ -71,23 +71,40 @@ class FixedProposer(Proposer):
 class LLMProposer(Proposer):
     """Proposer backed by any :class:`~src.research.llm.LLMClient`.
 
-    Asks the model for a JSON proposal: a hypothesis plus param overrides within
-    the supplied ``PARAM_RANGES``. The model id is pinned on the client and logged
-    by the agent's audit journal, so every proposal is replayable.
+    Asks the model for a JSON proposal: a hypothesis plus either param overrides
+    within the supplied ``PARAM_RANGES`` (``kind="tune"``) or, when
+    ``allow_code_gen`` is set, the source of a brand-new ``Strategy`` subclass
+    (``kind="code"``). The model id is pinned on the client and logged by the
+    agent's audit journal, so every proposal is replayable.
+
+    Code proposals are *untrusted text* until :mod:`src.research.sandbox` has
+    validated them - this class only transports them.
     """
 
-    def __init__(self, client: LLMClient, max_tokens: int = 1024):
+    def __init__(self, client: LLMClient, max_tokens: int = 1024, *, allow_code_gen: bool = False):
         self.client = client
         self.max_tokens = max_tokens
+        self.allow_code_gen = allow_code_gen
 
     def propose(self, context: ProposalContext) -> Optional[Proposal]:
         import json
 
-        response = self.client.complete(_SYSTEM_PROMPT, _build_user_prompt(context), self.max_tokens)
+        system = _CODEGEN_SYSTEM_PROMPT if self.allow_code_gen else _SYSTEM_PROMPT
+        response = self.client.complete(system, _build_user_prompt(context), self.max_tokens)
         try:
             payload = json.loads(_extract_json(response.text))
         except (ValueError, KeyError):
             return None
+
+        if payload.get("kind") == "code":
+            return Proposal(
+                hypothesis=payload.get("hypothesis", ""),
+                kind="code",
+                strategy=context.strategy,
+                code=payload.get("code", ""),
+                tokens_used=response.tokens,
+            )
+
         params = payload.get("params", {})
         return Proposal(
             hypothesis=payload.get("hypothesis", ""),
@@ -105,11 +122,12 @@ def build_proposer(
     *,
     client: Optional[LLMClient] = None,
     max_tokens: int = 1024,
+    allow_code_gen: bool = False,
     **kwargs,
 ) -> LLMProposer:
     """Build an :class:`LLMProposer` for a provider (anthropic | openai | ollama)."""
     llm = client or build_llm_client(provider, model, **kwargs)
-    return LLMProposer(llm, max_tokens=max_tokens)
+    return LLMProposer(llm, max_tokens=max_tokens, allow_code_gen=allow_code_gen)
 
 
 _SYSTEM_PROMPT = (
@@ -117,6 +135,38 @@ _SYSTEM_PROMPT = (
     "Change at most 5 parameters. Give a one-paragraph hypothesis of WHY the change should "
     "improve OUT-OF-SAMPLE performance - in-sample gains do not count. "
     'Respond ONLY with JSON: {"hypothesis": "...", "params": {"name": value, ...}}.'
+)
+
+#: System prompt for sessions run with ``--allow-code-gen``. The model may either
+#: tune the incumbent or author a new mechanism; the sandbox enforces the contract
+#: described here, so a violation is a rejected proposal, not a broken run.
+_CODEGEN_SYSTEM_PROMPT = (
+    "You are a quantitative research assistant proposing the next backtest experiment. "
+    "You may respond with EITHER of two proposal kinds.\n\n"
+    '1. Tune the existing strategy: {"kind": "tune", "hypothesis": "...", '
+    '"params": {"name": value, ...}} - at most 5 parameters, each within PARAM_RANGES.\n\n'
+    '2. Author a NEW strategy mechanism: {"kind": "code", "hypothesis": "...", "code": "<python source>"}.\n\n'
+    "Propose 'code' when the history suggests the parameter space is exhausted and a different "
+    "mechanism is needed; propose 'tune' when the incumbent looks refinable.\n\n"
+    "Generated code runs in a restricted sandbox and MUST satisfy this contract or it is rejected:\n"
+    "- Define exactly one concrete subclass of `Strategy` (from src.strategies.base).\n"
+    "- Imports are limited to: pandas, numpy, math, src.indicators.indicators, src.strategies.base. "
+    "No os, sys, io, requests, or file access of any kind.\n"
+    "- Give the class a docstring stating the hypothesis (required).\n"
+    "- Declare a PARAM_RANGES ClassVar dict with AT MOST 5 SEARCHABLE params. A param is "
+    "searchable when its spec has min, max, and step; a spec with only a default is fixed and "
+    "does NOT count against the cap. Each spec needs type ('int'|'float'), default, description.\n"
+    "- PARAM_RANGES MUST include risk_per_trade, stop_loss, and take_profit (fractional distances). "
+    "The execution path reads these on every bar; omitting them is rejected. Pin them with a "
+    "default only if you would rather spend the searchable budget on your mechanism.\n"
+    "- Set TIMEFRAME (e.g. '1Day') and call super().__init__(config) after setting config['timeframe'].\n"
+    "- Implement all four abstract hooks: initialize(), process_data(data) -> DataFrame, "
+    "calculate_scores(data) -> Series, calculate_required_lookback() -> int.\n"
+    "- calculate_scores returns ONE continuous conviction score per bar; the base class derives "
+    "BUY/SELL/HOLD from its sign. Do not emit discrete signals yourself.\n"
+    "- The class must construct from its own declared defaults.\n\n"
+    "Give a one-paragraph hypothesis of WHY this should improve OUT-OF-SAMPLE performance - "
+    "in-sample gains do not count. Respond ONLY with the JSON object."
 )
 
 

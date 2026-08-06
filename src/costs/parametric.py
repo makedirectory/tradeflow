@@ -17,6 +17,7 @@ equities and are all overridable.
 """
 
 import math
+from typing import Optional
 
 from src.costs.base import CostModel, Trade, TradeCost
 
@@ -77,6 +78,12 @@ class ParametricCostModel(CostModel):
             return 0.0
         return self.annual_borrow_rate * abs(notional) * holding_years
 
+    def borrow_rate(self, override: float = None) -> float:
+        """Annualized borrow rate - the flat ``annual_borrow_bps`` default, or a
+        per-name override (a locate-desk quote) when the caller has one.
+        """
+        return self.annual_borrow_rate if override is None else override
+
     def turnover_cost_rate(self, spread: float = None) -> float:
         """Linear cost per unit of turnover notional - the optimizer's L1 cost term.
 
@@ -102,3 +109,23 @@ class ParametricCostModel(CostModel):
         if self.linear_impact or not (adv_dollar > 0) or not (capital > 0) or not (daily_vol > 0):
             return 0.0
         return self.impact_eta * daily_vol * math.sqrt(capital / adv_dollar)
+
+
+def cost_curvature(k_imp: float, typical_trade: float) -> Optional[float]:
+    """Local quadratic curvature ``c2 = d2cost/dDeltaw2`` of the √-impact term at a
+    representative trade size: ``cost(Δw) = k·|Δw|^{3/2}`` (impact
+    only - the linear term is a kink, not curvature, at any Δw != 0), so
+    ``d2/dΔw2 = (3/4)·k·|Δw|^{-1/2}``. This is the curvature a quadratic-cost
+    closed form needs to derive the trading rate κ
+    (:func:`src.portfolio.policy.derive_kappa`); our cost is linear+3/2-power, so
+    this is a *calibrated-at-realistic-size* approximation, not exact -
+    validated empirically by the net-of-cost A/B, not asserted.
+
+    Returns ``None`` (curvature undefined) when there is no impact term
+    (``k_imp <= 0``, e.g. no capital/ADV so the solve is linear-only) or the trade
+    size is non-positive - the signal for :func:`~src.portfolio.policy.derive_kappa`
+    to fall back to band-only behavior rather than divide by (near) zero.
+    """
+    if not (k_imp > 0) or not (typical_trade > 0):
+        return None
+    return 0.75 * k_imp / math.sqrt(typical_trade)

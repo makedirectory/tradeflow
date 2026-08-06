@@ -75,6 +75,26 @@ def test_mcr_aggregates_to_portfolio_volatility():
     assert abs(total - m.volatility(w)) < 1e-12
 
 
+# --- implied (reverse-optimization) beta ----------------------------------------
+def test_implied_beta_matches_closed_form():
+    sigma = np.array([[0.04, 0.006, 0.002], [0.006, 0.09, 0.003], [0.002, 0.003, 0.05]])
+    m = RiskMatrix(["A", "B", "C"], sigma)
+    wb = {"A": 0.5, "B": 0.3, "C": 0.2}
+    wb_vec = np.array([0.5, 0.3, 0.2])
+    expected = (sigma @ wb_vec) / (wb_vec @ sigma @ wb_vec)
+    beta = m.implied_beta(wb)
+    assert np.allclose([beta[s] for s in ["A", "B", "C"]], expected)
+    # β is the beta that makes the benchmark self-consistent: βᵀw_B == 1 exactly.
+    assert abs(float(beta.reindex(["A", "B", "C"]) @ wb_vec) - 1.0) < 1e-9
+
+
+def test_implied_beta_is_zero_without_benchmark_risk():
+    sigma = np.array([[0.04, 0.0], [0.0, 0.09]])
+    m = RiskMatrix(["A", "B"], sigma)
+    beta = m.implied_beta({"A": 0.0, "B": 0.0})
+    assert (beta == 0.0).all()
+
+
 # --- as-of / leakage ---------------------------------------------------------
 def test_risk_matrix_independent_of_post_as_of_bars():
     symbols = [f"S{i}" for i in range(6)]
@@ -116,7 +136,7 @@ def test_sample_covariance_runs_and_is_symmetric():
     assert np.allclose(sigma, sigma.T)
 
 
-# --- factor model (006 v2) ---------------------------------------------------
+# --- factor model --------------------------------------------------------------
 def test_factor_model_recovers_known_factor_covariance():
     from src.risk import FactorRiskMatrix, estimate_factor_model
 

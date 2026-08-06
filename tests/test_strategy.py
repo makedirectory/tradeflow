@@ -108,3 +108,36 @@ def test_generate_signals_defaults_to_hold():
         signals.CLOSE_SELL,
         signals.HOLD,
     }
+
+
+def test_pinned_parameter_skips_range_validation():
+    """A param declared with only a default is typed and required, but not range-checked.
+
+    ``ParameterSpace`` already treats such specs as non-searchable; the base class must
+    agree, otherwise pinning a parameter raises KeyError on construction.
+    """
+    import pandas as pd
+
+    from src.strategies.base import Strategy
+
+    class Pinned(Strategy):
+        PARAM_RANGES = {
+            "window": {"type": "int", "min": 2, "max": 10, "step": 1, "default": 5},
+            "risk_per_trade": {"type": "float", "default": 0.02},
+        }
+
+        def calculate_required_lookback(self):
+            return 2
+
+        def initialize(self):
+            pass
+
+        def process_data(self, data):
+            return data
+
+        def calculate_scores(self, data):
+            return pd.Series(0.0, index=data.index)
+
+    strategy = Pinned({"window": 5, "risk_per_trade": 0.02, "timeframe": "1Day"})
+    assert strategy.config["risk_per_trade"] == 0.02
+    assert isinstance(strategy.config["risk_per_trade"], float)

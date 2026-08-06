@@ -28,21 +28,26 @@ Guardrails enforced here in code (not by prompt):
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Type
+from statistics import median
+from typing import Any, Callable, Dict, List, Optional, Type
 
+from src.costs.base import CostModel
+from src.engine.backtest import ACCOUNTING_VERSION, BacktestError
 from src.marketdata.client import MarketDataClient
 from src.optimization import config_store
 from src.optimization.walk_forward import WalkForwardValidator
 from src.research.proposer import Proposal, ProposalContext, Proposer
 from src.research.sandbox import load_strategy_from_code, validate_hygiene
-from src.services.audit import audit_log, new_run_id
+from src.services.audit import DEFAULT_TRIAL_JOURNAL, audit_log, new_run_id
 from src.services.registry import resolve_strategy_class
+from src.store.trials import TrialStore, db_path_for_journal
 from src.strategies.base import Strategy
 
 logger = logging.getLogger(__name__)
 
-#: Default research-journal location (append-only JSONL).
-DEFAULT_JOURNAL = "logs/research_journal.jsonl"
+#: Default research-journal location (append-only JSONL). The same file CLI
+#: ``backtest``/``optimize`` trials append to, so a trial store indexes one journal.
+DEFAULT_JOURNAL = str(DEFAULT_TRIAL_JOURNAL)
 
 
 @dataclass
@@ -68,6 +73,13 @@ class ResearchConfig:
     drawdown_guard_tolerance: float = 0.25  # OOS max_dd may worsen at most this fraction
     allow_code_gen: bool = False
     gates: Optional[Dict[str, float]] = None
+    #: Advisory only: annotate each shortlisted candidate with a
+    #: bootstrap-skill report (own + family p) after holdout scoring. Off by
+    #: default - it never influences keep/discard (guardrail 1 stays untouched).
+    bootstrap_skill: bool = False
+    #: Charged on every simulated fill. Left ``None`` the loop selects on gross
+    #: returns, which favors turnover the strategy could not afford live.
+    cost_model: Optional[CostModel] = None
 
 
 @dataclass
@@ -86,6 +98,15 @@ class Candidate:
     holdout_metrics: Optional[Dict[str, float]] = None
     saved_path: Optional[str] = None
     strategy_cls: Optional[Type[Strategy]] = field(default=None, repr=False)
+    #: This candidate's dated OOS return series - kept so
+    #: ``bootstrap_skill`` can be computed once the holdout score is in, without
+    #: re-running the walk-forward.
+    oos_returns: Optional[Any] = field(default=None, repr=False)
+    #: The bootstrap-skill report, when ``ResearchConfig.bootstrap_skill``
+    #: is on - advisory only, computed after holdout scoring; never influences
+    #: ``_beats_incumbent`` or the keep/discard decision (guardrail 1: OOS-only,
+    #: gate-based fitness stays exactly as specced).
+    bootstrap_skill: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -111,6 +132,8 @@ class ResearchAgent:
         *,
         seed: int = 42,
         journal_path: str = DEFAULT_JOURNAL,
+        observer: Optional[Callable[[str, Dict[str, Any]], None]] = None,
+        trial_store: Optional[TrialStore] = None,
     ):
         self.strategy_name = strategy_name
         self.data_client = data_client
@@ -118,7 +141,25 @@ class ResearchAgent:
         self.config = config
         self.seed = seed
         self.journal_path = journal_path
+        #: Optional live callback, invoked with every journaled ``(event, payload)``.
+        #: Purely observational - it cannot influence the loop or its decisions.
+        self.observer = observer
         self.session_id = new_run_id()
+        #: The trial store this session dual-writes into and dedups
+        #: against - defaults to the store alongside this session's journal, so
+        #: redirecting ``journal_path`` (as tests do) isolates the store too.
+        #: Best-effort like every other trial-store touchpoint: the store is
+        #: derived, never authoritative, so a store-open failure (read-only
+        #: filesystem, disk full, sandboxed CI) degrades to no dedup/recording
+        #: rather than aborting the whole research session before it starts.
+        if trial_store is not None:
+            self.trial_store: Optional[TrialStore] = trial_store
+        else:
+            try:
+                self.trial_store = TrialStore(db_path_for_journal(journal_path), journal_path=journal_path)
+            except Exception:  # noqa: BLE001 - never let store setup block research
+                logger.warning("Trial store unavailable; continuing without dedup/recording", exc_info=True)
+                self.trial_store = None
 
     def run(self, symbols: List[str], start: datetime, end: datetime) -> ResearchResult:
         cfg = self.config
@@ -179,7 +220,8 @@ class ResearchAgent:
             rounds += 1
             tokens_used += proposal.tokens_used
 
-            verdict = self._evaluate(proposal, symbols, start, research_end, n_trials_cumulative)
+            n_trials_offset = n_trials_cumulative
+            verdict = self._evaluate(proposal, symbols, start, research_end, n_trials_offset)
             if verdict is None:
                 dry += 1
                 history.append({"round": rounds, "rejected": True})
@@ -187,28 +229,59 @@ class ResearchAgent:
 
             result, cls, full_params = verdict
             n_trials_cumulative = result.n_trials_total
+            # In-sample median is recorded for contrast only - selection is OOS-only
+            # (guardrail 1). It is what makes the IS -> OOS collapse legible.
+            is_sharpe = float(
+                median([fr.is_metrics.get("sharpe_ratio", 0.0) for fr in result.folds] or [0.0])
+            )
             oos_sharpe = result.median_oos("sharpe_ratio")
             oos_dd = result.oos_aggregate.get("max_drawdown", 0.0)
             gate_report = result.gate_report(cfg.gates)
             promotable = gate_report["promotable"]
             advanced = promotable and self._beats_incumbent(oos_sharpe, oos_dd, incumbent)
 
-            self._journal(
-                "trial",
-                {
-                    "session_id": self.session_id,
-                    "round": rounds,
-                    "kind": proposal.kind,
-                    "hypothesis": proposal.hypothesis,
-                    "params": full_params,
-                    "oos_sharpe": oos_sharpe,
-                    "oos_max_drawdown": oos_dd,
-                    "oos_aggregate": result.oos_aggregate,
-                    "promotable": promotable,
-                    "advanced": advanced,
-                    "n_trials_cumulative": n_trials_cumulative,
-                    "tokens_used": tokens_used,
-                },
+            trial_payload = {
+                "session_id": self.session_id,
+                "round": rounds,
+                "kind": proposal.kind,
+                "hypothesis": proposal.hypothesis,
+                "params": full_params,
+                "is_sharpe": is_sharpe,
+                "oos_sharpe": oos_sharpe,
+                "efficiency": result.median_efficiency(),
+                "oos_max_drawdown": oos_dd,
+                "oos_aggregate": result.oos_aggregate,
+                "gate_report": gate_report,
+                "promotable": promotable,
+                "advanced": advanced,
+                "n_trials_cumulative": n_trials_cumulative,
+                "tokens_used": tokens_used,
+            }
+            # Persist this round's own dated OOS return series in the
+            # journal too (not just the trial store) - rebuild() must be able to
+            # restore it from the journal alone, the sole source of truth.
+            if result.oos_returns is not None and len(result.oos_returns):
+                trial_payload["oos_returns"] = {
+                    "dates": [d.isoformat() for d in result.oos_returns.index],
+                    "values": [float(v) for v in result.oos_returns.to_numpy()],
+                }
+            trial_run_id = self._journal("trial", trial_payload)
+            self._record_trial_row(
+                trial_run_id,
+                symbols,
+                start,
+                research_end,
+                full_params,
+                result,
+                # Same resolution _evaluate's dedup check used - a proposal naming
+                # a different registered strategy must be recorded (and later
+                # deduped) under that strategy, not the session's default.
+                strategy=proposal.strategy or self.strategy_name,
+                is_sharpe=is_sharpe,
+                oos_sharpe=oos_sharpe,
+                oos_dd=oos_dd,
+                promotable=promotable,
+                n_trials_offset=n_trials_offset,
             )
             history.append(
                 {
@@ -232,6 +305,7 @@ class ResearchAgent:
                     gate_report=gate_report,
                     n_trials_at_selection=n_trials_cumulative,
                     strategy_cls=cls,
+                    oos_returns=result.oos_returns,
                 )
                 shortlist.append(candidate)
                 shortlist.sort(key=lambda c: c.oos_metrics.get("sharpe_ratio", 0.0), reverse=True)
@@ -278,7 +352,7 @@ class ResearchAgent:
             try:
                 cls: Type[Strategy] = load_strategy_from_code(proposal.code)
             except Exception as exc:  # noqa: BLE001 - rejection, not crash
-                self._journal("reject", {"reason": f"sandbox: {exc}"})
+                self._journal("reject", {"reason": f"sandbox: {exc}", "hypothesis": proposal.hypothesis})
                 return None
             ok, reason = validate_hygiene(proposal, cls)
         else:
@@ -291,7 +365,47 @@ class ResearchAgent:
             )
             return None
 
-        validator = WalkForwardValidator(cls, self.data_client, cfg.capital, self.seed, cfg.gates)
+        # Dedup: a "tune" proposal that repeats an exact prior config
+        # for this strategy/universe/window is the same lottery ticket checked
+        # twice - reject it before it burns a walk-forward. Code proposals define
+        # a new mechanism each time, so params alone don't identify a repeat.
+        if proposal.kind != "code" and self.trial_store is not None:
+            full_params = self._full_params(cls, proposal.params)
+            if self.trial_store.seen(
+                strategy=proposal.strategy or self.strategy_name,
+                params=full_params,
+                symbols=symbols,
+                window_start=start,
+                window_end=research_end,
+                accounting=ACCOUNTING_VERSION,
+            ):
+                self._journal(
+                    "reject",
+                    {
+                        "reason": "duplicate: identical config already tried this campaign",
+                        "hypothesis": proposal.hypothesis,
+                        "params": full_params,
+                    },
+                )
+                return None
+
+        try:
+            return self._validate(proposal, cls, symbols, start, research_end, n_trials_offset)
+        except BacktestError as exc:
+            # Unrunnable is not the same as unprofitable. Journal it as its own
+            # rejection so a broken proposal can never be scored as "no edge".
+            self._journal(
+                "reject",
+                {"reason": f"unrunnable: {exc}", "hypothesis": proposal.hypothesis, "kind": proposal.kind},
+            )
+            return None
+
+    def _validate(self, proposal: Proposal, cls, symbols, start, research_end, n_trials_offset):
+        """Run the walk-forward validation for an already hygiene-cleared proposal."""
+        cfg = self.config
+        validator = WalkForwardValidator(
+            cls, self.data_client, cfg.capital, self.seed, cfg.gates, cfg.cost_model
+        )
         if proposal.kind == "code":
             # A new mechanism: let the optimizer search its PARAM_RANGES OOS.
             result = validator.run(
@@ -337,6 +451,7 @@ class ResearchAgent:
                 self.config.capital,
                 self.seed,
                 self.config.gates,
+                self.config.cost_model,
             )
             candidate.holdout_metrics = validator.score_window(
                 symbols,
@@ -368,6 +483,8 @@ class ResearchAgent:
             )
             candidate.saved_path = str(path)
             saved.append(str(path))
+            if self.config.bootstrap_skill:
+                candidate.bootstrap_skill = self._bootstrap_skill_for(candidate, symbols, n_trials_total)
             self._journal(
                 "holdout_score",
                 {
@@ -375,9 +492,32 @@ class ResearchAgent:
                     "candidate": candidate.id,
                     "holdout_metrics": candidate.holdout_metrics,
                     "saved": str(path),
+                    "bootstrap_skill": candidate.bootstrap_skill,
                 },
             )
         return saved
+
+    def _bootstrap_skill_for(
+        self, candidate: Candidate, symbols, n_trials_total: int
+    ) -> Optional[Dict[str, Any]]:
+        """Advisory-only: own p from this candidate's OOS return
+        series, next to the family p from every trial this session (and prior
+        sessions) has recorded for its strategy/universe. Never influences
+        keep/discard - a best-effort annotation on the final shortlist only."""
+        try:
+            from src.services.analysis import compute_bootstrap_skill
+
+            return compute_bootstrap_skill(
+                candidate.oos_returns,
+                candidate.strategy,
+                symbols,
+                n_trials_total,
+                candidate.oos_metrics,
+                journal_path=self.journal_path,
+            )
+        except Exception:  # noqa: BLE001 - advisory only, must never break finalize
+            logger.warning("Bootstrap-skill annotation failed for a shortlisted candidate", exc_info=True)
+            return None
 
     # ------------------------------------------------------------------ #
     # Helpers
@@ -407,5 +547,67 @@ class ResearchAgent:
             return f"{proposal.parent_id}->v"
         return incumbent.lineage + ".m" if incumbent else "root"
 
-    def _journal(self, event: str, payload: Dict[str, Any]) -> None:
-        audit_log(f"research:{event}", payload, path=self.journal_path)
+    def _journal(self, event: str, payload: Dict[str, Any]) -> str:
+        run_id = audit_log(f"research:{event}", payload, path=self.journal_path)
+        if self.observer is not None:
+            # An observer must never be able to break the research loop.
+            try:
+                self.observer(event, payload)
+            except Exception:  # noqa: BLE001 - narration is not load-bearing
+                logger.debug("research observer raised; continuing", exc_info=True)
+        return run_id
+
+    def _record_trial_row(
+        self,
+        run_id: str,
+        symbols,
+        start,
+        research_end,
+        full_params: Dict[str, Any],
+        result,
+        *,
+        strategy: str,
+        is_sharpe: float,
+        oos_sharpe: float,
+        oos_dd: float,
+        promotable: bool,
+        n_trials_offset: int,
+    ) -> None:
+        """Dual-write this round's trial into the trial store, keyed
+        on the same ``run_id`` the journal line just got - so a later rebuild
+        replaying that line is a no-op, not a duplicate.
+
+        Best-effort: the store is derived, never authoritative, so a write
+        failure here must never break the research loop.
+        """
+        try:
+            self.trial_store.record(
+                id=run_id,
+                kind="research",
+                strategy=strategy,
+                symbols=symbols,
+                params=full_params,
+                accounting=ACCOUNTING_VERSION,
+                session_id=self.session_id,
+                window_start=start,
+                window_end=research_end,
+                is_sharpe=is_sharpe,
+                oos_sharpe=oos_sharpe,
+                oos_profit_factor=result.oos_aggregate.get("profit_factor"),
+                oos_max_dd=oos_dd,
+                deflated_sharpe=result.oos_aggregate.get("deflated_sharpe_ratio"),
+                efficiency=result.median_efficiency(),
+                oos_trades=result.oos_aggregate.get("total_trades"),
+                promotable=promotable,
+                n_trials_in_session=result.n_trials_total - n_trials_offset,
+                git_sha=config_store.current_git_sha(),
+                metrics_full=result.oos_aggregate,
+            )
+            if result.oos_returns is not None and len(result.oos_returns):
+                self.trial_store.record_returns(
+                    run_id,
+                    [d.isoformat() for d in result.oos_returns.index],
+                    [float(v) for v in result.oos_returns.to_numpy()],
+                )
+        except Exception:  # noqa: BLE001 - the journal append above already succeeded
+            logger.warning("Trial store dual-write failed for a research trial", exc_info=True)

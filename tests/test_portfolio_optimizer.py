@@ -8,6 +8,7 @@ infeasibility detection, and constraint preservation.
 from datetime import datetime
 
 import numpy as np
+import pytest
 
 from src.alphas.base import Alpha
 from src.marketdata.client import MarketDataClient
@@ -26,6 +27,10 @@ ALPHA = np.array([0.06, 0.02, -0.01, 0.04])
 
 def _alphas() -> list:
     return [Alpha(s, float(ALPHA[i]), AS_OF, 0.2, 0.05, 0.0) for i, s in enumerate(SYMS)]
+
+
+def _alphas_from(vec) -> list:
+    return [Alpha(s, float(vec[i]), AS_OF, 0.2, 0.05, 0.0) for i, s in enumerate(SYMS)]
 
 
 def _risk() -> RiskMatrix:
@@ -111,7 +116,7 @@ def test_min_weight_must_not_exceed_max_weight():
         MeanVarianceOptimizer(max_weight=0.2, min_weight=0.3)
 
 
-# --- capacity (009) ----------------------------------------------------------
+# --- capacity ------------------------------------------------------------------
 def test_capacity_is_liquidity_sensitive():
     from src.services.analysis import _capacity
     from tests.fakes import make_ohlcv
@@ -141,3 +146,202 @@ def test_construct_portfolio_independent_of_post_as_of_bars():
     b = analysis.construct_portfolio(MarketDataClient(DictMarketData(full)), "ma_crossover", symbols, as_of)
     assert a["weights"] == b["weights"]
     assert a["diagnostics"] == b["diagnostics"]
+
+
+# --- benchmark-relative construction --------------------------------------------
+W_B = {"A": 0.4, "B": 0.3, "C": 0.2, "D": 0.1}
+
+
+def test_reduction_no_benchmark_matches_todays_behavior():
+    """Without benchmark_weights every quantity is byte-identical to the
+    plain cash-relative solve - the same reduction pattern."""
+    plain = MeanVarianceOptimizer(max_weight=1.0).optimize(_alphas(), _risk(), risk_aversion=2.0)
+    zero_bench = MeanVarianceOptimizer(max_weight=1.0).optimize(
+        _alphas(), _risk(), risk_aversion=2.0, benchmark_weights={s: 0.0 for s in SYMS}
+    )
+    assert plain.weights == zero_bench.weights
+    assert plain.diagnostics == zero_bench.diagnostics
+    assert "has_benchmark" not in plain.diagnostics
+
+
+def test_round_trip_implied_returns_recovers_the_benchmark():
+    """optimize(implied_returns(w_B, Σ, μ_B), Σ, w_B) -> w = w_B."""
+    from src.portfolio.benchmark import implied_returns
+
+    mu = implied_returns(W_B, _risk(), mu_b=0.05)
+    result = MeanVarianceOptimizer(max_weight=1.0).optimize(
+        _alphas_from([mu[s] for s in SYMS]), _risk(), risk_aversion=1.0, benchmark_weights=W_B
+    )
+    assert result.feasible
+    for s in SYMS:
+        assert abs(result.weights.get(s, 0.0) - W_B[s]) < 1e-6
+
+
+def test_zero_alpha_from_benchmark_holdings_is_a_no_trade():
+    """Hidden factor 4: w0 = w_B with zero alphas -> zero trades."""
+    zero = [Alpha(s, 0.0, AS_OF, 0.2, 0.05, 0.0) for s in SYMS]
+    result = MeanVarianceOptimizer(max_weight=1.0).optimize(
+        zero, _risk(), risk_aversion=1.0, benchmark_weights=W_B, current_weights=W_B
+    )
+    assert result.diagnostics["turnover"] < 1e-6
+
+
+def test_zero_alpha_from_cash_buys_the_benchmark():
+    """Hidden factor 4: w0 = cash with zero alphas -> the solve buys the benchmark,
+    paying cost while expected active return stays zero (indexing costs money)."""
+    zero = [Alpha(s, 0.0, AS_OF, 0.2, 0.05, 0.0) for s in SYMS]
+    result = MeanVarianceOptimizer(max_weight=1.0).optimize(
+        zero, _risk(), risk_aversion=1.0, benchmark_weights=W_B, current_weights={}
+    )
+    for s in SYMS:
+        assert abs(result.weights.get(s, 0.0) - W_B[s]) < 1e-6
+    assert result.diagnostics["turnover"] > 0.9
+    assert abs(result.diagnostics["expected_active_return"]) < 1e-9
+
+
+def test_neutralization_alpha_dot_wb_is_zero_and_unconstrained_beta_vanishes():
+    """After 3.3, α_neutralᵀw_B = 0 exactly, so the *unconstrained* optimum (no
+    box/budget) carries no benchmark tilt - box+budget always applies in the
+    constrained solve (there's no cardinality-free way to turn them off through
+    the public API), so this checks ``unconstrained_weights``, not ``weights``:
+    any residual β_a in the constrained result comes from box/budget/cardinality,
+    which is exactly what the underweight-bound test below exercises."""
+    wb = np.array([W_B[s] for s in SYMS])
+    beta = (SIGMA @ wb) / (wb @ SIGMA @ wb)
+    alpha_neutral = ALPHA - beta * (ALPHA @ wb)
+    assert abs(alpha_neutral @ wb) < 1e-9
+
+    result = MeanVarianceOptimizer(max_weight=1.0).optimize(
+        _alphas(), _risk(), risk_aversion=1.0, benchmark_weights=W_B
+    )
+    w_star = np.array([result.unconstrained_weights[s] for s in SYMS])
+    active_beta_unconstrained = beta @ (w_star - wb)
+    assert abs(active_beta_unconstrained) < 1e-9
+
+
+def test_te_truth_and_the_beta_residual_split():
+    """Reported ψ equals √(w_aᵀΣw_a) recomputed independently; β_a²σ_B² + ω² sums
+    exactly to ψ² (the "TE truth" property)."""
+    result = MeanVarianceOptimizer(max_weight=0.5).optimize(
+        _alphas(), _risk(), target_te=0.05, benchmark_weights=W_B
+    )
+    w = np.array([result.weights.get(s, 0.0) for s in SYMS])
+    wb = np.array([W_B[s] for s in SYMS])
+    wa = w - wb
+    psi = float(np.sqrt(wa @ SIGMA @ wa))
+    assert abs(result.diagnostics["predicted_tracking_error"] - psi) < 1e-9
+
+    d = result.diagnostics
+    split = d["active_beta"] ** 2 * d["benchmark_variance"] + d["residual_risk"] ** 2
+    assert abs(split - psi**2) < 1e-9
+
+
+def test_underweight_bound_pins_active_weight_to_minus_benchmark():
+    """A strongly negative alpha on a small-w_B name pins w = 0, hence
+    w_a = -w_B (the constraint a market-neutral book relaxes)."""
+    hostile = ALPHA.copy()
+    hostile[3] = -1.0  # symbol D, w_B=0.1: make it maximally unattractive
+    result = MeanVarianceOptimizer(max_weight=0.5).optimize(
+        _alphas_from(hostile), _risk(), target_te=0.05, benchmark_weights=W_B
+    )
+    assert result.weights.get("D", 0.0) < 1e-9  # pinned to 0 -> w_a = -w_B,D
+
+
+def test_self_benchmark_degeneracy_warns():
+    """Hidden factor 5: w0 == w_B makes ψ measure "distance from myself"."""
+    result = MeanVarianceOptimizer(max_weight=1.0).optimize(
+        _alphas(), _risk(), risk_aversion=1.0, benchmark_weights=W_B, current_weights=W_B
+    )
+    assert result.diagnostics["self_benchmark_warning"] is True
+
+    elsewhere = MeanVarianceOptimizer(max_weight=1.0).optimize(
+        _alphas(), _risk(), risk_aversion=1.0, benchmark_weights=W_B, current_weights={}
+    )
+    assert elsewhere.diagnostics["self_benchmark_warning"] is False
+
+
+# --- construct_portfolio integration ---------------------------------------------
+def test_construct_portfolio_reduction_without_benchmark_holdings():
+    """No benchmark_holdings -> byte-identical to the cash-relative solve (the
+    same reduction pattern, at the service layer)."""
+    symbols = [f"S{i}" for i in range(8)]
+    bars = {s: make_ohlcv(n=400, seed=i, freq="1D") for i, s in enumerate([*symbols, "SPY"])}
+    as_of = bars["S0"].index[-1].to_pydatetime()
+    client = MarketDataClient(DictMarketData(bars))
+
+    plain = analysis.construct_portfolio(client, "ma_crossover", symbols, as_of)
+    assert plain["benchmark_portfolio"] is None
+    assert "has_benchmark" not in plain["diagnostics"]
+
+
+def test_construct_portfolio_equal_benchmark_is_fully_covered():
+    symbols = [f"S{i}" for i in range(8)]
+    bars = {s: make_ohlcv(n=400, seed=i, freq="1D") for i, s in enumerate([*symbols, "SPY"])}
+    as_of = bars["S0"].index[-1].to_pydatetime()
+    client = MarketDataClient(DictMarketData(bars))
+
+    result = analysis.construct_portfolio(
+        client, "ma_crossover", symbols, as_of, benchmark_holdings="equal", benchmark_premium=0.05
+    )
+    assert result["feasible"]
+    bp = result["benchmark_portfolio"]
+    assert bp["coverage"] == pytest.approx(1.0)
+    assert bp["uncovered_weight"] == pytest.approx(0.0)
+    assert result["diagnostics"]["has_benchmark"] is True
+    assert set(bp["consensus_returns"]) == set(symbols)
+
+    # Value-added identity (SR_P² ≈ SR_B² + IR²) is reported and self-consistent.
+    vai = bp["value_added_identity"]
+    assert vai["sr_portfolio_predicted"] == pytest.approx((vai["sr_benchmark"] ** 2 + vai["ir"] ** 2) ** 0.5)
+
+
+def test_construct_portfolio_file_benchmark_reports_partial_coverage(tmp_path):
+    symbols = [f"S{i}" for i in range(8)]
+    bars = {s: make_ohlcv(n=400, seed=i, freq="1D") for i, s in enumerate([*symbols, "SPY"])}
+    as_of = bars["S0"].index[-1].to_pydatetime()
+    client = MarketDataClient(DictMarketData(bars))
+
+    path = tmp_path / "bench.csv"
+    path.write_text("symbol,weight\nS0,0.5\nS1,0.3\nNOT_IN_UNIVERSE,0.2\n")
+    result = analysis.construct_portfolio(
+        client, "ma_crossover", symbols, as_of, benchmark_holdings=str(path), benchmark_premium=0.06
+    )
+    assert result["feasible"]
+    bp = result["benchmark_portfolio"]
+    assert bp["coverage"] == pytest.approx(0.8)
+    assert bp["uncovered_weight"] == pytest.approx(0.2)
+    assert "NOT_IN_UNIVERSE" not in bp["consensus_returns"]
+
+
+# --- CLI --------------------------------------------------------------------------
+def test_cli_allocate_utility_with_benchmark_holdings(monkeypatch, tmp_path, capsys):
+    import main
+
+    symbols = [f"S{i}" for i in range(8)]
+    bars = {s: make_ohlcv(n=400, seed=i, freq="1D") for i, s in enumerate([*symbols, "SPY"])}
+    as_of = bars["S0"].index[-1].to_pydatetime()
+    client = MarketDataClient(DictMarketData(bars))
+    monkeypatch.setattr(main, "build_data_and_broker", lambda: (None, client))
+
+    args = main.build_parser().parse_args(
+        [
+            "allocate",
+            "--objective",
+            "utility",
+            "--strategy",
+            "ma_crossover",
+            "--symbols",
+            ",".join(symbols),
+            "--as-of",
+            as_of.strftime("%Y-%m-%d"),
+            "--benchmark-holdings",
+            "equal",
+            "--benchmark-premium",
+            "0.06",
+        ]
+    )
+    args.func(args)
+    out = capsys.readouterr().out
+    assert "benchmark 'equal'" in out
+    assert "consensus returns" in out
+    assert "active beta" in out

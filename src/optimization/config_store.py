@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from src.engine.backtest import ACCOUNTING_VERSION
+
 logger = logging.getLogger(__name__)
 
 #: Default directory for saved configs (gitignored).
@@ -37,10 +39,27 @@ class Provenance:
     git_sha: Optional[str] = None
     timestamp: Optional[str] = None
     notes: str = ""
+    #: Engine accounting model behind ``oos_metrics``. Defaults to 1 so a config
+    #: written before this field existed loads as the original accounting model —
+    #: which is exactly what it is. :func:`build_provenance` always stamps the
+    #: current version.
+    accounting: int = 1
 
 
 def current_git_sha() -> Optional[str]:
-    """Best-effort short git SHA of the working tree; ``None`` if unavailable."""
+    """Best-effort identifier for the code that produced a result; ``None`` if unavailable.
+
+    This is a *working-tree* identifier, not just ``HEAD``. Callers use it to decide
+    whether a stored trial may be served instead of re-run, and HEAD alone cannot
+    answer that: uncommitted edits leave the SHA untouched, so a strategy edited but
+    not committed would match its own pre-edit result and be served as though the
+    change had been evaluated. That is the one thing the guard exists to prevent, and
+    it would fire exactly when iterating, which is when the tree is dirty.
+
+    So a dirty tree gets a ``-dirty`` suffix, which matches no stored row and forces a
+    fresh run. Failing toward a redundant run is always safe; silently skipping one
+    never is.
+    """
     try:
         out = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
@@ -49,7 +68,17 @@ def current_git_sha() -> Optional[str]:
             timeout=5,
             check=True,
         )
-        return out.stdout.strip() or None
+        sha = out.stdout.strip()
+        if not sha:
+            return None
+        status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+        return f"{sha}-dirty" if status.stdout.strip() else sha
     except (subprocess.SubprocessError, OSError):
         return None
 
@@ -77,6 +106,7 @@ def build_provenance(
         git_sha=current_git_sha(),
         timestamp=stamp,
         notes=notes,
+        accounting=ACCOUNTING_VERSION,
     )
 
 
@@ -112,8 +142,32 @@ def load_config(path) -> Dict[str, Any]:
     """Load a config JSON written by :func:`save_config`.
 
     The returned ``params`` flow straight into ``strategy_class(params)``.
+
+    Warns when the recorded metrics predate the current accounting model: the
+    params are still valid, but the ``oos_metrics`` beside them were measured a
+    different way and must not be compared against a fresh run.
     """
-    return json.loads(Path(path).read_text())
+    payload = json.loads(Path(path).read_text())
+    stored = (payload.get("provenance") or {}).get("accounting", 1)
+    if stored != ACCOUNTING_VERSION:
+        logger.warning(
+            "%s carries accounting v%s metrics but the engine is v%s — its recorded "
+            "oos_metrics are NOT comparable with a current run. Re-run the config to "
+            "get metrics on the current model.",
+            path,
+            stored,
+            ACCOUNTING_VERSION,
+        )
+    return payload
+
+
+def is_current_accounting(payload: Dict[str, Any]) -> bool:
+    """Whether a loaded config's metrics were produced by the current engine.
+
+    Callers that rank or compare stored results should check this rather than
+    assume every record on disk measured the same thing.
+    """
+    return (payload.get("provenance") or {}).get("accounting", 1) == ACCOUNTING_VERSION
 
 
 def _jsonable(value: Any) -> Any:

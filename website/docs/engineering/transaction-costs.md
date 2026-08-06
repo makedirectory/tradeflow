@@ -59,11 +59,17 @@ profitable when it isn't.
   never depends on future volume. Metrics become net; `total_cost` and the gross
   final capital are reported alongside for the haircut attribution. **Net is the
   default** at the service/CLI layer; `--gross` disables the charge.
-- **Portfolio construction** (008): the proposed turnover is priced through the cost
-  model and reported as a **cost drag** on the expected active return (the ex-post
-  accounting; a name-specific cost term in the objective lands with an SOCP solver).
+- **Portfolio construction** ([engineering](./portfolio-construction#cost-inside-the-objective-cost-aware-by-default)):
+  the cost is priced **inside** the optimizer's objective, not just as an ex-post
+  drag — `turnover_cost_rate` (the linear `cᵢ`) and `impact_coefficient` (the
+  conic `kᵢ`) are the same functions the objective's proximal solve uses, so the
+  optimizer trades a name's alpha against *that name's* cost and a no-trade band
+  emerges from it. This needed no new solver dependency: the cost term's exact
+  proximal operator is closed-form, solved by the same 1-D budget bisection the
+  cost-free projection already used.
 - **Participation cap**: a trade demanding more than ~10% of a day's volume is flagged
-  — the seed of a capacity analysis (how much capital before cost eats the edge).
+  — the seed of a [capacity analysis](./information-analysis#attribution-and-capacity)
+  (how much capital before cost eats the edge).
 
 ## Borrow (short financing)
 
@@ -72,14 +78,13 @@ holding_years` (default 50 bp/yr, `--borrow-bps`). The backtest charges it per s
 position by how long it was held, so a short-heavy strategy isn't silently flattered.
 Long-side margin financing and leverage costs remain out of scope.
 
-## Known gaps
-
-The optimizer uses the linear cost term while the backtest charges the √-law; the gap
-is small and documented. A name-specific cost term inside the optimizer objective
-needs an SOCP solver (the ex-post drag report is the v1 stand-in).
-
 ## Where it runs
 
-`ParametricCostModel` in `src/costs/`. Surfaced as backtest flags (`--gross`,
-`--commission-bps`, `--impact-eta`) and folded into `compute_risk`-adjacent flows; the
-backtest report and the MCP `run_backtest` tool both return net metrics + `total_cost`.
+`ParametricCostModel` in `src/costs/` — the single source of the √-impact
+coefficient, shared by the backtest and the [cost-aware
+optimizer](./portfolio-construction#cost-inside-the-objective-cost-aware-by-default)
+so the two price the same model. Surfaced as backtest flags (`--gross`,
+`--commission-bps`, `--impact-eta`), `allocate --objective utility`'s
+`--gross-objective`/`--holding-period`/`--capital`, and folded into
+`compute_risk`-adjacent flows; the backtest report and the MCP `run_backtest`
+tool both return net metrics + `total_cost`.

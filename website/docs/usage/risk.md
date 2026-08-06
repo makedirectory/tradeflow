@@ -62,4 +62,42 @@ universe grows relative to the history).
 - **Ragged universes.** Names with too little history are kept with a fallback
   (median variance, independent) rather than dropped silently.
 
+## Conditional risk
+
+`--conditional ewma` or `--conditional har` conditions Σ's **volatilities** on
+recent history (holding the correlation structure slow), so a book targeting a
+tracking error is measured against *current* risk instead of a flat
+trailing-window average:
+
+```bash
+python main.py risk --symbols NVDA,AAPL,META,AMD,TSLA --as-of 2025-06-01 --conditional ewma
+```
+
+```
+Risk model 'shrinkage' as of 2025-06-01 (1Day returns)
+  names 5  shrinkage δ 0.28
+  condition number 9.1  PD True  mean corr 0.38  eq-weight vol 22.4%
+  conditional (ewma, λ=0.94): mean σ_t/σ_unconditional = 1.31
+```
+
+`mean σ_t/σ_unconditional` is how stressed the book is right now relative to its
+own trailing average — above 1 means recent vol is running hot.
+
+**Default off.** Before turning it on, run the evidence gate that decides
+whether conditioning is actually worth it for your universe:
+
+```bash
+python main.py risk --symbols NVDA,AAPL,META,AMD,TSLA --evaluate-conditional
+```
+
+This compares EWMA/HAR against the unconditional trailing baseline on two
+prongs — Mincer–Zarnowitz calibration and QLIKE loss — both required to point
+the same way before the gate passes. `info --conditional-ab` runs the
+complementary **net-of-cost** check: the same alpha book, walked forward,
+conditional vs unconditional Σ, decided by realized net IR, not TE-tracking
+alone (a Σ that tracks TE better but churns the book to death should lose
+there). See
+[Risk model — conditional risk (engineering)](../engineering/risk-model#conditional-risk)
+for why the default is off on this repo's own demo data.
+
 The same computation is available to agents as the read-only MCP tool `compute_risk`.

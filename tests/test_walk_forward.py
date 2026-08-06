@@ -184,3 +184,118 @@ def test_save_and_load_config_round_trip(tmp_path):
     assert loaded["provenance"]["objective"] == "sharpe_ratio"
     assert loaded["provenance"]["n_trials"] == 12
     assert loaded["provenance"]["windows"]["start"] == START.isoformat()
+
+
+def test_cost_model_reaches_both_in_sample_and_out_of_sample_backtests():
+    """A validator built with a cost model charges it on every simulated fill.
+
+    Threading it only into the OOS leg would let the optimizer pick a config on
+    gross returns and then score it net - flattering walk-forward efficiency for
+    a purely mechanical reason.
+    """
+    from src.costs import ParametricCostModel
+
+    client = MarketDataClient(FakeMarketData(["AAA", "BBB"], n=600, freq="1D"))
+    kwargs = dict(
+        symbols=["AAA", "BBB"],
+        start=datetime(2024, 1, 2),
+        end=datetime(2025, 6, 1),
+        n_folds=2,
+        holdout_days=30,
+        method="grid",
+        max_evals=4,
+    )
+
+    gross = WalkForwardValidator(PeriodicStrategy, client, seed=42).run(**kwargs)
+    net = WalkForwardValidator(PeriodicStrategy, client, seed=42, cost_model=ParametricCostModel()).run(
+        **kwargs
+    )
+
+    # Same seed and folds, so any divergence is the cost model doing its job.
+    assert net.folds and gross.folds
+    is_gross = [fr.is_metrics.get("total_return", 0.0) for fr in gross.folds]
+    is_net = [fr.is_metrics.get("total_return", 0.0) for fr in net.folds]
+    assert is_net != is_gross, "costs did not reach the in-sample optimization"
+    assert all(n <= g + 1e-9 for n, g in zip(is_net, is_gross)), "costs must not improve returns"
+
+
+def test_provenance_stamps_the_accounting_model(tmp_path):
+    """Saved metrics record which engine accounting produced them."""
+    from src.engine.backtest import ACCOUNTING_VERSION
+
+    provenance = config_store.build_provenance(
+        method="grid", objective="sharpe_ratio", windows={}, oos_metrics={"sharpe_ratio": 1.0}
+    )
+    assert provenance.accounting == ACCOUNTING_VERSION
+
+    path = config_store.save_config(
+        tmp_path / "c.json", strategy="periodic", params={"buy_every": 3}, provenance=provenance
+    )
+    loaded = config_store.load_config(path)
+    assert loaded["provenance"]["accounting"] == ACCOUNTING_VERSION
+    assert config_store.is_current_accounting(loaded)
+
+
+def test_config_predating_the_stamp_is_flagged_not_silently_reused(tmp_path, caplog):
+    """A record with no accounting field predates the field, and saying so is the whole point."""
+    import json
+
+    legacy = {
+        "strategy": "periodic",
+        "params": {"buy_every": 3},
+        # Written before the field existed - no "accounting" key.
+        "provenance": {"method": "grid", "oos_metrics": {"sharpe_ratio": 2.0}},
+    }
+    path = tmp_path / "legacy.json"
+    path.write_text(json.dumps(legacy))
+
+    with caplog.at_level("WARNING"):
+        loaded = config_store.load_config(path)
+    assert not config_store.is_current_accounting(loaded)
+    assert "not comparable" in caplog.text.lower()
+    # The params are still perfectly usable; only the recorded metrics are stale.
+    assert loaded["params"]["buy_every"] == 3
+
+
+def test_git_sha_marks_a_dirty_working_tree(monkeypatch):
+    """A dirty tree must not reuse a clean tree's identifier.
+
+    Regression: the identifier came from ``rev-parse HEAD`` alone, so uncommitted
+    edits kept the same SHA. Callers use it to decide whether a stored trial may be
+    served instead of re-run, so an edited-but-uncommitted strategy would match its
+    own pre-edit result and be served as though the change had been evaluated.
+    """
+    import subprocess
+
+    def fake_run(cmd, **kwargs):
+        if "status" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, stdout=" M src/strategies/base.py\n", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="abc1234\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert config_store.current_git_sha() == "abc1234-dirty"
+
+
+def test_git_sha_is_bare_when_the_tree_is_clean(monkeypatch):
+    """The suffix must appear only when there is something uncommitted - otherwise
+    every ordinary run would miss the cache it is meant to protect."""
+    import subprocess
+
+    def fake_run(cmd, **kwargs):
+        if "status" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="abc1234\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert config_store.current_git_sha() == "abc1234"
+
+
+def test_git_sha_is_none_when_git_is_unavailable(monkeypatch):
+    """Still best-effort: no git means no identifier, not a crash."""
+    import subprocess
+
+    def fake_run(cmd, **kwargs):
+        raise OSError("git not found")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert config_store.current_git_sha() is None

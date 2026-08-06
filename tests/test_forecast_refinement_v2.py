@@ -269,7 +269,7 @@ def test_combined_path_owns_level_shrink_and_does_not_double_apply():
     )
     chain = res["shrink_chain"]
     ic_steps = [s for s in chain if s["step"] == "ic_uncertainty"]
-    assert len(ic_steps) == 1  # exactly one "is the IC real" step (013 owns it here)
+    assert len(ic_steps) == 1  # exactly one "is the IC real" step (combination owns it here)
     assert ic_steps[0]["owner"] == "combination_shrink"
 
 

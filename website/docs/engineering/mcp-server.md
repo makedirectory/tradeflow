@@ -59,13 +59,29 @@ service function, logs the call, and returns JSON. The exposed surface:
 - Propose (writes a file, never live state): `save_config`, `load_config`,
   `list_configs`
 
-:::note Known gap
-The research tools don't expose the CLI's `neutralize_factors` parameter yet
-([factor-neutral alphas](./alphas.md#neutralization)) — their results echo a
-`neutralized_against` field, but via this surface it is always empty. Wiring the
-parameter through the tool signatures is a small follow-up for when the agent
-surface needs it.
-:::
+## Known gap
+
+The MCP tool surface lags the CLI/service layer on several parameters that
+landed after the initial tool signatures were written:
+
+- `neutralize_factors` ([factor-neutral alphas](./alphas.md#neutralization)) —
+  results echo a `neutralized_against` field, but via this surface it is always
+  empty.
+- `construct_portfolio`'s cost-aware knobs (`cost_aware`, `capital`,
+  `holding_period_years`), `book`/`gross_leverage`/`short_max_weight`
+  ([long/short](./portfolio-construction.md#longshort---book-market-neutral)),
+  `benchmark_holdings` ([benchmark-relative](./portfolio-construction.md#benchmark-relative-construction---benchmark-holdings)),
+  `conditional` ([conditional risk](./risk-model.md#conditional-risk)),
+  `posterior` ([Black–Litterman](./portfolio-construction.md#blacklitterman---posterior-bl)),
+  and `policy`/`trade_rate` ([multi-period trading](./multi-period-trading.md)) —
+  the tool still solves the pre-016 cost-blind, cash-relative, long-only book.
+- `compute_attribution`, `run_conditional_risk_ab`, `run_policy_ab`,
+  `evaluate_conditional_risk`, and the trial store are not exposed as tools at
+  all.
+
+Wiring these through is a small, mechanical follow-up for whenever the agent
+surface needs them — the underlying service functions already support
+everything; only `src/mcp/server.py`'s tool signatures are behind.
 
 ## The hard wall
 

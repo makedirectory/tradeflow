@@ -28,6 +28,13 @@ reports the fit `R²` — a low `R²` means the decay isn't a clean exponential,
 over-trust the half-life. Because value added scales with IR², the **value-added
 half-life is half the IC half-life** — stale alphas are more damaging than they look.
 
+The fit also reports a confidence band on the half-life (`half_life_lower` /
+`half_life_upper`, from the regression's own slope standard error) — short
+histories give wide bands, and a point estimate alone invites over-trusting a
+noisy fit. The [multi-period trading policy](./multi-period-trading) uses the
+upper (slower-decay) bound when discounting alphas, so a shaky short-history
+estimate doesn't prematurely kill a signal that's actually persistent.
+
 ## Cadence and the breadth↔frequency tradeoff
 
 ```
@@ -37,8 +44,7 @@ IR(Δt) = IC(Δt) · √(1/Δt)
 Rebalancing faster raises `√BR` but acts on less-confirmed information (lower `IC`) and
 costs more. The optimum is interior: `recommended_cadence` returns the `Δt` that
 maximizes this IR proxy, so the cadence is *chosen*, not assumed. The half-life is also
-the holding period [transaction cost](./transaction-costs) should be amortized over —
-closing that spec's "what holding period?" gap.
+the holding period [transaction cost](./transaction-costs) should be amortized over.
 
 ## The optimal current/lagged blend
 
@@ -52,6 +58,16 @@ w_now = (1 − γ·ρ) / (1 + γ² − 2·γ·ρ)        w_lag = 1 − w_now
 - `δ > ρ` → **diversify**: `w_lag > 0` — the lag carries independent information.
 - `δ < ρ` → **hedge**: `w_lag < 0` — it mostly cancels current noise.
 - `δ = ρ` → the latest signal alone is sufficient.
+
+:::note Superseded by the multi-period trading policy
+This two-point blend was the first, ad-hoc answer to "should I slow down
+trading into a decaying signal?" The
+[multi-period trading policy](./multi-period-trading) (`allocate --policy aim`)
+generalizes it into a continuous decay discount composed with the optimizer's
+own no-trade band — the blend here is the degenerate two-point special case.
+Prefer `--policy aim` for new work; this report's recommendation stays accurate
+on its own terms either way.
+:::
 
 ## Matching signal to return horizon
 

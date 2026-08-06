@@ -8,10 +8,21 @@ Research-clock only: Σ sizes conviction, it never reaches the order path.
 """
 
 from src.risk.base import RiskMatrix, RiskModel, build_return_panel, build_risk_matrix
+from src.risk.conditional import (
+    condition_risk_matrix,
+    default_lambda,
+    evaluate_vol_forecasts,
+    mincer_zarnowitz,
+    qlike_loss,
+    turnover_risk_share,
+)
 from src.risk.exposures import FACTOR_NAMES, build_factor_exposures
 from src.risk.factor import FactorRiskMatrix, build_factor_risk_matrix, estimate_factor_model
 from src.risk.sample import LedoitWolfCovariance, SampleCovariance
 from src.risk.streaming import streaming_factor_risk_matrix, streaming_sample_covariance
+
+#: Conditional-vol backends accepted by ``build_risk_matrix``/``build_factor_risk_matrix``.
+CONDITIONAL_VOL_MODELS = ("ewma", "har")
 
 #: Statistical estimators by name (the `RiskModel.estimate` interface).
 RISK_MODELS = {
@@ -39,4 +50,11 @@ __all__ = [
     "build_factor_risk_matrix",
     "streaming_sample_covariance",
     "streaming_factor_risk_matrix",
+    "condition_risk_matrix",
+    "default_lambda",
+    "evaluate_vol_forecasts",
+    "mincer_zarnowitz",
+    "qlike_loss",
+    "turnover_risk_share",
+    "CONDITIONAL_VOL_MODELS",
 ]

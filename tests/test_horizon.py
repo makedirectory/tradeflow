@@ -2,6 +2,8 @@
 
 from datetime import datetime
 
+import numpy as np
+
 from src.alphas.horizon import (
     blend_weights,
     fit_decay,
@@ -30,6 +32,35 @@ def test_peak_horizon_tracks_half_life():
 
 def test_fit_decay_handles_degenerate_profile():
     assert fit_decay({0: 0.05})["delta"] != fit_decay({0: 0.05})["delta"]  # NaN (too few points)
+
+
+# --- decay confidence interval ------------------------------------------------
+def test_fit_decay_ci_brackets_the_point_estimate():
+    ic0, delta = 0.08, 0.85
+    profile = {n: ic0 * delta**n for n in range(0, 10)}
+    fit = fit_decay(profile)
+    # A clean noiseless exponential still has finite-sample SE from np.polyfit's
+    # residuals (near machine epsilon here) - the CI should be a tight bracket
+    # around, not equal to, the point estimate.
+    assert fit["half_life_lower"] <= fit["half_life"] <= fit["half_life_upper"]
+
+
+def test_fit_decay_ci_widens_with_noise():
+    rng = np.random.default_rng(0)
+    ic0, delta = 0.08, 0.85
+    clean = {n: ic0 * delta**n for n in range(0, 10)}
+    noisy = {n: max(v * float(rng.normal(1.0, 0.4)), 1e-4) for n, v in clean.items()}
+    clean_fit = fit_decay(clean)
+    noisy_fit = fit_decay(noisy)
+    clean_width = clean_fit["half_life_upper"] - clean_fit["half_life_lower"]
+    noisy_width = noisy_fit["half_life_upper"] - noisy_fit["half_life_lower"]
+    assert noisy_width > clean_width
+
+
+def test_fit_decay_ci_is_nan_below_three_points():
+    fit = fit_decay({0: 0.08, 1: 0.07})  # 2 points: slope defined, SE isn't (n-2=0)
+    assert fit["decay_slope_se"] != fit["decay_slope_se"]  # NaN
+    assert fit["half_life_lower"] == fit["half_life"] == fit["half_life_upper"]
 
 
 # --- blend regimes -----------------------------------------------------------

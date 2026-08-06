@@ -7,18 +7,27 @@ safety model.
 """
 
 import logging
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from src.marketdata.client import MarketDataClient
 
 logger = logging.getLogger(__name__)
 
 
-def build_data_client() -> MarketDataClient:
+def build_data_client(
+    cache: bool = False, offline: bool = False, cache_dir: Optional[Any] = None
+) -> MarketDataClient:
     """Construct the Alpaca-backed historical data client from settings.
 
     Deliberately constructs no trading client / broker: the
     process that calls this cannot place orders.
+
+    ``cache``/``offline`` opt into the persistent bar cache
+    (:class:`~src.store.bars.CachedMarketData`): ``cache`` wraps the Alpaca
+    provider so repeated requests reuse previously-fetched bars; ``offline``
+    additionally forbids any network call (a request touching an uncached range
+    raises rather than falling through to Alpaca), and implies ``cache`` on its
+    own. Default behavior (neither flag) is unchanged - a plain Alpaca provider.
     """
     from alpaca.data.historical import StockHistoricalDataClient
 
@@ -27,7 +36,12 @@ def build_data_client() -> MarketDataClient:
 
     settings = load_settings()
     historical = StockHistoricalDataClient(settings.alpaca_key, settings.alpaca_secret)
-    return MarketDataClient(AlpacaMarketData(historical, settings.alpaca_key, settings.alpaca_secret))
+    provider = AlpacaMarketData(historical, settings.alpaca_key, settings.alpaca_secret)
+    if cache or offline:
+        from src.store.bars import CachedMarketData
+
+        provider = CachedMarketData(provider, cache_dir=cache_dir, offline=offline)
+    return MarketDataClient(provider)
 
 
 def resolve_universe(

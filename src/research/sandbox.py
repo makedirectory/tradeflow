@@ -29,6 +29,13 @@ from src.strategies.base import Strategy
 #: Hard cap on tunable parameters per strategy (more knobs = more overfit surface).
 MAX_TUNABLE_PARAMS = 5
 
+#: Config keys the execution path reads off every strategy, regardless of mechanism:
+#: ``calculate_position_size`` needs the first two, and the backtest engine and live
+#: trader both read ``take_profit`` when opening a position. A generated strategy that
+#: omits them passes every other check and then raises on the first bar - producing a
+#: zero-trade run that is indistinguishable from "no edge" unless we catch it here.
+REQUIRED_CONFIG_KEYS = ("risk_per_trade", "stop_loss", "take_profit")
+
 #: Import names a generated strategy is allowed to use.
 _ALLOWED_IMPORTS = {
     "pandas",
@@ -139,9 +146,18 @@ def _validate_contract(cls: Type[Strategy]) -> None:
     defaults = {name: spec["default"] for name, spec in cls.PARAM_RANGES.items() if "default" in spec}
     defaults.setdefault("timeframe", getattr(cls, "TIMEFRAME", "1Day"))
     try:
-        cls(dict(defaults))
+        instance = cls(dict(defaults))
     except Exception as exc:  # noqa: BLE001
         raise HygieneError(f"{cls.__name__} does not construct from defaults: {exc}") from exc
+
+    # Sizing and exit handling read these off the config on every bar. Missing keys
+    # would surface as a silent zero-trade run, not an error, so reject here instead.
+    missing = [key for key in REQUIRED_CONFIG_KEYS if key not in instance.config]
+    if missing:
+        raise HygieneError(
+            f"{cls.__name__} does not declare required config {missing} "
+            f"(the execution path reads {list(REQUIRED_CONFIG_KEYS)} on every bar)"
+        )
 
 
 def _guarded_import(name, *args, **kwargs):

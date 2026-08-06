@@ -36,8 +36,11 @@ cross-sectionally, **at each rebalance**:
 - `z_i` — the standardized raw score of name *i*: `z_i = (s_i − mean(s)) / std(s)`,
   so scores have mean 0 and unit dispersion *across the universe*.
 - `IC` — the information coefficient, the correlation skill of the signal
-  (realistically 0.02–0.10). Supplied as a **prior** today; a future
-  information-analysis step will measure it from realized outcomes and feed it back.
+  (realistically 0.02–0.10). Supplied as a **prior** here; [information
+  analysis](./information-analysis) measures it from realized outcomes and
+  reports a `recommended_ic` a human feeds back in, shrunk for its own
+  estimation error (see [forecast refinement v2](#forecast-refinement-v2)
+  below) — nothing auto-tunes this prior.
 - `σ_i` — the annualized residual volatility of name *i* (return minus
   `β_i · benchmark_return`). The risk of the bet that *isn't* just market exposure.
 

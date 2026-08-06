@@ -135,6 +135,7 @@ def build_server(data_client=None):
         beta_sizing: bool = False,
         benchmark: str = "SPY",
         gross: bool = False,
+        force: bool = False,
     ) -> Dict[str, Any]:
         """Backtest `strategy` on `symbols` over [start, end] (YYYY-MM-DD).
 
@@ -142,6 +143,12 @@ def build_server(data_client=None):
         + half-spread + square-root impact; pass gross=True to disable), the trade
         count, total cost, and a path to the trades CSV (trades are not inlined).
         `config` overrides default params.
+
+        Journals this as a trial (same research journal/trial store
+        `python main.py backtest` uses) so it counts toward the campaign's
+        multiple-testing total. An exact prior trial is served instead (result
+        has `memoized: true`) unless `force=True`, which re-runs and appends a
+        new trial rather than overwriting the memoized one.
         """
         inputs = {
             "strategy": strategy,
@@ -152,6 +159,7 @@ def build_server(data_client=None):
             "config": config,
             "beta_sizing": beta_sizing,
             "gross": gross,
+            "force": force,
         }
         result = analysis.run_backtest(
             dc,
@@ -164,6 +172,7 @@ def build_server(data_client=None):
             beta_sizing,
             benchmark,
             gross=gross,
+            force=force,
         )
         return _logged("run_backtest", inputs, result)
 
@@ -178,13 +187,22 @@ def build_server(data_client=None):
         max_evals: int = 50,
         seed: int = 42,
         capital: float = 100_000.0,
+        gross: bool = False,
+        force: bool = False,
     ) -> Dict[str, Any]:
         """Search a strategy's parameters IN-SAMPLE (grid|random|bayesian).
 
         Returns best_params, best_score, and the top-10 configs (full grid -> CSV).
-        IMPORTANT: in-sample results from picking the best of many configs are
-        inflated and are NOT evidence of edge. Always validate with
-        run_walk_forward before trusting them.
+        NET of transaction cost by default (commission + half-spread + square-root
+        impact; pass gross=True to disable) — gross search reliably favors the
+        highest-turnover config. IMPORTANT: in-sample results from picking the
+        best of many configs are inflated and are NOT evidence of edge. Always
+        validate with run_walk_forward before trusting them.
+
+        Each evaluated config is journaled as its own trial (same journal/trial
+        store the CLI uses). A candidate identical to one already scored this
+        campaign is served from the trial store instead of re-run (`n_memoized`
+        in the result) unless `force=True`.
         """
         inputs = {
             "strategy": strategy,
@@ -195,6 +213,8 @@ def build_server(data_client=None):
             "objective": objective,
             "max_evals": max_evals,
             "seed": seed,
+            "gross": gross,
+            "force": force,
         }
         result = analysis.run_optimization(
             dc,
@@ -207,6 +227,8 @@ def build_server(data_client=None):
             max_evals,
             seed,
             capital,
+            gross=gross,
+            force=force,
         )
         return _logged("run_optimization", inputs, result)
 
@@ -228,6 +250,8 @@ def build_server(data_client=None):
         include_pbo: bool = False,
         parameter_sensitivity: bool = False,
         leakage_probe: bool = False,
+        gross: bool = False,
+        force: bool = False,
     ) -> Dict[str, Any]:
         """Honest out-of-sample evaluation across folds - your advancement criterion.
 
@@ -237,6 +261,14 @@ def build_server(data_client=None):
         all configs tried), and the PROMOTION-GATE verdict (pass/fail per gate +
         overall "promotable"). A config advances only if it is promotable - never
         on in-sample Sharpe. include_pbo is expensive; leave it off unless needed.
+        NET of transaction cost by default, in-sample and out (pass gross=True to
+        disable) — gross validation systematically promotes turnover the
+        strategy could not afford live.
+
+        Journals the OOS aggregate as one validated trial. An identical prior
+        validation (same recipe: mode/folds/method/objective/max_evals/seed/cost
+        over the same window) is served instead (result has `memoized: true`)
+        unless `force=True`.
         """
         inputs = {
             "strategy": strategy,
@@ -252,6 +284,8 @@ def build_server(data_client=None):
             "max_evals": max_evals,
             "seed": seed,
             "include_pbo": include_pbo,
+            "gross": gross,
+            "force": force,
         }
         result = analysis.run_walk_forward(
             dc,
@@ -271,6 +305,8 @@ def build_server(data_client=None):
             include_pbo=include_pbo,
             parameter_sensitivity=parameter_sensitivity,
             leakage_probe=leakage_probe,
+            gross=gross,
+            force=force,
         )
         return _logged("run_walk_forward", inputs, result)
 
@@ -369,7 +405,7 @@ def build_server(data_client=None):
         benchmark: str = "SPY",
         max_lag: int = 10,
     ) -> Dict[str, Any]:
-        """Measure an alpha's decay/half-life and recommend cadence + lagged blend (012).
+        """Measure an alpha's decay/half-life and recommend cadence + lagged blend.
 
         Measures the IC-vs-lag profile (alpha at t vs residual return n periods later),
         fits the per-period decay δ and half-life, derives the rebalance cadence that
@@ -431,7 +467,7 @@ def build_server(data_client=None):
         benchmark: str = "SPY",
         capital: Optional[float] = None,
     ) -> Dict[str, Any]:
-        """Construct the mean-variance optimal portfolio from alphas (005) and Σ (006).
+        """Construct the mean-variance optimal portfolio from alphas and Σ.
 
         Maximizes αᵀw − λ·wᵀΣw over long-only, box-bounded, budgeted (optionally
         cardinality-capped) weights, calibrating λ to `target_te`. Returns the proposed
@@ -568,7 +604,16 @@ def _summary(result: Any) -> Dict[str, Any]:
     """A tiny, log-friendly digest of a tool result (no large arrays)."""
     if not isinstance(result, dict):
         return {"type": type(result).__name__, "len": len(result) if hasattr(result, "__len__") else None}
-    keep = ("run_id", "best_score", "total_trades", "n_trials", "n_trials_total", "flagged_count")
+    keep = (
+        "run_id",
+        "best_score",
+        "total_trades",
+        "n_trials",
+        "n_trials_total",
+        "flagged_count",
+        "memoized",
+        "trial_id",
+    )
     digest = {k: result[k] for k in keep if k in result}
     if "gate_report" in result and isinstance(result["gate_report"], dict):
         digest["promotable"] = result["gate_report"].get("promotable")

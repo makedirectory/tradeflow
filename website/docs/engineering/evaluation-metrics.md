@@ -72,3 +72,45 @@ equity curve from bar data is a future enhancement.
 
 Any result with fewer than ~30 trades sets the `low_sample` flag; ratios from a
 handful of trades are noise, not edge.
+
+## Bootstrap skill inference
+
+PSR/DSR are parametric: they assume the Sharpe estimator's asymptotic
+distribution, and DSR needs an *assumed* effective trial count and trial-Sharpe
+variance to approximate "the best of K configs tried." `src/analytics/bootstrap.py`
+is the heavier, definitive check behind `--bootstrap-skill` — it **simulates the
+null instead of assuming it** — not a replacement for PSR/DSR, always shown
+alongside them.
+
+Two questions, two functions:
+
+1. **Is this one track record skill?** `bootstrap_null` imposes the null (demean
+   the return series by its own estimated alpha), then resamples the residual
+   with a **stationary (Politis–Romano) block bootstrap** — never i.i.d., since
+   active returns are autocorrelated and i.i.d. resampling would understate how
+   likely a long lucky streak is. Reports the realized IR's rank in the
+   empirical null distribution: an *own* p-value with no assumption about the
+   return distribution's shape.
+2. **Is the best of the configs actually tried skill?** `reality_check`
+   (White's Reality Check) resamples the **same block indices across every
+   trial's return series at once**, so the cross-trial correlation structure is
+   preserved by construction — DSR has to *assume* a trial-Sharpe variance to
+   approximate this; this replays the actual trials recorded in the
+   [trial store](./walk-forward#the-trial-store). The null distribution is "the
+   best IR among K correlated tries," compared against the actually observed
+   best.
+
+Both report a Monte-Carlo standard error on the p-value and a block-length
+sensitivity check (p at half and double the chosen block length) — a p-value
+that flips across that range is not a result, it's noise dressed as a verdict.
+
+**Own and family are always reported together, never one alone.** A great own
+p and a terrible family p is exactly the selection-luck signature this test
+exists to catch — publishing only the own-track-record number would hide that
+this config was the best of many tried. Family scoring is **advisory**, not
+(yet) a hard promotion gate; see
+[the trial store](./walk-forward#the-trial-store) for why wiring campaign-wide
+counts into a hard gate is a separate, deliberately deferred decision.
+
+`--bootstrap-skill` on `walkforward` and on `info --attribution` both surface
+this; see the [usage guide](../usage/walk-forward.md#nonparametric-skill-check).

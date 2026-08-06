@@ -76,6 +76,18 @@ class ParquetBarStore:
                 table = pa.Table.from_pandas(group, preserve_index=False)
                 pq.write_table(table, part / "part.parquet")
 
+    def delete_symbol(self, symbol: str, timeframe: TimeframeLike = "1Day") -> None:
+        """Remove a symbol's entire cached subtree (all years) for one timeframe.
+
+        The corporate-action lever: a split/dividend backfill invalidates
+        everything cached for a symbol, not just a sub-range, so the next fetch
+        starts clean rather than merging fresh data with stale pre-adjustment bars.
+        """
+        tf = str(Timeframe.parse(timeframe) if isinstance(timeframe, str) else timeframe)
+        sdir = self._symbol_dir(tf, symbol)
+        if sdir.exists():
+            shutil.rmtree(sdir)
+
     # ------------------------------------------------------------------ #
     # Scan (the BarSource contract)
     # ------------------------------------------------------------------ #
