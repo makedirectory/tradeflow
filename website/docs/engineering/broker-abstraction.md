@@ -11,7 +11,7 @@ Alpaca is one implementation of each.
 
 ## The two interfaces
 
-### `Broker` (`src/brokers/base.py`)
+### `Broker` (`tradeflow/brokers/base.py`)
 
 Account reads, the order types the engine uses, and position/order lifecycle:
 
@@ -42,7 +42,7 @@ stop/take orders). `stream_trade_updates` is an *optional* capability — broker
 that can't stream account events simply return `False` from
 `supports_trade_updates`.
 
-### `MarketDataProvider` (`src/marketdata/base.py`)
+### `MarketDataProvider` (`tradeflow/marketdata/base.py`)
 
 ```python
 class MarketDataProvider(ABC):
@@ -60,7 +60,7 @@ adapter maps SDK objects to these.
 
 ## The Alpaca adapter
 
-`src/brokers/alpaca/` is the **only** place `import alpaca` appears
+`tradeflow/brokers/alpaca/` is the **only** place `import alpaca` appears
 (`AlpacaBroker`, `AlpacaMarketData`, and `factory.py`, whose `build_broker` /
 `build_market_data` construct them from credentials — entry points call the
 factories and never touch SDK clients). `AlpacaMarketData` also converts the

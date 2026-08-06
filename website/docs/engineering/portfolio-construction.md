@@ -5,7 +5,7 @@ title: Portfolio construction
 
 # Portfolio construction
 
-`src/portfolio/optimizer.py` turns alphas and risk into the portfolio that maximizes
+`tradeflow/portfolio/optimizer.py` turns alphas and risk into the portfolio that maximizes
 the **information ratio you can actually implement, net of cost**. Where the
 OR-Tools [allocator](./portfolio) maximizes a scalar score subject to constraints —
 and so piles weight onto the highest-scoring names regardless of how correlated

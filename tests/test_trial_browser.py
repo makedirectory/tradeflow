@@ -12,13 +12,13 @@ from datetime import datetime
 
 import pytest
 
-from src.analytics.reporting import (
+from tradeflow.analytics.reporting import (
     NOT_RECORDED,
     format_leaderboard,
     format_trial_detail,
     format_trials_table,
 )
-from src.store.trials import TrialStore
+from tradeflow.store.trials import TrialStore
 
 ACCOUNTING = 3
 
@@ -245,7 +245,7 @@ def test_an_unknown_ranking_is_refused(store):
 # --- trade-table persistence ------------------------------------------------
 def test_trades_round_trip_through_the_journal_alone(tmp_path):
     """The journal is the source of truth: a rebuild must reconstruct the table."""
-    from src.services import audit
+    from tradeflow.services import audit
 
     journal = tmp_path / "journal.jsonl"
     trial_id = audit.journal_trial(
@@ -259,7 +259,7 @@ def test_trades_round_trip_through_the_journal_alone(tmp_path):
         trades={"columns": ["symbol", "pnl"], "rows": [["AAA", 1.5], ["AAA", -0.5]]},
         path=journal,
     )
-    from src.store.trials import db_path_for_journal
+    from tradeflow.store.trials import db_path_for_journal
 
     with TrialStore(db_path_for_journal(journal), journal_path=journal) as s:
         assert s.trades_for(trial_id)["rows"] == [["AAA", 1.5], ["AAA", -0.5]]
@@ -268,8 +268,8 @@ def test_trades_round_trip_through_the_journal_alone(tmp_path):
 
 
 def test_without_the_flag_a_trial_stores_no_trade_table(tmp_path):
-    from src.services import audit
-    from src.store.trials import db_path_for_journal
+    from tradeflow.services import audit
+    from tradeflow.store.trials import db_path_for_journal
 
     journal = tmp_path / "journal.jsonl"
     trial_id = audit.journal_trial(
@@ -290,7 +290,7 @@ def test_a_truncated_trade_table_says_so(tmp_path):
     """A ceiling on stored rows is fine; a silent one is not."""
     import pandas as pd
 
-    from src.services.analysis import trades_payload
+    from tradeflow.services.analysis import trades_payload
 
     frame = pd.DataFrame({"symbol": ["AAA"] * 10, "pnl": range(10)})
     payload = trades_payload(frame, max_rows=4)

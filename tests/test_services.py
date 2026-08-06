@@ -12,11 +12,11 @@ from datetime import datetime
 
 import pytest
 
-from src.analytics.performance import FLAG_KEYS, METRIC_KEYS
-from src.marketdata.client import MarketDataClient
-from src.services import analysis, audit, glossary, registry
-from src.services.audit import audit_log
 from tests.fakes import FakeMarketData
+from tradeflow.analytics.performance import FLAG_KEYS, METRIC_KEYS
+from tradeflow.marketdata.client import MarketDataClient
+from tradeflow.services import analysis, audit, glossary, registry
+from tradeflow.services.audit import audit_log
 
 SYMBOLS = ["AAA", "BBB"]
 START, END = datetime(2024, 1, 2), datetime(2025, 6, 1)
@@ -119,8 +119,8 @@ def test_audit_log_appends_one_record(tmp_path):
 
 
 def test_journal_trial_records_a_normalized_trial(tmp_path):
-    from src.engine.backtest import ACCOUNTING_VERSION
-    from src.services.audit import journal_trial
+    from tradeflow.engine.backtest import ACCOUNTING_VERSION
+    from tradeflow.services.audit import journal_trial
 
     path = tmp_path / "journal.jsonl"
     journal_trial(
@@ -147,7 +147,7 @@ def test_journal_trial_records_a_normalized_trial(tmp_path):
 
 
 def test_journal_trial_records_the_objective_when_given(tmp_path):
-    from src.services.audit import journal_trial
+    from tradeflow.services.audit import journal_trial
 
     path = tmp_path / "journal.jsonl"
     journal_trial(
@@ -167,7 +167,7 @@ def test_journal_trial_records_the_objective_when_given(tmp_path):
 
 # --- the safety wall -----------------------------------------
 def test_no_live_or_order_tool_is_exposed():
-    from src.mcp import server
+    from tradeflow.mcp import server
 
     assert set(server.EXPOSED_TOOLS).isdisjoint(server.FORBIDDEN_TOOLS)
     forbidden_substrings = ("order", "live", "cancel", "close_position", "paper_trade", "account")
@@ -176,7 +176,7 @@ def test_no_live_or_order_tool_is_exposed():
 
 
 def test_server_refuses_non_data_client():
-    from src.mcp import server
+    from tradeflow.mcp import server
 
     class FakeBrokered:
         broker = object()  # smells like a trading-capable client
@@ -187,7 +187,7 @@ def test_server_refuses_non_data_client():
 
 def test_build_server_smoke():
     pytest.importorskip("mcp")
-    from src.mcp import server
+    from tradeflow.mcp import server
 
     built = server.build_server(data_client=_client())
     assert built is not None
@@ -197,9 +197,9 @@ def test_build_server_smoke():
 def _fake_cli_env(monkeypatch, tmp_path, symbols):
     """Point the CLI at fake data and a temp journal; return the journal path."""
     import main
-    from src.marketdata.client import MarketDataClient
-    from src.services import audit
     from tests.fakes import FakeMarketData
+    from tradeflow.marketdata.client import MarketDataClient
+    from tradeflow.services import audit
 
     client = MarketDataClient(FakeMarketData(symbols, n=400, freq="1D"))
     monkeypatch.setattr(main, "build_data_and_broker", lambda **kwargs: (None, client))
@@ -376,8 +376,8 @@ def test_cli_backtest_also_populates_the_trial_store(monkeypatch, tmp_path):
     campaign's n_trials can be counted from an index instead of replaying JSONL
     by hand on every query."""
     import main
-    from src.engine.backtest import ACCOUNTING_VERSION
-    from src.store.trials import TrialStore, db_path_for_journal
+    from tradeflow.engine.backtest import ACCOUNTING_VERSION
+    from tradeflow.store.trials import TrialStore, db_path_for_journal
 
     journal = _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB"])
     args = main.build_parser().parse_args(
@@ -412,10 +412,10 @@ def test_walkforward_gate_report_is_unaffected_by_a_broken_trial_store(monkeypat
     produce the identical printed gate report - the dual-write is one-way and can
     never feed back into a verdict."""
     import main
-    from src.marketdata.client import MarketDataClient
-    from src.services import audit
-    from src.store import trials as trials_mod
     from tests.fakes import FakeMarketData
+    from tradeflow.marketdata.client import MarketDataClient
+    from tradeflow.services import audit
+    from tradeflow.store import trials as trials_mod
 
     client = MarketDataClient(FakeMarketData(["AAA", "BBB"], n=400, freq="1D"))
     monkeypatch.setattr(main, "build_data_and_broker", lambda **kwargs: (None, client))
@@ -476,7 +476,7 @@ _BT_ARGV = [
 
 def test_cli_backtest_memoizes_identical_run_without_resimulating(monkeypatch, tmp_path, capsys):
     import main
-    from src.engine.backtest import BacktestEngine
+    from tradeflow.engine.backtest import BacktestEngine
 
     journal = _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB"])
     args1 = main.build_parser().parse_args(_BT_ARGV)
@@ -538,8 +538,8 @@ def _fake_cli_env_with_cache(monkeypatch, tmp_path, symbols, cache_dir=None):
     (CachedMarketData wrapping FakeMarketData), so --cache/vintage wiring can be
     exercised without needing real Alpaca settings."""
     import main
-    from src.services import audit
-    from src.store.bars import CachedMarketData
+    from tradeflow.services import audit
+    from tradeflow.store.bars import CachedMarketData
 
     cache_dir = cache_dir or (tmp_path / "cache" / "bars")
     provider = CachedMarketData(FakeMarketData(symbols, n=400, freq="1D"), cache_dir=cache_dir)
@@ -601,8 +601,8 @@ def test_cli_backtest_without_cache_keeps_the_no_vintage_caveat(monkeypatch, tmp
 def test_build_data_client_cache_flag_wraps_provider(monkeypatch, tmp_path):
     monkeypatch.setenv("APCA_API_KEY_ID", "fake")
     monkeypatch.setenv("APCA_API_SECRET_KEY", "fake")
-    from src.services.data import build_data_client
-    from src.store.bars import CachedMarketData
+    from tradeflow.services.data import build_data_client
+    from tradeflow.store.bars import CachedMarketData
 
     cached = build_data_client(cache=True, cache_dir=tmp_path / "bars")
     assert isinstance(cached.provider, CachedMarketData)
@@ -615,7 +615,7 @@ def test_build_data_and_broker_forwards_cache_flags(monkeypatch, tmp_path):
     monkeypatch.setenv("APCA_API_KEY_ID", "fake")
     monkeypatch.setenv("APCA_API_SECRET_KEY", "fake")
     import main
-    from src.store.bars import CachedMarketData
+    from tradeflow.store.bars import CachedMarketData
 
     _, client = main.build_data_and_broker(cache=True, cache_dir=tmp_path / "bars")
     assert isinstance(client.provider, CachedMarketData)
@@ -636,14 +636,14 @@ def test_cache_status_on_empty_dir_prints_a_sane_empty_state(tmp_path, capsys):
 
 
 def _mock_cached_build_data_client(monkeypatch, cache_dir, symbols=("AAA",)):
-    from src.store.bars import CachedMarketData
+    from tradeflow.store.bars import CachedMarketData
 
     def _build(cache=False, offline=False, cache_dir=None):
         return MarketDataClient(
             CachedMarketData(FakeMarketData(list(symbols), n=200, freq="1D"), cache_dir=cache_dir)
         )
 
-    monkeypatch.setattr("src.services.data.build_data_client", _build)
+    monkeypatch.setattr("tradeflow.services.data.build_data_client", _build)
 
 
 def test_cache_warm_then_status_round_trips(monkeypatch, tmp_path, capsys):
@@ -702,7 +702,7 @@ def test_cache_refresh_reports_per_symbol(monkeypatch, tmp_path, capsys):
 
 def test_walkforward_memoizes_identical_recipe_without_rerunning(monkeypatch, tmp_path, capsys):
     import main
-    from src.optimization.walk_forward import WalkForwardValidator
+    from tradeflow.optimization.walk_forward import WalkForwardValidator
 
     journal = _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB"])
     wf_argv = [
@@ -809,7 +809,7 @@ def test_walkforward_save_config_then_backtest_config_round_trips(monkeypatch, t
 
 def test_backtest_config_out_of_range_param_fails_loudly(tmp_path):
     import main
-    from src.services.registry import resolve_strategy_class
+    from tradeflow.services.registry import resolve_strategy_class
 
     cls = resolve_strategy_class("ma_crossover")
     params = {name: spec["default"] for name, spec in cls.PARAM_RANGES.items()}

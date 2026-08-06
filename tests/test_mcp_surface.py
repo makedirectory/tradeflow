@@ -14,12 +14,12 @@ from datetime import datetime
 
 import pytest
 
-from src.marketdata.client import MarketDataClient
-from src.mcp import server as mcp_server
-from src.mcp.server import EVIDENCE_GATED, EXPOSED_TOOLS, FORBIDDEN_TOOLS, JOURNALING_TOOLS
-from src.services import analysis, audit
-from src.store.trials import TrialStore
 from tests.fakes import FakeMarketData
+from tradeflow.marketdata.client import MarketDataClient
+from tradeflow.mcp import server as mcp_server
+from tradeflow.mcp.server import EVIDENCE_GATED, EXPOSED_TOOLS, FORBIDDEN_TOOLS, JOURNALING_TOOLS
+from tradeflow.services import analysis, audit
+from tradeflow.store.trials import TrialStore
 
 pytest.importorskip("mcp", reason="the MCP surface needs the 'mcp' extra")
 
@@ -75,7 +75,7 @@ def test_the_server_module_never_imports_a_trading_path():
     """A layering violation here is a safety violation: the wall is the *absence*
     of the capability, so an import that could reach one is review-blocking."""
     source = __import__("pathlib").Path(mcp_server.__file__).read_text()
-    for forbidden in ("src.execution", "engine.live", "build_broker", "TradingClient"):
+    for forbidden in ("tradeflow.execution", "engine.live", "build_broker", "TradingClient"):
         assert forbidden not in source
 
 
@@ -115,7 +115,7 @@ def test_tools_exposing_an_evidence_gated_feature_name_the_gate(built):
 
 def test_metric_vocabulary_comes_from_the_glossary_not_a_restatement(built):
     """One definition with two readers cannot drift; two descriptions will."""
-    from src.services.glossary import definitions_for
+    from tradeflow.services.glossary import definitions_for
 
     canonical = definitions_for(["deflated_sharpe_ratio"])["deflated_sharpe_ratio"]
     description = _tools(built)["run_backtest"].description
@@ -174,7 +174,7 @@ def test_render_report_returns_a_self_contained_document(built):
 def test_render_report_shares_the_cli_renderer_rather_than_a_second_route(built):
     """030's escaping and self-containment rules apply here because it is literally
     the same function — there is no unescaped MCP render path to audit separately."""
-    from src.analytics.htmlreport import render_html
+    from tradeflow.analytics.htmlreport import render_html
 
     result = analysis.run_verdict(
         MarketDataClient(FakeMarketData([*SYMBOLS, "SPY"], n=600, freq="1D")),

@@ -9,7 +9,7 @@ A scanner answers a different question than a strategy: *which symbols are worth
 trading right now?* It scores a symbol's recent bars and emits a per-symbol scan
 signal.
 
-## `ScannerStrategy` (`src/scanners/base.py`)
+## `ScannerStrategy` (`tradeflow/scanners/base.py`)
 
 Scanners operate on **one symbol's OHLCV frame at a time** — the `SymbolScanner`
 iterates the universe — which keeps the interface simple and avoids MultiIndex
@@ -26,7 +26,7 @@ bookkeeping.
 Scan signals (`SCANNER_BUY` / `SCANNER_SELL` / `SCANNER_HOLD`) are deliberately
 **distinct** from trade signals so the two can never be confused.
 
-## `SymbolScanner` (`src/scanners/symbol_scanner.py`)
+## `SymbolScanner` (`tradeflow/scanners/symbol_scanner.py`)
 
 The driver. It holds a registry of scanner strategies, fetches a lookback window
 sized to the scanner's `required_data_points()`, runs the scanner per symbol, and

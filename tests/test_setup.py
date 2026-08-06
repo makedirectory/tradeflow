@@ -10,7 +10,7 @@ from datetime import datetime
 
 import pytest
 
-from src.services import setup
+from tradeflow.services import setup
 
 REAL_KEY = "PKTESTKEYID0000001"
 REAL_SECRET = "abcdefghijklmnopqrstuvwxyz0123456789"
@@ -36,7 +36,7 @@ def test_masking_never_reveals_a_usable_secret():
 def test_placeholder_detection_defers_to_the_settings_loader():
     """Two definitions of "filled in" would drift; the one that matters is the
     one the loader enforces."""
-    from src.settings import _PLACEHOLDERS
+    from tradeflow.settings import _PLACEHOLDERS
 
     for placeholder in _PLACEHOLDERS:
         assert setup.is_placeholder(placeholder)
@@ -340,7 +340,7 @@ def test_cli_interactive_writes_keys_and_confirms_paper_trading(tmp_path, monkey
     monkeypatch.setattr(
         setup, "check_credentials", lambda *a, **k: setup.CredentialCheck(setup.CREDENTIALS_OK, "fine")
     )
-    monkeypatch.setattr("src.services.data.build_data_client", lambda *a, **k: object())
+    monkeypatch.setattr("tradeflow.services.data.build_data_client", lambda *a, **k: object())
 
     path = tmp_path / ".env"
     args = main.build_parser().parse_args(["init", "--env-path", str(path)])
@@ -367,7 +367,7 @@ def test_cli_interactive_requires_a_typed_phrase_to_disable_paper_trading(tmp_pa
     monkeypatch.setattr(
         setup, "check_credentials", lambda *a, **k: setup.CredentialCheck(setup.CREDENTIALS_OK, "fine")
     )
-    monkeypatch.setattr("src.services.data.build_data_client", lambda *a, **k: object())
+    monkeypatch.setattr("tradeflow.services.data.build_data_client", lambda *a, **k: object())
 
     path = tmp_path / ".env"
     args = main.build_parser().parse_args(["init", "--env-path", str(path)])

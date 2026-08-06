@@ -10,14 +10,21 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
-from src.alphas import AlphaContext, panel_to_alphas, refine, refine_alpha, signal_scorer, strategy_scorer
-from src.alphas.base import DEFAULT_MIN_UNIVERSE, Alpha
-from src.data.panel import FeaturePanel
-from src.marketdata.client import MarketDataClient
-from src.services import analysis
-from src.strategies import signals
-from src.strategies.ma_crossover import MovingAverageCrossoverStrategy
 from tests.fakes import DictMarketData, make_ohlcv
+from tradeflow.alphas import (
+    AlphaContext,
+    panel_to_alphas,
+    refine,
+    refine_alpha,
+    signal_scorer,
+    strategy_scorer,
+)
+from tradeflow.alphas.base import DEFAULT_MIN_UNIVERSE, Alpha
+from tradeflow.data.panel import FeaturePanel
+from tradeflow.marketdata.client import MarketDataClient
+from tradeflow.services import analysis
+from tradeflow.strategies import signals
+from tradeflow.strategies.ma_crossover import MovingAverageCrossoverStrategy
 
 AS_OF = datetime(2024, 6, 1)
 
@@ -181,7 +188,7 @@ def test_refine_unusable_exposures_fall_back_to_beta():
 def test_producer_writes_nothing_on_short_history():
     """An exposure build qualifying <2 names writes no columns, so refinement can
     fall back to beta instead of regressing on all-NaN exposures."""
-    from src.data.features import add_factor_exposure_features
+    from tradeflow.data.features import add_factor_exposure_features
 
     names = [f"S{i}" for i in range(12)]
     bars = {s: make_ohlcv(n=40, seed=i, freq="1D") for i, s in enumerate(names)}  # < 61 bars

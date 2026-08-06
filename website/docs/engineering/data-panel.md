@@ -5,7 +5,7 @@ title: Feature panel & scan
 
 # Feature panel & scan
 
-`src/data/` is the cross-sectional data substrate — **all the data in one place, as
+`tradeflow/data/` is the cross-sectional data substrate — **all the data in one place, as
 of one moment**. Every research-clock module that reasons across names at a rebalance
 (alphas today; risk, costs, portfolio construction, information analysis next) reads
 from and writes to the same table, instead of each assembling its own.

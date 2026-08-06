@@ -8,7 +8,7 @@ title: Transaction costs
 Until a cost model charges trading, every Sharpe and equity curve is **gross** — and
 gross results are the most reliable way to fool yourself, because the strategies that
 look best in-sample are very often the highest-turnover ones that costs destroy.
-`src/costs/` prices the cost of changing a position so research metrics are **net by
+`tradeflow/costs/` prices the cost of changing a position so research metrics are **net by
 default**.
 
 :::note Research clock only
@@ -80,7 +80,7 @@ Long-side margin financing and leverage costs remain out of scope.
 
 ## Where it runs
 
-`ParametricCostModel` in `src/costs/` — the single source of the √-impact
+`ParametricCostModel` in `tradeflow/costs/` — the single source of the √-impact
 coefficient, shared by the backtest and the [cost-aware
 optimizer](./portfolio-construction#cost-inside-the-objective-cost-aware-by-default)
 so the two price the same model. Surfaced as backtest flags (`--gross`,

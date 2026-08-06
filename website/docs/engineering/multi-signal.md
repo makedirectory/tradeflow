@@ -6,7 +6,7 @@ title: Multi-signal combination
 # Multi-signal combination
 
 One signal becomes one [alpha](./alphas). Real research has several — a trend read, a
-volume read, a mean-reversion read — and they are **correlated**. `src/alphas/combine.py`
+volume read, a mean-reversion read — and they are **correlated**. `tradeflow/alphas/combine.py`
 combines them into one alpha while avoiding the two classic mistakes:
 
 1. **Naive weighting double-counts.** Weighting by raw IC over-weights redundant

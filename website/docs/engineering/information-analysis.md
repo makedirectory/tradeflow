@@ -6,7 +6,7 @@ title: Information analysis
 # Information analysis
 
 The rest of the spine *assumes* an information coefficient and *predicts* an
-information ratio. `src/analytics/information.py` (+ `services.compute_information`)
+information ratio. `tradeflow/analytics/information.py` (+ `services.compute_information`)
 **measures** them and confronts the prediction with reality — the most honest
 diagnostic in the system.
 

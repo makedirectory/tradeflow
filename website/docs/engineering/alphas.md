@@ -5,7 +5,7 @@ title: Continuous alphas
 
 # Continuous alphas
 
-`src/alphas/` turns a per-name signal into an **alpha**: a forecast of *residual
+`tradeflow/alphas/` turns a per-name signal into an **alpha**: a forecast of *residual
 return* (return in excess of what beta to the benchmark explains), expressed in
 the same units — annualized return — for every name. That makes views directly
 comparable across symbols and directly consumable by a mean-variance
@@ -18,7 +18,7 @@ across names. Alphas recover both.
 
 :::note Research clock only
 Alphas are *forecasts*. Computing them never reads a realized forward return and
-never places an order. `src/engine/live.py` is untouched — live trading still
+never places an order. `tradeflow/engine/live.py` is untouched — live trading still
 consumes discrete signals via the existing path. See
 [separation of concerns](./separation-of-concerns.md).
 :::
@@ -108,7 +108,7 @@ rules that keep degraded inputs honest rather than silently wrong:
 :::note Known limitations (deliberate, tracked)
 - The **MCP tools don't expose `neutralize_factors` yet** — results echo the field
   (always `[]` via that surface); wiring the parameter through
-  [`src/mcp/server.py`](./mcp-server.md) is a small follow-up for when the agent
+  [`tradeflow/mcp/server.py`](./mcp-server.md) is a small follow-up for when the agent
   surface needs it.
 - The exposure builder's **history gate is two-way, not per-factor**: a subset with
   momentum requires the full 12-1 window (~148 bars), any other subset requires

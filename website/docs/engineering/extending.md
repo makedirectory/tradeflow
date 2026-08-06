@@ -9,7 +9,7 @@ Three common extension points. Each touches one layer.
 
 ## Add a strategy
 
-1. Subclass `Strategy` in `src/strategies/`:
+1. Subclass `Strategy` in `tradeflow/strategies/`:
 
    ```python
    class MyStrategy(Strategy):
@@ -32,7 +32,7 @@ Three common extension points. Each touches one layer.
    the [alpha layer](alphas) scales the same score. Set `LONG_ONLY = False` to allow
    shorts, and override `signal_thresholds()` for asymmetric entry/exit bands.
 
-2. Register it in `STRATEGIES` in `src/services/registry.py`. It now works in
+2. Register it in `STRATEGIES` in `tradeflow/services/registry.py`. It now works in
    `backtest`, `live`, `optimize`, the MCP server, and the research agent — sizing,
    fills, execution, and metrics come for free because they only depend on the base
    interface. (`create_with_defaults()` is inherited from `Strategy`; no need to
@@ -42,7 +42,7 @@ Use the pure [indicators](indicators); don't reach for a compiled TA library.
 
 ## Add a scanner
 
-1. Subclass `ScannerStrategy` in `src/scanners/` — implement `process_data` and
+1. Subclass `ScannerStrategy` in `tradeflow/scanners/` — implement `process_data` and
    `generate_signals_df` (emit `SCANNER_BUY`/`SCANNER_SELL`/`SCANNER_HOLD` plus a
    `signal_strength`).
 2. Register it in `SymbolScanner.SCANNERS`. Keep it TA-Lib-free.
@@ -50,7 +50,7 @@ Use the pure [indicators](indicators); don't reach for a compiled TA library.
 ## Add a broker
 
 1. Implement `Broker` (and optionally `MarketDataProvider`) for the venue in a new
-   `src/brokers/<vendor>/` package, mapping the SDK to the domain types.
+   `tradeflow/brokers/<vendor>/` package, mapping the SDK to the domain types.
 2. Construct it in `main.build_data_and_broker()`.
 
 Nothing in `engine/`, `execution/`, `strategies/`, `scanners/`, or the optimizer

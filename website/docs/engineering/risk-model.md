@@ -5,7 +5,7 @@ title: Risk model
 
 # Risk model
 
-`src/risk/` estimates the covariance matrix **Σ** over a universe — the thing
+`tradeflow/risk/` estimates the covariance matrix **Σ** over a universe — the thing
 portfolio theory is actually about. Risk is **not additive**: two names you like
 that move together are one bet, not two; two that move oppositely are a hedge.
 Without Σ the [allocator](./portfolio) is blind to that — it can't compute tracking
@@ -13,7 +13,7 @@ error or find the genuinely diversified portfolio. Σ is the *denominator* the a
 forecast gets divided by.
 
 :::note Research clock only
-Σ is a tool for sizing conviction, never consulted to place an order. `src/risk/`
+Σ is a tool for sizing conviction, never consulted to place an order. `tradeflow/risk/`
 imports no broker and the order path imports no risk model.
 :::
 
@@ -94,7 +94,7 @@ Both estimators above are **unconditional over their trailing window** — a fla
 equal-weighted average since the start of the estimation window. When realized
 vol doubles in a stress month, a book targeting a fixed tracking error against
 that average blows its *actual* risk budget exactly when breaching it is most
-expensive — and has room to spare in the quiet months. `src/risk/conditional.py`
+expensive — and has room to spare in the quiet months. `tradeflow/risk/conditional.py`
 fixes the cheap, well-supported part of this: **condition the volatilities, keep
 the correlation structure slow.**
 

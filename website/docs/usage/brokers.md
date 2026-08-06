@@ -27,7 +27,7 @@ can be added without touching anything above the broker layer.
 | Market clock (hours gating) | ✅ |
 | Paper **and** live | ✅ (paper by default) |
 
-Implemented in `src/brokers/alpaca/` — `AlpacaBroker` (trading) and
+Implemented in `tradeflow/brokers/alpaca/` — `AlpacaBroker` (trading) and
 `AlpacaMarketData` (data). This is the **only** place the `alpaca` SDK is imported.
 
 ## Not yet supported
@@ -46,7 +46,7 @@ These aren't built, but the design has a clear seam for each:
 
 ## What it takes to add a broker
 
-1. Create `src/brokers/<vendor>/` implementing `Broker` (and optionally
+1. Create `tradeflow/brokers/<vendor>/` implementing `Broker` (and optionally
    `MarketDataProvider`), mapping the SDK's objects to the project's vendor-neutral
    domain types (`Position`, `OrderResult`, `AccountSnapshot`, `BarEvent`, ...).
 2. Construct it in `main.build_data_and_broker()`.

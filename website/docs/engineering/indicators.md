@@ -15,7 +15,7 @@ project ships its own.
 The payoff: `uv sync` is the entire install, the Dockerfile has **no** build
 toolchain, and the math is right there to read.
 
-## `src/indicators/indicators.py`
+## `tradeflow/indicators/indicators.py`
 
 Pure, side-effect-free functions:
 
@@ -30,7 +30,7 @@ Pure, side-effect-free functions:
 
 Each takes Series/DataFrames and returns new ones, leaving inputs untouched.
 
-## `src/analytics/`
+## `tradeflow/analytics/`
 
 Performance accounting lives here, **not** in the strategy or engine.
 

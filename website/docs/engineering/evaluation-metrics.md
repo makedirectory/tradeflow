@@ -9,15 +9,15 @@ The analytics layer turns a table of closed trades plus an equity curve into a
 metrics dict honest enough to **rank thousands of configs by a single number**.
 The layering is deliberate:
 
-- `src/analytics/metrics.py` — pure, defensive primitives. One canonical
+- `tradeflow/analytics/metrics.py` — pure, defensive primitives. One canonical
   definition per metric, shared by the backtest analytics and the scanner base
   class so "Sharpe" or "max drawdown" mean the same thing everywhere. Empty or
   degenerate inputs return `0.0` (or `inf` for a zero-denominator ratio) rather
   than raising.
-- `src/analytics/performance.py` — `compute_backtest_metrics(...)` composes those
+- `tradeflow/analytics/performance.py` — `compute_backtest_metrics(...)` composes those
   primitives over the trade table and equity curve into a flat, JSON-serializable
   dict keyed by `METRIC_KEYS` (+ the `FLAG_KEYS` flags).
-- `src/analytics/reporting.py` — human-readable, sectioned rendering, kept
+- `tradeflow/analytics/reporting.py` — human-readable, sectioned rendering, kept
   separate from computation so the numbers stay machine-consumable.
 
 ## Metric tiers
@@ -77,7 +77,7 @@ handful of trades are noise, not edge.
 
 PSR/DSR are parametric: they assume the Sharpe estimator's asymptotic
 distribution, and DSR needs an *assumed* effective trial count and trial-Sharpe
-variance to approximate "the best of K configs tried." `src/analytics/bootstrap.py`
+variance to approximate "the best of K configs tried." `tradeflow/analytics/bootstrap.py`
 is the heavier, definitive check behind `--bootstrap-skill` — it **simulates the
 null instead of assuming it** — not a replacement for PSR/DSR, always shown
 alongside them.

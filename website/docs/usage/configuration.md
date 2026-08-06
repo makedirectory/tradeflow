@@ -30,7 +30,7 @@ Get paper keys from the [Alpaca dashboard](https://app.alpaca.markets/) under
 
 ## Where settings come from
 
-Every credential is resolved through one place (`src/settings.py`) in a fixed
+Every credential is resolved through one place (`tradeflow/settings.py`) in a fixed
 order, so there's never any ambiguity:
 
 1. **Environment variables** — the standard, 12-factor way (`export APCA_API_KEY_ID=…`).

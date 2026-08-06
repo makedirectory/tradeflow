@@ -11,14 +11,14 @@ from datetime import datetime
 
 import pytest
 
-from src.marketdata.client import MarketDataClient
-from src.optimization import config_store
-from src.research import sandbox
-from src.research.agent import ResearchAgent, ResearchConfig
-from src.research.proposer import FixedProposer, Proposal, ProposalContext
-from src.services import registry
 from tests.fakes import FakeMarketData
 from tests.test_walk_forward import PeriodicStrategy
+from tradeflow.marketdata.client import MarketDataClient
+from tradeflow.optimization import config_store
+from tradeflow.research import sandbox
+from tradeflow.research.agent import ResearchAgent, ResearchConfig
+from tradeflow.research.proposer import FixedProposer, Proposal, ProposalContext
+from tradeflow.services import registry
 
 SYMBOLS = ["AAA", "BBB"]
 START, END = datetime(2024, 1, 2), datetime(2025, 6, 1)
@@ -101,7 +101,7 @@ def test_hygiene_rejects_missing_hypothesis_and_too_many_params():
 # --- code sandbox -----------------------------------------------------------
 _VALID_CODE = '''
 import pandas as pd
-from src.strategies.base import Strategy
+from tradeflow.strategies.base import Strategy
 
 class GenStrat(Strategy):
     """Always-long. Hypothesis: the synthetic series drifts up."""
@@ -138,7 +138,9 @@ def test_sandbox_loads_valid_strategy_code():
 
 
 def test_sandbox_blocks_disallowed_imports():
-    bad = "import os\nfrom src.strategies.base import Strategy\n"
+    # `os` is denied outright; the broker layer is a real module that is simply not
+    # on the allowlist — generated code may reach the strategy base, never a venue.
+    bad = "import os\nfrom tradeflow.brokers.base import Broker\n"
     with pytest.raises(sandbox.HygieneError):
         sandbox.load_strategy_from_code(bad)
 
@@ -235,7 +237,7 @@ def test_duplicate_tune_proposal_is_deduped_via_the_trial_store(tmp_path):
 
 
 def test_research_trials_are_recorded_in_the_trial_store(tmp_path):
-    from src.engine.backtest import ACCOUNTING_VERSION
+    from tradeflow.engine.backtest import ACCOUNTING_VERSION
 
     agent = _agent(tmp_path, FixedProposer([_tune(3), _tune(5)]))
     agent.run(SYMBOLS, START, END)
@@ -297,7 +299,7 @@ def test_proposer_context_excludes_holdout(tmp_path):
 
 # --- provider-agnostic LLM layer --------------------------------------------
 def test_build_llm_client_defaults_per_provider():
-    from src.research.llm import build_llm_client
+    from tradeflow.research.llm import build_llm_client
 
     assert build_llm_client("anthropic").model == "claude-opus-4-8"
     assert build_llm_client("openai").model == "gpt-4o"
@@ -308,8 +310,8 @@ def test_build_llm_client_defaults_per_provider():
 
 
 def test_llm_proposer_parses_json_from_any_client():
-    from src.research.llm import LLMResponse
-    from src.research.proposer import LLMProposer
+    from tradeflow.research.llm import LLMResponse
+    from tradeflow.research.proposer import LLMProposer
 
     class StubClient:
         model = "stub"
@@ -330,8 +332,8 @@ def test_llm_proposer_parses_json_from_any_client():
 
 
 def test_llm_proposer_returns_none_on_unparseable_output():
-    from src.research.llm import LLMResponse
-    from src.research.proposer import LLMProposer
+    from tradeflow.research.llm import LLMResponse
+    from tradeflow.research.proposer import LLMProposer
 
     class JunkClient:
         model = "stub"
@@ -346,8 +348,8 @@ def test_llm_proposer_returns_none_on_unparseable_output():
 
 
 def test_build_proposer_accepts_injected_client():
-    from src.research.llm import LLMResponse
-    from src.research.proposer import build_proposer
+    from tradeflow.research.llm import LLMResponse
+    from tradeflow.research.proposer import build_proposer
 
     class StubClient:
         model = "stub"
@@ -376,8 +378,8 @@ def test_sandbox_rejects_strategy_missing_execution_config():
 
 def test_llm_proposer_emits_code_proposals_when_enabled():
     """With code-gen on, a ``kind: "code"`` response becomes a code proposal."""
-    from src.research.llm import LLMResponse
-    from src.research.proposer import LLMProposer
+    from tradeflow.research.llm import LLMResponse
+    from tradeflow.research.proposer import LLMProposer
 
     class CodeClient:
         model = "stub"
@@ -396,8 +398,8 @@ def test_llm_proposer_emits_code_proposals_when_enabled():
 
 
 def test_llm_proposer_still_parses_tune_proposals_with_code_gen_enabled():
-    from src.research.llm import LLMResponse
-    from src.research.proposer import LLMProposer
+    from tradeflow.research.llm import LLMResponse
+    from tradeflow.research.proposer import LLMProposer
 
     class TuneClient:
         model = "stub"

@@ -5,7 +5,7 @@ title: Multi-period trading
 
 # Multi-period trading: aim in front of the target
 
-`src/portfolio/policy.py` replaces the myopic "jump to this period's optimum" with
+`tradeflow/portfolio/policy.py` replaces the myopic "jump to this period's optimum" with
 a **partial-adjustment** policy: trade a fraction of the way toward a target that
 is itself *discounted* for how fast the alpha will decay before you finish
 trading into it. It wraps
@@ -140,7 +140,7 @@ the signal decays, exactly as the theorem predicts.
 
 ## Where it runs
 
-`src/portfolio/policy.py` (pure math + orchestration) plus
+`tradeflow/portfolio/policy.py` (pure math + orchestration) plus
 `services.construct_portfolio(policy="aim", trade_rate=...)`. The CLI is
 `allocate --objective utility --policy aim [--trade-rate κ]`; the A/B is
 `info --policy-ab [--trade-rate κ]`. Both default off. See the

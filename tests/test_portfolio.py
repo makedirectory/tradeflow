@@ -7,7 +7,7 @@ import pytest
 
 pytest.importorskip("ortools")
 
-from src.portfolio.allocator import Candidate, PortfolioAllocator  # noqa: E402
+from tradeflow.portfolio.allocator import Candidate, PortfolioAllocator  # noqa: E402
 
 
 def _candidates():

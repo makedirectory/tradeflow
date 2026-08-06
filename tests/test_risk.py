@@ -11,11 +11,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.marketdata.client import MarketDataClient
-from src.risk import LedoitWolfCovariance, RiskMatrix, SampleCovariance, build_risk_matrix
-from src.risk.base import build_return_panel
-from src.services import analysis
 from tests.fakes import DictMarketData, make_ohlcv
+from tradeflow.marketdata.client import MarketDataClient
+from tradeflow.risk import LedoitWolfCovariance, RiskMatrix, SampleCovariance, build_risk_matrix
+from tradeflow.risk.base import build_return_panel
+from tradeflow.services import analysis
 
 AS_OF = datetime(2024, 6, 1)
 
@@ -138,7 +138,7 @@ def test_sample_covariance_runs_and_is_symmetric():
 
 # --- factor model --------------------------------------------------------------
 def test_factor_model_recovers_known_factor_covariance():
-    from src.risk import FactorRiskMatrix, estimate_factor_model
+    from tradeflow.risk import FactorRiskMatrix, estimate_factor_model
 
     rng = np.random.default_rng(0)
     n, k, t = 20, 3, 3000
@@ -158,7 +158,7 @@ def test_factor_model_recovers_known_factor_covariance():
 
 
 def test_factor_and_specific_variance_sum_to_total():
-    from src.risk import estimate_factor_model
+    from tradeflow.risk import estimate_factor_model
 
     rng = np.random.default_rng(1)
     n, k, t = 10, 2, 500
@@ -183,7 +183,7 @@ def test_compute_risk_factor_model_reports_split():
 
 def test_factor_exposures_subset_relaxes_history_requirement():
     """A subset without momentum keeps names the full four-factor build must drop."""
-    from src.risk.exposures import build_factor_exposures
+    from tradeflow.risk.exposures import build_factor_exposures
 
     # ~90 bars: enough for volatility/size (60-bar windows), far short of 12-1 momentum.
     bars = {s: make_ohlcv(n=90, seed=i, freq="1D") for i, s in enumerate(["AAA", "BBB", "CCC"])}
@@ -200,7 +200,7 @@ def test_factor_exposures_subset_relaxes_history_requirement():
 
 
 def test_factor_exposures_unknown_factor_raises():
-    from src.risk.exposures import build_factor_exposures
+    from tradeflow.risk.exposures import build_factor_exposures
 
     bars = {"AAA": make_ohlcv(n=200, seed=0, freq="1D")}
     with pytest.raises(ValueError, match="value"):
@@ -208,7 +208,7 @@ def test_factor_exposures_unknown_factor_raises():
 
 
 def test_factor_exposures_empty_factor_list_returns_empty():
-    from src.risk.exposures import build_factor_exposures
+    from tradeflow.risk.exposures import build_factor_exposures
 
     bars = {s: make_ohlcv(n=200, seed=i, freq="1D") for i, s in enumerate(["AAA", "BBB"])}
     assert build_factor_exposures(bars, None, factors=[]).empty
@@ -216,7 +216,7 @@ def test_factor_exposures_empty_factor_list_returns_empty():
 
 def test_factor_exposures_reuse_precomputed_betas():
     """A supplied beta Series is used verbatim for the market column (no re-regression)."""
-    from src.risk.exposures import build_factor_exposures
+    from tradeflow.risk.exposures import build_factor_exposures
 
     symbols = ["AAA", "BBB", "CCC"]
     bars = {s: make_ohlcv(n=90, seed=i, freq="1D") for i, s in enumerate(symbols)}

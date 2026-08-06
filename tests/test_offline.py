@@ -10,14 +10,14 @@ from datetime import datetime
 import pandas as pd
 import pytest
 
-from src.analytics import metrics
-from src.engine.backtest import BacktestEngine
-from src.indicators import indicators
-from src.marketdata.client import MarketDataClient
-from src.optimization.optimizer import ParameterOptimizer
-from src.scanners.symbol_scanner import SymbolScanner
-from src.strategies.volume_spike import VolumeSpikeStrategy
 from tests.fakes import FakeMarketData, make_ohlcv
+from tradeflow.analytics import metrics
+from tradeflow.engine.backtest import BacktestEngine
+from tradeflow.indicators import indicators
+from tradeflow.marketdata.client import MarketDataClient
+from tradeflow.optimization.optimizer import ParameterOptimizer
+from tradeflow.scanners.symbol_scanner import SymbolScanner
+from tradeflow.strategies.volume_spike import VolumeSpikeStrategy
 
 SYMBOLS = ["AAA", "BBB", "CCC"]
 START, END = datetime(2024, 1, 2), datetime(2024, 2, 1)
@@ -58,7 +58,7 @@ def test_backtest_metrics_complete_and_json_serializable():
     """Every declared metric key is present and the dict survives JSON round-trip."""
     import json
 
-    from src.analytics.performance import FLAG_KEYS, METRIC_KEYS
+    from tradeflow.analytics.performance import FLAG_KEYS, METRIC_KEYS
 
     data_client = MarketDataClient(FakeMarketData(SYMBOLS))
     strategy = VolumeSpikeStrategy.create_with_defaults()
@@ -73,7 +73,7 @@ def test_backtest_metrics_complete_and_json_serializable():
 
 
 def test_empty_metrics_has_all_keys():
-    from src.analytics.performance import FLAG_KEYS, METRIC_KEYS, empty_metrics
+    from tradeflow.analytics.performance import FLAG_KEYS, METRIC_KEYS, empty_metrics
 
     empty = empty_metrics()
     for key in (*METRIC_KEYS, *FLAG_KEYS):

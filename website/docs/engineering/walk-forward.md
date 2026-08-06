@@ -5,7 +5,7 @@ title: Walk-forward validation
 
 # Walk-forward validation
 
-`src/optimization/walk_forward.py` is the honest fitness function for the whole
+`tradeflow/optimization/walk_forward.py` is the honest fitness function for the whole
 automation effort. The optimizer tunes parameters in-sample; the
 `WalkForwardValidator` makes the chosen config prove itself on out-of-sample data
 the optimizer never saw, across folds, with a holdout scored exactly once.
@@ -110,7 +110,7 @@ no Sharpe to cherry-pick). Pass `--no-journal` to keep a throwaway run out of th
 total.
 
 The journal alone answers "what happened" only by reading every line — `O(n)`
-per query. `src/store/trials.py` builds a **derived, disposable** SQLite index
+per query. `tradeflow/store/trials.py` builds a **derived, disposable** SQLite index
 over it (`logs/trials.db`) so a campaign can be asked "how many configs have I
 really tried against this strategy+universe, across every session I've ever
 run?" with an index lookup instead. **Derived, never authoritative**: `trials
@@ -188,7 +188,7 @@ out-of-sample trades, the honest reading is that it has not earned a verdict yet
 
 ## Config persistence
 
-`src/optimization/config_store.py` saves a chosen config as JSON with a
+`tradeflow/optimization/config_store.py` saves a chosen config as JSON with a
 `provenance` block (method, windows, objective, OOS metrics, `n_trials`, seed, git
 SHA, timestamp, `accounting`). Configs land in a gitignored `configs/` directory.
 Saving a config never alters live behavior — it's a file a human chooses to promote.

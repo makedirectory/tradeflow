@@ -6,7 +6,7 @@ title: Information horizon
 # Information horizon
 
 Every alpha is perishable: its forecasting power (IC) decays over time at a rate that
-is an intrinsic property of the signal. `src/alphas/horizon.py` measures that decay and
+is an intrinsic property of the signal. `tradeflow/alphas/horizon.py` measures that decay and
 turns it into two free wins — a principled **rebalance cadence** and a **lagged blend**
 that raises the information ratio.
 

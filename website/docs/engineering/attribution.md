@@ -6,7 +6,7 @@ title: Performance attribution
 # Performance attribution
 
 [Information analysis](./information-analysis) checks the *predicted* IR against
-the realized one, pooled over a window. `src/analytics/attribution.py` (+
+the realized one, pooled over a window. `tradeflow/analytics/attribution.py` (+
 `services.compute_attribution`) goes further: it attributes realized active
 return **per period, per source** — systematic benchmark timing, each risk
 factor, each signal, and stock-picking — by an exact regression identity, then

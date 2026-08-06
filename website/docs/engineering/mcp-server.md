@@ -13,16 +13,16 @@ the live order path is never reachable.
 MCP client (Claude Code / Desktop / research loop)
         │  stdio (JSON-RPC)
         ▼
-src/mcp/server.py        ← thin adapter, NO business logic
+tradeflow/mcp/server.py        ← thin adapter, NO business logic
         │  calls
         ▼
-src/services/*.py        ← plain functions over engine/optimizer/walk-forward/analytics
+tradeflow/services/*.py        ← plain functions over engine/optimizer/walk-forward/analytics
         │
         ▼
-existing src/ layers (unchanged)
+existing tradeflow/ layers (unchanged)
 ```
 
-## The shared service core (`src/services/`)
+## The shared service core (`tradeflow/services/`)
 
 One orchestration code path, reused by the CLI, the MCP server, and the research
 agent — no business logic lives in any adapter. Every function takes a data-only
@@ -45,7 +45,7 @@ agent — no business logic lives in any adapter. Every function takes a data-on
 - `data.py` — `build_data_client()` constructs **only** a historical-data client,
   never a broker.
 
-## The server (`src/mcp/server.py`)
+## The server (`tradeflow/mcp/server.py`)
 
 A FastMCP adapter (the `mcp` SDK is imported lazily, behind the `mcp` extra). Each
 tool is a typed function that calls a service function, logs the call, and returns

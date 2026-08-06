@@ -5,9 +5,9 @@ deterministic — built on the same ``DictMarketData``/``make_ohlcv`` fakes as t
 rest of the suite.
 """
 
-from src.marketdata.client import MarketDataClient
-from src.services import analysis
 from tests.fakes import DictMarketData, make_ohlcv
+from tradeflow.marketdata.client import MarketDataClient
+from tradeflow.services import analysis
 
 
 def _client(symbols, n=500, benchmark="SPY"):

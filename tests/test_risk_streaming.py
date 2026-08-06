@@ -13,16 +13,16 @@ pytest.importorskip("polars")
 
 import pandas as pd  # noqa: E402
 
-from src.data import ParquetBarStore  # noqa: E402
-from src.risk import (  # noqa: E402
+from tests.fakes import make_ohlcv  # noqa: E402
+from tradeflow.data import ParquetBarStore  # noqa: E402
+from tradeflow.risk import (  # noqa: E402
     build_factor_exposures,
     build_factor_risk_matrix,
     build_risk_matrix,
     streaming_factor_risk_matrix,
     streaming_sample_covariance,
 )
-from src.risk.sample import SampleCovariance  # noqa: E402
-from tests.fakes import make_ohlcv  # noqa: E402
+from tradeflow.risk.sample import SampleCovariance  # noqa: E402
 
 SYMBOLS = ["AAA", "BBB", "CCC", "DDD", "EEE"]
 PPY = 252.0

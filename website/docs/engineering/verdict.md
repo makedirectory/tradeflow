@@ -24,7 +24,7 @@ report that results *looks* joined-up while potentially describing four differen
 universes over four different windows — a failure that is harder to spot than four
 obviously separate reports, not easier.
 
-`run_verdict` (`src/services/analysis.py`) closes that by construction:
+`run_verdict` (`tradeflow/services/analysis.py`) closes that by construction:
 
 1. Resolve the universe **once**, from one scan (or the candidates as given, when
    the scanner flags nothing or is disabled). Every later step receives that list,
@@ -40,7 +40,7 @@ obviously separate reports, not easier.
 
 Steps repeat each other's bar requests constantly — the scan, the alpha panel, the
 covariance lookback, and the information sampler all want overlapping frames.
-`SessionBarCache` (`src/marketdata/session.py`) wraps the data client's provider for
+`SessionBarCache` (`tradeflow/marketdata/session.py`) wraps the data client's provider for
 the lifetime of one composite run and serves a repeat from memory.
 
 It is deliberately **exact-match only**: a response is reused for an identical

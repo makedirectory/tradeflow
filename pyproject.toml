@@ -62,4 +62,4 @@ ignore = ["E501"]
 [tool.ruff.lint.isort]
 # Classify the application package as first-party so import ordering is stable
 # across a local checkout and CI.
-known-first-party = ["src"]
+known-first-party = ["tradeflow"]

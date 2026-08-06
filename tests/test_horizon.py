@@ -4,16 +4,16 @@ from datetime import datetime
 
 import numpy as np
 
-from src.alphas.horizon import (
+from tests.fakes import DictMarketData, make_ohlcv
+from tradeflow.alphas.horizon import (
     blend_weights,
     fit_decay,
     frequency_ir_curve,
     peak_return_horizon,
     recommended_cadence,
 )
-from src.marketdata.client import MarketDataClient
-from src.services import analysis
-from tests.fakes import DictMarketData, make_ohlcv
+from tradeflow.marketdata.client import MarketDataClient
+from tradeflow.services import analysis
 
 
 # --- decay recovery ----------------------------------------------------------

@@ -12,13 +12,13 @@ from datetime import datetime
 
 import pytest
 
-from src.analytics.reporting import format_verdict_report
-from src.marketdata.client import MarketDataClient
-from src.marketdata.session import SessionBarCache, session_client
-from src.marketdata.timeframe import Timeframe
-from src.services import analysis, audit
-from src.store.trials import TrialStore, db_path_for_journal
 from tests.fakes import FakeMarketData
+from tradeflow.analytics.reporting import format_verdict_report
+from tradeflow.marketdata.client import MarketDataClient
+from tradeflow.marketdata.session import SessionBarCache, session_client
+from tradeflow.marketdata.timeframe import Timeframe
+from tradeflow.services import analysis, audit
+from tradeflow.store.trials import TrialStore, db_path_for_journal
 
 # Six names, not three: the default weight cap can't fund a book from three, and
 # the information sampler needs a cross-section wide enough to correlate.

@@ -12,8 +12,8 @@ from html.parser import HTMLParser
 
 import pytest
 
-from src.analytics.htmlreport import KINDS, ReportKindError, render_html, write_html
-from src.services.analysis import VERDICT_SCHEMA
+from tradeflow.analytics.htmlreport import KINDS, ReportKindError, render_html, write_html
+from tradeflow.services.analysis import VERDICT_SCHEMA
 
 #: Any attribute that could pull a resource from off the machine.
 _EXTERNAL = re.compile(r"""(?:src|href)\s*=\s*["'](?!data:|#)[^"']*|url\(\s*(?!['"]?data:)""", re.I)
@@ -256,7 +256,7 @@ def test_charts_embed_as_data_uris_when_plotting_is_available():
 
 def test_the_report_renders_without_the_plotting_extra(monkeypatch):
     """The chart slot explains itself; the run does not fail."""
-    from src.analytics import charts
+    from tradeflow.analytics import charts
 
     def missing(*args, **kwargs):
         raise RuntimeError("Charting needs matplotlib. Install the viz extra: `uv sync --extra viz`.")

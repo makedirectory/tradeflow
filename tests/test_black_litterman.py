@@ -12,19 +12,19 @@ from datetime import datetime
 import numpy as np
 import pytest
 
-from src.alphas.base import Alpha
-from src.alphas.refine import level_shrink_factor
-from src.marketdata.client import MarketDataClient
-from src.portfolio.optimizer import MeanVarianceOptimizer
-from src.portfolio.posterior import (
+from tests.fakes import DictMarketData, make_ohlcv
+from tradeflow.alphas.base import Alpha
+from tradeflow.alphas.refine import level_shrink_factor
+from tradeflow.marketdata.client import MarketDataClient
+from tradeflow.portfolio.optimizer import MeanVarianceOptimizer
+from tradeflow.portfolio.posterior import (
     black_litterman,
     black_litterman_from_ic,
     calibration_gap,
     expected_single_view_weight,
     view_variance,
 )
-from src.risk.base import RiskMatrix
-from tests.fakes import DictMarketData, make_ohlcv
+from tradeflow.risk.base import RiskMatrix
 
 AS_OF = datetime(2024, 6, 1)
 SYMS = ["A", "B", "C", "D"]
@@ -181,7 +181,7 @@ def _universe():
 
 
 def test_construct_portfolio_bl_requires_t_eff():
-    from src.services import analysis
+    from tradeflow.services import analysis
 
     symbols, dc = _universe()
     with pytest.raises(ValueError, match="posterior_t_eff"):
@@ -189,7 +189,7 @@ def test_construct_portfolio_bl_requires_t_eff():
 
 
 def test_construct_portfolio_bl_shrink_chain_applies_ic_uncertainty_once():
-    from src.services import analysis
+    from tradeflow.services import analysis
 
     symbols, dc = _universe()
     res = analysis.construct_portfolio(
@@ -205,7 +205,7 @@ def test_construct_portfolio_bl_shrink_chain_applies_ic_uncertainty_once():
 
 
 def test_construct_portfolio_bl_reports_posterior_section():
-    from src.services import analysis
+    from tradeflow.services import analysis
 
     symbols, dc = _universe()
     res = analysis.construct_portfolio(
@@ -224,7 +224,7 @@ def test_construct_portfolio_bl_reports_posterior_section():
 
 
 def test_construct_portfolio_without_posterior_omits_section():
-    from src.services import analysis
+    from tradeflow.services import analysis
 
     symbols, dc = _universe()
     res = analysis.construct_portfolio(dc, "ma_crossover", symbols, AS_OF)

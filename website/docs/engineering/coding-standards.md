@@ -26,7 +26,7 @@ These keep the layering honest — they matter more than any style nit:
 
 1. **Dependencies point downward.** A layer may import from layers below it, never
    above. See [Architecture](architecture).
-2. **No vendor SDK above the broker layer.** Only `src/brokers/<vendor>/` imports
+2. **No vendor SDK above the broker layer.** Only `tradeflow/brokers/<vendor>/` imports
    `alpaca` (or any other broker SDK). Everything else uses the `Broker` /
    `MarketDataProvider` interfaces. See [Broker abstraction](broker-abstraction).
 3. **One concern per module.** Signals, sizing, fills, execution, metrics, and
@@ -47,7 +47,7 @@ These keep the layering honest — they matter more than any style nit:
 - **Shared vocabulary lives in one place** — e.g. trade signals in
   `strategies/signals.py`, scan signals in `scanners/base.py`. Never hard-code a
   signal string in two layers.
-- **Indicators are pure pandas/numpy** (`src/indicators`). No TA-Lib or other
+- **Indicators are pure pandas/numpy** (`tradeflow/indicators`). No TA-Lib or other
   compiled dependency in the base install.
 - **Reuse the shared helpers** (`utils/numeric`, `utils/timeutils`,
   `utils/streaming`, `analytics/metrics`) rather than re-deriving the same logic.

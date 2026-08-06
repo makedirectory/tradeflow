@@ -2,12 +2,12 @@
 
 import pytest
 
-from src.brokers.base import AccountSnapshot, OrderSide, Position
-from src.execution.live_trader import LiveTrader
-from src.execution.sizing import BetaSizer, PortfolioWeightSizer, RiskBasedSizer
-from src.strategies import signals
-from src.strategies.volume_spike import VolumeSpikeStrategy
 from tests.fakes import FakeBroker
+from tradeflow.brokers.base import AccountSnapshot, OrderSide, Position
+from tradeflow.execution.live_trader import LiveTrader
+from tradeflow.execution.sizing import BetaSizer, PortfolioWeightSizer, RiskBasedSizer
+from tradeflow.strategies import signals
+from tradeflow.strategies.volume_spike import VolumeSpikeStrategy
 
 
 def _trader(broker, sizer=None):

@@ -5,7 +5,7 @@ title: Strategies
 
 # Strategies
 
-A `Strategy` (`src/strategies/base.py`) is responsible for three things and no
+A `Strategy` (`tradeflow/strategies/base.py`) is responsible for three things and no
 more:
 
 1. **Indicators** — `process_data(df)` returns the OHLCV frame plus the columns
@@ -48,7 +48,7 @@ position.
 
 ## The signal vocabulary
 
-The derived signals are plain strings, defined once in `src/strategies/signals.py`
+The derived signals are plain strings, defined once in `tradeflow/strategies/signals.py`
 so every layer agrees:
 
 ```python

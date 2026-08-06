@@ -12,10 +12,10 @@ from typing import Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-from src.brokers.base import AccountSnapshot, Broker, MarketStatus, OrderResult, OrderSide, Position
-from src.marketdata.base import BarHandler, MarketDataProvider
-from src.marketdata.timeframe import Timeframe
-from src.utils.timeutils import NEW_YORK
+from tradeflow.brokers.base import AccountSnapshot, Broker, MarketStatus, OrderResult, OrderSide, Position
+from tradeflow.marketdata.base import BarHandler, MarketDataProvider
+from tradeflow.marketdata.timeframe import Timeframe
+from tradeflow.utils.timeutils import NEW_YORK
 
 
 def make_ohlcv(n: int = 600, seed: int = 0, freq: str = "5min") -> pd.DataFrame:
@@ -170,7 +170,7 @@ class StreamingFakeMarketData(FakeMarketData):
     async def stream_bars(self, symbols, handler):
         import asyncio
 
-        from src.marketdata.base import BarEvent
+        from tradeflow.marketdata.base import BarEvent
 
         for i in range(self._bars_to_emit):
             for symbol in symbols:

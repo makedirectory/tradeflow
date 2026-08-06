@@ -3,8 +3,8 @@
 import pandas as pd
 import pytest
 
-from src.strategies import signals
-from src.strategies.volume_spike import VolumeSpikeStrategy
+from tradeflow.strategies import signals
+from tradeflow.strategies.volume_spike import VolumeSpikeStrategy
 
 
 def _strategy():
@@ -118,7 +118,7 @@ def test_pinned_parameter_skips_range_validation():
     """
     import pandas as pd
 
-    from src.strategies.base import Strategy
+    from tradeflow.strategies.base import Strategy
 
     class Pinned(Strategy):
         PARAM_RANGES = {

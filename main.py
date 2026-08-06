@@ -1,7 +1,7 @@
 """Command-line entry point.
 
 A thin adapter that wires the layers together per command - all the real work
-lives in ``src/`` (and the shared service core in ``src/services/``, so the CLI,
+lives in ``tradeflow/`` (and the shared service core in ``tradeflow/services/``, so the CLI,
 the MCP server, and the research agent run the same code):
 
     demo         run the whole pipeline on synthetic data (no keys, no network)
@@ -32,9 +32,9 @@ import sys
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from src.marketdata.base import MarketDataProvider
-from src.services.registry import STRATEGIES
-from src.utils.logging_config import setup_logging
+from tradeflow.marketdata.base import MarketDataProvider
+from tradeflow.services.registry import STRATEGIES
+from tradeflow.utils.logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
 
@@ -49,14 +49,14 @@ def build_data_and_broker(cache: bool = False, offline: bool = False, cache_dir:
     """Construct the Alpaca-backed broker and market-data client from settings.
 
     ``cache``/``offline``/``cache_dir`` are forwarded to
-    :func:`src.services.data.build_data_client`, which owns the actual provider
+    :func:`tradeflow.services.data.build_data_client`, which owns the actual provider
     construction (and its opt-in bar-cache wrapping) - kept in one place so the
     CLI and the read-only MCP/research path never diverge on how a data client
     gets built.
     """
-    from src.brokers.alpaca.factory import build_broker
-    from src.services.data import build_data_client
-    from src.settings import load_settings
+    from tradeflow.brokers.alpaca.factory import build_broker
+    from tradeflow.services.data import build_data_client
+    from tradeflow.settings import load_settings
 
     settings = load_settings()
     broker = build_broker(settings.alpaca_key, settings.alpaca_secret, settings.paper_trade)
@@ -69,7 +69,7 @@ def resolve_universe(data_client, scanner_name: Optional[str], candidates: List[
 
     Delegates to the shared service core so the CLI and MCP server use one path.
     """
-    from src.services.data import resolve_universe as _resolve
+    from tradeflow.services.data import resolve_universe as _resolve
 
     return _resolve(data_client, scanner_name, candidates)
 
@@ -85,7 +85,7 @@ def build_cost_model(args):
     research-clock entrypoint that can run a search or a validation, not just
     ``backtest``.
     """
-    from src.costs import ParametricCostModel
+    from tradeflow.costs import ParametricCostModel
 
     if args.gross:
         return None
@@ -130,13 +130,13 @@ def _vintage_stamp(data_client, universe: List[str], timeframe: str, start: Any,
     the data client isn't cache-backed (today's behavior - no vintage guarantee).
 
     Calling this ensures ``[start, end]`` is cached for ``universe`` (see
-    :meth:`~src.store.bars.CachedMarketData.vintage_stamp`) - it warms the cache
+    :meth:`~tradeflow.store.bars.CachedMarketData.vintage_stamp`) - it warms the cache
     as a side effect, which is why callers compute it once, up front, and reuse
     the same value for both the memoization lookup and the eventual record: the
     two must use an identical dedup key or a matching prior trial would never be
     found.
     """
-    from src.store.bars import CachedMarketData
+    from tradeflow.store.bars import CachedMarketData
 
     provider = getattr(data_client, "provider", None)
     if not isinstance(provider, CachedMarketData):
@@ -149,13 +149,13 @@ def _open_trial_store(journal_path: Optional[Any] = None):
     """A trial store against ``journal_path`` (default: the current
     ``audit.DEFAULT_TRIAL_JOURNAL``), or ``None`` on any failure to open one.
 
-    v1 of the trial store is passive and derived (see ``src.store.trials``): a
+    v1 of the trial store is passive and derived (see ``tradeflow.store.trials``): a
     broken store must never break the command it's attached to, memoization
     included - every caller here treats ``None`` as "skip memoization, run
     normally," never as an error to propagate.
     """
-    from src.services import audit
-    from src.store.trials import TrialStore, db_path_for_journal
+    from tradeflow.services import audit
+    from tradeflow.store.trials import TrialStore, db_path_for_journal
 
     path = journal_path or audit.DEFAULT_TRIAL_JOURNAL
     try:
@@ -181,7 +181,7 @@ def _find_cached_trial(
     """Look up an exact prior trial via the trial store; ``None`` if none exists
     (including when the store itself is unavailable - see :func:`_open_trial_store`).
     """
-    from src.optimization.config_store import current_git_sha
+    from tradeflow.optimization.config_store import current_git_sha
 
     with _open_trial_store() as store:
         if store is None:
@@ -208,7 +208,7 @@ def _write_html(args, result: Dict[str, Any], kind: str, extras: Optional[Dict[s
     path = getattr(args, "html", None)
     if not path:
         return
-    from src.analytics.htmlreport import write_html
+    from tradeflow.analytics.htmlreport import write_html
 
     try:
         print(f"HTML report written to {write_html(result, kind, path, extras=extras)}")
@@ -226,8 +226,8 @@ def _load_strategy_from_config(path: str):
     loudly (:meth:`Strategy._validate_parameters`) rather than silently
     trading on a config an older strategy version can no longer honor.
     """
-    from src.optimization.config_store import load_config
-    from src.services.registry import resolve_strategy_class
+    from tradeflow.optimization.config_store import load_config
+    from tradeflow.services.registry import resolve_strategy_class
 
     payload = load_config(path)
     strategy_name = payload["strategy"]
@@ -242,9 +242,13 @@ def _load_strategy_from_config(path: str):
 def cmd_backtest(args) -> None:
     import json
 
-    from src.analytics.reporting import format_backtest_report, format_cached_notice, log_backtest_report
-    from src.engine.backtest import ACCOUNTING_VERSION, BacktestEngine
-    from src.services.sizing import build_beta_sizer
+    from tradeflow.analytics.reporting import (
+        format_backtest_report,
+        format_cached_notice,
+        log_backtest_report,
+    )
+    from tradeflow.engine.backtest import ACCOUNTING_VERSION, BacktestEngine
+    from tradeflow.services.sizing import build_beta_sizer
 
     scanner = args.scanner
     if args.config:
@@ -309,16 +313,16 @@ def cmd_backtest(args) -> None:
     )
 
     if not args.no_journal:
-        from src.analytics.metrics import returns_from_equity
-        from src.analytics.performance import build_dated_equity_curve
-        from src.services.audit import journal_trial
+        from tradeflow.analytics.metrics import returns_from_equity
+        from tradeflow.analytics.performance import build_dated_equity_curve
+        from tradeflow.services.audit import journal_trial
 
         # Persist this trial's own dated return series (daily-resampled,
         # from realized trade P&L - the same construction every persisted trial
         # kind uses) so it can later join a Reality Check family panel.
         dated_equity = build_dated_equity_curve(result.trades, args.capital)
         returns_series = returns_from_equity(dated_equity) if not dated_equity.empty else None
-        from src.services.analysis import trades_payload
+        from tradeflow.services.analysis import trades_payload
 
         journal_trial(
             "backtest",
@@ -343,7 +347,7 @@ def cmd_backtest(args) -> None:
         )
 
     if getattr(args, "chart", None):
-        from src.analytics.charts import render_backtest_chart
+        from tradeflow.analytics.charts import render_backtest_chart
 
         try:
             path = render_backtest_chart(result, args.chart, title=f"{strategy_name} — backtest")
@@ -352,8 +356,8 @@ def cmd_backtest(args) -> None:
             print(f"Chart skipped: {exc}")
 
     if getattr(args, "html", None):
-        from src.services.analysis import backtest_payload
-        from src.services.audit import new_run_id
+        from tradeflow.services.analysis import backtest_payload
+        from tradeflow.services.audit import new_run_id
 
         _write_html(
             args,
@@ -380,7 +384,7 @@ def cmd_backtest(args) -> None:
 
 
 def cmd_scan(args) -> None:
-    from src.scanners.symbol_scanner import SymbolScanner
+    from tradeflow.scanners.symbol_scanner import SymbolScanner
 
     _, data_client = build_data_and_broker()
     flagged = SymbolScanner(data_client, args.scanner).scan(args.symbols)
@@ -397,8 +401,8 @@ def cmd_allocate(args) -> None:
         _allocate_utility(args)
         return
 
-    from src.scanners.symbol_scanner import SymbolScanner
-    from src.services.sizing import allocate_portfolio
+    from tradeflow.scanners.symbol_scanner import SymbolScanner
+    from tradeflow.services.sizing import allocate_portfolio
 
     _, data_client = build_data_and_broker()
     scanner = SymbolScanner(data_client, args.scanner)
@@ -421,7 +425,7 @@ def cmd_allocate(args) -> None:
 
 def _allocate_utility(args) -> None:
     """Mean-variance portfolio construction (alpha + Σ) — a read-only proposal."""
-    from src.services.analysis import construct_portfolio, longshort_report
+    from tradeflow.services.analysis import construct_portfolio, longshort_report
 
     _, data_client = build_data_and_broker()
     book = args.book.replace("-", "_")
@@ -634,7 +638,7 @@ def _worker_data_spec(args):
     is strictly worse than one warmed local cache. Asking for workers therefore opts
     into the bar cache whether or not `--cache` was passed, and says so.
     """
-    from src.optimization.parallel import DataSpec, resolve_workers
+    from tradeflow.optimization.parallel import DataSpec, resolve_workers
 
     if resolve_workers(getattr(args, "workers", None)) <= 1:
         return None
@@ -644,8 +648,8 @@ def _worker_data_spec(args):
 
 
 def cmd_optimize(args) -> None:
-    from src.engine.backtest import ACCOUNTING_VERSION
-    from src.optimization.optimizer import ParameterOptimizer
+    from tradeflow.engine.backtest import ACCOUNTING_VERSION
+    from tradeflow.optimization.optimizer import ParameterOptimizer
 
     _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
     universe = resolve_universe(data_client, args.scanner, args.symbols)
@@ -656,7 +660,7 @@ def cmd_optimize(args) -> None:
     # for the same ranges simultaneously.
     data_spec = _worker_data_spec(args)
     if data_spec is not None:
-        from src.optimization.parallel import warm_for
+        from tradeflow.optimization.parallel import warm_for
 
         warm_for(data_spec, universe, timeframe, args.start, args.end)
     # Net of transaction cost by default; --gross searches on gross returns, which
@@ -692,7 +696,7 @@ def cmd_optimize(args) -> None:
 
     n_memoized = 0
     if not args.no_journal and not result.results.empty:
-        from src.services.audit import journal_trial
+        from tradeflow.services.audit import journal_trial
 
         # Each evaluated config is a distinct trial — a 50-point search is 50 trials,
         # not one. Recording them per-config is what makes a campaign-level Deflated
@@ -728,10 +732,10 @@ def cmd_optimize(args) -> None:
 
 
 def cmd_walkforward(args) -> None:
-    from src.analytics.reporting import format_cached_notice
-    from src.engine.backtest import ACCOUNTING_VERSION
-    from src.optimization.config_store import build_provenance, current_git_sha, save_config
-    from src.optimization.walk_forward import WalkForwardValidator
+    from tradeflow.analytics.reporting import format_cached_notice
+    from tradeflow.engine.backtest import ACCOUNTING_VERSION
+    from tradeflow.optimization.config_store import build_provenance, current_git_sha, save_config
+    from tradeflow.optimization.walk_forward import WalkForwardValidator
 
     _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
     universe = resolve_universe(data_client, args.scanner, args.symbols)
@@ -782,7 +786,7 @@ def cmd_walkforward(args) -> None:
         # same trial store as top-level.
         data_spec = _worker_data_spec(args)
         if data_spec is not None:
-            from src.optimization.parallel import warm_for
+            from tradeflow.optimization.parallel import warm_for
 
             warm_for(data_spec, universe, timeframe, args.start, args.end)
         validator = WalkForwardValidator(
@@ -820,8 +824,8 @@ def cmd_walkforward(args) -> None:
     _print_walkforward(result, args.objective)
 
     if getattr(args, "html", None):
-        from src.services.analysis import walk_forward_payload
-        from src.services.audit import new_run_id
+        from tradeflow.services.analysis import walk_forward_payload
+        from tradeflow.services.audit import new_run_id
 
         _write_html(
             args,
@@ -841,8 +845,8 @@ def cmd_walkforward(args) -> None:
         )
 
     if not args.no_journal and result.folds:
-        from src.services.analysis import trades_payload
-        from src.services.audit import journal_trial
+        from tradeflow.services.analysis import trades_payload
+        from tradeflow.services.audit import journal_trial
 
         # One walk-forward is one *validated* config — the OOS aggregate is the
         # headline. The many IS-optimization configs it evaluated internally are
@@ -870,7 +874,7 @@ def cmd_walkforward(args) -> None:
         )
 
     if getattr(args, "bootstrap_skill", False) and result.folds:
-        from src.services.analysis import compute_bootstrap_skill
+        from tradeflow.services.analysis import compute_bootstrap_skill
 
         report = compute_bootstrap_skill(
             result.oos_returns,
@@ -885,7 +889,7 @@ def cmd_walkforward(args) -> None:
         _print_bootstrap_skill(report)
 
     if getattr(args, "chart", None):
-        from src.analytics.charts import render_walkforward_chart
+        from tradeflow.analytics.charts import render_walkforward_chart
 
         try:
             path = render_walkforward_chart(result, args.chart, title=f"{args.strategy} — walk-forward")
@@ -1068,9 +1072,9 @@ def cmd_research(args) -> None:
             f"Provider '{args.provider}' needs the '{extra}' extra. Install it:\n    uv sync --extra {extra}"
         )
 
-    from src.research.agent import ResearchAgent, ResearchConfig
-    from src.research.proposer import build_proposer
-    from src.services.data import build_data_client
+    from tradeflow.research.agent import ResearchAgent, ResearchConfig
+    from tradeflow.research.proposer import build_proposer
+    from tradeflow.services.data import build_data_client
 
     data_client = build_data_client()
     universe = resolve_universe(data_client, args.scanner, args.symbols)
@@ -1120,7 +1124,7 @@ def _journal_alpha(args, strategy_label: str, source: str, result: dict) -> None
     """
     if args.no_journal:
         return
-    from src.services.audit import journal_trial
+    from tradeflow.services.audit import journal_trial
 
     knobs = {
         "source": source,
@@ -1154,7 +1158,7 @@ def cmd_init(args) -> None:
     variables with no prompts (for scripts and containers); the default is the
     interactive wizard.
     """
-    from src.services import setup
+    from tradeflow.services import setup
 
     if args.check:
         _print_doctor(setup.run_checks())
@@ -1260,7 +1264,7 @@ def _init_interactive(args, setup) -> None:
 
 def _check_credentials_now(setup):
     """Validate through the data-only client factory — never a trading client."""
-    from src.services.data import build_data_client
+    from tradeflow.services.data import build_data_client
 
     try:
         return setup.check_credentials(build_data_client())
@@ -1273,8 +1277,8 @@ def _check_credentials_now(setup):
 def _warm_cache(args) -> None:
     """Optional first cache warm. Interruptible: the cache writes per partition, so
     Ctrl-C leaves a partial cache that is safe and resumable, and says so."""
-    from src.services import setup as setup_service
-    from src.services.data import build_data_client
+    from tradeflow.services import setup as setup_service
+    from tradeflow.services.data import build_data_client
 
     end = datetime.now()
     start = end - timedelta(days=365)
@@ -1327,8 +1331,8 @@ def cmd_verdict(args) -> None:
     """
     import json
 
-    from src.analytics.reporting import format_cached_notice, format_verdict_report
-    from src.services.analysis import run_verdict
+    from tradeflow.analytics.reporting import format_cached_notice, format_verdict_report
+    from tradeflow.services.analysis import run_verdict
 
     _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
 
@@ -1388,7 +1392,7 @@ def cmd_alphas(args) -> None:
     cross-section into comparable annualized-return forecasts, and ranks them.
     Produces no orders and saves no config.
     """
-    from src.services.analysis import compute_alphas, compute_combined_alphas
+    from tradeflow.services.analysis import compute_alphas, compute_combined_alphas
 
     _, data_client = build_data_and_broker()
 
@@ -1520,7 +1524,7 @@ def cmd_risk(args) -> None:
         _print_conditional_evidence_gate(data_client, args)
         return
 
-    from src.services.analysis import compute_risk
+    from tradeflow.services.analysis import compute_risk
 
     result = compute_risk(
         data_client,
@@ -1566,7 +1570,7 @@ def _print_conditional_evidence_gate(data_client, args) -> None:
     that decides whether conditioning is worth turning on."""
     from datetime import timedelta
 
-    from src.services.analysis import evaluate_conditional_risk
+    from tradeflow.services.analysis import evaluate_conditional_risk
 
     end = args.as_of
     start = end - timedelta(days=args.lookback_days)
@@ -1603,7 +1607,7 @@ def cmd_info(args) -> None:
     effective breadth over [start, end] and reconciles predicted IR with realized,
     surfacing the research-integrity guardrails. Produces no orders.
     """
-    from src.services.analysis import compute_information
+    from tradeflow.services.analysis import compute_information
 
     _, data_client = build_data_and_broker()
 
@@ -1694,7 +1698,7 @@ def _print_bucket_diagnostic(diag) -> None:
 
 def _print_scaling_ab(data_client, args) -> None:
     """Walk-forward A/B of the two scalings (the `--scaling-ab` research mode)."""
-    from src.services.analysis import run_scaling_ab
+    from tradeflow.services.analysis import run_scaling_ab
 
     r = run_scaling_ab(
         data_client,
@@ -1722,7 +1726,7 @@ def _print_scaling_ab(data_client, args) -> None:
 
 def _print_attribution_report(data_client, args) -> None:
     """Full performance-attribution report (`info --attribution`)."""
-    from src.services.analysis import compute_attribution
+    from tradeflow.services.analysis import compute_attribution
 
     r = compute_attribution(
         data_client,
@@ -1758,7 +1762,7 @@ def _print_attribution_report(data_client, args) -> None:
 
 def _print_conditional_ab(data_client, args) -> None:
     """The net-of-cost A/B (`info --conditional-ab`)."""
-    from src.services.analysis import run_conditional_risk_ab
+    from tradeflow.services.analysis import run_conditional_risk_ab
 
     r = run_conditional_risk_ab(
         data_client,
@@ -1796,7 +1800,7 @@ def _print_conditional_ab(data_client, args) -> None:
 
 def _print_policy_ab(data_client, args) -> None:
     """The net-of-cost A/B (`info --policy-ab`): myopic vs aim policy."""
-    from src.services.analysis import run_policy_ab
+    from tradeflow.services.analysis import run_policy_ab
 
     r = run_policy_ab(
         data_client,
@@ -1899,7 +1903,7 @@ def _maybe_print_attribution_verdict(
     `info --attribution` call). Silently skipped below a year or on insufficient data."""
     if (end - start).days < 365:
         return
-    from src.services.analysis import compute_attribution
+    from tradeflow.services.analysis import compute_attribution
 
     r = compute_attribution(data_client, strategy, symbols, start, end, benchmark=benchmark, n_points=16)
     if not r.get("periods"):
@@ -1920,7 +1924,7 @@ def cmd_horizon(args) -> None:
     Read-only research diagnostic: measures how fast the signal's IC decays and turns
     that into a rebalance cadence and a current/lagged blend. Produces no orders.
     """
-    from src.services.analysis import compute_horizon
+    from tradeflow.services.analysis import compute_horizon
 
     _, data_client = build_data_and_broker()
     r = compute_horizon(
@@ -1972,8 +1976,8 @@ def cmd_cache(args) -> None:
     ``MarketDataProvider``, so a repeated backtest/optimize/walkforward request
     reuses previously-fetched data instead of re-hitting Alpaca.
     """
-    from src.services.data import build_data_client
-    from src.store.bars import CachedMarketData
+    from tradeflow.services.data import build_data_client
+    from tradeflow.store.bars import CachedMarketData
 
     if args.cache_command == "status":
         # No network needed - open the cache directly.
@@ -2037,7 +2041,7 @@ def cmd_trials(args) -> None:
     journal that lets a campaign-level Deflated Sharpe count every config you've
     ever tried, not just the ones from this process.
     """
-    from src.store.trials import DEFAULT_JOURNAL_PATH, TrialStore
+    from tradeflow.store.trials import DEFAULT_JOURNAL_PATH, TrialStore
 
     # `query` has no --journal flag; status/rebuild do. Passing it here too means
     # a schema-mismatch rebuild (which can fire inside the constructor) replays
@@ -2099,7 +2103,7 @@ def _trial_filters(args) -> Dict[str, Any]:
 def _print_trials_list(store, args) -> None:
     import json
 
-    from src.analytics.reporting import format_trials_table
+    from tradeflow.analytics.reporting import format_trials_table
 
     filters = _trial_filters(args)
     rows = store.list_trials(sort=args.sort, limit=args.limit, offset=args.offset, **filters)
@@ -2109,7 +2113,7 @@ def _print_trials_list(store, args) -> None:
         return
     print(format_trials_table(rows, total=total))
     if args.strategy and args.symbols:
-        from src.engine.backtest import ACCOUNTING_VERSION
+        from tradeflow.engine.backtest import ACCOUNTING_VERSION
 
         accounting = args.accounting if args.accounting is not None else ACCOUNTING_VERSION
         n = store.family_count(args.strategy, args.symbols, accounting)
@@ -2122,7 +2126,7 @@ def _print_trials_list(store, args) -> None:
 def _print_trial_detail(store, args) -> None:
     import json
 
-    from src.analytics.reporting import format_trial_detail, format_trial_trades
+    from tradeflow.analytics.reporting import format_trial_detail, format_trial_trades
 
     trial = store.get_trial(args.trial_id)
     if trial is None:
@@ -2138,7 +2142,7 @@ def _print_trial_detail(store, args) -> None:
 def _print_leaderboard(store, args) -> None:
     import json
 
-    from src.analytics.reporting import format_leaderboard
+    from tradeflow.analytics.reporting import format_leaderboard
 
     board = store.best(rank_by=args.rank_by, limit=args.limit, **_trial_filters(args))
     if args.json:
@@ -2156,16 +2160,16 @@ def cmd_mcp(args) -> None:
     only a data client, so it cannot place orders.
     """
     try:
-        from src.mcp.server import serve
+        from tradeflow.mcp.server import serve
     except ImportError:
         sys.exit("The MCP server needs the 'mcp' extra. Install it:\n    uv sync --extra mcp")
     serve()
 
 
 def cmd_live(args) -> None:
-    from src.engine.live import LiveEngine
-    from src.execution.live_trader import LiveTrader
-    from src.services.sizing import build_beta_sizer, build_portfolio_weight_sizer
+    from tradeflow.engine.live import LiveEngine
+    from tradeflow.execution.live_trader import LiveTrader
+    from tradeflow.services.sizing import build_beta_sizer, build_portfolio_weight_sizer
 
     scanner = args.scanner
     if args.config:
@@ -2207,11 +2211,11 @@ def cmd_demo(args) -> None:
     verdict. The data is a seeded random walk with no real edge - so a healthy run
     ends in "NOT promotable", which is exactly the honesty the engine exists for.
     """
-    from src.engine.backtest import BacktestEngine
-    from src.marketdata.client import MarketDataClient
-    from src.marketdata.synthetic import SyntheticMarketData
-    from src.marketdata.timeframe import Timeframe
-    from src.optimization.walk_forward import WalkForwardValidator
+    from tradeflow.engine.backtest import BacktestEngine
+    from tradeflow.marketdata.client import MarketDataClient
+    from tradeflow.marketdata.synthetic import SyntheticMarketData
+    from tradeflow.marketdata.timeframe import Timeframe
+    from tradeflow.optimization.walk_forward import WalkForwardValidator
 
     data_client = MarketDataClient(SyntheticMarketData(seed=args.seed))
     symbols = ["SYNW", "SYNX", "SYNY", "SYNZ"]
@@ -2287,7 +2291,7 @@ def cmd_demo(args) -> None:
         if chart_result is None:
             print("   Chart skipped: no backtest result was captured.")
         else:
-            from src.analytics.charts import render_demo_summary
+            from tradeflow.analytics.charts import render_demo_summary
 
             try:
                 path = render_demo_summary(
@@ -2310,11 +2314,11 @@ def cmd_demo_agent(args) -> None:
     deterministic and needs no LLM key. Any other provider drives a live model
     through the identical loop.
     """
-    from src.costs import ParametricCostModel
-    from src.research.agent import ResearchAgent, ResearchConfig
-    from src.research.demo_proposals import DEMO_PROPOSALS
-    from src.research.proposer import FixedProposer, build_proposer
-    from src.services.data import build_data_client
+    from tradeflow.costs import ParametricCostModel
+    from tradeflow.research.agent import ResearchAgent, ResearchConfig
+    from tradeflow.research.demo_proposals import DEMO_PROPOSALS
+    from tradeflow.research.proposer import FixedProposer, build_proposer
+    from tradeflow.services.data import build_data_client
 
     rule = "=" * 74
     print(f"\n{rule}")
@@ -2468,7 +2472,7 @@ DEFAULT_NEUTRAL_FACTORS = ["market", "volatility", "size"]
 
 
 def _factors(value: str) -> List[str]:
-    from src.risk.exposures import FACTOR_NAMES
+    from tradeflow.risk.exposures import FACTOR_NAMES
 
     factors = [s.strip().lower() for s in value.split(",") if s.strip()]
     unknown = [f for f in factors if f not in FACTOR_NAMES]
@@ -2515,7 +2519,7 @@ def _add_cache_flags(parser) -> None:
     the same selectivity as :func:`_add_cost_flags` (not live/research/scan/...).
 
     ``--cache`` wraps the data client in the persistent bar cache
-    (``src.store.bars.CachedMarketData``): a repeated request for the same
+    (``tradeflow.store.bars.CachedMarketData``): a repeated request for the same
     symbols/window is served from local Parquet instead of re-fetched. ``--offline``
     additionally forbids any network call and implies ``--cache`` on its own — a
     byte-reproducible, cache-only run.
@@ -3470,8 +3474,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    from src.settings import SettingsError
-    from src.store.bars import CacheMiss
+    from tradeflow.settings import SettingsError
+    from tradeflow.store.bars import CacheMiss
 
     setup_logging()
     args = build_parser().parse_args()

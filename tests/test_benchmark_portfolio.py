@@ -9,12 +9,12 @@ import json
 import numpy as np
 import pytest
 
-from src.portfolio.benchmark import (
+from tradeflow.portfolio.benchmark import (
     implied_returns,
     load_benchmark_weights,
     restrict_and_renormalize,
 )
-from src.risk.base import RiskMatrix
+from tradeflow.risk.base import RiskMatrix
 
 SIGMA = np.array([[0.04, 0.006, 0.002], [0.006, 0.09, 0.003], [0.002, 0.003, 0.05]])
 SYMS = ["A", "B", "C"]

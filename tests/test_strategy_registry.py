@@ -8,13 +8,13 @@ from datetime import datetime
 
 import pytest
 
-from src.engine.backtest import BacktestEngine
-from src.marketdata.client import MarketDataClient
-from src.services.registry import STRATEGIES
-from src.strategies import signals
-from src.strategies.ma_crossover import MovingAverageCrossoverStrategy
-from src.strategies.mean_reversion import MeanReversionStrategy
 from tests.fakes import FakeMarketData, make_ohlcv
+from tradeflow.engine.backtest import BacktestEngine
+from tradeflow.marketdata.client import MarketDataClient
+from tradeflow.services.registry import STRATEGIES
+from tradeflow.strategies import signals
+from tradeflow.strategies.ma_crossover import MovingAverageCrossoverStrategy
+from tradeflow.strategies.mean_reversion import MeanReversionStrategy
 
 _VALID_SIGNALS = {signals.BUY, signals.SELL, signals.CLOSE_BUY, signals.CLOSE_SELL, signals.HOLD}
 

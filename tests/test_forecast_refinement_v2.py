@@ -14,14 +14,14 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
-from src.alphas import refine
-from src.alphas.base import AlphaContext, refine_alpha
-from src.alphas.horizon import effective_sample_size
-from src.analytics.information import risk_bucket_diagnostic
-from src.data.panel import FeaturePanel
-from src.marketdata.client import MarketDataClient
-from src.services import analysis
 from tests.fakes import DictMarketData, make_ohlcv
+from tradeflow.alphas import refine
+from tradeflow.alphas.base import AlphaContext, refine_alpha
+from tradeflow.alphas.horizon import effective_sample_size
+from tradeflow.analytics.information import risk_bucket_diagnostic
+from tradeflow.data.panel import FeaturePanel
+from tradeflow.marketdata.client import MarketDataClient
+from tradeflow.services import analysis
 
 AS_OF = datetime(2024, 6, 1)
 
