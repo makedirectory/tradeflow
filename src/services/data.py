@@ -29,14 +29,11 @@ def build_data_client(
     raises rather than falling through to Alpaca), and implies ``cache`` on its
     own. Default behavior (neither flag) is unchanged - a plain Alpaca provider.
     """
-    from alpaca.data.historical import StockHistoricalDataClient
-
-    from src.brokers.alpaca.market_data import AlpacaMarketData
+    from src.brokers.alpaca.factory import build_market_data
     from src.settings import load_settings
 
     settings = load_settings()
-    historical = StockHistoricalDataClient(settings.alpaca_key, settings.alpaca_secret)
-    provider = AlpacaMarketData(historical, settings.alpaca_key, settings.alpaca_secret)
+    provider = build_market_data(settings.alpaca_key, settings.alpaca_secret)
     if cache or offline:
         from src.store.bars import CachedMarketData
 

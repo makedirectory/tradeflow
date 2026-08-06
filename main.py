@@ -54,19 +54,12 @@ def build_data_and_broker(cache: bool = False, offline: bool = False, cache_dir:
     CLI and the read-only MCP/research path never diverge on how a data client
     gets built.
     """
-    from alpaca.trading.client import TradingClient
-
-    from src.brokers.alpaca.broker import AlpacaBroker
+    from src.brokers.alpaca.factory import build_broker
     from src.services.data import build_data_client
     from src.settings import load_settings
 
     settings = load_settings()
-    trading_client = TradingClient(
-        api_key=settings.alpaca_key,
-        secret_key=settings.alpaca_secret,
-        paper=settings.paper_trade,
-    )
-    broker = AlpacaBroker(trading_client, settings.alpaca_key, settings.alpaca_secret, settings.paper_trade)
+    broker = build_broker(settings.alpaca_key, settings.alpaca_secret, settings.paper_trade)
     data_client = build_data_client(cache=cache, offline=offline, cache_dir=cache_dir)
     return broker, data_client
 

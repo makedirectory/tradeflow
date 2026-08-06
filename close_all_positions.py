@@ -8,9 +8,7 @@ Usage:
 import argparse
 import logging
 
-from alpaca.trading.client import TradingClient
-
-from src.brokers.alpaca.broker import AlpacaBroker
+from src.brokers.alpaca.factory import build_broker
 from src.settings import SettingsError, load_settings
 from src.utils.logging_config import setup_logging
 
@@ -27,9 +25,7 @@ def main() -> None:
         settings = load_settings()
     except SettingsError as exc:
         raise SystemExit(str(exc))
-    broker = AlpacaBroker(
-        TradingClient(settings.alpaca_key, settings.alpaca_secret, paper=settings.paper_trade)
-    )
+    broker = build_broker(settings.alpaca_key, settings.alpaca_secret, settings.paper_trade)
     if broker.close_all_positions(cancel_orders=not args.keep_orders):
         logger.info("All positions closed.")
     else:
