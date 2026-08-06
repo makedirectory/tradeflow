@@ -41,11 +41,12 @@ from tradeflow.optimization.optimizer import ParameterOptimizer
 from tradeflow.optimization.walk_forward import WalkForwardValidator
 from tradeflow.services.audit import new_run_id
 from tradeflow.services.registry import resolve_strategy_class
+from tradeflow.settings import state_root
 
 logger = logging.getLogger(__name__)
 
 #: Where trade tables / optimization grids are written.
-ARTIFACT_DIR = Path("logs") / "artifacts"
+ARTIFACT_DIR = state_root() / "logs" / "artifacts"
 
 #: Cap on rows returned inline from an optimization (the rest go to CSV).
 TOP_N = 10

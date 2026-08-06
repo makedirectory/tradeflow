@@ -68,6 +68,26 @@ JSON. The exposed surface:
 Every CLI research capability has an MCP equivalent, except anything touching live
 trading — that is the parity principle, and the exception is the whole safety model.
 
+### Pointing a client at it
+
+An installed copy needs no paths:
+
+```json
+{"mcpServers": {"tradeflow": {"command": "tradeflow", "args": ["mcp"]}}}
+```
+
+From a checkout, the equivalent is the script it wraps:
+
+```json
+{"mcpServers": {"tradeflow": {"command": "uv",
+  "args": ["run", "--project", "/path/to/tradeflow", "python", "main.py", "mcp"]}}}
+```
+
+Both reach the same `tradeflow.cli:main`. Note that they resolve **different state
+roots** (`~/.tradeflow` vs. the checkout), so an agent and a human should be pointed
+at the same one — or `TRADEFLOW_HOME` set explicitly — if they are meant to share a
+campaign's trial history.
+
 ## Descriptions are an interface, not documentation
 
 A human who reads a stale doc can notice it is stale. An agent cannot: it reads a

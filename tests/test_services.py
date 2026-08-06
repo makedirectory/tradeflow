@@ -196,8 +196,8 @@ def test_build_server_smoke():
 # --- CLI trial journaling -------------------------------------------------------
 def _fake_cli_env(monkeypatch, tmp_path, symbols):
     """Point the CLI at fake data and a temp journal; return the journal path."""
-    import main
     from tests.fakes import FakeMarketData
+    from tradeflow import cli as main
     from tradeflow.marketdata.client import MarketDataClient
     from tradeflow.services import audit
 
@@ -215,7 +215,7 @@ def _trials(journal):
 
 
 def test_cli_backtest_journals_one_trial(monkeypatch, tmp_path):
-    import main
+    from tradeflow import cli as main
 
     journal = _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB"])
     args = main.build_parser().parse_args(
@@ -242,7 +242,7 @@ def test_cli_backtest_journals_one_trial(monkeypatch, tmp_path):
 
 
 def test_cli_optimize_journals_one_trial_per_config(monkeypatch, tmp_path):
-    import main
+    from tradeflow import cli as main
 
     journal = _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB"])
     args = main.build_parser().parse_args(
@@ -276,7 +276,7 @@ def test_cli_optimize_journals_one_trial_per_config(monkeypatch, tmp_path):
 
 
 def test_cli_no_journal_flag_records_nothing(monkeypatch, tmp_path):
-    import main
+    from tradeflow import cli as main
 
     journal = _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB"])
     args = main.build_parser().parse_args(
@@ -300,7 +300,7 @@ def test_cli_no_journal_flag_records_nothing(monkeypatch, tmp_path):
 
 
 def test_cli_walkforward_journals_one_validated_trial(monkeypatch, tmp_path):
-    import main
+    from tradeflow import cli as main
 
     journal = _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB"])
     args = main.build_parser().parse_args(
@@ -339,7 +339,7 @@ def test_cli_walkforward_journals_one_validated_trial(monkeypatch, tmp_path):
 
 
 def test_cli_alphas_journals_a_readonly_trial(monkeypatch, tmp_path):
-    import main
+    from tradeflow import cli as main
 
     journal = _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB", "CCC"])
     args = main.build_parser().parse_args(
@@ -375,7 +375,7 @@ def test_cli_backtest_also_populates_the_trial_store(monkeypatch, tmp_path):
     """Every journaled trial is dual-written into the sibling trial store, so a
     campaign's n_trials can be counted from an index instead of replaying JSONL
     by hand on every query."""
-    import main
+    from tradeflow import cli as main
     from tradeflow.engine.backtest import ACCOUNTING_VERSION
     from tradeflow.store.trials import TrialStore, db_path_for_journal
 
@@ -411,8 +411,8 @@ def test_walkforward_gate_report_is_unaffected_by_a_broken_trial_store(monkeypat
     run with a working trial store and one where the store is entirely broken must
     produce the identical printed gate report - the dual-write is one-way and can
     never feed back into a verdict."""
-    import main
     from tests.fakes import FakeMarketData
+    from tradeflow import cli as main
     from tradeflow.marketdata.client import MarketDataClient
     from tradeflow.services import audit
     from tradeflow.store import trials as trials_mod
@@ -475,7 +475,7 @@ _BT_ARGV = [
 
 
 def test_cli_backtest_memoizes_identical_run_without_resimulating(monkeypatch, tmp_path, capsys):
-    import main
+    from tradeflow import cli as main
     from tradeflow.engine.backtest import BacktestEngine
 
     journal = _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB"])
@@ -505,7 +505,7 @@ def test_cli_backtest_memoizes_identical_run_without_resimulating(monkeypatch, t
 def test_cli_backtest_commission_bps_change_is_a_distinct_trial(monkeypatch, tmp_path):
     """Regression test: two runs differing only in a cost flag must not collide
     as 'the same trial'."""
-    import main
+    from tradeflow import cli as main
 
     journal = _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB"])
     args1 = main.build_parser().parse_args(_BT_ARGV + ["--commission-bps", "1.0"])
@@ -516,7 +516,7 @@ def test_cli_backtest_commission_bps_change_is_a_distinct_trial(monkeypatch, tmp
 
 
 def test_cli_backtest_force_reruns_and_appends_rather_than_overwrites(monkeypatch, tmp_path):
-    import main
+    from tradeflow import cli as main
 
     journal = _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB"])
     args1 = main.build_parser().parse_args(_BT_ARGV)
@@ -537,7 +537,7 @@ def _fake_cli_env_with_cache(monkeypatch, tmp_path, symbols, cache_dir=None):
     """Like _fake_cli_env, but the injected data client is cache-backed
     (CachedMarketData wrapping FakeMarketData), so --cache/vintage wiring can be
     exercised without needing real Alpaca settings."""
-    import main
+    from tradeflow import cli as main
     from tradeflow.services import audit
     from tradeflow.store.bars import CachedMarketData
 
@@ -551,7 +551,7 @@ def _fake_cli_env_with_cache(monkeypatch, tmp_path, symbols, cache_dir=None):
 
 
 def test_cli_backtest_with_cache_records_vintage_and_reuse_is_vintage_safe(monkeypatch, tmp_path, capsys):
-    import main
+    from tradeflow import cli as main
 
     journal, _ = _fake_cli_env_with_cache(monkeypatch, tmp_path, ["AAA", "BBB"])
     args1 = main.build_parser().parse_args(_BT_ARGV + ["--cache"])
@@ -570,7 +570,7 @@ def test_cli_backtest_with_cache_records_vintage_and_reuse_is_vintage_safe(monke
 
 
 def test_cli_backtest_refresh_between_cache_runs_is_a_new_trial(monkeypatch, tmp_path):
-    import main
+    from tradeflow import cli as main
 
     journal, provider = _fake_cli_env_with_cache(monkeypatch, tmp_path, ["AAA", "BBB"])
     args1 = main.build_parser().parse_args(_BT_ARGV + ["--cache"])
@@ -586,7 +586,7 @@ def test_cli_backtest_refresh_between_cache_runs_is_a_new_trial(monkeypatch, tmp
 
 
 def test_cli_backtest_without_cache_keeps_the_no_vintage_caveat(monkeypatch, tmp_path, capsys):
-    import main
+    from tradeflow import cli as main
 
     _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB"])
     args1 = main.build_parser().parse_args(_BT_ARGV)
@@ -614,7 +614,7 @@ def test_build_data_client_cache_flag_wraps_provider(monkeypatch, tmp_path):
 def test_build_data_and_broker_forwards_cache_flags(monkeypatch, tmp_path):
     monkeypatch.setenv("APCA_API_KEY_ID", "fake")
     monkeypatch.setenv("APCA_API_SECRET_KEY", "fake")
-    import main
+    from tradeflow import cli as main
     from tradeflow.store.bars import CachedMarketData
 
     _, client = main.build_data_and_broker(cache=True, cache_dir=tmp_path / "bars")
@@ -626,7 +626,7 @@ def test_build_data_and_broker_forwards_cache_flags(monkeypatch, tmp_path):
 
 # --- `cache` CLI subcommand ------------------------------------------------
 def test_cache_status_on_empty_dir_prints_a_sane_empty_state(tmp_path, capsys):
-    import main
+    from tradeflow import cli as main
 
     args = main.build_parser().parse_args(["cache", "status", "--cache-dir", str(tmp_path / "bars")])
     args.func(args)
@@ -647,7 +647,7 @@ def _mock_cached_build_data_client(monkeypatch, cache_dir, symbols=("AAA",)):
 
 
 def test_cache_warm_then_status_round_trips(monkeypatch, tmp_path, capsys):
-    import main
+    from tradeflow import cli as main
 
     cache_dir = tmp_path / "bars"
     _mock_cached_build_data_client(monkeypatch, cache_dir)
@@ -677,7 +677,7 @@ def test_cache_warm_then_status_round_trips(monkeypatch, tmp_path, capsys):
 
 
 def test_cache_refresh_reports_per_symbol(monkeypatch, tmp_path, capsys):
-    import main
+    from tradeflow import cli as main
 
     cache_dir = tmp_path / "bars"
     _mock_cached_build_data_client(monkeypatch, cache_dir)
@@ -701,7 +701,7 @@ def test_cache_refresh_reports_per_symbol(monkeypatch, tmp_path, capsys):
 
 
 def test_walkforward_memoizes_identical_recipe_without_rerunning(monkeypatch, tmp_path, capsys):
-    import main
+    from tradeflow import cli as main
     from tradeflow.optimization.walk_forward import WalkForwardValidator
 
     journal = _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB"])
@@ -751,7 +751,7 @@ def test_walkforward_memoizes_identical_recipe_without_rerunning(monkeypatch, tm
 
 
 def test_walkforward_save_config_then_backtest_config_round_trips(monkeypatch, tmp_path):
-    import main
+    from tradeflow import cli as main
 
     journal = _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB"])
     config_path = tmp_path / "cfg.json"
@@ -808,7 +808,7 @@ def test_walkforward_save_config_then_backtest_config_round_trips(monkeypatch, t
 
 
 def test_backtest_config_out_of_range_param_fails_loudly(tmp_path):
-    import main
+    from tradeflow import cli as main
     from tradeflow.services.registry import resolve_strategy_class
 
     cls = resolve_strategy_class("ma_crossover")

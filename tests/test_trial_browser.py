@@ -305,14 +305,14 @@ def test_a_truncated_trade_table_says_so(tmp_path):
 
 # --- the CLI surface --------------------------------------------------------
 def _cli(monkeypatch, tmp_path, *argv):
-    import main
+    from tradeflow import cli as main
 
     args = main.build_parser().parse_args(["trials", *argv, "--db", str(tmp_path / "trials.db")])
     args.func(args)
 
 
 def test_cli_list_show_and_best_round_trip_as_json(monkeypatch, tmp_path, capsys):
-    import main
+    from tradeflow import cli as main
 
     with TrialStore(tmp_path / "trials.db", journal_path=tmp_path / "journal.jsonl") as s:
         _populate(s)
@@ -331,7 +331,7 @@ def test_cli_list_show_and_best_round_trip_as_json(monkeypatch, tmp_path, capsys
 
 
 def test_cli_show_on_an_unknown_id_exits_non_zero(tmp_path):
-    import main
+    from tradeflow import cli as main
 
     with TrialStore(tmp_path / "trials.db", journal_path=tmp_path / "journal.jsonl"):
         pass
@@ -342,7 +342,7 @@ def test_cli_show_on_an_unknown_id_exits_non_zero(tmp_path):
 
 
 def test_query_remains_an_alias_for_list(tmp_path, capsys):
-    import main
+    from tradeflow import cli as main
 
     with TrialStore(tmp_path / "trials.db", journal_path=tmp_path / "journal.jsonl") as s:
         _populate(s)

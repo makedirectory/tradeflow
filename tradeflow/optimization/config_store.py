@@ -19,11 +19,12 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from tradeflow.engine.backtest import ACCOUNTING_VERSION
+from tradeflow.settings import state_root
 
 logger = logging.getLogger(__name__)
 
 #: Default directory for saved configs (gitignored).
-DEFAULT_CONFIG_DIR = Path("configs")
+DEFAULT_CONFIG_DIR = state_root() / "configs"
 
 
 @dataclass

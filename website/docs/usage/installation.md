@@ -5,6 +5,39 @@ title: Installation
 
 # Installation
 
+## As a command (no clone)
+
+```bash
+uv tool install git+https://github.com/makedirectory/tradeflow
+tradeflow demo
+```
+
+`pipx install` works the same way. This gives you a `tradeflow` command with every
+verb — `tradeflow demo`, `tradeflow init`, `tradeflow verdict`, `tradeflow mcp` —
+and needs no repository, no keys, and no network for the demo.
+
+Optional capabilities stay opt-in extras:
+
+```bash
+uv tool install "tradeflow[viz,store,mcp] @ git+https://github.com/makedirectory/tradeflow"
+```
+
+### Where state lives
+
+An installed copy has no repository to write into, so the research journal, trial
+store, bar cache, and promoted configs go to `~/.tradeflow`. Run from a checkout,
+they stay in the checkout, exactly as they always have.
+
+Resolution order: `TRADEFLOW_HOME` if set → the current directory if it is a
+TradeFlow checkout → `~/.tradeflow`.
+
+This matters more than it looks. The multiple-testing correction rests on **one**
+journal accumulating every trial, so a campaign split across two roots would deflate
+its Sharpe against half the evidence — and nothing would error. `tradeflow --version`
+and `tradeflow init --check` both print the resolved root, so it is never a mystery.
+
+## From a checkout
+
 ## Prerequisites
 
 You need **either** of these (not both):

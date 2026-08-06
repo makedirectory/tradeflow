@@ -315,7 +315,7 @@ def test_construct_portfolio_file_benchmark_reports_partial_coverage(tmp_path):
 
 # --- CLI --------------------------------------------------------------------------
 def test_cli_allocate_utility_with_benchmark_holdings(monkeypatch, tmp_path, capsys):
-    import main
+    from tradeflow import cli as main
 
     symbols = [f"S{i}" for i in range(8)]
     bars = {s: make_ohlcv(n=400, seed=i, freq="1D") for i, s in enumerate([*symbols, "SPY"])}

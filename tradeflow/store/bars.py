@@ -29,6 +29,7 @@ import pandas as pd
 from tradeflow.marketdata.base import BarHandler, MarketDataProvider
 from tradeflow.marketdata.client import TimeframeLike
 from tradeflow.marketdata.timeframe import Timeframe
+from tradeflow.settings import state_root
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tradeflow.data.store import ParquetBarStore
@@ -36,8 +37,8 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 logger = logging.getLogger(__name__)
 
 #: Default cache location (gitignored, alongside logs/).
-DEFAULT_CACHE_ROOT = Path("cache") / "bars"
-DEFAULT_COVERAGE_DB = Path("cache") / "bars_coverage.db"
+DEFAULT_CACHE_ROOT = state_root() / "cache" / "bars"
+DEFAULT_COVERAGE_DB = state_root() / "cache" / "bars_coverage.db"
 
 #: "Read everything" sentinels for the read-merge-write path: ParquetBarStore.scan()
 #: takes an (as_of, lookback_days) window, not an arbitrary [start, end] range, so a

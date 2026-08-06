@@ -40,12 +40,14 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
+from tradeflow.settings import state_root
+
 logger = logging.getLogger(__name__)
 
 #: Default trial-store location (gitignored, alongside the journal it indexes).
-DEFAULT_DB_PATH = Path("logs") / "trials.db"
+DEFAULT_DB_PATH = state_root() / "logs" / "trials.db"
 #: Default journal location - kept in sync with ``tradeflow.services.audit.DEFAULT_TRIAL_JOURNAL``.
-DEFAULT_JOURNAL_PATH = Path("logs") / "research_journal.jsonl"
+DEFAULT_JOURNAL_PATH = state_root() / "logs" / "research_journal.jsonl"
 
 #: Bump when the schema changes shape. On mismatch the store rebuilds from the
 #: journal rather than running migration code - the journal is the source of truth,

@@ -257,7 +257,7 @@ def test_the_doctor_never_prints_a_raw_credential(tmp_path):
 
 # --- the CLI surface --------------------------------------------------------
 def test_cli_check_exits_non_zero_when_credentials_are_missing(tmp_path, monkeypatch, capsys):
-    import main
+    from tradeflow import cli as main
 
     monkeypatch.setattr(
         setup, "run_checks", lambda *a, **k: [setup.Check("APCA_API_KEY_ID", False, "missing")]
@@ -271,7 +271,7 @@ def test_cli_check_exits_non_zero_when_credentials_are_missing(tmp_path, monkeyp
 
 def test_cli_check_ignores_missing_optional_extras(tmp_path, monkeypatch, capsys):
     """A missing extra is not a broken setup — only the essentials fail the run."""
-    import main
+    from tradeflow import cli as main
 
     monkeypatch.setattr(
         setup,
@@ -284,7 +284,7 @@ def test_cli_check_ignores_missing_optional_extras(tmp_path, monkeypatch, capsys
 
 
 def test_cli_non_interactive_builds_the_env_from_the_environment(tmp_path, monkeypatch, capsys):
-    import main
+    from tradeflow import cli as main
 
     monkeypatch.setenv("APCA_API_KEY_ID", REAL_KEY)
     monkeypatch.setenv("APCA_API_SECRET_KEY", REAL_SECRET)
@@ -300,7 +300,7 @@ def test_cli_non_interactive_builds_the_env_from_the_environment(tmp_path, monke
 
 
 def test_cli_non_interactive_refuses_when_there_is_nothing_to_write(tmp_path, monkeypatch):
-    import main
+    from tradeflow import cli as main
 
     monkeypatch.delenv("APCA_API_KEY_ID", raising=False)
     monkeypatch.delenv("APCA_API_SECRET_KEY", raising=False)
@@ -315,7 +315,7 @@ def test_cli_interactive_skip_path_writes_nothing(tmp_path, monkeypatch, capsys)
     """Pressing Enter at the key prompt leaves a valid keyless demo setup."""
     import getpass
 
-    import main
+    from tradeflow import cli as main
 
     monkeypatch.setattr(getpass, "getpass", lambda *a, **k: "")
     path = tmp_path / ".env"
@@ -330,7 +330,7 @@ def test_cli_interactive_skip_path_writes_nothing(tmp_path, monkeypatch, capsys)
 def test_cli_interactive_writes_keys_and_confirms_paper_trading(tmp_path, monkeypatch, capsys):
     import getpass
 
-    import main
+    from tradeflow import cli as main
 
     answers = iter([REAL_KEY, REAL_SECRET])
     monkeypatch.setattr(getpass, "getpass", lambda *a, **k: next(answers))
@@ -357,7 +357,7 @@ def test_cli_interactive_requires_a_typed_phrase_to_disable_paper_trading(tmp_pa
     money — and anything other than the exact phrase keeps paper trading."""
     import getpass
 
-    import main
+    from tradeflow import cli as main
 
     answers = iter([REAL_KEY, REAL_SECRET])
     monkeypatch.setattr(getpass, "getpass", lambda *a, **k: next(answers))

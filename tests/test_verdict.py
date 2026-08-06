@@ -354,7 +354,7 @@ def test_report_names_the_cost_model_it_priced_with():
 
 # --- the CLI surface --------------------------------------------------------
 def _cli(monkeypatch, provider, *argv):
-    import main
+    from tradeflow import cli as main
 
     monkeypatch.setattr(main, "build_data_and_broker", lambda **kwargs: (None, MarketDataClient(provider)))
     args = main.build_parser().parse_args(

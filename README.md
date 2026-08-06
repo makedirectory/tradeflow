@@ -74,7 +74,25 @@ Pick whichever you prefer.
 Either way you'll need free Alpaca **paper-trading** API keys from the
 [Alpaca dashboard](https://app.alpaca.markets/) → *Paper Account → API Keys*.
 
-## Quickstart (uv)
+## Quickstart (install it)
+
+No clone needed — install the command and run the offline demo:
+
+```bash
+uv tool install git+https://github.com/makedirectory/tradeflow   # or: pipx install
+tradeflow demo                        # full pipeline on synthetic data, no keys
+tradeflow init                        # add your free Alpaca paper keys when ready
+tradeflow verdict --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-31
+```
+
+Optional capabilities are extras: `uv tool install "tradeflow[viz,store] @ git+..."`.
+
+State (the research journal, trial store, bar cache, promoted configs) lives in
+`~/.tradeflow` for an installed copy, or in the repo when you run from a checkout.
+`tradeflow --version` prints which copy is running and where its state is; override
+with `TRADEFLOW_HOME`.
+
+## Quickstart (from a checkout)
 
 ```bash
 # 1. Install uv:  https://docs.astral.sh/uv/
