@@ -15,7 +15,8 @@ on history or **trades live** (paper by default) — with optional **parameter
 optimization**, **walk-forward validation**, and **constraint-solver portfolio
 allocation**.
 
-Full docs — usage guide and engineering wiki — live at
+Full docs — usage guide, engineering wiki, and
+[changelog](https://tradeflow.mk-dir.com/changelog) — live at
 **[tradeflow.mk-dir.com](https://tradeflow.mk-dir.com/)**.
 
 > Making money in markets is genuinely hard. This project won't change that — but
@@ -55,7 +56,7 @@ never touch**:
 **Promotion is a manual human step** — automation never flips `PAPER_TRADE` or
 places an order. The [MCP server](#agent-integration-mcp) enforces this
 *structurally*: it builds only a data client, so it physically cannot trade. See
-the [architecture docs](https://tradeflow.mk-dir.com/docs/engineering/architecture)
+the [architecture docs](https://tradeflow.mk-dir.com/engineering/architecture)
 for the full picture.
 
 ## Requirements
@@ -130,7 +131,7 @@ docker compose run --rm verdict --symbols NVDA,META --start 2024-01-02 --end 202
 ```
 
 `live` is profile-gated and is never started by `up` — turning the machine on must
-not turn trading on. See [Running in Docker](https://tradeflow.mk-dir.com/docs/usage/docker).
+not turn trading on. See [Running in Docker](https://tradeflow.mk-dir.com/usage/docker).
 
 Run `make help` to see every target. Anything is overridable inline:
 
@@ -193,7 +194,7 @@ $ make demo
 Notice the arc: `ma_crossover` looks great in-sample (+16.8%, Sharpe 0.48), but
 once it's optimized in-sample and scored **out-of-sample** the edge evaporates
 (median OOS Sharpe −0.42) and every promotion gate fails. That's
-[walk-forward validation](https://tradeflow.mk-dir.com/docs/engineering/walk-forward)
+[walk-forward validation](https://tradeflow.mk-dir.com/engineering/walk-forward)
 doing its job.
 
 ### Watching the agent get told "no"
@@ -278,7 +279,7 @@ promoted automatically — is what stays constant.
 
 Three strategies ship today — pick one with `--strategy`. Each defines a single
 continuous **score** (its conviction); the trade clock's `BUY/SELL/HOLD` and the
-[continuous alpha](https://tradeflow.mk-dir.com/docs/engineering/alphas) are both
+[continuous alpha](https://tradeflow.mk-dir.com/engineering/alphas) are both
 derived from it — one source of truth.
 
 - **`volume_spike`** — long/short EMA-trend strength scaled by volume confirmation
@@ -289,7 +290,7 @@ derived from it — one source of truth.
   the dip and exit on the rebound (daily).
 
 Adding a fourth is a one-file change — see
-[Extending](https://tradeflow.mk-dir.com/docs/engineering/extending).
+[Extending](https://tradeflow.mk-dir.com/engineering/extending).
 
 ### Using it from your own code
 
@@ -306,7 +307,7 @@ print(result["verdict"]["summary"])
 ```
 
 Everything outside `services/` is internal and moves without notice. See
-[Using TradeFlow as a library](https://tradeflow.mk-dir.com/docs/engineering/embedding).
+[Using TradeFlow as a library](https://tradeflow.mk-dir.com/engineering/embedding).
 
 ### Optional features
 

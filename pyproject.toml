@@ -71,7 +71,7 @@ Homepage = "https://tradeflow.mk-dir.com/"
 Documentation = "https://tradeflow.mk-dir.com/"
 Source = "https://github.com/makedirectory/tradeflow"
 Issues = "https://github.com/makedirectory/tradeflow/issues"
-Changelog = "https://github.com/makedirectory/tradeflow/blob/main/CHANGELOG.md"
+Changelog = "https://tradeflow.mk-dir.com/changelog"
 
 [build-system]
 requires = ["hatchling"]

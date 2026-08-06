@@ -31,6 +31,7 @@ const sidebars = {
         'usage/agents',
       ],
     },
+    'changelog',
   ],
   engineering: [
     {
