@@ -11,6 +11,7 @@ const sidebars = {
       collapsed: false,
       items: [
         'usage/installation',
+        'usage/first-run',
         'usage/configuration',
         'usage/brokers',
         'usage/scanning',

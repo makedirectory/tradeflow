@@ -84,8 +84,9 @@ make install                          # uv sync
 # 3. See it work — no keys, no network
 make demo                             # full pipeline on synthetic data + verdict
 
-# 4. Point it at real data: add your free Alpaca paper keys
-cp .env.example .env                  # then edit .env
+# 4. Point it at real data: guided setup for your free Alpaca paper keys
+make init                             # writes .env, checks the keys, says what's next
+                                      # (make check re-runs the diagnostics any time)
 
 # 5. Try it (preconfigured combos)
 make scan                             # which symbols are flagged right now?
@@ -234,6 +235,7 @@ promoted automatically — is what stays constant.
 |---------|--------------|
 | `demo` | Run the whole pipeline on **synthetic data** — no keys, no network — ending in an honest promotion verdict |
 | `demo-agent` | Narrate one AI research session on **real market data**: proposal → sandbox → walk-forward → gates → holdout |
+| `init` | Guided first-run setup: write a valid `.env` with hidden prompts, validate the keys against Alpaca via the data-only client, confirm paper trading, optionally warm the cache. `--check` is a doctor that writes nothing |
 | `scan` | Run the universe scanner and print flagged symbols |
 | `verdict` | The whole cross-sectional pipeline in one command — scan → alphas → portfolio → information over one universe, one window, one cost model — ending in one gate-derived verdict (read-only) |
 | `backtest` | Scan → run a strategy over history → performance report |

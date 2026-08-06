@@ -1111,6 +1111,174 @@ def _journal_alpha(args, strategy_label: str, source: str, result: dict) -> None
     )
 
 
+def cmd_init(args) -> None:
+    """Guided first-run setup: write a valid `.env`, check it, and say what to try.
+
+    Three modes over one set of service functions: `--check` diagnoses what exists
+    and writes nothing; `--non-interactive` builds a `.env` from environment
+    variables with no prompts (for scripts and containers); the default is the
+    interactive wizard.
+    """
+    from src.services import setup
+
+    if args.check:
+        _print_doctor(setup.run_checks())
+        return
+    if args.non_interactive:
+        _init_non_interactive(args, setup)
+        return
+    _init_interactive(args, setup)
+
+
+def _print_doctor(checks) -> None:
+    """Every check, pass or fail, with an exit code that reflects the essentials.
+
+    A doctor reports the whole picture rather than stopping at the first problem —
+    but a missing credential is not the same as a missing optional extra, so only
+    the former fails the run.
+    """
+    print("\nTradeFlow setup check\n")
+    for check in checks:
+        print(f"  [{'ok' if check.passed else 'FAIL'}] {check.name:<22} {check.detail}")
+    essential = [c for c in checks if not c.passed and not c.name.startswith("extra:")]
+    if essential:
+        print(f"\n{len(essential)} problem(s) to fix. Run `python main.py init` for the guided setup.")
+        raise SystemExit(1)
+    print("\nSetup looks good. `make demo` needs nothing; `python main.py verdict` needs the keys above.")
+
+
+def _init_non_interactive(args, setup) -> None:
+    """Build a `.env` purely from environment variables — no prompts, no retries."""
+    import os
+
+    updates = setup.build_updates(
+        key=os.environ.get("APCA_API_KEY_ID"),
+        secret=os.environ.get("APCA_API_SECRET_KEY"),
+        paper_trade=None if "PAPER_TRADE" not in os.environ else os.environ["PAPER_TRADE"] != "false",
+    )
+    if not updates:
+        raise SystemExit(
+            "Nothing to write: set APCA_API_KEY_ID / APCA_API_SECRET_KEY in the environment first."
+        )
+    result = setup.write_env(updates, args.env_path)
+    print(f"Wrote {result['path']}: {', '.join(f'{k}={v}' for k, v in result['updated'].items())}")
+    if result["backup"]:
+        print(f"Previous file backed up to {result['backup']}")
+
+
+def _init_interactive(args, setup) -> None:
+    """The guided path. Prompts are the only thing that lives here; every decision
+    it makes is a service function that a test can drive directly."""
+    import getpass
+
+    print("\nTradeFlow setup\n")
+    state = setup.inspect_env(args.env_path)
+
+    if state.exists:
+        print(f"Found {state.path}:")
+        for key, masked in state.summary().items():
+            print(f"  {key:<22} {masked}")
+        if state.complete and not _confirm("\nCredentials already look set. Replace them?", default=False):
+            print("Left unchanged.")
+            _print_next_steps()
+            return
+    else:
+        print(f"No {state.path} yet — this will create one.")
+
+    print(
+        "\nAlpaca paper-trading keys come from https://app.alpaca.markets/"
+        " → Paper Account → API Keys."
+        "\nPress Enter at both prompts to skip and stay in keyless demo mode.\n"
+    )
+    # getpass, not input: a key echoed into a terminal ends up in scrollback and
+    # shell history, which is exactly where a secret should never be.
+    key = getpass.getpass("  APCA_API_KEY_ID (hidden): ").strip()
+    secret = getpass.getpass("  APCA_API_SECRET_KEY (hidden): ").strip() if key else ""
+
+    if not key or not secret:
+        print("\nSkipped — no keys written. `make demo` runs offline with no credentials at all.")
+        _print_next_steps()
+        return
+
+    paper = True
+    if not _confirm("\nKeep PAPER_TRADE=true (orders go to the paper account)?", default=True):
+        print(
+            "\n  Live trading means real money. The research clock proposes; a human promotes —\n"
+            "  turning this off removes the safety net that makes that separation matter."
+        )
+        paper = not _typed_confirmation("ENABLE LIVE")
+
+    result = setup.write_env(setup.build_updates(key, secret, paper), args.env_path)
+    print(f"\nWrote {result['path']} ({', '.join(f'{k}={v}' for k, v in result['updated'].items())}).")
+    if result["backup"]:
+        print(f"Previous file backed up to {result['backup']} — nothing else in it was changed.")
+
+    print("\nChecking the credentials against Alpaca…")
+    check = _check_credentials_now(setup)
+    print(f"  {check.message}")
+
+    if check.ok and _confirm("\nWarm the local bar cache now (a small universe, ~1 year daily)?", False):
+        _warm_cache(args)
+
+    _print_next_steps()
+
+
+def _check_credentials_now(setup):
+    """Validate through the data-only client factory — never a trading client."""
+    from src.services.data import build_data_client
+
+    try:
+        return setup.check_credentials(build_data_client())
+    except Exception as exc:  # noqa: BLE001 - a setup failure is a message, not a traceback
+        return setup.CredentialCheck(
+            setup.CREDENTIALS_UNREACHABLE, f"Could not build a data client: {type(exc).__name__}"
+        )
+
+
+def _warm_cache(args) -> None:
+    """Optional first cache warm. Interruptible: the cache writes per partition, so
+    Ctrl-C leaves a partial cache that is safe and resumable, and says so."""
+    from src.services import setup as setup_service
+    from src.services.data import build_data_client
+
+    end = datetime.now()
+    start = end - timedelta(days=365)
+    universe = list(setup_service.DEFAULT_WARM_UNIVERSE)
+    try:
+        provider = build_data_client(cache=True, cache_dir=args.cache_dir).provider
+        summary = provider.warm(universe, "1Day", start, end)
+        cached = sum(1 for s in summary.values() if not s["already_cached"])
+        print(f"  Cached {cached} of {len(universe)} symbols. `--offline` now works for this universe.")
+    except KeyboardInterrupt:
+        print("\n  Interrupted — the partial cache is safe and resumable (`cache warm` continues it).")
+    except Exception as exc:  # noqa: BLE001
+        print(f"  Cache warm skipped: {type(exc).__name__}. Nothing else is affected.")
+
+
+def _confirm(question: str, default: bool = True) -> bool:
+    suffix = "[Y/n]" if default else "[y/N]"
+    answer = input(f"{question} {suffix} ").strip().lower()
+    if not answer:
+        return default
+    return answer in {"y", "yes"}
+
+
+def _typed_confirmation(phrase: str) -> bool:
+    """Require the exact phrase. A yes/no prompt is too easy to answer wrongly for
+    a choice that moves real money."""
+    return input(f"  Type {phrase!r} to confirm, or anything else to keep paper trading: ") == phrase
+
+
+def _print_next_steps() -> None:
+    print(
+        "\nNext:"
+        "\n  make demo                 the whole pipeline on synthetic data — no keys, no network"
+        "\n  python main.py verdict    scan → alphas → portfolio → information, one verdict"
+        "\n  python main.py backtest   did the idea ever work?"
+        "\n  python main.py init --check   re-run these checks any time\n"
+    )
+
+
 def cmd_verdict(args) -> None:
     """Run the whole cross-sectional pipeline once and print one consolidated answer.
 
@@ -2727,6 +2895,29 @@ def build_parser() -> argparse.ArgumentParser:
     add_no_journal(wf)
     add_force(wf)
     wf.set_defaults(func=cmd_walkforward)
+
+    init = subparsers.add_parser(
+        "init",
+        help="Guided first-run setup: write a valid .env, check it, and say what to try next",
+    )
+    init.add_argument(
+        "--check",
+        action="store_true",
+        help="Diagnose the current setup and exit — writes nothing, makes no network call",
+    )
+    init.add_argument(
+        "--non-interactive",
+        dest="non_interactive",
+        action="store_true",
+        help="Build the .env from environment variables with no prompts (scripts, containers)",
+    )
+    init.add_argument(
+        "--env-path", dest="env_path", default=None, help="Write to this .env instead of the default"
+    )
+    init.add_argument(
+        "--cache-dir", dest="cache_dir", default=None, help="Bar cache directory (default: cache/bars)"
+    )
+    init.set_defaults(func=cmd_init)
 
     # The shared knobs, once. Step-specific tuning stays on the individual commands:
     # `verdict` is the honest default path through the pipeline, not a superset of

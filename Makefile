@@ -9,9 +9,9 @@ END      ?= 2024-04-01
 CAPITAL ?= 100000
 PY       = uv run python main.py
 
-.PHONY: help demo demo-agent demo-agent-live install install-optimize verdict backtest backtest-no-scan scan live \
+.PHONY: help demo demo-agent demo-agent-live init install install-optimize verdict backtest backtest-no-scan scan live \
         allocate allocate-utility alphas risk info horizon optimize optimize-bayesian cancel-orders close-positions \
-        test check-links docs docs-build docker-build docker-run clean
+        check test check-links docs docs-build docker-build docker-run clean
 
 help:  ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -31,6 +31,12 @@ demo-artifact:  ## Regenerate the README demo image (equity curve + verdict)
 	uv run --extra viz python main.py demo --chart website/static/img/demo.png
 
 # --- setup ------------------------------------------------------------------
+init:  ## Guided first-run setup: write a valid .env and check it
+	$(PY) init
+
+check:  ## Diagnose the current setup (no writes, no network)
+	$(PY) init --check
+
 install:  ## Create the uv environment and install dependencies
 	uv sync
 
