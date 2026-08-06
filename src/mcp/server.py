@@ -11,6 +11,7 @@ capability is not wired in.
 Run with: ``python main.py mcp`` (needs the ``mcp`` extra).
 """
 
+import contextlib
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -31,18 +32,33 @@ EXPOSED_TOOLS = (
     "run_backtest",
     "run_optimization",
     "run_walk_forward",
+    "run_verdict",
     "compute_alphas",
     "combine_alphas",
     "compute_risk",
     "construct_portfolio",
     "compute_information",
     "compute_horizon",
+    "render_report",
+    "list_trials",
+    "get_trial",
+    "best_trials",
     "get_metrics_glossary",
     "summarize_bars",
     "save_config",
     "load_config",
     "list_configs",
 )
+
+#: Tools that record a trial. An agent that does not know a call costs a trial will
+#: burn a campaign's multiple-testing budget at machine speed, so every one of these
+#: says so in its description - asserted by a test, not left to good intentions.
+JOURNALING_TOOLS = frozenset({"run_backtest", "run_optimization", "run_walk_forward", "run_verdict"})
+
+#: Evidence-gated features that ship **off**. Where a tool exposes one, its
+#: description must name the gate and its current verdict rather than presenting the
+#: flag as a neutral option - an agent reads a description as fact and acts on it.
+EVIDENCE_GATED = ("conditional", "policy", "posterior")
 
 #: Capabilities that must NEVER be exposed over MCP (the safety model).
 FORBIDDEN_TOOLS = frozenset(
@@ -73,6 +89,73 @@ def _parse_date(value: str) -> datetime:
         return datetime.strptime(value, "%Y-%m-%d")
 
 
+#: Appended to every journaling tool's description. One sentence, one place: an
+#: agent that misreads its own experiment history misreads every result after it.
+_JOURNALING_NOTE = (
+    "Journals one trial per evaluated config, so this call counts toward the "
+    "campaign's multiple-testing total (what the Deflated Sharpe deflates against). "
+    "An identical prior run is returned from the trial store labeled `memoized`, with "
+    "the original run's timestamp, instead of being re-run; pass `force=true` to "
+    "re-verify and append a new trial."
+)
+
+#: Appended where a tool exposes an evidence-gated feature.
+_GATED_NOTE = (
+    "Evidence-gated features ship OFF and are not neutral options: conditional risk, "
+    "the aim-in-front-of-the-target trading policy, and the Black-Litterman posterior "
+    "each have an adoption gate (a predictive-accuracy test or a net-of-cost A/B), and "
+    "none of them clears on this repository's own demo data. Enabling one is a "
+    "deliberate departure from the validated default, not a tuning choice."
+)
+
+
+#: Returned instead of rows when the store cannot be opened. The store is derived and
+#: passive by contract: a broken one degrades a read, it never fails a session.
+_NO_STORE = "The trial store could not be opened; no campaign history is available for this call."
+
+
+@contextlib.contextmanager
+def _trial_store():
+    """A read-only handle on the trial store, or ``None`` if it cannot be opened."""
+    from src.services import audit
+    from src.store.trials import TrialStore, db_path_for_journal
+
+    journal_path = audit.DEFAULT_TRIAL_JOURNAL
+    try:
+        store = TrialStore(db_path_for_journal(journal_path), journal_path=journal_path)
+    except Exception:  # noqa: BLE001 - a passive store never breaks its caller
+        logger.warning("Trial store unavailable for this MCP call", exc_info=True)
+        yield None
+        return
+    try:
+        yield store
+    finally:
+        store.close()
+
+
+def _describe(doc: Optional[str], *metric_keys: str, notes: Optional[List[str]] = None) -> str:
+    """A tool's description: its docstring, plus the glossary's own words for any
+    metric it reports.
+
+    Metric definitions are *pulled* from :mod:`src.services.glossary` rather than
+    restated here, so a description can never drift from what the metric actually
+    means — the same one-source-of-truth rule the layer table applies to logic.
+    Descriptions matter more than docs do: an agent cannot notice that a
+    description is stale, it can only act on it, and every action costs a trial.
+    """
+    parts = [(doc or "").strip()]
+    if metric_keys:
+        definitions = glossary.definitions_for(metric_keys)
+        if definitions:
+            parts.append(
+                "Metric definitions (from the shared glossary — call get_metrics_glossary "
+                "for the full set and its pitfalls):\n"
+                + "\n".join(f"- {name}: {text}" for name, text in definitions.items())
+            )
+    parts.extend(notes or [])
+    return "\n\n".join(p for p in parts if p)
+
+
 def build_server(data_client=None):
     """Construct the FastMCP server with all read/analyze/propose tools registered.
 
@@ -96,35 +179,85 @@ def build_server(data_client=None):
         audit_log(tool, inputs, run_id=run_id or new_run_id(), result_summary=_summary(result))
         return result
 
+    def tool(*metric_keys: str, notes: Optional[List[str]] = None):
+        """Register a tool whose description is *composed*, not hand-written twice.
+
+        The docstring stays next to the code, and the glossary's own definitions for
+        the metrics this tool reports are appended mechanically — so the description
+        an agent reads cannot drift from what the metric means, and shared caveats
+        (journaling, evidence-gated defaults) are stated identically everywhere.
+        """
+
+        def register(fn):
+            server.tool(description=_describe(fn.__doc__, *metric_keys, notes=notes))(fn)
+            return fn
+
+        return register
+
     # ---------------- Discovery (safe) ---------------- #
-    @server.tool()
+    @tool()
     def list_strategies() -> List[Dict[str, str]]:
-        """List available trading strategies (name, description, timeframe)."""
+        """List the trading strategies this engine can run: name, what each one
+        measures, and the bar timeframe it is designed for.
+
+        Start here. A strategy is a `bar -> score` policy: each defines one continuous
+        conviction score, and both the discrete BUY/SELL/HOLD signal and the continuous
+        alpha forecast are derived from that one score. The `name` values are what every
+        other tool's `strategy` argument accepts. Read-only.
+        """
         return _logged("list_strategies", {}, registry.list_strategies())
 
-    @server.tool()
+    @tool()
     def list_scanners() -> List[Dict[str, str]]:
-        """List available universe scanners (name, description)."""
+        """List the universe scanners: name and what each one selects for.
+
+        A scanner narrows a candidate symbol list to the names worth analyzing on a
+        given day; the `name` values are what every other tool's `scanner` argument
+        accepts, and `"none"` skips scanning and uses the candidates as given. Choosing
+        a universe by looking at outcomes is look-ahead — treat universe selection as a
+        research decision, not something to tune. Read-only.
+        """
         return _logged("list_scanners", {}, registry.list_scanners())
 
-    @server.tool()
+    @tool()
     def get_param_ranges(kind: str, name: str) -> Dict[str, Any]:
-        """Get the tunable PARAM_RANGES (bounds + defaults) for a strategy or scanner.
+        """The tunable parameters of one strategy or scanner: bounds and defaults.
 
-        kind: "strategy" or "scanner". This is your map of what can be optimized.
+        `kind` is "strategy" or "scanner". This is the map of what `run_optimization`
+        and `run_walk_forward` are allowed to search over, and what a `config` override
+        on any other tool may contain — a parameter outside its declared range is
+        rejected rather than silently clamped. Fewer parameters searched means fewer
+        trials burned and a less deflated Sharpe to clear. Read-only.
         """
         return _logged(
             "get_param_ranges", {"kind": kind, "name": name}, registry.get_param_ranges(kind, name)
         )
 
     # ---------------- Read / analyze (safe) ---------------- #
-    @server.tool()
+    @tool()
     def run_scan(scanner: str, symbols: List[str], config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Run a universe scanner over `symbols`; return the flagged symbols + signals."""
+        """Run a universe scanner over `symbols` and return the names it flags.
+
+        Narrows a candidate list to the symbols worth analyzing, with each one's
+        scanner signal strength. This is the same universe resolution every other tool
+        performs internally — call it when you want to see or reuse the selection,
+        not as a prerequisite.
+
+        Scanning is a research decision, not a tuning knob: picking a universe by
+        which one produces the best backtest is look-ahead, and it will not survive
+        out-of-sample. Read-only, journals nothing.
+        """
         inputs = {"scanner": scanner, "symbols": symbols, "config": config}
         return _logged("run_scan", inputs, analysis.run_scan(dc, scanner, symbols, config))
 
-    @server.tool()
+    @tool(
+        "sharpe_ratio",
+        "deflated_sharpe_ratio",
+        "max_drawdown",
+        "profit_factor",
+        "low_sample",
+        notes=[_JOURNALING_NOTE],
+    )
     def run_backtest(
         strategy: str,
         symbols: List[str],
@@ -176,7 +309,7 @@ def build_server(data_client=None):
         )
         return _logged("run_backtest", inputs, result)
 
-    @server.tool()
+    @tool("sharpe_ratio", "deflated_sharpe_ratio", notes=[_JOURNALING_NOTE])
     def run_optimization(
         strategy: str,
         symbols: List[str],
@@ -232,7 +365,13 @@ def build_server(data_client=None):
         )
         return _logged("run_optimization", inputs, result)
 
-    @server.tool()
+    @tool(
+        "sharpe_ratio",
+        "deflated_sharpe_ratio",
+        "profit_factor",
+        "max_drawdown",
+        notes=[_JOURNALING_NOTE],
+    )
     def run_walk_forward(
         strategy: str,
         symbols: List[str],
@@ -310,7 +449,7 @@ def build_server(data_client=None):
         )
         return _logged("run_walk_forward", inputs, result)
 
-    @server.tool()
+    @tool()
     def compute_alphas(
         strategy: str,
         symbols: List[str],
@@ -361,7 +500,7 @@ def build_server(data_client=None):
         )
         return _logged("compute_alphas", inputs, result)
 
-    @server.tool()
+    @tool()
     def combine_alphas(
         signals: List[str],
         symbols: List[str],
@@ -395,7 +534,7 @@ def build_server(data_client=None):
         )
         return _logged("combine_alphas", inputs, result)
 
-    @server.tool()
+    @tool()
     def compute_horizon(
         strategy: str,
         symbols: List[str],
@@ -426,7 +565,7 @@ def build_server(data_client=None):
         )
         return _logged("compute_horizon", inputs, result)
 
-    @server.tool()
+    @tool(notes=[_GATED_NOTE])
     def compute_risk(
         symbols: List[str],
         as_of: str,
@@ -455,7 +594,7 @@ def build_server(data_client=None):
         )
         return _logged("compute_risk", inputs, result)
 
-    @server.tool()
+    @tool("information_ratio", "turnover", notes=[_GATED_NOTE])
     def construct_portfolio(
         strategy: str,
         symbols: List[str],
@@ -470,11 +609,24 @@ def build_server(data_client=None):
         """Construct the mean-variance optimal portfolio from alphas and Σ.
 
         Maximizes αᵀw − λ·wᵀΣw over long-only, box-bounded, budgeted (optionally
-        cardinality-capped) weights, calibrating λ to `target_te`. Returns the proposed
-        weights plus the Fundamental-Law report: IR* (best achievable IR), predicted
-        tracking error and IR, the transfer coefficient (how much of IR* survives the
-        constraints), and turnover. A PROPOSAL — read-only, places no orders; a human
-        promotes the config.
+        cardinality-capped) weights, calibrating λ to `target_te`. Cost-aware by
+        default: the objective carries name-specific turnover and square-root impact,
+        so a no-trade band emerges from the cost itself rather than being imposed.
+
+        Returns the proposed weights, the active weights and factor exposures of the
+        resulting book, and the Fundamental-Law report: IR* (the best achievable
+        information ratio), predicted tracking error and IR, the transfer coefficient
+        (how much of IR* survives the constraints), turnover, expected active return
+        gross and net of cost, and the capacity at which impact erases the alpha.
+
+        A PROPOSAL, never an order. This is research-clock only: it cannot trade, and
+        a human promotes any config that comes out of it.
+
+        Scope note, so you do not assume more than this exposes: this tool solves the
+        long-only, cash-relative book with the default cost assumptions. Factor
+        neutralization, a portfolio-level benchmark, market-neutral books, and the
+        evidence-gated features below are reachable from the command line but are not
+        arguments here — `run_verdict` is the composite path with coherent defaults.
         """
         inputs = {"strategy": strategy, "symbols": symbols, "as_of": as_of, "target_te": target_te}
         result = analysis.construct_portfolio(
@@ -491,7 +643,7 @@ def build_server(data_client=None):
         )
         return _logged("construct_portfolio", inputs, result)
 
-    @server.tool()
+    @tool("information_ratio", "deflated_sharpe_ratio")
     def compute_information(
         strategy: str,
         symbols: List[str],
@@ -525,7 +677,225 @@ def build_server(data_client=None):
         )
         return _logged("compute_information", inputs, result)
 
-    @server.tool()
+    @tool("deflated_sharpe_ratio", "information_ratio", notes=[_JOURNALING_NOTE, _GATED_NOTE])
+    def run_verdict(
+        strategy: str,
+        symbols: List[str],
+        start: str,
+        end: str,
+        scanner: str = "volume",
+        signals: Optional[List[str]] = None,
+        source: str = "strategy",
+        benchmark: str = "SPY",
+        timeframe: str = "1Day",
+        capital: Optional[float] = 100_000.0,
+        horizon: int = 5,
+        target_te: float = 0.04,
+        risk_model: str = "shrinkage",
+        gross: bool = False,
+        commission_bps: float = 1.0,
+        impact_eta: float = 0.3,
+        borrow_bps: float = 50.0,
+        force: bool = False,
+    ) -> Dict[str, Any]:
+        """Run the whole cross-sectional pipeline once and return one composite answer.
+
+        Scan the universe, refine the signal into alphas (combining several when
+        `signals` names more than one), construct the cost-aware portfolio, and measure
+        the information content - all against ONE resolved universe, ONE window, and
+        ONE cost model. Running the four steps as separate tool calls gives no such
+        guarantee: each re-resolves its own universe and applies its own defaults, and
+        the joined-up story can silently be four different stories. Prefer this when
+        you want the answer rather than one stage's detail.
+
+        Returns `{schema, inputs, steps, scan, alphas, combination, portfolio,
+        information, verdict, provenance}`. `verdict.verdict` is one of promotable /
+        not promotable / needs more data / mixed / incomplete, assembled from the gates
+        the steps themselves computed (IC t-stat vs 2, realized IR vs its own standard
+        error, the sanity ceiling, expected active return net of cost) - every check is
+        in `verdict.checks` with its value and threshold. A run where any step failed
+        is `incomplete` and carries NO verdict, whatever the completed sections say:
+        do not act on a partial run's weights.
+
+        This answers "what does the pipeline say about this universe now" - a forecast
+        and a proposed book. For "did this ever work", use `run_backtest` or
+        `run_walk_forward`.
+
+        Read-only research clock: proposes a portfolio, never places an order. Journals
+        exactly ONE trial (kind `verdict`), so it counts once toward the campaign's
+        multiple-testing total. An identical prior run is returned from the trial store
+        with `memoized: true` and the original run's timestamp rather than re-run; pass
+        `force=true` to re-verify and append a new trial.
+        """
+        inputs = {"strategy": strategy, "symbols": symbols, "start": start, "end": end}
+        result = analysis.run_verdict(
+            dc,
+            strategy,
+            symbols,
+            _parse_date(start),
+            _parse_date(end),
+            scanner=scanner,
+            signals=signals,
+            source=source,
+            benchmark=benchmark,
+            timeframe=timeframe,
+            capital=capital,
+            horizon=horizon,
+            target_te=target_te,
+            risk_model=risk_model,
+            gross=gross,
+            commission_bps=commission_bps,
+            impact_eta=impact_eta,
+            borrow_bps=borrow_bps,
+            force=force,
+        )
+        return _logged("run_verdict", inputs, result)
+
+    @tool()
+    def render_report(kind: str, result: Dict[str, Any]) -> Dict[str, Any]:
+        """Render a result you already have as one self-contained HTML document.
+
+        `kind` is one of verdict/backtest/walkforward/info, and `result` is the dict
+        that kind's run tool returned, **unmodified** — pass it through rather than
+        rebuilding it, or the report will describe something the run did not produce.
+        A payload that does not match its kind is rejected with a clear error rather
+        than half-rendered.
+
+        Returns `{kind, html, bytes}`. The document embeds its CSS and charts, so
+        opening it issues no network requests at all — it is safe to save, attach, or
+        forward. Provenance (window, universe, cost model, git SHA, campaign
+        n_trials) is a mandatory header, and memoized results, gate failures, a failed
+        leakage probe, and any enabled evidence-gated feature render as warnings above
+        the sections rather than as footnotes.
+
+        This computes nothing: it is the same renderer the CLI's `--html` flag uses,
+        over the same object. Charts need the plotting extra on the server; without it
+        the tables still render and the chart slots say so.
+
+        Note that a backtest result carries no equity curve (it is omitted from the
+        payload deliberately), so a backtest report rendered here shows the metrics
+        table without the equity chart.
+        """
+        from src.analytics.htmlreport import render_html
+
+        document = render_html(result, kind)
+        return _logged(
+            "render_report",
+            {"kind": kind, "run_id": result.get("run_id") if isinstance(result, dict) else None},
+            {"kind": kind, "html": document, "bytes": len(document.encode("utf-8"))},
+        )
+
+    # ---------------- Campaign memory (read-only) ---------------- #
+    @tool("sharpe_ratio", "deflated_sharpe_ratio")
+    def list_trials(
+        strategy: Optional[str] = None,
+        kind: Optional[str] = None,
+        symbols: Optional[List[str]] = None,
+        since: Optional[str] = None,
+        until: Optional[str] = None,
+        min_sharpe: Optional[float] = None,
+        gates_passed: Optional[bool] = None,
+        sort: str = "date",
+        limit: int = 20,
+        offset: int = 0,
+        all_accounting: bool = False,
+    ) -> Dict[str, Any]:
+        """What has this campaign already tried? Filtered rows from the trial store.
+
+        Ask this BEFORE running anything expensive. Every backtest, optimization,
+        walk-forward, and verdict ever run — over the CLI or over this server — is
+        recorded here, and re-running something the campaign already answered costs a
+        trial without buying information.
+
+        `symbols` matches on the normalized universe, so order and case never change
+        what is found. `sort` is date/sharpe/dsr; a trial with no recorded metric
+        sorts last rather than as a zero. Returns `{rows, total}` — `total` is how
+        many matched, which is usually more than were returned.
+
+        Absent fields are null, and null means *not recorded*: a trial predating a
+        field did not fail to record it, and a forecast kind did not score zero.
+        Read-only: this cannot modify or delete anything.
+        """
+        inputs = {"strategy": strategy, "kind": kind, "symbols": symbols, "limit": limit}
+        with _trial_store() as store:
+            if store is None:
+                return _logged("list_trials", inputs, {"rows": [], "total": 0, "error": _NO_STORE})
+            filters = {
+                "strategy": strategy,
+                "kind": kind,
+                "symbols": symbols,
+                "since": _parse_date(since) if since else None,
+                "until": _parse_date(until) if until else None,
+                "min_sharpe": min_sharpe,
+                "promotable": gates_passed,
+                "all_accounting": all_accounting,
+            }
+            rows = store.list_trials(sort=sort, limit=limit, offset=offset, **filters)
+            return _logged("list_trials", inputs, {"rows": rows, "total": store.count_trials(**filters)})
+
+    @tool()
+    def get_trial(trial_id: str) -> Dict[str, Any]:
+        """Everything the trial store knows about one trial.
+
+        Its full params (the run's dedup identity, including the folded cost and
+        data-vintage keys), provenance, headline metrics, and what was stored
+        alongside it: whether its out-of-sample return series was persisted (and over
+        what window), the book it proposed, its trade table if the run opted into
+        keeping one, and which later trials were served from this one.
+
+        `null` for a companion means *not recorded* — the run predates that storage,
+        or did not opt in. It never means the run produced nothing. Read-only.
+        """
+        with _trial_store() as store:
+            if store is None:
+                return _logged("get_trial", {"trial_id": trial_id}, {"error": _NO_STORE})
+            trial = store.get_trial(trial_id)
+            if trial is None:
+                return _logged(
+                    "get_trial",
+                    {"trial_id": trial_id},
+                    {"error": f"No trial with id {trial_id!r}. Use list_trials to see what exists."},
+                )
+            return _logged("get_trial", {"trial_id": trial_id}, trial)
+
+    @tool("deflated_sharpe_ratio", "sharpe_ratio")
+    def best_trials(
+        strategy: Optional[str] = None,
+        kind: Optional[str] = None,
+        symbols: Optional[List[str]] = None,
+        rank_by: str = "dsr",
+        limit: int = 10,
+        all_accounting: bool = False,
+    ) -> Dict[str, Any]:
+        """The campaign's leaderboard, ranked by DEFLATED Sharpe by default.
+
+        Read the caveat this returns before reporting a winner. Ranking a research
+        campaign's trials and presenting the top row is selection bias by
+        construction: the best of N tried configs is a biased estimate of its own
+        future performance. That is why the default ranking is the deflated Sharpe
+        (which already discounts for N), why every row carries its family's
+        `n_trials`, and why `rank_by="sharpe"` returns a caveat saying in as many
+        words that the ordering does not correct for how many configs were tried.
+
+        Returns `{rank_by, rows, max_family_n_trials, caveat}`. The caveat and the
+        per-row family counts are part of the payload, not decoration — quote them
+        when you report a result. Read-only.
+        """
+        inputs = {"strategy": strategy, "symbols": symbols, "rank_by": rank_by, "limit": limit}
+        with _trial_store() as store:
+            if store is None:
+                return _logged("best_trials", inputs, {"rows": [], "error": _NO_STORE})
+            board = store.best(
+                rank_by=rank_by,
+                limit=limit,
+                strategy=strategy,
+                kind=kind,
+                symbols=symbols,
+                all_accounting=all_accounting,
+            )
+            return _logged("best_trials", inputs, board)
+
+    @tool()
     def get_metrics_glossary() -> Dict[str, Any]:
         """Definitions + pitfalls of every reported metric, plus global caveats.
 
@@ -535,7 +905,7 @@ def build_server(data_client=None):
         """
         return _logged("get_metrics_glossary", {}, glossary.metrics_glossary())
 
-    @server.tool()
+    @tool()
     def summarize_bars(
         symbols: List[str], timeframe: str = "1Day", lookback_days: int = 90
     ) -> Dict[str, Any]:
@@ -551,7 +921,7 @@ def build_server(data_client=None):
         )
 
     # ---------------- Propose (writes a file, never live state) ---------------- #
-    @server.tool()
+    @tool()
     def save_config(
         name: str,
         strategy: str,
@@ -559,10 +929,16 @@ def build_server(data_client=None):
         scanner: Optional[str] = None,
         provenance: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Save a candidate config to configs/<name>.json (with provenance).
+        """Propose a candidate config by writing configs/<name>.json, with provenance.
 
-        This writes a file for a HUMAN to review and promote. It does NOT affect
-        any running process and cannot enable live trading.
+        This is the end of what automation may do. It writes a file for a HUMAN to
+        read, judge, and promote; it does not affect any running process, does not
+        change any default, and cannot enable live trading. Promotion is a manual
+        step by design — the research clock proposes, a person disposes.
+
+        Include the evidence in `provenance` (the walk-forward or verdict run behind
+        the proposal, its trial id, its window and universe), because a config with
+        no recorded reason for existing is a config nobody can safely promote.
         """
         inputs = {"name": name, "strategy": strategy, "params": params, "scanner": scanner}
         result = configs.save_config(
@@ -570,14 +946,23 @@ def build_server(data_client=None):
         )
         return _logged("save_config", inputs, result)
 
-    @server.tool()
+    @tool()
     def load_config(name: str) -> Dict[str, Any]:
-        """Load a previously saved candidate config by name."""
+        """Read back one saved candidate config: its strategy, params, and provenance.
+
+        Reading a config does not activate it — nothing here is running the config,
+        and loading it changes no behavior anywhere. Use it to check what a past
+        proposal actually contained before re-testing or superseding it. Read-only.
+        """
         return _logged("load_config", {"name": name}, configs.load_config(name))
 
-    @server.tool()
+    @tool()
     def list_configs() -> List[Dict[str, Any]]:
-        """List saved candidate configs with a compact summary of each."""
+        """List every saved candidate config with a compact summary of each.
+
+        These are proposals awaiting human review, not active settings: none of them
+        is in use by anything until a person promotes it. Read-only.
+        """
         return _logged("list_configs", {}, configs.list_configs())
 
     return server

@@ -48,40 +48,78 @@ agent — no business logic lives in any adapter. Every function takes a data-on
 ## The server (`src/mcp/server.py`)
 
 A FastMCP adapter (the `mcp` SDK is imported lazily, behind the `mcp` extra). Each
-tool is a typed function whose docstring is written for the agent reader, calls a
-service function, logs the call, and returns JSON. The exposed surface:
+tool is a typed function that calls a service function, logs the call, and returns
+JSON. The exposed surface:
 
 - Discovery: `list_strategies`, `list_scanners`, `get_param_ranges`
 - Analyze: `run_scan`, `run_backtest`, `run_optimization`, `run_walk_forward`,
   `get_metrics_glossary`, `summarize_bars`
 - Research: `compute_alphas`, `combine_alphas`, `compute_risk`,
-  `construct_portfolio`, `compute_information`, `compute_horizon`
+  `construct_portfolio`, `compute_information`, `compute_horizon`,
+  `run_verdict` (the whole pipeline as one call — see
+  [One-command verdict](../usage/verdict.md))
+- Artifact: `render_report` (a result dict → one self-contained HTML document, the
+  same renderer `--html` uses — see [HTML reports](../usage/html-reports.md))
+- Campaign memory: `list_trials`, `get_trial`, `best_trials` (read-only views of
+  the [trial store](../usage/trials.md))
 - Propose (writes a file, never live state): `save_config`, `load_config`,
   `list_configs`
 
+Every CLI research capability has an MCP equivalent, except anything touching live
+trading — that is the parity principle, and the exception is the whole safety model.
+
+## Descriptions are an interface, not documentation
+
+A human who reads a stale doc can notice it is stale. An agent cannot: it reads a
+description as a statement of fact and acts on it at machine speed, and every action
+it takes burns a journaled trial. So descriptions here are treated as a contract and
+pinned by tests:
+
+- **Metric vocabulary is pulled from the glossary**, not restated.
+  `glossary.definitions_for()` supplies the canonical definition (and pitfall) of
+  every metric a tool reports, appended to its description at registration time. Two
+  descriptions of one metric would drift; one definition with two readers cannot.
+- **Journaling is stated wherever it happens.** Every tool in `JOURNALING_TOOLS`
+  says, in identical words, that the call records a trial, counts toward the
+  campaign's multiple-testing total, and serves a memoized prior run unless forced.
+- **Evidence-gated features are never presented as neutral options.** Conditional
+  risk, the aim trading policy, and the Black–Litterman posterior each ship off
+  because their own adoption gates do not clear on this repository's data; the
+  descriptions of tools near them say so rather than listing a flag.
+- **The leaderboard's honesty rules live in the payload.** `best_trials` returns its
+  `rank_by`, each row's family `n_trials`, and the caveat text as *data* — an agent
+  never sees a terminal's caveat line, so the caveat has to travel with the numbers.
+
+The mechanism is a small registration helper that composes each tool's description
+from its docstring plus the shared, glossary-derived pieces. Tests assert every
+registered tool has a substantive description, that journaling tools mention
+journaling and memoization, and that gated tools name their gate. String assertions
+are crude, but they catch silent regressions to stale text, which is the failure that
+actually happens.
+
 ## Known gap
 
-The MCP tool surface lags the CLI/service layer on several parameters that
-landed after the initial tool signatures were written:
+The tool surface still lags the CLI on some parameters. What is genuinely missing,
+as of the description audit:
 
 - `neutralize_factors` ([factor-neutral alphas](./alphas.md#neutralization)) —
   results echo a `neutralized_against` field, but via this surface it is always
   empty.
-- `construct_portfolio`'s cost-aware knobs (`cost_aware`, `capital`,
-  `holding_period_years`), `book`/`gross_leverage`/`short_max_weight`
+- `construct_portfolio` solves the long-only, cash-relative book. It **is**
+  cost-aware (the objective carries turnover and square-root impact by default), but
+  `book`/`gross_leverage`/`short_max_weight`
   ([long/short](./portfolio-construction.md#longshort---book-market-neutral)),
   `benchmark_holdings` ([benchmark-relative](./portfolio-construction.md#benchmark-relative-construction---benchmark-holdings)),
   `conditional` ([conditional risk](./risk-model.md#conditional-risk)),
   `posterior` ([Black–Litterman](./portfolio-construction.md#blacklitterman---posterior-bl)),
-  and `policy`/`trade_rate` ([multi-period trading](./multi-period-trading.md)) —
-  the tool still solves the pre-016 cost-blind, cash-relative, long-only book.
-- `compute_attribution`, `run_conditional_risk_ab`, `run_policy_ab`,
-  `evaluate_conditional_risk`, and the trial store are not exposed as tools at
-  all.
+  and `policy`/`trade_rate` ([multi-period trading](./multi-period-trading.md)) are
+  not arguments here. The tool's own description says so, so an agent does not assume
+  otherwise.
+- `compute_attribution`, `run_conditional_risk_ab`, `run_policy_ab`, and
+  `evaluate_conditional_risk` are not exposed as tools.
 
-Wiring these through is a small, mechanical follow-up for whenever the agent
-surface needs them — the underlying service functions already support
-everything; only `src/mcp/server.py`'s tool signatures are behind.
+Wiring these through is a small, mechanical follow-up — the underlying service
+functions already support everything; only the tool signatures are behind.
 
 ## The hard wall
 

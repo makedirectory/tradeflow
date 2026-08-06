@@ -6,7 +6,7 @@ that matter most: the equity-curve fidelity caveat and the
 multiple-testing correction the Deflated Sharpe applies.
 """
 
-from typing import Any, Dict
+from typing import Any, Dict, Iterable
 
 from src.analytics.performance import FLAG_KEYS, METRIC_KEYS
 
@@ -98,3 +98,22 @@ def metrics_glossary() -> Dict[str, Any]:
         metrics[key] = entry
     flags = {key: {"definition": _FLAG_DEFS.get(key, "")} for key in FLAG_KEYS}
     return {"metrics": metrics, "flags": flags, "global_caveats": GLOBAL_CAVEATS}
+
+
+def definitions_for(keys: Iterable[str]) -> Dict[str, str]:
+    """The definition (and pitfall, when there is one) for the named metrics.
+
+    Lets another surface — a tool description, a report footer — quote what a
+    metric means instead of restating it in its own words. Two descriptions of one
+    metric will drift; one definition with two readers cannot. Unknown keys are
+    skipped rather than rendered as "(no description)", which would advertise a
+    typo as a metric.
+    """
+    out: Dict[str, str] = {}
+    for key in keys:
+        definition = _DEFS.get(key) or _FLAG_DEFS.get(key)
+        if not definition:
+            continue
+        pitfall = _PITFALLS.get(key)
+        out[key] = f"{definition} Pitfall: {pitfall}" if pitfall else definition
+    return out
