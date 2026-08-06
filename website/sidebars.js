@@ -25,6 +25,7 @@ const sidebars = {
         'usage/information',
         'usage/html-reports',
         'usage/trials',
+        'usage/docker',
         'usage/horizon',
         'usage/walk-forward',
         'usage/agents',

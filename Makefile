@@ -11,7 +11,7 @@ PY       = uv run python main.py
 
 .PHONY: help demo demo-agent demo-agent-live init install install-optimize verdict backtest backtest-no-scan scan live \
         allocate allocate-utility alphas risk info horizon optimize optimize-bayesian cancel-orders close-positions \
-        check test check-links docs docs-build docker-build docker-run clean
+        check test check-links docs docs-build docker-build docker-run up down compose-run compose-smoke clean
 
 help:  ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -117,11 +117,23 @@ docs-build:  ## Build the static documentation site
 	cd website && npm install && npm run build
 
 # --- docker -----------------------------------------------------------------
+up:  ## Boot the local dev stack (MCP + persistent state). Never starts live trading.
+	docker compose up -d
+
+down:  ## Stop the stack (named volumes, and your trial history, survive)
+	docker compose down
+
+compose-run:  ## Run one verb in the stack, e.g. make compose-run CMD="verdict --symbols NVDA"
+	docker compose run --rm $(CMD)
+
+compose-smoke:  ## Verify the compose wiring end to end (needs Docker; not run in CI)
+	./scripts/compose_smoke.sh
+
 docker-build:  ## Build the Docker image
 	docker build -t tradeflow .
 
-docker-run:  ## Run the container (paper live trading; mounts your .env)
-	docker run --rm -it -v $$(pwd)/.env:/app/.env tradeflow
+docker-run:  ## Run the container (prints help; pass a verb to do anything)
+	docker run --rm -it -v $$(pwd)/.env:/state/.env:ro tradeflow
 
 clean:  ## Remove caches, build output, and results
 	rm -rf .venv optimization_results.csv website/build website/node_modules

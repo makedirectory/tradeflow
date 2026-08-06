@@ -1,0 +1,123 @@
+# A reproducible local development stack: the long-running surfaces, with state that
+# survives container replacement.
+#
+# This is deliberately not an adoption path — Docker is itself a prerequisite, so
+# `uv tool install tradeflow` is the easier way to simply try this. What compose adds
+# is volume and environment wiring (the part people get wrong by hand) and a seam a
+# database service can attach to later without changing how anyone boots the stack.
+#
+# TradeFlow is a single-process application with file-backed state, so most of what
+# follows is volumes and named entrypoints rather than service orchestration. Saying
+# so plainly is better than dressing it up.
+#
+#   docker compose up -d                       the research-clock surfaces
+#   docker compose --profile docs up docs      the documentation site
+#   docker compose run --rm verdict --symbols NVDA,AAPL --start 2024-01-01 --end 2024-12-31
+#   docker compose run --rm demo               offline, no keys
+#
+# Live trading is NEVER started by `up`. See the `live` service at the bottom.
+
+x-app: &app
+  build:
+    context: .
+    args:
+      # `ai` is deliberately absent: the base image should need no paid credentials.
+      EXTRAS: "mcp,store,viz"
+  image: tradeflow:local
+  environment:
+    # Every path the application writes resolves under this one root.
+    TRADEFLOW_HOME: /state
+  volumes:
+    # Named volumes, not bind mounts: state must outlive `down`, and the container's
+    # non-root user has to own it.
+    - tradeflow-logs:/state/logs
+    - tradeflow-cache:/state/cache
+    - tradeflow-configs:/state/configs
+    # Credentials are read-only and stay on the host. `:ro` is the point — a
+    # container should never be able to rewrite the keys it was given.
+    - ./.env:/state/.env:ro
+
+services:
+  # ---------------------------------------------------------------- surfaces --
+  mcp:
+    <<: *app
+    container_name: tradeflow-mcp
+    # The server speaks stdio, so this is attach-oriented rather than a listening
+    # port: an MCP client runs `docker compose run --rm mcp`. A TCP/SSE transport
+    # would add a port mapping here and nothing else.
+    command: ["uv", "run", "python", "main.py", "mcp"]
+    stdin_open: true
+    tty: false
+    restart: unless-stopped
+    healthcheck:
+      # The setup doctor: env readable, credentials present, state writable, extras
+      # importable. It makes no network call, so this reports on the container's own
+      # configuration rather than on a vendor's uptime.
+      test: ["CMD", "uv", "run", "python", "main.py", "init", "--check"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 30s
+
+  docs:
+    profiles: ["docs"]
+    image: node:20-slim
+    container_name: tradeflow-docs
+    working_dir: /site
+    volumes:
+      - ./website:/site
+    command: ["sh", "-c", "npm install && npm run start -- --host 0.0.0.0"]
+    ports:
+      - "3000:3000"
+
+  # ------------------------------------------------------------- one-shots ----
+  # Same image, same state, different verb. Arguments pass through:
+  #   docker compose run --rm backtest --symbols NVDA --start 2024-01-01 --end 2024-06-01
+  demo:
+    <<: *app
+    profiles: ["run"]
+    entrypoint: ["uv", "run", "python", "main.py", "demo"]
+
+  verdict:
+    <<: *app
+    profiles: ["run"]
+    entrypoint: ["uv", "run", "python", "main.py", "verdict"]
+
+  backtest:
+    <<: *app
+    profiles: ["run"]
+    entrypoint: ["uv", "run", "python", "main.py", "backtest"]
+
+  walkforward:
+    <<: *app
+    profiles: ["run"]
+    entrypoint: ["uv", "run", "python", "main.py", "walkforward"]
+
+  trials:
+    <<: *app
+    profiles: ["run"]
+    entrypoint: ["uv", "run", "python", "main.py", "trials"]
+
+  research:
+    <<: *app
+    profiles: ["run"]
+    # Needs the `ai` extra and an API key, neither of which the base image carries:
+    #   docker compose build --build-arg EXTRAS="mcp,store,viz,ai" research
+    entrypoint: ["uv", "run", "python", "main.py", "research"]
+
+  # ------------------------------------------------------------------ live ----
+  # Profile-gated and never part of `up`. Turning the machine on must not turn
+  # trading on, not even paper trading — this requires typing the word:
+  #   docker compose run --rm live
+  # PAPER_TRADE is still asserted by settings.py inside the container; this profile
+  # is the outer of two locks, not a replacement for it.
+  live:
+    <<: *app
+    profiles: ["live"]
+    entrypoint: ["uv", "run", "python", "main.py", "live"]
+    restart: "no"
+
+volumes:
+  tradeflow-logs:
+  tradeflow-cache:
+  tradeflow-configs:

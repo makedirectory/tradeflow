@@ -112,19 +112,22 @@ make backtest                         # scan -> volume_spike strategy -> report
 make live                             # paper-trade the scanned universe
 ```
 
-## Quickstart (Docker)
+## Docker (a local dev stack, not an easier install)
 
-No local Python or uv required — just Docker:
+Docker is itself a prerequisite, so `uv tool install` above is the simpler way to
+just try this. What compose adds is a long-running MCP server and docs site with
+state on named volumes that survives container replacement:
 
 ```bash
-cp .env.example .env                  # add your Alpaca paper keys
-make docker-build                     # build the image (uv runs inside it)
-make docker-run                       # paper live-trading; mounts your .env
+make up                               # MCP + persistent state. Never starts trading.
+make down                             # stop; your trial history survives
 
-# or run any command in the container directly:
-docker run --rm -v $(pwd)/.env:/app/.env tradeflow \
-    uv run python main.py backtest --symbols NVDA,META --start 2024-01-02 --end 2024-04-01
+docker compose run --rm demo          # offline, no keys
+docker compose run --rm verdict --symbols NVDA,META --start 2024-01-02 --end 2024-04-01
 ```
+
+`live` is profile-gated and is never started by `up` — turning the machine on must
+not turn trading on. See [Running in Docker](https://tradeflow.mk-dir.com/docs/usage/docker).
 
 Run `make help` to see every target. Anything is overridable inline:
 
