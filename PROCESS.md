@@ -68,8 +68,8 @@ reason in the PR description.
    flags and tool schemas explicit and typed.
 
 5. Docs
-   Update the engineering wiki (website/docs/engineering/) for architecture/
-   behavior, the usage guide (website/docs/usage/) for how to run it, and the
+   Update the engineering wiki (docs/content/engineering/) for architecture/
+   behavior, the usage guide (docs/content/usage/) for how to run it, and the
    README if the headline workflow changed.
 
 6. Review
@@ -142,8 +142,8 @@ Default checklist for every change.
 
 ### Documentation source of truth
 
-- The **engineering wiki** (`website/docs/engineering/`) explains architecture and
-  behavior; the **usage guides** (`website/docs/usage/`) explain how to run things.
+- The **engineering wiki** (`docs/content/engineering/`) explains architecture and
+  behavior; the **usage guides** (`docs/content/usage/`) explain how to run things.
 - Once a change lands, its behavior belongs in the wiki/usage docs. Any design
   note or spec you wrote up front stays a historical rationale, not the
   source of truth for built behavior.
@@ -407,7 +407,7 @@ description so the history stays legible:
 - Env/tooling: `uv` (app, `package=false`), `.env` via `tradeflow/settings.py`.
 - Tests: pytest, offline & deterministic via `tests/fakes.py`.
 - Lint/format: ruff (line length 110, E501 off, isort `known-first-party=["tradeflow"]`).
-- Docs: Docusaurus site in `website/`.
+- Docs: Docusaurus site in `docs/` (content under `docs/content/`).
 
 ### Commands
 
@@ -454,4 +454,4 @@ filled out, and merge only on green CI.
 ---
 
 *Conventions cross-reference the engineering wiki under
-[`website/docs/engineering/`](website/docs/engineering/coding-standards.md).*
+[`docs/content/engineering/`](docs/content/engineering/coding-standards.md).*

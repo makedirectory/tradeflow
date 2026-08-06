@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Iterable, List, Set, Tuple
 
 #: Checked when present. specs/ is local-only; the rest are tracked.
-DEFAULT_ROOTS = ("website/docs", "specs", "README.md", "PROCESS.md", "CONTRIBUTING.md")
+DEFAULT_ROOTS = ("docs/content", "specs", "README.md", "PROCESS.md", "CONTRIBUTING.md")
 
 SKIP_DIRS = {"node_modules", ".venv", "build", ".git", "__pycache__", ".pytest_cache"}
 

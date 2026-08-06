@@ -29,7 +29,7 @@ demo-agent-live:  ## Same, but with a live Claude proposer (needs ANTHROPIC_API_
 	uv run --extra ai python main.py demo-agent --provider anthropic
 
 demo-artifact:  ## Regenerate the README demo image (equity curve + verdict)
-	uv run --extra viz python main.py demo --chart website/static/img/demo.png
+	uv run --extra viz python main.py demo --chart docs/static/img/demo.png
 
 # --- setup ------------------------------------------------------------------
 init:  ## Guided first-run setup: write a valid .env and check it
@@ -124,10 +124,10 @@ test:  ## Run the offline test suite (no API keys needed)
 	uv run --extra dev pytest -q
 
 docs:  ## Serve the documentation site at http://localhost:3000
-	cd website && npm install && npm run start
+	cd docs && npm install && npm run start
 
 docs-build:  ## Build the static documentation site
-	cd website && npm install && npm run build
+	cd docs && npm install && npm run build
 
 # --- docker -----------------------------------------------------------------
 up:  ## Boot the local dev stack (MCP + persistent state). Never starts live trading.
@@ -149,5 +149,5 @@ docker-run:  ## Run the container (prints help; pass a verb to do anything)
 	docker run --rm -it -v $$(pwd)/.env:/state/.env:ro tradeflow
 
 clean:  ## Remove caches, build output, and results
-	rm -rf .venv optimization_results.csv website/build website/node_modules
+	rm -rf .venv optimization_results.csv docs/build docs/node_modules
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +

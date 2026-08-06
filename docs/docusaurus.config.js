@@ -40,6 +40,9 @@ const config = {
       /** @type {import('@docusaurus/preset-classic').Options} */
       ({
         docs: {
+          // Content lives in content/, not docs/ — the site itself is already
+          // `docs/`, and `docs/docs/` reads like a mistake.
+          path: 'content',
           sidebarPath: require.resolve('./sidebars.js'),
           routeBasePath: '/', // docs at site root
         },
