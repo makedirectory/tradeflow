@@ -79,13 +79,16 @@ Either way you'll need free Alpaca **paper-trading** API keys from the
 No clone needed — install the command and run the offline demo:
 
 ```bash
-uv tool install git+https://github.com/makedirectory/tradeflow   # or: pipx install
-tradeflow demo                        # full pipeline on synthetic data, no keys
+uv tool install tradeflow-engine        # or: pipx install tradeflow-engine
+tradeflow demo                          # full pipeline on synthetic data, no keys
 tradeflow init                        # add your free Alpaca paper keys when ready
 tradeflow verdict --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-31
 ```
 
-Optional capabilities are extras: `uv tool install "tradeflow[viz,store] @ git+..."`.
+Optional capabilities are extras: `uv tool install "tradeflow-engine[viz,store]"`.
+
+The distribution is **`tradeflow-engine`** (the bare `tradeflow` on PyPI is an
+unrelated package); the command and the importable package are both `tradeflow`.
 
 State (the research journal, trial store, bar cache, promoted configs) lives in
 `~/.tradeflow` for an installed copy, or in the repo when you run from a checkout.
@@ -287,6 +290,23 @@ derived from it — one source of truth.
 
 Adding a fourth is a one-file change — see
 [Extending](https://tradeflow.mk-dir.com/docs/engineering/extending).
+
+### Using it from your own code
+
+`tradeflow.services.*` is the supported surface — the same JSON-returning functions
+the CLI renders and the MCP server exposes, so you get identical numbers by
+construction:
+
+```python
+from tradeflow.services.analysis import run_verdict
+from tradeflow.services.data import build_data_client
+
+result = run_verdict(build_data_client(), "volume_spike", ["NVDA", "AAPL"], start, end)
+print(result["verdict"]["summary"])
+```
+
+Everything outside `services/` is internal and moves without notice. See
+[Using TradeFlow as a library](https://tradeflow.mk-dir.com/docs/engineering/embedding).
 
 ### Optional features
 

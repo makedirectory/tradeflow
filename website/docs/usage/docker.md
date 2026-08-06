@@ -15,7 +15,7 @@ itself a prerequisite, so if you just want to run this, [installing the
 command](installation#as-a-command-no-clone) is strictly simpler:
 
 ```bash
-uv tool install git+https://github.com/makedirectory/tradeflow && tradeflow demo
+uv tool install tradeflow-engine && tradeflow demo
 ```
 
 What compose adds is the volume and environment wiring people get wrong by hand, a

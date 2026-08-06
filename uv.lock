@@ -2781,7 +2781,7 @@ wheels = [
 ]
 
 [[package]]
-name = "tradeflow"
+name = "tradeflow-engine"
 version = "1.0.1"
 source = { editable = "." }
 dependencies = [

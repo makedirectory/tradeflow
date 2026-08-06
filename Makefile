@@ -11,7 +11,8 @@ PY       = uv run python main.py
 
 .PHONY: help demo demo-agent demo-agent-live init install install-optimize verdict backtest backtest-no-scan scan live \
         allocate allocate-utility alphas risk info horizon optimize optimize-bayesian cancel-orders close-positions \
-        check test check-links docs docs-build docker-build docker-run up down compose-run compose-smoke clean
+        check test check-links docs docs-build docker-build docker-run up down compose-run compose-smoke \
+        build release-check clean
 
 help:  ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -102,6 +103,18 @@ cancel-orders:  ## Cancel all open orders
 
 close-positions:  ## Close all open positions (also cancels orders)
 	uv run python close_all_positions.py
+
+# --- release ----------------------------------------------------------------
+build:  ## Build the wheel and sdist into dist/
+	rm -rf dist && uv build
+
+release-check: build  ## Build, validate the metadata, and install into a clean venv
+	uvx twine check dist/*
+	@rm -rf /tmp/tradeflow-release-check
+	@python3 -m venv /tmp/tradeflow-release-check
+	@/tmp/tradeflow-release-check/bin/pip install -q dist/*.whl
+	@TRADEFLOW_HOME=/tmp/tradeflow-release-state /tmp/tradeflow-release-check/bin/tradeflow --version
+	@echo "OK — the wheel installs and runs outside this checkout."
 
 # --- quality & docs ---------------------------------------------------------
 check-links:  ## Verify Markdown links + heading anchors (includes local specs/)

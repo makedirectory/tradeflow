@@ -63,6 +63,7 @@ const sidebars = {
         'engineering/evaluation-metrics',
         'engineering/walk-forward',
         'engineering/mcp-server',
+        'engineering/embedding',
         'engineering/research-agent',
         'engineering/testing',
         'engineering/coding-standards',

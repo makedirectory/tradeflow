@@ -8,9 +8,14 @@ title: Installation
 ## As a command (no clone)
 
 ```bash
-uv tool install git+https://github.com/makedirectory/tradeflow
+uv tool install tradeflow-engine     # or: pipx install tradeflow-engine
 tradeflow demo
 ```
+
+The distribution is **`tradeflow-engine`**; the command and the importable package
+are both `tradeflow`. The bare `tradeflow` name on PyPI belongs to an unrelated
+project (time-series sign simulation) — installing both into one environment would
+collide at import, so pick one.
 
 `pipx install` works the same way. This gives you a `tradeflow` command with every
 verb — `tradeflow demo`, `tradeflow init`, `tradeflow verdict`, `tradeflow mcp` —
@@ -19,7 +24,7 @@ and needs no repository, no keys, and no network for the demo.
 Optional capabilities stay opt-in extras:
 
 ```bash
-uv tool install "tradeflow[viz,store,mcp] @ git+https://github.com/makedirectory/tradeflow"
+uv tool install "tradeflow-engine[viz,store,mcp]"
 ```
 
 ### Where state lives
