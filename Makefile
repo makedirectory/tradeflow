@@ -11,7 +11,7 @@ PY       = uv run python main.py
 
 .PHONY: help demo demo-agent demo-agent-live init install install-optimize verdict backtest backtest-no-scan scan live \
         allocate allocate-utility alphas risk info horizon optimize optimize-bayesian cancel-orders close-positions \
-        check test check-links docs docs-build docker-build docker-run up down compose-run compose-smoke \
+        check test secret-scan check-links docs docs-build docker-build docker-run up down compose-run compose-smoke \
         build release-check clean
 
 help:  ## Show available commands
@@ -122,6 +122,12 @@ check-links:  ## Verify Markdown links + heading anchors (includes local specs/)
 
 test:  ## Run the offline test suite (no API keys needed)
 	uv run --extra dev pytest -q
+
+secret-scan:  ## Scan the full git history for committed secrets (same check CI runs)
+	@command -v gitleaks >/dev/null 2>&1 || { \
+		echo "gitleaks not installed — 'brew install gitleaks', or see https://github.com/gitleaks/gitleaks#installing"; \
+		exit 1; }
+	gitleaks git --no-banner --redact .
 
 docs:  ## Serve the documentation site at http://localhost:3000
 	cd docs && npm install && npm run start

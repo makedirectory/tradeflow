@@ -1,8 +1,10 @@
 name: CI
 
 on:
+  # Every branch, not just main: the secret scan below is only useful if it sees a
+  # push that has no pull request behind it. The expensive job stays gated to
+  # main + PRs via its own `if` — see lint-and-test.
   push:
-    branches: [main]
   pull_request:
 
 # Cancel superseded runs on the same ref.
@@ -12,6 +14,9 @@ concurrency:
 
 jobs:
   lint-and-test:
+    # Unchanged behavior: pull requests, and pushes to main. A push to a topic
+    # branch with a PR open would otherwise run the whole suite twice.
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -45,3 +50,47 @@ jobs:
 
       - name: Tests (pytest)
         run: uv run pytest -q
+
+  secret-scan:
+    # The repository is public, so a committed key is disclosed the moment it
+    # lands. Unlike lint-and-test this runs on *every* branch push, not only main
+    # and PRs — a secret pushed to a topic branch is already public whether or not
+    # anyone opens a pull request. A branch with a PR open therefore scans twice
+    # (push + pull_request); at half a second a run that is not worth avoiding.
+    #
+    # GitHub's own secret scanning + push protection is enabled on the repo and
+    # catches known provider formats before a push lands. This is the second
+    # layer — it runs on forks, and it fails the build rather than only alerting
+    # the owner.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Everything reachable from this ref, not just the diff: a secret deleted
+          # in a later commit is still readable in the one that added it, and the
+          # default shallow clone hides exactly those commits.
+          fetch-depth: 0
+
+      - name: Install gitleaks
+        # Pinned to an exact release rather than an action, so a scan is
+        # reproducible and no third-party code runs with the workflow token.
+        env:
+          GITLEAKS_VERSION: 8.30.1
+        run: |
+          curl -sSfL -o /tmp/gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tar -xzf /tmp/gitleaks.tar.gz -C /usr/local/bin gitleaks
+          gitleaks version
+
+      - name: Scan history for secrets
+        # --redact keeps any match out of the public build log; the finding is in
+        # the uploaded report. Exits non-zero when anything is found.
+        run: gitleaks git --no-banner --redact --report-path gitleaks-report.json .
+
+      - name: Upload findings
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: gitleaks-report
+          path: gitleaks-report.json
+          if-no-files-found: ignore
