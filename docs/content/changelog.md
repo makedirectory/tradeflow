@@ -28,7 +28,7 @@ index; they are tagged in the repository.
 
 ---
 
-## Unreleased
+## 2.0.4 — 2026-08-07
 
 ### Fixed
 
@@ -43,9 +43,11 @@ index; they are tagged in the repository.
 
 ### Added
 
-- `CLAUDE.md`, recording the conventions this project is actually built to — the
-  two-clocks invariant, the honesty rules for anything it prints, and the
-  verify-don't-assert habit that has caught most of the real defects here.
+- `CLAUDE.md` and `.claude/rules/` — the conventions this project is actually built
+  to, as path-scoped rules that load only when a matching file is touched: the
+  two-clocks invariant, the honesty rules for anything the tool prints, the trade
+  clock's reject-never-repair discipline, and the verify-don't-assert habit that has
+  caught most of the real defects here.
 
 ## 2.0.3 — 2026-08-07
 
