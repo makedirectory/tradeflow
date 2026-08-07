@@ -1,12 +1,19 @@
 name: Docs
 
-# Builds the documentation site on every PR (the Docusaurus production build compiles
-# every page and, with onBrokenLinks/onBrokenAnchors set to 'throw', fails on any dead
-# internal link or anchor) — and deploys it on main.
+# Builds the documentation site: the Docusaurus production build compiles every page
+# and, with onBrokenLinks/onBrokenAnchors set to 'throw', fails on any dead internal
+# link or anchor.
 #
-# The deploy exists because it did not: the site was published by hand, so it silently
-# fell behind the repository. A page could be written, reviewed, merged, and linked
-# from the README while 404ing for every reader.
+# Deploying is deliberately NOT here. Cloudflare Workers Builds deploys from Git
+# directly, and a second path in this workflow would race it. What this job adds is
+# the thing Cloudflare's build cannot: a failure on the *pull request*, before a
+# broken page reaches main.
+#
+# One trap worth knowing, because it cost a stale site once: Cloudflare's build has
+# its own root-directory setting, held in the dashboard rather than in this
+# repository. Renaming the docs directory broke it silently — every push failed with
+# "root directory not found" while nothing here went red. If this directory is ever
+# renamed again, update that setting in the same change.
 on:
   push:
     branches: [main]
@@ -46,65 +53,3 @@ jobs:
 
       - name: Build docs (fails on broken links/anchors)
         run: npm run build
-
-      - name: Upload the built site
-        if: github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@v7
-        with:
-          name: docs-site
-          path: docs/build/
-
-  deploy:
-    name: Deploy to Cloudflare
-    # Only from main, and only once the build above has actually succeeded.
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    needs: build-docs
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: docs
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-node@v7
-        with:
-          # .nvmrc is the single source: a contributor running `nvm use` and CI build
-          # on the same major, and there is no second place to forget to update.
-          node-version-file: .nvmrc
-          cache: npm
-          cache-dependency-path: docs/package-lock.json
-
-      - run: npm ci
-
-      - uses: actions/download-artifact@v8
-        with:
-          name: docs-site
-          path: docs/build/
-
-      # Fail with an explanation, not a bare exit code. Without this, a missing
-      # secret surfaces as `wrangler` exiting 1 with nothing to act on — the reader
-      # has to guess that a credential is the problem.
-      - name: Check the deploy credentials exist
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: |
-          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
-            echo "::error title=Missing deploy credentials::CLOUDFLARE_API_TOKEN is not set."
-            echo ""
-            echo "The docs site cannot deploy without it, so tradeflow.mk-dir.com will"
-            echo "keep serving whatever was last published by hand."
-            echo ""
-            echo "Add it at: Settings -> Secrets and variables -> Actions"
-            echo "  CLOUDFLARE_API_TOKEN    a token with the Workers Scripts:Edit permission"
-            echo "  CLOUDFLARE_ACCOUNT_ID   optional; only if the account is ambiguous"
-            echo ""
-            echo "To publish once by hand in the meantime:"
-            echo "  cd docs && npx wrangler login && npm run deploy"
-            exit 1
-          fi
-
-      - name: Deploy
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: npx wrangler deploy

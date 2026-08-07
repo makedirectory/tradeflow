@@ -51,8 +51,10 @@ using the published package rather than a checkout.
 
 ### Changed
 
-- **The documentation site now deploys itself** on every push to `main`. It was
-  published by hand, so it silently fell behind the repository — a page could be
+- **Restored the documentation site's automatic deploy.** Renaming `website/` to
+  `docs/` in 2.0.0 broke it: the deploy builds from Git with its own root-directory
+  setting, which still pointed at the old path, so every build failed while nothing
+  in CI went red. The site froze at its last pre-rename build — a page could be
   written, reviewed, merged, and linked from the README while 404ing for every
   reader.
 - **The home page leads with `uv tool install tradeflow-engine` and `tradeflow
