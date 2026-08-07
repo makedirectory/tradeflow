@@ -60,3 +60,43 @@ def test_dotenv_file_is_loaded(monkeypatch, tmp_path):
     s = load_settings()
     assert s.alpaca_key == "filek"
     assert s.alpaca_secret == "files"
+
+
+# --- the message a keyless user actually sees -------------------------------
+def _missing_message(monkeypatch, tmp_path, *, checkout: bool):
+    from tradeflow import settings
+
+    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
+    monkeypatch.setattr(settings, "_looks_like_checkout", lambda _p: checkout)
+    monkeypatch.setattr(settings, "get_credential", lambda *a, **k: None)
+    try:
+        settings.load_settings()
+    except settings.SettingsError as exc:
+        return str(exc)
+    raise AssertionError("expected SettingsError")
+
+
+def test_an_installed_copy_is_never_told_to_use_files_it_does_not_have(monkeypatch, tmp_path):
+    """This is the first thing most people see. It used to tell a pip-installed user
+    to copy a .env.example they do not have and run a make target that does not
+    exist — two dead ends, and no mention of the command that actually fixes it."""
+    message = _missing_message(monkeypatch, tmp_path, checkout=False)
+
+    assert "tradeflow init" in message
+    assert ".env.example" not in message
+    assert "make " not in message
+    assert str(tmp_path / ".env") in message  # says exactly where the file goes
+
+
+def test_a_checkout_keeps_its_own_instructions(monkeypatch, tmp_path):
+    message = _missing_message(monkeypatch, tmp_path, checkout=True)
+    assert "make init" in message
+    assert ".env.example" in message
+
+
+def test_both_paths_name_the_keyless_demo_and_where_keys_come_from(monkeypatch, tmp_path):
+    for checkout in (True, False):
+        message = _missing_message(monkeypatch, tmp_path, checkout=checkout)
+        assert "demo" in message, "someone with no keys must be told they can still try it"
+        assert "alpaca.markets" in message
+        assert "APCA_API_KEY_ID" in message  # the env-var path, for scripts

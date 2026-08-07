@@ -2164,11 +2164,32 @@ def cmd_mcp(args) -> None:
     Live trading is intentionally not exposed: the server builds
     only a data client, so it cannot place orders.
     """
+    # The guard has to wrap `serve()`, not just the import above it. The server
+    # module imports fine without the extra — it pulls in the MCP SDK lazily, inside
+    # build_server — so guarding only the import let the real failure escape as a
+    # traceback from several frames down, which is precisely the moment someone is
+    # trying to connect a client for the first time.
     try:
         from tradeflow.mcp.server import serve
+
+        serve()
     except ImportError:
-        sys.exit("The MCP server needs the 'mcp' extra. Install it:\n    uv sync --extra mcp")
-    serve()
+        sys.exit(_missing_extra_message("mcp", "The MCP server"))
+
+
+def _missing_extra_message(extra: str, what: str) -> str:
+    """How to install an optional extra, phrased for the copy that is running.
+
+    An installed copy has no checkout to `uv sync` in, so telling it to is a dead
+    end — the same failure the missing-credentials message used to have.
+    """
+    from tradeflow.settings import _looks_like_checkout, state_root
+
+    if _looks_like_checkout(state_root()):
+        command = f"uv sync --extra {extra}"
+    else:
+        command = f'uv tool install --force "tradeflow-engine[{extra}]"'
+    return f"{what} needs the '{extra}' extra. Install it:\n    {command}"
 
 
 def cmd_live(args) -> None:

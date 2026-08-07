@@ -26,6 +26,10 @@ It is built to be **easy to try** and **easy to read**:
   `MarketDataProvider` interface; Alpaca is just the first implementation.
 - **Strict separation of concerns.** Each package does exactly one job.
 
+**New here? [Getting started](usage/getting-started)** walks from install to a real
+result with Claude connected, in six steps. The first two need no keys and no
+network.
+
 Two doc tracks:
 
 - **[Usage](usage/installation)** — install, configure, and run the workflows
