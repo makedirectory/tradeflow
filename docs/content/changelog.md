@@ -28,6 +28,25 @@ index; they are tagged in the repository.
 
 ---
 
+## Unreleased
+
+### Fixed
+
+- **`trials best` ranked in-sample search results as if they were track records.**
+  An `optimize` row is the winner of a parameter search — best-of-N by construction,
+  which is the selection bias the whole evaluation stack exists to correct for — and
+  the leaderboard ranked them alongside validated results without even showing the
+  kind. On a real campaign, four of the top five rows were search artifacts and
+  nothing said so. In-sample kinds are now excluded by default (with the count of
+  exclusions reported, and `--include-in-sample` to opt back in), and every row names
+  its kind. Found by using the tool rather than reading it.
+
+### Added
+
+- `CLAUDE.md`, recording the conventions this project is actually built to — the
+  two-clocks invariant, the honesty rules for anything it prints, and the
+  verify-don't-assert habit that has caught most of the real defects here.
+
 ## 2.0.3 — 2026-08-07
 
 Found by walking the getting-started flow end to end against real paper credentials,

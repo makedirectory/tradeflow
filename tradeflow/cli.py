@@ -2149,7 +2149,12 @@ def _print_leaderboard(store, args) -> None:
 
     from tradeflow.analytics.reporting import format_leaderboard
 
-    board = store.best(rank_by=args.rank_by, limit=args.limit, **_trial_filters(args))
+    board = store.best(
+        rank_by=args.rank_by,
+        limit=args.limit,
+        include_in_sample=args.include_in_sample,
+        **_trial_filters(args),
+    )
     if args.json:
         # The honesty rules live in the payload, not only in the formatting: an agent
         # reading this over a wire must see the family counts and the caveat too.
@@ -3557,6 +3562,14 @@ def build_parser() -> argparse.ArgumentParser:
         default="dsr",
         help="Ranking metric. 'dsr' (default) already discounts how many configs were tried; "
         "'sharpe' does not, and prints a caveat saying so",
+    )
+    t_best.add_argument(
+        "--include-in-sample",
+        dest="include_in_sample",
+        action="store_true",
+        help="Also rank in-sample rows (optimize/alpha). They are search candidates, not "
+        "track records — an 'optimize' row is best-of-N by construction, so its rank "
+        "measures selection rather than skill",
     )
     t_best.add_argument("--limit", type=int, default=10)
     t_best.add_argument("--offset", type=int, default=0, help=argparse.SUPPRESS)

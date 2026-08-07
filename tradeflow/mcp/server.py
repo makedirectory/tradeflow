@@ -880,6 +880,7 @@ def build_server(data_client=None):
         symbols: Optional[List[str]] = None,
         rank_by: str = "dsr",
         limit: int = 10,
+        include_in_sample: bool = False,
         all_accounting: bool = False,
     ) -> Dict[str, Any]:
         """The campaign's leaderboard, ranked by DEFLATED Sharpe by default.
@@ -892,9 +893,15 @@ def build_server(data_client=None):
         `n_trials`, and why `rank_by="sharpe"` returns a caveat saying in as many
         words that the ordering does not correct for how many configs were tried.
 
-        Returns `{rank_by, rows, max_family_n_trials, caveat}`. The caveat and the
-        per-row family counts are part of the payload, not decoration — quote them
-        when you report a result. Read-only.
+        In-sample kinds (`optimize`, `alpha`) are excluded by default: an `optimize`
+        row is the winner of a search, best-of-N by construction, so ranking one
+        ranks the selection bias rather than any skill. `include_in_sample=true`
+        opts back in, and `in_sample_excluded` reports how many were dropped.
+
+        Returns `{rank_by, rows, max_family_n_trials, in_sample_included,
+        in_sample_excluded, caveat}`. The caveat and the per-row family counts are
+        part of the payload, not decoration — quote them when you report a result.
+        Read-only.
         """
         inputs = {"strategy": strategy, "symbols": symbols, "rank_by": rank_by, "limit": limit}
         with _trial_store() as store:
@@ -903,6 +910,7 @@ def build_server(data_client=None):
             board = store.best(
                 rank_by=rank_by,
                 limit=limit,
+                include_in_sample=include_in_sample,
                 strategy=strategy,
                 kind=kind,
                 symbols=symbols,
