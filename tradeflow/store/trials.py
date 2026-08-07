@@ -136,6 +136,14 @@ _LEADERBOARD_CAVEAT = {
 #: Trials excluded from a campaign's multiple-testing count: a forecast has no
 #: Sharpe to deflate.
 _EXCLUDED_FROM_FAMILY_COUNT = ("alpha",)
+
+#: Kinds a leaderboard must not rank by default. An ``optimize`` row is the *winner
+#: of a search* — best-of-N by construction, which is the selection bias the whole
+#: evaluation stack exists to correct for, not a result that survived anything. A
+#: leaderboard topped by them presents the artifact as the finding, which is exactly
+#: what this view is supposed to prevent. ``alpha`` rows are forecasts with no track
+#: record at all.
+IN_SAMPLE_KINDS = ("optimize", "alpha")
 #: Kinds whose row carries an internal trial count to SUM rather than 1 to COUNT -
 #: a walk-forward validates many inner configs per row, as does a research round
 #: that let the optimizer search internally.
@@ -949,6 +957,7 @@ class TrialStore:
         *,
         rank_by: str = "dsr",
         limit: int = 10,
+        include_in_sample: bool = False,
         **filters: Any,
     ) -> Dict[str, Any]:
         """The store's leaderboard, with the context that makes one honest.
@@ -958,6 +967,12 @@ class TrialStore:
         project exists to fight; doing it inside our own tooling would be worse
         than doing it by hand, because the tool would lend it authority.
 
+        **In-sample kinds are excluded by default** (see :data:`IN_SAMPLE_KINDS`).
+        An ``optimize`` row is the winner of a search — best-of-N by construction —
+        so ranking one is ranking the selection bias itself. ``include_in_sample``
+        opts back in, and the payload records how many rows were dropped so the
+        exclusion is visible rather than silent.
+
         The return value always carries each row's family ``n_trials`` alongside it,
         so the count travels with the data rather than living in one surface's
         formatting - an agent reading this over a wire sees the same caveat a human
@@ -965,7 +980,17 @@ class TrialStore:
         """
         if rank_by not in ("dsr", "sharpe"):
             raise ValueError(f"rank_by must be 'dsr' or 'sharpe', got {rank_by!r}")
-        rows = self.list_trials(sort=rank_by, limit=limit, **filters)
+        # Over-fetch, then drop the in-sample kinds, so excluding them does not
+        # silently shorten the board.
+        candidates = self.list_trials(
+            sort=rank_by, limit=limit * 8 if not include_in_sample else limit, **filters
+        )
+        excluded = 0
+        if not include_in_sample:
+            kept = [r for r in candidates if r.get("kind") not in IN_SAMPLE_KINDS]
+            excluded = len(candidates) - len(kept)
+            candidates = kept
+        rows = candidates[:limit]
         for row in rows:
             row["family_n_trials"] = (
                 self.family_count_by_hash(row["strategy"], row["universe_hash"], row["accounting"])
@@ -977,6 +1002,8 @@ class TrialStore:
             "rank_by": rank_by,
             "rows": rows,
             "max_family_n_trials": max(counts) if counts else 0,
+            "in_sample_included": include_in_sample,
+            "in_sample_excluded": excluded,
             "caveat": _LEADERBOARD_CAVEAT[rank_by],
         }
 

@@ -531,16 +531,31 @@ def format_leaderboard(board: Dict[str, Any]) -> str:
     lines = [
         "",
         f"  Top {len(rows)} by {ranked_by}:",
-        f"    {'#':<3}{'ID':14}{'STRATEGY':16}{'DSR':>8}{'SHARPE':>9}{'FAMILY n_trials':>17}",
+        # KIND is not decoration. Without it a reader cannot tell a validated
+        # walk-forward from a search's winning candidate, and those mean opposite
+        # things about whether a number is evidence.
+        f"    {'#':<3}{'ID':14}{'KIND':12}{'STRATEGY':16}{'DSR':>8}{'SHARPE':>9}{'FAMILY n_trials':>17}",
     ]
     for i, r in enumerate(rows, 1):
         family = r.get("family_n_trials")
         lines.append(
-            f"    {i:<3}{str(r.get('id', ''))[:14]:14}{str(r.get('strategy') or '')[:16]:16}"
+            f"    {i:<3}{str(r.get('id', ''))[:14]:14}{str(r.get('kind') or '')[:12]:12}"
+            f"{str(r.get('strategy') or '')[:16]:16}"
             f"{_cell(r.get('deflated_sharpe')):>8}{_cell(r.get('oos_sharpe')):>9}"
             f"{(NOT_RECORDED if family is None else family):>17}"
         )
-    lines.extend(["", f"  {board.get('caveat', '')}"])
+    lines.append("")
+    if board.get("in_sample_included"):
+        lines.append(
+            "  (!) IN-SAMPLE rows included. An 'optimize' row is the winner of a search — "
+            "best-of-N by construction — so its rank measures selection, not skill."
+        )
+    elif board.get("in_sample_excluded"):
+        lines.append(
+            f"  {board['in_sample_excluded']} in-sample row(s) excluded (search candidates, "
+            "not track records). Pass --include-in-sample to see them."
+        )
+    lines.append(f"  {board.get('caveat', '')}")
     if board.get("max_family_n_trials", 0) >= 50:
         lines.append(
             f"  This family has tried {board['max_family_n_trials']} configs. At that count "

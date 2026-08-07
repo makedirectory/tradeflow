@@ -109,6 +109,13 @@ selection-bias trap the evaluation machinery exists to fight — and it would be
 worse coming from our own tooling, which lends it authority. So:
 
 - Ranking is by **deflated** Sharpe by default.
+- **In-sample rows are excluded.** An `optimize` row is the winner of a search —
+  best-of-N by construction — so ranking one ranks the selection bias rather than
+  any skill. `--include-in-sample` opts back in and says plainly what that means;
+  either way the count of excluded rows is reported, so the exclusion is never
+  silent.
+- **Every row names its kind**, because a validated walk-forward and a search's
+  winning candidate look identical as numbers and mean opposite things as evidence.
 - Every row shows its family's `n_trials`, and a large count gets its own warning
   line.
 - `--rank-by sharpe` is available and prints a caveat saying, in as many words,

@@ -350,3 +350,56 @@ def test_query_remains_an_alias_for_list(tmp_path, capsys):
         args = main.build_parser().parse_args(["trials", verb, "--db", str(tmp_path / "trials.db")])
         args.func(args)
         assert "t3" in capsys.readouterr().out
+
+
+# --- the leaderboard must not rank search artifacts -------------------------
+def test_in_sample_kinds_are_excluded_from_the_leaderboard_by_default(store):
+    """An `optimize` row is the winner of a search — best-of-N by construction — so
+    ranking one ranks the selection bias itself. Found by using the tool: four of the
+    top five rows were in-sample, and nothing in the output said so."""
+    _record(store, "opt", kind="optimize", oos_sharpe=9.9, deflated_sharpe=1.0)
+    _record(store, "fc", kind="alpha", oos_sharpe=8.8, deflated_sharpe=1.0)
+    _record(store, "real", kind="walkforward", oos_sharpe=1.1, deflated_sharpe=0.6)
+
+    board = store.best(accounting=ACCOUNTING)
+    assert [r["id"] for r in board["rows"]] == ["real"]
+    assert board["in_sample_excluded"] == 2
+    assert board["in_sample_included"] is False
+
+
+def test_the_exclusion_is_reported_rather_than_silent(store):
+    _record(store, "opt", kind="optimize", oos_sharpe=9.9, deflated_sharpe=1.0)
+    _record(store, "real", kind="backtest", oos_sharpe=1.1, deflated_sharpe=0.6)
+    rendered = format_leaderboard(store.best(accounting=ACCOUNTING))
+    assert "1 in-sample row(s) excluded" in rendered
+
+
+def test_opting_in_ranks_them_but_says_what_that_means(store):
+    _record(store, "opt", kind="optimize", oos_sharpe=9.9, deflated_sharpe=1.0)
+    _record(store, "real", kind="backtest", oos_sharpe=1.1, deflated_sharpe=0.6)
+
+    board = store.best(accounting=ACCOUNTING, include_in_sample=True)
+    assert board["rows"][0]["id"] == "opt"
+    assert board["in_sample_included"] is True
+    assert "IN-SAMPLE rows included" in format_leaderboard(board)
+
+
+def test_excluding_in_sample_rows_does_not_shorten_the_board(store):
+    """Dropping rows after a LIMIT would silently return fewer than asked for."""
+    for i in range(12):
+        _record(store, f"opt{i}", kind="optimize", oos_sharpe=9.0, deflated_sharpe=0.99)
+    for i in range(5):
+        _record(store, f"real{i}", kind="backtest", oos_sharpe=1.0 + i, deflated_sharpe=0.5 + i / 100)
+
+    board = store.best(accounting=ACCOUNTING, limit=5)
+    assert len(board["rows"]) == 5
+    assert all(r["kind"] == "backtest" for r in board["rows"])
+
+
+def test_the_rendered_leaderboard_names_each_row_s_kind(store):
+    """Without it, a validated walk-forward and a search's winning candidate look
+    identical — and they mean opposite things about whether a number is evidence."""
+    _record(store, "real", kind="walkforward", oos_sharpe=1.1, deflated_sharpe=0.6)
+    rendered = format_leaderboard(store.best(accounting=ACCOUNTING))
+    assert "KIND" in rendered
+    assert "walkforward" in rendered
