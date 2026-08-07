@@ -530,7 +530,12 @@ def format_leaderboard(board: Dict[str, Any]) -> str:
     ranked_by = "deflated Sharpe" if board.get("rank_by") == "dsr" else "RAW Sharpe"
     lines = [
         "",
-        f"  Top {len(rows)} by {ranked_by}:",
+        # Name the population, not just the sort key. "Top 3 by deflated Sharpe"
+        # still reads as "the best of everything I have run" unless it says what it
+        # ranked over.
+        f"  Top {len(rows)} by {ranked_by}"
+        + ("" if board.get("in_sample_included") else " (validated runs only)")
+        + ":",
         # KIND is not decoration. Without it a reader cannot tell a validated
         # walk-forward from a search's winning candidate, and those mean opposite
         # things about whether a number is evidence.

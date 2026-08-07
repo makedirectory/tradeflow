@@ -367,6 +367,16 @@ def test_in_sample_kinds_are_excluded_from_the_leaderboard_by_default(store):
     assert board["in_sample_included"] is False
 
 
+def test_the_header_names_the_population_not_just_the_sort_key(store):
+    """ "Top 3 by deflated Sharpe" still reads as "the best of everything I have run"
+    unless it says what it ranked over."""
+    _record(store, "real", kind="backtest", oos_sharpe=1.1, deflated_sharpe=0.6)
+    assert "validated runs only" in format_leaderboard(store.best(accounting=ACCOUNTING))
+    assert "validated runs only" not in format_leaderboard(
+        store.best(accounting=ACCOUNTING, include_in_sample=True)
+    )
+
+
 def test_the_exclusion_is_reported_rather_than_silent(store):
     _record(store, "opt", kind="optimize", oos_sharpe=9.9, deflated_sharpe=1.0)
     _record(store, "real", kind="backtest", oos_sharpe=1.1, deflated_sharpe=0.6)
