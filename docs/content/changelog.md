@@ -28,6 +28,19 @@ index; they are tagged in the repository.
 
 ---
 
+## 2.0.1 — 2026-08-07
+
+- **Fixed the broken screenshot on the PyPI project page.** The README referenced the
+  demo image by a repository-relative path, which GitHub resolves and PyPI cannot —
+  PyPI renders a README standalone, with no repository context. It is now an absolute
+  URL, which works in both places.
+- Bumped the GitHub Actions used by CI and the release workflow off Node 20, which
+  GitHub is deprecating.
+
+No functional changes.
+
+---
+
 ## 2.0.0 — 2026-08-06
 
 The first release published to PyPI, as **`tradeflow-engine`**. Also the release that
