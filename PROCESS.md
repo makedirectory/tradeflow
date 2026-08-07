@@ -24,14 +24,14 @@ it**:
   an order.**
 - **Trade clock** — live, deterministic, LLM-free: `live bar → signal → order`.
   No model, no optimizer, no database, and no network call to an LLM sits in the
-  order path (`src/engine/live.py`, `src/execution/`).
+  order path (`tradeflow/engine/live.py`, `tradeflow/execution/`).
 
 Two structural guarantees enforce it, and every change must preserve them:
 
 - **Propose-don't-apply.** Automation (the optimizer, the research agent) only ever
-  *proposes* a config. A human promotes it. See `src/optimization/config_store.py`
-  and `src/research/`.
-- **The MCP server builds only a data client** (`src/mcp/server.py`) — it has no
+  *proposes* a config. A human promotes it. See `tradeflow/optimization/config_store.py`
+  and `tradeflow/research/`.
+- **The MCP server builds only a data client** (`tradeflow/mcp/server.py`) — it has no
   trading client wired in, so it *physically cannot* trade.
 
 If a change would let research-clock code reach the order path, or let the trade
@@ -53,7 +53,7 @@ reason in the PR description.
    a design note, an issue) is your call.
 
 2. Core implementation
-   Build in the correct src/ layer (see §4). Domain meaning lives in a strategy /
+   Build in the correct tradeflow/ layer (see §4). Domain meaning lives in a strategy /
    scanner / engine / service; reusable mechanics live in utils/ or analytics/.
    No vendor SDK above the broker layer.
 
@@ -64,12 +64,12 @@ reason in the PR description.
 
 4. Surfaces
    Wire the capability into the surfaces that apply: the CLI (main.py), an MCP
-   tool (src/mcp/server.py, research-clock only), and a Makefile target. Keep CLI
+   tool (tradeflow/mcp/server.py, research-clock only), and a Makefile target. Keep CLI
    flags and tool schemas explicit and typed.
 
 5. Docs
-   Update the engineering wiki (website/docs/engineering/) for architecture/
-   behavior, the usage guide (website/docs/usage/) for how to run it, and the
+   Update the engineering wiki (docs/content/engineering/) for architecture/
+   behavior, the usage guide (docs/content/usage/) for how to run it, and the
    README if the headline workflow changed.
 
 6. Review
@@ -106,11 +106,11 @@ Default checklist for every change.
 ### Implementation
 
 - Logic lives in the correct layer (§4); dependencies point **downward**.
-- No vendor SDK (`alpaca`, ...) is imported above `src/brokers/`.
+- No vendor SDK (`alpaca`, ...) is imported above `tradeflow/brokers/`.
 - Public APIs carry type hints and docstrings; reuse `utils/` and `analytics/`
   helpers instead of re-deriving logic.
 - Indicators stay pure pandas/numpy (no TA-Lib or compiled deps).
-- Errors are intentional and readable; configuration is explicit (`src/settings.py`,
+- Errors are intentional and readable; configuration is explicit (`tradeflow/settings.py`,
   validated from `.env`).
 - The two-clocks invariant and propose-don't-apply guarantees are intact.
 
@@ -142,8 +142,8 @@ Default checklist for every change.
 
 ### Documentation source of truth
 
-- The **engineering wiki** (`website/docs/engineering/`) explains architecture and
-  behavior; the **usage guides** (`website/docs/usage/`) explain how to run things.
+- The **engineering wiki** (`docs/content/engineering/`) explains architecture and
+  behavior; the **usage guides** (`docs/content/usage/`) explain how to run things.
 - Once a change lands, its behavior belongs in the wiki/usage docs. Any design
   note or spec you wrote up front stays a historical rationale, not the
   source of truth for built behavior.
@@ -231,7 +231,7 @@ TradeFlow is a layered engine: **dependencies point downward**, **one concern pe
 module**, and **no vendor SDK lives above the broker layer**. Product policy
 (what a strategy/scan/engine *means*) stays separate from reusable mechanics.
 
-### The layers (`src/`)
+### The layers (`tradeflow/`)
 
 | Layer | Modules | Owns |
 |-------|---------|------|
@@ -261,7 +261,7 @@ engine. Keep business logic out of `main.py`.
 
 ### Shared service inventory
 
-`src/services/` is the consolidation layer the CLI and other surfaces route
+`tradeflow/services/` is the consolidation layer the CLI and other surfaces route
 through. Keep this table current as services are added.
 
 | Module | Responsibility | Why it's shared |
@@ -404,10 +404,10 @@ description so the history stays legible:
 - Optional extras (opt-in, base install stays light): `optimize` (scikit-learn),
   `portfolio` (ortools), `mcp`, `ai` (anthropic), `openai`, `viz` (matplotlib),
   `store` (pyarrow — out-of-core Parquet bar store).
-- Env/tooling: `uv` (app, `package=false`), `.env` via `src/settings.py`.
+- Env/tooling: `uv` (app, `package=false`), `.env` via `tradeflow/settings.py`.
 - Tests: pytest, offline & deterministic via `tests/fakes.py`.
-- Lint/format: ruff (line length 110, E501 off, isort `known-first-party=["src"]`).
-- Docs: Docusaurus site in `website/`.
+- Lint/format: ruff (line length 110, E501 off, isort `known-first-party=["tradeflow"]`).
+- Docs: Docusaurus site in `docs/` (content under `docs/content/`).
 
 ### Commands
 
@@ -454,4 +454,4 @@ filled out, and merge only on green CI.
 ---
 
 *Conventions cross-reference the engineering wiki under
-[`website/docs/engineering/`](website/docs/engineering/coding-standards.md).*
+[`docs/content/engineering/`](docs/content/engineering/coding-standards.md).*

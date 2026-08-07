@@ -16,15 +16,15 @@ pytest.importorskip("duckdb")
 
 import polars as pl  # noqa: E402
 
-from src.alphas import refine  # noqa: E402
-from src.data import (  # noqa: E402
+from tests.fakes import make_ohlcv  # noqa: E402
+from tradeflow.alphas import refine  # noqa: E402
+from tradeflow.data import (  # noqa: E402
     ParquetBarStore,  # noqa: E402
     compute,
     edges,
 )
-from src.indicators.indicators import calculate_ema, calculate_sma  # noqa: E402
-from src.risk.sample import SampleCovariance  # noqa: E402
-from tests.fakes import make_ohlcv  # noqa: E402
+from tradeflow.indicators.indicators import calculate_ema, calculate_sma  # noqa: E402
+from tradeflow.risk.sample import SampleCovariance  # noqa: E402
 
 SYMBOLS = ["AAA", "BBB", "CCC", "DDD"]
 

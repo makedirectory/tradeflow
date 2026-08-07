@@ -3,8 +3,8 @@
 import pandas as pd
 import pytest
 
-from src.scanners.base import SCANNER_BUY, SCANNER_HOLD
-from src.scanners.volume_scanner import VolumeScannerStrategy
+from tradeflow.scanners.base import SCANNER_BUY, SCANNER_HOLD
+from tradeflow.scanners.volume_scanner import VolumeScannerStrategy
 
 
 def _scanner(**overrides):

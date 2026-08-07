@@ -25,7 +25,7 @@ make test                      # offline test suite (no API keys/network)
 ## Coding standards
 
 The full conventions live in the engineering wiki:
-**[Coding standards](website/docs/engineering/coding-standards.md)**. The rules
+**[Coding standards](docs/content/engineering/coding-standards.md)**. The rules
 that matter most:
 
 - **Dependencies point downward**, and **no vendor SDK (`alpaca`, ...) is imported
@@ -45,5 +45,5 @@ that matter most:
 ## Adding things
 
 Extending a strategy, scanner, or broker? See
-[Extending](website/docs/engineering/extending.md) — each is a one-file change at
+[Extending](docs/content/engineering/extending.md) — each is a one-file change at
 the right layer.

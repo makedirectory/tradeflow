@@ -7,7 +7,8 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
-from src.analytics.attribution import (
+from tests.fakes import DictMarketData, make_ohlcv
+from tradeflow.analytics.attribution import (
     attribute_period,
     bayesian_blend_variance,
     cross_sectional_regression,
@@ -18,9 +19,8 @@ from src.analytics.attribution import (
     systematic_split,
     years_to_significance,
 )
-from src.marketdata.client import MarketDataClient
-from src.services import analysis
-from tests.fakes import DictMarketData, make_ohlcv
+from tradeflow.marketdata.client import MarketDataClient
+from tradeflow.services import analysis
 
 RISK_COLS = ["market", "momentum", "volatility", "size"]
 

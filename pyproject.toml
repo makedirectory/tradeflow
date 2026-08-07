@@ -1,10 +1,32 @@
 [project]
-name = "tradeflow"
-version = "1.0.1"
+# The distribution name. The bare `tradeflow` is taken on PyPI by an unrelated
+# package (autocorrelated time-series simulation), so the project ships as
+# `tradeflow-engine` while the importable package stays `tradeflow`. Installing both
+# would collide at import; nothing prevents that, so it is called out in the README.
+name = "tradeflow-engine"
+# Read from tradeflow/__init__.py — one place, so the packaged version and the one
+# `--version` prints can never disagree.
+dynamic = ["version"]
 license = "MIT"
-description = "A simple, layered, broker-agnostic algorithmic trading engine (Alpaca adapter included; backtest + live)."
+description = "A layered, broker-agnostic algorithmic-trading research engine that is honest about how hard making money is."
 readme = "README.md"
 requires-python = ">=3.10"
+authors = [{ name = "Andrew Schwartz", email = "andrew@mk-dir.com" }]
+keywords = ["trading", "backtesting", "quantitative-finance", "walk-forward", "alpaca", "mcp"]
+classifiers = [
+    # Experimental is the honest status: interfaces and gate thresholds may still
+    # change, and the project has no production users or live capital.
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
 dependencies = [
     "alpaca-py>=0.35",   # latest Alpaca SDK; broker/data clients
     "pandas>=2.0",
@@ -38,20 +60,59 @@ dev = [
     "pyarrow>=14", "polars>=1.25", "duckdb>=1.0",
 ]
 
-[tool.uv]
-# This is an application, not a library: install dependencies only, don't build
-# the project itself.
-package = false
+[project.scripts]
+# The installed entry point. `python main.py` from a checkout reaches the same
+# `main`, so the two are one code path found two ways rather than two things that
+# have to be kept in agreement.
+tradeflow = "tradeflow.cli:main"
+
+[project.urls]
+Homepage = "https://tradeflow.mk-dir.com/"
+Documentation = "https://tradeflow.mk-dir.com/"
+Source = "https://github.com/makedirectory/tradeflow"
+Issues = "https://github.com/makedirectory/tradeflow/issues"
+Changelog = "https://tradeflow.mk-dir.com/changelog"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "tradeflow/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+# Only the package ships. `main.py` is a checkout convenience, and the tests, docs,
+# and scripts are not something an installed copy has any use for.
+packages = ["tradeflow"]
+
+[tool.hatch.build.targets.sdist]
+# The sdist carries the repo (tests and CI are useful to a packager), minus local
+# state and editor/agent artifacts that have no business in a published archive.
+exclude = [
+    ".claude",
+    ".vscode",
+    ".venv",
+    "logs",
+    "cache",
+    "configs",
+    "specs",
+    "docs/node_modules",
+    "docs/build",
+    "dist",
+    "*.csv",
+    ".env",
+]
 
 [tool.pytest.ini_options]
 # Run from the repo root so `import src...` / `import tests...` resolve.
 pythonpath = ["."]
 testpaths = ["tests"]
+markers = ["slow: exercises a full subprocess run (the demo end to end)"]
 
 [tool.ruff]
 line-length = 110
 target-version = "py310"
-extend-exclude = ["website"]
+extend-exclude = ["docs"]
 
 [tool.ruff.lint]
 # pycodestyle (E/W), pyflakes (F), import sorting (I). Line length is owned by
@@ -62,4 +123,4 @@ ignore = ["E501"]
 [tool.ruff.lint.isort]
 # Classify the application package as first-party so import ordering is stable
 # across a local checkout and CI.
-known-first-party = ["src"]
+known-first-party = ["tradeflow"]

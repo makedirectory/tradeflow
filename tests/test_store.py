@@ -11,10 +11,10 @@ from datetime import datetime, timezone  # noqa: E402
 
 import pandas as pd  # noqa: E402
 
-from src.data import BarSource, ClientBarSource, ParquetBarStore  # noqa: E402
-from src.marketdata.client import MarketDataClient  # noqa: E402
-from src.marketdata.timeframe import Timeframe  # noqa: E402
 from tests.fakes import DictMarketData, make_ohlcv  # noqa: E402
+from tradeflow.data import BarSource, ClientBarSource, ParquetBarStore  # noqa: E402
+from tradeflow.marketdata.client import MarketDataClient  # noqa: E402
+from tradeflow.marketdata.timeframe import Timeframe  # noqa: E402
 
 SYMBOLS = ["AAA", "BBB", "CCC"]
 
@@ -109,8 +109,8 @@ def test_missing_symbol_is_skipped(tmp_path):
 def test_streaming_backtest_matches_batch(tmp_path):
     # Streaming one symbol at a time from the store is equivalent to the in-memory
     # batch backtest on the same data — bounded memory, identical result.
-    from src.engine.backtest import BacktestEngine
-    from src.strategies.ma_crossover import MovingAverageCrossoverStrategy
+    from tradeflow.engine.backtest import BacktestEngine
+    from tradeflow.strategies.ma_crossover import MovingAverageCrossoverStrategy
 
     syms = ["AAA", "BBB", "CCC"]
     bars = {s: make_ohlcv(n=400, seed=i, freq="1D") for i, s in enumerate(syms)}

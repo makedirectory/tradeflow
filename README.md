@@ -15,7 +15,8 @@ on history or **trades live** (paper by default) — with optional **parameter
 optimization**, **walk-forward validation**, and **constraint-solver portfolio
 allocation**.
 
-Full docs — usage guide and engineering wiki — live at
+Full docs — usage guide, engineering wiki, and
+[changelog](https://tradeflow.mk-dir.com/changelog) — live at
 **[tradeflow.mk-dir.com](https://tradeflow.mk-dir.com/)**.
 
 > Making money in markets is genuinely hard. This project won't change that — but
@@ -33,7 +34,7 @@ Designed to be easy to try and easy to read:
 
 > ⚠️ Educational software. Trading is risky; use paper trading. No warranty.
 
-![TradeFlow demo — an in-sample equity curve that looks tradeable, beside the walk-forward verdict that refuses to promote it](website/static/img/demo.png)
+![TradeFlow demo — an in-sample equity curve that looks tradeable, beside the walk-forward verdict that refuses to promote it](docs/static/img/demo.png)
 
 *`make demo` runs the whole pipeline on synthetic data (no keys, no network) and
 renders this: a strategy that looks profitable in-sample, and the out-of-sample
@@ -55,7 +56,7 @@ never touch**:
 **Promotion is a manual human step** — automation never flips `PAPER_TRADE` or
 places an order. The [MCP server](#agent-integration-mcp) enforces this
 *structurally*: it builds only a data client, so it physically cannot trade. See
-the [architecture docs](https://tradeflow.mk-dir.com/docs/engineering/architecture)
+the [architecture docs](https://tradeflow.mk-dir.com/engineering/architecture)
 for the full picture.
 
 ## Requirements
@@ -74,7 +75,28 @@ Pick whichever you prefer.
 Either way you'll need free Alpaca **paper-trading** API keys from the
 [Alpaca dashboard](https://app.alpaca.markets/) → *Paper Account → API Keys*.
 
-## Quickstart (uv)
+## Quickstart (install it)
+
+No clone needed — install the command and run the offline demo:
+
+```bash
+uv tool install tradeflow-engine        # or: pipx install tradeflow-engine
+tradeflow demo                          # full pipeline on synthetic data, no keys
+tradeflow init                        # add your free Alpaca paper keys when ready
+tradeflow verdict --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-31
+```
+
+Optional capabilities are extras: `uv tool install "tradeflow-engine[viz,store]"`.
+
+The distribution is **`tradeflow-engine`** (the bare `tradeflow` on PyPI is an
+unrelated package); the command and the importable package are both `tradeflow`.
+
+State (the research journal, trial store, bar cache, promoted configs) lives in
+`~/.tradeflow` for an installed copy, or in the repo when you run from a checkout.
+`tradeflow --version` prints which copy is running and where its state is; override
+with `TRADEFLOW_HOME`.
+
+## Quickstart (from a checkout)
 
 ```bash
 # 1. Install uv:  https://docs.astral.sh/uv/
@@ -84,8 +106,9 @@ make install                          # uv sync
 # 3. See it work — no keys, no network
 make demo                             # full pipeline on synthetic data + verdict
 
-# 4. Point it at real data: add your free Alpaca paper keys
-cp .env.example .env                  # then edit .env
+# 4. Point it at real data: guided setup for your free Alpaca paper keys
+make init                             # writes .env, checks the keys, says what's next
+                                      # (make check re-runs the diagnostics any time)
 
 # 5. Try it (preconfigured combos)
 make scan                             # which symbols are flagged right now?
@@ -93,19 +116,22 @@ make backtest                         # scan -> volume_spike strategy -> report
 make live                             # paper-trade the scanned universe
 ```
 
-## Quickstart (Docker)
+## Docker (a local dev stack, not an easier install)
 
-No local Python or uv required — just Docker:
+Docker is itself a prerequisite, so `uv tool install` above is the simpler way to
+just try this. What compose adds is a long-running MCP server and docs site with
+state on named volumes that survives container replacement:
 
 ```bash
-cp .env.example .env                  # add your Alpaca paper keys
-make docker-build                     # build the image (uv runs inside it)
-make docker-run                       # paper live-trading; mounts your .env
+make up                               # MCP + persistent state. Never starts trading.
+make down                             # stop; your trial history survives
 
-# or run any command in the container directly:
-docker run --rm -v $(pwd)/.env:/app/.env tradeflow \
-    uv run python main.py backtest --symbols NVDA,META --start 2024-01-02 --end 2024-04-01
+docker compose run --rm demo          # offline, no keys
+docker compose run --rm verdict --symbols NVDA,META --start 2024-01-02 --end 2024-04-01
 ```
+
+`live` is profile-gated and is never started by `up` — turning the machine on must
+not turn trading on. See [Running in Docker](https://tradeflow.mk-dir.com/usage/docker).
 
 Run `make help` to see every target. Anything is overridable inline:
 
@@ -168,7 +194,7 @@ $ make demo
 Notice the arc: `ma_crossover` looks great in-sample (+16.8%, Sharpe 0.48), but
 once it's optimized in-sample and scored **out-of-sample** the edge evaporates
 (median OOS Sharpe −0.42) and every promotion gate fails. That's
-[walk-forward validation](https://tradeflow.mk-dir.com/docs/engineering/walk-forward)
+[walk-forward validation](https://tradeflow.mk-dir.com/engineering/walk-forward)
 doing its job.
 
 ### Watching the agent get told "no"
@@ -234,21 +260,26 @@ promoted automatically — is what stays constant.
 |---------|--------------|
 | `demo` | Run the whole pipeline on **synthetic data** — no keys, no network — ending in an honest promotion verdict |
 | `demo-agent` | Narrate one AI research session on **real market data**: proposal → sandbox → walk-forward → gates → holdout |
+| `init` | Guided first-run setup: write a valid `.env` with hidden prompts, validate the keys against Alpaca via the data-only client, confirm paper trading, optionally warm the cache. `--check` is a doctor that writes nothing |
 | `scan` | Run the universe scanner and print flagged symbols |
+| `verdict` | The whole cross-sectional pipeline in one command — scan → alphas → portfolio → information over one universe, one window, one cost model — ending in one gate-derived verdict (read-only) |
 | `backtest` | Scan → run a strategy over history → performance report |
-| `live` | Scan → warm up indicators → stream bars → place paper/live orders |
-| `optimize` | Search strategy parameters by backtest objective (grid / random / Bayesian) |
+| `live` | Scan → warm up indicators → stream bars → place paper/live orders. Bar-quality guards (staleness, spikes, inconsistent OHLC, out-of-order) veto bad bars — rejecting, never repairing — and a position ledger records intent vs. observed fills |
+| `reconcile` | Check the position ledger against the broker's actual account state. Reports divergence; never corrects it (read-only) |
+| `optimize` | Search strategy parameters by backtest objective (grid / random / Bayesian); `--workers N` evaluates candidates in parallel — wall-clock only, same trials and same winner |
 | `allocate` | Weight a portfolio: scalar-score sizing (OR-Tools), or `--objective utility` for mean-variance construction from alpha + Σ |
 | `alphas` | Rank a universe by continuous alpha — a comparable, annualized residual-return forecast per name; `--combine` blends several signals, `--neutralize-factors` regresses out the risk model's factor exposures (read-only) |
 | `risk` | Estimate the universe covariance Σ (Ledoit–Wolf shrinkage) and summarize its risk structure (read-only) |
 | `info` | Information report: measure IC, breadth, and predicted-vs-realized IR — skill vs luck (read-only) |
+| `--html PATH` | On `verdict`/`backtest`/`walkforward`/`info`: write a self-contained HTML report of the run — inline charts, zero external requests, provenance and honesty warnings first-class |
 | `horizon` | Measure alpha decay / half-life; recommend rebalance cadence + current/lagged blend (read-only) |
 | `walkforward` | Out-of-sample validation: optimize in-sample, score out-of-sample across folds, with a sacred holdout and promotion gates |
-| `mcp` | Serve TradeFlow over MCP so an agent (Claude Code / Desktop) can drive scan/backtest/optimize/walk-forward/alphas/risk/portfolio/info — read-only, no live trading |
+| `trials` | Browse the campaign's memory: `list` (filters, sorting, paging), `show` (one trial in full), `best` (a DSR-ranked leaderboard that always shows the family's `n_trials`) — read-only |
+| `mcp` | Serve TradeFlow over MCP so an agent (Claude Code / Desktop) can drive verdict/scan/backtest/optimize/walk-forward/alphas/risk/portfolio/info — read-only, no live trading |
 
 Three strategies ship today — pick one with `--strategy`. Each defines a single
 continuous **score** (its conviction); the trade clock's `BUY/SELL/HOLD` and the
-[continuous alpha](https://tradeflow.mk-dir.com/docs/engineering/alphas) are both
+[continuous alpha](https://tradeflow.mk-dir.com/engineering/alphas) are both
 derived from it — one source of truth.
 
 - **`volume_spike`** — long/short EMA-trend strength scaled by volume confirmation
@@ -259,7 +290,24 @@ derived from it — one source of truth.
   the dip and exit on the rebound (daily).
 
 Adding a fourth is a one-file change — see
-[Extending](https://tradeflow.mk-dir.com/docs/engineering/extending).
+[Extending](https://tradeflow.mk-dir.com/engineering/extending).
+
+### Using it from your own code
+
+`tradeflow.services.*` is the supported surface — the same JSON-returning functions
+the CLI renders and the MCP server exposes, so you get identical numbers by
+construction:
+
+```python
+from tradeflow.services.analysis import run_verdict
+from tradeflow.services.data import build_data_client
+
+result = run_verdict(build_data_client(), "volume_spike", ["NVDA", "AAPL"], start, end)
+print(result["verdict"]["summary"])
+```
+
+Everything outside `services/` is internal and moves without notice. See
+[Using TradeFlow as a library](https://tradeflow.mk-dir.com/engineering/embedding).
 
 ### Optional features
 
@@ -288,6 +336,7 @@ that honest, here's what's load-bearing versus what's still maturing:
 | Parameter optimization — Bayesian | 🧪 Experimental |
 | Portfolio allocation (OR-Tools) | 🧪 Experimental |
 | Live paper trading | 🧪 Experimental |
+| Bar-quality guards + position reconciliation | 🧪 Experimental |
 | MCP server | 🧪 Experimental |
 | Research agent | 🧪 Experimental |
 

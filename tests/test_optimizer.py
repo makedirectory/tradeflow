@@ -4,10 +4,10 @@ from datetime import datetime
 
 import pytest
 
-from src.marketdata.client import MarketDataClient
-from src.optimization.optimizer import ParameterOptimizer
-from src.strategies.volume_spike import VolumeSpikeStrategy
 from tests.fakes import FakeMarketData
+from tradeflow.marketdata.client import MarketDataClient
+from tradeflow.optimization.optimizer import ParameterOptimizer
+from tradeflow.strategies.volume_spike import VolumeSpikeStrategy
 
 SYMBOLS = ["AAA", "BBB"]
 START, END = datetime(2024, 1, 2), datetime(2024, 2, 1)
@@ -49,7 +49,7 @@ def test_best_params_retains_pinned_parameters():
     entries would hand back a config the strategy cannot be built from - which shows
     up much later as a walk-forward run that mysteriously places no trades.
     """
-    from src.optimization.param_space import ParameterSpace
+    from tradeflow.optimization.param_space import ParameterSpace
 
     ranges = {
         "searched": {"type": "int", "min": 1, "max": 3, "step": 1, "default": 2},

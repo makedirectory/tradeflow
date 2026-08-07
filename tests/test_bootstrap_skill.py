@@ -14,13 +14,13 @@ import math
 
 import numpy as np
 
-from src.analytics.bootstrap import (
+from tradeflow.analytics.bootstrap import (
     bootstrap_null,
     politis_white_block_length,
     reality_check,
     stationary_bootstrap_indices,
 )
-from src.analytics.metrics import probabilistic_sharpe_ratio
+from tradeflow.analytics.metrics import probabilistic_sharpe_ratio
 
 
 def _ks_uniform_ok(samples, alpha=0.01):

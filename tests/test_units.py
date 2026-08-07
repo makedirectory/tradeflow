@@ -4,10 +4,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.analytics import metrics
-from src.marketdata.timeframe import DAY, HOUR, MINUTE, Timeframe
-from src.optimization.param_space import ParameterSpace
-from src.utils import numeric
+from tradeflow.analytics import metrics
+from tradeflow.marketdata.timeframe import DAY, HOUR, MINUTE, Timeframe
+from tradeflow.optimization.param_space import ParameterSpace
+from tradeflow.utils import numeric
 
 
 # --- timeframe --------------------------------------------------------------
@@ -151,7 +151,7 @@ def test_new_primitives_handle_degenerate_input():
 
 # --- beta -------------------------------------------------------------------
 def test_beta_of_amplified_benchmark():
-    from src.indicators.indicators import calculate_beta
+    from tradeflow.indicators.indicators import calculate_beta
 
     rng = np.random.default_rng(0)
     benchmark_ret = rng.normal(0, 0.01, 300)
@@ -161,7 +161,7 @@ def test_beta_of_amplified_benchmark():
 
 
 def test_beta_neutral_on_degenerate_input():
-    from src.indicators.indicators import calculate_beta
+    from tradeflow.indicators.indicators import calculate_beta
 
     flat = pd.Series([100.0] * 10)
     assert calculate_beta(flat, flat) == 1.0  # flat benchmark -> neutral

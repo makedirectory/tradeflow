@@ -12,12 +12,13 @@ from datetime import datetime
 
 import numpy as np
 
-from src.alphas.base import Alpha
-from src.costs import ParametricCostModel
-from src.costs.parametric import cost_curvature
-from src.marketdata.client import MarketDataClient
-from src.portfolio.optimizer import CostInputs, MeanVarianceOptimizer
-from src.portfolio.policy import (
+from tests.fakes import DictMarketData, make_ohlcv
+from tradeflow.alphas.base import Alpha
+from tradeflow.costs import ParametricCostModel
+from tradeflow.costs.parametric import cost_curvature
+from tradeflow.marketdata.client import MarketDataClient
+from tradeflow.portfolio.optimizer import CostInputs, MeanVarianceOptimizer
+from tradeflow.portfolio.policy import (
     build_aim_portfolio,
     derive_kappa,
     discount_factor,
@@ -25,9 +26,8 @@ from src.portfolio.policy import (
     phi_from_half_life,
     trading_half_life,
 )
-from src.risk.base import RiskMatrix
-from src.services import analysis
-from tests.fakes import DictMarketData, make_ohlcv
+from tradeflow.risk.base import RiskMatrix
+from tradeflow.services import analysis
 
 
 def _alpha(symbol: str, alpha: float) -> Alpha:
@@ -46,7 +46,7 @@ def _cost(symbols, spread=0.001, adv=5e6, vol=0.02):
     )
 
 
-# --- cost curvature (src/costs/parametric.py) --------------------------------
+# --- cost curvature (tradeflow/costs/parametric.py) --------------------------------
 def test_cost_curvature_matches_the_closed_form():
     k, trade = 0.02, 0.01
     assert abs(cost_curvature(k, trade) - 0.75 * k / math.sqrt(trade)) < 1e-12

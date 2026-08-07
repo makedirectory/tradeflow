@@ -36,5 +36,12 @@ jobs:
         # `make check-links` locally to cover it.
         run: uv run python scripts/check_links.py
 
+      - name: Compose config validates
+        # Cheap and daemon-free: catches a malformed compose file on every PR. The
+        # behavioral checks (state survives `down`, live never starts, volumes are
+        # host-readable) need a daemon and live in scripts/compose_smoke.sh, run
+        # locally and recorded in the PR.
+        run: docker compose config --quiet
+
       - name: Tests (pytest)
         run: uv run pytest -q

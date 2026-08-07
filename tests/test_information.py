@@ -5,7 +5,8 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
-from src.analytics.information import (
+from tests.fakes import DictMarketData, make_ohlcv
+from tradeflow.analytics.information import (
     effective_breadth,
     ic_stats,
     ir_standard_error,
@@ -14,9 +15,8 @@ from src.analytics.information import (
     predicted_ir,
     rank_ic,
 )
-from src.marketdata.client import MarketDataClient
-from src.services import analysis
-from tests.fakes import DictMarketData, make_ohlcv
+from tradeflow.marketdata.client import MarketDataClient
+from tradeflow.services import analysis
 
 
 # --- breadth (the headline trap) ---------------------------------------------
@@ -93,7 +93,7 @@ def test_compute_information_zero_skill_null():
 
 # --- attribution -------------------------------------------------------------
 def test_factor_split_closes():
-    from src.services.analysis import _factor_split
+    from tradeflow.services.analysis import _factor_split
 
     rng = np.random.default_rng(0)
     w = rng.normal(0, 1, 8)

@@ -10,13 +10,13 @@ from typing import Any, ClassVar, Dict
 
 import pandas as pd
 
-from src.marketdata.client import MarketDataClient
-from src.optimization import config_store
-from src.optimization.walk_forward import WalkForwardValidator, _filter_trades_from
-from src.strategies import signals
-from src.strategies.base import Strategy
-from src.utils.timeutils import NEW_YORK
 from tests.fakes import FakeMarketData
+from tradeflow.marketdata.client import MarketDataClient
+from tradeflow.optimization import config_store
+from tradeflow.optimization.walk_forward import WalkForwardValidator, _filter_trades_from
+from tradeflow.strategies import signals
+from tradeflow.strategies.base import Strategy
+from tradeflow.utils.timeutils import NEW_YORK
 
 SYMBOLS = ["AAA", "BBB"]
 START, END = datetime(2024, 1, 2), datetime(2025, 6, 1)
@@ -193,7 +193,7 @@ def test_cost_model_reaches_both_in_sample_and_out_of_sample_backtests():
     gross returns and then score it net - flattering walk-forward efficiency for
     a purely mechanical reason.
     """
-    from src.costs import ParametricCostModel
+    from tradeflow.costs import ParametricCostModel
 
     client = MarketDataClient(FakeMarketData(["AAA", "BBB"], n=600, freq="1D"))
     kwargs = dict(
@@ -221,7 +221,7 @@ def test_cost_model_reaches_both_in_sample_and_out_of_sample_backtests():
 
 def test_provenance_stamps_the_accounting_model(tmp_path):
     """Saved metrics record which engine accounting produced them."""
-    from src.engine.backtest import ACCOUNTING_VERSION
+    from tradeflow.engine.backtest import ACCOUNTING_VERSION
 
     provenance = config_store.build_provenance(
         method="grid", objective="sharpe_ratio", windows={}, oos_metrics={"sharpe_ratio": 1.0}
@@ -269,7 +269,7 @@ def test_git_sha_marks_a_dirty_working_tree(monkeypatch):
 
     def fake_run(cmd, **kwargs):
         if "status" in cmd:
-            return subprocess.CompletedProcess(cmd, 0, stdout=" M src/strategies/base.py\n", stderr="")
+            return subprocess.CompletedProcess(cmd, 0, stdout=" M tradeflow/strategies/base.py\n", stderr="")
         return subprocess.CompletedProcess(cmd, 0, stdout="abc1234\n", stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)

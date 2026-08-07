@@ -14,8 +14,8 @@
 - [ ] `uv run ruff check .` and `uv run ruff format --check .` are clean
 - [ ] New/changed behavior is covered by tests
 - [ ] No vendor SDK (`alpaca`, ...) imported above the broker layer
-- [ ] Touches one concern per layer (see [Separation of concerns](../website/docs/engineering/separation-of-concerns.md))
-- [ ] Docs updated if usage or architecture changed (README / `website/docs`)
+- [ ] Touches one concern per layer (see [Separation of concerns](../docs/content/engineering/separation-of-concerns.md))
+- [ ] Docs updated if usage or architecture changed (README / `docs/content`)
 
 ## Screenshots / output
 

@@ -6,11 +6,11 @@ from datetime import datetime
 import pandas as pd
 import pytest
 
-from src.costs import ParametricCostModel, Trade
-from src.engine.backtest import BacktestEngine
-from src.marketdata.client import MarketDataClient
-from src.strategies.volume_spike import VolumeSpikeStrategy
 from tests.fakes import FakeMarketData
+from tradeflow.costs import ParametricCostModel, Trade
+from tradeflow.engine.backtest import BacktestEngine
+from tradeflow.marketdata.client import MarketDataClient
+from tradeflow.strategies.volume_spike import VolumeSpikeStrategy
 
 
 def _model():

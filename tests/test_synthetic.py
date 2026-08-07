@@ -2,8 +2,8 @@
 
 from datetime import datetime
 
-from src.marketdata.synthetic import SyntheticMarketData
-from src.marketdata.timeframe import Timeframe
+from tradeflow.marketdata.synthetic import SyntheticMarketData
+from tradeflow.marketdata.timeframe import Timeframe
 
 _DAILY = Timeframe.parse("1Day")
 

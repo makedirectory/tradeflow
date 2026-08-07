@@ -1,0 +1,550 @@
+"""Human-readable rendering of research results.
+
+Kept separate from metric *computation* so the numbers can be consumed
+programmatically (e.g. by the optimizer, or rendered to another medium) without
+any formatting concerns. Nothing here computes: a renderer that derives a number
+is a renderer that can disagree with the report it is summarizing.
+"""
+
+import logging
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
+
+# (metric key, label, format spec), grouped into report sections.
+_SECTIONS = [
+    (
+        "Returns",
+        [
+            ("total_return", "Total Return", "{:.2f}%"),
+            ("cagr", "CAGR", "{:.2f}%"),
+            ("buy_hold_return", "Buy & Hold Return", "{:.2f}%"),
+            ("annualized_volatility", "Annualized Volatility", "{:.2f}%"),
+        ],
+    ),
+    (
+        "Risk-adjusted",
+        [
+            ("sharpe_ratio", "Sharpe Ratio", "{:.2f}"),
+            ("probabilistic_sharpe_ratio", "  Probabilistic Sharpe", "{:.2f}"),
+            ("deflated_sharpe_ratio", "  Deflated Sharpe", "{:.2f}"),
+            ("sortino_ratio", "Sortino Ratio", "{:.2f}"),
+            ("calmar_ratio", "Calmar Ratio", "{:.2f}"),
+            ("martin_ratio", "Martin Ratio (UPI)", "{:.2f}"),
+            ("information_ratio", "Information Ratio", "{:.2f}"),
+            ("treynor_ratio", "Treynor Ratio", "{:.2f}"),
+        ],
+    ),
+    (
+        "Drawdown & tail",
+        [
+            ("max_drawdown", "Max Drawdown", "{:.2f}%"),
+            ("max_drawdown_duration", "Max DD Duration (days)", "{:.0f}"),
+            ("ulcer_index", "Ulcer Index", "{:.2f}"),
+            ("recovery_factor", "Recovery Factor", "{:.2f}"),
+            ("var_95", "VaR (95%)", "{:.2f}%"),
+            ("cvar_95", "CVaR (95%)", "{:.2f}%"),
+            ("var_99", "VaR (99%)", "{:.2f}%"),
+            ("exposure", "Time in Market", "{:.1f}%"),
+        ],
+    ),
+    (
+        "Trades",
+        [
+            ("total_trades", "Total Trades", "{:.0f}"),
+            ("win_rate", "Win Rate", "{:.2f}%"),
+            ("profit_factor", "Profit Factor", "{:.2f}"),
+            ("payoff_ratio", "Payoff Ratio", "{:.2f}"),
+            ("expectancy", "Expectancy", "${:.2f}"),
+            ("sqn", "System Quality (SQN)", "{:.2f}"),
+            ("kelly_criterion", "Kelly Fraction", "{:.2f}"),
+            ("max_consecutive_wins", "Max Consecutive Wins", "{:.0f}"),
+            ("max_consecutive_losses", "Max Consecutive Losses", "{:.0f}"),
+            ("avg_trade_duration", "Avg Trade Duration (h)", "{:.2f}"),
+            ("mae_pct", "Avg MAE", "{:.2f}%"),
+            ("mfe_pct", "Avg MFE", "{:.2f}%"),
+            ("avg_win", "Average Win", "${:.2f}"),
+            ("avg_loss", "Average Loss", "${:.2f}"),
+            ("largest_win", "Largest Win", "${:.2f}"),
+            ("largest_loss", "Largest Loss", "${:.2f}"),
+        ],
+    ),
+    (
+        "Benchmark-relative",
+        [
+            ("alpha", "Alpha (per period)", "{:.5f}"),
+            ("beta", "Beta", "{:.2f}"),
+            ("r_squared", "R-squared", "{:.2f}"),
+        ],
+    ),
+]
+
+# Flat view for backward compatibility / simple consumers.
+_ROWS = [row for _, rows in _SECTIONS for row in rows]
+
+
+def format_backtest_report(
+    metrics: Dict[str, float],
+    initial_capital: float,
+    final_capital: float,
+    title: str = "Backtest Results",
+) -> str:
+    """Render metrics as an aligned, fixed-width text block, grouped by section."""
+    lines = [f"=== {title} ===", f"{'Capital':28}${initial_capital:,.2f} -> ${final_capital:,.2f}"]
+    if metrics.get("low_sample"):
+        lines.append(f"{'(!) low sample':28}fewer than {30} trades - treat ratios with caution")
+    if not metrics.get("benchmark_available", True):
+        lines.append(f"{'(i) no benchmark':28}alpha/beta/information-ratio unavailable")
+    for section, rows in _SECTIONS:
+        section_lines = []
+        for key, label, fmt in rows:
+            if key in metrics:
+                value = fmt.format(metrics[key]) if metrics[key] != float("inf") else "inf"
+                section_lines.append(f"{label:28}{value}")
+        if section_lines:
+            lines.append(f"--- {section} ---")
+            lines.extend(section_lines)
+    lines.append("=" * (len(title) + 8))
+    return "\n".join(lines)
+
+
+def log_backtest_report(metrics: Dict[str, float], initial_capital: float, final_capital: float) -> None:
+    """Log the rendered report at INFO."""
+    logger.info("\n%s", format_backtest_report(metrics, initial_capital, final_capital))
+
+
+def _age_str(ts: Optional[str]) -> str:
+    """A human ``"N days"``/``"N hours"`` age for an ISO timestamp; ``"unknown"``
+    when it can't be parsed - never let a formatting failure block the notice."""
+    if not ts:
+        return "unknown age"
+    try:
+        when = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        delta = datetime.now(timezone.utc) - when
+    except ValueError:
+        return "unknown age"
+    seconds = delta.total_seconds()
+    if seconds < 0:
+        return "0 days"
+    if seconds < 3600:
+        return f"{int(seconds // 60)} minutes"
+    if seconds < 86400:
+        return f"{seconds / 3600:.1f} hours"
+    return f"{seconds / 86400:.1f} days"
+
+
+def format_cached_notice(
+    row: Dict[str, Any], *, current_accounting: Optional[int] = None, vintage_available: bool = False
+) -> str:
+    """A prominent, unmistakable "this is a memo, not a fresh verification" banner.
+
+    Every command that can serve a memoized trial (``backtest``/``optimize``/
+    ``walkforward``, CLI and MCP alike) renders this immediately above its report
+    so the reused case looks visually distinct everywhere, not just wherever it
+    was first implemented. Always names the original run's id and timestamp/age -
+    never let a stale number pass as freshly checked.
+
+    ``vintage_available`` is ``True`` only when *this* lookup was itself keyed on
+    a bar-cache data-vintage stamp and still matched - which, by construction,
+    means the match's underlying data vintage is identical to the stored trial's
+    (that's what made the dedup hash match). In that case the data caveat below is
+    replaced with a positive statement rather than dropped silently; a run without
+    the bar cache (``--cache``/``--offline``) still gets the original caveat, since
+    for it nothing has actually changed.
+    """
+    ts = row.get("ts")
+    lines = [
+        f"=== REUSED — trial {row.get('id', '?')} from {ts or 'unknown time'} ({_age_str(ts)} old) ===",
+        "Not re-run: an identical trial already exists in the trial store. Pass --force/--rerun to re-verify.",
+    ]
+    row_accounting = row.get("accounting")
+    if current_accounting is not None and row_accounting is not None and row_accounting != current_accounting:
+        lines.append(
+            f"(!) stored under accounting v{row_accounting}, engine is v{current_accounting} — "
+            "its metrics are NOT comparable to a fresh run"
+        )
+    if vintage_available:
+        lines.append(
+            "(i) data vintage confirmed: the bar cache's fetch stamp for this exact window matches the "
+            "original run's — this reuse is vintage-safe, not just same-inputs"
+        )
+    else:
+        lines.append(
+            "(i) reused on 'same requested inputs' only — not yet guaranteed identical underlying data "
+            "(no data-vintage stamp; re-run with --cache/--offline for a vintage-safe reuse); a rare vendor "
+            "correction/backfill since the original run could differ"
+        )
+    return "\n".join(lines)
+
+
+def format_verdict_report(result: Dict[str, Any]) -> str:
+    """Render a composite research result as one consolidated text report.
+
+    Pure formatting over the composite object: every number here was produced by
+    the step that owns it. The verdict banner is printed **last and loudest** -
+    the sections above it are evidence, and a report that buries its own conclusion
+    under a pretty table is worse than no report.
+    """
+    inputs = result.get("inputs") or {}
+    window = inputs.get("window") or {}
+    universe = inputs.get("universe") or []
+    provenance = result.get("provenance") or {}
+    lines = [
+        "",
+        f"=== Research verdict: '{inputs.get('strategy', '?')}' "
+        f"{_short_date(window.get('start'))}..{_short_date(window.get('end'))} ===",
+        f"  universe: {len(universe)} names ({_symbol_summary(universe)})",
+        f"  timeframe {inputs.get('timeframe', '?')} | benchmark {inputs.get('benchmark', '?')} | "
+        f"cost {_cost_summary(inputs.get('cost'))}",
+    ]
+    if provenance:
+        lines.append(
+            f"  provenance: git {provenance.get('git_sha') or 'unknown'} | "
+            f"campaign trials {provenance.get('n_trials', '?')} | "
+            f"bar fetches {_fetch_summary(provenance.get('bar_requests'))}"
+        )
+
+    lines.extend(_verdict_step_lines(result))
+    lines.extend(_verdict_scan_lines(result))
+    lines.extend(_verdict_alpha_lines(result))
+    lines.extend(_verdict_portfolio_lines(result))
+    lines.extend(_verdict_information_lines(result))
+    lines.extend(_verdict_banner_lines(result))
+    return "\n".join(lines)
+
+
+def _short_date(value: Optional[str]) -> str:
+    return (value or "?")[:10]
+
+
+def _symbol_summary(symbols, limit: int = 8) -> str:
+    listed = list(symbols)[:limit]
+    suffix = f", +{len(symbols) - limit} more" if len(symbols) > limit else ""
+    return ", ".join(str(s) for s in listed) + suffix if listed else "none"
+
+
+def _cost_summary(cost: Optional[Dict[str, Any]]) -> str:
+    if not cost:
+        return "unknown"
+    if cost.get("gross"):
+        return "GROSS (no transaction cost charged)"
+    return (
+        f"{cost.get('commission_bps')}bps commission, impact η={cost.get('impact_eta')}, "
+        f"borrow {cost.get('borrow_bps')}bps"
+    )
+
+
+def _fetch_summary(stats: Optional[Dict[str, Any]]) -> str:
+    """How much of the "one shared fetch" claim actually held, as measured."""
+    if not stats:
+        return "not measured"
+    return f"{stats.get('fetches', '?')} of {stats.get('requests', '?')} bar requests hit the provider"
+
+
+def _verdict_step_lines(result: Dict[str, Any]) -> list:
+    """One line per step that did not simply succeed - silence means everything ran."""
+    steps = result.get("steps") or {}
+    notable = [(name, s) for name, s in steps.items() if s.get("status") != "ok"]
+    if not notable:
+        return []
+    lines = ["", "  Steps:"]
+    for name, state in notable:
+        detail = state.get("error") or state.get("reason") or ""
+        marker = "(!)" if state.get("status") == "failed" else "  -"
+        lines.append(f"  {marker} {name}: {state.get('status')}{f' — {detail}' if detail else ''}")
+    return lines
+
+
+def _verdict_scan_lines(result: Dict[str, Any]) -> list:
+    scan = result.get("scan")
+    if not scan:
+        return []
+    lines = [
+        "",
+        f"  Scan ({scan.get('scanner')}): {scan.get('flagged_count', 0)} of "
+        f"{len(scan.get('candidates') or [])} candidates flagged",
+    ]
+    if scan.get("fell_back_to_candidates"):
+        lines.append("  (i) nothing flagged — the full candidate list was analyzed instead")
+    return lines
+
+
+def _verdict_alpha_lines(result: Dict[str, Any], top: int = 5) -> list:
+    combination = result.get("combination")
+    alphas = result.get("alphas")
+    source = combination or alphas
+    if not source:
+        return []
+    lines = [""]
+    if combination:
+        weights = combination.get("signal_weights") or {}
+        lines.append(
+            f"  Alphas (combined, measured IC {combination.get('combined_ic', 0.0):+.4f}): "
+            + ", ".join(f"{k} {v:+.2f}" for k, v in weights.items())
+        )
+    else:
+        flag = "  (low confidence)" if alphas.get("low_confidence") else ""
+        lines.append(
+            f"  Alphas ({alphas.get('scaling', '?')} scaling, assumed IC "
+            f"{alphas.get('ic', 0.0):+.4f}): {alphas.get('universe_size', 0)} names{flag}"
+        )
+    table = (source.get("alphas") or [])[:top]
+    for row in table:
+        lines.append(f"    {row.get('symbol', '?'):<8} alpha {float(row.get('alpha', 0.0)):+.4f}")
+    return lines
+
+
+def _verdict_portfolio_lines(result: Dict[str, Any], top: int = 5) -> list:
+    pf = result.get("portfolio")
+    if not pf:
+        return []
+    if not pf.get("feasible"):
+        return [
+            "",
+            f"  Portfolio: NOT FEASIBLE — {pf.get('binding_constraint') or pf.get('note') or 'unknown'}",
+        ]
+    d = pf.get("diagnostics") or {}
+    lines = [
+        "",
+        f"  Portfolio (proposal, not an order): {len(pf.get('weights') or {})} names, "
+        f"TE {float(d.get('predicted_tracking_error', 0.0)):.2%} (target {pf.get('target_te', 0):.2%})",
+        f"    expected active return {float(d.get('expected_active_return', 0.0)):+.2%} gross"
+        f" / {float(d.get('expected_active_return_net', d.get('expected_active_return', 0.0))):+.2%} net",
+        f"    predicted IR {float(d.get('predicted_ir', 0.0)):+.2f} | "
+        f"transfer coefficient {float(d.get('transfer_coefficient', 0.0)):+.2f}",
+    ]
+    for symbol, weight in list((pf.get("weights") or {}).items())[:top]:
+        lines.append(f"    {symbol:<8} {float(weight):>7.2%}")
+    exposures = pf.get("exposures")
+    if exposures:
+        lines.append(
+            "    exposures: " + ", ".join(f"{k} {float(v):+.2f}" for k, v in sorted(exposures.items()))
+        )
+    return lines
+
+
+def _verdict_information_lines(result: Dict[str, Any]) -> list:
+    inf = result.get("information")
+    if not inf or not inf.get("periods"):
+        return []
+    flag = "  (!) low sample" if inf.get("low_sample") else ""
+    return [
+        "",
+        f"  Information ({inf.get('periods')} rebalances, horizon {inf.get('horizon_bars')} bars):{flag}",
+        f"    IC {float(inf.get('mean_ic', 0.0)):+.4f}  t-stat {float(inf.get('ic_tstat', 0.0)):+.2f}  "
+        f"rank-IC {float(inf.get('rank_ic', 0.0)):+.4f}",
+        f"    breadth {float(inf.get('breadth_effective', 0.0)):.0f} effective "
+        f"(ρ̄ {float(inf.get('rho_bar', 0.0)):.2f}, {inf.get('n_names', 0)} names)",
+        f"    IR predicted {float(inf.get('predicted_ir', 0.0)):+.2f} vs realized "
+        f"{float(inf.get('realized_ir', 0.0)):+.2f} ± {float(inf.get('ir_standard_error', 0.0)):.2f}",
+        f"    P(any |t|>2 across {inf.get('n_trials', 1)} campaign trials) = "
+        f"{float(inf.get('multiple_testing_inflation', 0.0)):.2f}",
+    ]
+
+
+def _verdict_banner_lines(result: Dict[str, Any]) -> list:
+    """The conclusion, with every gate that produced it shown underneath.
+
+    Checks are listed whatever the verdict says, passes included: a verdict whose
+    supporting numbers are only visible when it is bad teaches the reader to trust
+    the good ones unexamined.
+    """
+    verdict = result.get("verdict") or {}
+    lines = ["", f"  VERDICT: {verdict.get('summary', 'unknown')}"]
+    for name, check in sorted((verdict.get("checks") or {}).items()):
+        mark = "PASS" if check.get("passed") else "FAIL"
+        value, threshold = check.get("value"), check.get("threshold")
+        detail = f"{_num(value)} vs {_num(threshold)}"
+        lines.append(f"    [{mark}] {name}: {detail} — {check.get('note', '')}")
+    if verdict.get("verdict") == "incomplete":
+        lines.append("    No verdict is offered for a partial run — do not act on the sections above.")
+    lines.append("")
+    return lines
+
+
+def _num(value: Any) -> str:
+    """Format a gate's value/threshold without pretending a bool or a None is a float."""
+    if isinstance(value, bool) or value is None:
+        return str(value)
+    if isinstance(value, (int, float)):
+        return f"{value:.4g}"
+    return str(value)
+
+
+# --------------------------------------------------------------------------- #
+# Trial-store browsing
+# --------------------------------------------------------------------------- #
+#: Rendered wherever a stored field is absent. A trial recorded before a field
+#: existed, or of a kind that never produces one, did not score zero and did not
+#: fail — it has nothing recorded, and the two must never look alike.
+NOT_RECORDED = "—"
+
+
+def _cell(value: Any, spec: str = "{:.3f}") -> str:
+    """A metric cell, or :data:`NOT_RECORDED` when there is genuinely nothing stored."""
+    if value is None:
+        return NOT_RECORDED
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    try:
+        return spec.format(float(value))
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _plural(count: int, noun: str) -> str:
+    """``1 name`` / ``2 names`` — a detail view is read closely enough for this to
+    grate."""
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+
+
+def format_trials_table(rows: List[Dict[str, Any]], *, total: Optional[int] = None) -> str:
+    """The trial listing: one row per trial, absences rendered as absences.
+
+    Always states how many rows matched versus how many are shown — a listing that
+    silently truncates reads as "this is everything" when it is not.
+    """
+    if not rows:
+        return "No trials matched."
+    lines = [
+        f"{'ID':14}{'KIND':12}{'STRATEGY':16}{'SHARPE':>9}{'DSR':>8}{'PROMO':>7}{'ACCT':>6}  TS",
+    ]
+    for r in rows:
+        promo = NOT_RECORDED if r.get("promotable") is None else ("yes" if r["promotable"] else "no")
+        lines.append(
+            f"{str(r.get('id', ''))[:14]:14}{str(r.get('kind', ''))[:12]:12}"
+            f"{str(r.get('strategy') or '')[:16]:16}"
+            f"{_cell(r.get('oos_sharpe')):>9}{_cell(r.get('deflated_sharpe')):>8}"
+            f"{promo:>7}{r.get('accounting', ''):>6}  {(r.get('ts') or '')[:19]}"
+        )
+    if total is not None and total > len(rows):
+        lines.append(f"\nShowing {len(rows)} of {total} matching trials (use --limit/--offset for more).")
+    elif total is not None:
+        lines.append(f"\n{total} matching trial(s).")
+    return "\n".join(lines)
+
+
+def format_trial_detail(trial: Dict[str, Any]) -> str:
+    """Everything the store knows about one trial.
+
+    Companion records report their *presence and shape* rather than their contents:
+    a detail view exists to tell you what is recoverable, not to dump a return
+    series into a terminal.
+    """
+    lines = [
+        "",
+        f"=== Trial {trial.get('id')} ({trial.get('kind')}) ===",
+        f"  recorded : {trial.get('ts') or NOT_RECORDED}",
+        f"  strategy : {trial.get('strategy') or NOT_RECORDED}",
+        f"  window   : {(trial.get('window_start') or NOT_RECORDED)[:19]} → "
+        f"{(trial.get('window_end') or NOT_RECORDED)[:19]}",
+        f"  universe : {trial.get('universe_hash', NOT_RECORDED)[:16]} (hash)",
+        f"  accounting v{trial.get('accounting')} | git {trial.get('git_sha') or NOT_RECORDED}",
+        "",
+        "  Params (the run's identity, including the folded cost and vintage keys):",
+    ]
+    params = trial.get("params") or {}
+    for key in sorted(params):
+        lines.append(f"    {key} = {params[key]}")
+    if not params:
+        lines.append(f"    {NOT_RECORDED}")
+
+    lines.append("")
+    lines.append("  Headline metrics:")
+    for label, key, spec in (
+        ("OOS Sharpe", "oos_sharpe", "{:.3f}"),
+        ("Deflated Sharpe", "deflated_sharpe", "{:.3f}"),
+        ("Profit factor", "oos_profit_factor", "{:.3f}"),
+        ("Max drawdown", "oos_max_dd", "{:.3f}"),
+        ("Efficiency", "efficiency", "{:.3f}"),
+        ("OOS trades", "oos_trades", "{:.0f}"),
+    ):
+        lines.append(f"    {label:<18}{_cell(trial.get(key), spec)}")
+    promo = trial.get("promotable")
+    lines.append(f"    {'Promotable':<18}{NOT_RECORDED if promo is None else ('yes' if promo else 'no')}")
+
+    lines.append("")
+    lines.append("  Stored alongside this trial:")
+    returns = trial.get("returns")
+    lines.append(
+        f"    return series : {NOT_RECORDED} (not recorded)"
+        if not returns
+        else f"    return series : {returns['periods']} periods, "
+        f"{str(returns['start'])[:10]} → {str(returns['end'])[:10]}"
+    )
+    weights = trial.get("weights")
+    lines.append(
+        f"    proposed book : {NOT_RECORDED} (not recorded)"
+        if not weights
+        else f"    proposed book : {_plural(len(weights.get('weights') or {}), 'name')}"
+        + (", with factor exposures" if weights.get("exposures") else "")
+        + (", with active weights" if weights.get("active_weights") else "")
+    )
+    trades = trial.get("trades")
+    lines.append(
+        f"    trade table   : {NOT_RECORDED} (not recorded — pass --record-trades on the run)"
+        if trades is None
+        else f"    trade table   : {_plural(len(trades.get('rows') or []), 'trade')}"
+    )
+
+    reused = trial.get("reused_by") or []
+    lines.append("")
+    if reused:
+        lines.append(f"  Reused by {len(reused)} later trial(s) with the same identity:")
+        for row in reused:
+            lines.append(f"    {row['id']}  {(row.get('ts') or '')[:19]}  ({row.get('kind')})")
+    else:
+        lines.append("  Not reused by any later trial.")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def format_trial_trades(trades: Optional[Dict[str, Any]], limit: int = 25) -> str:
+    """The stored trade table, truncated loudly rather than quietly."""
+    if not trades:
+        return f"  trade table: {NOT_RECORDED} (not recorded)"
+    columns = trades.get("columns") or []
+    rows = trades.get("rows") or []
+    lines = ["", "  Trades:", "    " + "  ".join(f"{str(c)[:12]:>12}" for c in columns)]
+    for row in rows[:limit]:
+        lines.append("    " + "  ".join(f"{str(v)[:12]:>12}" for v in row))
+    if len(rows) > limit:
+        lines.append(f"    … {len(rows) - limit} more trade(s) not shown (--trades-limit to raise).")
+    return "\n".join(lines)
+
+
+def format_leaderboard(board: Dict[str, Any]) -> str:
+    """The leaderboard, and the multiple-testing context that makes it honest.
+
+    The family's trial count sits on every row and the caveat is always printed —
+    a ranking without its selection context is the exact trap this project's
+    evaluation machinery exists to close, and it would be worse coming from our own
+    tooling, which lends it authority.
+    """
+    rows = board.get("rows") or []
+    if not rows:
+        return "No trials matched."
+    ranked_by = "deflated Sharpe" if board.get("rank_by") == "dsr" else "RAW Sharpe"
+    lines = [
+        "",
+        f"  Top {len(rows)} by {ranked_by}:",
+        f"    {'#':<3}{'ID':14}{'STRATEGY':16}{'DSR':>8}{'SHARPE':>9}{'FAMILY n_trials':>17}",
+    ]
+    for i, r in enumerate(rows, 1):
+        family = r.get("family_n_trials")
+        lines.append(
+            f"    {i:<3}{str(r.get('id', ''))[:14]:14}{str(r.get('strategy') or '')[:16]:16}"
+            f"{_cell(r.get('deflated_sharpe')):>8}{_cell(r.get('oos_sharpe')):>9}"
+            f"{(NOT_RECORDED if family is None else family):>17}"
+        )
+    lines.extend(["", f"  {board.get('caveat', '')}"])
+    if board.get("max_family_n_trials", 0) >= 50:
+        lines.append(
+            f"  This family has tried {board['max_family_n_trials']} configs. At that count "
+            "the best raw Sharpe is largely selection — read the deflated column, not the rank."
+        )
+    lines.append("")
+    return "\n".join(lines)

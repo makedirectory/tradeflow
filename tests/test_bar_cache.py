@@ -13,10 +13,10 @@ from datetime import datetime, timedelta, timezone  # noqa: E402
 
 import pandas as pd  # noqa: E402
 
-from src.data.store import ParquetBarStore  # noqa: E402
-from src.marketdata.base import MarketDataProvider  # noqa: E402
-from src.store.bars import BarCoverage, CachedMarketData, CacheMiss  # noqa: E402
 from tests.fakes import make_ohlcv  # noqa: E402
+from tradeflow.data.store import ParquetBarStore  # noqa: E402
+from tradeflow.marketdata.base import MarketDataProvider  # noqa: E402
+from tradeflow.store.bars import BarCoverage, CachedMarketData, CacheMiss  # noqa: E402
 
 SYMBOLS = ["AAA", "BBB"]
 

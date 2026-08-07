@@ -12,10 +12,10 @@ from typing import Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-from src.brokers.base import AccountSnapshot, Broker, MarketStatus, OrderResult, OrderSide, Position
-from src.marketdata.base import BarHandler, MarketDataProvider
-from src.marketdata.timeframe import Timeframe
-from src.utils.timeutils import NEW_YORK
+from tradeflow.brokers.base import AccountSnapshot, Broker, MarketStatus, OrderResult, OrderSide, Position
+from tradeflow.marketdata.base import BarHandler, MarketDataProvider
+from tradeflow.marketdata.timeframe import Timeframe
+from tradeflow.utils.timeutils import NEW_YORK
 
 
 def make_ohlcv(n: int = 600, seed: int = 0, freq: str = "5min") -> pd.DataFrame:
@@ -170,7 +170,7 @@ class StreamingFakeMarketData(FakeMarketData):
     async def stream_bars(self, symbols, handler):
         import asyncio
 
-        from src.marketdata.base import BarEvent
+        from tradeflow.marketdata.base import BarEvent
 
         for i in range(self._bars_to_emit):
             for symbol in symbols:
@@ -205,3 +205,110 @@ class TradeUpdateFakeBroker(FakeBroker):
             result = handler(update)
             if asyncio.iscoroutine(result):
                 await result
+
+
+class ScriptedFeed(FakeMarketData):
+    """Emits an exact, caller-supplied sequence of bar events.
+
+    The adversarial-feed harness. :class:`StreamingFakeMarketData` emits well-formed
+    bars, which is the case that was never in doubt; this one emits whatever the test
+    scripts — duplicates, inverted ranges, stale timestamps, out-of-order arrivals —
+    so the live loop's behavior under a misbehaving vendor is asserted rather than
+    assumed.
+
+    It fakes only the edge (data in). The engine, the strategy, and the trader under
+    test are the real ones, so the fence cannot pass by encoding the same assumptions
+    the code makes.
+    """
+
+    def __init__(self, symbols, events=(), *, raise_after: Optional[int] = None, **kwargs):
+        super().__init__(symbols, **kwargs)
+        self._events = list(events)
+        #: Simulates a dropped connection mid-stream, after this many events.
+        self._raise_after = raise_after
+        self.delivered = 0
+
+    def supports_streaming(self) -> bool:
+        return True
+
+    async def stream_bars(self, symbols, handler):
+        import asyncio
+
+        for i, event in enumerate(self._events):
+            if self._raise_after is not None and i == self._raise_after:
+                raise ConnectionError("stream dropped")
+            result = handler(event)
+            self.delivered += 1
+            if asyncio.iscoroutine(result):
+                await result
+
+
+def bar_event(
+    symbol="AAA",
+    *,
+    minute=0,
+    close=100.0,
+    open=None,
+    high=None,
+    low=None,
+    volume=1000.0,
+    day=2,
+):
+    """One well-formed BarEvent, with any field overridable to make it malformed."""
+    from tradeflow.marketdata.base import BarEvent
+
+    return BarEvent(
+        symbol=symbol,
+        timestamp=datetime(2024, 1, day, 10, minute),
+        open=close if open is None else open,
+        high=(close + 1) if high is None else high,
+        low=(close - 1) if low is None else low,
+        close=close,
+        volume=volume,
+    )
+
+
+class RecordingBroker(FakeBroker):
+    """A broker that records every call, and can be told to misbehave.
+
+    ``reject_orders`` makes submission return ``None`` (the broker refusing), which
+    is the case the loop has to survive without losing its place in the stream.
+    """
+
+    def __init__(self, *, reject_orders: bool = False, positions=None, **kwargs):
+        super().__init__(**kwargs)
+        self.reject_orders = reject_orders
+        self.calls: List[str] = []
+        self._forced_positions = positions
+
+    def submit_bracket_order(self, symbol, qty, side, stop_loss, take_profit):
+        self.calls.append(f"bracket:{symbol}")
+        if self.reject_orders:
+            return None
+        return super().submit_bracket_order(symbol, qty, side, stop_loss, take_profit)
+
+    def submit_market_order(self, symbol, qty, side):
+        self.calls.append(f"market:{symbol}")
+        if self.reject_orders:
+            return None
+        return super().submit_market_order(symbol, qty, side)
+
+    def list_positions(self):
+        self.calls.append("list_positions")
+        if self._forced_positions is not None:
+            return self._forced_positions
+        return super().list_positions()
+
+
+class FakeTradeUpdate:
+    """A broker trade update, shaped like the live path expects one."""
+
+    def __init__(
+        self, event="fill", symbol="AAA", order_id="o-1", status="filled", filled_qty=10.0, side="buy"
+    ):
+        self.event = event
+        self.symbol = symbol
+        self.order_id = order_id
+        self.status = status
+        self.filled_qty = filled_qty
+        self.side = side

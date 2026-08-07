@@ -11,12 +11,12 @@ from typing import Dict, List
 import pandas as pd
 import pytest
 
-from src.engine.backtest import BacktestEngine
-from src.marketdata.client import MarketDataClient
-from src.strategies import signals
-from src.strategies.base import Strategy
-from src.utils.timeutils import NEW_YORK
 from tests.fakes import DictMarketData
+from tradeflow.engine.backtest import BacktestEngine
+from tradeflow.marketdata.client import MarketDataClient
+from tradeflow.strategies import signals
+from tradeflow.strategies.base import Strategy
+from tradeflow.utils.timeutils import NEW_YORK
 
 # stop_loss/take_profit = 10%; size resolves to 10 shares at $100 (see notional cap).
 _CONFIG = {
@@ -113,10 +113,10 @@ def test_end_of_period_exit():
 
 
 def test_backtest_honors_injected_sizer():
-    from src.engine.backtest import BacktestEngine
-    from src.execution.sizing import PortfolioWeightSizer
-    from src.marketdata.client import MarketDataClient
     from tests.fakes import DictMarketData
+    from tradeflow.engine.backtest import BacktestEngine
+    from tradeflow.execution.sizing import PortfolioWeightSizer
+    from tradeflow.marketdata.client import MarketDataClient
 
     rows = [
         {"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1},
@@ -153,7 +153,7 @@ def test_all_symbols_failing_raises_instead_of_reporting_no_trades():
     Swallowing it would let a broken strategy be scored as "no edge" by the
     promotion gates - a false negative the validation engine must not have.
     """
-    from src.engine.backtest import BacktestError
+    from tradeflow.engine.backtest import BacktestError
 
     rows = [{"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1}] * 3
     data_client = MarketDataClient(DictMarketData({"AAA": _frame(rows)}))

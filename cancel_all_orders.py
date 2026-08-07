@@ -5,9 +5,9 @@ Usage: ``python cancel_all_orders.py`` (or ``make cancel-orders``).
 
 import logging
 
-from src.brokers.alpaca.factory import build_broker
-from src.settings import SettingsError, load_settings
-from src.utils.logging_config import setup_logging
+from tradeflow.brokers.alpaca.factory import build_broker
+from tradeflow.settings import SettingsError, load_settings
+from tradeflow.utils.logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
 

@@ -10,12 +10,12 @@ from datetime import datetime
 import numpy as np
 import pytest
 
-from src.alphas.base import Alpha
-from src.marketdata.client import MarketDataClient
-from src.portfolio.optimizer import MeanVarianceOptimizer
-from src.risk.base import RiskMatrix
-from src.services import analysis
 from tests.fakes import DictMarketData, make_ohlcv
+from tradeflow.alphas.base import Alpha
+from tradeflow.marketdata.client import MarketDataClient
+from tradeflow.portfolio.optimizer import MeanVarianceOptimizer
+from tradeflow.risk.base import RiskMatrix
+from tradeflow.services import analysis
 
 AS_OF = datetime(2024, 6, 1)
 SYMS = ["A", "B", "C", "D"]
@@ -118,8 +118,8 @@ def test_min_weight_must_not_exceed_max_weight():
 
 # --- capacity ------------------------------------------------------------------
 def test_capacity_is_liquidity_sensitive():
-    from src.services.analysis import _capacity
     from tests.fakes import make_ohlcv
+    from tradeflow.services.analysis import _capacity
 
     syms = [f"S{i}" for i in range(6)]
     weights = {s: 1.0 / len(syms) for s in syms}
@@ -166,7 +166,7 @@ def test_reduction_no_benchmark_matches_todays_behavior():
 
 def test_round_trip_implied_returns_recovers_the_benchmark():
     """optimize(implied_returns(w_B, Σ, μ_B), Σ, w_B) -> w = w_B."""
-    from src.portfolio.benchmark import implied_returns
+    from tradeflow.portfolio.benchmark import implied_returns
 
     mu = implied_returns(W_B, _risk(), mu_b=0.05)
     result = MeanVarianceOptimizer(max_weight=1.0).optimize(
@@ -315,7 +315,7 @@ def test_construct_portfolio_file_benchmark_reports_partial_coverage(tmp_path):
 
 # --- CLI --------------------------------------------------------------------------
 def test_cli_allocate_utility_with_benchmark_holdings(monkeypatch, tmp_path, capsys):
-    import main
+    from tradeflow import cli as main
 
     symbols = [f"S{i}" for i in range(8)]
     bars = {s: make_ohlcv(n=400, seed=i, freq="1D") for i, s in enumerate([*symbols, "SPY"])}

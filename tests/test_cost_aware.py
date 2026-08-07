@@ -14,13 +14,13 @@ from datetime import datetime
 import numpy as np
 import pytest
 
-from src.alphas.base import Alpha
-from src.costs import ParametricCostModel
-from src.costs.base import CostModel, Trade
-from src.marketdata.client import MarketDataClient
-from src.portfolio.optimizer import CostInputs, MeanVarianceOptimizer
-from src.risk.base import RiskMatrix
 from tests.fakes import DictMarketData, make_ohlcv
+from tradeflow.alphas.base import Alpha
+from tradeflow.costs import ParametricCostModel
+from tradeflow.costs.base import CostModel, Trade
+from tradeflow.marketdata.client import MarketDataClient
+from tradeflow.portfolio.optimizer import CostInputs, MeanVarianceOptimizer
+from tradeflow.risk.base import RiskMatrix
 
 AS_OF = datetime(2024, 6, 1)
 SYMS = ["A", "B", "C", "D"]
@@ -311,7 +311,7 @@ def test_impact_coefficient_formula_and_missing_data():
 def test_base_cost_model_has_zero_cost_defaults():
     class Null(CostModel):
         def cost(self, trade):  # pragma: no cover - trivial
-            from src.costs.base import TradeCost
+            from tradeflow.costs.base import TradeCost
 
             return TradeCost(0, 0, 0, 0, capped=False)
 
@@ -322,7 +322,7 @@ def test_base_cost_model_has_zero_cost_defaults():
 
 # --- spread proxy ------------------------------------------------------------
 def test_spread_proxy_is_monotone_in_range_and_clamped():
-    from src.services.analysis import _spread_proxy
+    from tradeflow.services.analysis import _spread_proxy
 
     model = ParametricCostModel()
     tight = make_ohlcv(n=60, seed=1, freq="1D")
@@ -344,7 +344,7 @@ def _universe():
 
 
 def test_construct_portfolio_cost_aware_reports_the_cost_split():
-    from src.services import analysis
+    from tradeflow.services import analysis
 
     symbols, dc = _universe()
     res = analysis.construct_portfolio(
@@ -366,7 +366,7 @@ def test_construct_portfolio_cost_aware_reports_the_cost_split():
 
 
 def test_construct_portfolio_gross_objective_uses_ex_post_drag():
-    from src.services import analysis
+    from tradeflow.services import analysis
 
     symbols, dc = _universe()
     res = analysis.construct_portfolio(

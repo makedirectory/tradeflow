@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from src import settings
-from src.settings import SettingsError, load_settings
+from tradeflow import settings
+from tradeflow.settings import SettingsError, load_settings
 
 
 @pytest.fixture(autouse=True)

@@ -12,9 +12,9 @@ logs/
 cache/
 
 # Docs site (Docusaurus)
-website/node_modules/
-website/build/
-website/.docusaurus/
+docs/node_modules/
+docs/build/
+docs/.docusaurus/
 
 # Mongo Data
 /data/db

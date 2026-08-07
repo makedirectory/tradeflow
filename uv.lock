@@ -2781,9 +2781,8 @@ wheels = [
 ]
 
 [[package]]
-name = "tradeflow"
-version = "1.0.1"
-source = { virtual = "." }
+name = "tradeflow-engine"
+source = { editable = "." }
 dependencies = [
     { name = "alpaca-py" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -2856,7 +2855,7 @@ requires-dist = [
     { name = "scikit-learn", marker = "extra == 'dev'", specifier = ">=1.4" },
     { name = "scikit-learn", marker = "extra == 'optimize'", specifier = ">=1.4" },
 ]
-provides-extras = ["optimize", "portfolio", "mcp", "ai", "openai", "viz", "store", "dev"]
+provides-extras = ["ai", "dev", "mcp", "openai", "optimize", "portfolio", "store", "viz"]
 
 [[package]]
 name = "typing-extensions"

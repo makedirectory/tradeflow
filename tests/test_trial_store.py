@@ -7,9 +7,9 @@ broken today (``n_trials`` resets every session).
 import json
 from datetime import datetime
 
-from src.engine.backtest import ACCOUNTING_VERSION
-from src.services.audit import audit_log, journal_trial
-from src.store.trials import TrialStore, db_path_for_journal, params_hash, universe_hash
+from tradeflow.engine.backtest import ACCOUNTING_VERSION
+from tradeflow.services.audit import audit_log, journal_trial
+from tradeflow.store.trials import TrialStore, db_path_for_journal, params_hash, universe_hash
 
 
 # --- hashing / normalization -------------------------------------------------
