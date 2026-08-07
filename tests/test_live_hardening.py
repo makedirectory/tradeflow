@@ -404,6 +404,28 @@ def test_scheduled_reconciliation_is_rate_limited(tmp_path):
     assert broker.calls.count("list_positions") == 1  # once, not ten times
 
 
+def test_the_first_sweep_happens_immediately_whatever_the_machines_uptime(tmp_path):
+    """`time.monotonic()` counts from an arbitrary origin, so seeding "last swept"
+    with 0.0 made the first sweep depend on how long the host had been up — skipped
+    entirely on a freshly booted one, which is exactly when a process is most likely
+    to have missed fills while it was down."""
+    led = _ledger(tmp_path)
+    engine, _, broker = _engine([bar_event(minute=1)], ledger=led)
+    engine.reconcile_every = 3600.0
+    assert engine._last_reconcile is None  # never swept, not "swept at zero"
+
+    asyncio.run(engine.start(["AAA"]))
+    assert broker.calls.count("list_positions") == 1
+
+
+def test_reconciliation_can_be_disabled_outright(tmp_path):
+    led = _ledger(tmp_path)
+    engine, _, broker = _engine([bar_event(minute=i) for i in range(1, 4)], ledger=led)
+    engine.reconcile_every = 0
+    asyncio.run(engine.start(["AAA"]))
+    assert broker.calls.count("list_positions") == 0
+
+
 # --- two clocks -------------------------------------------------------------
 def test_the_live_path_imports_no_research_machinery():
     """The invariant the whole project is shaped around. Hardening must not smuggle

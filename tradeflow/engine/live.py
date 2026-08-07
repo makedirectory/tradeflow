@@ -63,7 +63,13 @@ class LiveEngine:
         #: account state is detectable. Never authoritative, never remediating.
         self.ledger = ledger
         self.reconcile_every = reconcile_every
-        self._last_reconcile = 0.0
+        #: ``None`` means "never swept", which is deliberately not the same as
+        #: "swept at time zero". ``time.monotonic()`` counts from an arbitrary origin
+        #: (boot, on Linux), so seeding this with 0.0 made the first sweep depend on
+        #: how long the machine had been up — on a freshly booted host it was skipped
+        #: entirely for a full interval, which is exactly when reconciling matters
+        #: most.
+        self._last_reconcile: Optional[float] = None
 
     async def start(self, symbols: List[str]) -> None:
         """Warm up indicators with history, then stream live bars until canceled.
@@ -169,7 +175,10 @@ class LiveEngine:
         if self.ledger is None or self.reconcile_every <= 0:
             return
         now = time.monotonic()
-        if now - self._last_reconcile < self.reconcile_every:
+        # The first bar always sweeps. A process that just started is the case most
+        # likely to have drifted — it may have missed fills while it was down — so
+        # waiting a full interval to find out is backwards.
+        if self._last_reconcile is not None and now - self._last_reconcile < self.reconcile_every:
             return
         self._last_reconcile = now
         try:
