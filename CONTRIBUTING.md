@@ -29,7 +29,20 @@ These are exactly what CI runs:
 uv run ruff check .            # lint
 uv run ruff format .           # format (use --check in CI)
 make test                      # offline test suite (no API keys/network)
+make secret-scan               # committed secrets (needs gitleaks locally)
 ```
+
+## Keys and secrets
+
+This repository is public, so a committed key is disclosed the moment it lands —
+rotating it is the only fix. Keep credentials in `.env` (gitignored); `.env.example`
+holds placeholder values only, and is the right place to document a new setting.
+
+Two checks back this up: GitHub's push protection rejects a push containing a
+recognized provider key, and CI runs [gitleaks](https://github.com/gitleaks/gitleaks)
+over the **entire history** on every PR — deleting a secret in a later commit does
+not remove it from the one that added it. If the scan fails, treat the key as
+compromised and rotate it before rewriting history.
 
 ## Coding standards
 

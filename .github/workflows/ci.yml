@@ -45,3 +45,42 @@ jobs:
 
       - name: Tests (pytest)
         run: uv run pytest -q
+
+  secret-scan:
+    # The repository is public, so a committed key is disclosed the moment it
+    # lands. This scans the whole history, not just the diff: a secret removed in
+    # a later commit is still readable in the one that added it.
+    #
+    # GitHub's own secret scanning + push protection is enabled on the repo and
+    # catches known provider formats before a push lands. This is the second
+    # layer — it runs on forks, and it fails the build rather than only alerting
+    # the owner.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # full history — the default shallow clone hides old commits
+
+      - name: Install gitleaks
+        # Pinned to an exact release rather than an action, so a scan is
+        # reproducible and no third-party code runs with the workflow token.
+        env:
+          GITLEAKS_VERSION: 8.30.1
+        run: |
+          curl -sSfL -o /tmp/gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tar -xzf /tmp/gitleaks.tar.gz -C /usr/local/bin gitleaks
+          gitleaks version
+
+      - name: Scan history for secrets
+        # --redact keeps any match out of the public build log; the finding is in
+        # the uploaded report. Exits non-zero when anything is found.
+        run: gitleaks git --no-banner --redact --report-path gitleaks-report.json .
+
+      - name: Upload findings
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: gitleaks-report
+          path: gitleaks-report.json
+          if-no-files-found: ignore

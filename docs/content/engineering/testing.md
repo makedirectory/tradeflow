@@ -34,6 +34,19 @@ Notes:
 - CI runs the same command on every push/PR, alongside `ruff check` and
   `ruff format --check` (see [Coding standards](coding-standards)).
 
+## Secret scanning
+
+The repository is public, so CI also runs
+[gitleaks](https://github.com/gitleaks/gitleaks) over the full git history on every
+push and PR — not just the diff, because a secret deleted in a later commit is still
+readable in the commit that added it. Reproduce it locally with:
+
+```bash
+make secret-scan                # needs gitleaks installed (brew install gitleaks)
+```
+
+Credentials belong in `.env` (gitignored); `.env.example` carries placeholders only.
+
 ## Lint & format
 
 ```bash
