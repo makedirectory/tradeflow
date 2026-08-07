@@ -35,7 +35,9 @@ jobs:
       - name: Install Node
         uses: actions/setup-node@v7
         with:
-          node-version: 20
+          # .nvmrc is the single source: a contributor running `nvm use` and CI build
+          # on the same major, and there is no second place to forget to update.
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: docs/package-lock.json
 
@@ -66,7 +68,9 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          # .nvmrc is the single source: a contributor running `nvm use` and CI build
+          # on the same major, and there is no second place to forget to update.
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: docs/package-lock.json
 
@@ -77,10 +81,29 @@ jobs:
           name: docs-site
           path: docs/build/
 
+      # Fail with an explanation, not a bare exit code. Without this, a missing
+      # secret surfaces as `wrangler` exiting 1 with nothing to act on — the reader
+      # has to guess that a credential is the problem.
+      - name: Check the deploy credentials exist
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::error title=Missing deploy credentials::CLOUDFLARE_API_TOKEN is not set."
+            echo ""
+            echo "The docs site cannot deploy without it, so tradeflow.mk-dir.com will"
+            echo "keep serving whatever was last published by hand."
+            echo ""
+            echo "Add it at: Settings -> Secrets and variables -> Actions"
+            echo "  CLOUDFLARE_API_TOKEN    a token with the Workers Scripts:Edit permission"
+            echo "  CLOUDFLARE_ACCOUNT_ID   optional; only if the account is ambiguous"
+            echo ""
+            echo "To publish once by hand in the meantime:"
+            echo "  cd docs && npx wrangler login && npm run deploy"
+            exit 1
+          fi
+
       - name: Deploy
-        # Requires CLOUDFLARE_API_TOKEN (and CLOUDFLARE_ACCOUNT_ID) as repository
-        # secrets. Without them this step fails loudly rather than appearing to
-        # succeed while the site stays stale — which is the failure it exists to fix.
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
