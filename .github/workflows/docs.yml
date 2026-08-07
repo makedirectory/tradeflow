@@ -35,7 +35,9 @@ jobs:
       - name: Install Node
         uses: actions/setup-node@v7
         with:
-          node-version: 20
+          # .nvmrc is the single source: a contributor running `nvm use` and CI build
+          # on the same major, and there is no second place to forget to update.
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: docs/package-lock.json
 
@@ -66,7 +68,9 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          # .nvmrc is the single source: a contributor running `nvm use` and CI build
+          # on the same major, and there is no second place to forget to update.
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: docs/package-lock.json
 

@@ -61,7 +61,7 @@ services:
 
   docs:
     profiles: ["docs"]
-    image: node:20-slim
+    image: node:24-slim
     container_name: tradeflow-docs
     working_dir: /site
     volumes:

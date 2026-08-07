@@ -12,6 +12,15 @@ Use **[uv](https://docs.astral.sh/uv/getting-started/installation/)** (or
 uv sync --extra dev      # installs deps + ruff + pytest (and optimize/portfolio extras)
 ```
 
+Working on the documentation site as well? It pins its Node version in `.nvmrc`:
+
+```bash
+nvm use                  # or: fnm use — reads .nvmrc
+cd docs && npm ci
+```
+
+CI reads the same file, so a local build and a CI build are on the same major.
+
 ## Before you push
 
 These are exactly what CI runs:
