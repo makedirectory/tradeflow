@@ -41,7 +41,12 @@ optimize = ["scikit-learn>=1.4"]
 # Constraint-solver portfolio allocation (Google OR-Tools).
 portfolio = ["ortools>=9.8"]
 # Expose TradeFlow to an agent over MCP. Opt-in; base install unchanged.
-mcp = ["mcp>=1.0"]
+# Pinned below 2.0: the SDK's 2.x line removed `mcp.server.fastmcp.FastMCP`, which
+# this server is built on, so an unconstrained `mcp>=1.0` resolves to a version the
+# server cannot import. Porting to the 2.x API is real work and tracked separately;
+# until then the constraint is what makes `tradeflow-engine[mcp]` actually install a
+# working server.
+mcp = ["mcp>=1.0,<2"]
 # Autonomous research agent with Claude as the default proposer. Opt-in.
 ai = ["anthropic>=0.40"]
 # Use OpenAI models as the research proposer instead of Claude. Opt-in.
@@ -58,6 +63,9 @@ store = ["pyarrow>=14", "polars>=1.25", "duckdb>=1.0"]
 dev = [
     "pytest>=8.0", "ruff>=0.6", "scikit-learn>=1.4", "ortools>=9.8", "matplotlib>=3.8",
     "pyarrow>=14", "polars>=1.25", "duckdb>=1.0",
+    # The MCP SDK is in dev so CI resolves it the same way a user does, rather than
+    # only ever seeing whatever the lockfile happens to hold.
+    "mcp>=1.0,<2",
 ]
 
 [project.scripts]

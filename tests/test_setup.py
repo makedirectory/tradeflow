@@ -373,3 +373,33 @@ def test_cli_interactive_requires_a_typed_phrase_to_disable_paper_trading(tmp_pa
     args = main.build_parser().parse_args(["init", "--env-path", str(path)])
     args.func(args)
     assert "PAPER_TRADE=true" in path.read_text()
+
+
+# --- install hints and masking ----------------------------------------------
+def test_extras_hints_are_phrased_for_the_copy_that_is_running(monkeypatch, tmp_path):
+    """An installed copy has no checkout to `uv sync` in — the third place this same
+    dead end turned up."""
+    from tradeflow import settings
+
+    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
+    monkeypatch.setattr(settings, "_looks_like_checkout", lambda _p: False)
+    assert setup.install_hint("store") == 'uv tool install --force "tradeflow-engine[store]"'
+
+    monkeypatch.setattr(settings, "_looks_like_checkout", lambda _p: True)
+    assert setup.install_hint("store") == "uv sync --extra store"
+
+
+def test_only_credentials_are_masked(tmp_path):
+    """Masking PAPER_TRADE to **** hides nothing and costs the reader the one value
+    they most want to confirm."""
+    path = _write(tmp_path, f"APCA_API_KEY_ID={REAL_KEY}\nPAPER_TRADE=true\n")
+    summary = setup.inspect_env(path, environ={}).summary()
+
+    assert summary["PAPER_TRADE"] == "true"
+    assert REAL_KEY not in summary["APCA_API_KEY_ID"]
+
+
+def test_a_written_settings_value_is_not_masked_in_the_confirmation(tmp_path):
+    result = setup.write_env({"PAPER_TRADE": "true", "APCA_API_SECRET_KEY": REAL_SECRET}, tmp_path / ".env")
+    assert result["updated"]["PAPER_TRADE"] == "true"
+    assert REAL_SECRET not in str(result)

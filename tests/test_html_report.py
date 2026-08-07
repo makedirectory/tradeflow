@@ -167,7 +167,9 @@ def test_every_kind_renders_parseable_html_with_no_external_references(kind):
 @pytest.mark.parametrize("kind", KINDS)
 def test_every_kind_carries_its_provenance(kind):
     document = render_html(_FIXTURES[kind](), kind)
-    for field in ("Provenance", "Window", "Universe", "Git SHA", "Generated"):
+    # "Code version" rather than "Git SHA": an installed copy has no repository, and
+    # the packaged version is the honest answer to what produced the report.
+    for field in ("Provenance", "Window", "Universe", "Code version", "Generated"):
         assert field in document
 
 

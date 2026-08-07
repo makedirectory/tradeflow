@@ -1590,14 +1590,31 @@ def _campaign_trials(strategy: str, symbols: Sequence[str], accounting: int) -> 
             return 1
 
 
+def code_version() -> str:
+    """Which code produced a result, in whatever form is actually available.
+
+    A checkout has a git SHA (working-tree aware, so a dirty tree is marked). An
+    installed copy has no repository at all, and reporting "unknown" there defeats
+    the point of a provenance block: a report that outlives its context must be able
+    to say what made it, and for an installed copy the package version is exactly
+    that answer.
+    """
+    from tradeflow.optimization.config_store import current_git_sha
+
+    sha = current_git_sha()
+    if sha:
+        return sha
+    from tradeflow import __version__
+
+    return f"tradeflow {__version__}"
+
+
 def _verdict_provenance(inputs: Dict[str, Any], cache, n_trials: int) -> Dict[str, Any]:
     """What a reader needs to not misread this run a month later: the git SHA, the
     campaign's trial count, and the measured proof that the steps really did share
     one fetch (requests issued vs. requests that reached the provider)."""
-    from tradeflow.optimization.config_store import current_git_sha
-
     return {
-        "git_sha": current_git_sha(),
+        "git_sha": code_version(),
         "generated_at": datetime.now().isoformat(),
         "n_trials": n_trials,
         "universe_size": len(inputs.get("universe") or []),

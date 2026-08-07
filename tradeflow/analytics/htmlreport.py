@@ -256,7 +256,9 @@ def _provenance_block(result: Dict[str, Any], kind: str) -> str:
         ("Timeframe", inputs.get("timeframe") or result.get("timeframe") or "—"),
         ("Benchmark", inputs.get("benchmark") or result.get("benchmark") or "—"),
         ("Cost model", _cost_text(inputs.get("cost"), result)),
-        ("Git SHA", provenance.get("git_sha") or "unknown"),
+        # "Version" rather than "Git SHA": an installed copy has no repository, and
+        # the packaged version is the honest answer to "what made this".
+        ("Code version", provenance.get("git_sha") or _code_version()),
         ("Generated", provenance.get("generated_at") or datetime.now(timezone.utc).isoformat()),
         ("Campaign trials", provenance.get("n_trials") or result.get("n_trials") or "—"),
     ]
@@ -265,6 +267,13 @@ def _provenance_block(result: Dict[str, Any], kind: str) -> str:
     if result.get("trial_id"):
         pairs.append(("Trial id", result["trial_id"]))
     return _card("Provenance", _kv(pairs))
+
+
+def _code_version() -> str:
+    """The running code's identifier, for a result dict that carries none."""
+    from tradeflow.services.analysis import code_version
+
+    return code_version()
 
 
 def _cost_text(cost: Optional[Dict[str, Any]], result: Dict[str, Any]) -> str:
