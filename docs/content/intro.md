@@ -6,58 +6,88 @@ title: Overview
 
 # TradeFlow
 
-A small, **layered**, **broker-agnostic** algorithmic-trading engine. It ships
-with an [Alpaca](https://alpaca.markets) adapter, but everything above the broker
-layer is vendor-neutral. It scans a universe of symbols, runs a strategy over
-them, and either **backtests** on history or **trades live** (paper by default) —
-with optional **parameter optimization**, **walk-forward validation**, and
-**constraint-solver portfolio allocation**.
+A layered, broker-agnostic algorithmic-trading **research engine** — and an honest
+one, which mostly means it is very good at telling you your brilliant strategy is
+actually noise.
+
+## Try it in 30 seconds
+
+No keys, no account, no network:
+
+```bash
+uv tool install tradeflow-engine
+tradeflow demo
+```
+
+That runs the entire pipeline on synthetic data: it backtests every bundled
+strategy, picks the best-looking one, walk-forward validates it — and **refuses to
+promote it**.
+
+The refusal is the point. The synthetic series is a seeded random walk with no edge
+in it, so a strategy that looks profitable in-sample gets called noise
+out-of-sample. If that had *not* happened, the tool would be broken.
+
+**→ [Getting started](usage/getting-started)** walks the rest: real market data with
+free paper keys, your first verdict, and connecting Claude — six steps, and you can
+stop at any of them.
+
+No `uv`? [Install it](https://docs.astral.sh/uv/getting-started/installation/), or
+use `pipx install tradeflow-engine`.
+
+## What it actually does
+
+Scans a universe, turns signals into comparable return forecasts, builds a
+cost-aware portfolio, and — the part that matters — tells you whether any of it is
+distinguishable from luck.
+
+```bash
+tradeflow verdict --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-31
+```
+
+One command runs scan → alphas → portfolio → information analysis over one universe,
+one window, and one cost model, ending in a single verdict with every gate shown:
+
+```
+  VERDICT: mixed — passed: sample_size, sanity_ceiling; failed: ic_tstat, net_of_cost_alpha
+    [FAIL] ic_tstat: 0.70 vs 2 — IC t-stat below 2 is not distinguishable from luck
+    [FAIL] net_of_cost_alpha: -0.034 vs 0 — expected active return after the cost of trading
+    [PASS] sample_size: 24 vs 12 — too few rebalances to measure an IC with any confidence
+```
 
 > Beating the market is hard — embarrassingly hard. TradeFlow's real value isn't a
 > money printer; it's a rigorous skeptic that makes it harder to mistake luck for
 > skill. If your strategy survives walk-forward and the deflated Sharpe, *maybe*
 > you've got something. If it doesn't, you just saved yourself some tuition.
 
-It is built to be **easy to try** and **easy to read**:
+## Why it's built this way
 
-- **No TA-Lib, no native build step.** Indicators are pure pandas/numpy, so
-  `uv sync` is the whole install and the Docker image carries no compiler.
+- **Two clocks that never touch.** Research (backtest, optimize, walk-forward, the
+  AI agent) is slow, exploratory, and only ever *proposes*. The live order path is
+  deterministic and imports none of it. Promotion between them is a manual human
+  step. See [the architecture](engineering/architecture).
+- **AI-assisted research without AI-controlled trading.** The
+  [MCP server](engineering/mcp-server) builds only a market-data client, so an agent
+  is *structurally* incapable of placing an order — there is no order tool to
+  prompt-inject around.
 - **Broker-agnostic.** Every layer is written against a `Broker` /
   `MarketDataProvider` interface; Alpaca is just the first implementation.
-- **Strict separation of concerns.** Each package does exactly one job.
+- **No TA-Lib, no native build step.** Indicators are pure pandas/numpy, so there is
+  no compiler in the install path and none in the Docker image.
 
-**New here? [Getting started](usage/getting-started)** walks from install to a real
-result with Claude connected, in six steps. The first two need no keys and no
-network.
+## Where to go
 
-Two doc tracks:
-
-- **[Usage](usage/installation)** — install, configure, and run the workflows
-  (scan, backtest, live, optimize, walk-forward) plus portfolio allocation and the
-  optional AI agents.
-- **[Engineering Wiki](engineering/architecture)** — how it's built and why, and
-  how to extend it with a new strategy, scanner, or broker.
+- **[Getting started](usage/getting-started)** — install → keys → first result →
+  Claude, end to end
+- **[Usage](usage/installation)** — every command: verdict, backtest, walk-forward,
+  optimization, portfolio construction, the trial store, the AI agents
+- **[Engineering wiki](engineering/architecture)** — how it is built and why, and how
+  to add a strategy, scanner, or broker
+- **[Using it as a library](engineering/embedding)** — `tradeflow.services.*` from
+  your own code
+- **[Changelog](changelog)** — every release, and the project's history since 2023
 
 :::warning Educational software
 This project is for learning. Trading carries real financial risk. Keep
-`PAPER_TRADE = True` unless you fully understand the consequences. No warranty.
+`PAPER_TRADE=true` unless you fully understand the consequences. No warranty, and
+nothing here is investment advice.
 :::
-
-## 60-second tour
-
-No keys, no network — see the whole pipeline (and its honest verdict) first:
-
-```bash
-make install                      # uv sync
-make demo                         # backtest + walk-forward on synthetic data
-```
-
-Then point it at real data with free Alpaca paper keys:
-
-```bash
-cp .env.example .env              # add your Alpaca paper keys
-make scan                         # what's flagged right now?
-make backtest                     # scan -> strategy -> performance report
-```
-
-See **[Installation](usage/installation)** to get set up.

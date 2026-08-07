@@ -91,8 +91,13 @@ class EnvState:
         return self.from_environment.get(key) or self.values.get(key)
 
     def summary(self) -> Dict[str, str]:
-        """A printable, fully masked view. Never returns a raw secret."""
-        return {key: mask(self.resolved(key)) for key in OWNED_KEYS}
+        """A printable view. Credentials are masked; settings that are not secrets
+        are shown as they are — masking ``PAPER_TRADE=true`` to ``****`` hides
+        nothing and costs the reader the one value they most want to confirm."""
+        return {
+            key: (mask(self.resolved(key)) if key in CREDENTIAL_KEYS else (self.resolved(key) or "(not set)"))
+            for key in OWNED_KEYS
+        }
 
 
 def inspect_env(path: Optional[Any] = None, environ: Optional[Dict[str, str]] = None) -> EnvState:
@@ -184,7 +189,10 @@ def write_env(updates: Dict[str, str], path: Optional[Any] = None, *, backup: bo
     return {
         "path": str(env_path),
         "backup": str(backup_path) if backup_path else None,
-        "updated": {key: mask(value) for key, value in updates.items()},
+        # Same rule as EnvState.summary: mask credentials, show plain settings.
+        "updated": {
+            key: (mask(value) if key in CREDENTIAL_KEYS else value) for key, value in updates.items()
+        },
     }
 
 
@@ -348,8 +356,12 @@ _EXTRAS = (
 
 
 def _extras_checks() -> List[Check]:
-    """One row per optional extra. A missing extra is reported with the exact
-    command to install it — the wizard configures, the user installs."""
+    """One row per optional extra, with the exact command to install it — phrased
+    for the copy that is running.
+
+    An installed copy has no checkout to ``uv sync`` in, so suggesting it is a dead
+    end. The wizard configures; the user installs.
+    """
     import importlib.util
 
     checks = []
@@ -359,10 +371,19 @@ def _extras_checks() -> List[Check]:
             Check(
                 f"extra: {extra}",
                 present,
-                f"installed — {what}" if present else f"not installed — {what}: uv sync --extra {extra}",
+                f"installed — {what}" if present else f"not installed — {what}: {install_hint(extra)}",
             )
         )
     return checks
+
+
+def install_hint(extra: str) -> str:
+    """The command that installs an optional extra here, checkout or not."""
+    from tradeflow.settings import _looks_like_checkout, state_root
+
+    if _looks_like_checkout(state_root()):
+        return f"uv sync --extra {extra}"
+    return f'uv tool install --force "tradeflow-engine[{extra}]"'
 
 
 def build_updates(

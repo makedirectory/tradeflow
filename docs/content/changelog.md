@@ -28,6 +28,37 @@ index; they are tagged in the repository.
 
 ---
 
+## 2.0.3 — 2026-08-07
+
+Found by walking the getting-started flow end to end against real paper credentials,
+using the published package rather than a checkout.
+
+### Fixed
+
+- **`tradeflow-engine[mcp]` installed a broken server.** The MCP SDK released 2.0.0,
+  which removed the server class this integration is built on, and the dependency was
+  an unconstrained `mcp>=1.0` — so a fresh install resolved to a version that could
+  not be imported. It was invisible locally because the lockfile held a working 1.x.
+  Now constrained to `<2`, with tests that check the *resolved* SDK rather than
+  trusting the lockfile.
+- **`init --check` suggested `uv sync --extra …`**, which an installed copy cannot
+  run — the third place this same checkout-only assumption turned up.
+- **`PAPER_TRADE` was masked as `****`.** It is not a secret, and hiding it cost the
+  reader the one value they most want to confirm.
+- **Reports said `git unknown`** when run from an installed copy. A provenance block
+  exists so a result can say what produced it; it now falls back to the package
+  version, which is the honest answer when there is no repository.
+
+### Changed
+
+- **The documentation site now deploys itself** on every push to `main`. It was
+  published by hand, so it silently fell behind the repository — a page could be
+  written, reviewed, merged, and linked from the README while 404ing for every
+  reader.
+- **The home page leads with `uv tool install tradeflow-engine` and `tradeflow
+  demo`**, rather than the clone-and-`uv sync` instructions it still carried from
+  before the package existed.
+
 ## 2.0.2 — 2026-08-07
 
 Onboarding fixes, all found by installing the published package and following the

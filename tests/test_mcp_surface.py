@@ -268,3 +268,35 @@ def test_the_new_tools_are_audited_like_the_old_ones(built, _isolated_state):
 
     lines = [json.loads(line) for line in (_isolated_state / "mcp_audit.jsonl").read_text().splitlines()]
     assert {"list_trials", "best_trials"} <= {r["tool"] for r in lines}
+
+
+# --- the dependency contract ------------------------------------------------
+def test_the_declared_mcp_constraint_excludes_the_incompatible_major():
+    """The SDK's 2.x line removed `mcp.server.fastmcp.FastMCP`, which this server is
+    built on. An unconstrained `mcp>=1.0` therefore resolved to a version that could
+    not be imported, and `tradeflow-engine[mcp]` shipped broken — invisible locally,
+    because the lockfile held a 1.x that worked."""
+    from pathlib import Path
+
+    import tomllib
+
+    manifest = tomllib.loads(Path("pyproject.toml").read_text())
+    constraint = manifest["project"]["optional-dependencies"]["mcp"]
+    assert constraint == ["mcp>=1.0,<2"], constraint
+
+
+def test_the_installed_sdk_satisfies_that_constraint():
+    """Asserts the environment actually running these tests matches what a user
+    would get, rather than whatever a lockfile pinned years ago."""
+    from importlib.metadata import version
+
+    major = int(version("mcp").split(".")[0])
+    assert major == 1, f"mcp {version('mcp')} is outside the declared constraint"
+
+
+def test_the_server_entry_point_the_sdk_provides_still_exists():
+    """The specific import that broke. Cheap, and it fails loudly the day the SDK
+    moves it again."""
+    from mcp.server.fastmcp import FastMCP
+
+    assert callable(FastMCP)

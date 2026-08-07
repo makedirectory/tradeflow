@@ -403,3 +403,16 @@ def test_cli_exits_non_zero_when_a_step_failed(monkeypatch, capsys):
     assert exc.value.code == 1
     # The exit code is the machine-readable half; the report still says it plainly.
     assert "incomplete" in capsys.readouterr().out
+
+
+def test_provenance_identifies_the_code_even_without_a_git_repository(monkeypatch):
+    """A report that outlives its context must say what made it. An installed copy
+    has no repository, and "unknown" there defeats the whole provenance block."""
+    import tradeflow
+    from tradeflow.optimization import config_store
+
+    monkeypatch.setattr(config_store, "current_git_sha", lambda: None)
+    assert analysis.code_version() == f"tradeflow {tradeflow.__version__}"
+
+    monkeypatch.setattr(config_store, "current_git_sha", lambda: "abc1234")
+    assert analysis.code_version() == "abc1234"
