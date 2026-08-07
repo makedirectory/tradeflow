@@ -34,7 +34,7 @@ Designed to be easy to try and easy to read:
 
 > ⚠️ Educational software. Trading is risky; use paper trading. No warranty.
 
-![TradeFlow demo — an in-sample equity curve that looks tradeable, beside the walk-forward verdict that refuses to promote it](docs/static/img/demo.png)
+![TradeFlow demo — an in-sample equity curve that looks tradeable, beside the walk-forward verdict that refuses to promote it](https://raw.githubusercontent.com/makedirectory/tradeflow/main/docs/static/img/demo.png)
 
 *`make demo` runs the whole pipeline on synthetic data (no keys, no network) and
 renders this: a strategy that looks profitable in-sample, and the out-of-sample
