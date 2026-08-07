@@ -28,6 +28,27 @@ index; they are tagged in the repository.
 
 ---
 
+## 2.0.2 — 2026-08-07
+
+Onboarding fixes, all found by installing the published package and following the
+path a new user would.
+
+- **The missing-credentials message sent installed users to dead ends.** It told them
+  to copy a `.env.example` they do not have and run a `make` target that does not
+  exist, and never mentioned `tradeflow init` — the one command that fixes it. It is
+  now phrased for the copy that is running, and names the exact path the `.env` goes
+  to.
+- **`tradeflow mcp` crashed with a traceback** when the `mcp` extra was not
+  installed, instead of saying so. The guard wrapped only the import, but the SDK is
+  pulled in lazily further down, so the real failure escaped — at exactly the moment
+  someone is first trying to connect Claude. The install hint it prints is now
+  correct for an installed copy too.
+- **Added [Getting started](usage/getting-started)** — one walkthrough from install
+  to a real result with Claude connected, in six steps, replacing a set of correct
+  pages with no thread between them.
+- The README's MCP registration snippet assumed a checkout; it now shows the
+  installed form first, and its tool list is no longer two releases stale.
+
 ## 2.0.1 — 2026-08-07
 
 - **Fixed the broken screenshot on the PyPI project page.** The README referenced the

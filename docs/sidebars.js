@@ -10,6 +10,7 @@ const sidebars = {
       label: 'Usage',
       collapsed: false,
       items: [
+        'usage/getting-started',
         'usage/installation',
         'usage/first-run',
         'usage/configuration',

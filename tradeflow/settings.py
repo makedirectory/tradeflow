@@ -169,6 +169,43 @@ class Settings:
     paper_trade: bool = True
 
 
+#: Where free paper-trading keys come from, said the same way everywhere.
+ALPACA_KEYS_URL = "https://app.alpaca.markets/ (Paper Account -> API Keys)"
+
+
+def _missing_credentials_message(missing: list) -> str:
+    """What to do about missing keys, phrased for the copy that is running.
+
+    This is the first thing most people see, and it used to tell an installed user
+    to copy a ``.env.example`` they do not have and run a ``make`` target that does
+    not exist — two dead ends and no mention of the one command that actually fixes
+    it. A pip-installed copy has no repository, so any instruction that assumes one
+    is worse than no instruction: it sends someone looking for a file that was never
+    there.
+    """
+    setup_path = state_root() / ".env"
+    lines = ["Missing Alpaca credentials: " + ", ".join(missing) + "."]
+
+    if _looks_like_checkout(state_root()):
+        lines += [
+            "",
+            "  make init                 guided setup (or copy .env.example to .env)",
+            "  make demo                 no keys needed — the full pipeline on synthetic data",
+        ]
+    else:
+        lines += [
+            "",
+            "  tradeflow init            guided setup — writes " + str(setup_path),
+            "  tradeflow demo            no keys needed — the full pipeline on synthetic data",
+        ]
+    lines += [
+        "",
+        f"Free paper-trading keys: {ALPACA_KEYS_URL}",
+        "Environment variables (APCA_API_KEY_ID / APCA_API_SECRET_KEY) are honored too.",
+    ]
+    return "\n".join(lines)
+
+
 def load_settings() -> Settings:
     """Resolve and validate the Alpaca credentials, or raise :class:`SettingsError`.
 
@@ -184,12 +221,5 @@ def load_settings() -> Settings:
         if not value or value in _PLACEHOLDERS
     ]
     if missing:
-        raise SettingsError(
-            "Missing Alpaca credentials: "
-            + ", ".join(missing)
-            + ".\nCopy .env.example to .env and add your Alpaca paper-trading keys "
-            "(free at https://app.alpaca.markets/ -> Paper Account -> API Keys).\n"
-            "Environment variables are honored too. "
-            "No keys needed to explore? Run `make demo`."
-        )
+        raise SettingsError(_missing_credentials_message(missing))
     return Settings(alpaca_key=key, alpaca_secret=secret, paper_trade=_resolve_paper_trade())

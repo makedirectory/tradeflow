@@ -88,6 +88,10 @@ tradeflow verdict --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-31
 
 Optional capabilities are extras: `uv tool install "tradeflow-engine[viz,store]"`.
 
+**→ [Getting started](https://tradeflow.mk-dir.com/usage/getting-started)** walks the
+whole path: install → keys → your first real result → Claude connected. Six steps,
+the first two with no keys and no network.
+
 The distribution is **`tradeflow-engine`** (the bare `tradeflow` on PyPI is an
 unrelated package); the command and the importable package are both `tradeflow`.
 
@@ -348,10 +352,12 @@ that the code is untested. Everything ships with offline tests.
 > **AI-assisted research without AI-controlled trading.**
 
 `python main.py mcp` exposes TradeFlow's deterministic capabilities to any MCP
-client (Claude Code / Claude Desktop) as tools: discovery, `run_scan`,
-`run_backtest`, `run_optimization`, `run_walk_forward`, `get_metrics_glossary`,
-`summarize_bars`, and `save_config`/`load_config`/`list_configs`. Every call is
-logged to `logs/mcp_audit.jsonl` for replay.
+client (Claude Code / Claude Desktop) as tools: discovery, `run_verdict`,
+`run_scan`, `run_backtest`, `run_optimization`, `run_walk_forward`, the research
+chain (`compute_alphas`, `construct_portfolio`, `compute_information`, ...),
+`render_report`, read-only trial-store access (`list_trials`, `get_trial`,
+`best_trials`), `get_metrics_glossary`, and `save_config`/`load_config`/
+`list_configs`. Every call is logged to `logs/mcp_audit.jsonl` for replay.
 
 **The safety model is structural.** The server constructs only a *data* client —
 no trading client, no broker — so it is incapable of placing an order. There is
@@ -360,7 +366,17 @@ config to live is a manual human step outside MCP. The capability simply isn't
 wired in, so it can't be prompt-injected around. The agent works on the
 *research clock* (offline, exploratory); the live order path stays LLM-free.
 
-Register it with a client (Claude Desktop / Claude Code `mcpServers`):
+Register it with a client. Installed (`uv tool install --force "tradeflow-engine[mcp]"`):
+
+```bash
+claude mcp add tradeflow -- tradeflow mcp     # Claude Code
+```
+
+```json
+{ "mcpServers": { "tradeflow": { "command": "tradeflow", "args": ["mcp"] } } }
+```
+
+From a checkout, point it at the script instead:
 
 ```json
 { "mcpServers": { "tradeflow": {
@@ -368,6 +384,10 @@ Register it with a client (Claude Desktop / Claude Code `mcpServers`):
     "args": ["run", "--extra", "mcp", "python", "main.py", "mcp"],
     "cwd": "/path/to/tradeflow" } } }
 ```
+
+Note the two resolve **different state roots** (`~/.tradeflow` vs. the checkout), so
+point an agent and yourself at the same one — or set `TRADEFLOW_HOME` — if they
+should share a campaign's history.
 
 ## Research agent (optional)
 
