@@ -40,9 +40,13 @@ holds placeholder values only, and is the right place to document a new setting.
 
 Two checks back this up: GitHub's push protection rejects a push containing a
 recognized provider key, and CI runs [gitleaks](https://github.com/gitleaks/gitleaks)
-over the **entire history** on every PR — deleting a secret in a later commit does
-not remove it from the one that added it. If the scan fails, treat the key as
-compromised and rotate it before rewriting history.
+over **everything reachable from the pushed ref** — not just the diff, since deleting
+a secret in a later commit does not remove it from the one that added it. That scan
+runs on every branch push, not only on PRs: a secret pushed to a topic branch is
+already public whether or not a PR exists.
+
+If the scan fails, treat the key as compromised and **rotate it first**. Rewriting
+history is cleanup, not a fix — anyone may already have fetched the commit.
 
 ## Coding standards
 

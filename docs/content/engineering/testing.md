@@ -37,9 +37,11 @@ Notes:
 ## Secret scanning
 
 The repository is public, so CI also runs
-[gitleaks](https://github.com/gitleaks/gitleaks) over the full git history on every
-push and PR — not just the diff, because a secret deleted in a later commit is still
-readable in the commit that added it. Reproduce it locally with:
+[gitleaks](https://github.com/gitleaks/gitleaks) over everything reachable from the
+pushed ref — not just the diff, because a secret deleted in a later commit is still
+readable in the commit that added it. This is the one job that runs on **every branch
+push**, not only on `main` and PRs, since a secret on a topic branch is public the
+moment it is pushed. Reproduce it locally with:
 
 ```bash
 make secret-scan                # needs gitleaks installed (brew install gitleaks)
