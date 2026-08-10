@@ -174,7 +174,9 @@ class LiveEngine:
         signal = self.strategy.process_bar(event.symbol, bar, event.timestamp)
         if signal and signal != signals.HOLD:
             logger.info("Signal %s for %s @ $%.4f", signal, event.symbol, event.close)
-            order = self.live_trader.handle_signal(event.symbol, signal, event.close)
+            order = self.live_trader.handle_signal(
+                event.symbol, signal, event.close, bar_timestamp=event.timestamp
+            )
             self._record_intent(event.symbol, signal, order)
         self._maybe_reconcile()
 

@@ -21,8 +21,9 @@ class Broker(ABC):
     def list_positions(self) -> List[Position]: ...
     def get_position(self, symbol) -> Optional[Position]: ...
     def is_tradable(self, symbol) -> bool: ...
-    def submit_market_order(self, symbol, qty, side: OrderSide) -> Optional[OrderResult]: ...
-    def submit_bracket_order(self, symbol, qty, side, stop_loss, take_profit) -> Optional[OrderResult]: ...
+    def submit_market_order(self, symbol, qty, side, client_order_id=None) -> Optional[OrderResult]: ...
+    def submit_bracket_order(self, symbol, qty, side, stop_loss, take_profit,
+                             client_order_id=None) -> Optional[OrderResult]: ...
     def list_open_orders(self, symbol=None) -> List[OrderResult]: ...
     def cancel_order(self, order_id) -> bool: ...
     def cancel_all_orders(self) -> bool: ...
@@ -36,11 +37,27 @@ class Broker(ABC):
 ```
 
 `list_open_orders` backs two live-trading safeguards: skipping an entry when an
-order is already pending (no double-submits between placement and fill) and
-canceling resting bracket legs before a discretionary close (no orphaned
-stop/take orders). `stream_trade_updates` is an *optional* capability — brokers
-that can't stream account events simply return `False` from
-`supports_trade_updates`.
+order is already pending, and canceling resting bracket legs before a
+discretionary close (no orphaned stop/take orders). `stream_trade_updates` is an
+*optional* capability — brokers that can't stream account events simply return
+`False` from `supports_trade_updates`.
+
+### `client_order_id` — idempotency that survives a restart
+
+Asking the broker "are there open orders for this symbol?" immediately before
+placing one is a check-then-act race, and it has no memory: a process that
+restarts between submitting an order and seeing its fill asks again, gets an
+answer that no longer reflects what it did, and submits the same order twice.
+
+So every order carries an id derived from the decision behind it — strategy,
+its parameters, symbol, signal, and bar timestamp — and a venue that has already
+accepted that id must reject the duplicate. Idempotency becomes a property of
+the request rather than of how carefully the caller looked first. The pending-
+order check remains, but only as a cheap way to avoid a pointless round trip.
+
+The same bar redelivered after a reconnect hashes to the same id and is refused;
+the same symbol on the next bar hashes differently and trades normally. See
+`tradeflow/execution/order_id.py`.
 
 ### `MarketDataProvider` (`tradeflow/marketdata/base.py`)
 

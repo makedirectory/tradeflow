@@ -95,6 +95,8 @@ class FakeBroker(Broker):
         self.open_orders_list: List[OrderResult] = []  # still-open orders
         self.closed: List[str] = []  # symbols passed to close_position
         self.cancelled: List[str] = []  # order ids passed to cancel_order
+        self.accepted_order_ids: set = set()  # client order ids the venue has taken
+        self.rejected_duplicates: List[str] = []  # ids refused as already-seen
 
     def get_account(self) -> Optional[AccountSnapshot]:
         return self.account
@@ -108,16 +110,35 @@ class FakeBroker(Broker):
     def is_tradable(self, symbol: str) -> bool:
         return self.tradable
 
-    def _record(self, record: dict, symbol, qty, side) -> OrderResult:
+    def _record(self, record: dict, symbol, qty, side, client_order_id=None) -> Optional[OrderResult]:
+        # A real venue rejects a client order id it has already accepted. Faking that
+        # is the whole point: an in-memory broker that cheerfully accepts duplicates
+        # would let a double-submission test pass while the real one loses money.
+        if client_order_id is not None:
+            if client_order_id in self.accepted_order_ids:
+                self.rejected_duplicates.append(client_order_id)
+                return None
+            self.accepted_order_ids.add(client_order_id)
+        record = {**record, "client_order_id": client_order_id}
         self.orders.append(record)
         result = OrderResult(id=f"o{len(self.orders)}", symbol=symbol, side=side, qty=qty, status="accepted")
         self.open_orders_list.append(result)
         return result
 
-    def submit_market_order(self, symbol, qty, side: OrderSide) -> Optional[OrderResult]:
-        return self._record({"type": "market", "symbol": symbol, "qty": qty, "side": side}, symbol, qty, side)
+    def submit_market_order(
+        self, symbol, qty, side: OrderSide, client_order_id=None
+    ) -> Optional[OrderResult]:
+        return self._record(
+            {"type": "market", "symbol": symbol, "qty": qty, "side": side},
+            symbol,
+            qty,
+            side,
+            client_order_id,
+        )
 
-    def submit_bracket_order(self, symbol, qty, side, stop_loss, take_profit) -> Optional[OrderResult]:
+    def submit_bracket_order(
+        self, symbol, qty, side, stop_loss, take_profit, client_order_id=None
+    ) -> Optional[OrderResult]:
         return self._record(
             {
                 "type": "bracket",
@@ -130,6 +151,7 @@ class FakeBroker(Broker):
             symbol,
             qty,
             side,
+            client_order_id,
         )
 
     def list_open_orders(self, symbol: Optional[str] = None) -> List[OrderResult]:
@@ -282,17 +304,17 @@ class RecordingBroker(FakeBroker):
         self.calls: List[str] = []
         self._forced_positions = positions
 
-    def submit_bracket_order(self, symbol, qty, side, stop_loss, take_profit):
+    def submit_bracket_order(self, symbol, qty, side, stop_loss, take_profit, client_order_id=None):
         self.calls.append(f"bracket:{symbol}")
         if self.reject_orders:
             return None
-        return super().submit_bracket_order(symbol, qty, side, stop_loss, take_profit)
+        return super().submit_bracket_order(symbol, qty, side, stop_loss, take_profit, client_order_id)
 
-    def submit_market_order(self, symbol, qty, side):
+    def submit_market_order(self, symbol, qty, side, client_order_id=None):
         self.calls.append(f"market:{symbol}")
         if self.reject_orders:
             return None
-        return super().submit_market_order(symbol, qty, side)
+        return super().submit_market_order(symbol, qty, side, client_order_id)
 
     def list_positions(self):
         self.calls.append("list_positions")

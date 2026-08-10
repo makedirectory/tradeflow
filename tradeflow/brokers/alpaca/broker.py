@@ -99,7 +99,9 @@ class AlpacaBroker(Broker):
     # ------------------------------------------------------------------ #
     # Orders
     # ------------------------------------------------------------------ #
-    def submit_market_order(self, symbol: str, qty: float, side: OrderSide) -> Optional[OrderResult]:
+    def submit_market_order(
+        self, symbol: str, qty: float, side: OrderSide, client_order_id: Optional[str] = None
+    ) -> Optional[OrderResult]:
         try:
             order = self._client.submit_order(
                 MarketOrderRequest(
@@ -107,6 +109,7 @@ class AlpacaBroker(Broker):
                     qty=qty,
                     side=_SIDE_TO_ALPACA[side],
                     time_in_force=TimeInForce.GTC,
+                    client_order_id=client_order_id,
                 )
             )
             return self._to_order_result(order, side)
@@ -115,7 +118,13 @@ class AlpacaBroker(Broker):
             return None
 
     def submit_bracket_order(
-        self, symbol: str, qty: float, side: OrderSide, stop_loss: float, take_profit: float
+        self,
+        symbol: str,
+        qty: float,
+        side: OrderSide,
+        stop_loss: float,
+        take_profit: float,
+        client_order_id: Optional[str] = None,
     ) -> Optional[OrderResult]:
         try:
             order = self._client.submit_order(
@@ -128,6 +137,7 @@ class AlpacaBroker(Broker):
                     order_class=OrderClass.BRACKET,
                     take_profit=TakeProfitRequest(limit_price=take_profit),
                     stop_loss=StopLossRequest(stop_price=stop_loss),
+                    client_order_id=client_order_id,
                 )
             )
             return self._to_order_result(order, side)

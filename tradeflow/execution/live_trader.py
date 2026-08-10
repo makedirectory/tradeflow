@@ -16,9 +16,11 @@ convenience: see :meth:`LiveTrader.sync_strategy_book`.
 
 import logging
 import time
+from datetime import datetime
 from typing import Optional
 
 from tradeflow.brokers.base import Broker, OrderResult, OrderSide, Position
+from tradeflow.execution.order_id import client_order_id
 from tradeflow.execution.sizing import PositionSizer, RiskBasedSizer
 from tradeflow.strategies import signals
 from tradeflow.strategies.base import Strategy
@@ -94,8 +96,18 @@ class LiveTrader:
         self._strategy.positions = book
         return len(book)
 
-    def handle_signal(self, symbol: str, signal: str, price: float) -> Optional[OrderResult]:
-        """Act on a single signal. Returns the resulting order, if any."""
+    def handle_signal(
+        self,
+        symbol: str,
+        signal: str,
+        price: float,
+        bar_timestamp: Optional[datetime] = None,
+    ) -> Optional[OrderResult]:
+        """Act on a single signal. Returns the resulting order, if any.
+
+        ``bar_timestamp`` is what distinguishes one decision from a replay of the
+        same one; see :mod:`tradeflow.execution.order_id`.
+        """
         if signal == signals.HOLD:
             return None
 
@@ -110,7 +122,7 @@ class LiveTrader:
             return None
 
         if signal in signals.ENTRY_SIGNALS:
-            return self._handle_entry(symbol, signal, price, position)
+            return self._handle_entry(symbol, signal, price, position, bar_timestamp)
 
         logger.warning("Ignoring unrecognized signal %r for %s", signal, symbol)
         return None
@@ -119,13 +131,21 @@ class LiveTrader:
     # Entries & exits
     # ------------------------------------------------------------------ #
     def _handle_entry(
-        self, symbol: str, signal: str, price: float, position: Optional[Position]
+        self,
+        symbol: str,
+        signal: str,
+        price: float,
+        position: Optional[Position],
+        bar_timestamp: Optional[datetime] = None,
     ) -> Optional[OrderResult]:
         if position is not None:
             logger.info("Skipping %s entry for %s: position already open", signal, symbol)
             return None
 
-        # Guard against double-submitting between order placement and fill.
+        # A cheap local shortcut, not the safety mechanism: it saves a pointless round
+        # trip when an order is visibly pending, but it is a check-then-act race and
+        # it forgets everything across a restart. The deterministic client order id
+        # below is what actually prevents a double submission.
         if self._broker.list_open_orders(symbol):
             logger.info("Skipping %s entry for %s: an order is already pending", signal, symbol)
             return None
@@ -161,7 +181,14 @@ class LiveTrader:
             stop_loss,
             take_profit,
         )
-        order = self._broker.submit_bracket_order(symbol, qty, side, stop_loss, take_profit)
+        order = self._broker.submit_bracket_order(
+            symbol,
+            qty,
+            side,
+            stop_loss,
+            take_profit,
+            client_order_id=client_order_id(self._strategy, symbol, signal, bar_timestamp),
+        )
         if order is not None:
             # Intent, not truth: the order is submitted, not filled. Recording it now
             # is what lets the strategy recognize its own position on the very next

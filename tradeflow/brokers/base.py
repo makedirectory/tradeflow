@@ -116,14 +116,31 @@ class Broker(ABC):
 
     # --- orders --------------------------------------------------------------
     @abstractmethod
-    def submit_market_order(self, symbol: str, qty: float, side: OrderSide) -> Optional[OrderResult]:
-        """Submit a market order."""
+    def submit_market_order(
+        self, symbol: str, qty: float, side: OrderSide, client_order_id: Optional[str] = None
+    ) -> Optional[OrderResult]:
+        """Submit a market order.
+
+        ``client_order_id``, when given, is the caller's own identity for this order.
+        A venue that has already accepted it must reject the duplicate rather than
+        place a second order - that rejection is the idempotency guarantee, and it is
+        the only one that survives the submitting process restarting.
+        """
 
     @abstractmethod
     def submit_bracket_order(
-        self, symbol: str, qty: float, side: OrderSide, stop_loss: float, take_profit: float
+        self,
+        symbol: str,
+        qty: float,
+        side: OrderSide,
+        stop_loss: float,
+        take_profit: float,
+        client_order_id: Optional[str] = None,
     ) -> Optional[OrderResult]:
-        """Submit a bracket order (entry + stop-loss + take-profit)."""
+        """Submit a bracket order (entry + stop-loss + take-profit).
+
+        ``client_order_id`` carries the same meaning as in :meth:`submit_market_order`.
+        """
 
     @abstractmethod
     def list_open_orders(self, symbol: Optional[str] = None) -> List[OrderResult]:

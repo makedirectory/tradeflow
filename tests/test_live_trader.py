@@ -1,10 +1,13 @@
 """Execution-layer tests using an in-memory FakeBroker."""
 
+from datetime import datetime
+
 import pytest
 
 from tests.fakes import FakeBroker
 from tradeflow.brokers.base import AccountSnapshot, OrderSide, Position
 from tradeflow.execution.live_trader import LiveTrader
+from tradeflow.execution.order_id import client_order_id
 from tradeflow.execution.sizing import BetaSizer, PortfolioWeightSizer, RiskBasedSizer
 from tradeflow.strategies import signals
 from tradeflow.strategies.volume_spike import VolumeSpikeStrategy
@@ -148,3 +151,78 @@ def test_exit_cancels_resting_orders_before_closing():
     _trader(broker).handle_signal("AAA", signals.CLOSE_BUY, 100.0)
     assert broker.closed == ["AAA"]
     assert broker.list_open_orders("AAA") == []  # resting legs canceled
+
+
+# --- order identity ---------------------------------------------------------
+def _ts(minute=0):
+    return datetime(2024, 1, 2, 10, minute)
+
+
+def test_the_same_decision_always_yields_the_same_order_id():
+    strategy = VolumeSpikeStrategy.create_with_defaults()
+    first = client_order_id(strategy, "AAA", signals.BUY, _ts(1))
+    again = client_order_id(strategy, "AAA", signals.BUY, _ts(1))
+    assert first == again
+
+
+@pytest.mark.parametrize(
+    "symbol,signal,ts",
+    [("BBB", signals.BUY, _ts(1)), ("AAA", signals.SELL, _ts(1)), ("AAA", signals.BUY, _ts(2))],
+)
+def test_a_different_decision_yields_a_different_order_id(symbol, signal, ts):
+    """Cover every axis: the same symbol on a later bar is a new order, not a replay."""
+    strategy = VolumeSpikeStrategy.create_with_defaults()
+    baseline = client_order_id(strategy, "AAA", signals.BUY, _ts(1))
+    assert client_order_id(strategy, symbol, signal, ts) != baseline
+
+
+def test_reconfiguring_a_strategy_changes_its_order_ids():
+    """Two parameterizations can legitimately disagree about the same bar; one must
+    not be deduplicated against the other."""
+    base = VolumeSpikeStrategy.create_with_defaults()
+    other = VolumeSpikeStrategy.create_with_defaults()
+    other.config["risk_per_trade"] = base.config["risk_per_trade"] / 2
+    assert client_order_id(base, "AAA", signals.BUY, _ts(1)) != client_order_id(
+        other, "AAA", signals.BUY, _ts(1)
+    )
+
+
+def test_an_entry_carries_its_client_order_id_to_the_broker():
+    broker = FakeBroker()
+    _trader(broker).handle_signal("AAA", signals.BUY, 100.0, bar_timestamp=_ts(1))
+    assert broker.orders[0]["client_order_id"]
+
+
+def test_a_replayed_bar_cannot_place_a_second_order():
+    """The failure this exists for: a reconnect redelivers a bar, or the process
+    restarts, and the check-then-act guard against open orders no longer remembers
+    anything. The broker refuses the duplicate id instead."""
+    broker = FakeBroker()
+    strategy = VolumeSpikeStrategy.create_with_defaults()
+    trader = LiveTrader(broker, strategy)
+
+    first = trader.handle_signal("AAA", signals.BUY, 100.0, bar_timestamp=_ts(1))
+    # Wipe the local shortcut and the book, exactly as a restart would.
+    broker.open_orders_list.clear()
+    strategy.positions.clear()
+    second = trader.handle_signal("AAA", signals.BUY, 100.0, bar_timestamp=_ts(1))
+
+    assert first is not None
+    assert second is None
+    assert len(broker.orders) == 1
+    assert broker.rejected_duplicates  # refused by identity, not by looking first
+
+
+def test_a_genuinely_new_bar_still_places_an_order_after_a_restart():
+    """The other direction: identity must not become a reason to never trade again."""
+    broker = FakeBroker()
+    strategy = VolumeSpikeStrategy.create_with_defaults()
+    trader = LiveTrader(broker, strategy)
+
+    trader.handle_signal("AAA", signals.BUY, 100.0, bar_timestamp=_ts(1))
+    broker.open_orders_list.clear()
+    strategy.positions.clear()
+    later = trader.handle_signal("AAA", signals.BUY, 100.0, bar_timestamp=_ts(2))
+
+    assert later is not None
+    assert len(broker.orders) == 2
