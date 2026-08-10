@@ -5,6 +5,13 @@ depends only on the :class:`Broker` interface and the broker-agnostic domain
 types defined here - never on a specific vendor SDK. To support a new venue,
 implement :class:`Broker` (see :mod:`tradeflow.brokers.alpaca.broker`) and inject it;
 nothing else changes.
+
+**Failure is typed, not erased.** Anything that moves money or reports the account's
+actual state raises a :class:`~tradeflow.brokers.errors.BrokerError` subclass, because
+the caller's correct response differs by cause: back off, stop and get a human, size
+down, or carry on. The methods that answer a genuine yes/no question still return one
+- :meth:`Broker.get_position` returning ``None`` means *flat*, which is an answer
+rather than a failure.
 """
 
 from abc import ABC, abstractmethod
@@ -100,11 +107,20 @@ class Broker(ABC):
     # --- account & positions -------------------------------------------------
     @abstractmethod
     def get_account(self) -> Optional[AccountSnapshot]:
-        """Return the current account snapshot, or None on failure."""
+        """Return the current account snapshot.
+
+        Raises a :class:`~tradeflow.brokers.errors.BrokerError` if the account cannot
+        be read.
+        """
 
     @abstractmethod
     def list_positions(self) -> List[Position]:
-        """Return all open positions (empty list if none)."""
+        """Return all open positions; an empty list means the account is flat.
+
+        Raises a :class:`~tradeflow.brokers.errors.BrokerError` rather than returning
+        an empty list when positions cannot be read - "flat" and "unknown" are
+        different answers, and callers rebuild state from this one.
+        """
 
     @abstractmethod
     def get_position(self, symbol: str) -> Optional[Position]:
@@ -148,25 +164,33 @@ class Broker(ABC):
 
     @abstractmethod
     def cancel_order(self, order_id: str) -> bool:
-        """Cancel a single order. Returns True on success."""
+        """Cancel a single order. Raises a ``BrokerError`` if the venue refuses."""
 
     @abstractmethod
     def cancel_all_orders(self) -> bool:
-        """Cancel all open orders. Returns True on success."""
+        """Cancel all open orders. Raises a ``BrokerError`` if the venue refuses."""
 
     # --- position lifecycle --------------------------------------------------
     @abstractmethod
     def close_position(self, symbol: str) -> bool:
-        """Liquidate the position in ``symbol``. Returns True on success."""
+        """Liquidate the position in ``symbol``. Raises a ``BrokerError`` on failure."""
 
     @abstractmethod
     def close_all_positions(self, cancel_orders: bool = True) -> bool:
-        """Liquidate all positions, optionally canceling orders first."""
+        """Liquidate all positions, optionally canceling orders first.
+
+        Raises a ``BrokerError`` on failure - a flatten that quietly did nothing is
+        the worst possible outcome for this call.
+        """
 
     # --- market clock --------------------------------------------------------
     @abstractmethod
     def get_market_status(self) -> Optional[MarketStatus]:
-        """Return the current market clock, or None on failure."""
+        """Return the current market clock.
+
+        Raises a :class:`~tradeflow.brokers.errors.BrokerError` if the clock cannot be
+        read, so a caller can tell "closed" apart from "could not tell".
+        """
 
     # --- trade-update streaming (optional capability) ------------------------
     def supports_trade_updates(self) -> bool:

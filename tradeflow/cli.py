@@ -2216,7 +2216,13 @@ def cmd_live(args) -> None:
 
     sizer = None
     if args.portfolio:
-        account = broker.get_account()
+        from tradeflow.brokers.errors import BrokerError
+
+        try:
+            account = broker.get_account()
+        except BrokerError as exc:
+            logger.warning("Could not read the account (%s); sizing against a nominal $100k", exc)
+            account = None
         equity = account.equity if account else 100_000.0
         sizer = build_portfolio_weight_sizer(
             data_client, equity, universe, "1Day", args.max_positions, args.max_weight

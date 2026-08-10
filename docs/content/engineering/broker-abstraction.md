@@ -68,6 +68,41 @@ class MarketDataProvider(ABC):
     def supports_streaming(self) -> bool: ...
 ```
 
+## Typed failure (`tradeflow/brokers/errors.py`)
+
+Every broker call used to fail the same way — `None`, or `False`. A rate limit, an
+expired token, insufficient buying power, a closed market, and an order the venue
+deliberately refused all arrived as the same absence of information, so the only
+possible response was the same one. That is the wrong response to most of them, and
+for a duplicate order it is actively misleading: the order *was* placed.
+
+Anything that moves money or reports the account's actual state now raises a
+`BrokerError` subclass, chosen by what a caller would do differently:
+
+| Error | What it means | Correct response |
+|---|---|---|
+| `RateLimitedError` | Throttled; the request was fine | Back off |
+| `AuthenticationError` | Credentials rejected | Stop; never transient |
+| `InsufficientFundsError` | Account can't support this size | Size down |
+| `MarketClosedError` | Right request, wrong time | Wait |
+| `DuplicateOrderError` | The venue already has this order | Nothing — it succeeded |
+| `OrderRejectedError` | Refused on the venue's own terms | Inspect |
+| `BrokerUnavailableError` | Couldn't reach the venue at all | Retry |
+| `NotTradableError` | Symbol can't be traded now | Skip the symbol |
+
+Methods that answer a genuine yes/no question still return one: `get_position`
+returning `None` means *flat*, which is an answer rather than a failure.
+`list_positions` is the opposite case and raises — an empty list is the factual
+claim that the account holds nothing, and the strategy's position book is rebuilt
+from it, so turning an unreachable broker into "you are flat" would silently make
+every real position un-exitable.
+
+Two consequences worth stating outright. A `DuplicateOrderError` is not a failed
+submission, so the trader logs it and leaves the existing order alone rather than
+resubmitting. And an unreadable market clock no longer uniformly means "assume
+open": that is right for a transient blip, but revoked credentials are never
+transient, so authentication failures fail closed.
+
 ## Vendor-neutral domain types
 
 Callers never see Alpaca objects. The broker layer defines plain dataclasses /

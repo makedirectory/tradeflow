@@ -9,6 +9,7 @@ import argparse
 import logging
 
 from tradeflow.brokers.alpaca.factory import build_broker
+from tradeflow.brokers.errors import BrokerError
 from tradeflow.settings import SettingsError, load_settings
 from tradeflow.utils.logging_config import setup_logging
 
@@ -26,10 +27,11 @@ def main() -> None:
     except SettingsError as exc:
         raise SystemExit(str(exc))
     broker = build_broker(settings.alpaca_key, settings.alpaca_secret, settings.paper_trade)
-    if broker.close_all_positions(cancel_orders=not args.keep_orders):
-        logger.info("All positions closed.")
-    else:
-        logger.error("Failed to close positions.")
+    try:
+        broker.close_all_positions(cancel_orders=not args.keep_orders)
+    except BrokerError as exc:
+        raise SystemExit(f"Failed to close positions: {exc}")
+    logger.info("All positions closed.")
 
 
 if __name__ == "__main__":

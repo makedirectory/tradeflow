@@ -20,6 +20,7 @@ from datetime import datetime
 from typing import Optional
 
 from tradeflow.brokers.base import Broker, OrderResult, OrderSide, Position
+from tradeflow.brokers.errors import AuthenticationError, BrokerError, DuplicateOrderError
 from tradeflow.execution.order_id import client_order_id
 from tradeflow.execution.sizing import PositionSizer, RiskBasedSizer
 from tradeflow.strategies import signals
@@ -150,7 +151,11 @@ class LiveTrader:
             logger.info("Skipping %s entry for %s: an order is already pending", signal, symbol)
             return None
 
-        account = self._broker.get_account()
+        try:
+            account = self._broker.get_account()
+        except BrokerError as exc:
+            logger.error("Cannot size %s entry: %s (%s)", symbol, exc, type(exc).__name__)
+            return None
         if account is None:
             logger.error("Cannot size %s entry: account unavailable", symbol)
             return None
@@ -181,14 +186,19 @@ class LiveTrader:
             stop_loss,
             take_profit,
         )
-        order = self._broker.submit_bracket_order(
-            symbol,
-            qty,
-            side,
-            stop_loss,
-            take_profit,
-            client_order_id=client_order_id(self._strategy, symbol, signal, bar_timestamp),
-        )
+        order_id = client_order_id(self._strategy, symbol, signal, bar_timestamp)
+        try:
+            order = self._broker.submit_bracket_order(
+                symbol, qty, side, stop_loss, take_profit, client_order_id=order_id
+            )
+        except DuplicateOrderError:
+            # Not a failure: the venue already holds this exact order. Resubmitting is
+            # the one thing that must not happen, and the book should still reflect it.
+            logger.info("Entry for %s already placed (order id %s); leaving it alone", symbol, order_id)
+            order = None
+        except BrokerError as exc:
+            logger.error("Entry for %s refused: %s (%s)", symbol, exc, type(exc).__name__)
+            return None
         if order is not None:
             # Intent, not truth: the order is submitted, not filled. Recording it now
             # is what lets the strategy recognize its own position on the very next
@@ -211,26 +221,50 @@ class LiveTrader:
         )
         if matches:
             # Cancel any resting bracket legs first so closing the position can't
-            # leave an orphaned stop/take order behind (which could oversell).
+            # leave an orphaned stop/take order behind (which could oversell). A leg
+            # that cannot be canceled must not stop the close: an un-exited position
+            # is the worse of the two outcomes, and the sweep will surface the orphan.
             for order in self._broker.list_open_orders(symbol):
-                self._broker.cancel_order(order.id)
+                try:
+                    self._broker.cancel_order(order.id)
+                except BrokerError as exc:
+                    logger.warning("Could not cancel resting order %s: %s", order.id, exc)
             logger.info("Closing %s position for %s", position.side, symbol)
-            self._broker.close_position(symbol)
+            try:
+                self._broker.close_position(symbol)
+            except BrokerError as exc:
+                # Deliberately kept in the book: the position is still open, so the
+                # strategy must stay entitled to try again.
+                logger.error("Could not close %s: %s (%s)", symbol, exc, type(exc).__name__)
+                return
             self._strategy.positions.pop(symbol, None)
 
     def _market_open(self) -> bool:
         """Whether the market is open, cached for a short TTL.
 
-        If the clock can't be determined, default to open (permissive): the live
-        bar stream only delivers during sessions anyway, so this is a secondary
-        guard, and a transient clock error shouldn't freeze trading.
+        An unreadable clock used to mean "open". That is right for a transient blip -
+        the bar stream only delivers during sessions anyway, so this is a secondary
+        guard and freezing trading over one failed request would be worse - but it was
+        also being applied to a failure that is *never* transient. Expired or revoked
+        credentials produced "the market is open", and the system carried on placing
+        orders on the strength of an answer nobody had given it.
+
+        So the fallback now depends on the cause: an authentication failure fails
+        closed, everything else stays permissive and says so.
         """
         now = time.monotonic()
         if self._market_status_cache and now - self._market_status_cache[0] < _MARKET_STATUS_TTL:
             return self._market_status_cache[1]
 
-        status = self._broker.get_market_status()
-        is_open = status.is_open if status is not None else True
+        try:
+            status = self._broker.get_market_status()
+            is_open = status.is_open if status is not None else True
+        except AuthenticationError as exc:
+            logger.error("Treating the market as closed: credentials rejected (%s)", exc)
+            is_open = False
+        except BrokerError as exc:
+            logger.warning("Market clock unreadable (%s); assuming open", exc)
+            is_open = True
         self._market_status_cache = (now, is_open)
         return is_open
 

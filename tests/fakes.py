@@ -380,3 +380,46 @@ class ScriptedStrategy(Strategy):
 
     def calculate_scores(self, data: pd.DataFrame) -> pd.Series:
         return data["close"].astype(float) - self.config["pivot"]
+
+
+class FailingBroker(FakeBroker):
+    """A broker that fails a named method with a chosen error.
+
+    The point is the *kind* of failure: an in-memory broker that can only succeed or
+    return ``None`` cannot express the difference between a rate limit and revoked
+    credentials, which is exactly the difference callers now act on.
+    """
+
+    def __init__(self, failures: Optional[Dict[str, Exception]] = None, **kwargs):
+        super().__init__(**kwargs)
+        self.failures = failures or {}
+
+    def _maybe_fail(self, name: str) -> None:
+        error = self.failures.get(name)
+        if error is not None:
+            raise error
+
+    def get_account(self):
+        self._maybe_fail("get_account")
+        return super().get_account()
+
+    def list_positions(self):
+        self._maybe_fail("list_positions")
+        return super().list_positions()
+
+    def get_market_status(self):
+        self._maybe_fail("get_market_status")
+        return super().get_market_status()
+
+    def submit_bracket_order(self, symbol, qty, side, stop_loss, take_profit, client_order_id=None):
+        self._maybe_fail("submit_bracket_order")
+        return super().submit_bracket_order(symbol, qty, side, stop_loss, take_profit, client_order_id)
+
+    def close_position(self, symbol):
+        self._maybe_fail("close_position")
+        return super().close_position(symbol)
+
+    def cancel_order(self, order_id):
+        self._maybe_fail("cancel_order")
+        return super().cancel_order(order_id)
+
