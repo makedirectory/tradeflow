@@ -7,7 +7,7 @@ This is exactly what the broker abstraction buys us.
 """
 
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, ClassVar, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -15,6 +15,7 @@ import pandas as pd
 from tradeflow.brokers.base import AccountSnapshot, Broker, MarketStatus, OrderResult, OrderSide, Position
 from tradeflow.marketdata.base import BarHandler, MarketDataProvider
 from tradeflow.marketdata.timeframe import Timeframe
+from tradeflow.strategies.base import Strategy
 from tradeflow.utils.timeutils import NEW_YORK
 
 
@@ -312,3 +313,48 @@ class FakeTradeUpdate:
         self.status = status
         self.filled_qty = filled_qty
         self.side = side
+
+
+class ScriptedStrategy(Strategy):
+    """A strategy whose conviction is a plain function of price.
+
+    Score is ``close - pivot``, so a test drives it long or flat by choosing closes
+    either side of the pivot — no warm-up period to wait out and no indicator math
+    to reason about.
+
+    Only the indicator layer is faked. Hysteresis, signal derivation, position
+    validation and the real-time buffer all come from the real :class:`Strategy`
+    base class, which is where the behavior under test actually lives.
+    """
+
+    TIMEFRAME = "1Day"
+
+    PARAM_RANGES: ClassVar[Dict[str, Dict[str, Any]]] = {
+        "pivot": {"type": "float", "min": 1.0, "max": 1e6, "step": 1.0, "default": 100.0},
+        "risk_per_trade": {"type": "float", "min": 0.01, "max": 0.05, "step": 0.01, "default": 0.02},
+        "stop_loss": {"type": "float", "min": 0.01, "max": 0.08, "step": 0.01, "default": 0.03},
+        "take_profit": {"type": "float", "min": 0.02, "max": 0.15, "step": 0.01, "default": 0.06},
+    }
+
+    def __init__(self, config: Dict[str, Any]):
+        config["timeframe"] = self.TIMEFRAME
+        config.setdefault(
+            "position_limits",
+            {"max_positions": 1, "max_position_size": 100_000.0, "max_total_risk": 0.05},
+        )
+        super().__init__(config)
+
+    def calculate_required_lookback(self) -> int:
+        # One bar, so every scripted bar is actually evaluated. A larger lookback
+        # would swallow the first bars before the strategy ever sees them, which is
+        # realistic but makes a test about exits depend on warm-up arithmetic.
+        return 1
+
+    def initialize(self) -> None:
+        return None
+
+    def process_data(self, data: pd.DataFrame) -> pd.DataFrame:
+        return data
+
+    def calculate_scores(self, data: pd.DataFrame) -> pd.Series:
+        return data["close"].astype(float) - self.config["pivot"]

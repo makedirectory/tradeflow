@@ -23,6 +23,7 @@ Deliberately *not* a strategy's job (separation of concerns):
 The same strategy object is driven unchanged by the backtest and live engines.
 """
 
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
@@ -31,6 +32,9 @@ from typing import Any, Dict, Optional
 import pandas as pd
 
 from tradeflow.strategies import signals
+from tradeflow.utils.timeutils import match_index_tz
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -300,6 +304,10 @@ class Strategy(ABC):
                 buffer.index.name = "timestamp"
 
             row = {key: bar[key] for key in ("open", "high", "low", "close", "volume")}
+            # Warm-up history arrives localized; a streamed bar may not be. One naive
+            # timestamp in an otherwise aware index makes every subsequent comparison
+            # raise, and the guard below would turn that into permanent silence.
+            timestamp = match_index_tz(timestamp, buffer.index)
             buffer = pd.concat([buffer, pd.DataFrame([row], index=[timestamp])])
             if len(buffer) > self.max_buffer_size:
                 buffer = buffer.tail(self.max_buffer_size)
@@ -314,6 +322,9 @@ class Strategy(ABC):
             latest = self._latest_signal(self.generate_signals(processed))
             return latest if self.validate_signal(latest, symbol, bar["close"]) else signals.HOLD
         except Exception:  # noqa: BLE001 - never break the stream
+            # Swallowing keeps the stream alive, but a strategy that raises on every
+            # bar emits nothing and looks exactly like one with no opinion. Say so.
+            logger.warning("Discarding bar for %s: the strategy raised", symbol, exc_info=True)
             return None
 
     def process_real_time_data(

@@ -6,6 +6,12 @@ in live mode that mutates the account, and it speaks exclusively through the
 
 Sizing and stop/take-profit distances come from the strategy's config; placement
 and account/position reads go through the broker.
+
+It also owns the strategy's **position book** - the strategy's belief about what it
+holds. That belief is what :meth:`Strategy.validate_signal` consults to decide
+whether an exit is legitimate, so a book that is never populated silently converts
+every exit into a HOLD. Hydrating it is therefore part of executing, not a
+convenience: see :meth:`LiveTrader.sync_strategy_book`.
 """
 
 import logging
@@ -50,6 +56,43 @@ class LiveTrader:
     @property
     def broker(self) -> Broker:
         return self._broker
+
+    # ------------------------------------------------------------------ #
+    # The strategy's position book
+    # ------------------------------------------------------------------ #
+    def sync_strategy_book(self) -> int:
+        """Replace the strategy's position book with what the broker actually holds.
+
+        The strategy decides whether an exit is legitimate by looking itself up in
+        its own book (:meth:`Strategy.validate_signal`). Nothing in live mode used to
+        write that book, so it was permanently empty and every ``CLOSE_BUY`` /
+        ``CLOSE_SELL`` was rewritten to ``HOLD`` before execution ever saw it -
+        positions could be opened but never closed by the strategy, only by the
+        broker-side bracket legs.
+
+        Broker truth wins outright: the book is rebuilt, not merged. A belief that
+        disagrees with the account is not evidence of anything except a stale belief.
+        This is a *read* - it reports what is, and never places a corrective order.
+
+        One ``list_positions`` call regardless of universe size, so it is safe to
+        call on the trade clock. Returns the number of positions adopted.
+        """
+        positions = self._broker.list_positions() or []
+        book = {}
+        for position in positions:
+            side = signals.BUY if position.is_long else signals.SELL
+            stop_loss, take_profit = self._stop_levels(
+                position.avg_entry_price, OrderSide.BUY if position.is_long else OrderSide.SELL
+            )
+            book[position.symbol] = {
+                "side": side,
+                "qty": position.qty,
+                "entry_price": position.avg_entry_price,
+                "stop_loss": stop_loss,
+                "take_profit": take_profit,
+            }
+        self._strategy.positions = book
+        return len(book)
 
     def handle_signal(self, symbol: str, signal: str, price: float) -> Optional[OrderResult]:
         """Act on a single signal. Returns the resulting order, if any."""
@@ -118,7 +161,20 @@ class LiveTrader:
             stop_loss,
             take_profit,
         )
-        return self._broker.submit_bracket_order(symbol, qty, side, stop_loss, take_profit)
+        order = self._broker.submit_bracket_order(symbol, qty, side, stop_loss, take_profit)
+        if order is not None:
+            # Intent, not truth: the order is submitted, not filled. Recording it now
+            # is what lets the strategy recognize its own position on the very next
+            # bar and emit an exit for it; the next `sync_strategy_book` replaces this
+            # with whatever the broker actually holds.
+            self._strategy.positions[symbol] = {
+                "side": signal,
+                "qty": qty,
+                "entry_price": price,
+                "stop_loss": stop_loss,
+                "take_profit": take_profit,
+            }
+        return order
 
     def _handle_exit(self, symbol: str, signal: str, position: Optional[Position]) -> None:
         if position is None:
@@ -133,6 +189,7 @@ class LiveTrader:
                 self._broker.cancel_order(order.id)
             logger.info("Closing %s position for %s", position.side, symbol)
             self._broker.close_position(symbol)
+            self._strategy.positions.pop(symbol, None)
 
     def _market_open(self) -> bool:
         """Whether the market is open, cached for a short TTL.

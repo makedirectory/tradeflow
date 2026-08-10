@@ -79,6 +79,7 @@ class LiveEngine:
         """
         self.strategy.initialize()
         self._warm_up(symbols)
+        self._cold_start()
 
         broker = self.live_trader.broker
         tasks = [self.data_client.stream(symbols, self._on_bar)]
@@ -116,6 +117,30 @@ class LiveEngine:
                 )
         except Exception:  # noqa: BLE001 - bookkeeping never breaks the order path
             logger.warning("Could not record a fill in the position ledger", exc_info=True)
+
+    def _cold_start(self) -> None:
+        """Teach the strategy what it already holds, before the first bar arrives.
+
+        Warm-up seeds *indicators* from history; it says nothing about the book. A
+        process that restarts while holding a position would otherwise believe it was
+        flat — and a strategy that believes it is flat cannot emit an exit, because
+        its own signal validation rejects one. The position would then be closed only
+        by its broker-side bracket legs, if it had any.
+
+        Unconditional, and not governed by ``reconcile_every``: that setting paces the
+        ledger sweep, whereas an unhydrated book is a correctness bug rather than a
+        cadence choice. Failure here is logged, not fatal — starting flat is wrong but
+        recoverable on the next sweep, while refusing to start is not obviously better.
+        """
+        try:
+            adopted = self.live_trader.sync_strategy_book()
+        except Exception:  # noqa: BLE001 - bookkeeping never breaks the order path
+            logger.warning("Could not read the broker's positions at start-up", exc_info=True)
+            return
+        # Count the sweep: it just happened, so the first bar need not repeat it.
+        self._last_reconcile = time.monotonic()
+        if adopted:
+            logger.info("Resuming with %d open position(s) adopted from the broker", adopted)
 
     def _warm_up(self, symbols: List[str]) -> None:
         """Seed each symbol's rolling buffer so indicators are valid on bar one."""
@@ -172,7 +197,7 @@ class LiveEngine:
         per symbol — because this runs on the trade clock and must not make bar
         processing depend on the size of the universe.
         """
-        if self.ledger is None or self.reconcile_every <= 0:
+        if self.reconcile_every <= 0:
             return
         now = time.monotonic()
         # The first bar always sweeps. A process that just started is the case most
@@ -181,6 +206,14 @@ class LiveEngine:
         if self._last_reconcile is not None and now - self._last_reconcile < self.reconcile_every:
             return
         self._last_reconcile = now
+        # Re-read the book first: a bracket leg that filled, or a position closed by
+        # hand in the broker's UI, changes what the strategy is entitled to exit.
+        try:
+            self.live_trader.sync_strategy_book()
+        except Exception:  # noqa: BLE001 - bookkeeping never breaks the order path
+            logger.warning("Could not refresh the strategy's position book", exc_info=True)
+        if self.ledger is None:
+            return
         try:
             self.ledger.reconcile(self.live_trader.broker)
         except Exception:  # noqa: BLE001
