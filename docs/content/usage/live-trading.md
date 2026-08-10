@@ -170,12 +170,22 @@ So the live loop compares the direction the score implies against the position b
 the score already implies a position — a trend-follower started mid-trend, say — it
 will open that position on the first live bar rather than waiting for the next fresh
 crossing. Stops and targets are computed from the current price, not the price at the
-original crossing. That is the intended behavior of a book that converges on intent,
-but it is a real change from waiting for the next edge, and it is most visible the
-first time you start a strategy into an established move.
+original crossing. This is the default, on the view that a trend-follower started
+mid-trend should hold the trend rather than sit flat until the next crossing.
 
-Backtests are unaffected: they derive the book from the same signals, so the two can
-never disagree there.
+If you would rather wait for a fresh edge:
+
+```bash
+tradeflow live --strategy ma_crossover --no-reaffirm-entries
+```
+
+or set `reaffirm_entries: false` in a strategy config. **Exits are never gated by
+it.** Declining to open a position is a preference about what you trade; declining to
+close one the strategy no longer wants is a stuck position, so a missed exit is always
+re-stated whatever the flag says.
+
+Backtests are unaffected either way: they derive the book from the same signals, so
+the two can never disagree there.
 
 ## Why nothing happened
 

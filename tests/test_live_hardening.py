@@ -671,6 +671,63 @@ def test_an_exit_edge_missed_while_holding_is_still_acted_on():
     assert signal == signals.CLOSE_BUY
 
 
+def test_entry_reaffirmation_can_be_turned_off():
+    """A legitimate preference: wait for a fresh crossing rather than open a position
+    on a signal this process never saw fire."""
+    engine, broker, strategy = _scripted_engine([206.0, 207.0])
+    strategy.config["reaffirm_entries"] = False
+    import pandas as pd
+
+    history = pd.DataFrame(
+        {"open": 205.0, "high": 206.0, "low": 204.0, "close": 205.0, "volume": 1000.0},
+        index=pd.date_range("2024-01-02 09:30", periods=5, freq="1D", tz=NEW_YORK),
+    )
+    strategy.warm_up(SYMBOL, history)
+
+    signal = strategy.process_bar(SYMBOL, _bar(close=206.0), datetime(2024, 1, 15, 10, 0))
+
+    assert signal == signals.HOLD
+
+
+def test_turning_it_off_still_does_not_strand_an_open_position():
+    """Declining to *enter* is a preference. Declining to *close* something the
+    strategy no longer wants is a stuck position, so the exit side is never gated."""
+    engine, broker, strategy = _scripted_engine([195.0], positions=[_long_position()])
+    strategy.config["reaffirm_entries"] = False
+    engine.live_trader.sync_strategy_book()
+    import pandas as pd
+
+    history = pd.DataFrame(
+        {"open": 195.0, "high": 196.0, "low": 194.0, "close": 195.0, "volume": 1000.0},
+        index=pd.date_range("2024-01-02 09:30", periods=5, freq="1D", tz=NEW_YORK),
+    )
+    strategy.warm_up(SYMBOL, history)
+
+    signal = strategy.process_bar(SYMBOL, _bar(close=194.0), datetime(2024, 1, 15, 10, 0))
+
+    assert signal == signals.CLOSE_BUY
+
+
+def test_a_fresh_crossing_still_enters_with_reaffirmation_off():
+    """The flag suppresses re-affirmation, not trading."""
+    engine, broker, strategy = _scripted_engine([205.0, 206.0])
+    strategy.config["reaffirm_entries"] = False
+
+    asyncio.run(engine.start([SYMBOL]))
+
+    assert [o["type"] for o in broker.orders] == ["bracket"]
+
+
+def test_reaffirmation_defaults_to_on():
+    """The default is the assumption: a trend-follower started mid-trend takes the
+    position rather than sitting flat until the next crossing."""
+    from tradeflow.strategies.base import REAFFIRM_ENTRIES_DEFAULT
+
+    assert REAFFIRM_ENTRIES_DEFAULT is True
+    strategy = ScriptedStrategy.create_with_defaults()
+    assert strategy.config.get("reaffirm_entries", REAFFIRM_ENTRIES_DEFAULT) is True
+
+
 def test_a_book_that_already_matches_the_score_stays_quiet():
     """The other direction: re-affirmation must not re-fire every bar on a position
     that is exactly as intended."""

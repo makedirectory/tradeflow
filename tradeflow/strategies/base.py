@@ -36,6 +36,13 @@ from tradeflow.utils.timeutils import match_index_tz
 
 logger = logging.getLogger(__name__)
 
+#: Whether a live strategy opens a position implied by the score but whose entry edge
+#: it never saw — a crossing lost to a rejected bar, a dropped stream, a restart, or
+#: the warm-up history. On by default: a trend-follower started mid-trend should hold
+#: the trend, not sit flat until the next crossing. Set ``reaffirm_entries=False`` in a
+#: strategy's config to wait for a fresh edge instead. Exits ignore this entirely.
+REAFFIRM_ENTRIES_DEFAULT = True
+
 
 @dataclass(frozen=True)
 class ScoreThresholds:
@@ -82,6 +89,9 @@ class Strategy(ABC):
             stop_loss / take_profit: fractional distances from entry price
             position_limits: optional {max_positions, max_position_size,
                 max_total_risk}
+            reaffirm_entries: live-only; open a position the score implies even when
+                its entry edge was missed (default True). See
+                :data:`REAFFIRM_ENTRIES_DEFAULT`.
         """
         self.config = config
 
@@ -322,6 +332,14 @@ class Strategy(ABC):
 
         A flip closes first and re-enters on the next bar, exactly as
         :meth:`_transition` does, rather than reversing in one step.
+
+        **Entries are gated; exits never are.** ``reaffirm_entries=False`` makes the
+        strategy wait for a fresh crossing rather than opening a position on a signal
+        whose edge it did not witness - most visibly, an engine started into an
+        established trend stays flat until the next entry. That is a legitimate
+        preference about what a strategy trades. Declining to *close* a position the
+        strategy no longer wants is not a preference, it is a stuck position, so the
+        exit side stays unconditional whatever the flag says.
         """
         if signal != signals.HOLD:
             return signal
@@ -334,6 +352,8 @@ class Strategy(ABC):
             return signals.HOLD
         if held_side is not None:  # holding something we should not be: close it
             return signals.CLOSE_BUY if held_side == signals.BUY else signals.CLOSE_SELL
+        if not self.config.get("reaffirm_entries", REAFFIRM_ENTRIES_DEFAULT):
+            return signals.HOLD
         return desired or signals.HOLD
 
     def process_bar(self, symbol: str, bar: Dict[str, float], timestamp: datetime) -> Optional[str]:

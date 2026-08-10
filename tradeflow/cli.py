@@ -2211,6 +2211,10 @@ def cmd_live(args) -> None:
     else:
         strategy = STRATEGIES[args.strategy].create_with_defaults()
 
+    if getattr(args, "no_reaffirm_entries", False):
+        strategy.config["reaffirm_entries"] = False
+        logger.info("Entry re-affirmation off: waiting for a fresh crossing before entering")
+
     broker, data_client = build_data_and_broker()
     universe = resolve_universe(data_client, scanner, args.symbols)
 
@@ -2906,6 +2910,14 @@ def build_parser() -> argparse.ArgumentParser:
         dest="no_ledger",
         action="store_true",
         help="Do not record intended orders and observed fills for reconciliation",
+    )
+    live.add_argument(
+        "--no-reaffirm-entries",
+        dest="no_reaffirm_entries",
+        action="store_true",
+        help="Wait for a fresh crossing instead of opening a position whose entry signal "
+        "fired before this process saw it — so starting into an established trend stays "
+        "flat. Exits are never gated: a position the strategy no longer wants still closes",
     )
     live.add_argument(
         "--reconcile-every",
