@@ -41,16 +41,24 @@ open at the final bar is force-closed. See
 
 ```
 LiveEngine.start(universe)
-   ├── _warm_up: get_bars(lookback) -> process_data -> strategy.warm_up(buffer)
+   ├── _warm_up:   get_bars(sessions) -> process_data -> strategy.warm_up(buffer)
+   ├── _cold_start: list_positions -> hydrate the strategy's position book
    └── MarketDataClient.stream(universe, on_bar)   # auto-reconnecting bar stream
             │ BarEvent (full OHLCV) per bar
+            ▼
+        BarQualityFilter.check(...)          # reject, never repair
+            │ accepted bars only
             ▼
         Strategy.process_bar(symbol, {o,h,l,c,v}, ts)   # -> signal
             │ actionable signal
             ▼
-        LiveTrader.handle_signal(symbol, signal, price)
-            ├── entry: PositionSizer.size(...) -> submit_bracket_order
+        LiveTrader.handle_signal(symbol, signal, price, bar_timestamp)
+            ├── halted? -> Decision(allowed=False)   # entries only; exits pass
+            ├── entry: PositionSizer.size(...) -> submit_bracket_order(client_order_id)
             └── exit:  Broker.close_position
+            │
+            ▼ Decision(allowed, reason, guards_consulted, order)
+        PositionLedger.record_decision(...)   # including the declines
             │
             ▼
         AlpacaBroker -> Alpaca SDK

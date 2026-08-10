@@ -7,14 +7,16 @@ This is exactly what the broker abstraction buys us.
 """
 
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, ClassVar, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
 
 from tradeflow.brokers.base import AccountSnapshot, Broker, MarketStatus, OrderResult, OrderSide, Position
+from tradeflow.brokers.errors import DuplicateOrderError
 from tradeflow.marketdata.base import BarHandler, MarketDataProvider
 from tradeflow.marketdata.timeframe import Timeframe
+from tradeflow.strategies.base import Strategy
 from tradeflow.utils.timeutils import NEW_YORK
 
 
@@ -94,6 +96,8 @@ class FakeBroker(Broker):
         self.open_orders_list: List[OrderResult] = []  # still-open orders
         self.closed: List[str] = []  # symbols passed to close_position
         self.cancelled: List[str] = []  # order ids passed to cancel_order
+        self.accepted_order_ids: set = set()  # client order ids the venue has taken
+        self.rejected_duplicates: List[str] = []  # ids refused as already-seen
 
     def get_account(self) -> Optional[AccountSnapshot]:
         return self.account
@@ -107,16 +111,35 @@ class FakeBroker(Broker):
     def is_tradable(self, symbol: str) -> bool:
         return self.tradable
 
-    def _record(self, record: dict, symbol, qty, side) -> OrderResult:
+    def _record(self, record: dict, symbol, qty, side, client_order_id=None) -> Optional[OrderResult]:
+        # A real venue rejects a client order id it has already accepted. Faking that
+        # is the whole point: an in-memory broker that cheerfully accepts duplicates
+        # would let a double-submission test pass while the real one loses money.
+        if client_order_id is not None:
+            if client_order_id in self.accepted_order_ids:
+                self.rejected_duplicates.append(client_order_id)
+                raise DuplicateOrderError(f"client_order_id {client_order_id} already exists")
+            self.accepted_order_ids.add(client_order_id)
+        record = {**record, "client_order_id": client_order_id}
         self.orders.append(record)
         result = OrderResult(id=f"o{len(self.orders)}", symbol=symbol, side=side, qty=qty, status="accepted")
         self.open_orders_list.append(result)
         return result
 
-    def submit_market_order(self, symbol, qty, side: OrderSide) -> Optional[OrderResult]:
-        return self._record({"type": "market", "symbol": symbol, "qty": qty, "side": side}, symbol, qty, side)
+    def submit_market_order(
+        self, symbol, qty, side: OrderSide, client_order_id=None
+    ) -> Optional[OrderResult]:
+        return self._record(
+            {"type": "market", "symbol": symbol, "qty": qty, "side": side},
+            symbol,
+            qty,
+            side,
+            client_order_id,
+        )
 
-    def submit_bracket_order(self, symbol, qty, side, stop_loss, take_profit) -> Optional[OrderResult]:
+    def submit_bracket_order(
+        self, symbol, qty, side, stop_loss, take_profit, client_order_id=None
+    ) -> Optional[OrderResult]:
         return self._record(
             {
                 "type": "bracket",
@@ -129,6 +152,7 @@ class FakeBroker(Broker):
             symbol,
             qty,
             side,
+            client_order_id,
         )
 
     def list_open_orders(self, symbol: Optional[str] = None) -> List[OrderResult]:
@@ -281,17 +305,17 @@ class RecordingBroker(FakeBroker):
         self.calls: List[str] = []
         self._forced_positions = positions
 
-    def submit_bracket_order(self, symbol, qty, side, stop_loss, take_profit):
+    def submit_bracket_order(self, symbol, qty, side, stop_loss, take_profit, client_order_id=None):
         self.calls.append(f"bracket:{symbol}")
         if self.reject_orders:
             return None
-        return super().submit_bracket_order(symbol, qty, side, stop_loss, take_profit)
+        return super().submit_bracket_order(symbol, qty, side, stop_loss, take_profit, client_order_id)
 
-    def submit_market_order(self, symbol, qty, side):
+    def submit_market_order(self, symbol, qty, side, client_order_id=None):
         self.calls.append(f"market:{symbol}")
         if self.reject_orders:
             return None
-        return super().submit_market_order(symbol, qty, side)
+        return super().submit_market_order(symbol, qty, side, client_order_id)
 
     def list_positions(self):
         self.calls.append("list_positions")
@@ -312,3 +336,98 @@ class FakeTradeUpdate:
         self.status = status
         self.filled_qty = filled_qty
         self.side = side
+
+
+class ScriptedStrategy(Strategy):
+    """A strategy whose conviction is a plain function of price.
+
+    Score is ``close - pivot``, so a test drives it long or flat by choosing closes
+    either side of the pivot — no warm-up period to wait out and no indicator math
+    to reason about.
+
+    Only the indicator layer is faked. Hysteresis, signal derivation, position
+    validation and the real-time buffer all come from the real :class:`Strategy`
+    base class, which is where the behavior under test actually lives.
+    """
+
+    TIMEFRAME = "1Day"
+
+    PARAM_RANGES: ClassVar[Dict[str, Dict[str, Any]]] = {
+        "pivot": {"type": "float", "min": 1.0, "max": 1e6, "step": 1.0, "default": 100.0},
+        "risk_per_trade": {"type": "float", "min": 0.01, "max": 0.05, "step": 0.01, "default": 0.02},
+        "stop_loss": {"type": "float", "min": 0.01, "max": 0.08, "step": 0.01, "default": 0.03},
+        "take_profit": {"type": "float", "min": 0.02, "max": 0.15, "step": 0.01, "default": 0.06},
+    }
+
+    def __init__(self, config: Dict[str, Any]):
+        config["timeframe"] = self.TIMEFRAME
+        config.setdefault(
+            "position_limits",
+            {"max_positions": 1, "max_position_size": 100_000.0, "max_total_risk": 0.05},
+        )
+        super().__init__(config)
+
+    def calculate_required_lookback(self) -> int:
+        # One bar, so every scripted bar is actually evaluated. A larger lookback
+        # would swallow the first bars before the strategy ever sees them, which is
+        # realistic but makes a test about exits depend on warm-up arithmetic.
+        return 1
+
+    def initialize(self) -> None:
+        return None
+
+    def process_data(self, data: pd.DataFrame) -> pd.DataFrame:
+        return data
+
+    def calculate_scores(self, data: pd.DataFrame) -> pd.Series:
+        return data["close"].astype(float) - self.config["pivot"]
+
+
+class FailingBroker(FakeBroker):
+    """A broker that fails a named method with a chosen error.
+
+    The point is the *kind* of failure: an in-memory broker that can only succeed or
+    return ``None`` cannot express the difference between a rate limit and revoked
+    credentials, which is exactly the difference callers now act on.
+    """
+
+    def __init__(self, failures: Optional[Dict[str, Exception]] = None, **kwargs):
+        super().__init__(**kwargs)
+        self.failures = failures or {}
+
+    def _maybe_fail(self, name: str) -> None:
+        error = self.failures.get(name)
+        if error is not None:
+            raise error
+
+    def get_account(self):
+        self._maybe_fail("get_account")
+        return super().get_account()
+
+    def list_positions(self):
+        self._maybe_fail("list_positions")
+        return super().list_positions()
+
+    def get_market_status(self):
+        self._maybe_fail("get_market_status")
+        return super().get_market_status()
+
+    def submit_bracket_order(self, symbol, qty, side, stop_loss, take_profit, client_order_id=None):
+        self._maybe_fail("submit_bracket_order")
+        return super().submit_bracket_order(symbol, qty, side, stop_loss, take_profit, client_order_id)
+
+    def close_position(self, symbol):
+        self._maybe_fail("close_position")
+        return super().close_position(symbol)
+
+    def cancel_order(self, order_id):
+        self._maybe_fail("cancel_order")
+        return super().cancel_order(order_id)
+
+    def cancel_all_orders(self):
+        self._maybe_fail("cancel_all_orders")
+        return super().cancel_all_orders()
+
+    def close_all_positions(self, cancel_orders=True):
+        self._maybe_fail("close_all_positions")
+        return super().close_all_positions(cancel_orders)

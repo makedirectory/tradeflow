@@ -84,6 +84,25 @@ class Timeframe:
             WEEK: lambda n: timedelta(weeks=n),
         }[self.unit](self.amount)
 
+    def bars_per_trading_day(self) -> float:
+        """How many bars of this timeframe one regular session produces.
+
+        The bridge between a *bar count* and a *wall-clock window*. A strategy asks
+        for "50 bars of warm-up"; only this knows that 50 one-minute bars span part of
+        a single session while 50 daily bars span ten calendar weeks. Converting the
+        two with a plain ``timedelta`` treats the overnight gap as tradeable and
+        under-fetches badly at intraday frequencies.
+
+        Fractional on purpose: a 1Week timeframe yields 0.2 bars per trading day.
+        """
+        if self.unit == DAY:
+            return 1.0 / self.amount
+        if self.unit == WEEK:
+            return 1.0 / (5.0 * self.amount)
+        if self.unit == HOUR:
+            return self._TRADING_HOURS_PER_DAY / self.amount
+        return self._TRADING_HOURS_PER_DAY * 60.0 / self.amount
+
     def periods_per_year(self) -> float:
         """How many bars of this timeframe occur in a trading year.
 

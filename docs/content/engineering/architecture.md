@@ -67,15 +67,15 @@ strategies/  scanners/  execution/  analytics/     │
 
 | Package | Responsibility |
 |---------|----------------|
-| `brokers/` | `Broker` interface + domain types (`OrderSide`, `Position`, `AccountSnapshot`, `OrderResult`, `MarketStatus`) |
+| `brokers/` | `Broker` interface, domain types (`OrderSide`, `Position`, `AccountSnapshot`, `OrderResult`, `MarketStatus`), and the `BrokerError` hierarchy |
 | `brokers/alpaca/` | `AlpacaBroker` + `AlpacaMarketData` — the only modules that import `alpaca` |
 | `marketdata/` | `MarketDataProvider` interface, `Timeframe`, `MarketDataClient`, `BarEvent` |
 | `indicators/` | Pure pandas/numpy technical indicators |
 | `strategies/` | `Strategy` base, the signal vocabulary, and concrete strategies |
 | `scanners/` | `ScannerStrategy` base, concrete scanners, and the `SymbolScanner` |
-| `execution/` | `LiveTrader` — turns signals into broker orders |
+| `execution/` | `LiveTrader` (signals → broker orders), the `Decision` it returns, deterministic order ids, the position ledger, and halt/flatten |
 | `analytics/` | Performance metric primitives, backtest metrics, reporting |
-| `engine/` | `BacktestEngine` + `LiveEngine` — orchestration only |
+| `engine/` | `BacktestEngine` + `LiveEngine` — orchestration only — and the live bar-quality guards |
 | `optimization/` | `ParameterSpace` + `ParameterOptimizer` |
 | `portfolio/` | `PortfolioAllocator` — OR-Tools position weighting |
 | `utils/` | logging, numeric, and timezone helpers |

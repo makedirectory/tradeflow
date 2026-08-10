@@ -46,6 +46,18 @@ or export them, whichever you prefer.
 `PAPER_TRADE` selects the Alpaca endpoint. Leave it `True` while learning — every
 `live` run then trades against the paper account with no real money at risk.
 
+## Strategy config keys
+
+A strategy's config carries its tunable parameters plus a few behavioral keys the
+base class recognizes:
+
+| Key | Meaning |
+|---|---|
+| `risk_per_trade` | Fraction of capital risked per trade |
+| `stop_loss` / `take_profit` | Fractional distances from entry price |
+| `position_limits` | `{max_positions, max_position_size, max_total_risk}` |
+| `reaffirm_entries` | Live only. Open a position the score implies even when its entry edge was missed — a rejected bar, a dropped stream, a restart, or a crossing inside the warm-up history. Default `true`, so a strategy started mid-trend takes the position rather than waiting for the next crossing. `--no-reaffirm-entries` on `live` turns it off. Exits are never gated by it. |
+
 ## Run-time options
 
 Everything else (symbols, dates, capital, strategy, scanner) is passed per run on

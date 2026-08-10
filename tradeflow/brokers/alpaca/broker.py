@@ -10,6 +10,7 @@ import inspect
 import logging
 from typing import List, Optional
 
+from alpaca.common.exceptions import APIError, RetryException
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderClass, OrderType, QueryOrderStatus, TimeInForce
 from alpaca.trading.enums import OrderSide as AlpacaOrderSide
@@ -31,6 +32,17 @@ from tradeflow.brokers.base import (
     TradeUpdate,
     TradeUpdateHandler,
 )
+from tradeflow.brokers.errors import (
+    AuthenticationError,
+    BrokerError,
+    BrokerUnavailableError,
+    DuplicateOrderError,
+    InsufficientFundsError,
+    MarketClosedError,
+    NotTradableError,
+    OrderRejectedError,
+    RateLimitedError,
+)
 from tradeflow.utils.numeric import safe_float
 from tradeflow.utils.streaming import run_with_reconnect
 
@@ -38,6 +50,60 @@ logger = logging.getLogger(__name__)
 
 # Map our side enum onto Alpaca's.
 _SIDE_TO_ALPACA = {OrderSide.BUY: AlpacaOrderSide.BUY, OrderSide.SELL: AlpacaOrderSide.SELL}
+
+
+#: Substrings that identify a duplicate-client-order-id rejection. Alpaca reports it
+#: as a 422 whose message names the field; matching on the text is a heuristic, so an
+#: unrecognized phrasing degrades to a plain rejection rather than being misread as a
+#: success.
+_DUPLICATE_MARKERS = ("already exist", "must be unique", "duplicate")
+
+
+def classify_error(exc: Exception) -> BrokerError:
+    """Map a vendor exception onto the vendor-neutral hierarchy.
+
+    Defensive by construction: ``APIError`` exposes ``status_code`` and ``message`` as
+    properties that parse the underlying payload, and either can fail on a malformed
+    or non-JSON error body. A classifier that raises while classifying would replace a
+    diagnosable broker failure with an undiagnosable one.
+    """
+    if isinstance(exc, BrokerError):
+        return exc
+
+    status = None
+    message = str(exc)
+    if isinstance(exc, APIError):
+        try:
+            status = exc.status_code
+        except Exception:  # noqa: BLE001 - never fail while classifying a failure
+            status = None
+        try:
+            message = exc.message or message
+        except Exception:  # noqa: BLE001
+            pass
+    elif isinstance(exc, RetryException):
+        return RateLimitedError(message)
+    elif isinstance(exc, (ConnectionError, TimeoutError, OSError)):
+        return BrokerUnavailableError(message)
+
+    lowered = message.lower()
+    if "client_order_id" in lowered and any(m in lowered for m in _DUPLICATE_MARKERS):
+        return DuplicateOrderError(message)
+    if status in (401, 403):
+        return AuthenticationError(message)
+    if status == 429:
+        return RateLimitedError(message)
+    if status is not None and status >= 500:
+        return BrokerUnavailableError(message)
+    if "insufficient" in lowered or "buying power" in lowered:
+        return InsufficientFundsError(message)
+    if "market is closed" in lowered or "outside of market hours" in lowered:
+        return MarketClosedError(message)
+    if "not tradable" in lowered or "not active" in lowered:
+        return NotTradableError(message)
+    if status is not None and 400 <= status < 500:
+        return OrderRejectedError(message)
+    return BrokerError(message)
 
 
 class AlpacaBroker(Broker):
@@ -70,16 +136,19 @@ class AlpacaBroker(Broker):
                 portfolio_value=safe_float(account.portfolio_value),
                 trading_blocked=bool(account.trading_blocked),
             )
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Failed to fetch account: %s", exc)
-            return None
+        except Exception as exc:
+            raise classify_error(exc) from exc
 
     def list_positions(self) -> List[Position]:
+        # Raises rather than returning [] on failure: an empty list is a factual claim
+        # that the account holds nothing, and callers act on it — the strategy's book
+        # is rebuilt from this, and the ledger reads it as broker truth. Turning an
+        # unreachable broker into "you are flat" is how a real position stops being
+        # exitable.
         try:
             return [self._to_position(p) for p in self._client.get_all_positions()]
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Failed to list positions: %s", exc)
-            return []
+        except Exception as exc:
+            raise classify_error(exc) from exc
 
     def get_position(self, symbol: str) -> Optional[Position]:
         try:
@@ -99,7 +168,9 @@ class AlpacaBroker(Broker):
     # ------------------------------------------------------------------ #
     # Orders
     # ------------------------------------------------------------------ #
-    def submit_market_order(self, symbol: str, qty: float, side: OrderSide) -> Optional[OrderResult]:
+    def submit_market_order(
+        self, symbol: str, qty: float, side: OrderSide, client_order_id: Optional[str] = None
+    ) -> Optional[OrderResult]:
         try:
             order = self._client.submit_order(
                 MarketOrderRequest(
@@ -107,15 +178,21 @@ class AlpacaBroker(Broker):
                     qty=qty,
                     side=_SIDE_TO_ALPACA[side],
                     time_in_force=TimeInForce.GTC,
+                    client_order_id=client_order_id,
                 )
             )
             return self._to_order_result(order, side)
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Market order failed for %s: %s", symbol, exc)
-            return None
+        except Exception as exc:
+            raise classify_error(exc) from exc
 
     def submit_bracket_order(
-        self, symbol: str, qty: float, side: OrderSide, stop_loss: float, take_profit: float
+        self,
+        symbol: str,
+        qty: float,
+        side: OrderSide,
+        stop_loss: float,
+        take_profit: float,
+        client_order_id: Optional[str] = None,
     ) -> Optional[OrderResult]:
         try:
             order = self._client.submit_order(
@@ -128,12 +205,12 @@ class AlpacaBroker(Broker):
                     order_class=OrderClass.BRACKET,
                     take_profit=TakeProfitRequest(limit_price=take_profit),
                     stop_loss=StopLossRequest(stop_price=stop_loss),
+                    client_order_id=client_order_id,
                 )
             )
             return self._to_order_result(order, side)
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Bracket order failed for %s: %s", symbol, exc)
-            return None
+        except Exception as exc:
+            raise classify_error(exc) from exc
 
     def list_open_orders(self, symbol: Optional[str] = None) -> List[OrderResult]:
         try:
@@ -161,17 +238,15 @@ class AlpacaBroker(Broker):
         try:
             self._client.cancel_order_by_id(order_id)
             return True
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Failed to cancel order %s: %s", order_id, exc)
-            return False
+        except Exception as exc:
+            raise classify_error(exc) from exc
 
     def cancel_all_orders(self) -> bool:
         try:
             self._client.cancel_orders()
             return True
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Failed to cancel all orders: %s", exc)
-            return False
+        except Exception as exc:
+            raise classify_error(exc) from exc
 
     # ------------------------------------------------------------------ #
     # Position lifecycle
@@ -180,17 +255,15 @@ class AlpacaBroker(Broker):
         try:
             self._client.close_position(symbol)
             return True
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Failed to close position %s: %s", symbol, exc)
-            return False
+        except Exception as exc:
+            raise classify_error(exc) from exc
 
     def close_all_positions(self, cancel_orders: bool = True) -> bool:
         try:
             self._client.close_all_positions(cancel_orders=cancel_orders)
             return True
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Failed to close all positions: %s", exc)
-            return False
+        except Exception as exc:
+            raise classify_error(exc) from exc
 
     # ------------------------------------------------------------------ #
     # Market clock
@@ -204,9 +277,8 @@ class AlpacaBroker(Broker):
                 next_open=clock.next_open,
                 next_close=clock.next_close,
             )
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Failed to fetch market clock: %s", exc)
-            return None
+        except Exception as exc:
+            raise classify_error(exc) from exc
 
     # ------------------------------------------------------------------ #
     # Trade-update streaming

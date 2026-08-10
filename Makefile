@@ -97,6 +97,19 @@ optimize:  ## Grid-search strategy params (objective: sharpe_ratio)
 optimize-bayesian: install-optimize  ## Train a GP surrogate to tune params
 	$(PY) optimize --strategy volume_spike --scanner none --symbols $(SYMBOLS) --start $(START) --end $(END) --method bayesian
 
+# --- stopping ---------------------------------------------------------------
+halt:  ## Stop opening new positions (exits still allowed). REASON="why"
+	$(PY) halt all --reason "$(REASON)"
+
+resume:  ## Lift the global halt
+	$(PY) resume all
+
+halts:  ## Show what is currently halted — read-only
+	$(PY) halts
+
+flatten:  ## EMERGENCY: halt, cancel all orders, close all positions. REASON="why"
+	$(PY) flatten --confirm --reason "$(REASON)"
+
 # --- account utilities ------------------------------------------------------
 cancel-orders:  ## Cancel all open orders
 	uv run python cancel_all_orders.py

@@ -12,6 +12,7 @@ indicator math, no order-placement detail, and no vendor specifics.
 
 import asyncio
 import logging
+import math
 import time
 from datetime import datetime, timedelta
 from typing import List, Optional
@@ -21,22 +22,22 @@ from tradeflow.execution.ledger import PositionLedger
 from tradeflow.execution.live_trader import LiveTrader
 from tradeflow.marketdata.base import BarEvent
 from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.marketdata.timeframe import DAY, HOUR, MINUTE, WEEK, Timeframe
+from tradeflow.marketdata.timeframe import Timeframe
 from tradeflow.strategies import signals
 from tradeflow.strategies.base import Strategy
 from tradeflow.utils.timeutils import NEW_YORK
 
 logger = logging.getLogger(__name__)
 
-# Extra history fetched beyond the bare lookback, to cover non-trading gaps.
+# Fetch this multiple of the bare lookback, so a few missing bars still leave enough.
 _WARMUP_BUFFER = 2
 
-_UNIT_TO_TIMEDELTA = {
-    MINUTE: lambda n: timedelta(minutes=n),
-    HOUR: lambda n: timedelta(hours=n),
-    DAY: lambda n: timedelta(days=n),
-    WEEK: lambda n: timedelta(weeks=n),
-}
+#: Five trading days per seven calendar days.
+_CALENDAR_DAYS_PER_TRADING_WEEK = 7 / 5
+
+#: Slack for market holidays, which the ratio above does not model. Cheap insurance:
+#: extra history is discarded by the buffer, missing history is silent.
+_HOLIDAY_PADDING_DAYS = 5
 
 
 class LiveEngine:
@@ -79,6 +80,7 @@ class LiveEngine:
         """
         self.strategy.initialize()
         self._warm_up(symbols)
+        self._cold_start()
 
         broker = self.live_trader.broker
         tasks = [self.data_client.stream(symbols, self._on_bar)]
@@ -117,6 +119,30 @@ class LiveEngine:
         except Exception:  # noqa: BLE001 - bookkeeping never breaks the order path
             logger.warning("Could not record a fill in the position ledger", exc_info=True)
 
+    def _cold_start(self) -> None:
+        """Teach the strategy what it already holds, before the first bar arrives.
+
+        Warm-up seeds *indicators* from history; it says nothing about the book. A
+        process that restarts while holding a position would otherwise believe it was
+        flat — and a strategy that believes it is flat cannot emit an exit, because
+        its own signal validation rejects one. The position would then be closed only
+        by its broker-side bracket legs, if it had any.
+
+        Unconditional, and not governed by ``reconcile_every``: that setting paces the
+        ledger sweep, whereas an unhydrated book is a correctness bug rather than a
+        cadence choice. Failure here is logged, not fatal — starting flat is wrong but
+        recoverable on the next sweep, while refusing to start is not obviously better.
+        """
+        try:
+            adopted = self.live_trader.sync_strategy_book()
+        except Exception:  # noqa: BLE001 - bookkeeping never breaks the order path
+            logger.warning("Could not read the broker's positions at start-up", exc_info=True)
+            return
+        # Count the sweep: it just happened, so the first bar need not repeat it.
+        self._last_reconcile = time.monotonic()
+        if adopted:
+            logger.info("Resuming with %d open position(s) adopted from the broker", adopted)
+
     def _warm_up(self, symbols: List[str]) -> None:
         """Seed each symbol's rolling buffer so indicators are valid on bar one."""
         timeframe = Timeframe.parse(self.strategy.config["timeframe"])
@@ -125,10 +151,25 @@ class LiveEngine:
         end = datetime.now(NEW_YORK)
 
         history = self.data_client.get_bars(symbols, timeframe, start, end)
-        for symbol, bars in history.items():
-            if not bars.empty:
-                self.strategy.warm_up(symbol, self.strategy.process_data(bars))
+        for symbol in symbols:
+            bars = history.get(symbol)
+            # A short warm-up is the failure worth shouting about: the strategy runs
+            # anyway, on indicators computed from too little history, and produces
+            # confident-looking signals that the backtest never validated. Nothing
+            # else in the loop can tell that apart from a quiet market.
+            if bars is None or bars.empty:
+                logger.error("No warm-up history for %s — its indicators start blind", symbol)
+                continue
+            if len(bars) < periods:
+                logger.warning(
+                    "Warmed up %s with only %d of the %d bars its indicators need",
+                    symbol,
+                    len(bars),
+                    periods,
+                )
+            else:
                 logger.info("Warmed up %s with %d bars", symbol, len(bars))
+            self.strategy.warm_up(symbol, self.strategy.process_data(bars))
 
     def _on_bar(self, event: BarEvent) -> None:
         """Per-bar callback: validate, update the strategy, act on any signal."""
@@ -149,9 +190,29 @@ class LiveEngine:
         signal = self.strategy.process_bar(event.symbol, bar, event.timestamp)
         if signal and signal != signals.HOLD:
             logger.info("Signal %s for %s @ $%.4f", signal, event.symbol, event.close)
-            order = self.live_trader.handle_signal(event.symbol, signal, event.close)
-            self._record_intent(event.symbol, signal, order)
+            decision = self.live_trader.handle_signal(
+                event.symbol, signal, event.close, bar_timestamp=event.timestamp
+            )
+            if not decision:
+                logger.info("%s", decision)
+            self._record_decision(decision)
+            self._record_intent(event.symbol, signal, decision.order)
         self._maybe_reconcile()
+
+    def _record_decision(self, decision) -> None:
+        """Record why execution acted or declined.
+
+        Without this, "nothing happened on that bar" is answerable only from logs,
+        and only while they still exist. The ledger is already the append-only record
+        of what the live path did, so a declined signal belongs in it beside the
+        orders it did place.
+        """
+        if self.ledger is None:
+            return
+        try:
+            self.ledger.record_decision(decision)
+        except Exception:  # noqa: BLE001 - bookkeeping never breaks the order path
+            logger.warning("Could not record the execution decision", exc_info=True)
 
     def _record_intent(self, symbol: str, signal: str, order) -> None:
         """Note what we asked for, so a fill that never arrives is detectable."""
@@ -172,7 +233,7 @@ class LiveEngine:
         per symbol — because this runs on the trade clock and must not make bar
         processing depend on the size of the universe.
         """
-        if self.ledger is None or self.reconcile_every <= 0:
+        if self.reconcile_every <= 0:
             return
         now = time.monotonic()
         # The first bar always sweeps. A process that just started is the case most
@@ -181,6 +242,14 @@ class LiveEngine:
         if self._last_reconcile is not None and now - self._last_reconcile < self.reconcile_every:
             return
         self._last_reconcile = now
+        # Re-read the book first: a bracket leg that filled, or a position closed by
+        # hand in the broker's UI, changes what the strategy is entitled to exit.
+        try:
+            self.live_trader.sync_strategy_book()
+        except Exception:  # noqa: BLE001 - bookkeeping never breaks the order path
+            logger.warning("Could not refresh the strategy's position book", exc_info=True)
+        if self.ledger is None:
+            return
         try:
             self.ledger.reconcile(self.live_trader.broker)
         except Exception:  # noqa: BLE001
@@ -188,6 +257,23 @@ class LiveEngine:
 
     @staticmethod
     def _lookback_start(timeframe: Timeframe, periods: int) -> datetime:
-        units = periods * timeframe.amount * _WARMUP_BUFFER
-        delta = _UNIT_TO_TIMEDELTA[timeframe.unit](units)
-        return datetime.now(NEW_YORK) - delta
+        """How far back to fetch so warm-up actually yields ``periods`` bars.
+
+        This used to convert bars to wall-clock time directly — 50 one-minute bars
+        became 100 minutes ago — which silently treats the overnight gap, the weekend,
+        and every holiday as tradeable. At 09:35 on a Monday that window reached back
+        to 07:55 the same morning and returned five bars for a fifty-bar indicator,
+        leaving the strategy warmed up with an eighth of the history it asked for and
+        nothing to say so. Daily bars under-fetched too, just less visibly: 100
+        calendar days is about 70 sessions.
+
+        So the conversion goes through sessions. Over-fetching is deliberately
+        cheap — the buffer keeps only its tail — while under-fetching is invisible,
+        so the estimate is padded for holidays rather than made exact. That is also
+        why no market calendar is pulled in: precision here buys nothing that a few
+        spare days do not.
+        """
+        bars_needed = max(periods, 1) * _WARMUP_BUFFER
+        sessions = math.ceil(bars_needed / timeframe.bars_per_trading_day())
+        calendar_days = math.ceil(sessions * _CALENDAR_DAYS_PER_TRADING_WEEK) + _HOLIDAY_PADDING_DAYS
+        return datetime.now(NEW_YORK) - timedelta(days=calendar_days)

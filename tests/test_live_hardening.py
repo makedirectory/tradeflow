@@ -23,6 +23,7 @@ from tests.fakes import (
     FakeTradeUpdate,
     RecordingBroker,
     ScriptedFeed,
+    ScriptedStrategy,
     bar_event,
 )
 from tradeflow.brokers.base import Position
@@ -32,6 +33,8 @@ from tradeflow.execution.ledger import MISSING, QUANTITY_DRIFT, UNEXPECTED, Posi
 from tradeflow.execution.live_trader import LiveTrader
 from tradeflow.marketdata.client import MarketDataClient
 from tradeflow.services.registry import STRATEGIES
+from tradeflow.strategies import signals
+from tradeflow.utils.timeutils import NEW_YORK
 
 SYMBOL = "AAA"
 
@@ -423,7 +426,146 @@ def test_reconciliation_can_be_disabled_outright(tmp_path):
     engine, _, broker = _engine([bar_event(minute=i) for i in range(1, 4)], ledger=led)
     engine.reconcile_every = 0
     asyncio.run(engine.start(["AAA"]))
-    assert broker.calls.count("list_positions") == 0
+    # The one remaining read is the cold-start book hydration, which is not governed
+    # by `reconcile_every` — an unhydrated book breaks exits outright, so it is a
+    # correctness step rather than a cadence choice. No per-bar sweep fires.
+    assert broker.calls.count("list_positions") == 1
+
+
+# --- the strategy's position book -------------------------------------------
+def _long_position(symbol=SYMBOL, qty=10.0, entry=205.0):
+    return Position(
+        symbol=symbol,
+        qty=qty,
+        side="long",
+        avg_entry_price=entry,
+        current_price=entry,
+        market_value=qty * entry,
+        unrealized_pl=0.0,
+    )
+
+
+#: Warm-up history is a random walk around 100, so a pivot well above it keeps the
+#: strategy unambiguously flat until the scripted bars arrive.
+PIVOT = 200.0
+
+
+def _scripted_engine(closes, *, positions=None):
+    """The real engine and trader, driven by a strategy that goes long above PIVOT."""
+    config = {name: spec["default"] for name, spec in ScriptedStrategy.PARAM_RANGES.items()}
+    config["pivot"] = PIVOT
+    strategy = ScriptedStrategy(config)
+    # Day 15: the warm-up frame is ten daily bars from the 2nd, and a scripted bar
+    # timestamped before them would not be the latest signal in the buffer.
+    events = [bar_event(day=15, minute=i, close=close) for i, close in enumerate(closes, start=1)]
+    feed = ScriptedFeed([SYMBOL], events=events, n=10, freq="1D")
+    broker = RecordingBroker(positions=None)
+    for position in positions or []:
+        broker.positions[position.symbol] = position
+    engine = LiveEngine(
+        strategy,
+        MarketDataClient(feed),
+        LiveTrader(broker, strategy, respect_market_hours=False),
+        reconcile_every=0,
+    )
+    return engine, broker, strategy
+
+
+def test_a_strategy_that_holds_a_position_can_actually_exit_it():
+    """The regression. An exit is only legitimate if the strategy believes it holds
+    the position, and nothing in live mode used to give it that belief — so every
+    CLOSE_BUY was rewritten to HOLD and the position could be opened but never
+    closed. This drives the whole path: bar -> process_bar -> handle_signal ->
+    broker.close_position."""
+    engine, broker, _ = _scripted_engine([205.0, 206.0, 195.0], positions=[_long_position()])
+
+    asyncio.run(engine.start([SYMBOL]))
+
+    assert broker.closed == [SYMBOL]
+
+
+def test_the_book_is_hydrated_from_the_broker_before_the_first_bar():
+    """Cold start: a restarted process must know what it holds."""
+    engine, _, strategy = _scripted_engine([205.0], positions=[_long_position()])
+    assert strategy.positions == {}  # nothing known before start
+
+    asyncio.run(engine.start([SYMBOL]))
+
+    assert strategy.positions[SYMBOL]["side"] == signals.BUY
+    assert strategy.positions[SYMBOL]["qty"] == 10.0
+
+
+def test_broker_truth_replaces_a_stale_belief_rather_than_merging_with_it():
+    """A belief that disagrees with the account is just a stale belief."""
+    engine, broker, strategy = _scripted_engine([205.0], positions=[_long_position()])
+    strategy.positions = {"GONE": {"side": signals.BUY}, SYMBOL: {"side": signals.SELL}}
+
+    engine.live_trader.sync_strategy_book()
+
+    assert set(strategy.positions) == {SYMBOL}  # the phantom is dropped, not kept
+    assert strategy.positions[SYMBOL]["side"] == signals.BUY  # and the side corrected
+
+
+def test_an_entry_registers_in_the_book_immediately():
+    """Intent, recorded at submission. Without it the strategy forgets its own entry
+    until the next sweep — so it would neither recognize the position to exit it nor
+    know to stop re-entering it."""
+    engine, broker, strategy = _scripted_engine([205.0, 206.0])
+
+    asyncio.run(engine.start([SYMBOL]))
+
+    assert [o["type"] for o in broker.orders] == ["bracket"]  # entered once, not twice
+    assert strategy.positions[SYMBOL]["side"] == signals.BUY
+
+
+def test_a_naive_streamed_bar_does_not_silence_a_strategy_warmed_from_history():
+    """Warm-up history is localized to New York; a feed is free to stream a naive
+    timestamp. One naive value in an otherwise aware index made every later comparison
+    raise inside `process_bar` — whose blanket except turned that into a strategy that
+    emitted nothing at all, indefinitely, with no error anywhere."""
+    from tests.fakes import make_ohlcv
+
+    config = {name: spec["default"] for name, spec in ScriptedStrategy.PARAM_RANGES.items()}
+    config["pivot"] = PIVOT
+    strategy = ScriptedStrategy(config)
+    strategy.warm_up(SYMBOL, strategy.process_data(make_ohlcv(n=10, freq="1D")))
+    assert strategy.get_real_time_buffer(SYMBOL).index.tz is not None  # aware history
+
+    naive = datetime(2024, 1, 15, 10, 0)  # what the feed hands us
+    signal = strategy.process_bar(SYMBOL, _bar(close=PIVOT + 5.0), naive)
+
+    assert signal == signals.BUY  # an actual opinion, not silence
+
+
+def test_reading_the_book_never_places_an_order():
+    """Report, never remediate: hydration is a read of broker truth."""
+    engine, broker, _ = _scripted_engine([205.0], positions=[_long_position()])
+
+    engine.live_trader.sync_strategy_book()
+
+    assert broker.orders == []
+    assert broker.closed == []
+
+
+def test_a_broker_that_cannot_be_read_at_start_up_does_not_stop_the_engine():
+    """Starting flat is wrong but recoverable; refusing to start is not better."""
+
+    class Unreadable(RecordingBroker):
+        def list_positions(self):
+            raise ConnectionError("broker unreachable")
+
+    strategy = ScriptedStrategy.create_with_defaults()
+    feed = ScriptedFeed([SYMBOL], events=[bar_event(day=15, minute=1, close=205.0)], n=10, freq="1D")
+    engine = LiveEngine(
+        strategy,
+        MarketDataClient(feed),
+        LiveTrader(Unreadable(), strategy, respect_market_hours=False),
+        reconcile_every=0,
+    )
+
+    asyncio.run(engine.start([SYMBOL]))  # must not raise
+
+    assert feed.delivered == 1
 
 
 # --- two clocks -------------------------------------------------------------
@@ -445,3 +587,152 @@ def test_the_live_path_imports_no_research_machinery():
             "tradeflow.research",
         ):
             assert forbidden not in source, f"{module} reaches into {forbidden}"
+
+
+# --- warm-up window ---------------------------------------------------------
+@pytest.mark.parametrize("spec,periods", [("1Min", 50), ("5Min", 50), ("1Hour", 50), ("1Day", 50)])
+def test_the_warm_up_window_actually_spans_enough_sessions(spec, periods):
+    """It used to convert bars to wall-clock time directly, which treats the
+    overnight gap, the weekend and every holiday as tradeable: 50 one-minute bars
+    became "100 minutes ago", so a 09:35 start fetched five bars for a fifty-bar
+    indicator. Daily under-fetched too — 100 calendar days is about 70 sessions."""
+    from tradeflow.marketdata.timeframe import Timeframe
+
+    timeframe = Timeframe.parse(spec)
+    start = LiveEngine._lookback_start(timeframe, periods)
+
+    calendar_days = (datetime.now(NEW_YORK) - start).total_seconds() / 86400
+    sessions = calendar_days * 5 / 7
+    assert sessions * timeframe.bars_per_trading_day() >= periods
+
+
+def test_an_intraday_warm_up_reaches_past_the_previous_session():
+    """The specific failure: a window that never leaves the current morning."""
+    from tradeflow.marketdata.timeframe import Timeframe
+
+    start = LiveEngine._lookback_start(Timeframe.parse("1Min"), 50)
+    assert (datetime.now(NEW_YORK) - start) > timedelta(days=1)
+
+
+def test_a_short_warm_up_is_reported_rather_than_absorbed(caplog):
+    """Too little history produces confident-looking signals the backtest never
+    validated, and nothing else in the loop can tell that from a quiet market."""
+    strategy = ScriptedStrategy.create_with_defaults()
+    strategy.config["required_lookback_periods"] = 500  # more than the feed holds
+    feed = ScriptedFeed([SYMBOL], events=[], n=10, freq="1D")
+    engine = LiveEngine(
+        strategy,
+        MarketDataClient(feed),
+        LiveTrader(RecordingBroker(), strategy, respect_market_hours=False),
+        reconcile_every=0,
+    )
+
+    with caplog.at_level("WARNING"):
+        engine._warm_up([SYMBOL])
+
+    assert any("only 10 of the 500" in record.getMessage() for record in caplog.records)
+
+
+# --- missed edges -----------------------------------------------------------
+def test_an_entry_edge_missed_during_warm_up_is_still_acted_on():
+    """Entries are edge-triggered, so a crossing that happened inside the warm-up
+    history left the score saying "should be long" while every bar emitted HOLD —
+    and the position was never opened at all."""
+    engine, broker, strategy = _scripted_engine([206.0, 207.0])
+    # The crossing happens in history: warm the buffer already above the pivot, so no
+    # live bar carries the edge.
+    import pandas as pd
+
+    history = pd.DataFrame(
+        {"open": 205.0, "high": 206.0, "low": 204.0, "close": 205.0, "volume": 1000.0},
+        index=pd.date_range("2024-01-02 09:30", periods=5, freq="1D", tz=NEW_YORK),
+    )
+    strategy.warm_up(SYMBOL, history)
+
+    signal = strategy.process_bar(SYMBOL, _bar(close=206.0), datetime(2024, 1, 15, 10, 0))
+
+    assert signal == signals.BUY  # re-affirmed, not silently held
+
+
+def test_an_exit_edge_missed_while_holding_is_still_acted_on():
+    """The mirror case, and the worse one: a real position nothing will close."""
+    engine, broker, strategy = _scripted_engine([195.0], positions=[_long_position()])
+    engine.live_trader.sync_strategy_book()
+    import pandas as pd
+
+    history = pd.DataFrame(
+        {"open": 195.0, "high": 196.0, "low": 194.0, "close": 195.0, "volume": 1000.0},
+        index=pd.date_range("2024-01-02 09:30", periods=5, freq="1D", tz=NEW_YORK),
+    )
+    strategy.warm_up(SYMBOL, history)  # already below the pivot: the exit edge is gone
+
+    signal = strategy.process_bar(SYMBOL, _bar(close=194.0), datetime(2024, 1, 15, 10, 0))
+
+    assert signal == signals.CLOSE_BUY
+
+
+def test_entry_reaffirmation_can_be_turned_off():
+    """A legitimate preference: wait for a fresh crossing rather than open a position
+    on a signal this process never saw fire."""
+    engine, broker, strategy = _scripted_engine([206.0, 207.0])
+    strategy.config["reaffirm_entries"] = False
+    import pandas as pd
+
+    history = pd.DataFrame(
+        {"open": 205.0, "high": 206.0, "low": 204.0, "close": 205.0, "volume": 1000.0},
+        index=pd.date_range("2024-01-02 09:30", periods=5, freq="1D", tz=NEW_YORK),
+    )
+    strategy.warm_up(SYMBOL, history)
+
+    signal = strategy.process_bar(SYMBOL, _bar(close=206.0), datetime(2024, 1, 15, 10, 0))
+
+    assert signal == signals.HOLD
+
+
+def test_turning_it_off_still_does_not_strand_an_open_position():
+    """Declining to *enter* is a preference. Declining to *close* something the
+    strategy no longer wants is a stuck position, so the exit side is never gated."""
+    engine, broker, strategy = _scripted_engine([195.0], positions=[_long_position()])
+    strategy.config["reaffirm_entries"] = False
+    engine.live_trader.sync_strategy_book()
+    import pandas as pd
+
+    history = pd.DataFrame(
+        {"open": 195.0, "high": 196.0, "low": 194.0, "close": 195.0, "volume": 1000.0},
+        index=pd.date_range("2024-01-02 09:30", periods=5, freq="1D", tz=NEW_YORK),
+    )
+    strategy.warm_up(SYMBOL, history)
+
+    signal = strategy.process_bar(SYMBOL, _bar(close=194.0), datetime(2024, 1, 15, 10, 0))
+
+    assert signal == signals.CLOSE_BUY
+
+
+def test_a_fresh_crossing_still_enters_with_reaffirmation_off():
+    """The flag suppresses re-affirmation, not trading."""
+    engine, broker, strategy = _scripted_engine([205.0, 206.0])
+    strategy.config["reaffirm_entries"] = False
+
+    asyncio.run(engine.start([SYMBOL]))
+
+    assert [o["type"] for o in broker.orders] == ["bracket"]
+
+
+def test_reaffirmation_defaults_to_on():
+    """The default is the assumption: a trend-follower started mid-trend takes the
+    position rather than sitting flat until the next crossing."""
+    from tradeflow.strategies.base import REAFFIRM_ENTRIES_DEFAULT
+
+    assert REAFFIRM_ENTRIES_DEFAULT is True
+    strategy = ScriptedStrategy.create_with_defaults()
+    assert strategy.config.get("reaffirm_entries", REAFFIRM_ENTRIES_DEFAULT) is True
+
+
+def test_a_book_that_already_matches_the_score_stays_quiet():
+    """The other direction: re-affirmation must not re-fire every bar on a position
+    that is exactly as intended."""
+    engine, broker, strategy = _scripted_engine([205.0, 206.0, 207.0])
+
+    asyncio.run(engine.start([SYMBOL]))
+
+    assert [o["type"] for o in broker.orders] == ["bracket"]  # once, not three times

@@ -23,6 +23,7 @@ Deliberately *not* a strategy's job (separation of concerns):
 The same strategy object is driven unchanged by the backtest and live engines.
 """
 
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
@@ -31,6 +32,16 @@ from typing import Any, Dict, Optional
 import pandas as pd
 
 from tradeflow.strategies import signals
+from tradeflow.utils.timeutils import match_index_tz
+
+logger = logging.getLogger(__name__)
+
+#: Whether a live strategy opens a position implied by the score but whose entry edge
+#: it never saw — a crossing lost to a rejected bar, a dropped stream, a restart, or
+#: the warm-up history. On by default: a trend-follower started mid-trend should hold
+#: the trend, not sit flat until the next crossing. Set ``reaffirm_entries=False`` in a
+#: strategy's config to wait for a fresh edge instead. Exits ignore this entirely.
+REAFFIRM_ENTRIES_DEFAULT = True
 
 
 @dataclass(frozen=True)
@@ -78,6 +89,9 @@ class Strategy(ABC):
             stop_loss / take_profit: fractional distances from entry price
             position_limits: optional {max_positions, max_position_size,
                 max_total_risk}
+            reaffirm_entries: live-only; open a position the score implies even when
+                its entry edge was missed (default True). See
+                :data:`REAFFIRM_ENTRIES_DEFAULT`.
         """
         self.config = config
 
@@ -167,8 +181,17 @@ class Strategy(ABC):
         so entries are edge-triggered - re-affirmation is left to the engine, which
         dedupes against the open position.
         """
+        return self._walk_scores(data)[0]
+
+    def _walk_scores(self, data: pd.DataFrame) -> tuple:
+        """Return ``(signal per bar, the direction the score implies at the last bar)``.
+
+        The direction is the part edges alone cannot express. An edge says *change*;
+        the direction says *what should be true now*, which is the only thing that can
+        be compared against what is actually held.
+        """
         if data.empty:
-            return {}
+            return {}, 0
 
         scores = self.calculate_scores(data)
         thresholds = self.signal_thresholds()
@@ -186,7 +209,7 @@ class Strategy(ABC):
             target = self._desired_direction(score, state, thresholds, long_only)
             signal, state = self._transition(state, target)
             out[index[i]] = signal
-        return out
+        return out, state
 
     @staticmethod
     def _desired_direction(score: float, state: int, th: ScoreThresholds, long_only: bool) -> int:
@@ -286,6 +309,53 @@ class Strategy(ABC):
     # ------------------------------------------------------------------ #
     # Real-time processing (live mode)
     # ------------------------------------------------------------------ #
+    def _reaffirm(self, symbol: str, signal: str, direction: int) -> str:
+        """Re-state an edge that was missed, by comparing intent against the book.
+
+        Signals are edge-triggered: an entry is emitted on the bar the score crosses
+        and never again. Live, that edge can be missed - a bar rejected by the quality
+        guard, a dropped stream, a restart, or simply a crossing that happened inside
+        the warm-up history. Afterwards the score still says "should be long" while the
+        bar emits ``HOLD`` forever, and the position is never opened. The mirror case
+        is worse: a missed exit leaves a real position that nothing will close.
+
+        So live mode compares the direction the score implies against the position book
+        (which :class:`~tradeflow.execution.live_trader.LiveTrader` keeps synced with
+        broker truth) and re-states the difference. Where an edge says *change*, this
+        says *what should be true now* - the loop converges on the intended book
+        instead of depending on having caught one specific bar.
+
+        This is live-only. The backtest walks the same scores through
+        :meth:`generate_signals`, where its book is derived from those very signals and
+        so can never disagree - the two paths differ only in the case where the live
+        one has fallen behind.
+
+        A flip closes first and re-enters on the next bar, exactly as
+        :meth:`_transition` does, rather than reversing in one step.
+
+        **Entries are gated; exits never are.** ``reaffirm_entries=False`` makes the
+        strategy wait for a fresh crossing rather than opening a position on a signal
+        whose edge it did not witness - most visibly, an engine started into an
+        established trend stays flat until the next entry. That is a legitimate
+        preference about what a strategy trades. Declining to *close* a position the
+        strategy no longer wants is not a preference, it is a stuck position, so the
+        exit side stays unconditional whatever the flag says.
+        """
+        if signal != signals.HOLD:
+            return signal
+
+        desired = {1: signals.BUY, -1: signals.SELL}.get(direction)
+        held = self.positions.get(symbol)
+        held_side = held.get("side") if held else None
+
+        if desired == held_side:  # book already matches intent (including both flat)
+            return signals.HOLD
+        if held_side is not None:  # holding something we should not be: close it
+            return signals.CLOSE_BUY if held_side == signals.BUY else signals.CLOSE_SELL
+        if not self.config.get("reaffirm_entries", REAFFIRM_ENTRIES_DEFAULT):
+            return signals.HOLD
+        return desired or signals.HOLD
+
     def process_bar(self, symbol: str, bar: Dict[str, float], timestamp: datetime) -> Optional[str]:
         """Fold one streamed OHLCV bar into the rolling buffer and emit a signal.
 
@@ -300,6 +370,10 @@ class Strategy(ABC):
                 buffer.index.name = "timestamp"
 
             row = {key: bar[key] for key in ("open", "high", "low", "close", "volume")}
+            # Warm-up history arrives localized; a streamed bar may not be. One naive
+            # timestamp in an otherwise aware index makes every subsequent comparison
+            # raise, and the guard below would turn that into permanent silence.
+            timestamp = match_index_tz(timestamp, buffer.index)
             buffer = pd.concat([buffer, pd.DataFrame([row], index=[timestamp])])
             if len(buffer) > self.max_buffer_size:
                 buffer = buffer.tail(self.max_buffer_size)
@@ -311,9 +385,13 @@ class Strategy(ABC):
             processed = self.process_data(buffer.copy())
             self.last_processed_data[symbol] = processed
 
-            latest = self._latest_signal(self.generate_signals(processed))
+            emitted, direction = self._walk_scores(processed)
+            latest = self._reaffirm(symbol, self._latest_signal(emitted), direction)
             return latest if self.validate_signal(latest, symbol, bar["close"]) else signals.HOLD
         except Exception:  # noqa: BLE001 - never break the stream
+            # Swallowing keeps the stream alive, but a strategy that raises on every
+            # bar emits nothing and looks exactly like one with no opinion. Say so.
+            logger.warning("Discarding bar for %s: the strategy raised", symbol, exc_info=True)
             return None
 
     def process_real_time_data(

@@ -152,3 +152,75 @@ inside the trade-clock loop. Exit code is non-zero when divergence is found, so 
 scheduled `reconcile` can page you.
 
 `--no-ledger` disables recording; `--reconcile-every 0` disables the in-loop sweep.
+
+## Missed edges, and starting mid-trend
+
+Signals are edge-triggered: an entry fires on the bar the score crosses and never
+again. Live, that edge can be missed — a bar rejected by the quality guard, a dropped
+stream, a restart, or a crossing that happened inside the warm-up history. The score
+would still say "should be long" while every bar emitted `HOLD`, and the position was
+simply never opened. The mirror case is worse: a missed exit leaves a real position
+that nothing will close.
+
+So the live loop compares the direction the score implies against the position book
+(kept in sync with broker truth) and re-states the difference. Where an edge says
+*change*, this says *what should be true now*.
+
+**One consequence worth knowing before you run it.** If you start the engine while
+the score already implies a position — a trend-follower started mid-trend, say — it
+will open that position on the first live bar rather than waiting for the next fresh
+crossing. Stops and targets are computed from the current price, not the price at the
+original crossing. This is the default, on the view that a trend-follower started
+mid-trend should hold the trend rather than sit flat until the next crossing.
+
+If you would rather wait for a fresh edge:
+
+```bash
+tradeflow live --strategy ma_crossover --no-reaffirm-entries
+```
+
+or set `reaffirm_entries: false` in a strategy config. **Exits are never gated by
+it.** Declining to open a position is a preference about what you trade; declining to
+close one the strategy no longer wants is a stuck position, so a missed exit is always
+re-stated whatever the flag says.
+
+Backtests are unaffected either way: they derive the book from the same signals, so
+the two can never disagree there.
+
+## Why nothing happened
+
+A signal that produces no order used to leave a log line and nothing else — and
+"no order" is the same outcome for *the market is closed*, *we are halted*, *you
+already hold this*, *the size rounded to zero*, and *the broker refused*. So the one
+question worth asking afterwards was answerable only from logs, if they still
+existed.
+
+Execution now returns a **decision** for every signal, and the ledger records it:
+
+```json
+{"event": "decision", "symbol": "NVDA", "signal": "BUY", "allowed": false,
+ "reason": "insufficient buying power: need $12400.00, have $9800.00",
+ "guards_consulted": ["hold", "market_hours", "halt", "existing_position",
+                      "pending_order", "account", "sizing", "buying_power"]}
+```
+
+`guards_consulted` lists the guards that actually ran, not only the one that
+fired — a list naming just the veto cannot distinguish a guard that passed from one
+that never ran, which is how a check silently stops being applied and nobody
+notices. Declined decisions are recorded precisely because they leave no other
+trace.
+
+## Stopping
+
+`Ctrl-C` stops the process, but it records nothing — restart the engine and it trades
+again. To stop trading in a way that *sticks*, and to close everything in an
+emergency, see [Stopping trading](./stopping.md).
+
+```bash
+tradeflow halts                                  # what is currently halted
+tradeflow halt all --reason "why"                # refuse new entries
+tradeflow flatten --confirm --reason "why"       # halt, cancel, close everything
+```
+
+Halts block entries and never block exits, so pulling the switch can never trap the
+book.

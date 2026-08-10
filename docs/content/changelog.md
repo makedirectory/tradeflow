@@ -28,6 +28,77 @@ index; they are tagged in the repository.
 
 ---
 
+## 2.1.0 — 2026-08-10
+
+Trade-clock hardening. The live path is the smallest and least-tested part of this
+project, which is backwards — it is the only part that can lose money. Most of what
+follows was found by *running* it rather than reading it.
+
+### Fixed
+
+- **The live path could open a position but never close one.** A strategy decides
+  whether an exit is legitimate by looking itself up in its own position book, and
+  nothing in live mode ever wrote that book — so every `CLOSE_BUY`/`CLOSE_SELL` was
+  rewritten to `HOLD` before execution saw it, and a position could only be closed by
+  its broker-side bracket legs, if it had any. The book is now rebuilt from broker
+  truth: before the first bar, on every sweep, and when an entry is placed. The unit
+  tests had been passing because they fed `handle_signal` directly, exercising the
+  layer below the break.
+- **A strategy could go permanently silent with nothing logged.** Warm-up history is
+  timezone-aware and a feed may stream naive timestamps; mixing them made every later
+  comparison raise inside `process_bar`, whose blanket `except` turned that into a
+  strategy that emitted nothing at all, indefinitely. Timestamps are aligned before
+  append, and the `except` now says what it swallowed.
+- **Warm-up fetched a fraction of the history it asked for.** The lookback converted
+  bars to wall-clock time directly, which counts the overnight gap, the weekend and
+  every holiday as tradeable: fifty one-minute bars became "100 minutes ago", so a
+  09:35 start warmed a fifty-bar indicator with five bars and ran anyway. Daily
+  under-fetched too, less visibly. The window is now measured in sessions, and a
+  short warm-up is reported rather than absorbed.
+- **Missed signal edges were lost for good.** Entries fire on the crossing bar and
+  never again, so a bar rejected by a quality guard, a dropped stream, or a restart
+  left the score saying "should be long" while every bar emitted `HOLD`. Live mode
+  now compares the direction the score implies against the position book and
+  re-states the difference. Exits always; entries under `reaffirm_entries`, on by
+  default.
+
+### Added
+
+- **A kill switch.** `tradeflow halt | resume | halts` records a durable decision to
+  stop, and `tradeflow flatten --confirm` halts, cancels every order, and closes
+  every position — going straight to the broker, so it works when the engine is
+  wedged. Halt state is a file, not a database: the order path must hold no
+  connection to anything that can be down. Halts block entries and never exits, so
+  the switch cannot trap the book and flatten cannot deadlock against its own gate.
+- **Deterministic client order ids.** The guard against double-submitting was a
+  question asked of the broker immediately before placing an order — a check-then-act
+  race with no memory across a restart. Each order now carries an id derived from the
+  decision behind it, so a venue that has already accepted it rejects the duplicate.
+- **Typed broker failures.** Every broker call used to fail as `None` or `False`, so
+  a rate limit, an expired token, insufficient funds and a deliberate rejection all
+  produced the same non-answer. Two cases were actively wrong: a duplicate order read
+  as a failed submission, and `list_positions` returning `[]` — the claim that the
+  account is flat — when the broker could not be reached.
+- **A decision record for every signal.** "No order" had a dozen causes and one
+  representation. Execution now returns what it decided, why, and which guards it
+  consulted — the guards that *ran*, not just the one that fired — and the ledger
+  records the declines, which are the case that leaves no other trace.
+
+### Changed
+
+- **An unreadable market clock no longer uniformly means "assume open".** That is
+  right for a transient blip, but it was also being applied to revoked credentials,
+  which are never transient. Authentication failures now fail closed.
+- **A strategy started while the score already implies a position takes it** on the
+  first live bar, rather than waiting for the next crossing. Turn it off with
+  `--no-reaffirm-entries`.
+- **Internal trade-clock interfaces changed shape.** `Broker.submit_*` take a
+  `client_order_id`; the order-path methods raise `BrokerError` rather than
+  returning `None`/`False`; `LiveTrader.handle_signal` returns a `Decision` rather
+  than an optional order. No supported API moved — `tradeflow.services.*` is the
+  supported surface and is untouched — but anyone who had reached past it into the
+  broker or execution layer will need these. Hence a minor, not a major.
+
 ## 2.0.4 — 2026-08-07
 
 ### Fixed
