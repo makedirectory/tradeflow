@@ -153,6 +153,29 @@ scheduled `reconcile` can page you.
 
 `--no-ledger` disables recording; `--reconcile-every 0` disables the in-loop sweep.
 
+## Why nothing happened
+
+A signal that produces no order used to leave a log line and nothing else — and
+"no order" is the same outcome for *the market is closed*, *we are halted*, *you
+already hold this*, *the size rounded to zero*, and *the broker refused*. So the one
+question worth asking afterwards was answerable only from logs, if they still
+existed.
+
+Execution now returns a **decision** for every signal, and the ledger records it:
+
+```json
+{"event": "decision", "symbol": "NVDA", "signal": "BUY", "allowed": false,
+ "reason": "insufficient buying power: need $12400.00, have $9800.00",
+ "guards_consulted": ["hold", "market_hours", "halt", "existing_position",
+                      "pending_order", "account", "sizing", "buying_power"]}
+```
+
+`guards_consulted` lists the guards that actually ran, not only the one that
+fired — a list naming just the veto cannot distinguish a guard that passed from one
+that never ran, which is how a check silently stops being applied and nobody
+notices. Declined decisions are recorded precisely because they leave no other
+trace.
+
 ## Stopping
 
 `Ctrl-C` stops the process, but it records nothing — restart the engine and it trades

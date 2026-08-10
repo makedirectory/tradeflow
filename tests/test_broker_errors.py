@@ -107,15 +107,17 @@ def test_a_duplicate_order_is_not_treated_as_a_failed_submission():
     broker = FailingBroker({"submit_bracket_order": DuplicateOrderError("already exists")})
     trader = _trader(broker, respect_market_hours=False)
 
-    result = trader.handle_signal("AAA", signals.BUY, 100.0, bar_timestamp=datetime(2024, 1, 2, 10, 0))
+    decision = trader.handle_signal("AAA", signals.BUY, 100.0, bar_timestamp=datetime(2024, 1, 2, 10, 0))
 
-    assert result is None
+    assert not decision.allowed
+    assert "already placed" in decision.reason  # not "refused", not "failed"
     assert broker.orders == []  # nothing resubmitted
 
 
 def test_a_refused_entry_does_not_break_the_loop():
     broker = FailingBroker({"submit_bracket_order": InsufficientFundsError("no")})
-    assert _trader(broker, respect_market_hours=False).handle_signal("AAA", signals.BUY, 100.0) is None
+    decision = _trader(broker, respect_market_hours=False).handle_signal("AAA", signals.BUY, 100.0)
+    assert not decision.allowed
 
 
 def test_revoked_credentials_mean_closed_not_open():
@@ -135,7 +137,8 @@ def test_an_unreachable_clock_still_assumes_open():
 
 def test_an_unreadable_account_stops_the_entry_rather_than_guessing_a_size():
     broker = FailingBroker({"get_account": BrokerUnavailableError("timeout")})
-    assert _trader(broker, respect_market_hours=False).handle_signal("AAA", signals.BUY, 100.0) is None
+    decision = _trader(broker, respect_market_hours=False).handle_signal("AAA", signals.BUY, 100.0)
+    assert not decision.allowed
     assert broker.orders == []
 
 

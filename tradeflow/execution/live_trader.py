@@ -21,10 +21,12 @@ convenience: see :meth:`LiveTrader.sync_strategy_book`.
 import logging
 import time
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
-from tradeflow.brokers.base import Broker, OrderResult, OrderSide, Position
+from tradeflow.brokers.base import Broker, OrderSide, Position
 from tradeflow.brokers.errors import AuthenticationError, BrokerError, DuplicateOrderError
+from tradeflow.execution import decision as decisions
+from tradeflow.execution.decision import Decision
 from tradeflow.execution.halt import HaltState
 from tradeflow.execution.order_id import client_order_id
 from tradeflow.execution.sizing import PositionSizer, RiskBasedSizer
@@ -113,36 +115,44 @@ class LiveTrader:
         signal: str,
         price: float,
         bar_timestamp: Optional[datetime] = None,
-    ) -> Optional[OrderResult]:
-        """Act on a single signal. Returns the resulting order, if any.
+    ) -> Decision:
+        """Act on a single signal, and say what was decided and why.
+
+        Returns a :class:`~tradeflow.execution.decision.Decision` rather than an
+        order: "no order" has many causes, and collapsing them all into ``None`` made
+        the only question worth asking afterwards - why nothing happened on that bar -
+        answerable only from logs.
 
         ``bar_timestamp`` is what distinguishes one decision from a replay of the
         same one; see :mod:`tradeflow.execution.order_id`.
         """
+        guards: List[str] = [decisions.HOLD]
         if signal == signals.HOLD:
-            return None
+            return decisions.decline(symbol, signal, "no signal", tuple(guards))
 
-        if self._respect_market_hours and not self._market_open():
-            logger.info("Market closed; ignoring %s signal for %s", signal, symbol)
-            return None
+        if self._respect_market_hours:
+            guards.append(decisions.MARKET_HOURS)
+            if not self._market_open():
+                logger.info("Market closed; ignoring %s signal for %s", signal, symbol)
+                return decisions.decline(symbol, signal, "market closed", tuple(guards))
 
         position = self._broker.get_position(symbol)
 
         if signal in signals.EXIT_SIGNALS:
-            self._handle_exit(symbol, signal, position)
-            return None
+            return self._handle_exit(symbol, signal, position, guards)
 
         if signal in signals.ENTRY_SIGNALS:
             # Checked here rather than at the top so a halt can never block an exit.
             # A switch that also trapped the book would be one nobody dares pull.
+            guards.append(decisions.HALT)
             halt = self._halts.active(type(self._strategy).__name__)
             if halt is not None:
                 logger.warning("HALTED — refusing %s entry for %s: %s", signal, symbol, halt)
-                return None
-            return self._handle_entry(symbol, signal, price, position, bar_timestamp)
+                return decisions.decline(symbol, signal, f"halted — {halt}", tuple(guards))
+            return self._handle_entry(symbol, signal, price, position, bar_timestamp, guards)
 
         logger.warning("Ignoring unrecognized signal %r for %s", signal, symbol)
-        return None
+        return decisions.decline(symbol, signal, f"unrecognized signal {signal!r}", tuple(guards))
 
     # ------------------------------------------------------------------ #
     # Entries & exits
@@ -154,42 +164,55 @@ class LiveTrader:
         price: float,
         position: Optional[Position],
         bar_timestamp: Optional[datetime] = None,
-    ) -> Optional[OrderResult]:
+        guards: Optional[List[str]] = None,
+    ) -> Decision:
+        guards = list(guards or [])
+
+        guards.append(decisions.EXISTING_POSITION)
         if position is not None:
             logger.info("Skipping %s entry for %s: position already open", signal, symbol)
-            return None
+            return decisions.decline(symbol, signal, "position already open", tuple(guards))
 
         # A cheap local shortcut, not the safety mechanism: it saves a pointless round
         # trip when an order is visibly pending, but it is a check-then-act race and
         # it forgets everything across a restart. The deterministic client order id
         # below is what actually prevents a double submission.
+        guards.append(decisions.PENDING_ORDER)
         if self._broker.list_open_orders(symbol):
             logger.info("Skipping %s entry for %s: an order is already pending", signal, symbol)
-            return None
+            return decisions.decline(symbol, signal, "an order is already pending", tuple(guards))
 
+        guards.append(decisions.ACCOUNT)
         try:
             account = self._broker.get_account()
         except BrokerError as exc:
             logger.error("Cannot size %s entry: %s (%s)", symbol, exc, type(exc).__name__)
-            return None
+            return decisions.decline(symbol, signal, f"account unreadable: {exc}", tuple(guards))
         if account is None:
             logger.error("Cannot size %s entry: account unavailable", symbol)
-            return None
+            return decisions.decline(symbol, signal, "account unavailable", tuple(guards))
 
+        guards.append(decisions.SIZING)
         qty = round_quantity(
             self._sizer.size(symbol, price, account),
             allow_fractional=self._allow_fractional,
         )
         if qty <= 0:
             logger.warning("Computed position size <= 0 for %s; skipping", symbol)
-            return None
+            return decisions.decline(symbol, signal, "size rounds to zero", tuple(guards))
 
+        guards.append(decisions.BUYING_POWER)
         cost = qty * price
         if cost > account.buying_power:
             logger.warning(
                 "Insufficient buying power for %s: need $%.2f, have $%.2f", symbol, cost, account.buying_power
             )
-            return None
+            return decisions.decline(
+                symbol,
+                signal,
+                f"insufficient buying power: need ${cost:.2f}, have ${account.buying_power:.2f}",
+                tuple(guards),
+            )
 
         side = _ENTRY_SIDE[signal]
         stop_loss, take_profit = self._stop_levels(price, side)
@@ -202,6 +225,7 @@ class LiveTrader:
             stop_loss,
             take_profit,
         )
+        guards.append(decisions.BROKER)
         order_id = client_order_id(self._strategy, symbol, signal, bar_timestamp)
         try:
             order = self._broker.submit_bracket_order(
@@ -211,49 +235,67 @@ class LiveTrader:
             # Not a failure: the venue already holds this exact order. Resubmitting is
             # the one thing that must not happen, and the book should still reflect it.
             logger.info("Entry for %s already placed (order id %s); leaving it alone", symbol, order_id)
-            order = None
+            return decisions.decline(symbol, signal, "already placed at the broker", tuple(guards))
         except BrokerError as exc:
             logger.error("Entry for %s refused: %s (%s)", symbol, exc, type(exc).__name__)
-            return None
-        if order is not None:
-            # Intent, not truth: the order is submitted, not filled. Recording it now
-            # is what lets the strategy recognize its own position on the very next
-            # bar and emit an exit for it; the next `sync_strategy_book` replaces this
-            # with whatever the broker actually holds.
-            self._strategy.positions[symbol] = {
-                "side": signal,
-                "qty": qty,
-                "entry_price": price,
-                "stop_loss": stop_loss,
-                "take_profit": take_profit,
-            }
-        return order
+            return decisions.decline(symbol, signal, f"broker refused: {exc}", tuple(guards))
+        if order is None:
+            return decisions.decline(symbol, signal, "broker returned no order", tuple(guards))
 
-    def _handle_exit(self, symbol: str, signal: str, position: Optional[Position]) -> None:
+        # Intent, not truth: the order is submitted, not filled. Recording it now is
+        # what lets the strategy recognize its own position on the very next bar and
+        # emit an exit for it; the next `sync_strategy_book` replaces this with
+        # whatever the broker actually holds.
+        self._strategy.positions[symbol] = {
+            "side": signal,
+            "qty": qty,
+            "entry_price": price,
+            "stop_loss": stop_loss,
+            "take_profit": take_profit,
+        }
+        return decisions.allow(symbol, signal, f"entered {qty} @ ~${price:.2f}", tuple(guards), order)
+
+    def _handle_exit(
+        self,
+        symbol: str,
+        signal: str,
+        position: Optional[Position],
+        guards: Optional[List[str]] = None,
+    ) -> Decision:
+        guards = list(guards or [])
+        guards.append(decisions.EXISTING_POSITION)
         if position is None:
-            return
+            return decisions.decline(symbol, signal, "no position to close", tuple(guards))
+
+        guards.append(decisions.POSITION_MATCH)
         matches = (signal == signals.CLOSE_BUY and position.is_long) or (
             signal == signals.CLOSE_SELL and not position.is_long
         )
-        if matches:
-            # Cancel any resting bracket legs first so closing the position can't
-            # leave an orphaned stop/take order behind (which could oversell). A leg
-            # that cannot be canceled must not stop the close: an un-exited position
-            # is the worse of the two outcomes, and the sweep will surface the orphan.
-            for order in self._broker.list_open_orders(symbol):
-                try:
-                    self._broker.cancel_order(order.id)
-                except BrokerError as exc:
-                    logger.warning("Could not cancel resting order %s: %s", order.id, exc)
-            logger.info("Closing %s position for %s", position.side, symbol)
+        if not matches:
+            return decisions.decline(
+                symbol, signal, f"{signal} does not match a {position.side} position", tuple(guards)
+            )
+
+        guards.append(decisions.BROKER)
+        # Cancel any resting bracket legs first so closing the position can't leave an
+        # orphaned stop/take order behind (which could oversell). A leg that cannot be
+        # cancelled must not stop the close: an un-exited position is the worse of the
+        # two outcomes, and the sweep will surface the orphan.
+        for order in self._broker.list_open_orders(symbol):
             try:
-                self._broker.close_position(symbol)
+                self._broker.cancel_order(order.id)
             except BrokerError as exc:
-                # Deliberately kept in the book: the position is still open, so the
-                # strategy must stay entitled to try again.
-                logger.error("Could not close %s: %s (%s)", symbol, exc, type(exc).__name__)
-                return
-            self._strategy.positions.pop(symbol, None)
+                logger.warning("Could not cancel resting order %s: %s", order.id, exc)
+        logger.info("Closing %s position for %s", position.side, symbol)
+        try:
+            self._broker.close_position(symbol)
+        except BrokerError as exc:
+            # Deliberately kept in the book: the position is still open, so the
+            # strategy must stay entitled to try again.
+            logger.error("Could not close %s: %s (%s)", symbol, exc, type(exc).__name__)
+            return decisions.decline(symbol, signal, f"broker could not close it: {exc}", tuple(guards))
+        self._strategy.positions.pop(symbol, None)
+        return decisions.allow(symbol, signal, f"closed {position.side} position", tuple(guards))
 
     def _market_open(self) -> bool:
         """Whether the market is open, cached for a short TTL.

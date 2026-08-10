@@ -174,11 +174,29 @@ class LiveEngine:
         signal = self.strategy.process_bar(event.symbol, bar, event.timestamp)
         if signal and signal != signals.HOLD:
             logger.info("Signal %s for %s @ $%.4f", signal, event.symbol, event.close)
-            order = self.live_trader.handle_signal(
+            decision = self.live_trader.handle_signal(
                 event.symbol, signal, event.close, bar_timestamp=event.timestamp
             )
-            self._record_intent(event.symbol, signal, order)
+            if not decision:
+                logger.info("%s", decision)
+            self._record_decision(decision)
+            self._record_intent(event.symbol, signal, decision.order)
         self._maybe_reconcile()
+
+    def _record_decision(self, decision) -> None:
+        """Record why execution acted or declined.
+
+        Without this, "nothing happened on that bar" is answerable only from logs,
+        and only while they still exist. The ledger is already the append-only record
+        of what the live path did, so a declined signal belongs in it beside the
+        orders it did place.
+        """
+        if self.ledger is None:
+            return
+        try:
+            self.ledger.record_decision(decision)
+        except Exception:  # noqa: BLE001 - bookkeeping never breaks the order path
+            logger.warning("Could not record the execution decision", exc_info=True)
 
     def _record_intent(self, symbol: str, signal: str, order) -> None:
         """Note what we asked for, so a fill that never arrives is detectable."""

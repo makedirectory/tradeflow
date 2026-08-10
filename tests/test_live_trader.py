@@ -6,6 +6,7 @@ import pytest
 
 from tests.fakes import FakeBroker
 from tradeflow.brokers.base import AccountSnapshot, OrderSide, Position
+from tradeflow.execution import decision as decisions
 from tradeflow.execution.live_trader import LiveTrader
 from tradeflow.execution.order_id import client_order_id
 from tradeflow.execution.sizing import BetaSizer, PortfolioWeightSizer, RiskBasedSizer
@@ -15,6 +16,18 @@ from tradeflow.strategies.volume_spike import VolumeSpikeStrategy
 
 def _trader(broker, sizer=None):
     return LiveTrader(broker, VolumeSpikeStrategy.create_with_defaults(), sizer=sizer)
+
+
+def _open_position(symbol="AAA"):
+    return Position(
+        symbol=symbol,
+        qty=10.0,
+        side="long",
+        avg_entry_price=100.0,
+        current_price=100.0,
+        market_value=1000.0,
+        unrealized_pl=0.0,
+    )
 
 
 # --- position sizers --------------------------------------------------------
@@ -207,8 +220,9 @@ def test_a_replayed_bar_cannot_place_a_second_order():
     strategy.positions.clear()
     second = trader.handle_signal("AAA", signals.BUY, 100.0, bar_timestamp=_ts(1))
 
-    assert first is not None
-    assert second is None
+    assert first.allowed
+    assert not second.allowed
+    assert "already placed" in second.reason
     assert len(broker.orders) == 1
     assert broker.rejected_duplicates  # refused by identity, not by looking first
 
@@ -224,5 +238,90 @@ def test_a_genuinely_new_bar_still_places_an_order_after_a_restart():
     strategy.positions.clear()
     later = trader.handle_signal("AAA", signals.BUY, 100.0, bar_timestamp=_ts(2))
 
-    assert later is not None
+    assert later.allowed
     assert len(broker.orders) == 2
+
+
+# --- decisions --------------------------------------------------------------
+def test_a_decision_names_the_guard_that_stopped_it():
+    """ "Nothing happened" used to be one answer for a dozen causes."""
+    broker = FakeBroker(positions=[_open_position()])
+    decision = _trader(broker).handle_signal("AAA", signals.BUY, 100.0)
+
+    assert not decision.allowed
+    assert decision.reason == "position already open"
+    assert decisions.EXISTING_POSITION in decision.guards_consulted
+
+
+def test_a_decision_lists_the_guards_it_actually_consulted_not_just_the_one_that_fired():
+    """A veto list naming only the guard that tripped cannot distinguish a guard that
+    passed from one that never ran — which is how a check silently stops applying."""
+    broker = FakeBroker(buying_power=1.0)  # too poor to size anything
+    decision = _trader(broker).handle_signal("AAA", signals.BUY, 100.0)
+
+    assert not decision.allowed
+    # Everything before sizing was consulted and passed.
+    assert decisions.EXISTING_POSITION in decision.guards_consulted
+    assert decisions.PENDING_ORDER in decision.guards_consulted
+    assert decisions.ACCOUNT in decision.guards_consulted
+    assert decisions.SIZING in decision.guards_consulted
+    # The broker was never reached, so it must not appear.
+    assert decisions.BROKER not in decision.guards_consulted
+
+
+def test_an_allowed_decision_carries_the_order():
+    broker = FakeBroker()
+    decision = _trader(broker).handle_signal("AAA", signals.BUY, 100.0)
+
+    assert decision.allowed
+    assert decision.order is not None
+    assert bool(decision) is True
+
+
+def test_a_market_hours_veto_is_recorded_as_such():
+    broker = FakeBroker(market_open=False)
+    decision = LiveTrader(broker, VolumeSpikeStrategy.create_with_defaults()).handle_signal(
+        "AAA", signals.BUY, 100.0
+    )
+
+    assert not decision.allowed
+    assert decision.reason == "market closed"
+    assert decisions.MARKET_HOURS in decision.guards_consulted
+
+
+def test_a_skipped_market_hours_check_does_not_claim_to_have_run():
+    """`respect_market_hours=False` means the guard did not run, which is not the
+    same as running and passing."""
+    trader = LiveTrader(FakeBroker(), VolumeSpikeStrategy.create_with_defaults(), respect_market_hours=False)
+    decision = trader.handle_signal("AAA", signals.BUY, 100.0)
+    assert decisions.MARKET_HOURS not in decision.guards_consulted
+
+
+def test_a_declined_decision_is_written_to_the_ledger(tmp_path):
+    """The case that leaves no other trace is exactly the one worth recording."""
+    import json
+
+    from tradeflow.execution.ledger import PositionLedger
+
+    ledger = PositionLedger(tmp_path / "ledger.jsonl")
+    broker = FakeBroker(positions=[_open_position()])
+    decision = _trader(broker).handle_signal("AAA", signals.BUY, 100.0)
+    ledger.record_decision(decision)
+
+    records = [json.loads(line) for line in (tmp_path / "ledger.jsonl").read_text().splitlines()]
+    assert records[0]["event"] == "decision"
+    assert records[0]["allowed"] is False
+    assert records[0]["guards_consulted"]
+
+
+def test_a_recorded_decision_carries_no_position_meaning(tmp_path):
+    """It is an explanation, not a fill — it must not move the expected book."""
+    from tradeflow.execution.ledger import PositionLedger
+
+    ledger = PositionLedger(tmp_path / "ledger.jsonl")
+    ledger.record_fill("AAA", "buy", 10.0)
+    before = ledger.expected_positions()
+
+    ledger.record_decision(_trader(FakeBroker()).handle_signal("BBB", signals.BUY, 100.0))
+
+    assert ledger.expected_positions() == before

@@ -141,6 +141,16 @@ class PositionLedger:
         """A position we asked to close. Zeroes our expectation for the symbol."""
         self._append({"event": "close", "symbol": symbol})
 
+    def record_decision(self, decision) -> None:
+        """What execution decided about a signal, and which guards it consulted.
+
+        Deliberately recorded whether or not an order resulted: a *declined* signal is
+        the case that leaves no other trace, and it is the one you go looking for when
+        asking why a strategy did nothing all day. Carries no position meaning, so
+        :meth:`expected_positions` ignores it.
+        """
+        self._append({"event": "decision", **decision.as_dict()})
+
     def _append(self, record: Dict[str, Any]) -> None:
         """One line, flushed, under a lock.
 
