@@ -34,6 +34,7 @@ from tradeflow.execution.live_trader import LiveTrader
 from tradeflow.marketdata.client import MarketDataClient
 from tradeflow.services.registry import STRATEGIES
 from tradeflow.strategies import signals
+from tradeflow.utils.timeutils import NEW_YORK
 
 SYMBOL = "AAA"
 
@@ -586,3 +587,95 @@ def test_the_live_path_imports_no_research_machinery():
             "tradeflow.research",
         ):
             assert forbidden not in source, f"{module} reaches into {forbidden}"
+
+
+# --- warm-up window ---------------------------------------------------------
+@pytest.mark.parametrize("spec,periods", [("1Min", 50), ("5Min", 50), ("1Hour", 50), ("1Day", 50)])
+def test_the_warm_up_window_actually_spans_enough_sessions(spec, periods):
+    """It used to convert bars to wall-clock time directly, which treats the
+    overnight gap, the weekend and every holiday as tradeable: 50 one-minute bars
+    became "100 minutes ago", so a 09:35 start fetched five bars for a fifty-bar
+    indicator. Daily under-fetched too — 100 calendar days is about 70 sessions."""
+    from tradeflow.marketdata.timeframe import Timeframe
+
+    timeframe = Timeframe.parse(spec)
+    start = LiveEngine._lookback_start(timeframe, periods)
+
+    calendar_days = (datetime.now(NEW_YORK) - start).total_seconds() / 86400
+    sessions = calendar_days * 5 / 7
+    assert sessions * timeframe.bars_per_trading_day() >= periods
+
+
+def test_an_intraday_warm_up_reaches_past_the_previous_session():
+    """The specific failure: a window that never leaves the current morning."""
+    from tradeflow.marketdata.timeframe import Timeframe
+
+    start = LiveEngine._lookback_start(Timeframe.parse("1Min"), 50)
+    assert (datetime.now(NEW_YORK) - start) > timedelta(days=1)
+
+
+def test_a_short_warm_up_is_reported_rather_than_absorbed(caplog):
+    """Too little history produces confident-looking signals the backtest never
+    validated, and nothing else in the loop can tell that from a quiet market."""
+    strategy = ScriptedStrategy.create_with_defaults()
+    strategy.config["required_lookback_periods"] = 500  # more than the feed holds
+    feed = ScriptedFeed([SYMBOL], events=[], n=10, freq="1D")
+    engine = LiveEngine(
+        strategy,
+        MarketDataClient(feed),
+        LiveTrader(RecordingBroker(), strategy, respect_market_hours=False),
+        reconcile_every=0,
+    )
+
+    with caplog.at_level("WARNING"):
+        engine._warm_up([SYMBOL])
+
+    assert any("only 10 of the 500" in record.getMessage() for record in caplog.records)
+
+
+# --- missed edges -----------------------------------------------------------
+def test_an_entry_edge_missed_during_warm_up_is_still_acted_on():
+    """Entries are edge-triggered, so a crossing that happened inside the warm-up
+    history left the score saying "should be long" while every bar emitted HOLD —
+    and the position was never opened at all."""
+    engine, broker, strategy = _scripted_engine([206.0, 207.0])
+    # The crossing happens in history: warm the buffer already above the pivot, so no
+    # live bar carries the edge.
+    import pandas as pd
+
+    history = pd.DataFrame(
+        {"open": 205.0, "high": 206.0, "low": 204.0, "close": 205.0, "volume": 1000.0},
+        index=pd.date_range("2024-01-02 09:30", periods=5, freq="1D", tz=NEW_YORK),
+    )
+    strategy.warm_up(SYMBOL, history)
+
+    signal = strategy.process_bar(SYMBOL, _bar(close=206.0), datetime(2024, 1, 15, 10, 0))
+
+    assert signal == signals.BUY  # re-affirmed, not silently held
+
+
+def test_an_exit_edge_missed_while_holding_is_still_acted_on():
+    """The mirror case, and the worse one: a real position nothing will close."""
+    engine, broker, strategy = _scripted_engine([195.0], positions=[_long_position()])
+    engine.live_trader.sync_strategy_book()
+    import pandas as pd
+
+    history = pd.DataFrame(
+        {"open": 195.0, "high": 196.0, "low": 194.0, "close": 195.0, "volume": 1000.0},
+        index=pd.date_range("2024-01-02 09:30", periods=5, freq="1D", tz=NEW_YORK),
+    )
+    strategy.warm_up(SYMBOL, history)  # already below the pivot: the exit edge is gone
+
+    signal = strategy.process_bar(SYMBOL, _bar(close=194.0), datetime(2024, 1, 15, 10, 0))
+
+    assert signal == signals.CLOSE_BUY
+
+
+def test_a_book_that_already_matches_the_score_stays_quiet():
+    """The other direction: re-affirmation must not re-fire every bar on a position
+    that is exactly as intended."""
+    engine, broker, strategy = _scripted_engine([205.0, 206.0, 207.0])
+
+    asyncio.run(engine.start([SYMBOL]))
+
+    assert [o["type"] for o in broker.orders] == ["bracket"]  # once, not three times

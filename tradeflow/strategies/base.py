@@ -171,8 +171,17 @@ class Strategy(ABC):
         so entries are edge-triggered - re-affirmation is left to the engine, which
         dedupes against the open position.
         """
+        return self._walk_scores(data)[0]
+
+    def _walk_scores(self, data: pd.DataFrame) -> tuple:
+        """Return ``(signal per bar, the direction the score implies at the last bar)``.
+
+        The direction is the part edges alone cannot express. An edge says *change*;
+        the direction says *what should be true now*, which is the only thing that can
+        be compared against what is actually held.
+        """
         if data.empty:
-            return {}
+            return {}, 0
 
         scores = self.calculate_scores(data)
         thresholds = self.signal_thresholds()
@@ -190,7 +199,7 @@ class Strategy(ABC):
             target = self._desired_direction(score, state, thresholds, long_only)
             signal, state = self._transition(state, target)
             out[index[i]] = signal
-        return out
+        return out, state
 
     @staticmethod
     def _desired_direction(score: float, state: int, th: ScoreThresholds, long_only: bool) -> int:
@@ -290,6 +299,43 @@ class Strategy(ABC):
     # ------------------------------------------------------------------ #
     # Real-time processing (live mode)
     # ------------------------------------------------------------------ #
+    def _reaffirm(self, symbol: str, signal: str, direction: int) -> str:
+        """Re-state an edge that was missed, by comparing intent against the book.
+
+        Signals are edge-triggered: an entry is emitted on the bar the score crosses
+        and never again. Live, that edge can be missed - a bar rejected by the quality
+        guard, a dropped stream, a restart, or simply a crossing that happened inside
+        the warm-up history. Afterwards the score still says "should be long" while the
+        bar emits ``HOLD`` forever, and the position is never opened. The mirror case
+        is worse: a missed exit leaves a real position that nothing will close.
+
+        So live mode compares the direction the score implies against the position book
+        (which :class:`~tradeflow.execution.live_trader.LiveTrader` keeps synced with
+        broker truth) and re-states the difference. Where an edge says *change*, this
+        says *what should be true now* - the loop converges on the intended book
+        instead of depending on having caught one specific bar.
+
+        This is live-only. The backtest walks the same scores through
+        :meth:`generate_signals`, where its book is derived from those very signals and
+        so can never disagree - the two paths differ only in the case where the live
+        one has fallen behind.
+
+        A flip closes first and re-enters on the next bar, exactly as
+        :meth:`_transition` does, rather than reversing in one step.
+        """
+        if signal != signals.HOLD:
+            return signal
+
+        desired = {1: signals.BUY, -1: signals.SELL}.get(direction)
+        held = self.positions.get(symbol)
+        held_side = held.get("side") if held else None
+
+        if desired == held_side:  # book already matches intent (including both flat)
+            return signals.HOLD
+        if held_side is not None:  # holding something we should not be: close it
+            return signals.CLOSE_BUY if held_side == signals.BUY else signals.CLOSE_SELL
+        return desired or signals.HOLD
+
     def process_bar(self, symbol: str, bar: Dict[str, float], timestamp: datetime) -> Optional[str]:
         """Fold one streamed OHLCV bar into the rolling buffer and emit a signal.
 
@@ -319,7 +365,8 @@ class Strategy(ABC):
             processed = self.process_data(buffer.copy())
             self.last_processed_data[symbol] = processed
 
-            latest = self._latest_signal(self.generate_signals(processed))
+            emitted, direction = self._walk_scores(processed)
+            latest = self._reaffirm(symbol, self._latest_signal(emitted), direction)
             return latest if self.validate_signal(latest, symbol, bar["close"]) else signals.HOLD
         except Exception:  # noqa: BLE001 - never break the stream
             # Swallowing keeps the stream alive, but a strategy that raises on every

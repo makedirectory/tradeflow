@@ -153,6 +153,30 @@ scheduled `reconcile` can page you.
 
 `--no-ledger` disables recording; `--reconcile-every 0` disables the in-loop sweep.
 
+## Missed edges, and starting mid-trend
+
+Signals are edge-triggered: an entry fires on the bar the score crosses and never
+again. Live, that edge can be missed — a bar rejected by the quality guard, a dropped
+stream, a restart, or a crossing that happened inside the warm-up history. The score
+would still say "should be long" while every bar emitted `HOLD`, and the position was
+simply never opened. The mirror case is worse: a missed exit leaves a real position
+that nothing will close.
+
+So the live loop compares the direction the score implies against the position book
+(kept in sync with broker truth) and re-states the difference. Where an edge says
+*change*, this says *what should be true now*.
+
+**One consequence worth knowing before you run it.** If you start the engine while
+the score already implies a position — a trend-follower started mid-trend, say — it
+will open that position on the first live bar rather than waiting for the next fresh
+crossing. Stops and targets are computed from the current price, not the price at the
+original crossing. That is the intended behavior of a book that converges on intent,
+but it is a real change from waiting for the next edge, and it is most visible the
+first time you start a strategy into an established move.
+
+Backtests are unaffected: they derive the book from the same signals, so the two can
+never disagree there.
+
 ## Why nothing happened
 
 A signal that produces no order used to leave a log line and nothing else — and
