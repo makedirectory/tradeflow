@@ -7,6 +7,10 @@ in live mode that mutates the account, and it speaks exclusively through the
 Sizing and stop/take-profit distances come from the strategy's config; placement
 and account/position reads go through the broker.
 
+It is also where the kill switch bites: a halt recorded by
+:mod:`tradeflow.execution.halt` refuses new entries here, and deliberately never
+refuses an exit.
+
 It also owns the strategy's **position book** - the strategy's belief about what it
 holds. That belief is what :meth:`Strategy.validate_signal` consults to decide
 whether an exit is legitimate, so a book that is never populated silently converts
@@ -21,6 +25,7 @@ from typing import Optional
 
 from tradeflow.brokers.base import Broker, OrderResult, OrderSide, Position
 from tradeflow.brokers.errors import AuthenticationError, BrokerError, DuplicateOrderError
+from tradeflow.execution.halt import HaltState
 from tradeflow.execution.order_id import client_order_id
 from tradeflow.execution.sizing import PositionSizer, RiskBasedSizer
 from tradeflow.strategies import signals
@@ -46,9 +51,14 @@ class LiveTrader:
         sizer: Optional[PositionSizer] = None,
         allow_fractional: bool = False,
         respect_market_hours: bool = True,
+        halt_state: Optional[HaltState] = None,
     ):
         self._broker = broker
         self._strategy = strategy
+        #: Durable "stop trading" state. Consulted per actionable signal rather than
+        #: cached: promptness is the entire point of a kill switch, and the read is a
+        #: small local file on a path that only runs when a signal is not HOLD.
+        self._halts = halt_state if halt_state is not None else HaltState()
         # Default to the strategy's own risk-based sizing; callers can inject a
         # portfolio-weight sizer to let the portfolio manager drive live sizing.
         self._sizer = sizer or RiskBasedSizer(strategy)
@@ -123,6 +133,12 @@ class LiveTrader:
             return None
 
         if signal in signals.ENTRY_SIGNALS:
+            # Checked here rather than at the top so a halt can never block an exit.
+            # A switch that also trapped the book would be one nobody dares pull.
+            halt = self._halts.active(type(self._strategy).__name__)
+            if halt is not None:
+                logger.warning("HALTED — refusing %s entry for %s: %s", signal, symbol, halt)
+                return None
             return self._handle_entry(symbol, signal, price, position, bar_timestamp)
 
         logger.warning("Ignoring unrecognized signal %r for %s", signal, symbol)

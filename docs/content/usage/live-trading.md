@@ -152,3 +152,18 @@ inside the trade-clock loop. Exit code is non-zero when divergence is found, so 
 scheduled `reconcile` can page you.
 
 `--no-ledger` disables recording; `--reconcile-every 0` disables the in-loop sweep.
+
+## Stopping
+
+`Ctrl-C` stops the process, but it records nothing — restart the engine and it trades
+again. To stop trading in a way that *sticks*, and to close everything in an
+emergency, see [Stopping trading](./stopping.md).
+
+```bash
+tradeflow halts                                  # what is currently halted
+tradeflow halt all --reason "why"                # refuse new entries
+tradeflow flatten --confirm --reason "why"       # halt, cancel, close everything
+```
+
+Halts block entries and never block exits, so pulling the switch can never trap the
+book.

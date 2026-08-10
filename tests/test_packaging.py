@@ -47,10 +47,14 @@ def test_the_declared_entry_point_matches_reality():
     assert manifest["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == ["tradeflow"]
 
 
-def test_the_repo_itself_is_recognized_as_a_checkout():
+def test_the_repo_itself_is_recognized_as_a_checkout(monkeypatch):
     """The regression guard for the rename that broke this once. Running from the
     repo must resolve state to the repo — the alternative is a developer's journal
-    silently moving to ~/.tradeflow while their old one sits in the checkout."""
+    silently moving to ~/.tradeflow while their old one sits in the checkout.
+
+    Drops the suite's own TRADEFLOW_HOME: the override is what every other test wants
+    and the one thing this test must not have."""
+    monkeypatch.delenv("TRADEFLOW_HOME", raising=False)
     assert settings._looks_like_checkout(Path.cwd())
     assert settings.state_root() == Path.cwd()
 

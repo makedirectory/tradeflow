@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 
 from tradeflow.brokers.base import AccountSnapshot, Broker, MarketStatus, OrderResult, OrderSide, Position
+from tradeflow.brokers.errors import DuplicateOrderError
 from tradeflow.marketdata.base import BarHandler, MarketDataProvider
 from tradeflow.marketdata.timeframe import Timeframe
 from tradeflow.strategies.base import Strategy
@@ -117,7 +118,7 @@ class FakeBroker(Broker):
         if client_order_id is not None:
             if client_order_id in self.accepted_order_ids:
                 self.rejected_duplicates.append(client_order_id)
-                return None
+                raise DuplicateOrderError(f"client_order_id {client_order_id} already exists")
             self.accepted_order_ids.add(client_order_id)
         record = {**record, "client_order_id": client_order_id}
         self.orders.append(record)
@@ -423,3 +424,10 @@ class FailingBroker(FakeBroker):
         self._maybe_fail("cancel_order")
         return super().cancel_order(order_id)
 
+    def cancel_all_orders(self):
+        self._maybe_fail("cancel_all_orders")
+        return super().cancel_all_orders()
+
+    def close_all_positions(self, cancel_orders=True):
+        self._maybe_fail("close_all_positions")
+        return super().close_all_positions(cancel_orders)

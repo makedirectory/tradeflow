@@ -2276,6 +2276,63 @@ def cmd_live(args) -> None:
                 )
 
 
+def cmd_halt(args) -> None:
+    """Record a halt. Blocks new entries; never blocks an exit."""
+    from tradeflow.execution.halt import HaltState
+
+    halt = HaltState().set(args.reason, actor="cli", scope=args.scope)
+    print(f"Halted. {halt}")
+    print("New entries are refused while this stands. Exits are still allowed.")
+    print(f"Lift it with:  tradeflow resume {args.scope}")
+
+
+def cmd_resume(args) -> None:
+    """Lift a halt."""
+    from tradeflow.execution.halt import HaltState
+
+    if HaltState().clear(args.scope):
+        print(f"Halt lifted for {args.scope!r}. Trading may resume.")
+    else:
+        print(f"No halt was in force for {args.scope!r}; nothing to lift.")
+
+
+def cmd_halts(args) -> None:
+    """Show what is currently halted."""
+    from tradeflow.execution.halt import HaltState
+
+    halts = HaltState().list()
+    if not halts:
+        print("Nothing is halted.")
+        return
+    print("Active halts:")
+    for halt in halts:
+        print(f"  {halt}")
+
+
+def cmd_flatten(args) -> None:
+    """Halt, cancel every open order, and close every position.
+
+    Deliberately goes straight to the broker rather than through the engine, so it
+    works when the engine is wedged or holding state you no longer believe.
+    """
+    from tradeflow.execution.flatten import flatten
+
+    if not args.confirm:
+        raise SystemExit(
+            "flatten closes every position and halts trading. Re-run with --confirm once you are sure."
+        )
+    broker, _ = build_data_and_broker()
+    report = flatten(broker, reason=args.reason, actor="cli")
+    if args.json:
+        import json
+
+        print(json.dumps(report.as_dict(), indent=2))
+    else:
+        print(report.summary())
+    if not report.complete:
+        raise SystemExit(1)
+
+
 def cmd_reconcile(args) -> None:
     """Compare the position ledger against the broker's actual account state.
 
@@ -2859,6 +2916,29 @@ def build_parser() -> argparse.ArgumentParser:
         "from the broker's account state; never corrects it",
     )
     live.set_defaults(func=cmd_live)
+
+    halt = subparsers.add_parser(
+        "halt", help="Stop opening new positions (exits still allowed) — durable until resumed"
+    )
+    halt.add_argument("scope", nargs="?", default="all", help="'all', or a strategy class name")
+    halt.add_argument("--reason", required=True, help="Why — recorded with the halt")
+    halt.set_defaults(func=cmd_halt)
+
+    resume = subparsers.add_parser("resume", help="Lift a halt")
+    resume.add_argument("scope", nargs="?", default="all", help="'all', or a strategy class name")
+    resume.set_defaults(func=cmd_resume)
+
+    halts = subparsers.add_parser("halts", help="Show what is currently halted — read-only")
+    halts.set_defaults(func=cmd_halts)
+
+    flat = subparsers.add_parser(
+        "flatten",
+        help="Emergency: halt, cancel all orders, close all positions (bypasses the engine)",
+    )
+    flat.add_argument("--confirm", action="store_true", help="Required — this closes real positions")
+    flat.add_argument("--reason", required=True, help="Why — recorded with the halt")
+    flat.add_argument("--json", action="store_true", help="Emit the report as JSON")
+    flat.set_defaults(func=cmd_flatten)
 
     reconcile = subparsers.add_parser(
         "reconcile",
