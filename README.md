@@ -270,6 +270,8 @@ promoted automatically — is what stays constant.
 | `backtest` | Scan → run a strategy over history → performance report |
 | `live` | Scan → warm up indicators → stream bars → place paper/live orders. Bar-quality guards (staleness, spikes, inconsistent OHLC, out-of-order) veto bad bars — rejecting, never repairing — and a position ledger records intent vs. observed fills |
 | `reconcile` | Check the position ledger against the broker's actual account state. Reports divergence; never corrects it (read-only) |
+| `halt` / `resume` / `halts` | Stop opening new positions, and say so durably — a running engine sees it on the next bar. Blocks entries, never exits, so it can't trap the book |
+| `flatten` | Emergency: halt, cancel every order, close every position. Goes straight to the broker, so it works when the engine is wedged |
 | `optimize` | Search strategy parameters by backtest objective (grid / random / Bayesian); `--workers N` evaluates candidates in parallel — wall-clock only, same trials and same winner |
 | `allocate` | Weight a portfolio: scalar-score sizing (OR-Tools), or `--objective utility` for mean-variance construction from alpha + Σ |
 | `alphas` | Rank a universe by continuous alpha — a comparable, annualized residual-return forecast per name; `--combine` blends several signals, `--neutralize-factors` regresses out the risk model's factor exposures (read-only) |
@@ -503,7 +505,21 @@ See **[CONTRIBUTING.md](CONTRIBUTING.md)** for setup, the pre-push checks, and t
 coding standards (layering rules, separation of concerns, no vendor SDK above the
 broker layer). CI runs ruff lint + format + the test suite on every PR.
 
-## Account utilities
+## Stopping, and account utilities
+
+`Ctrl-C` stops the process but records nothing — restart the engine and it trades
+again. To stop in a way that sticks:
+
+```bash
+make halt REASON="feed looks wrong"   # refuse new entries; exits still allowed
+make halts                            # what is currently halted
+make resume                           # lift it
+make flatten REASON="why"             # halt, cancel everything, close everything
+```
+
+Halt state is a file under the state root, not a database — the order path holds no
+connection to anything that can be down, so the switch still works when the engine
+does not. See [Stopping trading](https://tradeflow.mk-dir.com/usage/stopping).
 
 ```bash
 make cancel-orders         # cancel all open orders

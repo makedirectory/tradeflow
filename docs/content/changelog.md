@@ -28,7 +28,7 @@ index; they are tagged in the repository.
 
 ---
 
-## Unreleased
+## 2.1.0 — 2026-08-10
 
 Trade-clock hardening. The live path is the smallest and least-tested part of this
 project, which is backwards — it is the only part that can lose money. Most of what
@@ -92,6 +92,12 @@ follows was found by *running* it rather than reading it.
 - **A strategy started while the score already implies a position takes it** on the
   first live bar, rather than waiting for the next crossing. Turn it off with
   `--no-reaffirm-entries`.
+- **Internal trade-clock interfaces changed shape.** `Broker.submit_*` take a
+  `client_order_id`; the order-path methods raise `BrokerError` rather than
+  returning `None`/`False`; `LiveTrader.handle_signal` returns a `Decision` rather
+  than an optional order. No supported API moved — `tradeflow.services.*` is the
+  supported surface and is untouched — but anyone who had reached past it into the
+  broker or execution layer will need these. Hence a minor, not a major.
 
 ## 2.0.4 — 2026-08-07
 
