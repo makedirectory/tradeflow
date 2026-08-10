@@ -46,6 +46,25 @@ wide hold band. Entries are edge-triggered (emitted on the crossing bar); while 
 direction is held the bar emits `HOLD`, and the engine dedupes against the open
 position.
 
+### Edges, and what live mode adds
+
+An edge says *change*. That is enough for a backtest, where the book is derived from
+the same signals and so can never disagree with them. Live it is not: the crossing
+bar can be missed — rejected by a quality guard, lost to a dropped stream, consumed
+by a restart, or simply inside the warm-up history — after which the score still says
+"should be long" while every bar emits `HOLD`, and the position is never opened. A
+missed exit is worse: a real position that nothing will close.
+
+So `process_bar` also compares the direction the score *implies* against the position
+book (which `LiveTrader` keeps synced with broker truth) and re-states any difference.
+Where an edge says *change*, this says *what should be true now*, and the loop
+converges on the intended book instead of depending on having caught one bar.
+
+Entries are gated by `reaffirm_entries` (default on — a trend-follower started
+mid-trend should hold the trend). Exits never are: declining to open a position is a
+preference, declining to close one the strategy no longer wants is a stuck position.
+See [live trading](../usage/live-trading.md) for the operational side.
+
 ## The signal vocabulary
 
 The derived signals are plain strings, defined once in `tradeflow/strategies/signals.py`

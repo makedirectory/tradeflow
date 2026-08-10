@@ -95,12 +95,25 @@ capital, dates, and the strategy config.
 
 1. `_warm_up` — fetch a lookback window, run `process_data`, and seed each
    symbol's rolling buffer via `Strategy.warm_up`, so indicators are valid on the
-   very first live bar.
-2. Subscribe to the live stream through the `MarketDataClient`.
-3. `_on_bar` — feed each full streamed bar to `process_bar`; forward any
-   actionable signal to the `LiveTrader`.
-4. If the broker supports it, run the **trade-update stream concurrently**
+   very first live bar. The window is measured in **sessions, not wall-clock
+   time**: converting bars to a `timedelta` directly counts the overnight gap and
+   the weekend as tradeable, which at intraday frequencies fetches a fraction of
+   the history the indicators asked for. A short or empty warm-up is logged,
+   because from inside the loop it is indistinguishable from a quiet market.
+2. `_cold_start` — hydrate the strategy's position book from broker truth *before*
+   the first bar. Warm-up seeds indicators; it says nothing about what is held, and
+   a strategy that wrongly believes it is flat cannot emit an exit.
+3. Subscribe to the live stream through the `MarketDataClient`.
+4. `_on_bar` — feed each full streamed bar to `process_bar`; forward any
+   actionable signal to the `LiveTrader`, which returns a `Decision` recording what
+   it did and why.
+5. If the broker supports it, run the **trade-update stream concurrently**
    (`asyncio.gather`) so fills/cancels/rejects are logged alongside trading.
+
+Inside the loop, on a timer rather than per bar, the engine re-reads the position
+book and reconciles the ledger against the account. Both are bounded by
+construction — one `list_positions` call per sweep, never one per symbol — because
+this runs on the trade clock and must not scale with universe size.
 
 Both live streams (market data and trade updates) auto-reconnect with capped
 backoff via a shared `run_with_reconnect` helper, and shut down cleanly on

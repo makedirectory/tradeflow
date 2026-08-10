@@ -53,9 +53,23 @@ Use the pure [indicators](indicators); don't reach for a compiled TA library.
    `tradeflow/brokers/<vendor>/` package, mapping the SDK to the domain types.
 2. Construct it in `main.build_data_and_broker()`.
 
+Three parts of the contract are easy to get wrong, and all three are load-bearing:
+
+- **Map failures onto `BrokerError`**, don't return `None`. Callers act differently
+  on a rate limit, revoked credentials, and a rejected order; collapsing them into
+  one non-answer removes the only basis for choosing.
+- **`list_positions` raises rather than returning `[]`** when the account cannot be
+  read. An empty list is the claim that the account is flat, and the strategy's
+  position book is rebuilt from it.
+- **Honor `client_order_id`.** A venue that has already accepted one must reject the
+  duplicate as `DuplicateOrderError` rather than placing a second order — that
+  rejection is the idempotency guarantee, and the only one that survives a restart.
+
 Nothing in `engine/`, `execution/`, `strategies/`, `scanners/`, or the optimizer
 changes — they only ever knew the interface. Prove it the same way the suite does:
-run against your adapter, or against `FakeBroker` first.
+run against your adapter, or against `FakeBroker` first. `FakeBroker` models all
+three behaviors above, and `FailingBroker` fails any named method with a chosen
+error, so an adapter can be exercised against the same expectations.
 
 ## Add an optimization objective
 
