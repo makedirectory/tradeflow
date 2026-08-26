@@ -137,6 +137,44 @@ def test_sandbox_loads_valid_strategy_code():
     assert instance.config["timeframe"] == "1Day"
 
 
+_VALID_SCANNER_CODE = '''
+import pandas as pd
+from tradeflow.scanners.base import SCANNER_BUY, SCANNER_HOLD, ScannerStrategy
+
+class GenScanner(ScannerStrategy):
+    """Flags up bars. Hypothesis: attention follows simple upward pressure."""
+    TIMEFRAME = "1Day"
+    PARAM_RANGES = {"min_move": {"type": "float", "min": 0.0, "max": 5.0, "step": 0.5, "default": 0.5}}
+
+    def initialize(self):
+        pass
+
+    def process_data(self, data):
+        enriched = data.copy()
+        enriched["move"] = (enriched["close"] - enriched["open"]) / enriched["open"] * 100
+        return enriched
+
+    def generate_signals_df(self, data):
+        out = pd.DataFrame(index=data.index)
+        out["signal"] = SCANNER_HOLD
+        out["signal_strength"] = data["move"].abs()
+        out.loc[data["move"] > self.config["min_move"], "signal"] = SCANNER_BUY
+        return out
+'''
+
+
+def test_sandbox_loads_valid_scanner_code():
+    cls = sandbox.load_scanner_from_code(_VALID_SCANNER_CODE)
+    assert cls.__name__ == "GenScanner"
+    assert cls({}).config["min_move"] == 0.5
+
+
+def test_sandbox_requires_scanner_signal_strength():
+    bad = _VALID_SCANNER_CODE.replace('        out["signal_strength"] = data["move"].abs()\n', "")
+    with pytest.raises(sandbox.HygieneError):
+        sandbox.load_scanner_from_code(bad)
+
+
 def test_sandbox_blocks_disallowed_imports():
     # `os` is denied outright; the broker layer is a real module that is simply not
     # on the allowlist — generated code may reach the strategy base, never a venue.

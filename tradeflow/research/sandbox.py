@@ -7,23 +7,27 @@ Two jobs:
    no more than :data:`MAX_TUNABLE_PARAMS` parameters may be varied. These are the
    cheap, load-bearing rules that stop the loop manufacturing overfit garbage at
    scale.
-2. **Contract validation** of agent-authored strategy *code*: it must define a
-   concrete :class:`~tradeflow.strategies.base.Strategy` subclass that implements the
-   abstract hooks, declares a valid ``PARAM_RANGES`` (<= 5 searchable), carries a
-   docstring (the hypothesis), and actually constructs.
+2. **Contract validation** of agent-authored strategy/scanner *code*: a strategy
+   must define a concrete :class:`~tradeflow.strategies.base.Strategy` subclass that
+   implements the abstract hooks, declares a valid ``PARAM_RANGES`` (<= 5
+   searchable), carries a docstring (the hypothesis), and actually constructs. A
+   scanner must define a concrete :class:`~tradeflow.scanners.base.ScannerStrategy`
+   subclass that emits the scanner signal vocabulary and a numeric
+   ``signal_strength``.
 
 Isolation note: generated code is validated and executed with a restricted global
 namespace (no ``os``/``sys``/network imports, limited builtins). This is a
 *proposal artifact*, never auto-merged. True OS-level isolation (separate process,
 no network, resource limits) is the production hardening called for in  and is
-left as a deliberate follow-up; :func:`load_strategy_from_code` is the single
-choke point where that would be enforced.
+left as a deliberate follow-up; :func:`load_strategy_from_code` and
+:func:`load_scanner_from_code` are the choke points where that would be enforced.
 """
 
 import builtins as _builtins
 from typing import Optional, Tuple, Type
 
 from tradeflow.optimization.param_space import ParameterSpace
+from tradeflow.scanners.base import SCANNER_BUY, SCANNER_HOLD, SCANNER_SELL, ScannerStrategy
 from tradeflow.strategies.base import Strategy
 
 #: Hard cap on tunable parameters per strategy (more knobs = more overfit surface).
@@ -36,13 +40,15 @@ MAX_TUNABLE_PARAMS = 5
 #: zero-trade run that is indistinguishable from "no edge" unless we catch it here.
 REQUIRED_CONFIG_KEYS = ("risk_per_trade", "stop_loss", "take_profit")
 
-#: Import names a generated strategy is allowed to use.
+#: Import names generated strategy/scanner code is allowed to use.
 _ALLOWED_IMPORTS = {
     "pandas",
     "numpy",
     "math",
     "tradeflow.indicators.indicators",
     "tradeflow.indicators",
+    "tradeflow.scanners.base",
+    "tradeflow.scanners",
     "tradeflow.strategies.base",
     "tradeflow.strategies.signals",
     "tradeflow.strategies",
@@ -105,10 +111,28 @@ def load_strategy_from_code(code: str, *, class_name: Optional[str] = None) -> T
     abstract-method contract, declares > 5 searchable params, lacks a docstring,
     or does not construct from its declared defaults.
     """
+    cls = _load_class_from_code(code, Strategy, "strategy", class_name)
+    _validate_strategy_contract(cls)
+    return cls
+
+
+def load_scanner_from_code(code: str, *, class_name: Optional[str] = None) -> Type[ScannerStrategy]:
+    """Compile generated source and return its validated ``ScannerStrategy`` subclass.
+
+    Raises :class:`HygieneError` if the code imports disallowed modules, fails the
+    abstract-method contract, declares too many searchable params, lacks a docstring,
+    or does not emit a scanner signal frame on sample OHLCV data.
+    """
+    cls = _load_class_from_code(code, ScannerStrategy, "scanner", class_name)
+    _validate_scanner_contract(cls)
+    return cls
+
+
+def _load_class_from_code(code: str, base_cls: Type, label: str, class_name: Optional[str] = None) -> Type:
     namespace: dict = {"__builtins__": _restricted_builtins()}
     namespace["__import__"] = _guarded_import
     try:
-        compiled = compile(code, "<generated-strategy>", "exec")
+        compiled = compile(code, f"<generated-{label}>", "exec")
         exec(compiled, namespace)  # noqa: S102 - restricted namespace, validated below
     except Exception as exc:  # noqa: BLE001 - any failure is a rejection, not a crash
         raise HygieneError(f"generated code failed to import: {exc}") from exc
@@ -116,19 +140,16 @@ def load_strategy_from_code(code: str, *, class_name: Optional[str] = None) -> T
     candidates = [
         obj
         for obj in namespace.values()
-        if isinstance(obj, type) and issubclass(obj, Strategy) and obj is not Strategy
+        if isinstance(obj, type) and issubclass(obj, base_cls) and obj is not base_cls
     ]
     if class_name:
         candidates = [c for c in candidates if c.__name__ == class_name]
     if not candidates:
-        raise HygieneError("no concrete Strategy subclass defined")
-    cls = candidates[-1]
-
-    _validate_contract(cls)
-    return cls
+        raise HygieneError(f"no concrete {base_cls.__name__} subclass defined")
+    return candidates[-1]
 
 
-def _validate_contract(cls: Type[Strategy]) -> None:
+def _validate_common_contract(cls: Type, base_name: str) -> None:
     if getattr(cls, "__abstractmethods__", None):
         raise HygieneError(
             f"{cls.__name__} leaves abstract methods unimplemented: {sorted(cls.__abstractmethods__)}"
@@ -140,10 +161,19 @@ def _validate_contract(cls: Type[Strategy]) -> None:
     space = ParameterSpace(cls.PARAM_RANGES)
     if len(space.searchable) > MAX_TUNABLE_PARAMS:
         raise HygieneError(
-            f"{cls.__name__} has {len(space.searchable)} searchable params (cap {MAX_TUNABLE_PARAMS})"
+            f"{cls.__name__} has {len(space.searchable)} searchable params "
+            f"(cap {MAX_TUNABLE_PARAMS} for draft {base_name}s)"
         )
+
+
+def _defaults(cls: Type) -> dict:
+    return {name: spec["default"] for name, spec in cls.PARAM_RANGES.items() if "default" in spec}
+
+
+def _validate_strategy_contract(cls: Type[Strategy]) -> None:
+    _validate_common_contract(cls, "strategy")
     # Must construct from its own defaults.
-    defaults = {name: spec["default"] for name, spec in cls.PARAM_RANGES.items() if "default" in spec}
+    defaults = _defaults(cls)
     defaults.setdefault("timeframe", getattr(cls, "TIMEFRAME", "1Day"))
     try:
         instance = cls(dict(defaults))
@@ -158,6 +188,43 @@ def _validate_contract(cls: Type[Strategy]) -> None:
             f"{cls.__name__} does not declare required config {missing} "
             f"(the execution path reads {list(REQUIRED_CONFIG_KEYS)} on every bar)"
         )
+
+
+def _validate_scanner_contract(cls: Type[ScannerStrategy]) -> None:
+    _validate_common_contract(cls, "scanner")
+    try:
+        instance = cls(_defaults(cls))
+        instance.initialize()
+    except Exception as exc:  # noqa: BLE001
+        raise HygieneError(f"{cls.__name__} does not construct from defaults: {exc}") from exc
+
+    import pandas as pd
+
+    sample = pd.DataFrame(
+        {
+            "open": [100.0, 101.0, 102.0, 103.0, 104.0],
+            "high": [101.0, 102.0, 103.0, 104.0, 105.0],
+            "low": [99.0, 100.0, 101.0, 102.0, 103.0],
+            "close": [100.5, 101.5, 102.5, 103.5, 104.5],
+            "volume": [100_000, 110_000, 120_000, 130_000, 140_000],
+        },
+        index=pd.date_range("2024-01-02", periods=5, freq="D"),
+    )
+    try:
+        signals = instance.generate_signals_df(instance.process_data(sample))
+    except Exception as exc:  # noqa: BLE001
+        raise HygieneError(f"{cls.__name__} cannot produce scanner signals on sample data: {exc}") from exc
+    required = {"signal", "signal_strength"}
+    if not required <= set(signals.columns):
+        raise HygieneError(f"{cls.__name__} scanner signals must include {sorted(required)}")
+    valid_signals = {SCANNER_BUY, SCANNER_SELL, SCANNER_HOLD}
+    emitted = set(signals["signal"].dropna())
+    if not emitted <= valid_signals:
+        raise HygieneError(f"{cls.__name__} emits unknown scanner signals: {sorted(emitted - valid_signals)}")
+    try:
+        pd.to_numeric(signals["signal_strength"])
+    except Exception as exc:  # noqa: BLE001
+        raise HygieneError(f"{cls.__name__} signal_strength must be numeric") from exc
 
 
 def _guarded_import(name, *args, **kwargs):

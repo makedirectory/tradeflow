@@ -12,6 +12,7 @@ Run with: ``python main.py mcp`` (needs the ``mcp`` extra).
 """
 
 import contextlib
+import hashlib
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -32,6 +33,9 @@ EXPOSED_TOOLS = (
     "run_backtest",
     "run_optimization",
     "run_walk_forward",
+    "validate_draft_strategy_code",
+    "validate_draft_scanner_code",
+    "run_draft_walk_forward",
     "run_verdict",
     "compute_alphas",
     "combine_alphas",
@@ -53,7 +57,9 @@ EXPOSED_TOOLS = (
 #: Tools that record a trial. An agent that does not know a call costs a trial will
 #: burn a campaign's multiple-testing budget at machine speed, so every one of these
 #: says so in its description - asserted by a test, not left to good intentions.
-JOURNALING_TOOLS = frozenset({"run_backtest", "run_optimization", "run_walk_forward", "run_verdict"})
+JOURNALING_TOOLS = frozenset(
+    {"run_backtest", "run_optimization", "run_walk_forward", "run_draft_walk_forward", "run_verdict"}
+)
 
 #: Evidence-gated features that ship **off**. Where a tool exposes one, its
 #: description must name the gate and its current verdict rather than presenting the
@@ -463,6 +469,132 @@ def build_server(data_client=None):
             workers=workers,
         )
         return _logged("run_walk_forward", inputs, result)
+
+    @tool()
+    def validate_draft_strategy_code(code: str, class_name: Optional[str] = None) -> Dict[str, Any]:
+        """Validate draft Strategy source without registering or running it.
+
+        Use this for agent-authored or private-package-bound strategy code before
+        spending market-data calls on it. The code is compiled in the research
+        sandbox with restricted imports, then checked for the Strategy contract:
+        concrete subclass, docstring, valid PARAM_RANGES with no more than five
+        searchable params, default construction, required sizing/risk config, and
+        one continuous score source. It writes no files and journals no trials.
+
+        This is a drafting aid, not promotion. To make validated code available by
+        name, ship it in a package exposing the `tradeflow.strategies` entry-point
+        group, or keep using `run_draft_walk_forward` with source attached.
+        """
+        inputs = {"class_name": class_name, "code_hash": _source_hash(code)}
+        return _logged(
+            "validate_draft_strategy_code",
+            inputs,
+            analysis.validate_draft_strategy_code(code, class_name=class_name),
+        )
+
+    @tool()
+    def validate_draft_scanner_code(code: str, class_name: Optional[str] = None) -> Dict[str, Any]:
+        """Validate draft ScannerStrategy source without registering or running it.
+
+        Use this for agent-authored or private-package-bound scanner code before it
+        becomes part of a universe-selection workflow. The code is compiled in the
+        research sandbox with restricted imports, then checked for the scanner
+        contract: concrete subclass, docstring, valid PARAM_RANGES with no more than
+        five searchable params, default construction, and a generated signal frame
+        containing `signal` plus numeric `signal_strength` using the scanner signal
+        vocabulary. It writes no files and journals no trials.
+
+        To make validated scanner code available by name, ship it in a package
+        exposing the `tradeflow.scanners` entry-point group.
+        """
+        inputs = {"class_name": class_name, "code_hash": _source_hash(code)}
+        return _logged(
+            "validate_draft_scanner_code",
+            inputs,
+            analysis.validate_draft_scanner_code(code, class_name=class_name),
+        )
+
+    @tool("sharpe_ratio", "deflated_sharpe_ratio", "profit_factor", "max_drawdown", notes=[_JOURNALING_NOTE])
+    def run_draft_walk_forward(
+        code: str,
+        symbols: List[str],
+        start: str,
+        end: str,
+        class_name: Optional[str] = None,
+        mode: str = "anchored",
+        n_folds: int = 4,
+        embargo_days: Optional[int] = None,
+        holdout_days: int = 0,
+        method: str = "grid",
+        objective: str = "sharpe_ratio",
+        max_evals: int = 50,
+        seed: int = 42,
+        capital: float = 100_000.0,
+        include_pbo: bool = False,
+        include_monte_carlo: bool = False,
+        parameter_sensitivity: bool = False,
+        leakage_probe: bool = False,
+        gross: bool = False,
+        journal: bool = True,
+        force: bool = False,
+    ) -> Dict[str, Any]:
+        """Validate draft Strategy source, then run normal walk-forward gates.
+
+        This is the bridge from "agent can propose or modify strategy code" to
+        "TradeFlow can validate it" without putting proprietary code in this repo.
+        The source is compiled in-memory through the same sandbox as
+        `validate_draft_strategy_code`, never registered globally, and never made
+        live. Results are regular walk-forward results with a `draft` block carrying
+        class name, source hash, and whether the run was journaled.
+
+        By default this journals one validated trial under
+        `draft:<ClassName>:<code_hash>` so campaign history still reflects that the
+        source consumed a test. Set `journal=false` only for smoke tests that should
+        not enter the campaign record. An identical prior draft validation is served
+        from the trial store unless `force=true`.
+        """
+        inputs = {
+            "code_hash": _source_hash(code),
+            "symbols": symbols,
+            "start": start,
+            "end": end,
+            "class_name": class_name,
+            "mode": mode,
+            "n_folds": n_folds,
+            "holdout_days": holdout_days,
+            "method": method,
+            "objective": objective,
+            "max_evals": max_evals,
+            "seed": seed,
+            "gross": gross,
+            "journal": journal,
+            "force": force,
+        }
+        result = analysis.run_draft_walk_forward(
+            dc,
+            code,
+            symbols,
+            _parse_date(start),
+            _parse_date(end),
+            class_name=class_name,
+            mode=mode,
+            n_folds=n_folds,
+            embargo_days=embargo_days,
+            holdout_days=holdout_days,
+            method=method,
+            objective=objective,
+            max_evals=max_evals,
+            seed=seed,
+            capital=capital,
+            include_pbo=include_pbo,
+            include_monte_carlo=include_monte_carlo,
+            parameter_sensitivity=parameter_sensitivity,
+            leakage_probe=leakage_probe,
+            gross=gross,
+            journal=journal,
+            force=force,
+        )
+        return _logged("run_draft_walk_forward", inputs, result)
 
     @tool()
     def compute_alphas(
@@ -1006,6 +1138,10 @@ def _assert_no_trading_client(data_client) -> None:
     for attr in ("broker", "trading_client", "_broker"):
         if getattr(data_client, attr, None) is not None:
             raise RuntimeError(f"MCP data client unexpectedly exposes {attr!r}; refusing to start.")
+
+
+def _source_hash(code: str) -> str:
+    return hashlib.sha256(code.encode("utf-8")).hexdigest()[:12]
 
 
 def _summary(result: Any) -> Dict[str, Any]:

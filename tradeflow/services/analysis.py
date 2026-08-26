@@ -7,6 +7,7 @@ artifact file and referenced by path - never inlined.
 """
 
 import contextlib
+import hashlib
 import json
 import logging
 from datetime import datetime, timedelta
@@ -657,6 +658,238 @@ def run_walk_forward(
         seed=seed,
         gates=gates,
     )
+
+
+def validate_draft_strategy_code(code: str, class_name: Optional[str] = None) -> Dict[str, Any]:
+    """Validate generated/private strategy source without registering or running it."""
+    from tradeflow.research.sandbox import HygieneError, load_strategy_from_code
+
+    run_id = new_run_id()
+    try:
+        cls = load_strategy_from_code(code, class_name=class_name)
+    except HygieneError as exc:
+        return {
+            "run_id": run_id,
+            "valid": False,
+            "kind": "strategy",
+            "error": str(exc),
+            "code_hash": _code_hash(code),
+        }
+    return {
+        "run_id": run_id,
+        "valid": True,
+        "kind": "strategy",
+        "class_name": cls.__name__,
+        "description": (cls.__doc__ or "").strip().split("\n", 1)[0],
+        "timeframe": getattr(cls, "TIMEFRAME", ""),
+        "param_ranges": _jsonable(cls.PARAM_RANGES),
+        "code_hash": _code_hash(code),
+    }
+
+
+def validate_draft_scanner_code(code: str, class_name: Optional[str] = None) -> Dict[str, Any]:
+    """Validate generated/private scanner source without registering or running it."""
+    from tradeflow.research.sandbox import HygieneError, load_scanner_from_code
+
+    run_id = new_run_id()
+    try:
+        cls = load_scanner_from_code(code, class_name=class_name)
+    except HygieneError as exc:
+        return {
+            "run_id": run_id,
+            "valid": False,
+            "kind": "scanner",
+            "error": str(exc),
+            "code_hash": _code_hash(code),
+        }
+    return {
+        "run_id": run_id,
+        "valid": True,
+        "kind": "scanner",
+        "class_name": cls.__name__,
+        "description": (cls.__doc__ or "").strip().split("\n", 1)[0],
+        "timeframe": getattr(cls, "TIMEFRAME", ""),
+        "param_ranges": _jsonable(cls.PARAM_RANGES),
+        "code_hash": _code_hash(code),
+    }
+
+
+def run_draft_walk_forward(
+    data_client: MarketDataClient,
+    code: str,
+    symbols: List[str],
+    start: datetime,
+    end: datetime,
+    *,
+    class_name: Optional[str] = None,
+    mode: str = "anchored",
+    n_folds: Optional[int] = 4,
+    train_days: Optional[int] = None,
+    test_days: Optional[int] = None,
+    embargo_days: Optional[int] = None,
+    holdout_days: int = 0,
+    method: str = "grid",
+    objective: str = "sharpe_ratio",
+    max_evals: int = 50,
+    seed: int = 42,
+    capital: float = 100_000.0,
+    include_pbo: bool = False,
+    include_monte_carlo: bool = False,
+    parameter_sensitivity: bool = False,
+    leakage_probe: bool = False,
+    gates: Optional[Dict[str, float]] = None,
+    gross: bool = False,
+    commission_bps: float = 1.0,
+    impact_eta: float = 0.3,
+    participation_cap: float = 0.10,
+    borrow_bps: float = 50.0,
+    journal: bool = True,
+    force: bool = False,
+) -> Dict[str, Any]:
+    """Validate strategy source, then run it through the normal walk-forward gates.
+
+    Draft code is never registered globally and never written into the public repo.
+    When ``journal`` is true, the validated run is recorded under a stable
+    ``draft:<ClassName>:<hash>`` strategy id so the campaign can still see that a
+    generated/private candidate consumed a test.
+    """
+    from tradeflow.optimization.config_store import current_git_sha
+    from tradeflow.research.sandbox import load_strategy_from_code
+    from tradeflow.services.audit import journal_trial
+
+    run_id = new_run_id()
+    code_hash = _code_hash(code)
+    cls = load_strategy_from_code(code, class_name=class_name)
+    draft_strategy = f"draft:{cls.__name__}:{code_hash}"
+    cost_model = _build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
+    cost_key = _cost_key(gross, commission_bps, impact_eta, borrow_bps)
+    recipe = {
+        "code_hash": code_hash,
+        "class_name": cls.__name__,
+        "mode": mode,
+        "n_folds": n_folds,
+        "train_days": train_days,
+        "test_days": test_days,
+        "embargo_days": embargo_days,
+        "holdout_days": holdout_days,
+        "method": method,
+        "objective": objective,
+        "max_evals": max_evals,
+        "seed": seed,
+        "_cost": cost_key,
+    }
+
+    with _open_trial_store() as trial_store:
+        if journal and not force and trial_store is not None:
+            cached = trial_store.find(
+                strategy=draft_strategy,
+                params=recipe,
+                symbols=symbols,
+                window_start=start,
+                window_end=end,
+                accounting=ACCOUNTING_VERSION,
+                git_sha=current_git_sha(),
+            )
+            if cached is not None:
+                metrics = json.loads(cached["metrics_json"] or "{}")
+                return {
+                    "run_id": run_id,
+                    "strategy": draft_strategy,
+                    "symbols": list(symbols),
+                    "window": {"start": start.isoformat(), "end": end.isoformat()},
+                    "memoized": True,
+                    "trial_id": cached["id"],
+                    "trial_ts": cached["ts"],
+                    "note": "Served from an identical prior draft validation, not re-run. "
+                    "Pass force=True to re-verify.",
+                    "oos_aggregate": _jsonable(metrics),
+                    "promotable": bool(cached["promotable"]) if cached["promotable"] is not None else None,
+                    "efficiency": cached["efficiency"],
+                    "n_trials_total": cached["n_trials_in_session"],
+                    "draft": {
+                        "class_name": cls.__name__,
+                        "code_hash": code_hash,
+                        "journaled": True,
+                    },
+                }
+
+        validator = WalkForwardValidator(
+            cls,
+            data_client,
+            initial_capital=capital,
+            seed=seed,
+            gates=gates,
+            cost_model=cost_model,
+            trial_store=None,
+            strategy_name=None,
+            cost_key=cost_key,
+            accounting=ACCOUNTING_VERSION,
+            force=True,
+        )
+        result = validator.run(
+            symbols,
+            start,
+            end,
+            mode=mode,
+            n_folds=n_folds,
+            train_days=train_days,
+            test_days=test_days,
+            embargo_days=embargo_days,
+            holdout_days=holdout_days,
+            method=method,
+            objective=objective,
+            max_evals=max_evals,
+            pbo=include_pbo,
+            monte_carlo=include_monte_carlo,
+            parameter_sensitivity=parameter_sensitivity,
+            leakage_probe=leakage_probe,
+        )
+        if journal and trial_store is not None and result.folds:
+            chosen = result.holdout_params or result.folds[-1].is_best_params
+            gate_report = result.gate_report(gates)
+            journal_trial(
+                "walkforward",
+                strategy=draft_strategy,
+                symbols=symbols,
+                start=start,
+                end=end,
+                params={**dict(chosen), "_draft": {"class_name": cls.__name__, "code_hash": code_hash}},
+                metrics=result.oos_aggregate,
+                objective=objective,
+                extra={
+                    "n_trials": result.n_trials_total,
+                    "promotable": gate_report["promotable"],
+                    "efficiency": result.median_efficiency(),
+                },
+                returns=result.oos_returns,
+                dedup_params=recipe,
+            )
+
+    payload = walk_forward_payload(
+        result,
+        run_id=run_id,
+        strategy=draft_strategy,
+        symbols=symbols,
+        start=start,
+        end=end,
+        mode=mode,
+        objective=objective,
+        method=method,
+        gross=gross,
+        seed=seed,
+        gates=gates,
+    )
+    payload["draft"] = {
+        "class_name": cls.__name__,
+        "code_hash": code_hash,
+        "journaled": bool(journal),
+        "note": "Draft source was validated and run in-memory; install it through entry points to use it by name.",
+    }
+    return payload
+
+
+def _code_hash(code: str) -> str:
+    return hashlib.sha256(code.encode("utf-8")).hexdigest()[:12]
 
 
 def walk_forward_payload(

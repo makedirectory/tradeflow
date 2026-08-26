@@ -31,10 +31,11 @@ agent — no business logic lives in any adapter. Every function takes a data-on
 - `registry.py` — `STRATEGIES` / `SCANNERS` registries and discovery
   (`list_strategies`, `list_scanners`, `get_param_ranges`).
 - `analysis.py` — `run_scan`, `run_backtest`, `run_optimization`,
-  `run_walk_forward`, `summarize_bars`. Large outputs (trade tables, full
-  optimization grids) are written to an artifact file under `logs/artifacts/` and
-  referenced by path — never inlined. Optimization output is capped to the top-N
-  rows with a truncation count.
+  `run_walk_forward`, draft code validation/evaluation helpers, and
+  `summarize_bars`. Large outputs (trade tables, full optimization grids) are
+  written to an artifact file under `logs/artifacts/` and referenced by path —
+  never inlined. Optimization output is capped to the top-N rows with a
+  truncation count.
 - `glossary.py` — `metrics_glossary()`: definition + pitfalls per metric, plus the
   closed-trade equity-curve caveat and the multiple-testing warning, so an agent
   doesn't over-trust in-sample Sharpe.
@@ -58,6 +59,8 @@ JSON. The exposed surface:
   `construct_portfolio`, `compute_information`, `compute_horizon`,
   `run_verdict` (the whole pipeline as one call — see
   [One-command verdict](../usage/verdict.md))
+- Draft code: `validate_draft_strategy_code`, `validate_draft_scanner_code`,
+  `run_draft_walk_forward`
 - Artifact: `render_report` (a result dict → one self-contained HTML document, the
   same renderer `--html` uses — see [HTML reports](../usage/html-reports.md))
 - Campaign memory: `list_trials`, `get_trial`, `best_trials` (read-only views of
@@ -67,6 +70,13 @@ JSON. The exposed surface:
 
 Every CLI research capability has an MCP equivalent, except anything touching live
 trading — that is the parity principle, and the exception is the whole safety model.
+
+Draft code tools are for the workbench phase. They let an agent check or
+walk-forward-test generated/private strategy code in memory without putting that
+source in this repository. Once a candidate deserves a name, ship it in a private
+package using the `tradeflow.strategies` or `tradeflow.scanners` entry-point group;
+the MCP server will discover it at startup and the normal named-strategy tools will
+work.
 
 ### Pointing a client at it
 

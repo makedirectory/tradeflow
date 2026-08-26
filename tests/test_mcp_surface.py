@@ -15,6 +15,7 @@ from datetime import datetime
 import pytest
 
 from tests.fakes import FakeMarketData
+from tests.test_research import _VALID_CODE, _VALID_SCANNER_CODE
 from tradeflow.marketdata.client import MarketDataClient
 from tradeflow.mcp import server as mcp_server
 from tradeflow.mcp.server import EVIDENCE_GATED, EXPOSED_TOOLS, FORBIDDEN_TOOLS, JOURNALING_TOOLS
@@ -128,6 +129,39 @@ def test_the_leaderboard_tool_warns_in_its_own_description(built):
     assert "selection bias" in description
     assert "deflated" in description.lower()
     assert "n_trials" in description
+
+
+# --- draft strategy/scanner workflow ---------------------------------------
+def test_draft_validation_tools_return_contract_metadata(built):
+    strategy = _call(built, "validate_draft_strategy_code", code=_VALID_CODE)
+    scanner = _call(built, "validate_draft_scanner_code", code=_VALID_SCANNER_CODE)
+
+    assert strategy["valid"] is True
+    assert strategy["class_name"] == "GenStrat"
+    assert strategy["code_hash"]
+    assert scanner["valid"] is True
+    assert scanner["class_name"] == "GenScanner"
+
+
+def test_draft_walk_forward_runs_without_registering_source(built):
+    payload = _call(
+        built,
+        "run_draft_walk_forward",
+        code=_VALID_CODE,
+        symbols=SYMBOLS,
+        start=START.strftime("%Y-%m-%d"),
+        end=END.strftime("%Y-%m-%d"),
+        n_folds=2,
+        method="grid",
+        max_evals=1,
+        journal=False,
+    )
+
+    assert payload["strategy"].startswith("draft:GenStrat:")
+    assert payload["draft"]["journaled"] is False
+    assert payload["n_trials_total"] == 2
+    assert "gate_report" in payload
+    assert "GenStrat" not in mcp_server.registry.STRATEGIES
 
 
 # --- run_verdict parity -----------------------------------------------------
