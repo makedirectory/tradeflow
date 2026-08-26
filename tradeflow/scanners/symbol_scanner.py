@@ -1,15 +1,16 @@
 """Universe scanner.
 
 Runs a chosen :class:`ScannerStrategy` across a candidate symbol list and returns
-those currently flagged - the universe the trading strategy/engine then operates
-on. Only TA-Lib-free scanners are registered, in keeping with the no-compiled-deps
-goal.
+those flagged at a specific research clock - the universe the trading
+strategy/engine then operates on. Only TA-Lib-free scanners are registered, in
+keeping with the no-compiled-deps goal.
 """
 
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple, Type
 
+from tradeflow.data.scan import slice_to_as_of
 from tradeflow.marketdata.client import MarketDataClient
 from tradeflow.marketdata.timeframe import Timeframe
 from tradeflow.scanners.base import ScannerStrategy
@@ -23,7 +24,7 @@ _LOOKBACK_DAY_BUFFER = 3
 
 
 class SymbolScanner:
-    """Filters a candidate universe down to currently-signaled symbols."""
+    """Filters a candidate universe down to scanner-signaled symbols."""
 
     #: Registered scanners by name (extend with new TA-Lib-free scanners here).
     SCANNERS: Dict[str, Type[ScannerStrategy]] = {
@@ -51,14 +52,19 @@ class SymbolScanner:
     def available(cls) -> List[str]:
         return list(cls.SCANNERS)
 
-    def scan(self, symbols: List[str], timeframe: Optional[str] = None) -> List[Tuple[str, str]]:
+    def scan(
+        self, symbols: List[str], timeframe: Optional[str] = None, as_of: Optional[datetime] = None
+    ) -> List[Tuple[str, str]]:
         """Return ``(symbol, scan_signal)`` for every flagged symbol in ``symbols``."""
         timeframe = timeframe or self.timeframe
-        start, end = self._scan_window(timeframe)
+        start, end = self._scan_window(timeframe, as_of=as_of)
         bars = self.data_client.get_bars(symbols, timeframe, start, end)
 
         flagged: List[Tuple[str, str]] = []
         for symbol, frame in bars.items():
+            if frame.empty:
+                continue
+            frame = slice_to_as_of(frame, end)
             if frame.empty:
                 continue
             processed = self.strategy.process_data(frame)
@@ -69,10 +75,14 @@ class SymbolScanner:
         logger.info("Scanner flagged %d/%d symbols", len(flagged), len(symbols))
         return flagged
 
-    def _scan_window(self, timeframe: str) -> Tuple[datetime, datetime]:
+    def _scan_window(self, timeframe: str, as_of: Optional[datetime] = None) -> Tuple[datetime, datetime]:
         """A lookback window large enough for the scanner's indicators."""
         tf = Timeframe.parse(timeframe)
         required = self.strategy.required_data_points()
         days = max(required * tf.amount * _LOOKBACK_DAY_BUFFER, 30)
-        end = datetime.now(NEW_YORK)
+        end = as_of or datetime.now(NEW_YORK)
+        if end.tzinfo is None:
+            end = NEW_YORK.localize(end)
+        else:
+            end = end.astimezone(NEW_YORK)
         return end - timedelta(days=days), end

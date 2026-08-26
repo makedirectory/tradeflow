@@ -160,14 +160,16 @@ def run_scan(
     scanner: str,
     symbols: List[str],
     config: Optional[Dict[str, Any]] = None,
+    as_of: Optional[datetime] = None,
 ) -> Dict[str, Any]:
     """Run a universe scanner; return the flagged ``(symbol, signal)`` pairs."""
     from tradeflow.scanners.symbol_scanner import SymbolScanner
 
-    flagged = SymbolScanner(data_client, scanner, config).scan(symbols)
+    flagged = SymbolScanner(data_client, scanner, config).scan(symbols, as_of=as_of)
     return {
         "scanner": scanner,
         "candidates": list(symbols),
+        "as_of": as_of.isoformat() if as_of else None,
         "flagged": [{"symbol": s, "signal": sig} for s, sig in flagged],
         "flagged_count": len(flagged),
     }
@@ -1585,9 +1587,9 @@ def run_verdict(
     universe and applies its own defaults, and the joined-up story can silently be
     five different stories.
 
-    Answers "what does the cross-sectional pipeline say about this universe now" -
-    a forecast and a proposed book, not a historical simulation. For "did this ever
-    work", that is ``run_backtest``/``run_walk_forward``.
+    Answers "what does the cross-sectional pipeline say about this universe as of
+    the window end" - a forecast and a proposed book, not a historical simulation.
+    For "did this ever work", that is ``run_backtest``/``run_walk_forward``.
 
     A step that fails does not kill the run: the composite records what ran, what
     did not, and why, and the overall verdict for any incomplete run is
@@ -1699,7 +1701,7 @@ def run_verdict(
         steps["scan"] = {"status": "skipped", "reason": "no scanner — candidates used as-is"}
         scan, universe = None, list(symbols)
     else:
-        scan = _step("scan", lambda: run_scan(client, scanner, list(symbols)))
+        scan = _step("scan", lambda: run_scan(client, scanner, list(symbols), as_of=end))
         universe = [row["symbol"] for row in (scan or {}).get("flagged", [])]
         if not universe:
             # Same fallback the single-step commands use: an empty scan means "nothing

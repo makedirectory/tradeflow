@@ -65,14 +65,16 @@ def build_data_and_broker(cache: bool = False, offline: bool = False, cache_dir:
     return broker, data_client
 
 
-def resolve_universe(data_client, scanner_name: Optional[str], candidates: List[str]) -> List[str]:
+def resolve_universe(
+    data_client, scanner_name: Optional[str], candidates: List[str], as_of: Optional[datetime] = None
+) -> List[str]:
     """Filter ``candidates`` through the scanner, falling back to them if none flag.
 
     Delegates to the shared service core so the CLI and MCP server use one path.
     """
     from tradeflow.services.data import resolve_universe as _resolve
 
-    return _resolve(data_client, scanner_name, candidates)
+    return _resolve(data_client, scanner_name, candidates, as_of=as_of)
 
 
 def build_cost_model(args):
@@ -262,7 +264,7 @@ def cmd_backtest(args) -> None:
         strategy = STRATEGIES[strategy_name].create_with_defaults()
 
     _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
-    universe = resolve_universe(data_client, scanner, args.symbols)
+    universe = resolve_universe(data_client, scanner, args.symbols, as_of=getattr(args, "scan_as_of", None) or args.end)
 
     # Computed once, up front: it warms the cache as a side effect (when
     # cache-backed) and must match exactly between the lookup below and the
@@ -388,7 +390,7 @@ def cmd_scan(args) -> None:
     from tradeflow.scanners.symbol_scanner import SymbolScanner
 
     _, data_client = build_data_and_broker()
-    flagged = SymbolScanner(data_client, args.scanner).scan(args.symbols)
+    flagged = SymbolScanner(data_client, args.scanner).scan(args.symbols, as_of=args.as_of)
     if not flagged:
         print("No symbols flagged.")
         return
@@ -653,7 +655,9 @@ def cmd_optimize(args) -> None:
     from tradeflow.optimization.optimizer import ParameterOptimizer
 
     _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
-    universe = resolve_universe(data_client, args.scanner, args.symbols)
+    universe = resolve_universe(
+        data_client, args.scanner, args.symbols, as_of=getattr(args, "scan_as_of", None) or args.end
+    )
     timeframe = STRATEGIES[args.strategy].create_with_defaults().config["timeframe"]
     vintage = _vintage_stamp(data_client, universe, timeframe, args.start, args.end)
     # Workers, when asked for, read bars from the local cache rather than the API —
@@ -739,7 +743,9 @@ def cmd_walkforward(args) -> None:
     from tradeflow.optimization.walk_forward import WalkForwardValidator
 
     _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
-    universe = resolve_universe(data_client, args.scanner, args.symbols)
+    universe = resolve_universe(
+        data_client, args.scanner, args.symbols, as_of=getattr(args, "scan_as_of", None) or args.end
+    )
     timeframe = STRATEGIES[args.strategy].create_with_defaults().config["timeframe"]
     vintage = _vintage_stamp(data_client, universe, timeframe, args.start, args.end)
 
@@ -1078,7 +1084,9 @@ def cmd_research(args) -> None:
     from tradeflow.services.data import build_data_client
 
     data_client = build_data_client()
-    universe = resolve_universe(data_client, args.scanner, args.symbols)
+    universe = resolve_universe(
+        data_client, args.scanner, args.symbols, as_of=getattr(args, "scan_as_of", None) or args.end
+    )
     cfg = ResearchConfig(
         goal=args.goal,
         mode=args.mode,
@@ -2010,7 +2018,7 @@ def cmd_cache(args) -> None:
     assert isinstance(provider, CachedMarketData)  # build_data_client(cache=True) guarantees this
 
     if args.cache_command == "warm":
-        universe = resolve_universe(data_client, args.scanner, args.symbols)
+        universe = resolve_universe(data_client, args.scanner, args.symbols, as_of=args.end)
         summary = provider.warm(universe, args.timeframe, args.start, args.end)
         for symbol, s in summary.items():
             state = "already cached" if s["already_cached"] else f"fetched {s['gaps_fetched']} gap(s)"
@@ -2699,7 +2707,10 @@ def _add_cache_flags(parser) -> None:
 
 
 def _date(value: str) -> datetime:
-    return datetime.strptime(value, "%Y-%m-%d")
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.strptime(value, "%Y-%m-%d")
 
 
 def _next_step_hint() -> str:
@@ -2778,6 +2789,13 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument("--start", type=_date, default=datetime.now() - timedelta(days=30))
             p.add_argument("--end", type=_date, default=datetime.now())
             p.add_argument("--capital", type=float, default=100_000.0)
+            p.add_argument(
+                "--scan-as-of",
+                dest="scan_as_of",
+                type=_date,
+                default=None,
+                help="Resolve the scanner at this date/datetime; defaults to --end for historical runs",
+            )
 
     def add_no_journal(p) -> None:
         # Trials are journaled so a campaign-level Deflated Sharpe can count them
@@ -2963,6 +2981,13 @@ def build_parser() -> argparse.ArgumentParser:
     scan = subparsers.add_parser("scan", help="Run the universe scanner only")
     scan.add_argument("--scanner", default="volume")
     scan.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
+    scan.add_argument(
+        "--as-of",
+        dest="as_of",
+        type=_date,
+        default=None,
+        help="Resolve scanner state at this date/datetime instead of now",
+    )
     scan.set_defaults(func=cmd_scan)
 
     alloc = subparsers.add_parser("allocate", help="Weight a portfolio over scanned symbols")

@@ -6,13 +6,20 @@ title: Scanning the universe
 # Scanning the universe
 
 The scanner filters a list of *candidate* symbols down to the ones worth trading
-right now. It runs a `ScannerStrategy` over each symbol's recent bars and keeps
-those that produce an actionable scan signal.
+at a specific research clock. It runs a `ScannerStrategy` over each symbol's
+recent bars and keeps those that produce an actionable scan signal.
 
 ```bash
 make scan
 # or
 uv run python main.py scan --scanner volume --symbols NVDA,META,TSLA,AMD
+```
+
+Standalone scans default to wall-clock now. Pin them to a historical clock with
+`--as-of`:
+
+```bash
+uv run python main.py scan --scanner volume --symbols NVDA,META,TSLA,AMD --as-of 2024-06-01
 ```
 
 Example output:
@@ -31,10 +38,12 @@ is pure pandas/numpy — see [Scanners](../engineering/scanners) for the interna
 
 ## How it feeds the other commands
 
-`backtest`, `live`, and `optimize` accept a `--scanner` option. When set, they run
-the scanner first and trade only the flagged symbols; if the scanner flags
-nothing, they fall back to the candidate list. Pass `--scanner none` to skip
-scanning and use the symbols as-is.
+`backtest`, `optimize`, `walkforward`, and `research` accept a `--scanner` option.
+When set, they run the scanner first and trade only the flagged symbols; if the
+scanner flags nothing, they fall back to the candidate list. Historical commands
+resolve the scanner at `--end` by default, so a validation window does not mix in
+today's universe. Use `--scan-as-of` to pin a different scanner clock. Pass
+`--scanner none` to skip scanning and use the symbols as-is.
 
 ```bash
 uv run python main.py backtest --scanner none --symbols AAPL,MSFT --start 2024-01-02 --end 2024-04-01

@@ -1,10 +1,17 @@
 """Scanner tests: volume scanner signal logic and base-class behavior."""
 
+from datetime import datetime
+
 import pandas as pd
 import pytest
 
+from tests.fakes import DictMarketData, FakeMarketData
+from tradeflow.marketdata.client import MarketDataClient
 from tradeflow.scanners.base import SCANNER_BUY, SCANNER_HOLD
+from tradeflow.scanners.symbol_scanner import SymbolScanner
 from tradeflow.scanners.volume_scanner import VolumeScannerStrategy
+from tradeflow.services import analysis
+from tradeflow.utils.timeutils import NEW_YORK
 
 
 def _scanner(**overrides):
@@ -82,3 +89,51 @@ def test_evaluate_forward_returns_metric_keys():
     forward = pd.DataFrame({"close": [100, 102, 104, 103, 105, 106]}, index=idx)
     metrics = _scanner().evaluate_forward(signals_df, forward, hold_bars=3)
     assert {"hit_rate", "avg_return", "total_signals", "sharpe_ratio", "profit_factor"} <= metrics.keys()
+
+
+def test_symbol_scanner_can_scan_at_a_historical_as_of():
+    scanner = SymbolScanner(MarketDataClient(FakeMarketData(["AAA"], n=60, freq="1D")), "volume")
+    as_of = NEW_YORK.localize(datetime(2024, 6, 1, 16, 0))
+
+    start, end = scanner._scan_window("1Day", as_of=as_of)
+
+    assert end == as_of
+    assert start < as_of
+
+
+def test_symbol_scanner_localizes_naive_historical_as_of():
+    scanner = SymbolScanner(MarketDataClient(FakeMarketData(["AAA"], n=60, freq="1D")), "volume")
+    as_of = datetime(2024, 6, 1, 16, 0)
+
+    _, end = scanner._scan_window("1Day", as_of=as_of)
+
+    assert end == NEW_YORK.localize(as_of)
+
+
+def test_symbol_scanner_ignores_bars_after_as_of():
+    index = pd.date_range("2024-01-02 16:00", periods=16, freq="D", tz=NEW_YORK)
+    frame = pd.DataFrame(
+        {
+            "open": [100.0] * 16,
+            "high": [101.0] * 16,
+            "low": [99.0] * 16,
+            "close": [100.0] * 15 + [110.0],
+            "volume": [1_000_000.0] * 15 + [12_000_000.0],
+        },
+        index=index,
+    )
+    as_of = index[-2].to_pydatetime()
+    scanner = SymbolScanner(MarketDataClient(DictMarketData({"AAA": frame})), "volume")
+
+    flagged = scanner.scan(["AAA"], as_of=as_of)
+
+    assert flagged == []
+
+
+def test_run_scan_reports_the_historical_as_of():
+    client = MarketDataClient(FakeMarketData(["AAA"], n=60, freq="1D"))
+    as_of = datetime(2024, 6, 1)
+
+    result = analysis.run_scan(client, "volume", ["AAA"], as_of=as_of)
+
+    assert result["as_of"] == as_of.isoformat()

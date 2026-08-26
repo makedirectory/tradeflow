@@ -131,6 +131,19 @@ def test_the_leaderboard_tool_warns_in_its_own_description(built):
     assert "n_trials" in description
 
 
+def test_run_scan_accepts_a_historical_as_of(built):
+    payload = _call(
+        built,
+        "run_scan",
+        scanner="volume",
+        symbols=SYMBOLS,
+        as_of="2024-06-01T16:00:00-04:00",
+    )
+
+    assert payload["as_of"] == "2024-06-01T16:00:00-04:00"
+    assert payload["candidates"] == SYMBOLS
+
+
 # --- draft strategy/scanner workflow ---------------------------------------
 def test_draft_validation_tools_return_contract_metadata(built):
     strategy = _call(built, "validate_draft_strategy_code", code=_VALID_CODE)

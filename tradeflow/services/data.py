@@ -7,6 +7,7 @@ safety model.
 """
 
 import logging
+from datetime import datetime
 from typing import Any, List, Optional
 
 from tradeflow.marketdata.client import MarketDataClient
@@ -42,7 +43,10 @@ def build_data_client(
 
 
 def resolve_universe(
-    data_client: MarketDataClient, scanner_name: Optional[str], candidates: List[str]
+    data_client: MarketDataClient,
+    scanner_name: Optional[str],
+    candidates: List[str],
+    as_of: Optional[datetime] = None,
 ) -> List[str]:
     """Filter ``candidates`` through a scanner, falling back to them if none flag."""
     if not scanner_name or scanner_name == "none":
@@ -50,7 +54,7 @@ def resolve_universe(
 
     from tradeflow.scanners.symbol_scanner import SymbolScanner
 
-    flagged = SymbolScanner(data_client, scanner_name).scan(candidates)
+    flagged = SymbolScanner(data_client, scanner_name).scan(candidates, as_of=as_of)
     universe = [symbol for symbol, _ in flagged]
     if not universe:
         logger.warning("Scanner flagged no symbols; falling back to the candidate list")

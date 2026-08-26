@@ -84,6 +84,7 @@ def test_one_universe_and_one_window_across_every_section():
 
     assert result["portfolio"]["as_of"] == END.isoformat()
     assert result["alphas"]["as_of"] == END.isoformat()
+    assert result["scan"]["as_of"] == END.isoformat()
     assert result["information"]["window"] == {"start": START.isoformat(), "end": END.isoformat()}
     # Every step scored the universe the scan resolved, not the candidate list and
     # not a universe of its own.

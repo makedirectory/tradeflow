@@ -56,8 +56,10 @@ distinct set of bars once, and hands every step the same window, universe, and c
 model. The provenance line reports how many of its bar requests actually reached the
 provider, so "one shared fetch" is a measured claim rather than a promise.
 
-It answers **"what does the pipeline say about this universe now"** — a forecast and
-a proposed book. For **"did this ever work"**, that is
+It answers **"what does the pipeline say about this universe as of `--end`"** — a
+forecast and a proposed book. The scanner is resolved at `--end`, not at wall-clock
+now, so an older window does not accidentally inherit today's universe. For **"did
+this ever work"**, that is
 [`backtest`](backtesting) and [`walkforward`](walk-forward); `verdict` does not
 replace them, and it is not a historical simulation.
 

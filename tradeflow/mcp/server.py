@@ -252,7 +252,12 @@ def build_server(data_client=None):
 
     # ---------------- Read / analyze (safe) ---------------- #
     @tool()
-    def run_scan(scanner: str, symbols: List[str], config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def run_scan(
+        scanner: str,
+        symbols: List[str],
+        config: Optional[Dict[str, Any]] = None,
+        as_of: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Run a universe scanner over `symbols` and return the names it flags.
 
         Narrows a candidate list to the symbols worth analyzing, with each one's
@@ -260,12 +265,21 @@ def build_server(data_client=None):
         performs internally — call it when you want to see or reuse the selection,
         not as a prerequisite.
 
+        `as_of` can pin the scan to a historical ISO date/datetime. Omit it only when
+        you genuinely want "now"; historical backtests and verdicts resolve scanner
+        state at their own window end to avoid mixing today's universe with an older
+        evaluation window.
+
         Scanning is a research decision, not a tuning knob: picking a universe by
         which one produces the best backtest is look-ahead, and it will not survive
         out-of-sample. Read-only, journals nothing.
         """
-        inputs = {"scanner": scanner, "symbols": symbols, "config": config}
-        return _logged("run_scan", inputs, analysis.run_scan(dc, scanner, symbols, config))
+        inputs = {"scanner": scanner, "symbols": symbols, "config": config, "as_of": as_of}
+        return _logged(
+            "run_scan",
+            inputs,
+            analysis.run_scan(dc, scanner, symbols, config, as_of=_parse_date(as_of) if as_of else None),
+        )
 
     @tool(
         "sharpe_ratio",
@@ -864,8 +878,10 @@ def build_server(data_client=None):
         is `incomplete` and carries NO verdict, whatever the completed sections say:
         do not act on a partial run's weights.
 
-        This answers "what does the pipeline say about this universe now" - a forecast
-        and a proposed book. For "did this ever work", use `run_backtest` or
+        This answers "what does the pipeline say about this universe as of `end`" -
+        a forecast and a proposed book. The scanner is resolved at `end`, not at
+        wall-clock now, so a historical verdict does not mix today's universe into an
+        older evaluation window. For "did this ever work", use `run_backtest` or
         `run_walk_forward`.
 
         Read-only research clock: proposes a portfolio, never places an order. Journals
