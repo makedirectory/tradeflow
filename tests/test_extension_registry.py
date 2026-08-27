@@ -51,6 +51,7 @@ class _FakeEntryPoints(list):
 
 
 def test_refresh_registries_loads_private_entry_points(monkeypatch):
+    real_entry_points = metadata.entry_points
     entry_points = _FakeEntryPoints(
         [
             _FakeEntryPoint("private_trend", registry.STRATEGY_ENTRY_POINT_GROUP, PrivateTrendStrategy),
@@ -65,11 +66,13 @@ def test_refresh_registries_loads_private_entry_points(monkeypatch):
         assert registry.SCANNERS["private_scan"] is PrivateScanner
         assert "private_scan" in registry.SymbolScanner.available()
     finally:
-        monkeypatch.setattr(metadata, "entry_points", lambda: _FakeEntryPoints())
+        monkeypatch.setattr(metadata, "entry_points", real_entry_points)
         registry.refresh_registries()
 
 
 def test_entry_point_factories_can_return_multiple_strategies(monkeypatch):
+    real_entry_points = metadata.entry_points
+
     def contribute():
         return {"private_a": PrivateTrendStrategy, "private_b": PrivateTrendStrategy}
 
@@ -85,11 +88,12 @@ def test_entry_point_factories_can_return_multiple_strategies(monkeypatch):
     try:
         assert {"private_a", "private_b"} <= set(registry.STRATEGIES)
     finally:
-        monkeypatch.setattr(metadata, "entry_points", lambda: _FakeEntryPoints())
+        monkeypatch.setattr(metadata, "entry_points", real_entry_points)
         registry.refresh_registries()
 
 
 def test_private_entry_points_cannot_override_builtins(monkeypatch):
+    real_entry_points = metadata.entry_points
     monkeypatch.setattr(
         metadata,
         "entry_points",
@@ -102,5 +106,5 @@ def test_private_entry_points_cannot_override_builtins(monkeypatch):
     try:
         assert registry.STRATEGIES["ma_crossover"] is MovingAverageCrossoverStrategy
     finally:
-        monkeypatch.setattr(metadata, "entry_points", lambda: _FakeEntryPoints())
+        monkeypatch.setattr(metadata, "entry_points", real_entry_points)
         registry.refresh_registries()

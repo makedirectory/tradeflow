@@ -350,10 +350,11 @@ class CachedMarketData(MarketDataProvider):
         if self.offline:
             raise CacheMiss(symbol, timeframe, gaps)
 
+        upstream_timeframe = Timeframe.parse(timeframe)
         fetched_frames: List[pd.DataFrame] = []
         for gap_start, gap_end in gaps:
             fetched = self.upstream.get_bars(
-                [symbol], timeframe, gap_start.to_pydatetime(), gap_end.to_pydatetime()
+                [symbol], upstream_timeframe, gap_start.to_pydatetime(), gap_end.to_pydatetime()
             )
             frame = fetched.get(symbol)
             if frame is not None and not frame.empty:
