@@ -846,26 +846,31 @@ def run_draft_walk_forward(
             parameter_sensitivity=parameter_sensitivity,
             leakage_probe=leakage_probe,
         )
-        if journal and trial_store is not None and result.folds:
-            chosen = result.holdout_params or result.folds[-1].is_best_params
-            gate_report = result.gate_report(gates)
-            journal_trial(
-                "walkforward",
-                strategy=draft_strategy,
-                symbols=symbols,
-                start=start,
-                end=end,
-                params={**dict(chosen), "_draft": {"class_name": cls.__name__, "code_hash": code_hash}},
-                metrics=result.oos_aggregate,
-                objective=objective,
-                extra={
-                    "n_trials": result.n_trials_total,
-                    "promotable": gate_report["promotable"],
-                    "efficiency": result.median_efficiency(),
-                },
-                returns=result.oos_returns,
-                dedup_params=recipe,
-            )
+    # Outside the trial-store block, and not conditioned on it: the store is a
+    # derived memo cache, the journal is the campaign's multiple-testing record. A
+    # store that will not open must not quietly turn a spent out-of-sample test into
+    # an unrecorded one. Same placement as run_walk_forward, for the same reason.
+    journaled = bool(journal and result.folds)
+    if journaled:
+        chosen = result.holdout_params or result.folds[-1].is_best_params
+        gate_report = result.gate_report(gates)
+        journal_trial(
+            "walkforward",
+            strategy=draft_strategy,
+            symbols=symbols,
+            start=start,
+            end=end,
+            params={**dict(chosen), "_draft": {"class_name": cls.__name__, "code_hash": code_hash}},
+            metrics=result.oos_aggregate,
+            objective=objective,
+            extra={
+                "n_trials": result.n_trials_total,
+                "promotable": gate_report["promotable"],
+                "efficiency": result.median_efficiency(),
+            },
+            returns=result.oos_returns,
+            dedup_params=recipe,
+        )
 
     payload = walk_forward_payload(
         result,
@@ -884,9 +889,15 @@ def run_draft_walk_forward(
     payload["draft"] = {
         "class_name": cls.__name__,
         "code_hash": code_hash,
-        "journaled": bool(journal),
+        "journaled": journaled,
         "note": "Draft source was validated and run in-memory; install it through entry points to use it by name.",
     }
+    if journal and not journaled:
+        # Asked for and not done. Saying so is the point: a caller counting its own
+        # multiple-testing budget cannot infer this from a `false` alone.
+        payload["draft"]["not_journaled_reason"] = (
+            "the run produced no folds, so there was no out-of-sample result to record"
+        )
     return payload
 
 

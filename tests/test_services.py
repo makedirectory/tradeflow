@@ -6,6 +6,7 @@ audit log, and - critically - the safety wall (no live/order tool is exposed and
 the server refuses a non-data client).
 """
 
+import contextlib
 import json
 import re
 from datetime import datetime
@@ -13,6 +14,7 @@ from datetime import datetime
 import pytest
 
 from tests.fakes import FakeMarketData
+from tests.test_research import _VALID_CODE
 from tradeflow.analytics.performance import FLAG_KEYS, METRIC_KEYS
 from tradeflow.marketdata.client import MarketDataClient
 from tradeflow.services import analysis, audit, glossary, registry
@@ -855,3 +857,32 @@ def test_analysis_run_backtest_journals_a_trial_and_memoizes_a_repeat():
     result3 = analysis.run_backtest(_client(), "volume_spike", SYMBOLS, START, END, force=True)
     assert not result3.get("memoized")
     assert len(_trials(audit.DEFAULT_TRIAL_JOURNAL)) == 2
+
+
+# --- draft walk-forward journaling ------------------------------------------
+@contextlib.contextmanager
+def _store_that_will_not_open():
+    """What ``_open_trial_store`` yields when the memo DB cannot be opened."""
+    yield None
+
+
+def test_a_draft_run_is_journaled_even_when_the_trial_store_will_not_open(monkeypatch, tmp_path):
+    """The store is a derived memo cache; the journal is the campaign's own record.
+
+    Journaling used to be gated on the store, so a store that failed to open spent an
+    out-of-sample test without recording it - and the trial count the deflated Sharpe
+    rests on then under-counts, silently, which is the one number that must not.
+    """
+    monkeypatch.setattr(analysis, "_open_trial_store", _store_that_will_not_open)
+
+    payload = analysis.run_draft_walk_forward(
+        _client(), _VALID_CODE, SYMBOLS, START, END, n_folds=2, method="grid", max_evals=1
+    )
+
+    assert payload["strategy"].startswith("draft:GenStrat:")
+    assert payload["draft"]["journaled"] is True
+    assert "not_journaled_reason" not in payload["draft"]
+    recorded = [
+        t for t in _trials(tmp_path / "journal.jsonl") if t["inputs"]["strategy"] == payload["strategy"]
+    ]
+    assert len(recorded) == 1
