@@ -38,12 +38,20 @@ is pure pandas/numpy — see [Scanners](../engineering/scanners) for the interna
 
 ## How it feeds the other commands
 
-`backtest`, `optimize`, `walkforward`, and `research` accept a `--scanner` option.
-When set, they run the scanner first and trade only the flagged symbols; if the
-scanner flags nothing, they fall back to the candidate list. Historical commands
-resolve the scanner at `--end` by default, so a validation window does not mix in
-today's universe. Use `--scan-as-of` to pin a different scanner clock. Pass
+`backtest`, `optimize`, `walkforward`, `research`, `cache warm` and `live` all accept
+a `--scanner` option. When set, they run the scanner first and trade only the flagged
+symbols; if the scanner flags nothing, they fall back to the candidate list. Pass
 `--scanner none` to skip scanning and use the symbols as-is.
+
+The historical commands resolve the scanner at `--end` by default, so a validation
+window does not mix in today's universe, and `--scan-as-of` pins a different scanner
+clock. **`live` is the exception, and deliberately so:** it resolves at wall-clock
+now, because a live book is selected from the universe as it stands, not as it stood
+at the end of some window. It therefore takes no `--scan-as-of`.
+
+Every scan reports the clock it resolved at, in the exchange zone — including the ones
+that resolved to "now", so a payload never leaves which universe it selected from as
+something to be inferred.
 
 ```bash
 uv run python main.py backtest --scanner none --symbols AAPL,MSFT --start 2024-01-02 --end 2024-04-01

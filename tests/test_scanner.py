@@ -130,10 +130,30 @@ def test_symbol_scanner_ignores_bars_after_as_of():
     assert flagged == []
 
 
-def test_run_scan_reports_the_historical_as_of():
+def test_run_scan_reports_the_clock_it_resolved_at_not_the_one_requested():
+    """The payload echoed the caller's argument.
+
+    A naive `2024-06-01` came back as a bare date while the scan had actually run at
+    `2024-06-01` New York, and an omitted `as_of` came back as null rather than as the
+    wall-clock now it resolved to. A selection clock reported differently from the one
+    applied is worse than none, because it reads as provenance.
+    """
+    from tradeflow.scanners.symbol_scanner import resolve_scan_clock
+
     client = MarketDataClient(FakeMarketData(["AAA"], n=60, freq="1D"))
     as_of = datetime(2024, 6, 1)
 
     result = analysis.run_scan(client, "volume", ["AAA"], as_of=as_of)
 
-    assert result["as_of"] == as_of.isoformat()
+    assert result["as_of"] == resolve_scan_clock(as_of).isoformat()
+    assert result["as_of"].endswith("-04:00")  # localized, not echoed back naive
+
+
+def test_run_scan_names_its_clock_even_when_none_was_asked_for():
+    """ "Now" is a selection clock like any other; reporting null for it hides which
+    universe the scan actually saw."""
+    client = MarketDataClient(FakeMarketData(["AAA"], n=60, freq="1D"))
+
+    result = analysis.run_scan(client, "volume", ["AAA"])
+
+    assert result["as_of"] is not None

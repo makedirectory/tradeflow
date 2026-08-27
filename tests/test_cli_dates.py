@@ -52,3 +52,29 @@ def test_an_aware_end_can_be_compared_against_a_defaulted_start():
 
     assert isinstance(args.end - args.start, timedelta)  # used to raise TypeError
     assert args.end == datetime(2024, 6, 1, 12)  # 16:00Z is noon in New York in June
+
+
+def test_every_command_that_scans_a_historical_window_can_pin_its_scan_clock():
+    """`cache warm` resolved the scanner at `--end` with no way to override it, while
+    every other historical command took `--scan-as-of`. A cache warmed for a
+    deliberately different selection clock was simply not expressible."""
+    parser = build_parser()
+    subparsers = parser._subparsers._group_actions[0].choices
+
+    for command in ("backtest", "optimize", "walkforward", "research"):
+        flags = {opt for action in subparsers[command]._actions for opt in action.option_strings}
+        assert "--scan-as-of" in flags, f"{command} cannot pin its scan clock"
+
+    warm = subparsers["cache"]._subparsers._group_actions[0].choices["warm"]
+    assert "--scan-as-of" in {opt for action in warm._actions for opt in action.option_strings}
+
+
+def test_live_deliberately_has_no_scan_clock_to_pin():
+    """A live book is selected from the universe as it stands, not as it stood at the
+    end of a window — so `live` resolving at wall-clock now is the intended behaviour,
+    and the absence of the flag is the design rather than an omission."""
+    subparsers = build_parser()._subparsers._group_actions[0].choices
+    flags = {opt for action in subparsers["live"]._actions for opt in action.option_strings}
+
+    assert "--scanner" in flags
+    assert "--scan-as-of" not in flags

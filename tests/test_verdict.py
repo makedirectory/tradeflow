@@ -19,6 +19,7 @@ from tradeflow.marketdata.session import SessionBarCache, session_client
 from tradeflow.marketdata.timeframe import Timeframe
 from tradeflow.services import analysis, audit
 from tradeflow.store.trials import TrialStore, db_path_for_journal
+from tradeflow.utils.timeutils import NEW_YORK
 
 # Six names, not three: the default weight cap can't fund a book from three, and
 # the information sampler needs a cross-section wide enough to correlate.
@@ -84,7 +85,11 @@ def test_one_universe_and_one_window_across_every_section():
 
     assert result["portfolio"]["as_of"] == END.isoformat()
     assert result["alphas"]["as_of"] == END.isoformat()
-    assert result["scan"]["as_of"] == END.isoformat()
+    # The scan names its clock in the exchange zone rather than echoing the argument,
+    # so this is the same instant spelled differently - which is what the section has
+    # to agree on. Comparing the strings would make the section coherent only while
+    # every section happened to render a datetime the same way.
+    assert datetime.fromisoformat(result["scan"]["as_of"]) == NEW_YORK.localize(END)
     assert result["information"]["window"] == {"start": START.isoformat(), "end": END.isoformat()}
     # Every step scored the universe the scan resolved, not the candidate list and
     # not a universe of its own.

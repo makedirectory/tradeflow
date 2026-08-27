@@ -34,6 +34,22 @@ BUILTIN_SCANNERS: Dict[str, Type[ScannerStrategy]] = {
 }
 
 
+def resolve_scan_clock(as_of: Optional[datetime] = None) -> datetime:
+    """The exchange-zone instant a scan is resolved at, from an optional request.
+
+    One rule, so the clock a scan *runs* at and the clock it *reports* cannot differ.
+    The payload used to echo the caller's own argument, so a naive ``2024-06-01`` was
+    reported as a bare date while the scan actually ran at ``2024-06-01`` New York,
+    and an omitted ``as_of`` was reported as nothing at all rather than as the
+    wall-clock now it resolved to. A selection clock reported differently from the one
+    applied is worse than no clock, because it reads as provenance.
+    """
+    end = as_of or datetime.now(NEW_YORK)
+    if end.tzinfo is None:
+        return NEW_YORK.localize(end)
+    return end.astimezone(NEW_YORK)
+
+
 class SymbolScanner:
     """Filters a candidate universe down to scanner-signaled symbols."""
 
@@ -90,9 +106,5 @@ class SymbolScanner:
         tf = Timeframe.parse(timeframe)
         required = self.strategy.required_data_points()
         days = max(required * tf.amount * _LOOKBACK_DAY_BUFFER, 30)
-        end = as_of or datetime.now(NEW_YORK)
-        if end.tzinfo is None:
-            end = NEW_YORK.localize(end)
-        else:
-            end = end.astimezone(NEW_YORK)
+        end = resolve_scan_clock(as_of)
         return end - timedelta(days=days), end

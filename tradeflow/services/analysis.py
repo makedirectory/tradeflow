@@ -163,13 +163,14 @@ def run_scan(
     as_of: Optional[datetime] = None,
 ) -> Dict[str, Any]:
     """Run a universe scanner; return the flagged ``(symbol, signal)`` pairs."""
-    from tradeflow.scanners.symbol_scanner import SymbolScanner
+    from tradeflow.scanners.symbol_scanner import SymbolScanner, resolve_scan_clock
 
     flagged = SymbolScanner(data_client, scanner, config).scan(symbols, as_of=as_of)
     return {
         "scanner": scanner,
         "candidates": list(symbols),
-        "as_of": as_of.isoformat() if as_of else None,
+        # The clock the scan actually resolved at, not the argument that asked for it.
+        "as_of": resolve_scan_clock(as_of).isoformat(),
         "flagged": [{"symbol": s, "signal": sig} for s, sig in flagged],
         "flagged_count": len(flagged),
     }

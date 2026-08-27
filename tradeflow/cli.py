@@ -265,9 +265,7 @@ def cmd_backtest(args) -> None:
         strategy = STRATEGIES[strategy_name].create_with_defaults()
 
     _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
-    universe = resolve_universe(
-        data_client, scanner, args.symbols, as_of=getattr(args, "scan_as_of", None) or args.end
-    )
+    universe = resolve_universe(data_client, scanner, args.symbols, as_of=args.scan_as_of or args.end)
 
     # Computed once, up front: it warms the cache as a side effect (when
     # cache-backed) and must match exactly between the lookup below and the
@@ -658,9 +656,7 @@ def cmd_optimize(args) -> None:
     from tradeflow.optimization.optimizer import ParameterOptimizer
 
     _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
-    universe = resolve_universe(
-        data_client, args.scanner, args.symbols, as_of=getattr(args, "scan_as_of", None) or args.end
-    )
+    universe = resolve_universe(data_client, args.scanner, args.symbols, as_of=args.scan_as_of or args.end)
     timeframe = STRATEGIES[args.strategy].create_with_defaults().config["timeframe"]
     vintage = _vintage_stamp(data_client, universe, timeframe, args.start, args.end)
     # Workers, when asked for, read bars from the local cache rather than the API —
@@ -746,9 +742,7 @@ def cmd_walkforward(args) -> None:
     from tradeflow.optimization.walk_forward import WalkForwardValidator
 
     _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
-    universe = resolve_universe(
-        data_client, args.scanner, args.symbols, as_of=getattr(args, "scan_as_of", None) or args.end
-    )
+    universe = resolve_universe(data_client, args.scanner, args.symbols, as_of=args.scan_as_of or args.end)
     timeframe = STRATEGIES[args.strategy].create_with_defaults().config["timeframe"]
     vintage = _vintage_stamp(data_client, universe, timeframe, args.start, args.end)
 
@@ -1087,9 +1081,7 @@ def cmd_research(args) -> None:
     from tradeflow.services.data import build_data_client
 
     data_client = build_data_client()
-    universe = resolve_universe(
-        data_client, args.scanner, args.symbols, as_of=getattr(args, "scan_as_of", None) or args.end
-    )
+    universe = resolve_universe(data_client, args.scanner, args.symbols, as_of=args.scan_as_of or args.end)
     cfg = ResearchConfig(
         goal=args.goal,
         mode=args.mode,
@@ -2021,7 +2013,9 @@ def cmd_cache(args) -> None:
     assert isinstance(provider, CachedMarketData)  # build_data_client(cache=True) guarantees this
 
     if args.cache_command == "warm":
-        universe = resolve_universe(data_client, args.scanner, args.symbols, as_of=args.end)
+        universe = resolve_universe(
+            data_client, args.scanner, args.symbols, as_of=args.scan_as_of or args.end
+        )
         summary = provider.warm(universe, args.timeframe, args.start, args.end)
         for symbol, s in summary.items():
             state = "already cached" if s["already_cached"] else f"fetched {s['gaps_fetched']} gap(s)"
@@ -3611,6 +3605,13 @@ def build_parser() -> argparse.ArgumentParser:
     c_warm.add_argument("--timeframe", default="1Day")
     c_warm.add_argument("--start", type=_date, default=datetime.now() - timedelta(days=365))
     c_warm.add_argument("--end", type=_date, default=datetime.now())
+    c_warm.add_argument(
+        "--scan-as-of",
+        dest="scan_as_of",
+        type=_date,
+        default=None,
+        help="Resolve the scanner at this date/datetime; defaults to --end",
+    )
 
     c_status = cache_sub.add_parser("status", help="Coverage summary and a drift check — no network")
     _add_cache_dir_flag(c_status)
