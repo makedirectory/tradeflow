@@ -495,6 +495,11 @@ def build_server(data_client=None):
         searchable params, default construction, required sizing/risk config, and
         one continuous score source. It writes no files and journals no trials.
 
+        Always answers, never raises: a rejection comes back as `valid: false` with
+        `error_kind` either `invalid_draft` (rewrite the source - `error` names what
+        to fix) or `validator_error` (the validator itself failed on this input; the
+        draft may be fine, so rewriting it is the wrong response).
+
         This is a drafting aid, not promotion. To make validated code available by
         name, ship it in a package exposing the `tradeflow.strategies` entry-point
         group, or keep using `run_draft_walk_forward` with source attached.
@@ -516,7 +521,8 @@ def build_server(data_client=None):
         contract: concrete subclass, docstring, valid PARAM_RANGES with no more than
         five searchable params, default construction, and a generated signal frame
         containing `signal` plus numeric `signal_strength` using the scanner signal
-        vocabulary. It writes no files and journals no trials.
+        vocabulary. It writes no files and journals no trials. It answers with the
+        same verdict shape as `validate_draft_strategy_code`, including on rejection.
 
         To make validated scanner code available by name, ship it in a package
         exposing the `tradeflow.scanners` entry-point group.
@@ -560,6 +566,11 @@ def build_server(data_client=None):
         `validate_draft_strategy_code`, never registered globally, and never made
         live. Results are regular walk-forward results with a `draft` block carrying
         class name, source hash, and whether the run was journaled.
+
+        Source that does not validate comes back as the same `valid: false` verdict
+        the two validators return, rather than as an error: nothing ran and no trial
+        was spent, so a rejected draft costs nothing against the campaign's budget.
+        Validating first with `validate_draft_strategy_code` is still cheaper.
 
         By default this journals one validated trial under
         `draft:<ClassName>:<code_hash>` so campaign history still reflects that the

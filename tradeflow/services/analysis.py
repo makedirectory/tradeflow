@@ -662,21 +662,47 @@ def run_walk_forward(
     )
 
 
+def _draft_rejection(run_id: str, kind: str, code: str, exc: Exception, *, hygiene: bool) -> Dict[str, Any]:
+    """The one shape every draft entry point returns when it cannot proceed.
+
+    ``error_kind`` separates the two cases rather than flattening them into "invalid",
+    because they call for opposite responses and only one of them is about the draft:
+
+    * ``invalid_draft`` - the source was rejected. Rewrite it.
+    * ``validator_error`` - the validator itself failed on this input. The draft may
+      be fine; this is a defect here, and reporting it as invalid code would send an
+      agent rewriting something that was never the problem.
+
+    Neither consumes a trial, and the note says so: a caller tracking its own
+    multiple-testing budget cannot tell that from an absent metrics block.
+    """
+    return {
+        "run_id": run_id,
+        "valid": False,
+        "kind": kind,
+        "error": str(exc),
+        "error_kind": "invalid_draft" if hygiene else "validator_error",
+        "code_hash": _code_hash(code),
+        "note": "Nothing was run and no trial was journaled.",
+    }
+
+
 def validate_draft_strategy_code(code: str, class_name: Optional[str] = None) -> Dict[str, Any]:
-    """Validate generated/private strategy source without registering or running it."""
+    """Validate generated/private strategy source without registering or running it.
+
+    Answers with a verdict, never an exception: a tool whose only job is to say
+    whether code is valid has failed if invalid code makes it raise.
+    """
     from tradeflow.research.sandbox import HygieneError, load_strategy_from_code
 
     run_id = new_run_id()
     try:
         cls = load_strategy_from_code(code, class_name=class_name)
     except HygieneError as exc:
-        return {
-            "run_id": run_id,
-            "valid": False,
-            "kind": "strategy",
-            "error": str(exc),
-            "code_hash": _code_hash(code),
-        }
+        return _draft_rejection(run_id, "strategy", code, exc, hygiene=True)
+    except Exception as exc:  # noqa: BLE001 - a validator that crashes answers nothing
+        logger.warning("Draft strategy validation failed unexpectedly", exc_info=True)
+        return _draft_rejection(run_id, "strategy", code, exc, hygiene=False)
     return {
         "run_id": run_id,
         "valid": True,
@@ -690,20 +716,21 @@ def validate_draft_strategy_code(code: str, class_name: Optional[str] = None) ->
 
 
 def validate_draft_scanner_code(code: str, class_name: Optional[str] = None) -> Dict[str, Any]:
-    """Validate generated/private scanner source without registering or running it."""
+    """Validate generated/private scanner source without registering or running it.
+
+    Answers with a verdict, never an exception - see
+    :func:`validate_draft_strategy_code`.
+    """
     from tradeflow.research.sandbox import HygieneError, load_scanner_from_code
 
     run_id = new_run_id()
     try:
         cls = load_scanner_from_code(code, class_name=class_name)
     except HygieneError as exc:
-        return {
-            "run_id": run_id,
-            "valid": False,
-            "kind": "scanner",
-            "error": str(exc),
-            "code_hash": _code_hash(code),
-        }
+        return _draft_rejection(run_id, "scanner", code, exc, hygiene=True)
+    except Exception as exc:  # noqa: BLE001 - a validator that crashes answers nothing
+        logger.warning("Draft scanner validation failed unexpectedly", exc_info=True)
+        return _draft_rejection(run_id, "scanner", code, exc, hygiene=False)
     return {
         "run_id": run_id,
         "valid": True,
@@ -756,12 +783,22 @@ def run_draft_walk_forward(
     generated/private candidate consumed a test.
     """
     from tradeflow.optimization.config_store import current_git_sha
-    from tradeflow.research.sandbox import load_strategy_from_code
+    from tradeflow.research.sandbox import HygieneError, load_strategy_from_code
     from tradeflow.services.audit import journal_trial
 
     run_id = new_run_id()
     code_hash = _code_hash(code)
-    cls = load_strategy_from_code(code, class_name=class_name)
+    # The same verdict the validators return. This entry point guarded nothing at
+    # all, so even the anticipated rejection - a draft that simply does not pass
+    # hygiene - came back as a raised exception rather than an answer, from the one
+    # of the three tools that costs a trial to call.
+    try:
+        cls = load_strategy_from_code(code, class_name=class_name)
+    except HygieneError as exc:
+        return _draft_rejection(run_id, "strategy", code, exc, hygiene=True)
+    except Exception as exc:  # noqa: BLE001 - see validate_draft_strategy_code
+        logger.warning("Draft strategy validation failed unexpectedly", exc_info=True)
+        return _draft_rejection(run_id, "strategy", code, exc, hygiene=False)
     draft_strategy = f"draft:{cls.__name__}:{code_hash}"
     cost_model = _build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
     cost_key = _cost_key(gross, commission_bps, impact_eta, borrow_bps)

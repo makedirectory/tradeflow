@@ -24,6 +24,7 @@ left as a deliberate follow-up; :func:`load_strategy_from_code` and
 """
 
 import builtins as _builtins
+from collections.abc import Mapping
 from typing import Optional, Tuple, Type
 
 from tradeflow.optimization.param_space import ParameterSpace
@@ -158,6 +159,16 @@ def _validate_common_contract(cls: Type, base_name: str) -> None:
         raise HygieneError(f"{cls.__name__} has no docstring (the hypothesis is required)")
     if not isinstance(getattr(cls, "PARAM_RANGES", None), dict):
         raise HygieneError(f"{cls.__name__} must declare a PARAM_RANGES dict")
+    # Every rejection leaves here as a HygieneError, including a malformed spec.
+    # `PARAM_RANGES = {"lookback": 20}` is what generated code actually writes, and
+    # reading it raised a bare TypeError out of ParameterSpace - through validators
+    # whose entire contract is to answer "is this valid?" with a verdict.
+    for param, spec in cls.PARAM_RANGES.items():
+        if not isinstance(spec, Mapping):
+            raise HygieneError(
+                f"{cls.__name__} parameter {param!r} must be a spec mapping with "
+                f"min/max/step/default, not a bare {type(spec).__name__}"
+            )
     space = ParameterSpace(cls.PARAM_RANGES)
     if len(space.searchable) > MAX_TUNABLE_PARAMS:
         raise HygieneError(

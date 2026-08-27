@@ -183,6 +183,37 @@ def test_sandbox_blocks_disallowed_imports():
         sandbox.load_strategy_from_code(bad)
 
 
+def test_a_malformed_strategy_param_spec_is_a_rejection_not_a_crash():
+    """`PARAM_RANGES = {"threshold": 0.01}` is what generated code actually writes.
+
+    Reading it raised a bare `TypeError` out of `ParameterSpace` - straight through
+    validators whose entire contract is to answer "is this valid?" with a verdict.
+    Every rejection has to leave the sandbox as a HygieneError or callers are left
+    enumerating the exception types its internals happen to use.
+    """
+    bad = _VALID_CODE.replace(
+        '{"type": "float", "min": 0.0, "max": 0.05, "step": 0.01, "default": 0.01}', "0.01"
+    )
+    with pytest.raises(sandbox.HygieneError, match="threshold"):
+        sandbox.load_strategy_from_code(bad)
+
+
+def test_a_malformed_scanner_param_spec_is_a_rejection_not_a_crash():
+    """Same defect on the scanner path, which reaches it twice - once in the spec
+    scan and again in `_defaults()` reading `spec["default"]`."""
+    bad = _VALID_SCANNER_CODE.replace(
+        '{"type": "float", "min": 0.0, "max": 5.0, "step": 0.5, "default": 0.5}', "0.5"
+    )
+    with pytest.raises(sandbox.HygieneError, match="min_move"):
+        sandbox.load_scanner_from_code(bad)
+
+
+def test_a_well_formed_param_spec_is_still_accepted():
+    """The other direction. A shape check that rejects every spec is not a check."""
+    assert sandbox.load_strategy_from_code(_VALID_CODE).__name__ == "GenStrat"
+    assert sandbox.load_scanner_from_code(_VALID_SCANNER_CODE).__name__ == "GenScanner"
+
+
 def test_sandbox_requires_docstring_and_caps_params():
     no_doc = _VALID_CODE.replace('"""Always-long. Hypothesis: the synthetic series drifts up."""', "")
     with pytest.raises(sandbox.HygieneError):

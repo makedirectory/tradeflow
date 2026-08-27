@@ -14,7 +14,7 @@ from datetime import datetime
 import pytest
 
 from tests.fakes import FakeMarketData
-from tests.test_research import _VALID_CODE
+from tests.test_research import _VALID_CODE, _VALID_SCANNER_CODE
 from tradeflow.analytics.performance import FLAG_KEYS, METRIC_KEYS
 from tradeflow.marketdata.client import MarketDataClient
 from tradeflow.services import analysis, audit, glossary, registry
@@ -886,3 +886,65 @@ def test_a_draft_run_is_journaled_even_when_the_trial_store_will_not_open(monkey
         t for t in _trials(tmp_path / "journal.jsonl") if t["inputs"]["strategy"] == payload["strategy"]
     ]
     assert len(recorded) == 1
+
+
+# --- draft entry points answer, never raise ---------------------------------
+_MALFORMED_STRATEGY = _VALID_CODE.replace(
+    '{"type": "float", "min": 0.0, "max": 0.05, "step": 0.01, "default": 0.01}', "0.01"
+)
+_MALFORMED_SCANNER = _VALID_SCANNER_CODE.replace(
+    '{"type": "float", "min": 0.0, "max": 5.0, "step": 0.5, "default": 0.5}', "0.5"
+)
+
+
+def test_draft_validators_return_a_verdict_for_a_malformed_param_spec():
+    """A bare spec value used to raise `TypeError: argument of type 'int' is not
+    iterable` out of tools whose only job is to say whether the code is usable."""
+    strategy = analysis.validate_draft_strategy_code(_MALFORMED_STRATEGY)
+    scanner = analysis.validate_draft_scanner_code(_MALFORMED_SCANNER)
+
+    for verdict, param in ((strategy, "threshold"), (scanner, "min_move")):
+        assert verdict["valid"] is False
+        assert verdict["error_kind"] == "invalid_draft"
+        assert param in verdict["error"]  # names what to fix, not just that it failed
+
+
+def test_a_draft_walk_forward_reports_a_rejection_instead_of_raising(tmp_path):
+    """This entry point guarded nothing at all, so even the anticipated rejection -
+    source that simply fails hygiene - came back as an exception rather than an
+    answer, from the one of the three draft tools that costs a trial to call.
+    """
+    payload = analysis.run_draft_walk_forward(
+        _client(), _MALFORMED_STRATEGY, SYMBOLS, START, END, n_folds=2, max_evals=1
+    )
+
+    assert payload["valid"] is False
+    assert payload["error_kind"] == "invalid_draft"
+    assert "threshold" in payload["error"]
+    # Nothing ran, so nothing may have been charged against the campaign's budget.
+    assert _trials(tmp_path / "journal.jsonl") == []
+
+
+def test_a_validator_that_breaks_does_not_blame_the_draft(monkeypatch):
+    """The two failures need opposite responses, so they cannot share one label.
+
+    Reporting a defect in the validator as `invalid_draft` sends an agent rewriting
+    source that was never the problem - and it would keep rewriting it.
+    """
+    from tradeflow.research import sandbox
+
+    def _explode(*args, **kwargs):
+        raise RuntimeError("validator fell over")
+
+    monkeypatch.setattr(sandbox, "load_strategy_from_code", _explode)
+    verdict = analysis.validate_draft_strategy_code(_VALID_CODE)
+
+    assert verdict["valid"] is False
+    assert verdict["error_kind"] == "validator_error"
+    assert "validator fell over" in verdict["error"]
+
+
+def test_valid_draft_source_is_still_accepted():
+    """The other direction: the guards must not reject everything."""
+    assert analysis.validate_draft_strategy_code(_VALID_CODE)["valid"] is True
+    assert analysis.validate_draft_scanner_code(_VALID_SCANNER_CODE)["valid"] is True
