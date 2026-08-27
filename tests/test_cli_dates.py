@@ -1,0 +1,54 @@
+"""Window bounds parsed off the command line.
+
+`--as-of` accepts a time and a zone; `--start`/`--end` default to a naive
+`datetime.now()`. Anything that returns both kinds hands the rest of the program a
+pair it cannot compare, so the coercion belongs here, once, where the value is parsed.
+"""
+
+from datetime import datetime, timedelta
+
+import pytest
+
+from tradeflow.cli import _date, build_parser
+from tradeflow.utils.timeutils import NEW_YORK
+
+
+def test_a_plain_date_still_parses():
+    assert _date("2024-06-01") == datetime(2024, 6, 1)
+
+
+def test_an_aware_value_becomes_the_same_instant_on_the_exchange_clock():
+    """A zone is a shift, not a label. Dropping it without converting would move the
+    value by the offset, which for a session boundary is a different trading day."""
+    parsed = _date("2024-06-01T16:00:00Z")
+
+    assert parsed.tzinfo is None
+    assert NEW_YORK.localize(parsed) == datetime.fromisoformat("2024-06-01T16:00:00+00:00")
+
+
+def test_the_same_instant_written_two_ways_parses_identically():
+    assert _date("2024-06-01T16:00:00Z") == _date("2024-06-01T12:00:00-04:00")
+
+
+@pytest.mark.parametrize("value", ["2024-06-01", "2024-06-01T16:00:00Z", "2024-06-01T12:00:00-04:00"])
+def test_every_accepted_form_is_naive(value):
+    """The property the rest of the program depends on. One aware value anywhere in
+    the set reintroduces the mixed comparison."""
+    assert _date(value).tzinfo is None
+
+
+def test_an_aware_end_can_be_compared_against_a_defaulted_start():
+    """The regression.
+
+    The ISO fallback accepted a zone that nothing downstream could use: argparse took
+    the value and the first comparison raised `can't subtract offset-naive and
+    offset-aware datetimes` inside a window calculation. Before the fallback existed
+    argparse rejected the same value cleanly at the command line, so widening what was
+    accepted without normalizing it traded a good error for a bad one.
+    """
+    args = build_parser().parse_args(
+        ["backtest", "--strategy", "volume_spike", "--end", "2024-06-01T16:00:00Z"]
+    )
+
+    assert isinstance(args.end - args.start, timedelta)  # used to raise TypeError
+    assert args.end == datetime(2024, 6, 1, 12)  # 16:00Z is noon in New York in June

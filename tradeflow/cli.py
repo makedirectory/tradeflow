@@ -36,6 +36,7 @@ from typing import Any, Dict, List, Optional
 from tradeflow.marketdata.base import MarketDataProvider
 from tradeflow.services.registry import STRATEGIES
 from tradeflow.utils.logging_config import setup_logging
+from tradeflow.utils.timeutils import NEW_YORK
 
 logger = logging.getLogger(__name__)
 
@@ -2742,10 +2743,31 @@ def _add_cache_flags(parser) -> None:
 
 
 def _date(value: str) -> datetime:
+    """Parse a date or ISO datetime into a naive New York wall clock.
+
+    Accepting a zone (so ``--as-of 2024-06-01T16:00:00Z`` works) without normalizing
+    one produced an argument argparse took and nothing downstream could use: every
+    window default is a naive ``datetime.now()``, so the first comparison raised
+    ``can't subtract offset-naive and offset-aware datetimes`` deep inside a window
+    calculation. Before the ISO fallback existed, argparse rejected the same value
+    cleanly at the command line.
+
+    So the coercion happens once, here, where the value is parsed - not at each of
+    the places two of these get compared. New York because that is what consumes
+    them: a naive window bound is localized to the exchange zone by the scanner and
+    aligned to the (New-York) bar index by the engine, so converting an aware value
+    to the same wall clock is what makes it name the same instant either way.
+
+    Distinct from the UTC assumption :func:`localize_index_to_new_york` makes for a
+    naive *bar index*: that is a provider's timestamp, this is a human's date.
+    """
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
-        return datetime.strptime(value, "%Y-%m-%d")
+        parsed = datetime.strptime(value, "%Y-%m-%d")
+    if parsed.tzinfo is None:
+        return parsed
+    return parsed.astimezone(NEW_YORK).replace(tzinfo=None)
 
 
 def _next_step_hint() -> str:
