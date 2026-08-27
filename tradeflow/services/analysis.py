@@ -683,7 +683,7 @@ def _draft_rejection(run_id: str, kind: str, code: str, exc: Exception, *, hygie
         "kind": kind,
         "error": str(exc),
         "error_kind": "invalid_draft" if hygiene else "validator_error",
-        "code_hash": _code_hash(code),
+        "code_hash": draft_code_hash(code),
         "note": "Nothing was run and no trial was journaled.",
     }
 
@@ -712,7 +712,7 @@ def validate_draft_strategy_code(code: str, class_name: Optional[str] = None) ->
         "description": (cls.__doc__ or "").strip().split("\n", 1)[0],
         "timeframe": getattr(cls, "TIMEFRAME", ""),
         "param_ranges": _jsonable(cls.PARAM_RANGES),
-        "code_hash": _code_hash(code),
+        "code_hash": draft_code_hash(code),
     }
 
 
@@ -740,7 +740,7 @@ def validate_draft_scanner_code(code: str, class_name: Optional[str] = None) -> 
         "description": (cls.__doc__ or "").strip().split("\n", 1)[0],
         "timeframe": getattr(cls, "TIMEFRAME", ""),
         "param_ranges": _jsonable(cls.PARAM_RANGES),
-        "code_hash": _code_hash(code),
+        "code_hash": draft_code_hash(code),
     }
 
 
@@ -788,7 +788,7 @@ def run_draft_walk_forward(
     from tradeflow.services.audit import journal_trial
 
     run_id = new_run_id()
-    code_hash = _code_hash(code)
+    code_hash = draft_code_hash(code)
     # The same verdict the validators return. This entry point guarded nothing at
     # all, so even the anticipated rejection - a draft that simply does not pass
     # hygiene - came back as a raised exception rather than an answer, from the one
@@ -939,7 +939,14 @@ def run_draft_walk_forward(
     return payload
 
 
-def _code_hash(code: str) -> str:
+def draft_code_hash(code: str) -> str:
+    """Short digest identifying draft source.
+
+    Public because the MCP layer logs it against calls the journal records under
+    ``draft:<ClassName>:<hash>``. That layer had its own byte-identical copy, so the
+    two would have silently named different things the first time either changed - and
+    what they name is how a draft's calls are tied to the trials it spent.
+    """
     return hashlib.sha256(code.encode("utf-8")).hexdigest()[:12]
 
 

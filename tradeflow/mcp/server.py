@@ -12,7 +12,6 @@ Run with: ``python main.py mcp`` (needs the ``mcp`` extra).
 """
 
 import contextlib
-import hashlib
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -504,7 +503,7 @@ def build_server(data_client=None):
         name, ship it in a package exposing the `tradeflow.strategies` entry-point
         group, or keep using `run_draft_walk_forward` with source attached.
         """
-        inputs = {"class_name": class_name, "code_hash": _source_hash(code)}
+        inputs = {"class_name": class_name, "code_hash": analysis.draft_code_hash(code)}
         return _logged(
             "validate_draft_strategy_code",
             inputs,
@@ -527,7 +526,7 @@ def build_server(data_client=None):
         To make validated scanner code available by name, ship it in a package
         exposing the `tradeflow.scanners` entry-point group.
         """
-        inputs = {"class_name": class_name, "code_hash": _source_hash(code)}
+        inputs = {"class_name": class_name, "code_hash": analysis.draft_code_hash(code)}
         return _logged(
             "validate_draft_scanner_code",
             inputs,
@@ -579,7 +578,7 @@ def build_server(data_client=None):
         from the trial store unless `force=true`.
         """
         inputs = {
-            "code_hash": _source_hash(code),
+            "code_hash": analysis.draft_code_hash(code),
             "symbols": symbols,
             "start": start,
             "end": end,
@@ -1165,10 +1164,6 @@ def _assert_no_trading_client(data_client) -> None:
     for attr in ("broker", "trading_client", "_broker"):
         if getattr(data_client, attr, None) is not None:
             raise RuntimeError(f"MCP data client unexpectedly exposes {attr!r}; refusing to start.")
-
-
-def _source_hash(code: str) -> str:
-    return hashlib.sha256(code.encode("utf-8")).hexdigest()[:12]
 
 
 def _summary(result: Any) -> Dict[str, Any]:

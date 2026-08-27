@@ -347,3 +347,28 @@ def test_the_server_entry_point_the_sdk_provides_still_exists():
     from mcp.server.fastmcp import FastMCP
 
     assert callable(FastMCP)
+
+
+def test_the_mcp_log_and_the_journal_name_a_draft_the_same_way(built):
+    """One hash, not two byte-identical ones.
+
+    The MCP layer logged a `code_hash` from its own copy of the digest while the
+    service journalled the trial under `draft:<ClassName>:<hash>` from another. They
+    agreed only for as long as nobody touched either, and what they name is how a
+    draft's calls are tied to the trials it spent.
+    """
+    payload = _call(
+        built,
+        "run_draft_walk_forward",
+        code=_VALID_CODE,
+        symbols=SYMBOLS,
+        start=START.strftime("%Y-%m-%d"),
+        end=END.strftime("%Y-%m-%d"),
+        n_folds=2,
+        method="grid",
+        max_evals=1,
+        journal=False,
+    )
+
+    assert payload["strategy"] == f"draft:GenStrat:{analysis.draft_code_hash(_VALID_CODE)}"
+    assert payload["draft"]["code_hash"] == analysis.draft_code_hash(_VALID_CODE)
