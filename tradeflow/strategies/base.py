@@ -88,7 +88,10 @@ class Strategy(ABC):
             risk_per_trade: fraction of capital risked per trade
             stop_loss / take_profit: fractional distances from entry price
             position_limits: optional {max_positions, max_position_size,
-                max_total_risk}
+                max_total_risk, max_gross_exposure}. max_total_risk is a
+                stop-weighted risk budget (loss if everything stops out), not a
+                cap on deployed notional; max_gross_exposure is the notional cap.
+                Both are enforced across the book by the backtest engine.
             reaffirm_entries: live-only; open a position the score implies even when
                 its entry edge was missed (default True). See
                 :data:`REAFFIRM_ENTRIES_DEFAULT`.
@@ -245,6 +248,13 @@ class Strategy(ABC):
 
         The result is the smallest of three constraints: the risk-per-trade
         target, the max notional per position, and the max total portfolio risk.
+
+        That third one is applied to *one* position in isolation, because sizing
+        has no view of the open book - it answers "could this position alone
+        consume the whole risk budget?", and the engine is what enforces the budget
+        across the book. ``max_gross_exposure`` is absent here for the same reason,
+        and more so: a cap on total deployed notional says nothing about what any
+        single position may take.
         """
         risk_amount = capital * self.config["risk_per_trade"] * risk_factor
         stop_loss_pct = self.config["stop_loss"]

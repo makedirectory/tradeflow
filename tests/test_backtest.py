@@ -6,7 +6,7 @@ and P&L exactly - independent of any indicator behavior.
 """
 
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import pandas as pd
 import pytest
@@ -31,9 +31,9 @@ _CONFIG = {
 class ScriptedStrategy(Strategy):
     PARAM_RANGES: Dict = {}
 
-    def __init__(self, per_bar_signals: List[str]):
+    def __init__(self, per_bar_signals: List[str], overrides: Optional[Dict] = None):
         self._signals = per_bar_signals
-        super().__init__(dict(_CONFIG))
+        super().__init__({**_CONFIG, **(overrides or {})})
 
     def calculate_required_lookback(self) -> int:
         return 1
@@ -188,8 +188,8 @@ def test_one_bad_symbol_still_completes_the_run():
 # --------------------------------------------------------------------------- #
 # Portfolio accounting
 # --------------------------------------------------------------------------- #
-def _multi(frames: Dict[str, pd.DataFrame], per_bar_signals: List[str], capital=100_000):
-    strategy = ScriptedStrategy(per_bar_signals)
+def _multi(frames: Dict[str, pd.DataFrame], per_bar_signals: List[str], capital=100_000, overrides=None):
+    strategy = ScriptedStrategy(per_bar_signals, overrides)
     data_client = MarketDataClient(DictMarketData(frames))
     return BacktestEngine(strategy, data_client).run(
         sorted(frames), datetime(2024, 1, 2), datetime(2024, 1, 10), capital
@@ -339,3 +339,63 @@ def test_aligned_grid_keeps_the_timeframe_rate():
     )
     engine.run(["AAA", "BBB"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000)
     assert engine._step_periods_per_year == pytest.approx(engine._periods_per_year)
+
+
+# --------------------------------------------------------------------------- #
+# Risk budget vs. gross exposure
+# --------------------------------------------------------------------------- #
+#: Flat prices, so nothing stops or takes profit and every admitted position
+#: survives to the closing signal - the trade count is the admission count.
+_FLAT = [{"open": 100, "high": 100, "low": 100, "close": 100, "volume": 1}] * 3
+
+#: A 1% stop with a $20k notional cap risks $200 per position, so four positions
+#: spend $800 of budget while deploying $80k of notional against $100k of equity.
+_TIGHT_STOP = {
+    "stop_loss": 0.01,
+    "take_profit": 0.01,
+    "position_limits": {"max_positions": 4, "max_position_size": 20_000.0, "max_total_risk": 0.05},
+}
+
+
+def _four_names():
+    return {sym: _frame(_FLAT) for sym in ("AAA", "BBB", "CCC", "DDD")}
+
+
+def _limits(**changes):
+    return {**_TIGHT_STOP, "position_limits": {**_TIGHT_STOP["position_limits"], **changes}}
+
+
+def test_max_total_risk_does_not_bound_deployed_notional():
+    """The distinction the config docs turn on, asserted rather than described.
+
+    max_total_risk is loss-at-stop, so a tight stop buys a lot of notional for very
+    little of it. Here a 5% budget admits 80% of equity in notional - anyone reading
+    the fraction as an exposure cap is off by 16x.
+    """
+    result = _multi(_four_names(), ["BUY", "HOLD", "CLOSE_BUY"], overrides=_TIGHT_STOP)
+    notional = (result.trades["size"] * result.trades["entry_price"]).sum()
+    assert len(result.trades) == 4
+    assert notional == pytest.approx(80_000)
+    assert notional > 0.05 * result.initial_capital
+
+
+def test_max_total_risk_bounds_loss_at_stop():
+    """The budget it does enforce: $200 of risk per position against a $300 budget."""
+    result = _multi(_four_names(), ["BUY", "HOLD", "CLOSE_BUY"], overrides=_limits(max_total_risk=0.003))
+    assert len(result.trades) == 1
+
+
+def test_max_gross_exposure_caps_deployed_notional():
+    """The notional cap the risk budget is not: 45% of equity admits two $20k positions."""
+    result = _multi(_four_names(), ["BUY", "HOLD", "CLOSE_BUY"], overrides=_limits(max_gross_exposure=0.45))
+    notional = (result.trades["size"] * result.trades["entry_price"]).sum()
+    assert len(result.trades) == 2
+    assert notional == pytest.approx(40_000)
+
+
+def test_max_gross_exposure_is_off_by_default():
+    """Unset must change nothing - free cash stays the only bound on notional."""
+    baseline = _multi(_four_names(), ["BUY", "HOLD", "CLOSE_BUY"], overrides=_TIGHT_STOP)
+    explicit = _multi(_four_names(), ["BUY", "HOLD", "CLOSE_BUY"], overrides=_limits(max_gross_exposure=None))
+    assert len(explicit.trades) == len(baseline.trades) == 4
+    assert explicit.final_capital == pytest.approx(baseline.final_capital)

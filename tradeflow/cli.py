@@ -264,7 +264,9 @@ def cmd_backtest(args) -> None:
         strategy = STRATEGIES[strategy_name].create_with_defaults()
 
     _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
-    universe = resolve_universe(data_client, scanner, args.symbols, as_of=getattr(args, "scan_as_of", None) or args.end)
+    universe = resolve_universe(
+        data_client, scanner, args.symbols, as_of=getattr(args, "scan_as_of", None) or args.end
+    )
 
     # Computed once, up front: it warms the cache as a side effect (when
     # cache-backed) and must match exactly between the lookup below and the

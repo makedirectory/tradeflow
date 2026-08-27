@@ -85,10 +85,21 @@ def _align_tz(when, index: pd.DatetimeIndex) -> pd.Timestamp:
 
 
 #: Fallback when a strategy declares no ``position_limits`` (mirrors the base class).
-DEFAULT_POSITION_LIMITS: Dict[str, float] = {
+#:
+#: The two portfolio-level fractions measure different things and read alike:
+#:
+#: * ``max_total_risk`` is a **risk budget** - the fraction of equity the book gives
+#:   up if every open position stops out. A position contributes
+#:   ``notional x stop_loss``, so a tight stop buys a lot of notional for very
+#:   little budget. It bounds loss-at-stop, not how much is deployed.
+#: * ``max_gross_exposure`` is a **notional cap** - marked gross notional over
+#:   equity, shorts counted by magnitude. ``None`` (the default) leaves free cash as
+#:   the only bound on deployed notional, which is the long-standing behavior.
+DEFAULT_POSITION_LIMITS: Dict[str, Optional[float]] = {
     "max_positions": 5,
     "max_position_size": 1500.0,
     "max_total_risk": 0.05,
+    "max_gross_exposure": None,
 }
 
 
@@ -130,6 +141,15 @@ class _Book:
     def open_risk(self) -> float:
         """Sum of per-position risk (notional x stop distance) across the book."""
         return sum(p["risk"] for p in self.positions.values())
+
+    def gross_exposure(self) -> float:
+        """Marked gross notional across the book, shorts counted by magnitude.
+
+        Deliberately not :meth:`market_value`, which is an accounting number -
+        reserved notional plus unrealized P&L under full cash collateral. This is
+        the market exposure the book is actually carrying.
+        """
+        return sum(p["size"] * p["last_price"] for p in self.positions.values())
 
     def market_value(self) -> float:
         """Reserved notional plus unrealized gross P&L, marked at last seen price."""
@@ -407,6 +427,7 @@ class BacktestEngine:
         limits = {**DEFAULT_POSITION_LIMITS, **(self.strategy.config.get("position_limits") or {})}
         max_positions = limits["max_positions"]
         max_total_risk = limits["max_total_risk"]
+        max_gross_exposure = limits.get("max_gross_exposure")
         n_steps = len(master)
         order = sorted(panels)
 
@@ -482,6 +503,7 @@ class BacktestEngine:
                         book,
                         equity_now,
                         max_total_risk,
+                        max_gross_exposure,
                         panel.adv,
                         panel.vol,
                         i,
@@ -541,6 +563,7 @@ class BacktestEngine:
         book: _Book,
         equity: float,
         max_total_risk: float,
+        max_gross_exposure: Optional[float],
         adv: Optional[np.ndarray],
         vol: Optional[np.ndarray],
         i: int,
@@ -579,8 +602,18 @@ class BacktestEngine:
         # Portfolio-level risk budget. calculate_position_size caps a *single*
         # position against max_total_risk; nothing capped the book as a whole, so
         # "max_total_risk" was per-symbol in practice.
+        #
+        # What it bounds is loss-at-stop, not deployed notional: at a 0.5% stop a 5%
+        # budget admits ten times equity in notional before this gate binds. It is
+        # not a gross exposure cap, and max_gross_exposure below is the one that is.
         risk = size * price * stop_pct
         if max_total_risk and book.open_risk() + risk > equity * max_total_risk:
+            return None
+
+        # Gross notional cap, off unless configured. Free cash already holds the book
+        # near 1x on its own (shorts are fully collateralized, per the docstring), so
+        # this binds when a config wants to sit deliberately below that.
+        if max_gross_exposure and book.gross_exposure() + size * price > equity * max_gross_exposure:
             return None
 
         if signal == signals.BUY:

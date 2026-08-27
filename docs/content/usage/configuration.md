@@ -55,8 +55,48 @@ base class recognizes:
 |---|---|
 | `risk_per_trade` | Fraction of capital risked per trade |
 | `stop_loss` / `take_profit` | Fractional distances from entry price |
-| `position_limits` | `{max_positions, max_position_size, max_total_risk}` |
+| `position_limits` | Portfolio limits the [engine](../engineering/engine.md) enforces across the book: `max_positions` (open positions), `max_position_size` (notional per position, in dollars), `max_total_risk` (risk budget as a fraction of equity), `max_gross_exposure` (deployed notional as a fraction of equity; unset by default). See [what `max_total_risk` caps](#what-max_total_risk-caps). |
 | `reaffirm_entries` | Live only. Open a position the score implies even when its entry edge was missed — a rejected bar, a dropped stream, a restart, or a crossing inside the warm-up history. Default `true`, so a strategy started mid-trend takes the position rather than waiting for the next crossing. `--no-reaffirm-entries` on `live` turns it off. Exits are never gated by it. |
+
+## What `max_total_risk` caps
+
+`max_total_risk` is a **risk budget**, not an exposure cap, and the two read alike
+enough to be worth stating plainly.
+
+Each open position contributes `notional × stop_loss` — what it gives up if it stops
+out — and the engine refuses an entry that would push the sum past
+`max_total_risk × equity`. So it bounds *loss if everything stops out*. It says
+nothing about how much notional is deployed, and the relationship between the two
+runs through the stop distance:
+
+| `stop_loss` | Notional admitted by `max_total_risk: 0.05` |
+|---|---|
+| 5% | 1× equity |
+| 1% | 5× equity |
+| 0.5% | 10× equity |
+
+A tighter stop buys more notional for the same budget. Reading `max_total_risk: 0.05`
+as "at most 5% of the book is deployed" is wrong in every row but the first.
+
+`max_gross_exposure` is the cap on deployed notional: marked gross notional over
+equity, shorts counted by magnitude. It is unset by default, which leaves free cash
+as the only bound — and because [shorts are fully
+cash-collateralized](../engineering/engine.md), that holds a backtest near 1× on its
+own. Set it when a config should sit deliberately below that:
+
+```python
+"position_limits": {
+    "max_positions": 5,
+    "max_position_size": 1500.0,
+    "max_total_risk": 0.05,     # lose at most 5% if every stop fills
+    "max_gross_exposure": 0.60,  # never deploy more than 60% of equity
+}
+```
+
+Both are portfolio-level in the backtest engine. `Strategy.calculate_position_size`
+also clamps a *single* position against `max_total_risk`, because sizing has no view
+of the open book; that clamp asks only whether one position could exhaust the whole
+budget.
 
 ## Run-time options
 

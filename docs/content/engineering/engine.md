@@ -35,9 +35,11 @@ live. Each step:
    entries, so capital freed this bar is reusable this bar.
 3. **Rank** entry candidates across the whole universe by the strategy's own
    conviction score, descending, ties broken by symbol so a run is reproducible.
-4. **Admit** in that order while `max_positions`, `max_total_risk` and free cash
-   allow. Sizing goes through `Strategy.calculate_position_size` as before, but
-   against *free cash*, which is what makes positions actually compete.
+4. **Admit** in that order while `max_positions`, `max_total_risk`,
+   `max_gross_exposure` and free cash allow. Sizing goes through
+   `Strategy.calculate_position_size` as before, but against *free cash*, which is
+   what makes positions actually compete. The two portfolio fractions are not the
+   same measurement — see [what `max_total_risk` caps](../usage/configuration.md#what-max_total_risk-caps).
 5. **Record** portfolio equity — cash plus marked-to-market positions.
 
 Anything still open at the end is force-closed (`END_OF_PERIOD`). P&L is
