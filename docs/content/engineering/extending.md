@@ -55,9 +55,11 @@ Use the pure [indicators](indicators); don't reach for a compiled TA library.
 1. Subclass `ScannerStrategy` in `tradeflow/scanners/` — implement `process_data` and
    `generate_signals_df` (emit `SCANNER_BUY`/`SCANNER_SELL`/`SCANNER_HOLD` plus a
    `signal_strength`).
-2. For public/example scanners, register it in `BUILTIN_SCANNERS` in
-   `tradeflow/services/registry.py`. For proprietary scanners, expose it from a
-   separate installed package through the `tradeflow.scanners` entry-point group:
+2. For public/example scanners, add it to the `BUILTIN_SCANNERS` literal in
+   `tradeflow/scanners/symbol_scanner.py` — not `SymbolScanner.SCANNERS`, which
+   discovery overwrites with the built-ins plus whatever installed packages
+   contribute. For proprietary scanners, expose it from a separate installed package
+   through the `tradeflow.scanners` entry-point group:
 
    ```toml
    [project.entry-points."tradeflow.scanners"]

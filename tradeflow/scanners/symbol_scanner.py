@@ -23,13 +23,23 @@ logger = logging.getLogger(__name__)
 _LOOKBACK_DAY_BUFFER = 3
 
 
+#: The scanners that ship with this package - the literal to extend when adding a
+#: public example. Kept separate from :attr:`SymbolScanner.SCANNERS`, which discovery
+#: overwrites with built-ins *plus* whatever installed packages contribute: deriving
+#: the built-in set from that live attribute meant a module reload absorbed third-party
+#: scanners into it, and the reserved names an extension may not override then silently
+#: included names that came from an extension.
+BUILTIN_SCANNERS: Dict[str, Type[ScannerStrategy]] = {
+    "volume": VolumeScannerStrategy,
+}
+
+
 class SymbolScanner:
     """Filters a candidate universe down to scanner-signaled symbols."""
 
-    #: Registered scanners by name (extend with new TA-Lib-free scanners here).
-    SCANNERS: Dict[str, Type[ScannerStrategy]] = {
-        "volume": VolumeScannerStrategy,
-    }
+    #: Scanners resolvable by name. Built-ins until discovery runs, then built-ins
+    #: plus installed contributions - see :mod:`tradeflow.services.registry`.
+    SCANNERS: Dict[str, Type[ScannerStrategy]] = dict(BUILTIN_SCANNERS)
 
     def __init__(
         self,
