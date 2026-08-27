@@ -84,25 +84,6 @@ def _align_tz(when, index: pd.DatetimeIndex) -> pd.Timestamp:
     return ts
 
 
-#: Fallback when a strategy declares no ``position_limits`` (mirrors the base class).
-#:
-#: The two portfolio-level fractions measure different things and read alike:
-#:
-#: * ``max_total_risk`` is a **risk budget** - the fraction of equity the book gives
-#:   up if every open position stops out. A position contributes
-#:   ``notional x stop_loss``, so a tight stop buys a lot of notional for very
-#:   little budget. It bounds loss-at-stop, not how much is deployed.
-#: * ``max_gross_exposure`` is a **notional cap** - marked gross notional over
-#:   equity, shorts counted by magnitude. ``None`` (the default) leaves free cash as
-#:   the only bound on deployed notional, which is the long-standing behavior.
-DEFAULT_POSITION_LIMITS: Dict[str, Optional[float]] = {
-    "max_positions": 5,
-    "max_position_size": 1500.0,
-    "max_total_risk": 0.05,
-    "max_gross_exposure": None,
-}
-
-
 @dataclass
 class _Panel:
     """One symbol's arrays, aligned to the merged timeline.
@@ -424,7 +405,7 @@ class BacktestEngine:
             return trades, equity_curve
 
         cutoff = _align_tz(trade_from, master) if trade_from is not None else None
-        limits = {**DEFAULT_POSITION_LIMITS, **(self.strategy.config.get("position_limits") or {})}
+        limits = self.strategy.position_limits()
         max_positions = limits["max_positions"]
         max_total_risk = limits["max_total_risk"]
         max_gross_exposure = limits.get("max_gross_exposure")

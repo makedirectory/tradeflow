@@ -61,6 +61,28 @@ class ScoreThresholds:
     exit_short: float = 0.0
 
 
+#: Portfolio limits applied when a strategy declares no ``position_limits``.
+#:
+#: The two fractions measure different things and read alike:
+#:
+#: * ``max_total_risk`` is a **risk budget** - the fraction of equity the book gives
+#:   up if every open position stops out. A position contributes
+#:   ``notional x stop_loss``, so a tight stop buys a lot of notional for very
+#:   little budget. It bounds loss-at-stop, not how much is deployed.
+#: * ``max_gross_exposure`` is a **notional cap** - marked gross notional over
+#:   equity, shorts counted by magnitude. ``None`` (the default) leaves free cash as
+#:   the only bound on deployed notional.
+#:
+#: They live here rather than in the backtest engine because both clocks enforce
+#: them, and the trade clock cannot import the engine.
+DEFAULT_POSITION_LIMITS: Dict[str, Any] = {
+    "max_positions": 5,
+    "max_position_size": 1500.0,
+    "max_total_risk": 0.05,
+    "max_gross_exposure": None,
+}
+
+
 class Strategy(ABC):
     """Abstract base for all trading strategies."""
 
@@ -243,6 +265,15 @@ class Strategy(ABC):
     # ------------------------------------------------------------------ #
     # Position sizing & risk
     # ------------------------------------------------------------------ #
+    def position_limits(self) -> Dict[str, Any]:
+        """Configured portfolio limits merged over :data:`DEFAULT_POSITION_LIMITS`.
+
+        One accessor so the backtest engine and the live trader read the same merged
+        dict, and so a config that sets only some of the keys gets defaults for the
+        rest rather than a ``KeyError`` at the first entry.
+        """
+        return {**DEFAULT_POSITION_LIMITS, **(self.config.get("position_limits") or {})}
+
     def calculate_position_size(self, capital: float, price: float, risk_factor: float = 1.0) -> float:
         """Size a position from risk-per-trade, capped by configured limits.
 
@@ -250,20 +281,18 @@ class Strategy(ABC):
         target, the max notional per position, and the max total portfolio risk.
 
         That third one is applied to *one* position in isolation, because sizing
-        has no view of the open book - it answers "could this position alone
-        consume the whole risk budget?", and the engine is what enforces the budget
-        across the book. ``max_gross_exposure`` is absent here for the same reason,
-        and more so: a cap on total deployed notional says nothing about what any
-        single position may take.
+        has no view of the open book - it answers "could this position alone consume
+        the whole risk budget?". Enforcing the budget across the book is the
+        backtest engine's job on the research clock and the live trader's on the
+        trade clock; both read :meth:`position_limits`. ``max_gross_exposure`` is
+        absent here for the same reason, and more so: a cap on total deployed
+        notional says nothing about what any single position may take.
         """
         risk_amount = capital * self.config["risk_per_trade"] * risk_factor
         stop_loss_pct = self.config["stop_loss"]
         target_size = risk_amount / (price * stop_loss_pct)
 
-        limits = self.config.get(
-            "position_limits",
-            {"max_positions": 5, "max_position_size": 1500.0, "max_total_risk": 0.05},
-        )
+        limits = self.position_limits()
         max_size_by_notional = limits["max_position_size"] / price
         max_size_by_total_risk = (capital * limits["max_total_risk"]) / (price * stop_loss_pct)
 

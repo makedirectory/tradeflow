@@ -578,6 +578,8 @@ def test_the_live_path_imports_no_research_machinery():
         "tradeflow/engine/live.py",
         "tradeflow/engine/barcheck.py",
         "tradeflow/execution/ledger.py",
+        "tradeflow/execution/live_trader.py",
+        "tradeflow/execution/sizing.py",
     ):
         source = Path(module).read_text()
         for forbidden in (

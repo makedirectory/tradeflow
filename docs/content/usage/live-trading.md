@@ -210,6 +210,38 @@ that never ran, which is how a check silently stops being applied and nobody
 notices. Declined decisions are recorded precisely because they leave no other
 trace.
 
+## Portfolio limits are enforced live
+
+The `position_limits` in a strategy's config — `max_positions`, `max_total_risk`,
+`max_gross_exposure` — are checked against the whole book before every entry, under
+the `position_limits` guard. **This is newer than the rest of live trading.** Sizing
+clamps one position at a time and has no view of what is already open, so before
+this guard existed each entry could consume the entire risk budget on its own and
+nothing capped the count at all. A config validated in a backtest at five positions
+could run unbounded live, against a margin account whose buying power is a multiple
+of equity.
+
+Two things to know before your next run:
+
+- **The defaults now bite.** A strategy that declares no `position_limits` gets
+  `max_positions: 5` — the same default the backtest has always applied. If you are
+  running more names than that, set the limit to what you actually intend.
+- **A portfolio-weight deployment must say so.** `PortfolioWeightSizer` lets the
+  [allocator](portfolio.md) choose the book, and the strategy's `position_limits`
+  will still be enforced on top. Set `max_positions` to at least the allocator's
+  cardinality or the book gets truncated at five names.
+
+Every refusal is logged with the numbers that caused it and recorded as a decision,
+so a limit that is quietly throttling a run is visible rather than inferred.
+
+The live count differs from the backtest's in two ways, both deliberate. It reads
+the strategy's position book — broker truth at start-up and at each reconciliation —
+rather than querying the broker per entry, because several symbols can signal on one
+bar and a round trip on each is exactly what the bar loop must not do. And it
+measures exposure at entry price rather than marking it, because the trade clock has
+no price for a symbol it is not currently handling. A book that has run up is
+carrying more market exposure than this counts.
+
 ## Stopping
 
 `Ctrl-C` stops the process, but it records nothing — restart the engine and it trades

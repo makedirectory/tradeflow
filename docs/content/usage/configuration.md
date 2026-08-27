@@ -93,10 +93,12 @@ own. Set it when a config should sit deliberately below that:
 }
 ```
 
-Both are portfolio-level in the backtest engine. `Strategy.calculate_position_size`
-also clamps a *single* position against `max_total_risk`, because sizing has no view
-of the open book; that clamp asks only whether one position could exhaust the whole
-budget.
+Both are enforced across the whole book — by the backtest engine on the research
+clock, and by the live trader on the trade clock (see [portfolio limits are enforced
+live](live-trading.md#portfolio-limits-are-enforced-live), which notes where the two
+counts differ). `Strategy.calculate_position_size` also clamps a *single* position
+against `max_total_risk`, because sizing has no view of the open book; that clamp
+asks only whether one position could exhaust the whole budget.
 
 ## Run-time options
 

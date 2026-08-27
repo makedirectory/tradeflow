@@ -29,6 +29,7 @@ PENDING_ORDER = "pending_order"
 ACCOUNT = "account"
 SIZING = "sizing"
 BUYING_POWER = "buying_power"
+POSITION_LIMITS = "position_limits"
 BROKER = "broker"
 POSITION_MATCH = "position_match"
 

@@ -214,6 +214,12 @@ class LiveTrader:
                 tuple(guards),
             )
 
+        guards.append(decisions.POSITION_LIMITS)
+        breach = self._limit_breach(symbol, qty, price, account)
+        if breach is not None:
+            logger.warning("Refusing %s entry for %s: %s", signal, symbol, breach)
+            return decisions.decline(symbol, signal, breach, tuple(guards))
+
         side = _ENTRY_SIDE[signal]
         stop_loss, take_profit = self._stop_levels(price, side)
         logger.info(
@@ -325,6 +331,72 @@ class LiveTrader:
             is_open = True
         self._market_status_cache = (now, is_open)
         return is_open
+
+    def _limit_breach(self, symbol: str, qty: float, price: float, account) -> Optional[str]:
+        """Say which portfolio limit this entry would break, or ``None`` if it fits.
+
+        Sizing answers "how big should this position be?" one symbol at a time and
+        has no view of the book, so ``max_total_risk`` applied there caps a single
+        position against the *whole* budget - N open positions could each consume all
+        of it. The backtest enforces these across the book; live did not enforce them
+        at all, so a config validated at five positions and a 5% risk budget could run
+        unbounded against a margin account whose buying power is a multiple of equity.
+
+        Counted from the strategy's own position book rather than a fresh broker read.
+        That book is broker truth at start-up and at every reconciliation, and this
+        path runs inside the bar loop - a ``list_positions`` per entry would put a
+        broker round trip on a path several symbols can take on the same bar. Two
+        consequences, both deliberate:
+
+        * Exposure is measured at entry price, not marked. The trade clock has no
+          price for a symbol it is not currently handling, and inventing one is worse
+          than measuring at cost. A book that has run up is therefore carrying more
+          market exposure than this counts.
+        * Freshness is bounded by the reconciliation interval, not the bar. A position
+          this trader did not open is invisible until the next sync.
+
+        Reports and rejects; it never resizes an entry to fit.
+        """
+        limits = self._strategy.position_limits()
+        max_positions = limits.get("max_positions")
+        max_total_risk = limits.get("max_total_risk")
+        max_gross_exposure = limits.get("max_gross_exposure")
+        if not (max_positions or max_total_risk or max_gross_exposure):
+            return None
+
+        others = [p for held, p in self._strategy.positions.items() if held != symbol]
+
+        if max_positions and len(others) + 1 > max_positions:
+            return f"book is full: {len(others)} of {max_positions} positions already open"
+
+        if not (max_total_risk or max_gross_exposure):
+            return None
+
+        equity = account.equity
+        if equity <= 0:
+            return f"cannot check portfolio limits against ${equity:,.2f} of equity"
+
+        held_notional = sum(abs(p["qty"]) * p["entry_price"] for p in others)
+        entry_notional = qty * price
+
+        if max_total_risk:
+            # Same accounting as the engine: notional x stop distance, one stop
+            # fraction for the whole strategy.
+            stop_pct = self._strategy.config["stop_loss"]
+            open_risk = held_notional * stop_pct
+            budget = equity * max_total_risk
+            if open_risk + entry_notional * stop_pct > budget:
+                return (
+                    f"risk budget exhausted: ${open_risk + entry_notional * stop_pct:,.2f} "
+                    f"of ${budget:,.2f} at a {stop_pct:.1%} stop"
+                )
+
+        if max_gross_exposure:
+            cap = equity * max_gross_exposure
+            if held_notional + entry_notional > cap:
+                return f"gross exposure capped: ${held_notional + entry_notional:,.2f} of ${cap:,.2f}"
+
+        return None
 
     def _stop_levels(self, entry_price: float, side: OrderSide) -> tuple[float, float]:
         """Compute (stop_loss, take_profit) prices from the strategy's config."""
