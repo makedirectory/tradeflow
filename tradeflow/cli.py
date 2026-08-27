@@ -2242,6 +2242,7 @@ def cmd_live(args) -> None:
             data_client, equity, universe, "1Day", args.max_positions, args.max_weight
         )
         if sizer is not None:
+            _warn_if_portfolio_sizer_exceeds_strategy_limit(strategy, sizer.symbols)
             universe = sizer.symbols  # trade only the funded names
     elif args.beta_sizing:
         sizer = build_beta_sizer(data_client, strategy, universe, args.benchmark)
@@ -2288,6 +2289,20 @@ def cmd_live(args) -> None:
                     "ELEVATED bar-rejection rate — this is a data-feed problem wearing "
                     "a quiet market's clothes. Investigate before trusting these results."
                 )
+
+
+def _warn_if_portfolio_sizer_exceeds_strategy_limit(strategy, funded_symbols) -> None:
+    """Report a live portfolio allocation that the strategy's book guard will truncate."""
+    limit = (strategy.position_limits() or {}).get("max_positions")
+    funded = len(funded_symbols or [])
+    if limit and funded > int(limit):
+        logger.warning(
+            "Portfolio allocator funded %d names, but strategy position_limits.max_positions=%d. "
+            "The live guard can truncate this book; set position_limits.max_positions at least "
+            "as high as the allocator cardinality or lower --max-positions.",
+            funded,
+            int(limit),
+        )
 
 
 def cmd_halt(args) -> None:
