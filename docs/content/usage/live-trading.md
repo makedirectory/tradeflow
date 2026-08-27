@@ -226,10 +226,16 @@ Two things to know before your next run:
 - **The defaults now bite.** A strategy that declares no `position_limits` gets
   `max_positions: 5` — the same default the backtest has always applied. If you are
   running more names than that, set the limit to what you actually intend.
-- **A portfolio-weight deployment must say so.** `PortfolioWeightSizer` lets the
-  [allocator](portfolio.md) choose the book, and the strategy's `position_limits`
-  will still be enforced on top. Set `max_positions` to at least the allocator's
-  cardinality or the book gets truncated at five names.
+- **A portfolio-weight deployment must reconcile its two caps, and `live` refuses to
+  start until it does.** `--portfolio` lets the [allocator](portfolio.md) choose the
+  book, but the strategy's `position_limits.max_positions` still bounds what the book
+  holds. When `--max-positions` exceeds it, the surplus names are funded and never
+  traded, and which ones survive is decided by signal arrival order rather than by
+  the allocation — so `live --portfolio` exits with both numbers and both remedies
+  instead of starting. Every strategy shipped here declares `max_positions: 1` while
+  `--max-positions` defaults to `5`, so the default invocation is one of the
+  configurations that gets refused: raise the strategy's limit or pass
+  `--max-positions 1`.
 
 Every refusal is logged with the numbers that caused it and recorded as a decision,
 so a limit that is quietly throttling a run is visible rather than inferred.

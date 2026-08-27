@@ -2225,6 +2225,9 @@ def cmd_live(args) -> None:
         strategy.config["reaffirm_entries"] = False
         logger.info("Entry re-affirmation off: waiting for a fresh crossing before entering")
 
+    if args.portfolio:
+        _refuse_contradictory_portfolio_cardinality(strategy, args.max_positions)
+
     broker, data_client = build_data_and_broker()
     universe = resolve_universe(data_client, scanner, args.symbols)
 
@@ -2242,7 +2245,6 @@ def cmd_live(args) -> None:
             data_client, equity, universe, "1Day", args.max_positions, args.max_weight
         )
         if sizer is not None:
-            _warn_if_portfolio_sizer_exceeds_strategy_limit(strategy, sizer.symbols)
             universe = sizer.symbols  # trade only the funded names
     elif args.beta_sizing:
         sizer = build_beta_sizer(data_client, strategy, universe, args.benchmark)
@@ -2291,18 +2293,34 @@ def cmd_live(args) -> None:
                 )
 
 
-def _warn_if_portfolio_sizer_exceeds_strategy_limit(strategy, funded_symbols) -> None:
-    """Report a live portfolio allocation that the strategy's book guard will truncate."""
+def _refuse_contradictory_portfolio_cardinality(strategy, allocator_max_positions) -> None:
+    """Refuse a live portfolio run whose two position caps cannot both be honored.
+
+    ``--max-positions`` bounds what the allocator may fund; the strategy's
+    ``position_limits.max_positions`` bounds what the live book will hold. When the
+    first exceeds the second, the book is truncated to the smaller number and which
+    names survive is decided by which signals arrive first, not by the allocation -
+    so what trades is not the book that was allocated, and not the one that was
+    validated. There is no reading of that configuration worth starting.
+
+    Checked against the declared caps rather than the funded set, and before the
+    broker is reached. The allocator hard-caps its own cardinality, so a run that
+    happens to fund few enough names today would otherwise start and the same
+    configuration would truncate tomorrow; and the operator learns this before a
+    market-data fetch and a solve rather than after.
+    """
     limit = (strategy.position_limits() or {}).get("max_positions")
-    funded = len(funded_symbols or [])
-    if limit and funded > int(limit):
-        logger.warning(
-            "Portfolio allocator funded %d names, but strategy position_limits.max_positions=%d. "
-            "The live guard can truncate this book; set position_limits.max_positions at least "
-            "as high as the allocator cardinality or lower --max-positions.",
-            funded,
-            int(limit),
-        )
+    if not limit or not allocator_max_positions:
+        return
+    limit, funded_cap = int(limit), int(allocator_max_positions)
+    if funded_cap <= limit:
+        return
+    raise SystemExit(
+        f"--portfolio would fund up to {funded_cap} names, but this strategy holds at most "
+        f"{limit} (position_limits.max_positions), so {funded_cap - limit} of them would never "
+        f"be traded. Reconcile the two before trading: raise position_limits.max_positions to "
+        f"{funded_cap} in the strategy config, or pass --max-positions {limit}."
+    )
 
 
 def cmd_halt(args) -> None:
