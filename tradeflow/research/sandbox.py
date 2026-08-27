@@ -42,10 +42,19 @@ MAX_TUNABLE_PARAMS = 5
 REQUIRED_CONFIG_KEYS = ("risk_per_trade", "stop_loss", "take_profit")
 
 #: Import names generated strategy/scanner code is allowed to use.
+#:
+#: The list exists to keep generated code away from the filesystem, the process, the
+#: network and the broker. ``typing`` and ``collections.abc`` reach none of those -
+#: they are annotation vocabulary and grant no capability - and leaving them off
+#: rejected every strategy and scanner this package ships, since all of them annotate
+#: their ``PARAM_RANGES``. A validator that refuses the repository's own examples is
+#: measuring its allowlist, not the draft.
 _ALLOWED_IMPORTS = {
     "pandas",
     "numpy",
     "math",
+    "typing",
+    "collections.abc",
     "tradeflow.indicators.indicators",
     "tradeflow.indicators",
     "tradeflow.scanners.base",
@@ -171,9 +180,13 @@ def _validate_common_contract(cls: Type, base_name: str) -> None:
             )
     space = ParameterSpace(cls.PARAM_RANGES)
     if len(space.searchable) > MAX_TUNABLE_PARAMS:
+        # Deliberately stricter than the curated strategies this package ships: a
+        # draft is an unreviewed proposal, and knobs are overfit surface. Two shipped
+        # strategies exceed it, which is why the shipped-artifact test below admits
+        # this one rejection and no other.
         raise HygieneError(
             f"{cls.__name__} has {len(space.searchable)} searchable params "
-            f"(cap {MAX_TUNABLE_PARAMS} for draft {base_name}s)"
+            f"(draft {base_name} cap is {MAX_TUNABLE_PARAMS})"
         )
 
 
@@ -211,16 +224,7 @@ def _validate_scanner_contract(cls: Type[ScannerStrategy]) -> None:
 
     import pandas as pd
 
-    sample = pd.DataFrame(
-        {
-            "open": [100.0, 101.0, 102.0, 103.0, 104.0],
-            "high": [101.0, 102.0, 103.0, 104.0, 105.0],
-            "low": [99.0, 100.0, 101.0, 102.0, 103.0],
-            "close": [100.5, 101.5, 102.5, 103.5, 104.5],
-            "volume": [100_000, 110_000, 120_000, 130_000, 140_000],
-        },
-        index=pd.date_range("2024-01-02", periods=5, freq="D"),
-    )
+    sample = _scanner_sample(cls, instance)
     try:
         signals = instance.generate_signals_df(instance.process_data(sample))
     except Exception as exc:  # noqa: BLE001
@@ -236,6 +240,47 @@ def _validate_scanner_contract(cls: Type[ScannerStrategy]) -> None:
         pd.to_numeric(signals["signal_strength"])
     except Exception as exc:  # noqa: BLE001
         raise HygieneError(f"{cls.__name__} signal_strength must be numeric") from exc
+
+
+def _scanner_sample(cls: Type, instance):
+    """OHLCV long enough for a scanner's own warm-up, and eventful enough to move it.
+
+    A fixed five-bar frame was neither, and every scanner needs more than five bars.
+    One that guards on ``required_data_points()`` was rejected for a sample too short
+    to scan; one that does not returned an all-NaN, all-HOLD frame - which passes the
+    signal-vocabulary check trivially, because ``{HOLD}`` is a subset of the
+    vocabulary. So the check could not fail, for any scanner, in either direction.
+
+    The tail carries a volume spike on a decisive up-bar because a scanner that never
+    emits an actionable label is a scanner whose actionable labels went unchecked.
+    """
+    import pandas as pd
+
+    try:
+        required = int(instance.required_data_points())
+    except Exception as exc:  # noqa: BLE001 - a scanner that cannot say is not valid
+        raise HygieneError(f"{cls.__name__} cannot report required_data_points: {exc}") from exc
+    if required < 1:
+        raise HygieneError(f"{cls.__name__} reports required_data_points={required}")
+
+    n = max(required + 5, 30)
+    opens = [100.0 + i * 0.25 for i in range(n)]
+    closes = [price + 0.1 for price in opens]
+    volumes = [300_000.0] * n
+    # The event: a decisive up-bar on heavy volume, so thresholds on ratio, move and
+    # liquidity are all cleared at once and an actionable label is actually reachable.
+    opens[-1], closes[-1] = 100.0, 103.0
+    volumes[-1] = 2_000_000.0
+    return pd.DataFrame(
+        {
+            "open": opens,
+            "high": [max(o, c) + 1.0 for o, c in zip(opens, closes)],
+            "low": [min(o, c) - 1.0 for o, c in zip(opens, closes)],
+            "close": closes,
+            "volume": volumes,
+        },
+        index=pd.date_range("2024-01-02", periods=n, freq="D"),
+    )
 
 
 def _guarded_import(name, *args, **kwargs):
