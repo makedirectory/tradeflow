@@ -380,10 +380,14 @@ def _verdict_banner_lines(result: Dict[str, Any]) -> list:
     verdict = result.get("verdict") or {}
     lines = ["", f"  VERDICT: {verdict.get('summary', 'unknown')}"]
     for name, check in sorted((verdict.get("checks") or {}).items()):
-        mark = "PASS" if check.get("passed") else "FAIL"
+        passed = bool(check.get("passed"))
         value, threshold = check.get("value"), check.get("threshold")
         detail = f"{_num(value)} vs {_num(threshold)}"
-        lines.append(f"    [{mark}] {name}: {detail} — {check.get('note', '')}")
+        # Every note states the *failing* condition ("...is indistinguishable from
+        # zero"), so printing it beside a PASS produced a line that contradicted its
+        # own verdict. On a pass the value and its threshold already say everything.
+        note = f" — {check['note']}" if not passed and check.get("note") else ""
+        lines.append(f"    [{'PASS' if passed else 'FAIL'}] {name}: {detail}{note}")
     if verdict.get("verdict") == "incomplete":
         lines.append("    No verdict is offered for a partial run — do not act on the sections above.")
     lines.append("")

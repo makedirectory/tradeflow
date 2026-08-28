@@ -440,3 +440,46 @@ def test_the_provenance_line_does_not_claim_provider_access_it_cannot_vouch_for(
     assert "provider" not in summary
     assert "3" in summary and "12" in summary
     assert _fetch_summary(None) == "not measured"
+
+
+def test_a_passing_gate_does_not_print_the_failure_that_did_not_happen():
+    """Reported from a real verdict: `[PASS] ir_above_noise ... realized IR inside its
+    own standard-error band is indistinguishable from zero`.
+
+    Every gate's note states the *failing* condition, so printing it beside a PASS
+    produced a line that contradicted its own verdict - and a reader who trusts the
+    prose over the mark reads a pass as a failure.
+    """
+    from tradeflow.analytics.reporting import _verdict_banner_lines
+
+    lines = _verdict_banner_lines(
+        {
+            "verdict": {
+                "summary": "mixed",
+                "checks": {
+                    "ir_above_noise": {
+                        "value": 1.78,
+                        "threshold": 0.62,
+                        "passed": True,
+                        "note": "realized IR inside its own standard-error band is indistinguishable from zero",
+                    },
+                    "ic_tstat": {
+                        "value": 0.4,
+                        "threshold": 2.0,
+                        "passed": False,
+                        "note": "IC t-stat below 2 is not distinguishable from luck",
+                    },
+                },
+            }
+        }
+    )
+    rendered = "\n".join(lines)
+
+    passing = next(line for line in lines if "ir_above_noise" in line)
+    assert "PASS" in passing
+    assert "indistinguishable" not in passing  # the failure text is not on the pass
+
+    # And the failing gate keeps its explanation, or the note would be useless.
+    failing = next(line for line in lines if "ic_tstat" in line)
+    assert "FAIL" in failing and "not distinguishable from luck" in failing
+    assert "1.78 vs 0.62" in rendered  # values still shown on a pass

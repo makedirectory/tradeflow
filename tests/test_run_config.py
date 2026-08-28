@@ -194,3 +194,63 @@ def test_a_config_saved_without_run_inputs_still_loads(tmp_path):
 
     assert "symbols" not in loaded
     assert loaded["params"] == _PARAMS
+
+
+# --- backtest and live use the same layering as everything else ---------------
+def test_backtest_lets_an_explicit_scanner_override_the_config(saved, monkeypatch):
+    """Reported from real use, both directions.
+
+    `backtest` kept its own pre-existing config branch when the shared layering was
+    introduced, and that branch read `if cfg_scanner: scanner = cfg_scanner` - so the
+    file always won and `--scanner` was inert. Passing a scanner got the config's, and
+    passing `--scanner none` still ran the config's scanner.
+    """
+    args = parse_cli(
+        ["backtest", "--config", saved, "--scanner", "none", "--start", "2024-01-02", "--end", "2024-06-01"]
+    )
+
+    apply_run_config(args)
+
+    assert args.scanner == "none"
+
+
+def test_backtest_takes_its_universe_from_the_config(saved):
+    """The other half of the same defect, and the more dangerous half.
+
+    `backtest` never applied the config's `symbols`, so `args.symbols` stayed at
+    DEFAULT_UNIVERSE - which is why a run against a 61-symbol saved config went and
+    fetched RIVN. `verdict` handled the same file correctly, which is what made it
+    look scanner-specific rather than a whole command left on the old path.
+    """
+    from tradeflow.cli import DEFAULT_UNIVERSE
+
+    args = parse_cli(["backtest", "--config", saved, "--start", "2024-01-02", "--end", "2024-06-01"])
+
+    apply_run_config(args)
+
+    assert args.symbols == ["AAA", "BBB", "CCC"]
+    assert "RIVN" not in args.symbols
+    assert args.symbols != DEFAULT_UNIVERSE
+
+
+def test_live_takes_its_universe_and_scanner_from_the_config(saved):
+    """`live` carried the identical branch, so it had the identical defect."""
+    args = parse_cli(["live", "--config", saved, "--scanner", "none"])
+
+    apply_run_config(args)
+
+    assert args.scanner == "none"
+    assert args.symbols == ["AAA", "BBB", "CCC"]
+
+
+def test_every_command_with_config_shares_one_layering_path():
+    """The defect was one command keeping its own copy of this logic. Asserting the
+    behaviour per command would not have caught it; asserting there is one path does."""
+    import inspect
+
+    from tradeflow import cli
+
+    for command in ("cmd_backtest", "cmd_live", "cmd_verdict", "cmd_alphas", "cmd_info", "cmd_horizon"):
+        source = inspect.getsource(getattr(cli, command))
+        assert "apply_run_config" in source, f"{command} does not use the shared layering"
+        assert "cfg_scanner" not in source, f"{command} still has its own config branch"

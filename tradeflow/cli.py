@@ -270,6 +270,17 @@ def _load_strategy_from_config(path: str):
     return strategy, strategy_name, payload.get("scanner")
 
 
+def _strategy_from(args, tuned):
+    """The strategy a run should use, from the resolved name and any tuned params.
+
+    Construction goes through ``Strategy.__init__`` exactly as
+    ``create_with_defaults()`` does, so params an older strategy can no longer honour
+    raise loudly rather than trading on a config it cannot actually run.
+    """
+    cls = STRATEGIES[args.strategy]
+    return cls(dict(tuned)) if tuned else cls.create_with_defaults()
+
+
 def apply_run_config(args):
     """Layer a saved config under the command line; explicit flags win.
 
@@ -295,8 +306,20 @@ def apply_run_config(args):
         return {}
 
     given = getattr(args, "flags_given", None)
-    if given is None:  # parsed without parse_cli: treat everything as explicit
-        given = {name for name in vars(args) if getattr(args, name, None) is not None}
+    if given is None:
+        # Parsed without parse_cli - a direct parse_args, as tests and embedders do.
+        # Fall back to comparing against the parser's own defaults. Less precise than
+        # reading the tokens (a flag typed with its default value reads as absent), but
+        # it is the only signal available, and it errs toward letting the file fill in
+        # rather than inventing a contradiction the user never wrote.
+        parser = build_parser()
+        choices = parser._subparsers._group_actions[0].choices
+        sub = choices.get(getattr(args, "command", ""), parser)
+        given = {
+            action.dest
+            for action in sub._actions
+            if action.dest != "help" and getattr(args, action.dest, None) != sub.get_default(action.dest)
+        }
 
     payload = load_config(args.config)
     name = payload["strategy"]
@@ -358,18 +381,12 @@ def cmd_backtest(args) -> None:
     from tradeflow.engine.backtest import ACCOUNTING_VERSION, BacktestEngine
     from tradeflow.services.sizing import build_beta_sizer
 
-    scanner = args.scanner
-    if args.config:
-        strategy, strategy_name, cfg_scanner = _load_strategy_from_config(args.config)
-        if cfg_scanner:
-            scanner = cfg_scanner
-        print(f"Loaded config {args.config} -> strategy={strategy_name!r} scanner={scanner!r}")
-    else:
-        strategy_name = args.strategy
-        strategy = STRATEGIES[strategy_name].create_with_defaults()
+    tuned = apply_run_config(args)
+    strategy_name = args.strategy
+    strategy = _strategy_from(args, tuned)
 
     _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
-    universe = resolve_universe(data_client, scanner, args.symbols, as_of=args.scan_as_of or args.end)
+    universe = resolve_universe(data_client, args.scanner, args.symbols, as_of=args.scan_as_of or args.end)
 
     # Computed once, up front: it warms the cache as a side effect (when
     # cache-backed) and must match exactly between the lookup below and the
@@ -2346,14 +2363,8 @@ def cmd_live(args) -> None:
     from tradeflow.execution.live_trader import LiveTrader
     from tradeflow.services.sizing import build_beta_sizer, build_portfolio_weight_sizer
 
-    scanner = args.scanner
-    if args.config:
-        strategy, strategy_name, cfg_scanner = _load_strategy_from_config(args.config)
-        if cfg_scanner:
-            scanner = cfg_scanner
-        logger.info("Loaded config %s -> strategy=%r scanner=%r", args.config, strategy_name, scanner)
-    else:
-        strategy = STRATEGIES[args.strategy].create_with_defaults()
+    tuned = apply_run_config(args)
+    strategy = _strategy_from(args, tuned)
 
     if getattr(args, "no_reaffirm_entries", False):
         strategy.config["reaffirm_entries"] = False
@@ -2363,7 +2374,7 @@ def cmd_live(args) -> None:
         _refuse_contradictory_portfolio_cardinality(strategy, args.max_positions)
 
     broker, data_client = build_data_and_broker()
-    universe = resolve_universe(data_client, scanner, args.symbols)
+    universe = resolve_universe(data_client, args.scanner, args.symbols)
 
     sizer = None
     if args.portfolio:
