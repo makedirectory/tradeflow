@@ -78,7 +78,7 @@ the concatenation of every fold's OOS trades, not an average of per-fold numbers
 | `--param-sensitivity` | Perturb the chosen params ±10% and re-test robustness. |
 | `--leakage-probe` | Shift the data feed forward to detect future-data leakage. |
 | `--bootstrap-skill` | Nonparametric own p-value (stationary block bootstrap) next to the FAMILY p from White's Reality Check over every OOS return series the trial store has recorded for this strategy/universe/accounting — advisory only, not a gate. See [below](#nonparametric-skill-check). |
-| `--save-config PATH` | Save the chosen config (with provenance) for a human to review. |
+| `--save-config PATH` | Save the chosen config — params *and* run inputs — for a human to review. See [Reusing a saved config](#reusing-a-saved-config). |
 | `--results-csv PATH` | Write the per-fold table to CSV. |
 
 ## Reading the output
@@ -93,6 +93,38 @@ Sharpe, and — when requested — parameter sensitivity and the leakage probe).
 > Saving a config never changes live behavior. It writes a JSON file to a
 > gitignored `configs/` directory; promoting it to live trading is a manual human
 > step.
+
+## Reusing a saved config
+
+The file holds the whole run configuration, not just tuned params: `strategy`,
+`params`, `scanner`, `symbols` (the universe the scanner *resolved*, not the candidate
+list), `capital` and the cost model. So one file drives any run type, and can be
+versioned in a private repository beside the strategies it belongs to:
+
+```bash
+tradeflow backtest --config configs/alpha.json --start 2024-01-02 --end 2024-06-01
+tradeflow verdict  --config configs/alpha.json --start 2024-01-02 --end 2024-06-01
+tradeflow alphas   --config configs/alpha.json
+tradeflow risk     --config configs/alpha.json
+```
+
+`--config` is accepted by `backtest`, `live`, `verdict`, `info`, `alphas`, `horizon`,
+`allocate` and `risk`. Three rules make it predictable:
+
+- **Anything you type wins.** The file fills in only what the command line left
+  unsaid, so `--symbols ZZZ` beats the file's universe. Each run prints where every
+  value came from.
+- **A command takes only the fields it has.** `risk` summarizes a universe's
+  covariance and has no strategy, so it uses the file's `symbols` and nothing else —
+  and says so rather than naming a strategy it never ran.
+- **A contradictory `--strategy` is refused.** The params in the file belong to the
+  strategy in the file; handing one strategy's tuned params to another is not
+  something to guess at.
+
+**The window is never stored.** A config carrying its own tuning dates would make
+every later run silently re-evaluate that period, so `--start`/`--end` always come
+from the run and the output says so. What the config *was* tuned on is recorded under
+`provenance.windows`, for reading rather than replaying.
 
 ## Nonparametric skill check
 

@@ -220,10 +220,40 @@ def _write_html(args, result: Dict[str, Any], kind: str, extras: Optional[Dict[s
         print(f"HTML report skipped: {exc}")
 
 
+def _flags_given(parser, argv: List[str], command: Optional[str]) -> set:
+    """Which options the user actually typed, as argparse dests.
+
+    Needed because a saved config fills in what the command line left unsaid, and
+    "left unsaid" cannot be inferred from the parsed value: a flag passed explicitly
+    with its default value is indistinguishable from one omitted. Reading the tokens
+    is the only way to tell, and getting it wrong means a config silently overriding
+    something the user typed.
+    """
+    sub = parser
+    if command is not None:
+        choices = parser._subparsers._group_actions[0].choices
+        sub = choices.get(command, parser)
+    by_option = {opt: action.dest for action in sub._actions for opt in action.option_strings}
+    given = set()
+    for token in argv:
+        if token.startswith("-") and (dest := by_option.get(token.split("=", 1)[0])) is not None:
+            given.add(dest)
+    return given
+
+
+def parse_cli(argv: Optional[List[str]] = None):
+    """Parse argv and record which flags were typed, for config layering."""
+    argv = list(sys.argv[1:]) if argv is None else list(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    args.flags_given = _flags_given(parser, argv, getattr(args, "command", None))
+    return args
+
+
 def _load_strategy_from_config(path: str):
-    """Load a saved config (``walkforward --save-config``) and construct the
-    strategy directly from its params - the ``--config`` path shared by
-    ``backtest``/``live``. Returns ``(strategy, strategy_name, scanner_name)``.
+    """Load a saved config and construct the strategy directly from its params.
+
+    Returns ``(strategy, strategy_name, scanner_name)``.
 
     Construction goes through ``Strategy.__init__`` exactly as
     ``create_with_defaults()`` does, so out-of-range/unrecognized params raise
@@ -238,6 +268,80 @@ def _load_strategy_from_config(path: str):
     cls = resolve_strategy_class(strategy_name)
     strategy = cls(dict(payload.get("params") or {}))
     return strategy, strategy_name, payload.get("scanner")
+
+
+def apply_run_config(args):
+    """Layer a saved config under the command line; explicit flags win.
+
+    One file configures a run whatever its type, so this is shared by every command
+    that accepts ``--config`` rather than reimplemented per command. Only fields the
+    command actually has are filled - ``risk`` takes a universe but no strategy - so
+    a config saved from a walk-forward is usable everywhere without being meaningful
+    everywhere.
+
+    Returns the config's tuned params (``{}`` when there is no ``--config``), because
+    the analysis services take a strategy *name* plus a params overlay rather than a
+    constructed strategy. A command that ignores that return would run the config's
+    universe with the strategy's *default* params while reporting that it loaded the
+    config, which is the failure this whole surface exists to avoid.
+
+    A ``--strategy`` that contradicts the config is refused rather than resolved. The
+    params in the file belong to the strategy in the file, and quietly handing one
+    strategy's tuned params to another is not an outcome worth guessing at.
+    """
+    from tradeflow.optimization.config_store import load_config
+
+    if not getattr(args, "config", None):
+        return {}
+
+    given = getattr(args, "flags_given", None)
+    if given is None:  # parsed without parse_cli: treat everything as explicit
+        given = {name for name in vars(args) if getattr(args, name, None) is not None}
+
+    payload = load_config(args.config)
+    name = payload["strategy"]
+    if "strategy" in given and getattr(args, "strategy", name) != name:
+        raise SystemExit(
+            f"--config {args.config} holds strategy {name!r} and its tuned params, but "
+            f"--strategy {args.strategy!r} was given. Those params belong to {name!r}; "
+            f"drop --strategy, or drop --config and tune {args.strategy!r} on its own."
+        )
+
+    sources = []
+    if hasattr(args, "strategy"):
+        sources.append(f"strategy={name!r}")
+        # Construct it here purely to validate: params an older strategy can no longer
+        # honour must fail now, not four steps into a pipeline.
+        _load_strategy_from_config(args.config)
+        args.strategy = name
+
+    for field, flag in (("scanner", "--scanner"), ("symbols", "--symbols"), ("capital", "--capital")):
+        if not hasattr(args, field):
+            continue
+        value = payload.get(field)
+        if field in given:
+            sources.append(f"{field}=<{flag} given>")
+        elif value is not None:
+            setattr(args, field, value)
+            sources.append(f"{field}=<config>")
+
+    cost = payload.get("cost") or {}
+    applied_cost = [
+        field
+        for field in ("gross", "commission_bps", "impact_eta", "borrow_bps")
+        if hasattr(args, field) and field not in given and field in cost
+    ]
+    for field in applied_cost:
+        setattr(args, field, cost[field])
+    if applied_cost:
+        sources.append("cost=<config>")
+
+    print(f"Config {args.config}: {', '.join(sources) or 'nothing this command can use'}")
+    # The window is never stored - see save_config - so it is always this run's own,
+    # and saying so is what stops a reader assuming the config pinned it.
+    if hasattr(args, "start") and hasattr(args, "end"):
+        print(f"  window {args.start:%Y-%m-%d}..{args.end:%Y-%m-%d} (from this run, not the config)")
+    return dict(payload.get("params") or {})
 
 
 # ---------------------------------------------------------------------------- #
@@ -406,8 +510,12 @@ def cmd_scan(args) -> None:
 
 
 def cmd_allocate(args) -> None:
+    # The scalar-weight path scores no strategy, so only the config's universe,
+    # scanner and capital reach it; the utility path can use the tuned params too.
+    tuned = apply_run_config(args)
+
     if getattr(args, "objective", "weights") == "utility":
-        _allocate_utility(args)
+        _allocate_utility(args, tuned)
         return
 
     from tradeflow.scanners.symbol_scanner import SymbolScanner
@@ -432,7 +540,7 @@ def cmd_allocate(args) -> None:
         print(f"{a.symbol:10}{a.weight:>7.1%}{a.dollars:>14,.2f}{a.shares:>10.0f}")
 
 
-def _allocate_utility(args) -> None:
+def _allocate_utility(args, tuned=None) -> None:
     """Mean-variance portfolio construction (alpha + Σ) — a read-only proposal."""
     from tradeflow.services.analysis import construct_portfolio, longshort_report
 
@@ -445,6 +553,7 @@ def _allocate_utility(args) -> None:
             args.strategy,
             args.symbols,
             args.as_of,
+            config=tuned,
             source=args.source,
             scanner=args.scanner,
             target_te=args.target_te,
@@ -465,6 +574,7 @@ def _allocate_utility(args) -> None:
         args.strategy,
         args.symbols,
         as_of=args.as_of,
+        config=tuned,
         source=args.source,
         scanner=args.scanner,
         target_te=args.target_te,
@@ -944,6 +1054,16 @@ def cmd_walkforward(args) -> None:
             strategy=args.strategy,
             scanner=args.scanner,
             params=chosen,
+            # The run inputs, so the file configures a run rather than only a
+            # strategy. The *resolved* universe, not the candidate list: the scanner
+            # is saved beside it, and re-running it would pick a different set on a
+            # different day - which is not what "this config" meant.
+            symbols=universe,
+            capital=args.capital,
+            # _cost_key(args) without the vintage: that stamp fingerprints the *data*
+            # a run read, and pinning a reusable config to one data snapshot is the
+            # opposite of what it is for.
+            cost=_cost_key(args),
             provenance=provenance,
         )
         print(f"Chosen config saved to {path} (a human promotes it to live; nothing auto-flips)")
@@ -1348,6 +1468,7 @@ def cmd_verdict(args) -> None:
     from tradeflow.analytics.reporting import format_cached_notice, format_verdict_report
     from tradeflow.services.analysis import run_verdict
 
+    tuned = apply_run_config(args)
     _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
 
     result = run_verdict(
@@ -1356,6 +1477,7 @@ def cmd_verdict(args) -> None:
         args.symbols,
         args.start,
         args.end,
+        config=tuned,
         scanner=args.scanner,
         signals=args.combine,
         source=args.source,
@@ -1406,6 +1528,8 @@ def cmd_alphas(args) -> None:
     cross-section into comparable annualized-return forecasts, and ranks them.
     Produces no orders and saves no config.
     """
+    tuned = apply_run_config(args)
+
     from tradeflow.services.analysis import compute_alphas, compute_combined_alphas
 
     _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
@@ -1430,6 +1554,7 @@ def cmd_alphas(args) -> None:
         args.strategy,
         args.symbols,
         as_of=args.as_of,
+        config=tuned,
         source=args.source,
         scanner=args.scanner,
         ic=args.ic,
@@ -1532,6 +1657,8 @@ def cmd_risk(args) -> None:
     shrinkage intensity, conditioning, mean correlation, equal-weight portfolio
     volatility, and the top risk contributors. Produces no orders.
     """
+    apply_run_config(args)
+
     _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
 
     if getattr(args, "evaluate_conditional", False):
@@ -1621,6 +1748,8 @@ def cmd_info(args) -> None:
     effective breadth over [start, end] and reconciles predicted IR with realized,
     surfacing the research-integrity guardrails. Produces no orders.
     """
+    tuned = apply_run_config(args)
+
     from tradeflow.services.analysis import compute_information
 
     _, data_client = build_data_and_broker()
@@ -1644,6 +1773,7 @@ def cmd_info(args) -> None:
         args.symbols,
         args.start,
         args.end,
+        config=tuned,
         source=args.source,
         scanner=args.scanner,
         benchmark=args.benchmark,
@@ -1938,6 +2068,8 @@ def cmd_horizon(args) -> None:
     Read-only research diagnostic: measures how fast the signal's IC decays and turns
     that into a rebalance cadence and a current/lagged blend. Produces no orders.
     """
+    tuned = apply_run_config(args)
+
     from tradeflow.services.analysis import compute_horizon
 
     _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
@@ -1947,6 +2079,7 @@ def cmd_horizon(args) -> None:
         args.symbols,
         args.start,
         args.end,
+        config=tuned,
         source=args.source,
         scanner=args.scanner,
         benchmark=args.benchmark,
@@ -2716,6 +2849,21 @@ def _add_cost_flags(parser) -> None:
     )
 
 
+def _add_config_flag(parser) -> None:
+    """``--config``: a saved run configuration, filling what the command line omits.
+
+    One file for every run type, so a tuned config can be versioned beside the
+    strategies it belongs to and then used to backtest, allocate, or produce a verdict
+    without restating the universe each time.
+    """
+    parser.add_argument(
+        "--config",
+        default=None,
+        help="Saved run config (walkforward --save-config). Supplies strategy, params, "
+        "scanner, universe, capital and cost settings; any flag you pass wins over it.",
+    )
+
+
 def _add_cache_flags(parser) -> None:
     """--cache/--offline/--cache-dir, on every read-only command that fetches bars.
 
@@ -3221,6 +3369,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override the derived κ (utility; only with --policy aim)",
     )
     _add_cache_flags(alloc)
+    _add_config_flag(alloc)
     alloc.set_defaults(func=cmd_allocate)
 
     opt = subparsers.add_parser(
@@ -3410,6 +3559,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_html_flag(verdict)
     add_no_journal(verdict)
     add_force(verdict)
+    _add_config_flag(verdict)
     verdict.set_defaults(func=cmd_verdict)
 
     alphas = subparsers.add_parser(
@@ -3454,6 +3604,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_no_journal(alphas)
     _add_cache_flags(alphas)
+    _add_config_flag(alphas)
     alphas.set_defaults(func=cmd_alphas)
 
     info = subparsers.add_parser(
@@ -3548,6 +3699,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_neutralize_factors_flag(info, note="; measure the alpha you deploy")
     add_html_flag(info)
+    _add_config_flag(info)
     info.set_defaults(func=cmd_info)
 
     hz = subparsers.add_parser(
@@ -3567,6 +3719,7 @@ def build_parser() -> argparse.ArgumentParser:
     hz.add_argument("--timeframe", default="1Day")
     _add_neutralize_factors_flag(hz, note="; measure the alpha you deploy")
     _add_cache_flags(hz)
+    _add_config_flag(hz)
     hz.set_defaults(func=cmd_horizon)
 
     risk = subparsers.add_parser(
@@ -3612,6 +3765,7 @@ def build_parser() -> argparse.ArgumentParser:
         "worth turning on for this universe/window.",
     )
     _add_cache_flags(risk)
+    _add_config_flag(risk)
     risk.set_defaults(func=cmd_risk)
 
     def _add_cache_dir_flag(p) -> None:
@@ -3882,7 +4036,7 @@ def main() -> None:
     from tradeflow.store.bars import CacheMiss
 
     setup_logging()
-    args = build_parser().parse_args()
+    args = parse_cli()
     try:
         args.func(args)
     except (SettingsError, CacheMiss) as exc:

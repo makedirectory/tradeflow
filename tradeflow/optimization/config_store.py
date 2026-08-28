@@ -117,10 +117,26 @@ def save_config(
     strategy: str,
     params: Dict[str, Any],
     scanner: Optional[str] = None,
+    symbols: Optional[Any] = None,
+    capital: Optional[float] = None,
+    cost: Optional[Dict[str, Any]] = None,
     provenance: Optional[Provenance] = None,
 ) -> Path:
-    """Write ``{strategy, scanner, params, provenance}`` as JSON; return the path.
+    """Write the run configuration as JSON; return the path.
 
+    ``{strategy, scanner, symbols, capital, cost, params, provenance}``. The first six
+    are *inputs* - what to run - so one file can configure a run whatever its type,
+    which is the point of a config a private repository versions alongside its
+    strategies. ``provenance`` is the opposite: a record of how the params were
+    arrived at, never read back as input.
+
+    The window is deliberately absent. A config carrying its own tuning dates would
+    make every later run re-evaluate that period by default, which is the one thing a
+    saved config must not quietly do; ``provenance.windows`` records what it was tuned
+    on, for reading rather than for replaying.
+
+    Keys whose value is ``None`` are omitted rather than written as null, so a config
+    that never had a universe is distinguishable from one that was saved without one.
     A relative ``path`` with no directory is placed under :data:`DEFAULT_CONFIG_DIR`.
     """
     path = Path(path)
@@ -128,12 +144,15 @@ def save_config(
         path = DEFAULT_CONFIG_DIR / path
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    payload = {
+    payload: Dict[str, Any] = {
         "strategy": strategy,
         "scanner": scanner,
         "params": _jsonable(params),
         "provenance": asdict(provenance) if provenance else {},
     }
+    for key, value in (("symbols", symbols), ("capital", capital), ("cost", cost)):
+        if value is not None:
+            payload[key] = _jsonable(value)
     path.write_text(json.dumps(payload, indent=2, sort_keys=False))
     logger.info("Saved config to %s", path)
     return path

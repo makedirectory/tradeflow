@@ -1192,6 +1192,7 @@ def compute_alphas(
     timeframe: Optional[str] = None,
     scaling: str = "case1",
     price_derived: bool = True,
+    config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Turn a per-name view into ranked residual-return alphas, via a feature panel.
 
@@ -1212,7 +1213,7 @@ def compute_alphas(
     echoed under ``case`` whenever the test runs so a wrong call is visible.
     """
     run_id = new_run_id()
-    strat = _strategy(strategy, None)
+    strat = _strategy(strategy, config)
     tf = timeframe or strat.config.get("timeframe", "1Day")
     periods_per_year = Timeframe.parse(tf).periods_per_year()
 
@@ -1426,6 +1427,7 @@ def compute_information(
     n_trials: int = 1,
     timeframe: str = "1Day",
     risk_model: str = "shrinkage",
+    config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Measure a strategy's information coefficient, breadth, and information ratio.
 
@@ -1447,7 +1449,7 @@ def compute_information(
     from tradeflow.indicators import indicators
 
     run_id = new_run_id()
-    strat = _strategy(strategy, None)
+    strat = _strategy(strategy, config)
     periods_per_year = Timeframe.parse(timeframe).periods_per_year()
     rebalances_per_year = periods_per_year / horizon
 
@@ -1611,6 +1613,7 @@ def run_verdict(
     start: datetime,
     end: datetime,
     *,
+    config: Optional[Dict[str, Any]] = None,
     scanner: str = "volume",
     signals: Optional[Sequence[str]] = None,
     source: str = "strategy",
@@ -1689,7 +1692,7 @@ def run_verdict(
     # is likely to vary - two materially different composites must never collide as
     # "the same trial" just because the flags they differ on live inside a step.
     dedup_params = {
-        **_tunable_params(_strategy(strategy, None)),
+        **_tunable_params(_strategy(strategy, config)),
         "_verdict": {
             "signals": sorted(signal_list),
             "source": source,
@@ -1776,6 +1779,7 @@ def run_verdict(
             strategy,
             universe,
             end,
+            config=config,
             source=source,
             scanner=scanner,
             benchmark=benchmark,
@@ -1841,6 +1845,7 @@ def run_verdict(
             universe,
             start,
             end,
+            config=config,
             source=source,
             scanner=scanner,
             benchmark=benchmark,
@@ -2651,6 +2656,7 @@ def compute_horizon(
     max_lag: int = 10,
     n_points: int = 20,
     timeframe: str = "1Day",
+    config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Measure an alpha's decay and recommend a rebalance cadence + lagged blend.
 
@@ -2666,7 +2672,7 @@ def compute_horizon(
     from tradeflow.indicators import indicators
 
     run_id = new_run_id()
-    strat = _strategy(strategy, None)
+    strat = _strategy(strategy, config)
     periods_per_year = Timeframe.parse(timeframe).periods_per_year()
 
     bars = ClientBarSource(data_client).scan([*symbols, benchmark], timeframe, end, _window_days(start, end))
@@ -2975,6 +2981,7 @@ def construct_portfolio(
     strategy: str,
     symbols: List[str],
     as_of: datetime,
+    config: Optional[Dict[str, Any]] = None,
     source: str = "strategy",
     scanner: str = "volume",
     target_te: float = 0.04,
@@ -3094,7 +3101,7 @@ def construct_portfolio(
     from tradeflow.portfolio.optimizer import MeanVarianceOptimizer
 
     run_id = new_run_id()
-    strat = _strategy(strategy, None)
+    strat = _strategy(strategy, config)
     tf = timeframe
     periods_per_year = Timeframe.parse(tf).periods_per_year()
 
@@ -3629,6 +3636,7 @@ def longshort_report(
     strategy: str,
     symbols: List[str],
     as_of: datetime,
+    config: Optional[Dict[str, Any]] = None,
     source: str = "strategy",
     scanner: str = "volume",
     target_te: float = 0.04,
