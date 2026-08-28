@@ -36,6 +36,17 @@ logger = logging.getLogger(__name__)
 _INF_SENTINEL = 1e6
 
 
+def _plain(value):
+    """A DataFrame cell as a plain Python scalar.
+
+    A row read off a DataFrame carries numpy scalars, and under NumPy 2 those repr as
+    ``np.int64(50)`` - which is what the CLI printed back as the chosen config, and
+    what every other consumer then had to re-normalize. Converting once here keeps a
+    search result an ordinary dict.
+    """
+    return value.item() if hasattr(value, "item") else value
+
+
 @dataclass
 class OptimizationResult:
     """Outcome of a parameter search."""
@@ -359,7 +370,7 @@ class ParameterOptimizer:
         # Layer the searched values over the full defaults: callers construct a
         # strategy straight from best_params, so dropping *pinned* params (declared
         # with a default but no min/max/step) would yield an unconstructable config.
-        searched = {k: best[k] for k in self.space.searchable if k in df.columns}
+        searched = {k: _plain(best[k]) for k in self.space.searchable if k in df.columns}
         best_params = {**self.space.defaults, **searched}
         logger.info("Best %s = %.4f with %s", objective, best[objective], searched)
         return OptimizationResult(best_params, float(best[objective]), objective, df)

@@ -7,6 +7,7 @@ import pytest
 from tests.fakes import FakeMarketData
 from tradeflow.marketdata.client import MarketDataClient
 from tradeflow.optimization.optimizer import ParameterOptimizer
+from tradeflow.services.registry import STRATEGIES
 from tradeflow.strategies.volume_spike import VolumeSpikeStrategy
 
 SYMBOLS = ["AAA", "BBB"]
@@ -60,3 +61,20 @@ def test_best_params_retains_pinned_parameters():
 
     grid = space.grid()
     assert all(combo["pinned"] == 0.02 for combo in grid)
+
+
+def test_best_params_are_plain_python_scalars():
+    """They are read off a DataFrame row, so they arrived as numpy scalars — which
+    NumPy 2 reprs as `np.int64(50)`. The CLI printed that back as the chosen config,
+    and every other consumer had to re-normalize it."""
+    client = MarketDataClient(FakeMarketData(["AAA", "BBB"], n=400, freq="1D"))
+    optimizer = ParameterOptimizer(STRATEGIES["ma_crossover"], client, initial_capital=100_000)
+
+    result = optimizer.random_search(
+        ["AAA", "BBB"], datetime(2024, 1, 2), datetime(2025, 1, 2), "sharpe_ratio", n_samples=3
+    )
+
+    assert result.best_params
+    for name, value in result.best_params.items():
+        assert type(value) in (int, float, str, bool), f"{name} is {type(value).__name__}"
+    assert "np." not in repr(result.best_params)

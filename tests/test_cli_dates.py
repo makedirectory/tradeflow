@@ -78,3 +78,34 @@ def test_live_deliberately_has_no_scan_clock_to_pin():
 
     assert "--scanner" in flags
     assert "--scan-as-of" not in flags
+
+
+# --- the CLI's own output ----------------------------------------------------
+def test_no_help_string_contains_an_unescaped_percent():
+    """argparse %-formats help text against the action's own attributes.
+
+    `--param-sensitivity` read "Perturb chosen params +-10% and re-test", so `% a`
+    became a format spec and `--help` printed the action's entire `__dict__` in the
+    middle of the sentence. A literal percent has to be doubled, and the rule is
+    asserted over every command rather than the one that happened to break.
+    """
+    import re
+
+    subparsers = build_parser()._subparsers._group_actions[0].choices
+    offenders = [
+        (command, action.option_strings or [action.dest], action.help)
+        for command, sub in subparsers.items()
+        for action in sub._actions
+        if action.help and re.search(r"(?<!%)%(?!%)", action.help)
+    ]
+    assert not offenders, f"unescaped % in help text: {offenders}"
+
+
+def test_every_command_renders_its_own_help_without_leaking_internals():
+    """The defect was only visible once help was *formatted*, not when it was declared,
+    so the check has to render every command rather than inspect the strings."""
+    subparsers = build_parser()._subparsers._group_actions[0].choices
+    for command, sub in subparsers.items():
+        rendered = sub.format_help()
+        assert "option_strings" not in rendered, f"{command} --help leaked argparse internals"
+        assert "_ArgumentGroup" not in rendered, f"{command} --help leaked argparse internals"

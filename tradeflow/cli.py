@@ -3257,7 +3257,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--param-sensitivity",
         dest="param_sensitivity",
         action="store_true",
-        help="Perturb chosen params +-10% and re-test",
+        # `%%`, not `%`: argparse %-formats help text against the action's own
+        # attributes, so a literal percent renders the action's __dict__ mid-sentence.
+        help="Perturb chosen params +-10%% and re-test",
     )
     wf.add_argument(
         "--leakage-probe",
