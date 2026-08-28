@@ -204,7 +204,7 @@ def format_verdict_report(result: Dict[str, Any]) -> str:
         lines.append(
             f"  provenance: git {provenance.get('git_sha') or 'unknown'} | "
             f"campaign trials {provenance.get('n_trials', '?')} | "
-            f"bar fetches {_fetch_summary(provenance.get('bar_requests'))}"
+            f"bar requests: {_fetch_summary(provenance.get('bar_requests'))}"
         )
 
     lines.extend(_verdict_step_lines(result))
@@ -238,10 +238,19 @@ def _cost_summary(cost: Optional[Dict[str, Any]]) -> str:
 
 
 def _fetch_summary(stats: Optional[Dict[str, Any]]) -> str:
-    """How much of the "one shared fetch" claim actually held, as measured."""
+    """How much of the "one shared fetch" claim actually held, as measured.
+
+    This counts *in-run sharing*, not provider access. ``fetches`` is the number of
+    requests that missed this run's own memo and reached the data client underneath -
+    and on an ``--offline`` run that client is the local bar cache, so the old wording
+    ("hit the provider") reported a network round trip on a run that made none. A
+    provenance line that overstates where data came from is worse than no line, since
+    provenance is the one thing a reader cannot check for themselves.
+    """
     if not stats:
         return "not measured"
-    return f"{stats.get('fetches', '?')} of {stats.get('requests', '?')} bar requests hit the provider"
+    fetches, requests = stats.get("fetches", "?"), stats.get("requests", "?")
+    return f"{fetches} of {requests} reached the data client, the rest shared within this run"
 
 
 def _verdict_step_lines(result: Dict[str, Any]) -> list:

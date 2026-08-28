@@ -21,7 +21,7 @@ python main.py verdict \
 === Research verdict: 'volume_spike' 2024-01-01..2024-12-31 ===
   universe: 8 names (NVDA, AAPL, META, AMD, TSLA, GOOG, MSFT, AMZN)
   timeframe 1Day | benchmark SPY | cost 1.0bps commission, impact η=0.3, borrow 50.0bps
-  provenance: git 4f2c1ab | campaign trials 14 | bar fetches 3 of 7 bar requests hit the provider
+  provenance: git 4f2c1ab | campaign trials 14 | bar requests: 3 of 7 reached the data client, the rest shared within this run
 
   Scan (volume): 5 of 8 candidates flagged
 

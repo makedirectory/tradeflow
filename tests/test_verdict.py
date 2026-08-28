@@ -422,3 +422,21 @@ def test_provenance_identifies_the_code_even_without_a_git_repository(monkeypatc
 
     monkeypatch.setattr(config_store, "current_git_sha", lambda: "abc1234")
     assert analysis.code_version() == "abc1234"
+
+
+def test_the_provenance_line_does_not_claim_provider_access_it_cannot_vouch_for():
+    """It read "N of M bar requests hit the provider".
+
+    The number comes from the per-run bar memo: `fetches` counts requests that missed
+    it and reached the data client underneath. On an `--offline` run that client is
+    the local cache, so the line reported a network round trip on a run that made
+    none. Provenance is the one thing a reader cannot check for themselves, so
+    overstating where data came from is worse than saying nothing.
+    """
+    from tradeflow.analytics.reporting import _fetch_summary
+
+    summary = _fetch_summary({"requests": 12, "fetches": 3, "distinct": 3})
+
+    assert "provider" not in summary
+    assert "3" in summary and "12" in summary
+    assert _fetch_summary(None) == "not measured"
