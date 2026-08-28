@@ -388,9 +388,14 @@ def cmd_backtest(args) -> None:
 
 
 def cmd_scan(args) -> None:
-    from tradeflow.scanners.symbol_scanner import SymbolScanner
+    from tradeflow.analytics.reporting import format_offline_scan_notice
+    from tradeflow.scanners.symbol_scanner import SymbolScanner, resolve_scan_clock
 
-    _, data_client = build_data_and_broker()
+    _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
+    # Before the result, not after it: a caveat under a list of symbols is a caveat
+    # most readers have already scrolled past.
+    if args.offline:
+        print(format_offline_scan_notice(resolve_scan_clock(args.as_of)))
     flagged = SymbolScanner(data_client, args.scanner).scan(args.symbols, as_of=args.as_of)
     if not flagged:
         print("No symbols flagged.")
@@ -408,7 +413,7 @@ def cmd_allocate(args) -> None:
     from tradeflow.scanners.symbol_scanner import SymbolScanner
     from tradeflow.services.sizing import allocate_portfolio
 
-    _, data_client = build_data_and_broker()
+    _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
     scanner = SymbolScanner(data_client, args.scanner)
     flagged = [symbol for symbol, _ in scanner.scan(args.symbols)]
     if not flagged:
@@ -1403,7 +1408,7 @@ def cmd_alphas(args) -> None:
     """
     from tradeflow.services.analysis import compute_alphas, compute_combined_alphas
 
-    _, data_client = build_data_and_broker()
+    _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
 
     if args.combine:
         combined = compute_combined_alphas(
@@ -1527,7 +1532,7 @@ def cmd_risk(args) -> None:
     shrinkage intensity, conditioning, mean correlation, equal-weight portfolio
     volatility, and the top risk contributors. Produces no orders.
     """
-    _, data_client = build_data_and_broker()
+    _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
 
     if getattr(args, "evaluate_conditional", False):
         _print_conditional_evidence_gate(data_client, args)
@@ -1935,7 +1940,7 @@ def cmd_horizon(args) -> None:
     """
     from tradeflow.services.analysis import compute_horizon
 
-    _, data_client = build_data_and_broker()
+    _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
     r = compute_horizon(
         data_client,
         args.strategy,
@@ -2712,8 +2717,13 @@ def _add_cost_flags(parser) -> None:
 
 
 def _add_cache_flags(parser) -> None:
-    """--cache/--offline/--cache-dir, shared by backtest/optimize/walkforward -
-    the same selectivity as :func:`_add_cost_flags` (not live/research/scan/...).
+    """--cache/--offline/--cache-dir, on every read-only command that fetches bars.
+
+    Not on `live`, which must read the market as it is, and not on `research`, which
+    drives the others. Everything else that reads history takes them: a warm cache is
+    useless if the command you want to run against it has no way to say so, and the
+    commands that lacked these degraded into empty results when the network was down
+    rather than reading the bars already on disk.
 
     ``--cache`` wraps the data client in the persistent bar cache
     (``tradeflow.store.bars.CachedMarketData``): a repeated request for the same
@@ -3040,6 +3050,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Resolve scanner state at this date/datetime instead of now",
     )
+    _add_cache_flags(scan)
     scan.set_defaults(func=cmd_scan)
 
     alloc = subparsers.add_parser("allocate", help="Weight a portfolio over scanned symbols")
@@ -3209,6 +3220,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Override the derived κ (utility; only with --policy aim)",
     )
+    _add_cache_flags(alloc)
     alloc.set_defaults(func=cmd_allocate)
 
     opt = subparsers.add_parser(
@@ -3441,6 +3453,7 @@ def build_parser() -> argparse.ArgumentParser:
         "(no per-name vol multiply); 'auto' = let a Std_TS-vs-ω regression decide",
     )
     add_no_journal(alphas)
+    _add_cache_flags(alphas)
     alphas.set_defaults(func=cmd_alphas)
 
     info = subparsers.add_parser(
@@ -3553,6 +3566,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     hz.add_argument("--timeframe", default="1Day")
     _add_neutralize_factors_flag(hz, note="; measure the alpha you deploy")
+    _add_cache_flags(hz)
     hz.set_defaults(func=cmd_horizon)
 
     risk = subparsers.add_parser(
@@ -3597,6 +3611,7 @@ def build_parser() -> argparse.ArgumentParser:
         "by realized-vol regime — the report that decides whether --conditional is "
         "worth turning on for this universe/window.",
     )
+    _add_cache_flags(risk)
     risk.set_defaults(func=cmd_risk)
 
     def _add_cache_dir_flag(p) -> None:

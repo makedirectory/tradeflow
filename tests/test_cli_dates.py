@@ -109,3 +109,75 @@ def test_every_command_renders_its_own_help_without_leaking_internals():
         rendered = sub.format_help()
         assert "option_strings" not in rendered, f"{command} --help leaked argparse internals"
         assert "_ArgumentGroup" not in rendered, f"{command} --help leaked argparse internals"
+
+
+# --- reading a warm cache from every command that reads bars -----------------
+def test_every_read_only_bar_command_can_use_the_cache():
+    """`scan`, `alphas`, `risk`, `horizon` and `allocate` had neither flag.
+
+    They built a live client regardless, so a warm cache was unusable from them and a
+    DNS failure degraded them into empty or insufficient-data results rather than
+    reading the bars already on disk.
+    """
+    subparsers = build_parser()._subparsers._group_actions[0].choices
+    for command in (
+        "scan",
+        "alphas",
+        "risk",
+        "horizon",
+        "allocate",
+        "backtest",
+        "optimize",
+        "walkforward",
+        "verdict",
+    ):
+        flags = {opt for action in subparsers[command]._actions for opt in action.option_strings}
+        assert {"--cache", "--offline", "--cache-dir"} <= flags, f"{command} cannot read the cache"
+
+
+def test_live_deliberately_cannot_be_run_offline():
+    """The trade clock reads the market as it is. A cached live run is not a thing."""
+    subparsers = build_parser()._subparsers._group_actions[0].choices
+    flags = {opt for action in subparsers["live"]._actions for opt in action.option_strings}
+    assert "--offline" not in flags and "--cache" not in flags
+
+
+def test_the_cache_flags_reach_the_data_client_not_just_the_parser(monkeypatch):
+    """A flag that parses and is never read is worse than no flag: it reports a
+    capability the command does not have."""
+    from tradeflow import cli
+
+    seen = {}
+
+    def _spy(cache=False, offline=False, cache_dir=None):
+        seen.update(cache=cache, offline=offline, cache_dir=cache_dir)
+        raise RuntimeError("stop after the client would have been built")
+
+    monkeypatch.setattr(cli, "build_data_and_broker", _spy)
+    args = build_parser().parse_args(["scan", "--offline", "--symbols", "AAA"])
+    with pytest.raises(RuntimeError):
+        cli.cmd_scan(args)
+
+    assert seen["offline"] is True
+
+
+def test_an_offline_scan_says_its_universe_is_only_as_current_as_the_cache(monkeypatch, capsys):
+    """Nothing errors when coverage ends before the scan clock — the newest cached bar
+    just becomes "the latest", so a universe picked from stale bars looks exactly like
+    one picked from fresh bars. That case has to announce itself."""
+    from tests.fakes import DictMarketData, make_ohlcv
+    from tradeflow import cli
+    from tradeflow.marketdata.client import MarketDataClient
+
+    client = MarketDataClient(DictMarketData({"AAA": make_ohlcv(n=60, seed=0, freq="1D")}))
+    monkeypatch.setattr(cli, "build_data_and_broker", lambda **kw: (None, client))
+
+    cli.cmd_scan(build_parser().parse_args(["scan", "--offline", "--symbols", "AAA"]))
+    offline_output = capsys.readouterr().out
+    assert "OFFLINE" in offline_output
+    assert "as current as the cache" in offline_output
+
+    # And stays quiet when the run can actually reach the network, or the notice
+    # becomes noise that means nothing.
+    cli.cmd_scan(build_parser().parse_args(["scan", "--symbols", "AAA"]))
+    assert "OFFLINE" not in capsys.readouterr().out

@@ -237,6 +237,22 @@ def _cost_summary(cost: Optional[Dict[str, Any]]) -> str:
     )
 
 
+def format_offline_scan_notice(as_of) -> str:
+    """Say plainly that an offline scan saw only what the cache already holds.
+
+    A scan picks a universe at a clock. Offline it reads local Parquet and nothing
+    else, so the selection is exactly as current as the cache and no more - and
+    nothing errors when coverage ends before that clock: the newest cached bar simply
+    becomes "the latest", and a universe chosen from stale bars is indistinguishable
+    from one chosen from fresh ones. That is precisely the case that has to announce
+    itself.
+    """
+    return (
+        f"OFFLINE: universe resolved at {as_of.isoformat()} from cached bars only - "
+        "as current as the cache and no more. `cache status` shows the coverage."
+    )
+
+
 def _fetch_summary(stats: Optional[Dict[str, Any]]) -> str:
     """How much of the "one shared fetch" claim actually held, as measured.
 
