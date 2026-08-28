@@ -685,6 +685,7 @@ def cmd_optimize(args) -> None:
             force=args.force,
             workers=args.workers,
             data_spec=data_spec,
+            seed=args.seed,
         )
 
         if args.method == "grid":
@@ -3217,6 +3218,14 @@ def build_parser() -> argparse.ArgumentParser:
     opt.add_argument("--method", choices=["grid", "random", "bayesian"], default="grid")
     opt.add_argument("--objective", default="sharpe_ratio")
     opt.add_argument("--max-evals", dest="max_evals", type=int, default=50)
+    opt.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Seed for candidate sampling. Affects --method random and bayesian, and "
+        "grid too once --max-evals caps the grid (the cap is sampled, not truncated). "
+        "Matches walkforward's --seed, so the same value reproduces its inner search.",
+    )
     opt.add_argument("--output", default="optimization_results.csv")
     _add_cost_flags(opt)
     _add_cache_flags(opt)

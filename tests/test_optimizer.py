@@ -78,3 +78,33 @@ def test_best_params_are_plain_python_scalars():
     for name, value in result.best_params.items():
         assert type(value) in (int, float, str, bool), f"{name} is {type(value).__name__}"
     assert "np." not in repr(result.best_params)
+
+
+def test_the_seed_selects_which_candidates_a_random_search_draws():
+    """`optimize` accepted no --seed, so every random search used the built-in 42.
+
+    That is reproducible and uncontrollable: you could not draw a second independent
+    sample, and could not reproduce a `walkforward --seed N` run's inner search with a
+    standalone optimize. Both directions matter — same seed same draw, different seed
+    different draw — or the flag is decorative.
+    """
+    client = MarketDataClient(FakeMarketData(["AAA", "BBB"], n=400, freq="1D"))
+
+    def draw(seed):
+        optimizer = ParameterOptimizer(STRATEGIES["ma_crossover"], client, initial_capital=100_000, seed=seed)
+        result = optimizer.random_search(
+            ["AAA", "BBB"], datetime(2024, 1, 2), datetime(2025, 1, 2), "sharpe_ratio", n_samples=4
+        )
+        return [tuple(sorted(row.items())) for row in result.results.to_dict("records")]
+
+    assert draw(27) == draw(27)
+    assert draw(27) != draw(42)
+
+
+def test_optimize_exposes_the_seed_walkforward_already_had():
+    from tradeflow.cli import build_parser
+
+    args = build_parser().parse_args(
+        ["optimize", "--strategy", "ma_crossover", "--method", "random", "--seed", "27"]
+    )
+    assert args.seed == 27

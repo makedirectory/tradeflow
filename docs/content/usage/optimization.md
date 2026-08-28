@@ -31,6 +31,12 @@ uv run python main.py optimize \
 | `random` | Random step-aligned sampling (`--max-evals` samples) | — |
 | `bayesian` | Trains a Gaussian-Process **surrogate model** of the objective and proposes promising configs | `scikit-learn` |
 
+All three consume `--seed` (default 42): `random` and `bayesian` always, and `grid`
+once `--max-evals` is smaller than the grid, because the cap is *sampled* rather than
+truncated. It matches `walkforward --seed`, so the same value reproduces the search a
+walk-forward ran inside each fold. Vary it to draw a genuinely second sample — without
+it every random search on a given space returned the same candidates.
+
 Bayesian needs the optional extra:
 
 ```bash
