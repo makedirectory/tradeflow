@@ -144,6 +144,29 @@ class _Book:
         return self.cash + self.market_value()
 
 
+def _benchmark_returns(closes, equity_times) -> Optional[pd.Series]:
+    """Benchmark returns sampled at the equity curve's own instants.
+
+    Positional, not date-indexed, because that is the only alignment the metrics can
+    use: the equity curve reaches them as a bare list of floats, so its returns carry
+    a RangeIndex and a date-indexed benchmark would join to nothing at all - silently,
+    producing an empty regression rather than an error.
+
+    Reindexed onto those instants and forward-filled, so a benchmark that does not
+    trade on one of the universe's bars carries its last close rather than dropping
+    the step and shifting every later pairing by one.
+    """
+    if closes is None or closes.empty or len(equity_times) < 2:
+        return None
+    stamps = pd.DatetimeIndex([t for t in equity_times[1:]])
+    aligned = closes.reindex(closes.index.union(stamps)).ffill().reindex(stamps)
+    returns = aligned.pct_change()
+    if returns.notna().sum() < 2:
+        return None
+    # Drop the index: the pairing is by position against the equity curve's own steps.
+    return pd.Series(returns.to_numpy(), dtype="float64")
+
+
 @dataclass
 class BacktestResult:
     """Everything produced by a backtest run."""
@@ -190,6 +213,7 @@ class BacktestEngine:
         end: datetime,
         initial_capital: float,
         trade_from: Optional[datetime] = None,
+        benchmark: Optional[str] = None,
     ) -> BacktestResult:
         """Backtest ``symbols`` over ``[start, end]`` starting from ``initial_capital``.
 
@@ -206,7 +230,10 @@ class BacktestEngine:
         timeframe = self.strategy.config["timeframe"]
         self._periods_per_year = Timeframe.parse(timeframe).periods_per_year()
         data = self.data_client.get_bars(symbols, timeframe, start, end)
-        return self._simulate(((s, b) for s, b in data.items()), start, end, initial_capital, trade_from)
+        bench = self._benchmark_closes(benchmark, timeframe, start, end)
+        return self._simulate(
+            ((s, b) for s, b in data.items()), start, end, initial_capital, trade_from, bench
+        )
 
     def run_streaming(
         self,
@@ -244,13 +271,35 @@ class BacktestEngine:
 
         return self._simulate(per_symbol(), start, end, initial_capital, trade_from)
 
-    def _simulate(self, symbol_bars, start, end, initial_capital: float, trade_from=None) -> BacktestResult:
+    def _benchmark_closes(self, benchmark: Optional[str], timeframe, start, end):
+        """The benchmark's close series, or ``None`` when there is nothing usable.
+
+        A benchmark that cannot be fetched degrades to no benchmark rather than
+        failing the run - but it says so, because silently scoring alpha against
+        nothing is exactly the reading this whole path got wrong before.
+        """
+        if not benchmark:
+            return None
+        try:
+            bars = self.data_client.get_bars([benchmark], timeframe, start, end)
+        except Exception as exc:  # noqa: BLE001 - a missing benchmark is not a failed run
+            logger.warning("Benchmark %s unavailable (%s); alpha/beta/IR will be unavailable", benchmark, exc)
+            return None
+        frame = bars.get(benchmark)
+        if frame is None or frame.empty or "close" not in frame:
+            logger.warning("Benchmark %s returned no bars; alpha/beta/IR will be unavailable", benchmark)
+            return None
+        return frame["close"]
+
+    def _simulate(
+        self, symbol_bars, start, end, initial_capital: float, trade_from=None, benchmark_closes=None
+    ) -> BacktestResult:
         """Simulate the whole universe on one clock against one capital pool."""
         panels, market_data, master = self._prepare(symbol_bars)
         # A merged-timeline step is the unit for *both* carry accrual and the equity
         # curve, so both have to annualize on the merged timeline's own rate.
         self._step_periods_per_year = self._step_rate(panels, master)
-        all_trades, equity_curve = self._replay(panels, master, initial_capital, trade_from)
+        all_trades, equity_curve, equity_times = self._replay(panels, master, initial_capital, trade_from)
 
         trades_df = pd.DataFrame(all_trades)
         if not trades_df.empty:
@@ -270,6 +319,7 @@ class BacktestEngine:
             # The curve is sampled per merged-timeline step, so it annualizes on that
             # timeline's rate — not the daily default, and not the raw timeframe.
             periods_per_year=self._step_periods_per_year,
+            benchmark_returns=_benchmark_returns(benchmark_closes, equity_times),
         )
 
         return BacktestResult(
@@ -401,8 +451,13 @@ class BacktestEngine:
         book = _Book(cash=initial_capital)
         trades: List[Dict[str, Any]] = []
         equity_curve: List[float] = [initial_capital]
+        # One timestamp per recorded equity point. The curve is a bare list of floats
+        # by the time metrics see it, so alpha/beta against a date-indexed benchmark
+        # can only be computed if something remembers which instants those floats
+        # belong to - and nothing did.
+        equity_times: List[Any] = [None]
         if not panels:
-            return trades, equity_curve
+            return trades, equity_curve, equity_times
 
         cutoff = _align_tz(trade_from, master) if trade_from is not None else None
         limits = self.strategy.position_limits()
@@ -497,6 +552,7 @@ class BacktestEngine:
 
             if trading:
                 equity_curve.append(book.equity())
+                equity_times.append(master[k])
 
         # Force-close whatever is still open, each at its own last bar.
         for symbol in order:
@@ -515,7 +571,7 @@ class BacktestEngine:
         if len(equity_curve) > 1:
             equity_curve[-1] = book.equity()
 
-        return trades, equity_curve
+        return trades, equity_curve, equity_times
 
     def _trade_cost(self, symbol, shares, price, adv, vol, i) -> float:
         """Dollar cost of trading ``shares`` at bar ``i`` (0 when no cost model)."""

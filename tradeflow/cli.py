@@ -434,7 +434,7 @@ def cmd_backtest(args) -> None:
     # Metrics are net of transaction cost by default; --gross disables the charge.
     cost_model = build_cost_model(args)
     result = BacktestEngine(strategy, data_client, sizer=sizer, cost_model=cost_model).run(
-        universe, args.start, args.end, args.capital
+        universe, args.start, args.end, args.capital, benchmark=args.benchmark
     )
 
     if not args.no_journal:
@@ -495,6 +495,7 @@ def cmd_backtest(args) -> None:
                 end=args.end,
                 capital=args.capital,
                 gross=args.gross,
+                benchmark=args.benchmark,
             ),
             "backtest",
             # The equity curve is not in the result dict (it can run to tens of

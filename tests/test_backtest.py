@@ -399,3 +399,71 @@ def test_max_gross_exposure_is_off_by_default():
     explicit = _multi(_four_names(), ["BUY", "HOLD", "CLOSE_BUY"], overrides=_limits(max_gross_exposure=None))
     assert len(explicit.trades) == len(baseline.trades) == 4
     assert explicit.final_capital == pytest.approx(baseline.final_capital)
+
+
+# --- the benchmark actually reaches the metrics -------------------------------
+def _bench_run(benchmark):
+    from tests.fakes import FakeMarketData
+    from tradeflow.services.registry import STRATEGIES
+
+    client = MarketDataClient(FakeMarketData(["AAA", "BBB", "SPY"], n=400, freq="1D"))
+    engine = BacktestEngine(STRATEGIES["ma_crossover"].create_with_defaults(), client)
+    return engine.run(
+        ["AAA", "BBB"], datetime(2024, 1, 2), datetime(2025, 1, 2), 100_000, benchmark=benchmark
+    )
+
+
+def test_a_supplied_benchmark_reaches_the_metrics():
+    """Reported from a real run: `--benchmark SPY` was accepted and the report still
+    said `(i) no benchmark` with beta 0, beside a Buy & Hold of 95.56%.
+
+    Both were true. Buy & Hold comes from the traded universe's own bars, while the
+    benchmark never reached the engine at all - `run()` had no parameter for one, so
+    `benchmark_returns` was always None and alpha/beta/IR were structurally zero.
+    """
+    result = _bench_run("SPY")
+
+    assert result.metrics["benchmark_available"] is True
+    assert result.metrics["beta"] != 0.0
+
+
+def test_no_benchmark_still_says_so():
+    """The other direction: the flag means something, so its absence must too."""
+    result = _bench_run(None)
+
+    assert result.metrics["benchmark_available"] is False
+    assert result.metrics["beta"] == 0.0
+    assert result.metrics["information_ratio"] == 0.0
+
+
+def test_the_benchmark_is_aligned_to_the_curve_positionally():
+    """The failure this had to avoid is silent, not loud.
+
+    The equity curve reaches the metrics as a bare list of floats, so its returns carry
+    a RangeIndex. A date-indexed benchmark would join to nothing, `dropna` would empty
+    it, and the regression would report a confident zero rather than raising.
+    """
+    import pandas as pd
+
+    from tests.fakes import FakeMarketData
+    from tradeflow.engine.backtest import _benchmark_returns
+
+    client = MarketDataClient(FakeMarketData(["SPY"], n=120, freq="1D"))
+    closes = client.get_bars(["SPY"], "1Day", datetime(2024, 1, 2), datetime(2024, 6, 1))["SPY"]["close"]
+    steps = list(closes.index[:20])
+
+    aligned = _benchmark_returns(closes, [None, *steps])
+
+    assert isinstance(aligned.index, pd.RangeIndex)  # positional, or it pairs with nothing
+    assert len(aligned) == len(steps)
+    assert aligned.notna().sum() >= len(steps) - 1
+
+
+def test_an_unfetchable_benchmark_degrades_instead_of_failing_the_run():
+    """A benchmark that cannot be loaded is a missing comparison, not a broken
+    backtest — but it must land as `benchmark_available: False` rather than as a
+    number scored against nothing."""
+    result = _bench_run("NOT_A_REAL_SYMBOL")
+
+    assert result.metrics["benchmark_available"] is False
+    assert result.metrics["total_return"] == _bench_run(None).metrics["total_return"]

@@ -234,7 +234,7 @@ def run_backtest(
     sizer = build_beta_sizer(data_client, strat, symbols, benchmark, as_of=start) if beta_sizing else None
     cost_model = _build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
     result = BacktestEngine(strat, data_client, sizer=sizer, cost_model=cost_model).run(
-        symbols, start, end, capital
+        symbols, start, end, capital, benchmark=benchmark
     )
 
     from tradeflow.services.audit import journal_trial
@@ -264,6 +264,7 @@ def run_backtest(
         end=end,
         capital=capital,
         gross=gross,
+        benchmark=benchmark,
         trades_csv=trades_csv,
     )
 
@@ -302,6 +303,7 @@ def backtest_payload(
     end: datetime,
     capital: float,
     gross: bool,
+    benchmark: Optional[str] = None,
     trades_csv: Optional[str] = None,
 ) -> Dict[str, Any]:
     """A ``BacktestResult`` as the JSON-serializable dict every surface consumes.
@@ -319,6 +321,9 @@ def backtest_payload(
         "window": {"start": start.isoformat(), "end": end.isoformat()},
         "initial_capital": capital,
         "final_capital": result.final_capital,
+        # Named here so a report cannot show "Benchmark —" beside metrics that were
+        # in fact scored against one, or the reverse.
+        "benchmark": benchmark if result.metrics.get("benchmark_available") else None,
         "gross": gross,
         "total_cost": result.total_cost,
         "gross_final_capital": result.gross_final_capital,
