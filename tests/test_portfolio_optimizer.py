@@ -321,7 +321,10 @@ def test_cli_allocate_utility_with_benchmark_holdings(monkeypatch, tmp_path, cap
     bars = {s: make_ohlcv(n=400, seed=i, freq="1D") for i, s in enumerate([*symbols, "SPY"])}
     as_of = bars["S0"].index[-1].to_pydatetime()
     client = MarketDataClient(DictMarketData(bars))
-    monkeypatch.setattr(main, "build_data_and_broker", lambda: (None, client))
+    # `**kwargs`, like every other stub of this: a no-argument stub only accepts the
+    # call shape that existed when it was written, so it fails the day a caller
+    # starts passing the cache flags rather than the day the behaviour breaks.
+    monkeypatch.setattr(main, "build_data_and_broker", lambda **kwargs: (None, client))
 
     args = main.build_parser().parse_args(
         [

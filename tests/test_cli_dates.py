@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from tradeflow.cli import _date, build_parser
+from tradeflow.cli import _date, build_parser, parse_cli
 from tradeflow.utils.timeutils import NEW_YORK
 
 
@@ -113,11 +113,15 @@ def test_every_command_renders_its_own_help_without_leaking_internals():
 
 # --- reading a warm cache from every command that reads bars -----------------
 def test_every_read_only_bar_command_can_use_the_cache():
-    """`scan`, `alphas`, `risk`, `horizon` and `allocate` had neither flag.
+    """`scan`, `alphas`, `risk`, `horizon`, `allocate` and `info` had neither flag.
 
     They built a live client regardless, so a warm cache was unusable from them and a
     DNS failure degraded them into empty or insufficient-data results rather than
     reading the bars already on disk.
+
+    This list is what makes an omission *fail*: the wiring test below is parametrized
+    over whichever commands declare the flags, so a command declaring none is simply
+    invisible to it. `info` was missed exactly that way.
     """
     subparsers = build_parser()._subparsers._group_actions[0].choices
     for command in (
@@ -126,6 +130,7 @@ def test_every_read_only_bar_command_can_use_the_cache():
         "risk",
         "horizon",
         "allocate",
+        "info",
         "backtest",
         "optimize",
         "walkforward",
@@ -142,23 +147,59 @@ def test_live_deliberately_cannot_be_run_offline():
     assert "--offline" not in flags and "--cache" not in flags
 
 
-def test_the_cache_flags_reach_the_data_client_not_just_the_parser(monkeypatch):
-    """A flag that parses and is never read is worse than no flag: it reports a
-    capability the command does not have."""
+def _commands_declaring_cache_flags():
+    subparsers = build_parser()._subparsers._group_actions[0].choices
+    return sorted(
+        name
+        for name, sub in subparsers.items()
+        if "--cache" in {opt for action in sub._actions for opt in action.option_strings}
+    )
+
+
+@pytest.mark.parametrize("command", _commands_declaring_cache_flags())
+def test_the_cache_flags_reach_the_data_client_of_every_command_that_offers_them(command, monkeypatch):
+    """A flag that parses and is never read is worse than no flag: it advertises a
+    capability the command does not have.
+
+    This was first written against `scan` alone, and a parser-shaped check for the
+    rest — which certified `allocate` as fixed while `_allocate_utility`, the branch
+    `--objective utility` takes, still built a live client and ignored `--offline`.
+    Every command that offers the flags is exercised now, because the hole was in the
+    coverage rather than in the rule.
+    """
     from tradeflow import cli
 
     seen = {}
 
     def _spy(cache=False, offline=False, cache_dir=None):
-        seen.update(cache=cache, offline=offline, cache_dir=cache_dir)
-        raise RuntimeError("stop after the client would have been built")
+        seen.update(cache=cache, offline=offline)
+        raise RuntimeError("stop once the client would have been built")
 
     monkeypatch.setattr(cli, "build_data_and_broker", _spy)
-    args = build_parser().parse_args(["scan", "--offline", "--symbols", "AAA"])
+    args = parse_cli([command, "--offline"])
     with pytest.raises(RuntimeError):
-        cli.cmd_scan(args)
+        args.func(args)
 
-    assert seen["offline"] is True
+    assert seen.get("offline") is True, f"{command} ignored --offline"
+
+
+def test_the_allocate_utility_book_reads_the_cache_too(monkeypatch):
+    """`--objective utility` is a different function, and it was the one that ignored
+    the flags its own command declared."""
+    from tradeflow import cli
+
+    seen = {}
+
+    def _spy(cache=False, offline=False, cache_dir=None):
+        seen.update(cache=cache, offline=offline)
+        raise RuntimeError("stop")
+
+    monkeypatch.setattr(cli, "build_data_and_broker", _spy)
+    args = parse_cli(["allocate", "--objective", "utility", "--offline"])
+    with pytest.raises(RuntimeError):
+        args.func(args)
+
+    assert seen.get("offline") is True
 
 
 def test_an_offline_scan_says_its_universe_is_only_as_current_as_the_cache(monkeypatch, capsys):

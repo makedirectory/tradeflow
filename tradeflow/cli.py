@@ -544,7 +544,7 @@ def _allocate_utility(args, tuned=None) -> None:
     """Mean-variance portfolio construction (alpha + Σ) — a read-only proposal."""
     from tradeflow.services.analysis import construct_portfolio, longshort_report
 
-    _, data_client = build_data_and_broker()
+    _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
     book = args.book.replace("-", "_")
 
     if args.longshort_report:
@@ -1752,7 +1752,7 @@ def cmd_info(args) -> None:
 
     from tradeflow.services.analysis import compute_information
 
-    _, data_client = build_data_and_broker()
+    _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
 
     if getattr(args, "scaling_ab", False):
         _print_scaling_ab(data_client, args)
@@ -3699,6 +3699,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_neutralize_factors_flag(info, note="; measure the alpha you deploy")
     add_html_flag(info)
+    _add_cache_flags(info)
     _add_config_flag(info)
     info.set_defaults(func=cmd_info)
 
