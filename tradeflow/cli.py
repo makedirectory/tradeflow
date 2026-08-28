@@ -2010,17 +2010,23 @@ def _print_attribution(r, strategy: str, start, end) -> None:
 
     print(f"\nPerformance attribution: '{strategy}' {start:%Y-%m-%d}..{end:%Y-%m-%d}")
     print(f"  measured over {r['periods']} rebalances (horizon {r['horizon_bars']} bars)")
-    print(f"  {'row':28}{'mean/yr':>9}{'IR':>8}{'t':>8}{'share ψ²':>10}")
+    # Named for what it is on every line that carries a level. These come from a paper
+    # book built from the signal's own cross-section, scaled to unit gross - not from
+    # anything the execution engine did, which is why a strategy the engine declined to
+    # trade at all still has rows here.
+    print("  paper book at unit gross — signal quality, not an executed track record;")
+    print("  a strategy the engine takes zero trades in can still score here.")
+    print(f"  {'row':28}{'p-b mean/yr':>13}{'p-b IR':>9}{'t':>8}{'share ψ²':>10}")
 
     rows = r["rows"]
 
     def _line(label: str, key: str, not_skill: bool = False) -> None:
         row = rows[key]
         if not_skill:
-            print(f"  {label:28}{'—':>9}{'—':>8}{'—':>8}{'(not skill)':>12}")
+            print(f"  {label:28}{'—':>13}{'—':>9}{'—':>8}{'(not skill)':>12}")
         else:
             print(
-                f"  {label:28}{row['annualized_mean'] * 100:>8.2f}%{row['ir']:>8.2f}"
+                f"  {label:28}{row['annualized_mean'] * 100:>12.2f}%{row['ir']:>9.2f}"
                 f"{row['t_stat']:>8.2f}{row['share_of_variance'] * 100:>9.1f}%"
             )
 

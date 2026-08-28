@@ -2243,6 +2243,7 @@ def compute_attribution(
     component_names = ["systematic", *risk_names, *signal_names, "specific"]
     series: Dict[str, List[float]] = {name: [] for name in component_names}
     r_active_series, r_bench_series, beta_a_series, psi2_series, bench_vol_series = [], [], [], [], []
+    gross_series: List[float] = []  # the paper book's gross per rebalance, for the level scale
 
     for j in points:
         t, t_fwd = window[j], window[j + horizon]
@@ -2309,7 +2310,29 @@ def compute_attribution(
         beta_a_series.append(result.beta_a)
         w_vec = w_active.reindex(matrix.symbols).fillna(0.0).to_numpy()
         psi2_series.append(float(w_vec @ matrix.sigma @ w_vec))
+        gross_series.append(float(np.abs(w_vec).sum()))
         bench_vol_series.append(trailing_vol)
+
+    # The paper book is a z-scored alpha vector - mean-zero, unit cross-sectional SD,
+    # deliberately not normalized to unit gross, because scale cancels in an IR. It
+    # does not cancel in a *level*: with 61 names that book carries roughly 50x
+    # notional, which is how a reported mean of 644%/yr and a tracking error of 374%
+    # arise from a perfectly sound IR of 1.7. Printed as percentages they read as fund
+    # returns, which is a trap rather than a diagnostic.
+    #
+    # So every level is divided by one constant - the book's mean gross - which leaves
+    # every ratio built from these series exactly unchanged: IR is mean/vol and the
+    # t-stat is mean/sd x sqrt(t), and a constant cancels in both. Levels become
+    # readable as a unit-gross long-short book; IR and t-stat are bit-identical.
+    # Per-period normalization would not be: a time-varying divisor reshapes the
+    # series and moves the IR with it.
+    gross_scale = float(np.mean(gross_series)) if gross_series else 0.0
+    if gross_scale > 0:
+        for key in list(series):
+            series[key] = [value / gross_scale for value in series[key]]
+        r_active_series = [value / gross_scale for value in r_active_series]
+        beta_a_series = [value / gross_scale for value in beta_a_series]
+        psi2_series = [value / (gross_scale**2) for value in psi2_series]  # a variance
 
     periods = len(r_active_series)
     if periods < 5:

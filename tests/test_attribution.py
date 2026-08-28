@@ -6,6 +6,7 @@ from datetime import datetime
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from tests.fakes import DictMarketData, make_ohlcv
 from tradeflow.analytics.attribution import (
@@ -388,3 +389,59 @@ def test_compute_attribution_independent_of_post_end_bars():
     assert a["periods"] == b["periods"]
     assert a["total_active_ir"] == b["total_active_ir"]
     assert a["cumulation"]["honest_car"] == b["cumulation"]["honest_car"]
+
+
+# --- the paper book is reported at unit gross --------------------------------
+def test_reported_levels_are_unit_gross_while_ratios_are_unchanged():
+    """Reported from real use: mean/yr 644%, TE 175-374%, IR +1.78.
+
+    The paper book is a z-scored alpha vector - mean-zero, unit cross-sectional SD,
+    deliberately not normalized, because scale cancels in an IR. It does not cancel in
+    a level: at 61 names that book carries ~50x notional, so the levels were arithmetic
+    about a construct rather than anything a book could earn, printed as percentages.
+
+    Dividing every level by one constant leaves every ratio untouched, which is the
+    property this pins: IR and t-stat unchanged to floating-point, levels now readable.
+    """
+    from datetime import datetime
+
+    from tests.fakes import FakeMarketData
+    from tradeflow.marketdata.client import MarketDataClient
+    from tradeflow.services import analysis
+
+    symbols = [f"S{i}" for i in range(12)]
+    client = MarketDataClient(FakeMarketData([*symbols, "SPY"], n=600, freq="1D"))
+
+    report = analysis.compute_attribution(
+        client, "ma_crossover", symbols, datetime(2024, 1, 2), datetime(2025, 6, 1), scanner="none"
+    )
+
+    rows = {name: row for name, row in report["rows"].items() if "ir" in row}
+    assert rows, "no attributed rows to check"
+    for name, row in rows.items():
+        # A book of a dozen names carried ~9x gross before this; annualized vol of a
+        # unit-gross long-short book belongs nowhere near 20%/yr per single factor row.
+        assert abs(row["annualized_vol_blended"]) < 0.5, f"{name} level still unnormalized"
+        # The ratio is the statistic, and it is reconstructible from the levels shown.
+        if row["annualized_vol_blended"] > 0:
+            assert row["ir"] == pytest.approx(
+                row["annualized_mean"] / row["annualized_vol_blended"], rel=1e-9
+            )
+
+
+def test_a_constant_rescale_cannot_move_the_ir():
+    """The algebra the fix rests on, asserted directly rather than trusted: IR is
+    mean/vol and the t-stat is mean/sd x sqrt(t), so a constant divides out of both.
+    Per-period normalization would *not* have this property - a time-varying divisor
+    reshapes the series and moves the IR with it."""
+    from tradeflow.analytics import attribution as attr
+
+    values = [0.004, -0.002, 0.007, 0.001, -0.005, 0.003, 0.002, -0.001]
+    scale = 49.5
+
+    plain = attr.series_stats(values, 52.0, 0.01, 10.0)
+    scaled = attr.series_stats([v / scale for v in values], 52.0, 0.01 / scale**2, 10.0)
+
+    assert scaled["ir"] == pytest.approx(plain["ir"], rel=1e-12)
+    assert scaled["t_stat"] == pytest.approx(plain["t_stat"], rel=1e-12)
+    assert scaled["annualized_mean"] == pytest.approx(plain["annualized_mean"] / scale, rel=1e-12)
