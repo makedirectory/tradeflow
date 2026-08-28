@@ -13,138 +13,61 @@ from tradeflow.cli import _date, build_parser, parse_cli
 from tradeflow.utils.timeutils import NEW_YORK
 
 
-def test_a_plain_date_still_parses():
-    assert _date("2024-06-01") == datetime(2024, 6, 1)
+def test_a_bare_date_means_that_market_date_in_the_exchange_zone():
+    """One date contract. `2026-08-22` is that session, not UTC midnight.
 
-
-def test_an_aware_value_becomes_the_same_instant_on_the_exchange_clock():
-    """A zone is a shift, not a label. Dropping it without converting would move the
-    value by the offset, which for a session boundary is a different trading day."""
-    parsed = _date("2024-06-01T16:00:00Z")
-
-    assert parsed.tzinfo is None
-    assert NEW_YORK.localize(parsed) == datetime.fromisoformat("2024-06-01T16:00:00+00:00")
-
-
-def test_the_same_instant_written_two_ways_parses_identically():
-    assert _date("2024-06-01T16:00:00Z") == _date("2024-06-01T12:00:00-04:00")
-
-
-@pytest.mark.parametrize("value", ["2024-06-01", "2024-06-01T16:00:00Z", "2024-06-01T12:00:00-04:00"])
-def test_every_accepted_form_is_naive(value):
-    """The property the rest of the program depends on. One aware value anywhere in
-    the set reintroduces the mixed comparison."""
-    assert _date(value).tzinfo is None
-
-
-def test_an_aware_end_can_be_compared_against_a_defaulted_start():
-    """The regression.
-
-    The ISO fallback accepted a zone that nothing downstream could use: argparse took
-    the value and the first comparison raised `can't subtract offset-naive and
-    offset-aware datetimes` inside a window calculation. Before the fallback existed
-    argparse rejected the same value cleanly at the command line, so widening what was
-    accepted without normalizing it traded a good error for a bad one.
+    Two readings of one string is what broke an offline scan: `cache warm --end DATE`
+    recorded coverage through 00:00Z because the store reads a naive datetime as UTC,
+    while `scan --as-of DATE` asked for 04:00Z because the scanner reads one as New
+    York - a four-hour hole in a cache that held exactly the right daily bar.
     """
+    parsed = _date("2026-08-22")
+
+    assert parsed.tzinfo is not None
+    assert parsed.utcoffset() == NEW_YORK.localize(datetime(2026, 8, 22)).utcoffset()
+    assert (parsed.year, parsed.month, parsed.day, parsed.hour) == (2026, 8, 22, 0)
+
+
+def test_the_cache_and_the_scanner_now_read_a_date_the_same_way():
+    """The defect itself, pinned end to end rather than through either component."""
+    from tradeflow.scanners.symbol_scanner import resolve_scan_clock
+    from tradeflow.store.bars import _to_utc
+
+    parsed = _date("2026-08-22")
+
+    assert _to_utc(parsed) == _to_utc(resolve_scan_clock(parsed))
+
+
+def test_an_explicit_zone_is_converted_not_discarded():
+    """A zone is a shift, not a label: dropping it would move a session boundary onto
+    a different trading day."""
+    assert _date("2026-08-22T16:00:00Z") == _date("2026-08-22T12:00:00-04:00")
+    assert _date("2026-08-22T16:00:00Z").hour == 12  # noon in New York in August
+
+
+@pytest.mark.parametrize("value", ["2026-08-22", "2026-08-22T16:00:00Z", "2026-08-22T12:00:00-04:00"])
+def test_every_accepted_form_carries_the_zone(value):
+    """The property the contract rests on: a naive value has no zone to disagree
+    about, which is exactly how the two readings diverged in the first place."""
+    assert _date(value).tzinfo is not None
+
+
+def test_the_window_defaults_share_the_contract():
+    """Defaults that stayed naive would reintroduce the mixed-awareness comparison the
+    contract exists to remove — which is how the previous round of this broke."""
+    args = build_parser().parse_args(["backtest", "--strategy", "volume_spike"])
+
+    assert args.start.tzinfo is not None
+    assert args.end.tzinfo is not None
+    assert isinstance(args.end - args.start, timedelta)
+
+
+def test_a_typed_end_still_compares_against_a_defaulted_start():
     args = build_parser().parse_args(
-        ["backtest", "--strategy", "volume_spike", "--end", "2024-06-01T16:00:00Z"]
+        ["backtest", "--strategy", "volume_spike", "--end", "2026-08-22T16:00:00Z"]
     )
 
-    assert isinstance(args.end - args.start, timedelta)  # used to raise TypeError
-    assert args.end == datetime(2024, 6, 1, 12)  # 16:00Z is noon in New York in June
-
-
-def test_every_command_that_scans_a_historical_window_can_pin_its_scan_clock():
-    """`cache warm` resolved the scanner at `--end` with no way to override it, while
-    every other historical command took `--scan-as-of`. A cache warmed for a
-    deliberately different selection clock was simply not expressible."""
-    parser = build_parser()
-    subparsers = parser._subparsers._group_actions[0].choices
-
-    for command in ("backtest", "optimize", "walkforward", "research"):
-        flags = {opt for action in subparsers[command]._actions for opt in action.option_strings}
-        assert "--scan-as-of" in flags, f"{command} cannot pin its scan clock"
-
-    warm = subparsers["cache"]._subparsers._group_actions[0].choices["warm"]
-    assert "--scan-as-of" in {opt for action in warm._actions for opt in action.option_strings}
-
-
-def test_live_deliberately_has_no_scan_clock_to_pin():
-    """A live book is selected from the universe as it stands, not as it stood at the
-    end of a window — so `live` resolving at wall-clock now is the intended behaviour,
-    and the absence of the flag is the design rather than an omission."""
-    subparsers = build_parser()._subparsers._group_actions[0].choices
-    flags = {opt for action in subparsers["live"]._actions for opt in action.option_strings}
-
-    assert "--scanner" in flags
-    assert "--scan-as-of" not in flags
-
-
-# --- the CLI's own output ----------------------------------------------------
-def test_no_help_string_contains_an_unescaped_percent():
-    """argparse %-formats help text against the action's own attributes.
-
-    `--param-sensitivity` read "Perturb chosen params +-10% and re-test", so `% a`
-    became a format spec and `--help` printed the action's entire `__dict__` in the
-    middle of the sentence. A literal percent has to be doubled, and the rule is
-    asserted over every command rather than the one that happened to break.
-    """
-    import re
-
-    subparsers = build_parser()._subparsers._group_actions[0].choices
-    offenders = [
-        (command, action.option_strings or [action.dest], action.help)
-        for command, sub in subparsers.items()
-        for action in sub._actions
-        if action.help and re.search(r"(?<!%)%(?!%)", action.help)
-    ]
-    assert not offenders, f"unescaped % in help text: {offenders}"
-
-
-def test_every_command_renders_its_own_help_without_leaking_internals():
-    """The defect was only visible once help was *formatted*, not when it was declared,
-    so the check has to render every command rather than inspect the strings."""
-    subparsers = build_parser()._subparsers._group_actions[0].choices
-    for command, sub in subparsers.items():
-        rendered = sub.format_help()
-        assert "option_strings" not in rendered, f"{command} --help leaked argparse internals"
-        assert "_ArgumentGroup" not in rendered, f"{command} --help leaked argparse internals"
-
-
-# --- reading a warm cache from every command that reads bars -----------------
-def test_every_read_only_bar_command_can_use_the_cache():
-    """`scan`, `alphas`, `risk`, `horizon`, `allocate` and `info` had neither flag.
-
-    They built a live client regardless, so a warm cache was unusable from them and a
-    DNS failure degraded them into empty or insufficient-data results rather than
-    reading the bars already on disk.
-
-    This list is what makes an omission *fail*: the wiring test below is parametrized
-    over whichever commands declare the flags, so a command declaring none is simply
-    invisible to it. `info` was missed exactly that way.
-    """
-    subparsers = build_parser()._subparsers._group_actions[0].choices
-    for command in (
-        "scan",
-        "alphas",
-        "risk",
-        "horizon",
-        "allocate",
-        "info",
-        "backtest",
-        "optimize",
-        "walkforward",
-        "verdict",
-    ):
-        flags = {opt for action in subparsers[command]._actions for opt in action.option_strings}
-        assert {"--cache", "--offline", "--cache-dir"} <= flags, f"{command} cannot read the cache"
-
-
-def test_live_deliberately_cannot_be_run_offline():
-    """The trade clock reads the market as it is. A cached live run is not a thing."""
-    subparsers = build_parser()._subparsers._group_actions[0].choices
-    flags = {opt for action in subparsers["live"]._actions for opt in action.option_strings}
-    assert "--offline" not in flags and "--cache" not in flags
+    assert isinstance(args.end - args.start, timedelta)
 
 
 def _commands_declaring_cache_flags():

@@ -62,6 +62,19 @@ CREATE INDEX IF NOT EXISTS idx_fetches_symbol ON fetches(symbol, timeframe);
 """
 
 
+#: Printed beside every offline cache miss while the date-contract change washes
+#: through. A bare date now means that market date in New York, so coverage recorded
+#: when a naive date was read as UTC sits a few hours short of what the same command
+#: asks for today. The window is genuinely uncached under the new reading - the fix is
+#: a re-warm, not a tolerance - and saying so turns an unexplained miss on data the
+#: user knows they have into provenance.
+DATE_CONTRACT_NOTICE = (
+    "Note: a bare date now means that market date in America/New_York, not UTC midnight. "
+    "Coverage recorded under the older naive-date reading is a few hours short of the same "
+    "window today, so daily windows warmed before that change need one re-warm."
+)
+
+
 class CacheMiss(RuntimeError):
     """Raised in ``--offline`` mode when a requested window isn't fully cached."""
 
@@ -72,7 +85,8 @@ class CacheMiss(RuntimeError):
         ranges = ", ".join(f"{s.isoformat()}..{e.isoformat()}" for s, e in gaps)
         super().__init__(
             f"--offline: {symbol} ({timeframe}) is missing cached bars for {ranges}. "
-            f"Run `python main.py cache warm --symbols {symbol} --timeframe {timeframe}` first."
+            f"Run `python main.py cache warm --symbols {symbol} --timeframe {timeframe}` first.\n"
+            f"{DATE_CONTRACT_NOTICE}"
         )
 
 

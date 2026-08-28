@@ -2907,31 +2907,40 @@ def _add_cache_flags(parser) -> None:
 
 
 def _date(value: str) -> datetime:
-    """Parse a date or ISO datetime into a naive New York wall clock.
+    """Parse a date or ISO datetime into a New York instant.
 
-    Accepting a zone (so ``--as-of 2024-06-01T16:00:00Z`` works) without normalizing
-    one produced an argument argparse took and nothing downstream could use: every
-    window default is a naive ``datetime.now()``, so the first comparison raised
-    ``can't subtract offset-naive and offset-aware datetimes`` deep inside a window
-    calculation. Before the ISO fallback existed, argparse rejected the same value
-    cleanly at the command line.
+    **One date contract.** ``2026-08-22`` means that market date in the exchange's own
+    zone, everywhere in this program. That is a domain decision: someone typing a date
+    at a trading tool means the session, not UTC midnight.
 
-    So the coercion happens once, here, where the value is parsed - not at each of
-    the places two of these get compared. New York because that is what consumes
-    them: a naive window bound is localized to the exchange zone by the scanner and
-    aligned to the (New-York) bar index by the engine, so converting an aware value
-    to the same wall clock is what makes it name the same instant either way.
+    Leaving the value naive and letting each consumer localize it is what produced the
+    bug this replaced. ``cache warm --end 2026-08-22`` recorded coverage through
+    00:00Z (the store reads a naive datetime as UTC) while ``scan --as-of 2026-08-22``
+    asked for 04:00Z (the scanner reads one as New York), so a cache holding exactly
+    the right daily bar reported a four-hour hole and refused an offline run whose
+    data was complete. Two readings of one string is a semantic fork; it surfaced in
+    the cache first and would have surfaced next in reports, or in live/backtest
+    parity.
 
-    Distinct from the UTC assumption :func:`localize_index_to_new_york` makes for a
-    naive *bar index*: that is a provider's timestamp, this is a human's date.
+    Returning an *aware* value is what stops the contract re-forking: a naive datetime
+    carries no zone to disagree about because it carries no zone at all.
     """
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         parsed = datetime.strptime(value, "%Y-%m-%d")
     if parsed.tzinfo is None:
-        return parsed
-    return parsed.astimezone(NEW_YORK).replace(tzinfo=None)
+        return NEW_YORK.localize(parsed)
+    return parsed.astimezone(NEW_YORK)
+
+
+def _now() -> datetime:
+    """Now, on the clock every parsed date uses.
+
+    The window defaults have to share the contract or they reintroduce the mixed-
+    awareness comparison the contract exists to remove.
+    """
+    return datetime.now(NEW_YORK)
 
 
 def _next_step_hint() -> str:
@@ -3007,8 +3016,8 @@ def build_parser() -> argparse.ArgumentParser:
             "--symbols", type=_symbols, default=DEFAULT_UNIVERSE, help="Comma-separated candidate symbols"
         )
         if with_dates:
-            p.add_argument("--start", type=_date, default=datetime.now() - timedelta(days=30))
-            p.add_argument("--end", type=_date, default=datetime.now())
+            p.add_argument("--start", type=_date, default=_now() - timedelta(days=30))
+            p.add_argument("--end", type=_date, default=_now())
             p.add_argument("--capital", type=float, default=100_000.0)
             p.add_argument(
                 "--scan-as-of",
@@ -3234,9 +3243,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="strategy",
         help="Score origin (utility)",
     )
-    alloc.add_argument(
-        "--as-of", dest="as_of", type=_date, default=datetime.now(), help="Rebalance date (utility)"
-    )
+    alloc.add_argument("--as-of", dest="as_of", type=_date, default=_now(), help="Rebalance date (utility)")
     alloc.add_argument(
         "--target-te", dest="target_te", type=float, default=0.04, help="Target tracking error"
     )
@@ -3529,8 +3536,8 @@ def build_parser() -> argparse.ArgumentParser:
     verdict.add_argument("--strategy", choices=STRATEGIES, default="volume_spike")
     verdict.add_argument("--scanner", default="volume", help="Universe scanner ('none' to skip)")
     verdict.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
-    verdict.add_argument("--start", type=_date, default=datetime.now() - timedelta(days=365))
-    verdict.add_argument("--end", type=_date, default=datetime.now())
+    verdict.add_argument("--start", type=_date, default=_now() - timedelta(days=365))
+    verdict.add_argument("--end", type=_date, default=_now())
     verdict.add_argument("--capital", type=float, default=100_000.0)
     verdict.add_argument(
         "--source", choices=["strategy", "signal", "scanner"], default="strategy", help="Alpha score origin"
@@ -3581,7 +3588,7 @@ def build_parser() -> argparse.ArgumentParser:
     alphas.add_argument("--scanner", default="volume", help="Scanner used as the --source score metric")
     alphas.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
     alphas.add_argument(
-        "--as-of", dest="as_of", type=_date, default=datetime.now(), help="Rebalance date (YYYY-MM-DD)"
+        "--as-of", dest="as_of", type=_date, default=_now(), help="Rebalance date (YYYY-MM-DD)"
     )
     alphas.add_argument(
         "--source",
@@ -3628,8 +3635,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     info.add_argument("--scanner", default="volume", help="Scanner used when --source scanner")
     info.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
-    info.add_argument("--start", type=_date, default=datetime.now() - timedelta(days=365))
-    info.add_argument("--end", type=_date, default=datetime.now())
+    info.add_argument("--start", type=_date, default=_now() - timedelta(days=365))
+    info.add_argument("--end", type=_date, default=_now())
     info.add_argument("--benchmark", default="SPY", help="Benchmark for residual returns")
     info.add_argument("--horizon", type=int, default=5, help="Forward-return horizon in bars")
     info.add_argument(
@@ -3722,8 +3729,8 @@ def build_parser() -> argparse.ArgumentParser:
     hz.add_argument("--source", choices=["strategy", "signal", "scanner"], default="strategy")
     hz.add_argument("--scanner", default="volume")
     hz.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
-    hz.add_argument("--start", type=_date, default=datetime.now() - timedelta(days=365))
-    hz.add_argument("--end", type=_date, default=datetime.now())
+    hz.add_argument("--start", type=_date, default=_now() - timedelta(days=365))
+    hz.add_argument("--end", type=_date, default=_now())
     hz.add_argument("--benchmark", default="SPY")
     hz.add_argument(
         "--max-lag", dest="max_lag", type=int, default=10, help="Largest lag (periods) to measure"
@@ -3739,9 +3746,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Estimate the universe covariance Σ and summarize its risk structure — read-only",
     )
     risk.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
-    risk.add_argument(
-        "--as-of", dest="as_of", type=_date, default=datetime.now(), help="Rebalance date (YYYY-MM-DD)"
-    )
+    risk.add_argument("--as-of", dest="as_of", type=_date, default=_now(), help="Rebalance date (YYYY-MM-DD)")
     risk.add_argument(
         "--model",
         choices=["shrinkage", "sample", "factor"],
@@ -3795,8 +3800,8 @@ def build_parser() -> argparse.ArgumentParser:
     c_warm.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
     c_warm.add_argument("--scanner", default="none", help="Universe scanner ('none' to skip)")
     c_warm.add_argument("--timeframe", default="1Day")
-    c_warm.add_argument("--start", type=_date, default=datetime.now() - timedelta(days=365))
-    c_warm.add_argument("--end", type=_date, default=datetime.now())
+    c_warm.add_argument("--start", type=_date, default=_now() - timedelta(days=365))
+    c_warm.add_argument("--end", type=_date, default=_now())
     c_warm.add_argument(
         "--scan-as-of",
         dest="scan_as_of",
