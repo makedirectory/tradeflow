@@ -113,11 +113,63 @@ class _Panel:
 
 
 @dataclass
+class _Execution:
+    """What the sizer asked for versus what could actually be traded.
+
+    Whole-share rounding is silent, and at small capital it is not a rounding error:
+    the sizer asks for 0.4 shares of a $500 name, the engine floors it to zero, and the
+    equity curve is correct while the reason for it is invisible. These counters make
+    the difference between the intended book and the executed one a number rather than
+    an inference.
+
+    Filled and requested notional are accumulated over *opened* positions only, so the
+    ratio is pure rounding drag; positions lost outright are counted separately, since
+    a book that cannot open a name at all is a different problem from one that opens a
+    slightly smaller one.
+    """
+
+    requested_notional: float = 0.0
+    filled_notional: float = 0.0
+    filled: int = 0
+    rounded_to_zero: int = 0
+    below_min_notional: int = 0
+
+    def drag_pct(self) -> float:
+        """Requested notional that whole-share rounding removed, as a percentage."""
+        if self.requested_notional <= 0:
+            return 0.0
+        return float((1.0 - self.filled_notional / self.requested_notional) * 100.0)
+
+    def unfillable_pct(self) -> float:
+        """Share of intended entries that could not be opened at all, as a percentage.
+
+        Separate from the drag: a book that opens every name slightly smaller is a
+        different proposition from one that silently never opens a quarter of them.
+        """
+        attempted = self.filled + self.rounded_to_zero + self.below_min_notional
+        if attempted <= 0:
+            return 0.0
+        return float((self.rounded_to_zero + self.below_min_notional) / attempted * 100.0)
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {
+            "requested_notional": self.requested_notional,
+            "filled_notional": self.filled_notional,
+            "rounding_drag_pct": self.drag_pct(),
+            "positions_filled": self.filled,
+            "positions_rounded_to_zero": self.rounded_to_zero,
+            "positions_below_min_notional": self.below_min_notional,
+            "unfillable_pct": self.unfillable_pct(),
+        }
+
+
+@dataclass
 class _Book:
     """Mutable portfolio state carried across the merged timeline."""
 
     cash: float
     positions: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    execution: _Execution = field(default_factory=_Execution)
 
     def open_risk(self) -> float:
         """Sum of per-position risk (notional x stop distance) across the book."""
@@ -181,6 +233,8 @@ class BacktestResult:
     strategy_config: Dict[str, Any]
     total_cost: float = 0.0  # total transaction cost charged across all trades
     gross_final_capital: float = 0.0  # final capital before cost (for the haircut attribution)
+    #: What the sizer asked for versus what was actually tradeable - see :class:`_Execution`.
+    execution: Dict[str, Any] = field(default_factory=dict)
 
 
 class BacktestEngine:
@@ -299,7 +353,9 @@ class BacktestEngine:
         # A merged-timeline step is the unit for *both* carry accrual and the equity
         # curve, so both have to annualize on the merged timeline's own rate.
         self._step_periods_per_year = self._step_rate(panels, master)
-        all_trades, equity_curve, equity_times = self._replay(panels, master, initial_capital, trade_from)
+        all_trades, equity_curve, equity_times, execution = self._replay(
+            panels, master, initial_capital, trade_from
+        )
 
         trades_df = pd.DataFrame(all_trades)
         if not trades_df.empty:
@@ -333,6 +389,7 @@ class BacktestEngine:
             strategy_config=dict(self.strategy.config),
             total_cost=total_cost,
             gross_final_capital=final_capital + total_cost,
+            execution=execution,
         )
 
     # ------------------------------------------------------------------ #
@@ -457,13 +514,14 @@ class BacktestEngine:
         # belong to - and nothing did.
         equity_times: List[Any] = [None]
         if not panels:
-            return trades, equity_curve, equity_times
+            return trades, equity_curve, equity_times, book.execution.as_dict()
 
         cutoff = _align_tz(trade_from, master) if trade_from is not None else None
         limits = self.strategy.position_limits()
         max_positions = limits["max_positions"]
         max_total_risk = limits["max_total_risk"]
         max_gross_exposure = limits.get("max_gross_exposure")
+        min_notional = limits.get("min_notional")
         n_steps = len(master)
         order = sorted(panels)
 
@@ -540,6 +598,7 @@ class BacktestEngine:
                         equity_now,
                         max_total_risk,
                         max_gross_exposure,
+                        min_notional,
                         panel.adv,
                         panel.vol,
                         i,
@@ -571,7 +630,7 @@ class BacktestEngine:
         if len(equity_curve) > 1:
             equity_curve[-1] = book.equity()
 
-        return trades, equity_curve, equity_times
+        return trades, equity_curve, equity_times, book.execution.as_dict()
 
     def _trade_cost(self, symbol, shares, price, adv, vol, i) -> float:
         """Dollar cost of trading ``shares`` at bar ``i`` (0 when no cost model)."""
@@ -601,6 +660,7 @@ class BacktestEngine:
         equity: float,
         max_total_risk: float,
         max_gross_exposure: Optional[float],
+        min_notional: Optional[float],
         adv: Optional[np.ndarray],
         vol: Optional[np.ndarray],
         i: int,
@@ -624,8 +684,20 @@ class BacktestEngine:
             buying_power=book.cash,
             portfolio_value=equity,
         )
-        size = round_quantity(self.sizer.size(symbol, price, account))
+        # Requested before rounding, so the gap between intent and fill is measurable
+        # rather than inferred. Whole shares: the live path floors too, and the two
+        # clocks must agree about what is fillable.
+        requested = self.sizer.size(symbol, price, account)
+        size = round_quantity(requested)
         if size <= 0:
+            if requested > 0:
+                book.execution.rounded_to_zero += 1
+            return None
+        if min_notional and size * price < min_notional:
+            # A venue floor is an execution fact, not a preference: an order below it
+            # would be refused, so filling it here would validate a book that could not
+            # be traded.
+            book.execution.below_min_notional += 1
             return None
         # The affordability check must include what this fill will cost to enter,
         # not just its notional - otherwise a maximally-sized position can push
@@ -658,6 +730,12 @@ class BacktestEngine:
         else:
             stop, take = price * (1 + stop_pct), price * (1 - take_pct)
 
+        # Counted here rather than at the sizing call, because everything between the
+        # two can still decline the entry - and a position the book refused to fund is
+        # not evidence about whether rounding was affordable.
+        book.execution.requested_notional += requested * price
+        book.execution.filled_notional += size * price
+        book.execution.filled += 1
         return {
             "symbol": symbol,
             "side": signal,

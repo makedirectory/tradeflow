@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from tradeflow.analytics import metrics as m
+from tradeflow.analytics import performance
 
 logger = logging.getLogger(__name__)
 
@@ -87,11 +88,48 @@ _SECTIONS = [
 _ROWS = [row for _, rows in _SECTIONS for row in rows]
 
 
+def _execution_lines(execution: Optional[Dict[str, Any]]) -> List[str]:
+    """The gap between the book the sizer asked for and the one that could be traded.
+
+    Silent by construction until now: whole-share rounding just happens, and it scales
+    with how small the account is. Shown whenever anything was lost, and shown with
+    both numbers beside their thresholds rather than as a verdict on its own - the same
+    rule the promotion gates follow.
+    """
+    if not execution:
+        return []
+    verdict = performance.execution_verdict(execution)
+    if verdict["executable"] is None or (verdict["executable"] and not execution.get("rounding_drag_pct")):
+        return []
+
+    mark = "(!)" if not verdict["executable"] else "(i)"
+    lines = [
+        "",
+        f"--- Execution at this capital {mark} ---",
+        f"{'Intended notional':28}${execution.get('requested_notional', 0.0):,.2f}",
+        f"{'Filled notional':28}${execution.get('filled_notional', 0.0):,.2f}",
+    ]
+    for name, check in verdict["checks"].items():
+        flag = "PASS" if check["passed"] else "FAIL"
+        lines.append(f"  [{flag}] {name:22}{check['value']:.2f}% vs {check['threshold']:.2f}%")
+    lost = execution.get("positions_rounded_to_zero", 0) + execution.get("positions_below_min_notional", 0)
+    if lost:
+        lines.append(
+            f"{'  entries never opened':28}{lost} "
+            f"({execution.get('positions_rounded_to_zero', 0)} rounded to zero, "
+            f"{execution.get('positions_below_min_notional', 0)} below min notional)"
+        )
+    if not verdict["executable"]:
+        lines.append("  This book is not the one that was validated: raise capital, or widen min_notional.")
+    return lines
+
+
 def format_backtest_report(
     metrics: Dict[str, float],
     initial_capital: float,
     final_capital: float,
     title: str = "Backtest Results",
+    execution: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Render metrics as an aligned, fixed-width text block, grouped by section."""
     lines = [f"=== {title} ===", f"{'Capital':28}${initial_capital:,.2f} -> ${final_capital:,.2f}"]
@@ -105,6 +143,7 @@ def format_backtest_report(
             f"{m.MIN_ABS_BETA_FOR_TREYNOR:g}; excess return per unit of beta is not "
             f"meaningful for a book with no market exposure)"
         )
+    lines.extend(_execution_lines(execution))
     for section, rows in _SECTIONS:
         section_lines = []
         for key, label, fmt in rows:
@@ -118,9 +157,14 @@ def format_backtest_report(
     return "\n".join(lines)
 
 
-def log_backtest_report(metrics: Dict[str, float], initial_capital: float, final_capital: float) -> None:
+def log_backtest_report(
+    metrics: Dict[str, float],
+    initial_capital: float,
+    final_capital: float,
+    execution: Optional[Dict[str, Any]] = None,
+) -> None:
     """Log the rendered report at INFO."""
-    logger.info("\n%s", format_backtest_report(metrics, initial_capital, final_capital))
+    logger.info("\n%s", format_backtest_report(metrics, initial_capital, final_capital, execution=execution))
 
 
 def _age_str(ts: Optional[str]) -> str:

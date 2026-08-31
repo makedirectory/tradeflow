@@ -72,6 +72,11 @@ class ScoreThresholds:
 #: * ``max_gross_exposure`` is a **notional cap** - marked gross notional over
 #:   equity, shorts counted by magnitude. ``None`` (the default) leaves free cash as
 #:   the only bound on deployed notional.
+#: * ``min_notional`` is an **execution floor** in dollars, not a fraction: a venue or
+#:   broker minimum below which an order would be refused. ``None`` (the default) keeps
+#:   the historical behaviour of assuming any positive size is fillable, which stops
+#:   being a safe assumption as capital shrinks - at $4,000 across a wide universe the
+#:   sizer routinely asks for positions a real account could not open.
 #:
 #: They live here rather than in the backtest engine because both clocks enforce
 #: them, and the trade clock cannot import the engine.
@@ -80,6 +85,7 @@ DEFAULT_POSITION_LIMITS: Dict[str, Any] = {
     "max_position_size": 1500.0,
     "max_total_risk": 0.05,
     "max_gross_exposure": None,
+    "min_notional": None,
 }
 
 

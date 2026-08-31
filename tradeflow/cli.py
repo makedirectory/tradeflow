@@ -463,7 +463,9 @@ def cmd_backtest(args) -> None:
             trades=trades_payload(result.trades) if args.record_trades else None,
         )
 
-    log_backtest_report(result.metrics, result.initial_capital, result.final_capital)
+    log_backtest_report(
+        result.metrics, result.initial_capital, result.final_capital, execution=result.execution
+    )
     if not args.gross and result.total_cost:
         print(
             f"Transaction cost: ${result.total_cost:,.2f} "

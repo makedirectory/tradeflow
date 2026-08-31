@@ -28,6 +28,7 @@ from tradeflow.alphas import (
     strategy_scorer,
 )
 from tradeflow.analytics import metrics as m
+from tradeflow.analytics import performance
 from tradeflow.data import (
     ClientBarSource,
     FeaturePanel,
@@ -329,6 +330,11 @@ def backtest_payload(
         "gross_final_capital": result.gross_final_capital,
         "cost_drag_pct": (result.total_cost / capital * 100.0) if capital else 0.0,
         "metrics": _jsonable(result.metrics),
+        # The gap between the intended book and the tradeable one, plus the verdict on
+        # it - separate from `metrics` because it judges executability at this capital,
+        # not whether the edge was real.
+        "execution": _jsonable(getattr(result, "execution", {}) or {}),
+        "executability": _jsonable(performance.execution_verdict(getattr(result, "execution", None))),
         "total_trades": int(len(result.trades)),
         "trades_csv": trades_csv,
         "resolved_config": _jsonable(result.strategy_config),

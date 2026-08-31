@@ -545,3 +545,114 @@ def test_a_suppressed_treynor_is_distinguishable_from_a_real_zero():
     assert metrics["treynor_available"] is False
     assert metrics["treynor_ratio"] == 0.0
     assert "beta near zero" in format_backtest_report(metrics, 100.0, 103.0, title="t")
+
+
+# --- execution at small capital ----------------------------------------------
+def _small_account_run(capital, min_notional=None):
+    from tests.fakes import FakeMarketData
+    from tradeflow.services.registry import STRATEGIES
+
+    symbols = [f"S{i}" for i in range(8)]
+    client = MarketDataClient(FakeMarketData(symbols, n=300, freq="1D"))
+    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy.config["position_limits"] = {
+        **strategy.position_limits(),
+        "max_positions": 8,
+        "max_position_size": 50_000.0,
+        "min_notional": min_notional,
+    }
+    return BacktestEngine(strategy, client).run(symbols, datetime(2024, 1, 2), datetime(2024, 12, 1), capital)
+
+
+def test_share_rounding_drag_grows_as_the_account_shrinks():
+    """The thing that was invisible. Whole-share rounding just happened.
+
+    The same config drags a fraction of a percent at $100k and double digits at $500,
+    and nothing in the result said so - the equity curve was right while the reason for
+    it was unexplained. Asserted as a direction rather than a constant, because the
+    exact figures are a property of the fake feed.
+    """
+    big = _small_account_run(100_000.0).execution
+    small = _small_account_run(4_000.0).execution
+    tiny = _small_account_run(500.0).execution
+
+    assert big["rounding_drag_pct"] < small["rounding_drag_pct"] < tiny["rounding_drag_pct"]
+    assert big["positions_rounded_to_zero"] == 0
+    assert tiny["positions_rounded_to_zero"] > small["positions_rounded_to_zero"]
+
+
+def test_intended_and_filled_notional_are_both_reported():
+    """The gap is the point, so both sides of it have to be visible - a drag percentage
+    with no notional behind it cannot be checked."""
+    execution = _small_account_run(4_000.0).execution
+
+    assert execution["requested_notional"] > execution["filled_notional"] > 0
+    expected = (1 - execution["filled_notional"] / execution["requested_notional"]) * 100
+    assert execution["rounding_drag_pct"] == pytest.approx(expected)
+
+
+def test_a_min_notional_floor_refuses_orders_a_venue_would():
+    """Nothing modelled a venue minimum, so the backtest filled positions a real
+    account could not open - and validated a book that could not be traded."""
+    without = _small_account_run(4_000.0, min_notional=None)
+    with_floor = _small_account_run(4_000.0, min_notional=2_000.0)
+
+    assert without.execution["positions_below_min_notional"] == 0
+    assert with_floor.execution["positions_below_min_notional"] > 0
+    assert len(with_floor.trades) < len(without.trades)
+
+
+def test_the_default_leaves_the_floor_off():
+    """Absent is not zero: a config that never mentioned a venue minimum keeps the
+    behaviour it was validated under."""
+    from tradeflow.strategies.base import DEFAULT_POSITION_LIMITS
+
+    assert DEFAULT_POSITION_LIMITS["min_notional"] is None
+    assert _small_account_run(4_000.0).execution["positions_below_min_notional"] == 0
+
+
+def test_executability_is_judged_separately_from_the_edge():
+    """A verdict on whether the book can be traded at this capital, kept apart from
+    whether the edge was real - collapsing the two would make one number mean two
+    things and silently redefine `promotable` for every trial already recorded."""
+    from tradeflow.analytics.performance import execution_verdict
+
+    assert execution_verdict(_small_account_run(100_000.0).execution)["executable"] is True
+
+    failing = execution_verdict(_small_account_run(500.0).execution)
+    assert failing["executable"] is False
+    assert failing["reason"]
+    assert not failing["checks"]["rounding_drag"]["passed"]
+
+
+def test_nothing_attempted_is_not_the_same_as_passing():
+    """`executable: None` rather than True, or a run that never tried to open anything
+    would read as one that traded cleanly."""
+    from tradeflow.analytics.performance import execution_verdict
+
+    verdict = execution_verdict({})
+
+    assert verdict["executable"] is None
+    assert verdict["checks"] == {}
+
+
+def test_the_report_shows_the_gap_and_names_the_failing_check():
+    from tradeflow.analytics.reporting import format_backtest_report
+
+    result = _small_account_run(500.0)
+    rendered = format_backtest_report(result.metrics, 500.0, result.final_capital, execution=result.execution)
+
+    assert "Execution at this capital" in rendered
+    assert "Intended notional" in rendered and "Filled notional" in rendered
+    assert "FAIL" in rendered and "rounding_drag" in rendered
+    assert "not the one that was validated" in rendered
+
+
+def test_a_healthy_run_does_not_grow_an_execution_section():
+    """A diagnostic that always fires is one people learn to skip."""
+    from tradeflow.analytics.reporting import format_backtest_report
+
+    result = _small_account_run(100_000.0)
+    rendered = format_backtest_report(result.metrics, 100_000.0, result.final_capital, execution=None)
+
+    assert "Execution at this capital" not in rendered

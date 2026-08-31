@@ -15,7 +15,7 @@ these as mark-to-market figures.
 """
 
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -92,6 +92,62 @@ METRIC_KEYS = (
 #: book's beta is too near zero to divide by. Without the flag a suppressed ratio and a
 #: genuine zero are the same number.
 FLAG_KEYS = ("benchmark_available", "low_sample", "treynor_available")
+
+
+#: Thresholds for the executability verdict. Judgment calls, not evidence-derived:
+#: they mark where an executed book stops resembling the one that was validated, and
+#: they are exposed so a deployment can set its own. Deliberately **separate** from the
+#: promotion gates - those ask whether the edge was real, this asks whether the book
+#: can be traded at this capital, and collapsing the two would make one number mean two
+#: things and silently redefine `promotable` for every trial already recorded.
+DEFAULT_EXECUTION_LIMITS: Dict[str, float] = {
+    "max_rounding_drag_pct": 10.0,  # executed notional this far below intended
+    "max_unfillable_pct": 5.0,  # this share of intended entries never opened
+}
+
+
+def execution_verdict(
+    execution: Optional[Dict[str, Any]], limits: Optional[Dict[str, float]] = None
+) -> Dict[str, Any]:
+    """Whether the book the engine actually traded resembles the one it was asked for.
+
+    Whole-share rounding is invisible and scales with how small the account is: the
+    same config that drags 0.3% at $100,000 drags 5% at $4,000 and 22% at $500, and
+    nothing in the result said so. This turns that into a check with its numbers shown,
+    in the house style - every threshold beside its value, no single reassuring summary.
+
+    Returns ``executable: None`` when there is nothing to judge (no entries attempted),
+    which is not the same as passing and must not be rendered as one.
+    """
+    checks: Dict[str, Any] = {}
+    if not execution or not (
+        execution.get("positions_filled", 0)
+        or execution.get("positions_rounded_to_zero", 0)
+        or execution.get("positions_below_min_notional", 0)
+    ):
+        return {"executable": None, "checks": checks, "reason": "no entries were attempted"}
+
+    limit = {**DEFAULT_EXECUTION_LIMITS, **(limits or {})}
+    drag = float(execution.get("rounding_drag_pct", 0.0))
+    unfillable = float(execution.get("unfillable_pct", 0.0))
+    checks["rounding_drag"] = {
+        "value": drag,
+        "threshold": limit["max_rounding_drag_pct"],
+        "passed": drag <= limit["max_rounding_drag_pct"],
+        "note": "share rounding removed this much of the intended notional at this capital",
+    }
+    checks["unfillable_entries"] = {
+        "value": unfillable,
+        "threshold": limit["max_unfillable_pct"],
+        "passed": unfillable <= limit["max_unfillable_pct"],
+        "note": "this share of intended entries could not be opened at all",
+    }
+    failed = [name for name, check in checks.items() if not check["passed"]]
+    return {
+        "executable": not failed,
+        "checks": checks,
+        "reason": "" if not failed else f"{', '.join(failed)} beyond limit at this capital",
+    }
 
 
 def empty_metrics() -> Dict[str, float]:
