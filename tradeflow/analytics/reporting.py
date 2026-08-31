@@ -10,6 +10,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from tradeflow.analytics import metrics as m
+
 logger = logging.getLogger(__name__)
 
 # (metric key, label, format spec), grouped into report sections.
@@ -19,7 +21,8 @@ _SECTIONS = [
         [
             ("total_return", "Total Return", "{:.2f}%"),
             ("cagr", "CAGR", "{:.2f}%"),
-            ("buy_hold_return", "Buy & Hold Return", "{:.2f}%"),
+            ("buy_hold_return", "Buy & Hold (universe)", "{:.2f}%"),
+            ("benchmark_buy_hold_return", "Buy & Hold (benchmark)", "{:.2f}%"),
             ("annualized_volatility", "Annualized Volatility", "{:.2f}%"),
         ],
     ),
@@ -96,6 +99,12 @@ def format_backtest_report(
         lines.append(f"{'(!) low sample':28}fewer than {30} trades - treat ratios with caution")
     if not metrics.get("benchmark_available", True):
         lines.append(f"{'(i) no benchmark':28}alpha/beta/information-ratio unavailable")
+    elif not metrics.get("treynor_available", True):
+        lines.append(
+            f"{'(i) beta near zero':28}Treynor unavailable (|beta| < "
+            f"{m.MIN_ABS_BETA_FOR_TREYNOR:g}; excess return per unit of beta is not "
+            f"meaningful for a book with no market exposure)"
+        )
     for section, rows in _SECTIONS:
         section_lines = []
         for key, label, fmt in rows:

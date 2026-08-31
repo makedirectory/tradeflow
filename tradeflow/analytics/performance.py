@@ -73,6 +73,7 @@ METRIC_KEYS = (
     "r_squared",
     "treynor_ratio",
     "information_ratio",
+    "benchmark_buy_hold_return",
     # --- Tier 3: nice-to-have ---
     "skew",
     "kurtosis",
@@ -85,7 +86,12 @@ METRIC_KEYS = (
 )
 
 #: Non-numeric flags also always present in a results dict.
-FLAG_KEYS = ("benchmark_available", "low_sample")
+#:
+#: ``treynor_available`` is separate from ``benchmark_available`` because the two fail
+#: independently: a benchmark can be present and Treynor still meaningless, when the
+#: book's beta is too near zero to divide by. Without the flag a suppressed ratio and a
+#: genuine zero are the same number.
+FLAG_KEYS = ("benchmark_available", "low_sample", "treynor_available")
 
 
 def empty_metrics() -> Dict[str, float]:
@@ -93,6 +99,7 @@ def empty_metrics() -> Dict[str, float]:
     base = {key: 0.0 for key in METRIC_KEYS}
     base["benchmark_available"] = False
     base["low_sample"] = True
+    base["treynor_available"] = False
     return base
 
 
@@ -151,10 +158,16 @@ def compute_backtest_metrics(
     cagr_frac = m.cagr(equity_curve, years)
 
     has_benchmark = benchmark_returns is not None and len(benchmark_returns) > 0
+    benchmark_buy_hold = 0.0
     if has_benchmark:
         alpha, beta, r_squared = m.alpha_beta(returns, benchmark_returns)
         info_ratio = m.information_ratio(returns, benchmark_returns, periods_per_year)
         treynor = m.treynor_ratio(returns, beta, periods_per_year)
+        # Compounded over exactly the steps the strategy was measured on, rather than
+        # the benchmark's own first/last close: the two differ whenever the curve does
+        # not start on the benchmark's first bar, and the comparison is only fair over
+        # one window.
+        benchmark_buy_hold = float(((1.0 + pd.Series(benchmark_returns).dropna()).prod() - 1.0) * 100)
     else:
         alpha = beta = r_squared = info_ratio = treynor = 0.0
 
@@ -162,6 +175,7 @@ def compute_backtest_metrics(
         # --- original headline set ---
         "total_return": total_return_pct,
         "buy_hold_return": _buy_hold_return(market_data),
+        "benchmark_buy_hold_return": benchmark_buy_hold,
         "sharpe_ratio": m.sharpe_ratio(returns, periods_per_year),
         "sortino_ratio": m.sortino_ratio(returns, periods_per_year),
         "calmar_ratio": m.calmar_ratio(cagr_frac, drawdown_frac),
@@ -214,6 +228,7 @@ def compute_backtest_metrics(
         "turnover": _turnover(trades_df, initial_capital),
         # --- flags ---
         "benchmark_available": bool(has_benchmark),
+        "treynor_available": bool(has_benchmark and abs(beta) >= m.MIN_ABS_BETA_FOR_TREYNOR),
         "low_sample": bool(len(trades_df) < LOW_SAMPLE_TRADES),
     }
     return result

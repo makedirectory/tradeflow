@@ -467,3 +467,81 @@ def test_an_unfetchable_benchmark_degrades_instead_of_failing_the_run():
 
     assert result.metrics["benchmark_available"] is False
     assert result.metrics["total_return"] == _bench_run(None).metrics["total_return"]
+
+
+# --- two reporting fixes, both found by reading a real report ------------------
+def test_buy_and_hold_names_what_it_holds():
+    """It stayed 95.56% for both SPY and QQQ, which is how it surfaced.
+
+    `buy_hold_return` averages the *traded universe*, so it cannot move when the
+    benchmark does. The number was right and the label said only "Buy & Hold Return",
+    which reads as the benchmark's return to anyone who just passed `--benchmark`.
+    """
+    from tradeflow.analytics.reporting import format_backtest_report
+
+    rendered = format_backtest_report(
+        {"buy_hold_return": 95.56, "benchmark_buy_hold_return": 41.2, "benchmark_available": True},
+        4000.0,
+        4480.0,
+        title="t",
+    )
+
+    assert "Buy & Hold (universe)" in rendered
+    assert "Buy & Hold (benchmark)" in rendered
+    assert "Buy & Hold Return" not in rendered  # the ambiguous label is gone
+
+
+def test_the_two_buy_and_holds_differ_and_only_one_tracks_the_benchmark():
+    """The property the label now promises, asserted end to end rather than by name."""
+    from tests.fakes import FakeMarketData
+    from tradeflow.services.registry import STRATEGIES
+
+    client = MarketDataClient(FakeMarketData(["AAA", "BBB", "SPY", "QQQ"], n=400, freq="1D"))
+    engine = BacktestEngine(STRATEGIES["ma_crossover"].create_with_defaults(), client)
+
+    spy = engine.run(["AAA", "BBB"], datetime(2024, 1, 2), datetime(2025, 1, 2), 100_000, benchmark="SPY")
+    qqq = engine.run(["AAA", "BBB"], datetime(2024, 1, 2), datetime(2025, 1, 2), 100_000, benchmark="QQQ")
+
+    # The universe figure cannot move: it never looked at the benchmark.
+    assert spy.metrics["buy_hold_return"] == qqq.metrics["buy_hold_return"]
+    # The benchmark figure must, or it is measuring the same thing twice.
+    assert spy.metrics["benchmark_buy_hold_return"] != qqq.metrics["benchmark_buy_hold_return"]
+
+
+def test_treynor_is_suppressed_rather_than_unbounded_at_a_near_zero_beta():
+    """Reported as Treynor -262.22 beside a beta rendered "-0.00".
+
+    The guard was `beta == 0` exactly, so -0.0001 divided. Excess return *per unit of
+    beta* has no meaning for a book with no market exposure, and `--beta-sizing` puts
+    books in that regime deliberately - so this is the common case, not an edge one.
+    """
+    from tradeflow.analytics import metrics as m
+
+    returns = [0.001] * 250
+
+    assert m.treynor_ratio(returns, -0.0002) == 0.0
+    assert m.treynor_ratio(returns, 0.02) == 0.0
+    # And it still reports where beta is real, or the guard just deletes the metric.
+    assert m.treynor_ratio(returns, 0.9) != 0.0
+    assert m.treynor_ratio(returns, m.MIN_ABS_BETA_FOR_TREYNOR) != 0.0
+
+
+def test_a_suppressed_treynor_is_distinguishable_from_a_real_zero():
+    """0.0 is the established "unavailable" value for these metrics, so the flag is
+    what stops a suppressed ratio reading as a measured one. It fails independently of
+    `benchmark_available`: the benchmark here is present and fine."""
+    import pandas as pd
+
+    from tradeflow.analytics.performance import compute_backtest_metrics
+    from tradeflow.analytics.reporting import format_backtest_report
+
+    trades = pd.DataFrame({"pnl": [1.0, -0.5, 2.0]})
+    curve = [100.0 + i * 0.01 for i in range(300)]
+    flat_benchmark = pd.Series([0.0005] * (len(curve) - 1))  # near-zero covariance -> tiny beta
+
+    metrics = compute_backtest_metrics(trades, curve, 100.0, 103.0, {}, benchmark_returns=flat_benchmark)
+
+    assert metrics["benchmark_available"] is True
+    assert metrics["treynor_available"] is False
+    assert metrics["treynor_ratio"] == 0.0
+    assert "beta near zero" in format_backtest_report(metrics, 100.0, 103.0, title="t")
