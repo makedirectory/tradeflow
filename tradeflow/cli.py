@@ -529,6 +529,30 @@ def cmd_scan(args) -> None:
     print(f"{'SYMBOL':10}SIGNAL")
     for symbol, signal in flagged:
         print(f"{symbol:10}{signal}")
+    if getattr(args, "drift", False):
+        _print_scanner_drift(data_client, args)
+
+
+def _print_scanner_drift(data_client, args) -> None:
+    """How much this universe moves when the scan clock moves.
+
+    A config records the universe its scanner *resolved*, so an unstable scan means the
+    book a deployment gets is not the book that was validated - and no promotion gate
+    would notice, because the gates never see the scan twice.
+    """
+    from tradeflow.services.analysis import run_scanner_drift
+
+    report = run_scanner_drift(data_client, args.scanner, args.symbols, args.as_of)
+    print(f"\n=== Scanner drift ({report['baseline_size']} flagged at {report['as_of'][:10]}) ===")
+    print(f"  {'clock':>10}{'flagged':>9}{'overlap':>9}{'turnover':>10}")
+    for row in report["comparisons"]:
+        print(f"  {row['offset_days']:>9}d{row['size']:>9}{row['overlap']:>9}{row['turnover_pct']:>9.1f}%")
+    worst = report["max_turnover_pct"]
+    print(
+        f"  Universe turnover peaks at {worst:.1f}% across these clocks."
+        if worst
+        else "  Universe is identical across these clocks."
+    )
 
 
 def cmd_allocate(args) -> None:
@@ -3272,6 +3296,13 @@ def build_parser() -> argparse.ArgumentParser:
     scan = subparsers.add_parser("scan", help="Run the universe scanner only")
     scan.add_argument("--scanner", default="volume")
     scan.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
+    scan.add_argument(
+        "--drift",
+        action="store_true",
+        help="Also re-scan at nearby clocks and report how much the universe moves. "
+        "A config records the universe its scanner resolved, so drift is the gap "
+        "between the validated book and the one a deployment would get.",
+    )
     scan.add_argument(
         "--as-of",
         dest="as_of",

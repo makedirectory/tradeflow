@@ -157,3 +157,92 @@ def test_run_scan_names_its_clock_even_when_none_was_asked_for():
     result = analysis.run_scan(client, "volume", ["AAA"])
 
     assert result["as_of"] is not None
+
+
+# --- scanner stability --------------------------------------------------------
+def _spiky_feed(spike_days):
+    """One symbol per entry, spiking volume on each day it is given.
+
+    Days are a list, not one day, because a name that spikes on a single bar is
+    unstable by construction - it is selected on that bar's clock and on no other. A
+    *stable* selection is one that spikes on both clocks being compared, and the
+    fixture has to be able to express that or "no drift" is untestable.
+
+    Built rather than sampled: drift has to be a fact of the fixture, or a test that
+    passes because a random feed happened to move proves nothing about the measurement.
+    """
+    import numpy as np
+
+    frames = {}
+    index = pd.date_range("2024-01-02", periods=60, freq="D", tz=NEW_YORK)
+    for symbol, days in spike_days.items():
+        close = np.full(len(index), 100.0)
+        open_ = np.full(len(index), 100.0)
+        volume = np.full(len(index), 100_000.0)
+        # A decisive up-bar on heavy volume, on each named day.
+        for day in days:
+            open_[day], close[day], volume[day] = 100.0, 106.0, 2_000_000.0
+        frames[symbol] = pd.DataFrame(
+            {
+                "open": open_,
+                "high": np.maximum(open_, close) + 1.0,
+                "low": np.minimum(open_, close) - 1.0,
+                "close": close,
+                "volume": volume,
+            },
+            index=index,
+        )
+    return MarketDataClient(DictMarketData(frames)), index
+
+
+def test_scanner_drift_reports_which_names_entered_and_left():
+    """A universe that turns over across a session is a different object from one that
+    is stable, and nothing said which you had.
+
+    It matters because a validated config carries the universe its scanner *resolved* -
+    so if the scan is unstable, the book a deployment gets is not the book that was
+    validated, and no promotion gate would notice.
+    """
+    client, index = _spiky_feed({"AAA": [40], "BBB": [41]})
+
+    report = analysis.run_scanner_drift(
+        client, "volume", ["AAA", "BBB"], index[41].to_pydatetime(), offsets_days=(-1,)
+    )
+
+    assert report["baseline_size"] == 1  # only BBB spikes on the baseline day
+    drift = report["comparisons"][0]
+    assert drift["added"] == ["AAA"] and drift["dropped"] == ["BBB"]
+    assert drift["turnover_pct"] == 200.0  # both names changed, against a baseline of one
+
+
+def test_a_stable_scan_reports_no_drift():
+    """The other direction. A measurement that always reports movement is not one."""
+    # Both names selected on both clocks: the only shape a stable scan can have.
+    client, index = _spiky_feed({"AAA": [39, 40], "BBB": [39, 40]})
+
+    report = analysis.run_scanner_drift(
+        client, "volume", ["AAA", "BBB"], index[40].to_pydatetime(), offsets_days=(-1,)
+    )
+
+    assert report["baseline_size"] == 2
+    assert report["max_turnover_pct"] == 0.0
+
+
+def test_a_saved_universe_is_compared_against_todays_scan():
+    """The question a deployment actually has: is the file still describing the
+    universe the scanner would pick now?"""
+    client, index = _spiky_feed({"AAA": [40], "BBB": [41]})
+
+    report = analysis.run_scanner_drift(
+        client,
+        "volume",
+        ["AAA", "BBB"],
+        index[41].to_pydatetime(),
+        offsets_days=(),
+        saved_universe=["AAA"],
+    )
+
+    saved = report["saved_vs_current"]
+    assert saved["dropped"] == ["AAA"]  # the config's name is no longer selected
+    assert saved["added"] == ["BBB"]
+    assert report["comparisons"] == []

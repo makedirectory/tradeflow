@@ -770,6 +770,96 @@ def validate_draft_scanner_code(code: str, class_name: Optional[str] = None) -> 
 DEFAULT_COST_STRESS_MULTIPLES = (1.0, 2.0, 3.0, 5.0)
 
 
+def run_scanner_drift(
+    data_client: MarketDataClient,
+    scanner: str,
+    symbols: List[str],
+    as_of: datetime,
+    *,
+    config: Optional[Dict[str, Any]] = None,
+    offsets_days: Sequence[int] = (-1, -2, -5),
+    saved_universe: Optional[Sequence[str]] = None,
+) -> Dict[str, Any]:
+    """How much the selected universe moves when the scan clock moves.
+
+    A universe that turns over 40% across one session is a different object from one
+    that is stable, and nothing said which you had. That matters more than it looks: a
+    validated config carries the universe its scanner *resolved*, so if the scan is
+    unstable the book you get on the day you deploy is not the book that was validated,
+    and no promotion gate would notice.
+
+    Needs no new machinery - `--as-of` already resolves a scanner at an arbitrary
+    historical clock, so this is that seam asked several times and differenced.
+
+    ``saved_universe`` compares against what a config recorded rather than against
+    another scan, which is the question a deployment actually has: *is the file still
+    describing today's universe?*
+    """
+    from tradeflow.scanners.symbol_scanner import resolve_scan_clock
+
+    run_id = new_run_id()
+    baseline = {symbol for symbol, _ in _scan_at(data_client, scanner, symbols, config, as_of)}
+
+    comparisons: List[Dict[str, Any]] = []
+    for offset in offsets_days:
+        when = as_of + timedelta(days=offset)
+        other = {symbol for symbol, _ in _scan_at(data_client, scanner, symbols, config, when)}
+        comparisons.append(
+            {
+                "offset_days": int(offset),
+                "as_of": resolve_scan_clock(when).isoformat(),
+                "size": len(other),
+                **_universe_overlap(baseline, other),
+            }
+        )
+
+    saved = None
+    if saved_universe is not None:
+        saved = {
+            "size": len(set(saved_universe)),
+            **_universe_overlap(set(saved_universe), baseline),
+        }
+
+    drifts = [c["turnover_pct"] for c in comparisons]
+    return {
+        "run_id": run_id,
+        "scanner": scanner,
+        "as_of": resolve_scan_clock(as_of).isoformat(),
+        "candidates": len(symbols),
+        "baseline_size": len(baseline),
+        "comparisons": comparisons,
+        "saved_vs_current": saved,
+        "max_turnover_pct": max(drifts) if drifts else 0.0,
+        "note": "Turnover is the share of the baseline universe that changes at each "
+        "clock. A config records the universe its scanner resolved, so drift is the "
+        "gap between the book that was validated and the one a deployment would get.",
+    }
+
+
+def _scan_at(data_client, scanner: str, symbols, config, when):
+    from tradeflow.scanners.symbol_scanner import SymbolScanner
+
+    return SymbolScanner(data_client, scanner, config).scan(list(symbols), as_of=when)
+
+
+def _universe_overlap(left: set, right: set) -> Dict[str, Any]:
+    """Symmetric difference between two universes, as counts and a turnover share.
+
+    Turnover is measured against ``left`` (the reference), so "40% turnover" reads as
+    "40% of the universe I am comparing from is not in the other one" rather than as an
+    unanchored symmetric statistic.
+    """
+    added, dropped = sorted(right - left), sorted(left - right)
+    reference = len(left)
+    turnover = float((len(added) + len(dropped)) / reference * 100.0) if reference else 0.0
+    return {
+        "overlap": len(left & right),
+        "added": added,
+        "dropped": dropped,
+        "turnover_pct": turnover,
+    }
+
+
 def run_cost_stress(
     data_client: MarketDataClient,
     strategy: str,

@@ -36,6 +36,33 @@ The bundled `volume` scanner flags a symbol when its latest bar shows **unusuall
 high volume** (relative to its moving average) **and** a meaningful price move. It
 is pure pandas/numpy — see [Scanners](../engineering/scanners) for the internals.
 
+## Is the universe stable?
+
+A config records the universe its scanner **resolved**, not the scanner. So if the scan
+moves, the book a deployment gets is not the book that was validated — and no promotion
+gate would notice, because the gates never see the scan twice.
+
+```bash
+uv run python main.py scan --scanner volume --drift --as-of 2026-08-22
+```
+
+```
+=== Scanner drift (61 flagged at 2026-08-22) ===
+       clock  flagged  overlap  turnover
+         -1d       59       57      6.6%
+         -2d       62       55     19.7%
+         -5d       48       40     47.5%
+  Universe turnover peaks at 47.5% across these clocks.
+```
+
+Turnover is measured against the baseline universe, so "47.5%" reads as *this share of
+the universe I am comparing from is not in the other one*. A selection that turns over
+half its names across a week is a different object from one that is stable, and which
+you have decides how much a single validated run tells you.
+
+This needs no new machinery: `--as-of` already resolves a scanner at an arbitrary
+historical clock, so drift is that seam asked several times and differenced.
+
 ## How it feeds the other commands
 
 `backtest`, `optimize`, `walkforward`, `research`, `cache warm` and `live` all accept
