@@ -60,6 +60,40 @@ cost and the gross final capital alongside. Pass `--gross` to disable the charge
 attribution — "how much did costs cost me?"), and tune `--commission-bps` / `--impact-eta`.
 High-turnover strategies degrade sharply once costs are on; that's the point.
 
+## Cost stress — where the edge dies
+
+A single cost assumption produces a single number, and no way to tell how much of the
+result was the assumption. `--cost-stress` re-runs the same config under scaled costs:
+
+```bash
+uv run python main.py backtest --strategy ma_crossover --symbols NVDA,META,TSLA \
+    --cost-stress
+```
+
+```
+=== Cost stress (all axis) ===
+    multiple    Sharpe    return          cost
+        1.0x      0.31     +1.47%        $  412
+        2.0x      0.26     +1.26%        $  824
+        3.0x      0.22     +1.06%        $1,236
+        5.0x      0.14     +0.66%        $2,060
+  Edge survives to 5x its assumed cost.
+```
+
+That is a different proposition from a config that reads `+0.05%` at 1x and turns
+negative at 2x — and both are "profitable at 1bp". The curve is the point: *where* an
+edge dies matters more than whether it clears at one assumed cost.
+
+`--cost-stress borrow` scales only the borrow rate. Worth asking separately because a
+long-short book is exposed to it differently — borrow is carry on inventory, so it
+grows with holding period rather than with turnover, and a long-only book is flat under
+it while the combined axis still bites.
+
+**Nothing is journaled.** Each point is one candidate under a stated assumption, not a
+new candidate; counting them would inflate the multiple-testing total the
+[deflated Sharpe](../engineering/evaluation-metrics.md) deflates against, punishing you
+for asking how robust your strategy is.
+
 ## Trial journaling
 
 Each run records one **trial** — the config it evaluated, on this universe and

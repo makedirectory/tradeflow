@@ -948,3 +948,67 @@ def test_valid_draft_source_is_still_accepted():
     """The other direction: the guards must not reject everything."""
     assert analysis.validate_draft_strategy_code(_VALID_CODE)["valid"] is True
     assert analysis.validate_draft_scanner_code(_VALID_SCANNER_CODE)["valid"] is True
+
+
+# --- cost stress --------------------------------------------------------------
+def _stress(strategy, n_symbols, **kwargs):
+    symbols = [f"S{i}" for i in range(n_symbols)]
+    client = MarketDataClient(FakeMarketData([*symbols, "SPY"], n=500, freq="1D"))
+    return analysis.run_cost_stress(
+        client, strategy, symbols, datetime(2024, 1, 2), datetime(2025, 3, 1), capital=100_000.0, **kwargs
+    )
+
+
+def test_the_stress_curve_separates_robust_from_barely_profitable():
+    """The whole point: both of these are "profitable at 1bp" and are not the same.
+
+    One survives five times its assumed cost. The other clears by a hair at its own
+    assumptions and is negative at twice them - which a single cost assumption reports
+    as a pass, with no way to tell how much of the result was the assumption.
+    """
+    robust = _stress("ma_crossover", 6)
+    fragile = _stress("ma_crossover", 12)
+
+    assert robust["survives_to_multiple"] > fragile["survives_to_multiple"]
+    assert fragile["points"][0]["total_return"] > 0  # profitable at its own cost
+    assert fragile["points"][1]["total_return"] < 0  # and not at twice it
+
+
+def test_cost_rises_with_the_multiple():
+    """The curve has to actually scale what it says it scales."""
+    report = _stress("ma_crossover", 6)
+    costs = [point["total_cost"] for point in report["points"]]
+
+    assert costs == sorted(costs)
+    assert costs[-1] > costs[0]
+
+
+def test_the_borrow_axis_isolates_borrow():
+    """Worth asking separately because it is carry on inventory rather than a toll on
+    turnover — so a long-only book, which borrows nothing, must be flat under it while
+    the combined axis still bites."""
+    borrow_only = _stress("ma_crossover", 6, axis="borrow")
+    everything = _stress("ma_crossover", 6, axis="all")
+
+    assert len({point["total_cost"] for point in borrow_only["points"]}) == 1
+    assert len({point["total_cost"] for point in everything["points"]}) > 1
+
+
+def test_a_stress_curve_journals_nothing(tmp_path):
+    """Each point is one candidate under a stated assumption, not a new candidate.
+
+    Journaling them would inflate the multiple-testing total that the deflated Sharpe
+    deflates against — the campaign would punish a user for asking how robust their
+    strategy was.
+    """
+    _stress("ma_crossover", 6)
+
+    assert _trials(tmp_path / "journal.jsonl") == []
+
+
+def test_journaling_is_on_unless_a_caller_opts_out():
+    """A run that quietly does not count is how a campaign loses track of what it
+    tried, so the opt-out must never be the default."""
+    import inspect
+
+    assert inspect.signature(analysis.run_backtest).parameters["journal"].default is True

@@ -193,6 +193,7 @@ def run_backtest(
     participation_cap: float = 0.10,
     borrow_bps: float = 50.0,
     force: bool = False,
+    journal: bool = True,
 ) -> Dict[str, Any]:
     """Backtest a strategy; return the full metrics dict + a path to the trades CSV.
 
@@ -238,17 +239,23 @@ def run_backtest(
         symbols, start, end, capital, benchmark=benchmark
     )
 
-    from tradeflow.services.audit import journal_trial
+    # `journal=False` exists for re-runs of a config that is already a candidate -
+    # a cost-stress curve is one candidate under several stated assumptions, and
+    # recording each point would inflate the multiple-testing total the deflated
+    # Sharpe deflates against. It must never be the default: a run that quietly does
+    # not count is how a campaign loses track of what it tried.
+    if journal:
+        from tradeflow.services.audit import journal_trial
 
-    journal_trial(
-        "backtest",
-        strategy=strategy,
-        symbols=symbols,
-        start=start,
-        end=end,
-        params=dedup_params,
-        metrics=result.metrics,
-    )
+        journal_trial(
+            "backtest",
+            strategy=strategy,
+            symbols=symbols,
+            start=start,
+            end=end,
+            params=dedup_params,
+            metrics=result.metrics,
+        )
 
     trades_csv = None
     if not result.trades.empty:
@@ -752,6 +759,103 @@ def validate_draft_scanner_code(code: str, class_name: Optional[str] = None) -> 
         "timeframe": getattr(cls, "TIMEFRAME", ""),
         "param_ranges": _jsonable(cls.PARAM_RANGES),
         "code_hash": draft_code_hash(code),
+    }
+
+
+#: Cost multiples the stress curve walks. 1x is the run's own assumptions, so the
+#: curve always contains its own baseline and the reader can see the slope rather than
+#: a single pass/fail. Points rather than one 3x check because *where* an edge dies is
+#: the useful part: a strategy that survives 5x and one that dies just past 1x are both
+#: "passes at 1x" and are not the same proposition.
+DEFAULT_COST_STRESS_MULTIPLES = (1.0, 2.0, 3.0, 5.0)
+
+
+def run_cost_stress(
+    data_client: MarketDataClient,
+    strategy: str,
+    symbols: List[str],
+    start: datetime,
+    end: datetime,
+    *,
+    config: Optional[Dict[str, Any]] = None,
+    capital: float = 100_000.0,
+    benchmark: str = "SPY",
+    commission_bps: float = 1.0,
+    impact_eta: float = 0.3,
+    participation_cap: float = 0.10,
+    borrow_bps: float = 50.0,
+    multiples: Sequence[float] = DEFAULT_COST_STRESS_MULTIPLES,
+    axis: str = "all",
+) -> Dict[str, Any]:
+    """Re-run one config under progressively worse cost assumptions.
+
+    An edge that clears its gates at 1bp and evaporates at 2bp is a different
+    proposition from one that survives five times its assumed cost, and nothing
+    distinguished them: a single cost assumption produces a single number, and the
+    reader cannot tell how much of the result was the assumption.
+
+    ``axis`` restricts what is scaled. ``"all"`` scales commission, impact and borrow
+    together. ``"borrow"`` scales only the borrow rate, which is worth asking
+    separately because a long-short book's exposure to it is qualitatively different
+    from its exposure to commission - it is a carry on inventory rather than a toll on
+    turnover, so it grows with holding period rather than with trading.
+
+    Read-only research clock: re-runs a backtest per point and reports the curve.
+    Journals nothing - these are the same config under stated assumptions, not new
+    candidates, and recording them as trials would inflate the multiple-testing count
+    that the deflated Sharpe deflates against.
+    """
+    run_id = new_run_id()
+    points: List[Dict[str, Any]] = []
+    for multiple in multiples:
+        scale_turnover = multiple if axis in ("all", "turnover") else 1.0
+        scale_borrow = multiple if axis in ("all", "borrow") else 1.0
+        result = run_backtest(
+            data_client,
+            strategy,
+            symbols,
+            start,
+            end,
+            config=config,
+            capital=capital,
+            benchmark=benchmark,
+            commission_bps=commission_bps * scale_turnover,
+            impact_eta=impact_eta * scale_turnover,
+            participation_cap=participation_cap,
+            borrow_bps=borrow_bps * scale_borrow,
+            journal=False,
+            force=True,
+        )
+        metrics = result.get("metrics") or {}
+        points.append(
+            {
+                "multiple": float(multiple),
+                "sharpe_ratio": metrics.get("sharpe_ratio", 0.0),
+                "total_return": metrics.get("total_return", 0.0),
+                "total_cost": result.get("total_cost", 0.0),
+                "executability": result.get("executability", {}),
+            }
+        )
+
+    survives = [p["multiple"] for p in points if p["sharpe_ratio"] > 0 and p["total_return"] > 0]
+    return {
+        "run_id": run_id,
+        "strategy": strategy,
+        "axis": axis,
+        "window": {"start": start.isoformat(), "end": end.isoformat()},
+        "base_cost": {
+            "commission_bps": commission_bps,
+            "impact_eta": impact_eta,
+            "borrow_bps": borrow_bps,
+        },
+        "points": points,
+        # The headline: the largest multiple of its own assumed cost the edge survives.
+        # 0.0 means it does not survive its own assumptions, which is worth saying
+        # plainly rather than leaving to be read off a table.
+        "survives_to_multiple": max(survives) if survives else 0.0,
+        "note": "Each point re-runs the same config under scaled cost assumptions. "
+        "Nothing is journaled: these are one candidate under stated assumptions, not "
+        "new candidates, and counting them would inflate the multiple-testing total.",
     }
 
 

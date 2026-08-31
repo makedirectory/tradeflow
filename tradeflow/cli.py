@@ -466,6 +466,8 @@ def cmd_backtest(args) -> None:
     log_backtest_report(
         result.metrics, result.initial_capital, result.final_capital, execution=result.execution
     )
+    if getattr(args, "cost_stress", False):
+        _print_cost_stress(data_client, strategy_name, universe, args, tuned)
     if not args.gross and result.total_cost:
         print(
             f"Transaction cost: ${result.total_cost:,.2f} "
@@ -2004,6 +2006,45 @@ def _print_policy_ab(data_client, args) -> None:
     )
 
 
+def _print_cost_stress(data_client, strategy_name: str, universe, args, tuned) -> None:
+    """Re-run this config under worse cost assumptions and show where the edge dies.
+
+    A single cost assumption produces a single number and no way to tell how much of
+    the result was the assumption. The curve separates a strategy that survives five
+    times its assumed cost from one that clears by a hair at 1x - both of which are
+    "profitable at 1bp" and are not the same proposition.
+    """
+    from tradeflow.services.analysis import run_cost_stress
+
+    report = run_cost_stress(
+        data_client,
+        strategy_name,
+        universe,
+        args.start,
+        args.end,
+        config=tuned or None,
+        capital=args.capital,
+        benchmark=args.benchmark,
+        commission_bps=args.commission_bps,
+        impact_eta=args.impact_eta,
+        borrow_bps=args.borrow_bps,
+        axis=args.cost_stress,
+    )
+    print(f"\n=== Cost stress ({report['axis']} axis) ===")
+    print(f"  {'multiple':>10}{'Sharpe':>10}{'return':>10}{'cost':>14}")
+    for point in report["points"]:
+        print(
+            f"  {point['multiple']:>9.1f}x{point['sharpe_ratio']:>10.2f}"
+            f"{point['total_return']:>9.2f}%${point['total_cost']:>12,.0f}"
+        )
+    survives = report["survives_to_multiple"]
+    if survives:
+        print(f"  Edge survives to {survives:.0f}x its assumed cost.")
+    else:
+        print("  Edge does not survive its own cost assumptions.")
+    print("  Nothing journaled: one candidate under stated assumptions, not new candidates.")
+
+
 def _print_attribution(r, strategy: str, start, end) -> None:
     """Render a ``compute_attribution`` report: per-row mean/IR/t/share-of-variance,
     honest cumulation, and the skill-vs-luck verdict."""
@@ -3115,6 +3156,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bt.add_argument("--benchmark", default="SPY", help="Benchmark symbol for beta")
     _add_cost_flags(bt)
+    bt.add_argument(
+        "--cost-stress",
+        dest="cost_stress",
+        nargs="?",
+        const="all",
+        default=None,
+        choices=["all", "turnover", "borrow"],
+        help="Re-run under scaled cost assumptions and show where the edge dies. "
+        "'borrow' scales only the borrow rate, which a long-short book is exposed to "
+        "differently: it is carry on inventory, not a toll on turnover.",
+    )
     _add_cache_flags(bt)
     bt.add_argument(
         "--chart",
