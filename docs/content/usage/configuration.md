@@ -55,7 +55,7 @@ base class recognizes:
 |---|---|
 | `risk_per_trade` | Fraction of capital risked per trade |
 | `stop_loss` / `take_profit` | Fractional distances from entry price |
-| `position_limits` | Portfolio limits the [engine](../engineering/engine.md) enforces across the book: `max_positions` (open positions), `max_position_size` (notional per position, in dollars), `max_total_risk` (risk budget as a fraction of equity), `max_gross_exposure` (deployed notional as a fraction of equity; unset by default), `min_notional` (dollar floor below which an order would be refused by a venue; unset by default). See [what `max_total_risk` caps](#what-max_total_risk-caps) and [execution at small capital](#execution-at-small-capital). |
+| `position_limits` | Portfolio limits the [engine](../engineering/engine.md) enforces across the book: `max_positions` (open positions), `max_position_size` (notional per position, in dollars), `max_total_risk` (risk budget as a fraction of equity), `max_gross_exposure` (deployed notional as a fraction of equity; unset by default), `min_notional` (dollar floor below which an order would be refused by a venue; unset by default). See [what `max_total_risk` caps](#what-max_total_risk-caps) and [execution and cost](#execution-and-cost). |
 | `reaffirm_entries` | Live only. Open a position the score implies even when its entry edge was missed — a rejected bar, a dropped stream, a restart, or a crossing inside the warm-up history. Default `true`, so a strategy started mid-trend takes the position rather than waiting for the next crossing. `--no-reaffirm-entries` on `live` turns it off. Exits are never gated by it. |
 
 ## What `max_total_risk` caps
@@ -100,7 +100,7 @@ counts differ). `Strategy.calculate_position_size` also clamps a *single* positi
 against `max_total_risk`, because sizing has no view of the open book; that clamp
 asks only whether one position could exhaust the whole budget.
 
-## Execution at small capital
+## Execution and cost
 
 Sizes are floored to whole shares, on both clocks. That is invisible at $100,000 and
 material at $4,000: the same config can lose a fraction of a percent of its intended
@@ -110,18 +110,25 @@ equity curve was right while the reason for it was unexplained.
 Every backtest now reports the gap when there is one:
 
 ```
---- Execution at this capital (!) ---
+--- Execution & cost (!) ---
 Intended notional           $34,583.55
 Filled notional             $32,721.56
   [PASS] rounding_drag         5.38% vs 10.00%
   [FAIL] unfillable_entries    8.51% vs 5.00%
+  [PASS] cost_share_of_gross  12.40% vs 40.00%
   entries never opened      4 (4 rounded to zero, 0 below min notional)
 ```
 
-Two numbers, because they are two different problems. **Rounding drag** is the
+Separate numbers, because they are separate problems. **Rounding drag** is the
 intended notional that whole-share rounding removed — every name opens, slightly
 smaller. **Unfillable entries** are positions that never opened at all, which is a
 different book rather than a smaller one.
+
+**Cost is measured against gross profit, not capital.** The same dollar cost is
+unremarkable against a large gross return and fatal against a small one, and the two
+denominators disagree most exactly when the answer matters. When a run made no gross
+profit the check is skipped rather than reported: there was no edge for cost to eat, and
+a ratio against a non-positive denominator would be arithmetic rather than a fact.
 
 `min_notional` adds a venue's own floor: an order below it would be refused, so filling
 it in a backtest validates a book that could not be traded. It is unset by default, so

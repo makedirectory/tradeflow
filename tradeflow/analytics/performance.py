@@ -103,6 +103,7 @@ FLAG_KEYS = ("benchmark_available", "low_sample", "treynor_available")
 DEFAULT_EXECUTION_LIMITS: Dict[str, float] = {
     "max_rounding_drag_pct": 10.0,  # executed notional this far below intended
     "max_unfillable_pct": 5.0,  # this share of intended entries never opened
+    "max_cost_share_of_gross_pct": 40.0,  # transaction cost as a share of gross profit
 }
 
 
@@ -142,6 +143,20 @@ def execution_verdict(
         "passed": unfillable <= limit["max_unfillable_pct"],
         "note": "this share of intended entries could not be opened at all",
     }
+    # Against *gross profit*, not capital: the same cost is unremarkable against a
+    # large gross return and fatal against a small one, and the two denominators
+    # disagree most exactly when the answer matters. Skipped rather than guessed when
+    # the strategy did not make money gross - there is no edge for cost to eat, and a
+    # ratio against a non-positive denominator would be arithmetic rather than a fact.
+    gross_profit = float(execution.get("gross_profit", 0.0))
+    if gross_profit > 0:
+        cost_share = float(execution.get("total_cost", 0.0)) / gross_profit * 100.0
+        checks["cost_share_of_gross"] = {
+            "value": cost_share,
+            "threshold": limit["max_cost_share_of_gross_pct"],
+            "passed": cost_share <= limit["max_cost_share_of_gross_pct"],
+            "note": "transaction cost ate this share of the gross profit",
+        }
     failed = [name for name, check in checks.items() if not check["passed"]]
     return {
         "executable": not failed,

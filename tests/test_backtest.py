@@ -642,10 +642,10 @@ def test_the_report_shows_the_gap_and_names_the_failing_check():
     result = _small_account_run(500.0)
     rendered = format_backtest_report(result.metrics, 500.0, result.final_capital, execution=result.execution)
 
-    assert "Execution at this capital" in rendered
+    assert "Execution & cost" in rendered
     assert "Intended notional" in rendered and "Filled notional" in rendered
     assert "FAIL" in rendered and "rounding_drag" in rendered
-    assert "not the one that was validated" in rendered
+    assert "Not the book that was validated" in rendered
 
 
 def test_a_healthy_run_does_not_grow_an_execution_section():
@@ -655,4 +655,50 @@ def test_a_healthy_run_does_not_grow_an_execution_section():
     result = _small_account_run(100_000.0)
     rendered = format_backtest_report(result.metrics, 100_000.0, result.final_capital, execution=None)
 
-    assert "Execution at this capital" not in rendered
+    assert "Execution & cost" not in rendered
+
+
+def test_cost_is_judged_against_gross_profit_not_capital():
+    """The honest denominator, and the one the two disagree about.
+
+    The same dollar cost is unremarkable against a large gross return and fatal against
+    a small one. Measuring against capital would call a strategy that spent its entire
+    edge on commission "3% of capital in cost" and pass it.
+    """
+    from tests.fakes import FakeMarketData
+    from tradeflow.analytics.performance import execution_verdict
+    from tradeflow.costs.parametric import ParametricCostModel
+    from tradeflow.services.registry import STRATEGIES
+
+    symbols = [f"S{i}" for i in range(8)]
+    client = MarketDataClient(FakeMarketData(symbols, n=300, freq="1D"))
+
+    def share(bps):
+        strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+        strategy.config["position_limits"] = {
+            **strategy.position_limits(),
+            "max_positions": 8,
+            "max_position_size": 50_000.0,
+        }
+        result = BacktestEngine(strategy, client, cost_model=ParametricCostModel(commission_bps=bps)).run(
+            symbols, datetime(2024, 1, 2), datetime(2024, 12, 1), 100_000.0
+        )
+        return execution_verdict(result.execution)["checks"]["cost_share_of_gross"]
+
+    cheap, dear = share(1.0), share(60.0)
+
+    assert cheap["value"] < dear["value"]
+    assert not dear["passed"]
+
+
+def test_no_gross_profit_means_no_cost_ratio_rather_than_a_guessed_one():
+    """A ratio against a non-positive denominator is arithmetic, not a fact: there was
+    no edge for cost to eat, and reporting a number would imply there was."""
+    from tradeflow.analytics.performance import execution_verdict
+
+    verdict = execution_verdict(
+        {"positions_filled": 3, "gross_profit": -50.0, "total_cost": 20.0, "rounding_drag_pct": 0.0}
+    )
+
+    assert "cost_share_of_gross" not in verdict["checks"]
+    assert verdict["executable"] is True  # the checks that *could* run all passed

@@ -105,7 +105,7 @@ def _execution_lines(execution: Optional[Dict[str, Any]]) -> List[str]:
     mark = "(!)" if not verdict["executable"] else "(i)"
     lines = [
         "",
-        f"--- Execution at this capital {mark} ---",
+        f"--- Execution & cost {mark} ---",
         f"{'Intended notional':28}${execution.get('requested_notional', 0.0):,.2f}",
         f"{'Filled notional':28}${execution.get('filled_notional', 0.0):,.2f}",
     ]
@@ -120,7 +120,7 @@ def _execution_lines(execution: Optional[Dict[str, Any]]) -> List[str]:
             f"{execution.get('positions_below_min_notional', 0)} below min notional)"
         )
     if not verdict["executable"]:
-        lines.append("  This book is not the one that was validated: raise capital, or widen min_notional.")
+        lines.append("  Not the book that was validated - see the failing check above.")
     return lines
 
 

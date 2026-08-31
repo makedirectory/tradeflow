@@ -364,6 +364,11 @@ class BacktestEngine:
         net_pnl = trades_df["pnl"].sum() if not trades_df.empty else 0.0
         total_cost = float(trades_df["cost"].sum()) if "cost" in trades_df else 0.0
         final_capital = initial_capital + net_pnl
+        # Cost belongs beside the fill diagnostics: both answer "what did executing
+        # this actually take out of the book". Gross profit is the honest denominator -
+        # 3% of capital in cost is fine against 40% gross and fatal against 4%.
+        execution["total_cost"] = total_cost
+        execution["gross_profit"] = float(net_pnl + total_cost)
         metrics = performance.compute_backtest_metrics(
             trades_df,
             equity_curve,
