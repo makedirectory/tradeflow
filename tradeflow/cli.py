@@ -508,7 +508,11 @@ def cmd_backtest(args) -> None:
         )
 
     log_backtest_report(
-        result.metrics, result.initial_capital, result.final_capital, execution=result.execution
+        result.metrics,
+        result.initial_capital,
+        result.final_capital,
+        execution=result.execution,
+        legs=result.legs,
     )
     _print_verdicts_for_backtest(result)
     if getattr(args, "cost_stress", False):

@@ -196,6 +196,72 @@ class _Book:
         return self.cash + self.market_value()
 
 
+def _leg_report(leg_curves, trades, initial_capital: float) -> Dict[str, Any]:
+    """What each side of a long/short book actually did, separately.
+
+    A near-zero net beta is the headline of any market-neutral result, and it has two
+    completely different causes: genuinely small exposure on both sides, or a large long
+    beta cancelling a large short one. Those are the same number and opposite risks, and
+    nothing in a net-level report tells them apart.
+
+    Curves are realized-plus-unrealized per side, sampled on the equity curve's own
+    steps, so the per-leg volatility, drawdown and beta describe the position as it was
+    held rather than only as it was closed.
+
+    Diagnostic only: no threshold, no verdict. Make the risk visible first and decide
+    afterwards whether any of it deserves to gate something.
+    """
+    report: Dict[str, Any] = {}
+    trades_df = pd.DataFrame(trades) if trades else pd.DataFrame()
+    for side, curve in leg_curves.items():
+        name = "long" if side == signals.BUY else "short"
+        if trades_df.empty or "side" not in trades_df:
+            leg_trades = pd.DataFrame()
+        else:
+            leg_trades = trades_df[trades_df["side"] == side]
+        if len(curve) < 2 and leg_trades.empty:
+            continue
+        # As a fraction of capital, so the two legs are on one scale and the pair adds
+        # up to something a reader can check against the headline return.
+        series = pd.Series(curve, dtype="float64") / initial_capital if initial_capital else pd.Series(curve)
+        report[name] = {
+            "pnl": float(leg_trades["pnl"].sum()) if not leg_trades.empty else 0.0,
+            "return_pct": float(series.iloc[-1] * 100.0),
+            "volatility_pct": float(series.diff().std() * 100.0),
+            "max_drawdown_pct": float(abs(m.max_drawdown(list(1.0 + series))) * 100.0),
+            "trades": int(len(leg_trades)),
+            "cost": float(leg_trades["cost"].sum()) if "cost" in leg_trades else 0.0,
+            "_returns": series.diff().dropna(),  # for beta, dropped before serialization
+        }
+    return report
+
+
+def _leg_betas(legs: Dict[str, Any], benchmark_returns) -> None:
+    """Add each leg's beta against the benchmark, in place.
+
+    Separate from :func:`_leg_report` because the benchmark is aligned later - and
+    because a leg beta is exactly the number that distinguishes "no exposure" from
+    "two exposures cancelling", so it is worth its own step rather than a side effect.
+    """
+    for leg in legs.values():
+        leg_returns = leg.pop("_returns", None)
+        if benchmark_returns is None or leg_returns is None or len(leg_returns) < 2:
+            leg["beta"] = None
+            leg["benchmark_correlation"] = None
+            continue
+        paired = pd.concat(
+            [pd.Series(leg_returns.to_numpy()), pd.Series(pd.Series(benchmark_returns).to_numpy())],
+            axis=1,
+            keys=["leg", "bench"],
+        ).dropna()
+        if len(paired) < 2 or paired["bench"].std() == 0 or paired["leg"].std() == 0:
+            leg["beta"] = None
+            leg["benchmark_correlation"] = None
+            continue
+        leg["beta"] = float(paired["leg"].cov(paired["bench"]) / paired["bench"].var())
+        leg["benchmark_correlation"] = float(paired["leg"].corr(paired["bench"]))
+
+
 def _benchmark_returns(closes, equity_times) -> Optional[pd.Series]:
     """Benchmark returns sampled at the equity curve's own instants.
 
@@ -235,6 +301,9 @@ class BacktestResult:
     gross_final_capital: float = 0.0  # final capital before cost (for the haircut attribution)
     #: What the sizer asked for versus what was actually tradeable - see :class:`_Execution`.
     execution: Dict[str, Any] = field(default_factory=dict)
+    #: Per-side realized performance for a long/short book - see :func:`_leg_report`.
+    #: Empty for a long-only run, which has nothing to decompose.
+    legs: Dict[str, Any] = field(default_factory=dict)
     #: The benchmark returns this run scored against, already aligned positionally to
     #: ``equity_curve``. Exposed so a caller that recomputes metrics on *this* curve
     #: (the walk-forward does, to fold in its own trial counts) can reuse the alignment
@@ -359,7 +428,7 @@ class BacktestEngine:
         # A merged-timeline step is the unit for *both* carry accrual and the equity
         # curve, so both have to annualize on the merged timeline's own rate.
         self._step_periods_per_year = self._step_rate(panels, master)
-        all_trades, equity_curve, equity_times, execution = self._replay(
+        all_trades, equity_curve, equity_times, execution, legs = self._replay(
             panels, master, initial_capital, trade_from
         )
 
@@ -368,6 +437,7 @@ class BacktestEngine:
             trades_df = trades_df.sort_values("exit_time").reset_index(drop=True)
 
         aligned_benchmark = _benchmark_returns(benchmark_closes, equity_times)
+        _leg_betas(legs, aligned_benchmark)
         net_pnl = trades_df["pnl"].sum() if not trades_df.empty else 0.0
         total_cost = float(trades_df["cost"].sum()) if "cost" in trades_df else 0.0
         final_capital = initial_capital + net_pnl
@@ -410,6 +480,7 @@ class BacktestEngine:
             gross_final_capital=final_capital + total_cost,
             execution=execution,
             benchmark_returns=aligned_benchmark,
+            legs=legs,
         )
 
     # ------------------------------------------------------------------ #
@@ -533,8 +604,20 @@ class BacktestEngine:
         # can only be computed if something remembers which instants those floats
         # belong to - and nothing did.
         equity_times: List[Any] = [None]
+        # Realized-plus-unrealized P&L per side, sampled on the same steps as the equity
+        # curve. Built here rather than from the trade list because a curve
+        # reconstructed from closed trades only sees P&L at exit - which is precisely
+        # what volatility, drawdown and beta are most distorted by.
+        realized_by_side: Dict[str, float] = {signals.BUY: 0.0, signals.SELL: 0.0}
+        leg_curves: Dict[str, List[float]] = {signals.BUY: [0.0], signals.SELL: [0.0]}
         if not panels:
-            return trades, equity_curve, equity_times, book.execution.as_dict()
+            return (
+                trades,
+                equity_curve,
+                equity_times,
+                book.execution.as_dict(),
+                _leg_report(leg_curves, trades, initial_capital),
+            )
 
         cutoff = _align_tz(trade_from, master) if trade_from is not None else None
         limits = self.strategy.position_limits()
@@ -582,6 +665,7 @@ class BacktestEngine:
                 )
                 if closed is not None:
                     trades.append(closed)
+                    realized_by_side[pos["side"]] += closed["pnl"]
                     book.cash += pos["notional"] + closed["gross_pnl"] - exit_cost
                     del book.positions[symbol]
 
@@ -632,6 +716,14 @@ class BacktestEngine:
             if trading:
                 equity_curve.append(book.equity())
                 equity_times.append(master[k])
+                unrealized = {signals.BUY: 0.0, signals.SELL: 0.0}
+                for pos in book.positions.values():
+                    direction = 1 if pos["side"] == signals.BUY else -1
+                    unrealized[pos["side"]] += (
+                        (pos["last_price"] - pos["entry_price"]) * pos["size"] * direction
+                    )
+                for side, curve in leg_curves.items():
+                    curve.append(realized_by_side[side] + unrealized[side])
 
         # Force-close whatever is still open, each at its own last bar.
         for symbol in order:
@@ -650,7 +742,13 @@ class BacktestEngine:
         if len(equity_curve) > 1:
             equity_curve[-1] = book.equity()
 
-        return trades, equity_curve, equity_times, book.execution.as_dict()
+        return (
+            trades,
+            equity_curve,
+            equity_times,
+            book.execution.as_dict(),
+            _leg_report(leg_curves, trades, initial_capital),
+        )
 
     def _trade_cost(self, symbol, shares, price, adv, vol, i) -> float:
         """Dollar cost of trading ``shares`` at bar ``i`` (0 when no cost model)."""

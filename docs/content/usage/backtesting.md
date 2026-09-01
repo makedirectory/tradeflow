@@ -82,6 +82,37 @@ cost and the gross final capital alongside. Pass `--gross` to disable the charge
 attribution — "how much did costs cost me?"), and tune `--commission-bps` / `--impact-eta`.
 High-turnover strategies degrade sharply once costs are on; that's the point.
 
+## Long/short legs
+
+When a run trades both sides, each leg is reported separately:
+
+```
+--- Legs (diagnostic; no thresholds) ---
+  leg       return     vol   max DD    beta   corr  trades       cost
+  long     +18.00%  0.310%    9.40%   0.920   0.88      54      1,200
+  short    -11.00%  0.290%   12.10%  -0.890  -0.85      61      3,400
+  Both legs carry real market exposure - a small net beta here is two exposures
+  cancelling, not an absence of them.
+```
+
+**A near-zero net beta has two completely different causes** — genuinely small exposure
+on both sides, or a large long beta cancelling a large short one. They are the same
+number and opposite risks, and no net-level figure can tell them apart. The example
+above nets to a beta of 0.03 while each leg carries close to a full unit of market
+exposure.
+
+The columns answer the questions a headline cannot: whether both legs make money or one
+subsidises the other, whether drawdown comes from one side, and what the short side
+costs to carry.
+
+Leg curves are **marked, not realized**: they follow the book as held rather than
+recording P&L at exit, because a position held through a large excursion and closed
+flat would otherwise look as though it never moved — and volatility, drawdown and beta
+are exactly the figures that distortion ruins.
+
+This is diagnostic. There are no thresholds and it gates nothing; the point is to make
+the risk visible before deciding whether any of it deserves to become a prerequisite.
+
 ## Cost stress — where the edge dies
 
 A single cost assumption produces a single number, and no way to tell how much of the

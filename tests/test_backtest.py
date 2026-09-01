@@ -826,3 +826,142 @@ def test_the_undeflated_number_itself_is_unchanged():
     assert deflated_sharpe_ratio(returns, 1) == pytest.approx(probabilistic_sharpe_ratio(returns))
     # And a real campaign count still deflates, hard.
     assert deflated_sharpe_ratio(returns, 50) < deflated_sharpe_ratio(returns, 1)
+
+
+# --- long/short legs, separately -----------------------------------------------
+def _tracking_feed(n=120):
+    """One symbol that tracks the benchmark exactly, so a leg beta's *sign* is
+    determinate rather than noise. Independent random walks would give both legs a beta
+    near zero and prove nothing about direction."""
+    import numpy as np
+
+    from tests.fakes import DictMarketData
+    from tradeflow.utils.timeutils import NEW_YORK
+
+    index = pd.date_range("2024-01-02", periods=n, freq="D", tz=NEW_YORK)
+    close = 100.0 * np.exp(np.cumsum(np.random.default_rng(3).normal(0, 0.01, n)))
+    frame = pd.DataFrame(
+        {
+            "open": close,
+            "high": close * 1.001,
+            "low": close * 0.999,
+            "close": close,
+            "volume": np.full(n, 1e6),
+        },
+        index=index,
+    )
+    return MarketDataClient(DictMarketData({"AAA": frame.copy(), "SPY": frame.copy()})), n
+
+
+def _one_sided_run(signal, n):
+    strategy = ScriptedStrategy(
+        [signal] + ["HOLD"] * (n - 2) + ["CLOSE_" + signal],
+        overrides={
+            "stop_loss": 0.9,
+            "take_profit": 0.9,
+            "position_limits": {"max_positions": 1, "max_position_size": 50_000.0, "max_total_risk": 1.0},
+        },
+    )
+    client, _ = _tracking_feed(n)
+    return BacktestEngine(strategy, client).run(
+        ["AAA"], datetime(2024, 1, 2), datetime(2024, 5, 1), 100_000.0, benchmark="SPY"
+    )
+
+
+def test_leg_betas_carry_the_sign_of_the_side():
+    """The number the whole diagnostic turns on.
+
+    A near-zero net beta is either genuinely small exposure on both sides or a large
+    long beta cancelling a large short one - the same figure and opposite risks. Only a
+    *signed* per-leg beta separates them, so the sign is asserted against a symbol that
+    tracks the benchmark exactly rather than against noise.
+    """
+    n = 120
+    long_beta = _one_sided_run("BUY", n).legs["long"]["beta"]
+    short_beta = _one_sided_run("SELL", n).legs["short"]["beta"]
+
+    assert long_beta > 0.3
+    assert short_beta < -0.3
+    assert long_beta == pytest.approx(-short_beta, rel=1e-6)  # same exposure, opposite sign
+
+
+def test_leg_curves_are_marked_not_only_realized():
+    """Built from the book as held, not reconstructed from closed trades.
+
+    A curve that only sees P&L at exit is exactly the one whose volatility, drawdown
+    and beta are most distorted - a position held through a large excursion and closed
+    flat would look like it never moved.
+    """
+    result = _one_sided_run("BUY", 120)
+    leg = result.legs["long"]
+
+    assert leg["trades"] == 1  # a single position, opened once and closed once
+    assert leg["volatility_pct"] > 0  # yet it has a volatility, because it was marked
+    assert leg["max_drawdown_pct"] > 0
+
+
+def test_a_long_only_run_has_nothing_to_decompose():
+    """The block is shown only when both sides traded: a table with an empty short row
+    is noise, and noise teaches readers to skip the block that matters."""
+    from tradeflow.analytics.reporting import format_backtest_report
+
+    result = _one_sided_run("BUY", 120)
+    rendered = format_backtest_report(result.metrics, 100_000.0, result.final_capital, legs=result.legs)
+
+    assert result.legs["short"]["trades"] == 0
+    assert "--- Legs" not in rendered
+
+
+def test_two_cancelling_legs_are_called_out():
+    """+0.92 and -0.89 netting to 0.03 is the case this exists for, and the report says
+    so rather than leaving a reader to compare two columns."""
+    from tradeflow.analytics.reporting import format_backtest_report
+
+    legs = {
+        "long": {
+            "return_pct": 18.0,
+            "volatility_pct": 0.31,
+            "max_drawdown_pct": 9.4,
+            "beta": 0.92,
+            "benchmark_correlation": 0.88,
+            "trades": 54,
+            "cost": 1200.0,
+        },
+        "short": {
+            "return_pct": -11.0,
+            "volatility_pct": 0.29,
+            "max_drawdown_pct": 12.1,
+            "beta": -0.89,
+            "benchmark_correlation": -0.85,
+            "trades": 61,
+            "cost": 3400.0,
+        },
+    }
+    rendered = format_backtest_report({"beta": 0.03}, 100_000.0, 107_000.0, legs=legs)
+
+    assert "two exposures cancelling" in rendered
+    assert "+18.00%" in rendered and "-11.00%" in rendered  # one leg subsidising the other
+    assert "3,400" in rendered  # and what the short side cost to carry
+
+
+def test_genuinely_neutral_legs_are_not_called_out():
+    """The other direction. A warning that fires on every long/short book is one nobody
+    reads."""
+    from tradeflow.analytics.reporting import format_backtest_report
+
+    legs = {
+        name: {
+            "return_pct": 1.0,
+            "volatility_pct": 0.1,
+            "max_drawdown_pct": 1.0,
+            "beta": sign * 0.04,
+            "benchmark_correlation": sign * 0.05,
+            "trades": 10,
+            "cost": 0.0,
+        }
+        for name, sign in (("long", 1), ("short", -1))
+    }
+    rendered = format_backtest_report({"beta": 0.0}, 100_000.0, 101_000.0, legs=legs)
+
+    assert "--- Legs" in rendered
+    assert "two exposures cancelling" not in rendered

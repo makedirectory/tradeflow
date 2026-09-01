@@ -124,6 +124,43 @@ def _execution_lines(execution: Optional[Dict[str, Any]]) -> List[str]:
     return lines
 
 
+def _leg_lines(legs: Optional[Dict[str, Any]]) -> List[str]:
+    """Each side of a long/short book, separately.
+
+    Shown only when both sides actually traded: a long-only run has nothing to
+    decompose, and a table with an empty short row is noise that teaches readers to
+    skip the block.
+
+    The question it exists to answer is what a net figure structurally cannot: a
+    near-zero net beta is either genuinely small exposure on both sides, or a large
+    long beta cancelling a large short one. Same number, opposite risk.
+    """
+    if not legs or not all(legs.get(side, {}).get("trades") for side in ("long", "short")):
+        return []
+    lines = [
+        "",
+        "--- Legs (diagnostic; no thresholds) ---",
+        f"  {'leg':7}{'return':>9}{'vol':>8}{'max DD':>9}{'beta':>8}{'corr':>7}{'trades':>8}{'cost':>11}",
+    ]
+    for name in ("long", "short"):
+        leg = legs[name]
+        beta, corr = leg.get("beta"), leg.get("benchmark_correlation")
+        lines.append(
+            f"  {name:7}{leg['return_pct']:>+8.2f}%{leg['volatility_pct']:>7.3f}%"
+            f"{leg['max_drawdown_pct']:>8.2f}%"
+            f"{'n/a' if beta is None else format(beta, '.3f'):>8}"
+            f"{'n/a' if corr is None else format(corr, '.2f'):>7}"
+            f"{leg['trades']:>8}{leg['cost']:>11,.0f}"
+        )
+    betas = [legs[name].get("beta") for name in ("long", "short")]
+    if all(b is not None for b in betas) and min(abs(b) for b in betas) > 0.3:
+        lines.append(
+            "  Both legs carry real market exposure - a small net beta here is two "
+            "exposures cancelling, not an absence of them."
+        )
+    return lines
+
+
 def format_verdicts(
     *,
     statistical: Optional[Dict[str, Any]] = None,
@@ -167,6 +204,7 @@ def format_backtest_report(
     final_capital: float,
     title: str = "Backtest Results",
     execution: Optional[Dict[str, Any]] = None,
+    legs: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Render metrics as an aligned, fixed-width text block, grouped by section."""
     lines = [f"=== {title} ===", f"{'Capital':28}${initial_capital:,.2f} -> ${final_capital:,.2f}"]
@@ -181,6 +219,7 @@ def format_backtest_report(
             f"meaningful for a book with no market exposure)"
         )
     lines.extend(_execution_lines(execution))
+    lines.extend(_leg_lines(legs))
     undeflated = not metrics.get("deflation_applied", True)
     for section, rows in _SECTIONS:
         section_lines = []
@@ -204,6 +243,7 @@ def log_backtest_report(
     initial_capital: float,
     final_capital: float,
     execution: Optional[Dict[str, Any]] = None,
+    legs: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Log the rendered report at INFO."""
     logger.info("\n%s", format_backtest_report(metrics, initial_capital, final_capital, execution=execution))
