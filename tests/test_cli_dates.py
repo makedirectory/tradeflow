@@ -145,3 +145,87 @@ def test_an_offline_scan_says_its_universe_is_only_as_current_as_the_cache(monke
     # becomes noise that means nothing.
     cli.cmd_scan(build_parser().parse_args(["scan", "--symbols", "AAA"]))
     assert "OFFLINE" not in capsys.readouterr().out
+
+
+# --- surface drift across commands ---------------------------------------------
+#: Options that are layered, not per-command: they mean the same thing everywhere they
+#: appear, so a command offering one and not reading it - or a second definition
+#: drifting from the first - is a defect rather than a design choice.
+_LAYERED_OPTIONS = {
+    "--config": ("backtest", "live", "verdict", "info", "alphas", "horizon", "allocate", "risk"),
+    "--re-resolve-universe": ("backtest", "live", "verdict", "info", "alphas", "horizon", "allocate", "risk"),
+    "--cache": (
+        "scan",
+        "alphas",
+        "risk",
+        "horizon",
+        "allocate",
+        "info",
+        "backtest",
+        "optimize",
+        "walkforward",
+        "verdict",
+    ),
+    "--offline": (
+        "scan",
+        "alphas",
+        "risk",
+        "horizon",
+        "allocate",
+        "info",
+        "backtest",
+        "optimize",
+        "walkforward",
+        "verdict",
+    ),
+}
+
+
+@pytest.mark.parametrize("option,expected", sorted(_LAYERED_OPTIONS.items()))
+def test_a_layered_option_reaches_every_command_that_should_have_it(option, expected):
+    """Four separate instances of the same drift in two months.
+
+    `--cache`/`--offline` reached three commands and not five read-only ones;
+    `--config` reached two and not six; `--benchmark` reached `backtest` and not
+    `walkforward`; and `--re-resolve-universe` reached six and missed the two the
+    defect was reported against. Each was found by a user crossing two commands that
+    should have agreed.
+    """
+    subparsers = build_parser()._subparsers._group_actions[0].choices
+    missing = [
+        command
+        for command in expected
+        if option not in {opt for action in subparsers[command]._actions for opt in action.option_strings}
+    ]
+
+    assert not missing, f"{option} missing from {missing}"
+
+
+def test_a_layered_option_has_exactly_one_definition():
+    """The fourth instance was not a missing call - it was a *second definition*.
+
+    `--config` was declared twice and the two drifted, so flags added to the newer one
+    reached six commands and silently missed the two that used the older. Coverage
+    alone cannot catch that: both definitions produce a flag, so every command looks
+    served right up until the two disagree about what it does.
+
+    Identical help text across commands is the observable proxy for one definition.
+    """
+    subparsers = build_parser()._subparsers._group_actions[0].choices
+    for option, expected in _LAYERED_OPTIONS.items():
+        helps = set()
+        for command in expected:
+            for action in subparsers[command]._actions:
+                if option in action.option_strings:
+                    helps.add(action.help)
+        assert len(helps) == 1, f"{option} has {len(helps)} different definitions across commands"
+
+
+def test_live_is_deliberately_excluded_from_the_cache_options():
+    """The list is a decision, not an inventory: the trade clock reads the market as it
+    is, so `live` must *not* acquire these however many other commands do."""
+    subparsers = build_parser()._subparsers._group_actions[0].choices
+    flags = {opt for action in subparsers["live"]._actions for opt in action.option_strings}
+
+    assert "--cache" not in flags and "--offline" not in flags
+    assert "--config" in flags  # but it does take a saved run configuration
