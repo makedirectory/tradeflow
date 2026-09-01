@@ -72,3 +72,102 @@ def test_the_default_live_portfolio_invocation_is_refused_before_the_broker_is_r
     with pytest.raises(SystemExit) as exit_info:
         cmd_live(args)
     assert "--portfolio would fund up to 5 names" in str(exit_info.value)
+
+
+# --- preflight and broker mode --------------------------------------------------
+def _preflight_output(capsys, monkeypatch, *, paper=True, capital=8_000.0, ledger_path="/tmp/l.jsonl"):
+    from unittest import mock
+
+    from tests.fakes import FakeBroker
+    from tradeflow import cli
+    from tradeflow.services.registry import STRATEGIES
+
+    monkeypatch.setattr("tradeflow.settings.paper_trade_mode", lambda: paper)
+    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy.config["position_limits"] = {**strategy.position_limits(), "max_positions": 8}
+    args = build_parser().parse_args(["live", "--preflight", "--scanner", "none"])
+    ledger = mock.Mock()
+    ledger.path = ledger_path
+
+    cli._print_live_preflight(
+        args, strategy, FakeBroker(buying_power=100_000.0), [f"S{i}" for i in range(61)], capital, ledger
+    )
+    return capsys.readouterr().out
+
+
+def test_preflight_states_the_contract_the_run_will_trade_under(capsys, monkeypatch):
+    """Printed on every live run, not only under --preflight: a check you have to
+    remember to ask for is one that gets skipped exactly when it matters."""
+    printed = _preflight_output(capsys, monkeypatch)
+
+    assert "broker mode" in printed and "PAPER" in printed
+    assert "capital this run" in printed and "8,000" in printed
+    assert "61 symbols" in printed
+    assert "max positions" in printed
+
+
+def test_preflight_shows_capital_beside_the_account_it_differs_from(capsys, monkeypatch):
+    """The discrepancy that would invalidate the telemetry: $8,000 of intent against a
+    $100,000 paper balance. Both numbers, on adjacent lines."""
+    printed = _preflight_output(capsys, monkeypatch)
+
+    assert "100,000" in printed  # what the venue handed out
+    assert "8,000" in printed  # what this run may deploy
+
+
+def test_preflight_names_where_the_telemetry_lands(capsys, monkeypatch):
+    """Telemetry nobody can find is telemetry nobody checks, and the drift gates are
+    worthless without it."""
+    printed = _preflight_output(capsys, monkeypatch, ledger_path="/tmp/findme/ledger.jsonl")
+
+    assert "/tmp/findme/ledger.jsonl" in printed
+    assert "journal" in printed and "halt state" in printed
+
+
+def test_a_disabled_ledger_says_so_rather_than_printing_nothing(capsys, monkeypatch):
+
+    from tests.fakes import FakeBroker
+    from tradeflow import cli
+    from tradeflow.services.registry import STRATEGIES
+
+    monkeypatch.setattr("tradeflow.settings.paper_trade_mode", lambda: True)
+    args = build_parser().parse_args(["live", "--no-ledger", "--scanner", "none"])
+    cli._print_live_preflight(
+        args, STRATEGIES["ma_crossover"].create_with_defaults(), FakeBroker(), ["AAA"], None, None
+    )
+
+    assert "DISABLED" in capsys.readouterr().out
+
+
+def test_real_money_is_refused_on_an_environment_variable_alone(monkeypatch):
+    """PAPER_TRADE defaults to true, which is right and is also why this exists: a
+    default nobody set is indistinguishable from a decision somebody made, until it is
+    wrong. A live run must be asserted twice, in two places."""
+    from tradeflow import cli
+
+    monkeypatch.setattr("tradeflow.settings.paper_trade_mode", lambda: False)
+    args = build_parser().parse_args(["live"])
+
+    with pytest.raises(SystemExit) as exit_info:
+        cli._refuse_ambiguous_broker_mode(args)
+
+    assert "real money" in str(exit_info.value)
+    assert "--live-money" in str(exit_info.value)
+
+
+def test_real_money_proceeds_when_said_on_the_command_line_too(monkeypatch, capsys):
+    from tradeflow import cli
+
+    monkeypatch.setattr("tradeflow.settings.paper_trade_mode", lambda: False)
+    cli._refuse_ambiguous_broker_mode(build_parser().parse_args(["live", "--live-money"]))
+
+    assert "LIVE MONEY confirmed" in capsys.readouterr().out
+
+
+def test_paper_mode_never_asks_for_an_acknowledgement(monkeypatch):
+    """The guard exists for real money. Making paper runs confirm anything would train
+    people to pass the flag reflexively."""
+    from tradeflow import cli
+
+    monkeypatch.setattr("tradeflow.settings.paper_trade_mode", lambda: True)
+    cli._refuse_ambiguous_broker_mode(build_parser().parse_args(["live"]))  # must not raise

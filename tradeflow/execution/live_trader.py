@@ -23,7 +23,7 @@ import time
 from datetime import datetime
 from typing import List, Optional
 
-from tradeflow.brokers.base import Broker, OrderSide, Position
+from tradeflow.brokers.base import AccountSnapshot, Broker, OrderSide, Position
 from tradeflow.brokers.errors import AuthenticationError, BrokerError, DuplicateOrderError
 from tradeflow.execution import decision as decisions
 from tradeflow.execution.decision import Decision
@@ -54,6 +54,7 @@ class LiveTrader:
         allow_fractional: bool = False,
         respect_market_hours: bool = True,
         halt_state: Optional[HaltState] = None,
+        capital: Optional[float] = None,
     ):
         self._broker = broker
         self._strategy = strategy
@@ -65,6 +66,12 @@ class LiveTrader:
         # portfolio-weight sizer to let the portfolio manager drive live sizing.
         self._sizer = sizer or RiskBasedSizer(strategy)
         self._allow_fractional = allow_fractional
+        #: How much of the account this strategy may deploy, or ``None`` for all of it.
+        #: A paper account arrives with whatever equity the venue gave it - typically far
+        #: more than the capital a config was validated at - and sizing against that
+        #: trades a different book from the one that was tested, which would invalidate
+        #: the execution telemetry the run exists to gather.
+        self._capital = capital
         self._respect_market_hours = respect_market_hours
         self._market_status_cache: Optional[tuple] = None  # (monotonic_ts, is_open)
 
@@ -192,9 +199,15 @@ class LiveTrader:
             logger.error("Cannot size %s entry: account unavailable", symbol)
             return decisions.decline(symbol, signal, "account unavailable", tuple(guards))
 
+        # Size against the capital this strategy was given, not the account's whole
+        # balance. The affordability check below deliberately keeps using the *real*
+        # account: capital is how much of it may be deployed, buying power is what the
+        # venue will actually let through, and a cap must never make the second look
+        # larger than it is.
+        sizing_account = self._deployable(account)
         guards.append(decisions.SIZING)
         qty = round_quantity(
-            self._sizer.size(symbol, price, account),
+            self._sizer.size(symbol, price, sizing_account),
             allow_fractional=self._allow_fractional,
         )
         if qty <= 0:
@@ -215,7 +228,10 @@ class LiveTrader:
             )
 
         guards.append(decisions.POSITION_LIMITS)
-        breach = self._limit_breach(symbol, qty, price, account)
+        # The capped account here too: `max_total_risk` and `max_gross_exposure` are
+        # fractions *of equity*, and 5% of a paper account's balance is not 5% of the
+        # capital the config was validated at.
+        breach = self._limit_breach(symbol, qty, price, sizing_account)
         if breach is not None:
             logger.warning("Refusing %s entry for %s: %s", signal, symbol, breach)
             return decisions.decline(symbol, signal, breach, tuple(guards))
@@ -331,6 +347,23 @@ class LiveTrader:
             is_open = True
         self._market_status_cache = (now, is_open)
         return is_open
+
+    def _deployable(self, account: AccountSnapshot) -> AccountSnapshot:
+        """The account as this strategy may use it, capped at its configured capital.
+
+        Returns the account untouched when no capital was set, so an unconfigured run
+        behaves exactly as before. Caps rather than replaces: a $8,000 config on an
+        account holding $3,000 may deploy $3,000, never the number written in the file.
+        """
+        if not self._capital:
+            return account
+        return AccountSnapshot(
+            cash=min(account.cash, self._capital),
+            equity=min(account.equity, self._capital),
+            buying_power=min(account.buying_power, self._capital),
+            portfolio_value=min(account.portfolio_value, self._capital),
+            trading_blocked=account.trading_blocked,
+        )
 
     def _limit_breach(self, symbol: str, qty: float, price: float, account) -> Optional[str]:
         """Say which portfolio limit this entry would break, or ``None`` if it fits.

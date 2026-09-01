@@ -440,3 +440,56 @@ def test_checking_the_limits_adds_no_broker_call_to_the_bar_loop():
     for symbol in ("AAA", "CCC", "DDD"):
         trader.handle_signal(symbol, signals.BUY, 100.0)
     assert broker.list_calls == 1
+
+
+# --- capital: what this run may deploy -----------------------------------------
+def _sized_at(capital, account_balance=100_000.0):
+    broker = FakeBroker(buying_power=account_balance)
+    strategy = VolumeSpikeStrategy.create_with_defaults()
+    strategy.config["position_limits"] = {
+        **strategy.position_limits(),
+        "max_positions": 5,
+        "max_position_size": 50_000.0,
+    }
+    LiveTrader(broker, strategy, capital=capital).handle_signal("AAA", signals.BUY, price=100.0)
+    return broker.orders[0]["qty"] if broker.orders else 0
+
+
+def test_sizing_uses_the_configured_capital_not_the_account_balance():
+    """A paper account arrives with whatever equity the venue handed out.
+
+    Sizing against that trades a different book from the one validated - which does not
+    merely flatter the result, it invalidates the execution telemetry the run exists to
+    gather, because fills, slippage and rounding are all properties of a book at a size.
+    """
+    assert _sized_at(8_000.0) * 100 == pytest.approx(8_000.0)
+    assert _sized_at(None) * 100 > 8_000.0  # the whole account, as before
+
+
+def test_capital_caps_and_never_inflates():
+    """A $8,000 config on a $3,000 account may deploy $3,000, never the number in the
+    file. It is a ceiling on what may be used, not a claim about what exists."""
+    assert _sized_at(8_000.0, account_balance=3_000.0) * 100 <= 3_000.0
+
+
+def test_no_capital_leaves_an_unconfigured_run_exactly_as_it_was():
+    assert _sized_at(None) == _sized_at(0)  # falsy capital is "the whole account"
+
+
+def test_portfolio_limits_are_fractions_of_the_capital_not_the_account():
+    """`max_total_risk` and `max_gross_exposure` are fractions *of equity*, and 5% of a
+    paper account's balance is not 5% of the capital a config was validated at."""
+    broker = FakeBroker(buying_power=100_000.0)
+    strategy = VolumeSpikeStrategy.create_with_defaults()
+    strategy.config["position_limits"] = {
+        **strategy.position_limits(),
+        "max_positions": 5,
+        "max_position_size": 50_000.0,
+        "max_gross_exposure": 0.5,  # half of *what*?
+    }
+    trader = LiveTrader(broker, strategy, capital=8_000.0)
+
+    trader.handle_signal("AAA", signals.BUY, price=100.0)
+    filled = sum(order["qty"] * 100 for order in broker.orders)
+
+    assert filled <= 8_000.0 * 0.5 + 1e-6  # half the capital, not half the account

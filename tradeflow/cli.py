@@ -2783,6 +2783,7 @@ def cmd_live(args) -> None:
 
     tuned = apply_run_config(args)
     strategy = _strategy_from(args, tuned)
+    capital = _live_capital(args)
 
     if getattr(args, "no_reaffirm_entries", False):
         strategy.config["reaffirm_entries"] = False
@@ -2827,10 +2828,16 @@ def cmd_live(args) -> None:
         )
     ledger = None if args.no_ledger else PositionLedger()
 
+    _print_live_preflight(args, strategy, broker, universe, capital, ledger)
+    _refuse_ambiguous_broker_mode(args)
+    if getattr(args, "preflight", False):
+        print("\n--preflight: nothing was started and no order path ran.")
+        return
+
     engine = LiveEngine(
         strategy,
         data_client,
-        LiveTrader(broker, strategy, sizer=sizer),
+        LiveTrader(broker, strategy, sizer=sizer, capital=capital),
         bar_filter=bar_filter,
         ledger=ledger,
         reconcile_every=args.reconcile_every,
@@ -2854,6 +2861,91 @@ def cmd_live(args) -> None:
                     "ELEVATED bar-rejection rate — this is a data-feed problem wearing "
                     "a quiet market's clothes. Investigate before trusting these results."
                 )
+
+
+def _refuse_ambiguous_broker_mode(args) -> None:
+    """Refuse to reach the order path on real money without it being said out loud.
+
+    ``PAPER_TRADE`` defaults to true, which is the right default and also the reason
+    this check exists: a default nobody set is indistinguishable from a decision
+    somebody made, right up until it is wrong. A live run therefore has to be asserted
+    on the command line as well as in the environment - two independent statements of
+    the same intent, because one of them can be inherited from a shell nobody remembers
+    exporting.
+    """
+    from tradeflow.settings import paper_trade_mode
+
+    if paper_trade_mode():
+        return
+    if getattr(args, "live_money", False):
+        print("  LIVE MONEY confirmed by --live-money. Orders will use real capital.")
+        return
+    raise SystemExit(
+        "PAPER_TRADE is false, so this would place orders with real money. Refusing to "
+        "start on an environment variable alone: pass --live-money to say so on the "
+        "command line, or set PAPER_TRADE=true to trade the paper account."
+    )
+
+
+def _live_capital(args) -> Optional[float]:
+    """How much of the account this run may deploy.
+
+    A paper account arrives with whatever equity the venue handed it - typically far
+    more than the capital a config was validated at - and sizing against that balance
+    trades a different book from the one that was tested. That does not merely flatter
+    the result; it invalidates the execution telemetry the run exists to gather, because
+    fills, slippage and rounding are all properties of a book at a size.
+
+    ``None`` means "the whole account", which is the historical behaviour and stays the
+    default for a run that never mentioned capital.
+    """
+    capital = getattr(args, "capital", None)
+    if capital:
+        return float(capital)
+    return None
+
+
+def _print_live_preflight(args, strategy, broker, universe, capital, ledger) -> None:
+    """The exact contract this run will trade under, printed before any order logic.
+
+    Everything here is a read. It places nothing, and it is printed on every live run
+    rather than only under ``--preflight`` - the point is that the contract is never
+    implicit, and a check you have to remember to ask for is one that gets skipped
+    exactly when it matters.
+    """
+    from tradeflow.execution.halt import HaltState
+    from tradeflow.services.audit import DEFAULT_TRIAL_JOURNAL
+    from tradeflow.settings import paper_trade_mode
+
+    limits = strategy.position_limits()
+    account = None
+    try:
+        account = broker.get_account()
+    except Exception as exc:  # noqa: BLE001 - a preflight reports, it does not fail the run
+        print(f"  (account unreadable: {exc})")
+
+    print("\n=== Live preflight ===")
+    mode = "PAPER" if paper_trade_mode() else "LIVE - REAL MONEY"
+    print(f"  {'broker mode':22}{mode}")
+    if account is not None:
+        print(f"  {'account':22}equity ${account.equity:,.2f}  cash ${account.cash:,.2f}")
+    deployable = f"${capital:,.2f}" if capital else "the whole account (no --capital set)"
+    print(f"  {'capital this run':22}{deployable}")
+    print(
+        f"  {'universe':22}{len(universe)} symbols ({'replayed' if args.scanner == 'none' else args.scanner})"
+    )
+    print(f"  {'max positions':22}{limits.get('max_positions')}")
+    print(f"  {'max position size':22}{limits.get('max_position_size')}")
+    print(f"  {'max gross exposure':22}{limits.get('max_gross_exposure') or 'unset'}")
+    print(
+        f"  {'entries':22}{'re-affirmed' if strategy.config.get('reaffirm_entries', True) else 'fresh crossings only'}"
+    )
+    print(f"  {'bar guards':22}{'off' if args.no_bar_checks else 'on'}")
+    print(f"  {'reconcile every':22}{args.reconcile_every:g}s")
+    # Where the drift data lands. Telemetry nobody can find is telemetry nobody checks.
+    print(f"  {'ledger':22}{ledger.path if ledger is not None else 'DISABLED (--no-ledger)'}")
+    print(f"  {'journal':22}{DEFAULT_TRIAL_JOURNAL}")
+    print(f"  {'halt state':22}{HaltState().path}")
 
 
 def _refuse_contradictory_portfolio_cardinality(strategy, allocator_max_positions) -> None:
@@ -3570,6 +3662,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="Scale position sizing inversely by each symbol's beta",
     )
     live.add_argument("--benchmark", default="SPY", help="Benchmark symbol for beta")
+    live.add_argument(
+        "--capital",
+        type=float,
+        default=None,
+        help="How much of the account this run may deploy. A saved config supplies it; "
+        "without either, sizing uses the whole account balance - which on a paper "
+        "account is whatever the venue handed out, not what was validated.",
+    )
+    live.add_argument(
+        "--preflight",
+        action="store_true",
+        help="Print the run contract and exit without starting the order path",
+    )
+    live.add_argument(
+        "--live-money",
+        dest="live_money",
+        action="store_true",
+        help="Acknowledge on the command line that PAPER_TRADE=false means real capital",
+    )
     live.add_argument("--max-positions", dest="max_positions", type=int, default=5)
     live.add_argument("--max-weight", dest="max_weight", type=float, default=0.25)
     # Guards are opt-OUT. The live loop is the only place a corrupt bar or a missed

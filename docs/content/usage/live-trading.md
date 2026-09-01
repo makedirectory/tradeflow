@@ -210,6 +210,58 @@ that never ran, which is how a check silently stops being applied and nobody
 notices. Declined decisions are recorded precisely because they leave no other
 trace.
 
+## Preflight: the contract before the order path
+
+Every live run prints what it is about to do, before any order logic runs:
+
+```
+=== Live preflight ===
+  broker mode           PAPER
+  account               equity $100,000.00  cash $100,000.00
+  capital this run      $8,000.00
+  universe              61 symbols (replayed)
+  max positions         8
+  max position size     1200.0
+  max gross exposure    0.9
+  entries               re-affirmed
+  bar guards            on
+  reconcile every       300s
+  ledger                ~/.tradeflow/logs/positions.jsonl
+  journal               ~/.tradeflow/logs/research_journal.jsonl
+  halt state            ~/.tradeflow/logs/halts.json
+```
+
+`--preflight` prints it and exits without starting anything. It is printed on every run
+regardless, because a check you have to remember to ask for is one that gets skipped
+exactly when it matters.
+
+### `--capital` — what this run may deploy
+
+The two most important lines above are adjacent on purpose: a paper account arrives
+with whatever equity the venue handed out, and sizing against **that** trades a
+different book from the one that was validated. It does not merely flatter the result —
+it invalidates the execution telemetry, because fills, slippage and share rounding are
+all properties of a book at a size.
+
+`--capital` (or the `capital` a [saved config](walk-forward.md#reusing-a-saved-config)
+carries) caps what the sizer may use. It is a ceiling, never a claim: an $8,000 config
+on a $3,000 account deploys $3,000. Position limits expressed as fractions —
+`max_total_risk`, `max_gross_exposure` — are fractions of *that capital*, not of the
+account balance. Without it, sizing uses the whole account, which is the historical
+behaviour.
+
+### Real money must be said twice
+
+`PAPER_TRADE` defaults to `true`, which is the right default and precisely why the
+check exists: a default nobody set looks identical to a decision somebody made, right
+up until it is wrong. With `PAPER_TRADE=false`, `live` **refuses to start** unless
+`--live-money` also says so on the command line — two independent statements of the
+same intent, because one of them can be inherited from a shell nobody remembers
+exporting.
+
+Paper runs are never asked to confirm anything. Making them would train the reflex the
+guard depends on you not having.
+
 ## Portfolio limits are enforced live
 
 The `position_limits` in a strategy's config — `max_positions`, `max_total_risk`,

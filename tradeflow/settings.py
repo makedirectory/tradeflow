@@ -160,6 +160,17 @@ def _resolve_paper_trade() -> bool:
     return True
 
 
+def paper_trade_mode() -> bool:
+    """Whether orders would go to the paper account, without needing credentials.
+
+    Separate from :func:`load_settings` because reporting the broker mode must work in
+    a preflight that has not yet proved it can reach a venue - refusing to say "this is
+    paper" because the keys are missing would withhold the one fact most worth printing
+    before an order path starts.
+    """
+    return _resolve_paper_trade()
+
+
 @dataclass(frozen=True)
 class Settings:
     """Validated runtime settings - currently the Alpaca account credentials."""
