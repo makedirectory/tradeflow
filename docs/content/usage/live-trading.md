@@ -353,6 +353,17 @@ beyond the terminal: `SIGTERM` is what a supervisor, a container runtime and pla
 `kill` send, and a shutdown reachable only by a human at a keyboard does not exist
 under any of them.
 
+**No bound scheduled on the event loop can be trusted on its own.** Third-party code
+called from a coroutine can block the loop, and when that happens every loop-scheduled
+timeout fails at once — including the signal handlers themselves, which asyncio
+delivers as loop callbacks. That is not hypothetical: alpaca-py's synchronous
+`stream.stop()` submits a coroutine to the running loop and then blocks the calling
+thread waiting for it, so calling it from inside that loop deadlocks until its own
+timeout expires. Streams are therefore closed by awaiting the coroutine that wrapper
+wraps, and a daemon watchdog thread — armed the moment a stop begins — force-exits if
+shutdown has not completed in time. The watchdog is what makes "a stop signal always
+ends the process" true rather than usually true.
+
 Stopping is signal-driven rather than exception-driven. A bare `KeyboardInterrupt`
 unwinds from wherever the interpreter happened to be, which is not necessarily a point
 where the running coroutine's cleanup can finish; a loop signal handler delivers

@@ -44,7 +44,7 @@ from tradeflow.brokers.errors import (
     RateLimitedError,
 )
 from tradeflow.utils.numeric import safe_float
-from tradeflow.utils.streaming import run_with_reconnect
+from tradeflow.utils.streaming import close_stream, run_with_reconnect
 
 logger = logging.getLogger(__name__)
 
@@ -331,12 +331,9 @@ class AlpacaBroker(Broker):
                 logger.info("Subscribed to trade updates")
                 await stream._run_forever()
             finally:
-                try:
-                    stop = stream.stop()
-                    if inspect.isawaitable(stop):
-                        await stop
-                except Exception:  # noqa: BLE001
-                    pass
+                # Never the SDK's synchronous stop() from inside the loop; it blocks
+                # the very loop that would have to run its close. See close_stream.
+                await close_stream(stream)
 
         await run_with_reconnect("trade-updates", connect)
 

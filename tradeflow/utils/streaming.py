@@ -7,11 +7,58 @@ cleanly. That loop lives here so both share one implementation.
 """
 
 import asyncio
+import contextlib
+import inspect
 import logging
+import os
 import signal
-from typing import Awaitable, Callable
+import sys
+import threading
+from dataclasses import dataclass
+from typing import Awaitable, Callable, Optional
 
 logger = logging.getLogger(__name__)
+
+#: How long to wait for a websocket to close before moving on.
+STREAM_CLOSE_TIMEOUT = 2.0
+
+
+async def close_stream(stream) -> None:
+    """Best-effort websocket shutdown; never raises, never blocks the loop.
+
+    An SDK's synchronous ``stop()`` must not be called from inside the event loop.
+    alpaca-py's does::
+
+        asyncio.run_coroutine_threadsafe(self.stop_ws(), self._loop).result(timeout=5)
+
+    which submits work to the loop and then blocks the calling thread waiting for it.
+    Called from a coroutine, the caller *is* that loop, so the work can never run and
+    the loop stays frozen for the whole timeout. Nothing scheduled on the loop happens
+    meanwhile — including the signal callbacks that stop the process, which is how a
+    shutdown ends up ignoring a second SIGTERM and a Ctrl-C, and why the only bound
+    that survives a blocked loop is the watchdog thread below.
+
+    ``stop_ws()`` is the coroutine that wrapper wraps, so awaiting it directly is the
+    same shutdown without the deadlock.
+    """
+    closer = getattr(stream, "stop_ws", None) or getattr(stream, "close", None)
+    if closer is None:
+        return
+    try:
+        result = closer()
+        if not inspect.isawaitable(result):
+            return
+        # Bounded, and via wait(): wait_for cancels what it waits on and then awaits
+        # it, which cannot bound a close slow to answer cancellation.
+        task = asyncio.ensure_future(result)
+        done, _ = await asyncio.wait({task}, timeout=STREAM_CLOSE_TIMEOUT)
+        if task not in done:
+            logger.warning("Stream close did not finish within %gs", STREAM_CLOSE_TIMEOUT)
+            task.cancel()
+        else:
+            task.exception()  # collect, so nothing is reported as never retrieved
+    except Exception:  # noqa: BLE001 - cleanup must not mask the real error
+        logger.debug("Stream close raised during shutdown", exc_info=True)
 
 
 async def run_with_reconnect(
@@ -50,8 +97,152 @@ async def run_with_reconnect(
 #: reachable only by a human at a keyboard does not exist in any of those.
 STOP_SIGNALS = (signal.SIGINT, signal.SIGTERM)
 
+#: Indirection so tests can observe a forced exit instead of dying. Nothing else
+#: should call ``os._exit`` directly.
+_exit_process = os._exit
 
-def run_until_stopped(coro, *, teardown_timeout: float = 5.0, stop_signals=STOP_SIGNALS):
+
+class _Abandoned(Exception):
+    """The stopped session outlasted its teardown budget and was left behind."""
+
+
+@dataclass
+class _Stop:
+    """The stop sequence for one :func:`run_until_stopped` call.
+
+    Holds the state the signal handler, the watchdog and the caller all need, so none
+    of them has to be threaded through as a growing list of positional arguments.
+    """
+
+    loop: asyncio.AbstractEventLoop
+    task: "asyncio.Task"
+    abandoned: asyncio.Event
+    teardown_timeout: float
+    hard_exit_grace: float
+    signalled: bool = False
+    watchdog: Optional[threading.Timer] = None
+    installed: tuple = ()
+
+    # -- the three ways a session can end -------------------------------------
+    def request(self, sig) -> None:
+        """First stop signal cancels gracefully; a second leaves immediately."""
+        if self.signalled:
+            self.force(f"Second {sig.name} — exiting immediately.")
+            return
+        self.signalled = True
+        logger.info("%s received — stopping.", sig.name)
+        self.task.cancel()
+        # Bounds the session's own unwinding, not just the tasks it owns.
+        self.loop.call_later(self.teardown_timeout, self.abandoned.set)
+        # Armed here, at the moment the stop begins — not after the loop returns.
+        # If the loop blocks during teardown it never returns, which is exactly the
+        # case the watchdog exists for.
+        self.arm_watchdog()
+        self.hand_back_signals()
+
+    def force(self, reason: str, code: int = 130) -> None:
+        """Leave now, without running interpreter shutdown.
+
+        ``sys.exit`` is not enough: interpreter exit joins the non-daemon worker
+        threads ``asyncio.to_thread`` uses, and a worker blocked in a broker call
+        keeps the process alive with no way left to interrupt it.
+        """
+        logger.error("%s", reason)
+        for stream in (sys.stdout, sys.stderr):
+            with contextlib.suppress(Exception):
+                stream.flush()
+        _exit_process(code)
+
+    def arm_watchdog(self) -> None:
+        """A last resort that does not depend on the event loop being alive.
+
+        Every other bound here is scheduled on the loop, so all of them fail together
+        the moment third-party code blocks it — which a synchronous SDK call does. A
+        daemon timer thread is the only one that still fires, and so the only thing
+        that makes "a stop signal always ends the process" true rather than usually
+        true.
+        """
+        if self.watchdog is not None:
+            return
+        grace = self.teardown_timeout + self.hard_exit_grace
+        self.watchdog = threading.Timer(
+            grace,
+            self.force,
+            args=(
+                f"Shutdown did not complete within {grace:g}s — forcing exit. Any open "
+                "positions are untouched at the broker; nothing was flattened.",
+            ),
+        )
+        self.watchdog.daemon = True
+        self.watchdog.start()
+
+    def disarm(self) -> None:
+        if self.watchdog is not None:
+            self.watchdog.cancel()
+            self.watchdog = None
+
+    # -- signal plumbing ------------------------------------------------------
+    def install_signals(self, stop_signals) -> None:
+        """Route stop signals to :meth:`request`.
+
+        ``add_signal_handler`` is Unix-only and unavailable off the main thread; where
+        it is missing the process keeps whatever behaviour it had rather than losing
+        the ability to stop at all.
+        """
+        installed = []
+        for sig in stop_signals:
+            try:
+                self.loop.add_signal_handler(sig, self.request, sig)
+            except (NotImplementedError, RuntimeError, ValueError, AttributeError, OSError):
+                logger.debug("No loop signal handler available for %s", sig)
+                continue
+            installed.append(sig)
+        self.installed = tuple(installed)
+
+    def hand_back_signals(self) -> None:
+        """Swap the loop's handlers for plain ones that force an exit.
+
+        Deliberately ``signal.signal`` rather than ``loop.add_signal_handler``: the
+        loop delivers its signal callbacks as loop callbacks, so once something blocks
+        the loop a second interrupt routed through it is never seen — which is exactly
+        the moment an operator is sending one.
+        """
+        self.remove_signals()
+        for sig in STOP_SIGNALS:
+            with contextlib.suppress(Exception):
+                signal.signal(sig, self._forced)
+
+    def _forced(self, signum, _frame) -> None:
+        self.force(f"Second {signal.Signals(signum).name} — exiting immediately.")
+
+    def remove_signals(self) -> None:
+        for sig in self.installed:
+            with contextlib.suppress(NotImplementedError, RuntimeError, ValueError, OSError):
+                self.loop.remove_signal_handler(sig)
+        self.installed = ()
+
+
+async def _await_bounded(task, abandoned: asyncio.Event):
+    """Await ``task``, unless it is abandoned first.
+
+    The budget has to cover the session's *own* unwinding, not just the tasks it
+    started. ``run_until_complete`` waits for a cancelled coroutine to finish its
+    ``finally`` with no bound — so a cleanup that blocks holds the process open
+    exactly as an unbounded gather did, one level further in.
+    """
+    waiter = asyncio.ensure_future(abandoned.wait())
+    try:
+        done, _ = await asyncio.wait({task, waiter}, return_when=asyncio.FIRST_COMPLETED)
+        if task in done:
+            return task.result()
+        raise _Abandoned
+    finally:
+        waiter.cancel()
+
+
+def run_until_stopped(
+    coro, *, teardown_timeout: float = 5.0, stop_signals=STOP_SIGNALS, hard_exit_grace: float = 10.0
+):
     """Run ``coro`` on a private loop, guaranteeing the process can exit afterwards.
 
     ``asyncio.run`` cannot be used for a streaming session. On the way out it cancels
@@ -66,10 +257,14 @@ def run_until_stopped(coro, *, teardown_timeout: float = 5.0, stop_signals=STOP_
 
     **Stopping is signal-driven, not exception-driven.** A bare ``KeyboardInterrupt``
     unwinds from wherever the interpreter happened to be, which is not necessarily a
-    point where the running coroutine's own cleanup can complete; a loop signal handler
+    point where the running coroutine's cleanup can complete; a loop signal handler
     delivers cancellation at an await instead, so every ``finally`` on the way out
-    actually runs. The first signal cancels; a second restores the default handler, so
-    an operator who wants out immediately still gets out immediately.
+    actually runs.
+
+    **Nothing here trusts the loop to stay alive.** Third-party code called from a
+    coroutine can block it, and every loop-scheduled bound fails together when that
+    happens. A daemon watchdog thread, armed the moment a stop begins, is what makes
+    the guarantee hold anyway.
 
     The cancellation is re-raised as ``KeyboardInterrupt`` so callers keep one thing to
     catch however the stop arrived.
@@ -78,19 +273,25 @@ def run_until_stopped(coro, *, teardown_timeout: float = 5.0, stop_signals=STOP_
     """
     loop = asyncio.new_event_loop()
     stopping = []  # non-empty once teardown has begun
-    signalled = []  # non-empty once a stop signal has been seen
     loop.set_exception_handler(_make_exception_handler(stopping))
+    stop = None
     try:
         asyncio.set_event_loop(loop)
         task = loop.create_task(coro)
-        abandoned = asyncio.Event()
-        installed = _install_stop_handlers(loop, task, signalled, stop_signals, abandoned, teardown_timeout)
+        stop = _Stop(
+            loop=loop,
+            task=task,
+            abandoned=asyncio.Event(),
+            teardown_timeout=teardown_timeout,
+            hard_exit_grace=hard_exit_grace,
+        )
+        stop.install_signals(stop_signals)
         try:
-            return loop.run_until_complete(_await_bounded(task, abandoned))
+            return loop.run_until_complete(_await_bounded(task, stop.abandoned))
         except asyncio.CancelledError:
             # Only translate a stop we asked for. A CancelledError from anywhere else
             # is a real outcome and must not be disguised as an interrupt.
-            if signalled:
+            if stop.signalled:
                 raise KeyboardInterrupt from None
             raise
         except _Abandoned:
@@ -100,7 +301,7 @@ def run_until_stopped(coro, *, teardown_timeout: float = 5.0, stop_signals=STOP_
             )
             raise KeyboardInterrupt from None
         finally:
-            _remove_stop_handlers(loop, installed)
+            stop.remove_signals()
     finally:
         stopping.append(True)
         try:
@@ -108,72 +309,10 @@ def run_until_stopped(coro, *, teardown_timeout: float = 5.0, stop_signals=STOP_
         finally:
             asyncio.set_event_loop(None)
             loop.close()
-
-
-class _Abandoned(Exception):
-    """The stopped session outlasted its teardown budget and was left behind."""
-
-
-async def _await_bounded(task, abandoned: asyncio.Event):
-    """Await ``task``, unless it is abandoned first.
-
-    The budget has to cover the session's *own* unwinding, not just the tasks it
-    started. ``run_until_complete`` waits for a cancelled coroutine to finish its
-    ``finally``, with no bound - so a cleanup that blocks holds the process open
-    exactly as the unbounded gather did, one level further in.
-    """
-    waiter = asyncio.ensure_future(abandoned.wait())
-    try:
-        done, _ = await asyncio.wait({task, waiter}, return_when=asyncio.FIRST_COMPLETED)
-        if task in done:
-            return task.result()
-        raise _Abandoned
-    finally:
-        waiter.cancel()
-
-
-def _install_stop_handlers(
-    loop, task, signalled: list, stop_signals, abandoned: asyncio.Event, teardown_timeout: float
-) -> list:
-    """Route stop signals to a cancel of ``task``. Returns the signals actually hooked.
-
-    ``add_signal_handler`` is Unix-only, and unavailable off the main thread; where it
-    is missing the process keeps whatever behaviour it had rather than losing the
-    ability to stop at all.
-    """
-    installed = []
-    for sig in stop_signals:
-        try:
-            loop.add_signal_handler(
-                sig, _request_stop, loop, task, signalled, sig, abandoned, teardown_timeout
-            )
-        except (NotImplementedError, RuntimeError, ValueError, AttributeError, OSError):
-            logger.debug("No loop signal handler available for %s", sig)
-            continue
-        installed.append(sig)
-    return installed
-
-
-def _remove_stop_handlers(loop, installed) -> None:
-    for sig in installed:
-        try:
-            loop.remove_signal_handler(sig)
-        except (NotImplementedError, RuntimeError, ValueError, OSError):
-            logger.debug("Could not remove the signal handler for %s", sig)
-
-
-def _request_stop(loop, task, signalled: list, sig, abandoned, teardown_timeout: float) -> None:
-    """First stop signal cancels; a second hands the signal back to the default."""
-    if signalled:
-        logger.warning("Second %s — exiting immediately.", sig.name)
-        _remove_stop_handlers(loop, [sig])
-        signal.raise_signal(sig)
-        return
-    signalled.append(sig)
-    logger.info("%s received — stopping.", sig.name)
-    task.cancel()
-    # Starts the clock on the session's own unwinding, not just on the tasks it owns.
-    loop.call_later(teardown_timeout, abandoned.set)
+            if stop is not None:
+                # Everything that had to happen has happened; the watchdog would only
+                # fire on a process that is already leaving.
+                stop.disarm()
 
 
 def _make_exception_handler(stopping: list):

@@ -20,7 +20,7 @@ from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 
 from tradeflow.marketdata.base import BarEvent, BarHandler, MarketDataProvider
 from tradeflow.marketdata.timeframe import DAY, HOUR, MINUTE, WEEK, Timeframe
-from tradeflow.utils.streaming import run_with_reconnect
+from tradeflow.utils.streaming import close_stream, run_with_reconnect
 from tradeflow.utils.timeutils import localize_index_to_new_york
 
 logger = logging.getLogger(__name__)
@@ -140,13 +140,8 @@ class AlpacaMarketData(MarketDataProvider):
 
     @staticmethod
     async def _safe_stop(stream) -> None:
-        """Best-effort stream shutdown; never raises."""
-        try:
-            result = stream.stop()
-            if inspect.isawaitable(result):
-                await result
-        except Exception:  # noqa: BLE001 - cleanup must not mask the real error
-            pass
+        """Best-effort stream shutdown. See :func:`close_stream` for why not ``stop()``."""
+        await close_stream(stream)
 
     # ------------------------------------------------------------------ #
     # Helpers
