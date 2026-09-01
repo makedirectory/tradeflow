@@ -2776,6 +2776,62 @@ def _missing_extra_message(extra: str, what: str) -> str:
     return f"{what} needs the '{extra}' extra. Install it:\n    {command}"
 
 
+# The book limits a live run may override from the command line, and the
+# `position_limits` key each one sets.
+_LIMIT_OVERRIDES = (
+    ("max_positions", "max_positions", "--max-positions"),
+    ("max_position_size", "max_position_size", "--max-position-size"),
+    ("max_gross_exposure", "max_gross_exposure", "--max-gross-exposure"),
+)
+
+
+def _apply_limit_overrides(args, strategy) -> None:
+    """Let the command line override the book limits a saved config or strategy declares.
+
+    Only flags actually typed apply. `--max-positions` carries a default, so applying it
+    unconditionally would let an untyped default silently overrule the limit a frozen
+    config exists to pin.
+    """
+    given = getattr(args, "flags_given", set())
+    overrides = {
+        key: getattr(args, dest)
+        for key, dest, _ in _LIMIT_OVERRIDES
+        if dest in given and getattr(args, dest, None) is not None
+    }
+    if overrides:
+        strategy.config["position_limits"] = {**strategy.position_limits(), **overrides}
+
+
+def _refuse_inert_flags(args) -> None:
+    """Stop a run whose typed flag cannot reach anything.
+
+    A sizing flag that needs `--portfolio` or `--beta-sizing` is otherwise parsed and
+    discarded in silence, so the preflight prints the limits the run really has while
+    the operator reads the ones they asked for and concludes the two agree.
+    """
+    given = getattr(args, "flags_given", set())
+    if "max_weight" in given and not args.portfolio:
+        equivalent = ""
+        capital = _live_capital(args)
+        if capital:
+            equivalent = (
+                f"\n  For a per-position ceiling on this book, that weight is "
+                f"--max-position-size {args.max_weight * capital:.0f} "
+                f"({args.max_weight:.0%} of ${capital:,.0f})."
+            )
+        sys.exit(
+            f"--max-weight {args.max_weight} sizes the --portfolio allocator, which this "
+            f"run does not use, so it would have been ignored.\n"
+            f"  Add --portfolio to allocate, or drop the flag.{equivalent}"
+        )
+    if "benchmark" in given and not args.beta_sizing:
+        sys.exit(
+            f"--benchmark {args.benchmark} selects the symbol beta sizing measures against, "
+            f"and this run does not size by beta, so it would have been ignored.\n"
+            f"  Add --beta-sizing to use it, or drop the flag."
+        )
+
+
 def cmd_live(args) -> None:
     from tradeflow.engine.live import LiveEngine
     from tradeflow.execution.live_trader import LiveTrader
@@ -2783,6 +2839,8 @@ def cmd_live(args) -> None:
 
     tuned = apply_run_config(args)
     strategy = _strategy_from(args, tuned)
+    _apply_limit_overrides(args, strategy)
+    _refuse_inert_flags(args)
     capital = _live_capital(args)
 
     if getattr(args, "no_reaffirm_entries", False):
@@ -2934,9 +2992,26 @@ def _print_live_preflight(args, strategy, broker, universe, capital, ledger) -> 
     print(
         f"  {'universe':22}{len(universe)} symbols ({'replayed' if args.scanner == 'none' else args.scanner})"
     )
-    print(f"  {'max positions':22}{limits.get('max_positions')}")
-    print(f"  {'max position size':22}{limits.get('max_position_size')}")
-    print(f"  {'max gross exposure':22}{limits.get('max_gross_exposure') or 'unset'}")
+
+    # Absent is not zero: a limit nobody declared is unbounded, and must not read as 0.
+    def _limit(value, render):
+        return render(value) if value is not None else "unset"
+
+    print(f"  {'max positions':22}{_limit(limits.get('max_positions'), str)}")
+    size = limits.get("max_position_size")
+    # A per-position ceiling above the whole deployable book cannot bind. Saying so
+    # here stops it reading as a limit somebody chose.
+    inert = (
+        "  (above this run's capital - not a binding limit)" if size and capital and size >= capital else ""
+    )
+    print(f"  {'max position size':22}{_limit(size, lambda v: f'${v:,.2f}')}{inert}")
+    # Gross exposure is a fraction of deployable capital, so show the dollars it means
+    # here - the fraction alone is the one number an operator cannot sanity-check.
+    gross = limits.get("max_gross_exposure")
+    if gross is not None and capital:
+        print(f"  {'max gross exposure':22}{gross:g} ({gross:.0%} of capital = ${gross * capital:,.2f})")
+    else:
+        print(f"  {'max gross exposure':22}{_limit(gross, lambda v: f'{v:g} ({v:.0%} of capital)')}")
     print(
         f"  {'entries':22}{'re-affirmed' if strategy.config.get('reaffirm_entries', True) else 'fresh crossings only'}"
     )
@@ -3681,8 +3756,37 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Acknowledge on the command line that PAPER_TRADE=false means real capital",
     )
-    live.add_argument("--max-positions", dest="max_positions", type=int, default=5)
-    live.add_argument("--max-weight", dest="max_weight", type=float, default=0.25)
+    live.add_argument(
+        "--max-positions",
+        dest="max_positions",
+        type=int,
+        default=5,
+        help="How many positions the book may hold at once. Overrides the strategy's and "
+        "the saved config's limit, and bounds the allocator under --portfolio",
+    )
+    live.add_argument(
+        "--max-position-size",
+        dest="max_position_size",
+        type=float,
+        default=None,
+        help="Dollar ceiling on any one position. Overrides the strategy's and the saved config's limit",
+    )
+    live.add_argument(
+        "--max-gross-exposure",
+        dest="max_gross_exposure",
+        type=float,
+        default=None,
+        help="Ceiling on gross exposure as a fraction of deployable capital (0.9 = 90%%). "
+        "Overrides the strategy's and the saved config's limit",
+    )
+    live.add_argument(
+        "--max-weight",
+        dest="max_weight",
+        type=float,
+        default=0.25,
+        help="Largest weight the --portfolio allocator may give one name. Sizes the "
+        "allocation only; use --max-position-size to bound what the book will hold",
+    )
     # Guards are opt-OUT. The live loop is the only place a corrupt bar or a missed
     # fill costs money, so the safe configuration is the default one.
     live.add_argument(

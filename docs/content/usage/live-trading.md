@@ -221,8 +221,8 @@ Every live run prints what it is about to do, before any order logic runs:
   capital this run      $8,000.00
   universe              61 symbols (replayed)
   max positions         8
-  max position size     1200.0
-  max gross exposure    0.9
+  max position size     $1,200.00
+  max gross exposure    0.9 (90% of capital = $7,200.00)
   entries               re-affirmed
   bar guards            on
   reconcile every       300s
@@ -249,6 +249,31 @@ on a $3,000 account deploys $3,000. Position limits expressed as fractions —
 `max_total_risk`, `max_gross_exposure` — are fractions of *that capital*, not of the
 account balance. Without it, sizing uses the whole account, which is the historical
 behaviour.
+
+### Stating the book limits for this run
+
+`--max-positions`, `--max-position-size` and `--max-gross-exposure` set the limits the
+live book is held to, overriding both the strategy's declared limits and any a saved
+config carries. They map one-to-one onto the preflight lines above, so what you typed
+and what the run will enforce can be compared directly.
+
+Only a flag you actually type applies. `--max-positions` carries a default, and letting
+an untyped default overrule a frozen config would silently shrink the very book the
+capital freeze exists to pin.
+
+Two limits are stated in different units on purpose. `--max-position-size` is a dollar
+ceiling on one position; `--max-gross-exposure` is a fraction of deployable capital, and
+the preflight prints the dollars it works out to, because the fraction on its own is the
+one number that cannot be sanity-checked by eye. A per-position ceiling larger than the
+whole book is marked as not binding rather than printed as though somebody chose it.
+
+**`--max-weight` is not one of these.** It is the largest weight the
+[allocator](portfolio.md) may give one name, so it does nothing without `--portfolio`.
+A run that types it without the allocator is refused rather than started, with the
+book-limit equivalent worked out for you — at `--capital 8000`, `--max-weight 0.15`
+is `--max-position-size 1200`. `--benchmark` is refused the same way without
+`--beta-sizing`: a flag that cannot reach anything stops the run instead of being
+parsed and discarded, which is what makes a preflight worth reading.
 
 ### Real money must be said twice
 
@@ -280,13 +305,15 @@ Two things to know before your next run:
   running more names than that, set the limit to what you actually intend.
 - **A portfolio-weight deployment must reconcile its two caps, and `live` refuses to
   start until it does.** `--portfolio` lets the [allocator](portfolio.md) choose the
-  book, but the strategy's `position_limits.max_positions` still bounds what the book
-  holds. When `--max-positions` exceeds it, the surplus names are funded and never
-  traded, and which ones survive is decided by signal arrival order rather than by
-  the allocation — so `live --portfolio` exits with both numbers and both remedies
-  instead of starting. Every strategy shipped here declares `max_positions: 1` while
-  `--max-positions` defaults to `5`, so the default invocation is one of the
-  configurations that gets refused: raise the strategy's limit or pass
+  book, but `position_limits.max_positions` still bounds what the book holds. When the
+  allocator funds more names than the book can hold, the surplus are funded and never
+  traded, and which ones survive is decided by signal arrival order rather than by the
+  allocation — so `live --portfolio` exits with both numbers and both remedies instead
+  of starting. Typing `--max-positions` now sets both, so the two cannot disagree; the
+  refusal still applies when the allocator's untyped default of `5` meets a smaller
+  limit declared by the strategy or a saved config. Every strategy shipped here
+  declares `max_positions: 1`, so a bare `live --portfolio` is one of the
+  configurations that gets refused: raise the declared limit or pass
   `--max-positions 1`.
 
 Every refusal is logged with the numbers that caused it and recorded as a decision,
