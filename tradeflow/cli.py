@@ -317,7 +317,14 @@ def _strategy_from(args, tuned):
     raise loudly rather than trading on a config it cannot actually run.
     """
     cls = STRATEGIES[args.strategy]
-    return cls(dict(tuned)) if tuned else cls.create_with_defaults()
+    strategy = cls(dict(tuned)) if tuned else cls.create_with_defaults()
+    limits = getattr(args, "config_position_limits", None)
+    if limits:
+        # After construction: `position_limits` is not a tunable parameter, so it does
+        # not go through PARAM_RANGES validation, and a strategy built from defaults
+        # would otherwise silently keep the defaults the file exists to override.
+        strategy.config["position_limits"] = {**strategy.position_limits(), **limits}
+    return strategy
 
 
 def apply_run_config(args):
@@ -386,6 +393,17 @@ def apply_run_config(args):
         elif value is not None:
             setattr(args, field, value)
             sources.append(f"{field}=<config>")
+
+    # Limits recorded in the file win over the strategy class's defaults, because the
+    # file is what was validated. Merged rather than replaced so a config written before
+    # this still gets the defaults for keys it never recorded.
+    limits = payload.get("position_limits")
+    if limits:
+        tuned_limits = dict(limits)
+        sources.append("position_limits=<config>")
+    else:
+        tuned_limits = None
+    args.config_position_limits = tuned_limits
 
     args.candidate_symbols = payload.get("candidate_symbols")
     args.universe_source = "flag" if "symbols" in given else ("config" if payload.get("symbols") else None)
@@ -1164,6 +1182,9 @@ def cmd_walkforward(args) -> None:
             symbols=universe,
             candidate_symbols=args.symbols,
             capital=args.capital,
+            # Written out in full so a frozen config states what it risks rather than
+            # inheriting it. The strategy's own defaults are a decision nobody made.
+            position_limits=STRATEGIES[args.strategy].create_with_defaults().position_limits(),
             # _cost_key(args) without the vintage: that stamp fingerprints the *data*
             # a run read, and pinning a reusable config to one data snapshot is the
             # opposite of what it is for.

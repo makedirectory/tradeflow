@@ -120,6 +120,7 @@ def save_config(
     symbols: Optional[Any] = None,
     candidate_symbols: Optional[Any] = None,
     capital: Optional[float] = None,
+    position_limits: Optional[Dict[str, Any]] = None,
     cost: Optional[Dict[str, Any]] = None,
     provenance: Optional[Provenance] = None,
 ) -> Path:
@@ -131,6 +132,13 @@ def save_config(
     which is the point of a config a private repository versions alongside its
     strategies. ``provenance`` is the opposite: a record of how the params were
     arrived at, never read back as input.
+
+    ``position_limits`` is written out in full rather than left to the strategy's own
+    defaults. A config is the thing a paper or live run is frozen from, and the shipped
+    default of ``max_positions: 1`` is exactly the kind of inheritance nobody chose - a
+    61-name config that quietly holds one position is a defect already found in
+    backtests, and a live run would repeat it with money. What a run risks should be in
+    the file, not resolved from somewhere else at start-up.
 
     ``symbols`` is the universe the scanner **resolved**: the book that was validated,
     and what a replay trades. ``candidate_symbols`` is the list it was resolved *from*,
@@ -162,6 +170,7 @@ def save_config(
         ("symbols", symbols),
         ("candidate_symbols", candidate_symbols),
         ("capital", capital),
+        ("position_limits", position_limits),
         ("cost", cost),
     ):
         if value is not None:

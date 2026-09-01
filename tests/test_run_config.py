@@ -573,3 +573,91 @@ def test_provenance_states_survivorship_rather_than_measuring_it():
 
     assert "not point-in-time" in rendered
     assert "today's names applied to history" in rendered
+
+
+# --- a frozen config states what it risks --------------------------------------
+def _frozen(tmp_path, limits):
+    from tradeflow.services.registry import STRATEGIES
+
+    path = tmp_path / "frozen.json"
+    path.write_text(
+        json.dumps(
+            {
+                "strategy": "ma_crossover",
+                "scanner": "none",
+                "symbols": ["A", "B", "C"],
+                "capital": 8000.0,
+                "params": {n: s["default"] for n, s in STRATEGIES["ma_crossover"].PARAM_RANGES.items()},
+                "provenance": {},
+                **({"position_limits": limits} if limits else {}),
+            }
+        )
+    )
+    return str(path)
+
+
+def test_a_config_s_risk_limits_reach_the_strategy(tmp_path, capsys):
+    """Writing limits into a file changes nothing unless they arrive.
+
+    The shipped default of `max_positions: 1` is exactly the inheritance a frozen
+    config exists to prevent - a 61-name config quietly holding one position is a defect
+    already found in backtests, and a live run would repeat it with money.
+    """
+    from tradeflow.cli import _strategy_from
+
+    path = _frozen(tmp_path, {"max_positions": 8, "max_position_size": 1200.0, "min_notional": 25.0})
+    args = parse_cli(["backtest", "--config", path])
+    tuned = apply_run_config(args)
+    capsys.readouterr()
+
+    limits = _strategy_from(args, tuned).position_limits()
+
+    assert limits["max_positions"] == 8  # not the shipped 1
+    assert limits["max_position_size"] == 1200.0
+    assert limits["min_notional"] == 25.0
+
+
+def test_limits_absent_from_an_older_config_fall_back_to_the_defaults(tmp_path, capsys):
+    """Merged, not replaced: a config written before limits were recorded still gets
+    the strategy's own values for keys it never carried."""
+    from tradeflow.cli import _strategy_from
+
+    args = parse_cli(["backtest", "--config", _frozen(tmp_path, None)])
+    tuned = apply_run_config(args)
+    capsys.readouterr()
+
+    limits = _strategy_from(args, tuned).position_limits()
+
+    assert limits["max_positions"] == 1  # the strategy's own default, unchanged
+    assert set(limits) >= {"max_positions", "max_total_risk", "max_gross_exposure", "min_notional"}
+
+
+def test_a_partial_limits_block_keeps_the_rest(tmp_path, capsys):
+    from tradeflow.cli import _strategy_from
+
+    args = parse_cli(["backtest", "--config", _frozen(tmp_path, {"max_positions": 12})])
+    tuned = apply_run_config(args)
+    capsys.readouterr()
+
+    limits = _strategy_from(args, tuned).position_limits()
+
+    assert limits["max_positions"] == 12
+    assert limits["max_total_risk"] == 0.05  # untouched by a partial override
+
+
+def test_a_saved_config_records_its_limits_in_full(tmp_path):
+    """So the file says what it risks rather than resolving it at start-up."""
+    from tradeflow.optimization.config_store import load_config, save_config
+    from tradeflow.services.registry import STRATEGIES
+
+    path = save_config(
+        tmp_path / "c.json",
+        strategy="ma_crossover",
+        params={"a": 1},
+        symbols=["A"],
+        capital=8000.0,
+        position_limits=STRATEGIES["ma_crossover"].create_with_defaults().position_limits(),
+    )
+
+    limits = load_config(path)["position_limits"]
+    assert set(limits) >= {"max_positions", "max_position_size", "max_total_risk", "max_gross_exposure"}

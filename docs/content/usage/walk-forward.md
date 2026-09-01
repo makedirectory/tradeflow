@@ -179,7 +179,14 @@ actually evaluated — a clear verdict over one of two checks is not a clearance
 
 The file holds the whole run configuration, not just tuned params: `strategy`,
 `params`, `scanner`, `symbols` (the universe the scanner *resolved*, not the candidate
-list), `capital` and the cost model. So one file drives any run type, and can be
+list), `candidate_symbols`, `capital`, `position_limits` and the cost model.
+
+**`position_limits` is written out in full**, not left to the strategy's defaults. A
+config is what a paper or live run gets frozen from, and the shipped default of
+`max_positions: 1` is exactly the kind of inheritance nobody chose — a 61-name config
+that quietly holds one position. What a run risks belongs in the file rather than being
+resolved from somewhere else at start-up. A config written before this still works:
+recorded keys win, unrecorded ones fall back to the strategy's own. So one file drives any run type, and can be
 versioned in a private repository beside the strategies it belongs to:
 
 ```bash
