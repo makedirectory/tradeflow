@@ -4526,6 +4526,13 @@ def main() -> None:
         args.func(args)
     except (SettingsError, CacheMiss) as exc:
         sys.exit(str(exc))
+    except KeyboardInterrupt:
+        # A traceback reads as a crash; Ctrl-C is a choice. What matters more than the
+        # tidiness is the second clause: a research command interrupted part-way has
+        # written no config and journaled no trial, and a half-finished validation that
+        # silently recorded one would corrupt the campaign's own trial count - the
+        # number every deflated Sharpe deflates against.
+        sys.exit("\nInterrupted - no config saved, no trial recorded.")
 
 
 if __name__ == "__main__":

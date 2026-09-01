@@ -251,3 +251,31 @@ def test_the_default_can_be_turned_off_without_argument_juggling():
         parse(["walkforward", "--strategy", "ma_crossover", "--cost-stress", "borrow"]).cost_stress
         == "borrow"
     )
+
+
+def test_an_interrupted_command_exits_cleanly_and_says_what_did_not_happen():
+    """Ctrl-C during a walk-forward printed a Python traceback ending in
+    `KeyboardInterrupt`, which reads as a crash rather than a choice.
+
+    The message matters more than the tidiness: a research command interrupted part-way
+    has written no config and journaled no trial, and a half-finished validation that
+    silently recorded one would corrupt the campaign's own trial count - the number
+    every deflated Sharpe deflates against.
+    """
+    from unittest import mock
+
+    from tradeflow import cli
+
+    def interrupted(args):
+        raise KeyboardInterrupt
+
+    namespace = mock.Mock()
+    namespace.func = interrupted
+
+    with mock.patch.object(cli, "parse_cli", return_value=namespace), mock.patch.object(cli, "setup_logging"):
+        with pytest.raises(SystemExit) as exit_info:
+            cli.main()
+
+    message = str(exit_info.value)
+    assert "Interrupted" in message
+    assert "no config saved" in message and "no trial recorded" in message
