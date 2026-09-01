@@ -148,6 +148,24 @@ def execution_verdict(
     # disagree most exactly when the answer matters. Skipped rather than guessed when
     # the strategy did not make money gross - there is no edge for cost to eat, and a
     # ratio against a non-positive denominator would be arithmetic rather than a fact.
+    # Breadth: not "is the cap small" - a strategy that concentrates in the best five
+    # of sixty is a legitimate design - but "was the cap ever chosen". A one-position
+    # book selected from many candidates is a different strategy from a many-position
+    # one, and 1 is what every shipped strategy declares by default, so this is
+    # overwhelmingly a setting nobody changed rather than a decision anybody made.
+    max_positions = execution.get("max_positions")
+    universe_size = int(execution.get("universe_size") or 0)
+    if max_positions is not None and universe_size > 1:
+        checks["book_breadth"] = {
+            "value": float(max_positions),
+            "threshold": 2.0,
+            "passed": float(max_positions) > 1,
+            "note": (
+                f"the book holds at most {max_positions} of {universe_size} candidates - "
+                "max_positions is 1, the shipped default; set it to the book you intend"
+            ),
+        }
+
     gross_profit = float(execution.get("gross_profit", 0.0))
     if gross_profit > 0:
         cost_share = float(execution.get("total_cost", 0.0)) / gross_profit * 100.0

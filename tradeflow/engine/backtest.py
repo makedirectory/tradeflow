@@ -369,6 +369,13 @@ class BacktestEngine:
         # 3% of capital in cost is fine against 40% gross and fatal against 4%.
         execution["total_cost"] = total_cost
         execution["gross_profit"] = float(net_pnl + total_cost)
+        # The shape of the book that was actually validated. All three shipped
+        # strategies declare max_positions=1, so a run over a scanned universe of
+        # sixty names can validate a one-position book without ever saying so.
+        limits = self.strategy.position_limits()
+        execution["max_positions"] = limits.get("max_positions")
+        execution["universe_size"] = len(market_data)
+        execution["symbols_traded"] = int(trades_df["symbol"].nunique()) if not trades_df.empty else 0
         metrics = performance.compute_backtest_metrics(
             trades_df,
             equity_curve,

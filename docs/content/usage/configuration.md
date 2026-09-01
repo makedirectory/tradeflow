@@ -124,6 +124,14 @@ intended notional that whole-share rounding removed — every name opens, slight
 smaller. **Unfillable entries** are positions that never opened at all, which is a
 different book rather than a smaller one.
 
+**`max_positions` decides what book you validated.** Every strategy shipped here
+declares `max_positions: 1`, so a backtest over a scanned universe of sixty names
+validates a book holding *one position at a time* — a correct result describing a
+different strategy from the one most people think they are testing. The report flags a
+cap of 1 whenever there is more than one candidate, because 1 is the default rather
+than a decision. A deliberately concentrated book (five of sixty) is not flagged: the
+check asks whether the cap was ever chosen, not whether it is small.
+
 **Cost is measured against gross profit, not capital.** The same dollar cost is
 unremarkable against a large gross return and fatal against a small one, and the two
 denominators disagree most exactly when the answer matters. When a run made no gross

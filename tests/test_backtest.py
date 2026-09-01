@@ -702,3 +702,59 @@ def test_no_gross_profit_means_no_cost_ratio_rather_than_a_guessed_one():
 
     assert "cost_share_of_gross" not in verdict["checks"]
     assert verdict["executable"] is True  # the checks that *could* run all passed
+
+
+def _breadth_run(max_positions, n_symbols=20):
+    from tests.fakes import FakeMarketData
+    from tradeflow.services.registry import STRATEGIES
+
+    symbols = [f"S{i}" for i in range(n_symbols)]
+    client = MarketDataClient(FakeMarketData(symbols, n=400, freq="1D"))
+    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy.config["position_limits"] = {
+        **strategy.position_limits(),
+        "max_positions": max_positions,
+        "max_position_size": 50_000.0,
+    }
+    return BacktestEngine(strategy, client).run(
+        symbols, datetime(2024, 1, 2), datetime(2025, 1, 2), 100_000.0
+    )
+
+
+def test_a_one_position_book_over_a_wide_universe_is_flagged():
+    """Every shipped strategy declares `max_positions: 1`.
+
+    So a backtest over a scanned universe of sixty names validates a book that holds
+    one position at a time, and nothing said so - measured here, a cap of 1 over twenty
+    candidates ever touches nine of them. The result is correct and describes a
+    different strategy from the one the user thinks they are testing.
+    """
+    from tradeflow.analytics.performance import execution_verdict
+
+    result = _breadth_run(1)
+    check = execution_verdict(result.execution)["checks"]["book_breadth"]
+
+    assert not check["passed"]
+    assert "1 of 20 candidates" in check["note"]
+    assert result.execution["symbols_traded"] < result.execution["universe_size"]
+
+
+def test_a_deliberately_concentrated_book_is_not_flagged():
+    """The check is "was the cap ever chosen", not "is the cap small".
+
+    Concentrating in the best five of twenty is a legitimate design, and a gate that
+    called it a defect would be one people learn to switch off.
+    """
+    from tradeflow.analytics.performance import execution_verdict
+
+    check = execution_verdict(_breadth_run(5).execution)["checks"]["book_breadth"]
+
+    assert check["passed"]
+
+
+def test_breadth_is_not_judged_on_a_single_name_universe():
+    """A one-position book over one candidate is the only book available, so there is
+    nothing to flag and a check that fired would be noise."""
+    from tradeflow.analytics.performance import execution_verdict
+
+    assert "book_breadth" not in execution_verdict(_breadth_run(1, n_symbols=1).execution)["checks"]
