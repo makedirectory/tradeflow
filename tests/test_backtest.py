@@ -758,3 +758,71 @@ def test_breadth_is_not_judged_on_a_single_name_universe():
     from tradeflow.analytics.performance import execution_verdict
 
     assert "book_breadth" not in execution_verdict(_breadth_run(1, n_symbols=1).execution)["checks"]
+
+
+# --- three verdicts, shown together --------------------------------------------
+def test_a_command_says_which_verdicts_it_did_not_assess():
+    """The fix for "a backtest replay reads as approved".
+
+    The three verdicts already never collapsed into one another, but each was printed
+    by a different command at a different moment, so nothing showed a reader all three.
+    A backtest can speak to execution and to nothing else, and saying so is the point -
+    an unknown rendered as a blank is an unknown a reader fills in optimistically.
+    """
+    from tradeflow.analytics.reporting import format_verdicts
+
+    rendered = "\n".join(format_verdicts(execution="PASS"))
+
+    assert "Execution viability" in rendered and "PASS" in rendered
+    assert "Statistical validation" in rendered and "not assessed here" in rendered
+    assert "walkforward" in rendered  # and names what would assess it
+    assert "Clearing one says nothing about the others" in rendered
+
+
+def test_the_three_verdicts_are_never_merged_into_one():
+    """Each carries its own answer; none is derived from another."""
+    from tradeflow.analytics.reporting import format_verdicts
+
+    rendered = "\n".join(
+        format_verdicts(statistical="FAIL - min_oos_sharpe", execution="PASS", evidence="2 of 3 evaluated")
+    )
+
+    assert "FAIL - min_oos_sharpe" in rendered
+    assert "PASS" in rendered
+    assert "2 of 3 evaluated" in rendered
+    assert "not assessed here" not in rendered
+
+
+def test_one_trial_reports_an_undeflated_sharpe_by_that_name():
+    """At one trial there is nothing to deflate against - the deflated Sharpe is
+    identically the probabilistic one, so the name promised a multiple-testing
+    correction that was never applied. The number was always right."""
+    import pandas as pd
+
+    from tradeflow.analytics.performance import compute_backtest_metrics
+    from tradeflow.analytics.reporting import format_backtest_report
+
+    curve = [100.0 + i * 0.01 for i in range(300)]
+    trades = pd.DataFrame({"pnl": [1.0, -0.5, 2.0]})
+
+    alone = compute_backtest_metrics(trades, curve, 100.0, 103.0, {}, n_trials=1)
+    campaign = compute_backtest_metrics(trades, curve, 100.0, 103.0, {}, n_trials=12)
+
+    assert alone["deflation_applied"] is False
+    assert campaign["deflation_applied"] is True
+    assert "Sharpe (undeflated)" in format_backtest_report(alone, 100.0, 103.0, title="t")
+    assert "Deflated Sharpe" in format_backtest_report(campaign, 100.0, 103.0, title="t")
+
+
+def test_the_undeflated_number_itself_is_unchanged():
+    """Only the label was wrong. Hiding or altering a correct number would be a
+    different defect."""
+    import numpy as np
+
+    from tradeflow.analytics.metrics import deflated_sharpe_ratio, probabilistic_sharpe_ratio
+
+    returns = np.random.default_rng(7).normal(0.0004, 0.01, 300)
+
+    assert deflated_sharpe_ratio(returns, 1) == pytest.approx(probabilistic_sharpe_ratio(returns))
+    # And a real campaign count still deflates, hard.
+    assert deflated_sharpe_ratio(returns, 50) < deflated_sharpe_ratio(returns, 1)

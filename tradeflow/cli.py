@@ -510,6 +510,7 @@ def cmd_backtest(args) -> None:
     log_backtest_report(
         result.metrics, result.initial_capital, result.final_capital, execution=result.execution
     )
+    _print_verdicts_for_backtest(result)
     if getattr(args, "cost_stress", False):
         _print_cost_stress(data_client, strategy_name, universe, args, tuned)
     if not args.gross and result.total_cost:
@@ -1283,6 +1284,7 @@ def _print_promotion_prerequisites(data_client, args, result, universe, bootstra
     prereq = promotion_prerequisites(
         cost_stress=stress, bootstrap=bootstrap_report, benchmark_ir=benchmark_ir
     )
+    _print_walkforward_verdicts(result, prereq)
     if not prereq["evaluated"] and prereq["checks"]["family_bootstrap"]["n_used"] == 0:
         return  # nothing to say: no input was produced by this run
 
@@ -1305,6 +1307,24 @@ def _print_promotion_prerequisites(data_client, args, result, universe, bootstra
     print(f"  Prerequisites: {done} of {total} evaluated - {verdict}{tail}")
     if unknown:
         print("  An unevaluated check is not a passed one - what is unknown stays unknown.")
+
+
+def _print_walkforward_verdicts(result, prereq) -> None:
+    """Statistical validation and evidence completeness. Execution is not measurable
+    here - it is a property of a book at a capital, which a backtest reports."""
+    from tradeflow.analytics.reporting import format_verdicts
+
+    gates = result.gate_report()
+    failed = [name for name, check in gates["checks"].items() if not check.get("passed")]
+    statistical = "PASS" if gates["promotable"] else f"FAIL - {', '.join(failed)}"
+
+    done, total = prereq["evaluated"], prereq["total"]
+    unknown = total - done
+    ready = {None: "nothing assessed", True: "clear so far" if unknown else "clear", False: "NOT clear"}[
+        prereq["ready"]
+    ]
+    evidence = f"{done} of {total} evaluated - {ready}" + (f"; {unknown} unknown" if unknown else "")
+    print("\n".join(format_verdicts(statistical=statistical, evidence=evidence)))
 
 
 def _print_bootstrap_skill(report: Dict[str, Any]) -> None:
@@ -2143,6 +2163,24 @@ def _print_policy_ab(data_client, args) -> None:
         "  (net of the real transaction cost — an aim policy that tracks decay but churns less "
         "yet still loses net IR should, and does, lose here)"
     )
+
+
+def _print_verdicts_for_backtest(result) -> None:
+    """A backtest can speak to execution and to nothing else.
+
+    Saying so is the point: the statistical verdict comes from a walk-forward and the
+    evidence one from a campaign, and a backtest that stayed silent about both is how a
+    replay reads as approval.
+    """
+    from tradeflow.analytics.performance import execution_verdict
+    from tradeflow.analytics.reporting import format_verdicts
+
+    verdict = execution_verdict(getattr(result, "execution", None))
+    executable = verdict["executable"]
+    summary = {None: "UNKNOWN - nothing was attempted", True: "PASS", False: f"FAIL - {verdict['reason']}"}[
+        executable
+    ]
+    print("\n".join(format_verdicts(execution=summary)))
 
 
 def _print_cost_stress(data_client, strategy_name: str, universe, args, tuned) -> None:

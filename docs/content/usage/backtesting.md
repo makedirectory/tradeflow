@@ -51,6 +51,28 @@ Profit Factor           1.61
 How fills and P&L are simulated is documented in **[The Engine](../engineering/engine)**;
 how each metric is computed is in **[Indicators & Analytics](../engineering/indicators)**.
 
+## Three verdicts, not one
+
+A backtest answers one of the three questions worth asking, and says so:
+
+```
+=== Verdicts ===
+  Statistical validation  not assessed here - was the edge real, and not overfit (`walkforward`)
+  Execution viability     FAIL - unfillable_entries beyond limit at this capital
+  Evidence completeness   not assessed here - what has actually been checked (`walkforward --bootstrap-skill`)
+  Three separate facts. Clearing one says nothing about the others.
+```
+
+These were always three separate verdicts — `promotable`, `executable` and the
+promotion prerequisites — that never collapse into one another. What was missing is
+that each was printed by a different command at a different moment, so nothing showed
+you all three. That is how a backtest replay can read as *approved* when it only means
+"this saved config runs, and its history looks good".
+
+A verdict this command cannot assess is printed as **not assessed here**, naming the
+command that would assess it. An unknown left blank is an unknown a reader fills in
+optimistically.
+
 ## Net of transaction cost
 
 Backtest metrics are **net of transaction cost by default** — commission + half-spread

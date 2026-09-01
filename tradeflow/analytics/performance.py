@@ -91,7 +91,7 @@ METRIC_KEYS = (
 #: independently: a benchmark can be present and Treynor still meaningless, when the
 #: book's beta is too near zero to divide by. Without the flag a suppressed ratio and a
 #: genuine zero are the same number.
-FLAG_KEYS = ("benchmark_available", "low_sample", "treynor_available")
+FLAG_KEYS = ("benchmark_available", "low_sample", "treynor_available", "deflation_applied")
 
 
 #: Thresholds for the executability verdict. Judgment calls, not evidence-derived:
@@ -274,6 +274,7 @@ def empty_metrics() -> Dict[str, float]:
     base["benchmark_available"] = False
     base["low_sample"] = True
     base["treynor_available"] = False
+    base["deflation_applied"] = False
     return base
 
 
@@ -403,6 +404,10 @@ def compute_backtest_metrics(
         # --- flags ---
         "benchmark_available": bool(has_benchmark),
         "treynor_available": bool(has_benchmark and abs(beta) >= m.MIN_ABS_BETA_FOR_TREYNOR),
+        # At one trial there is nothing to deflate against: the "deflated" Sharpe is
+        # identically the probabilistic one, so the name promises a multiple-testing
+        # correction that was not applied. The number is right; the label was not.
+        "deflation_applied": bool(n_trials > 1),
         "low_sample": bool(len(trades_df) < LOW_SAMPLE_TRADES),
     }
     return result

@@ -124,6 +124,43 @@ def _execution_lines(execution: Optional[Dict[str, Any]]) -> List[str]:
     return lines
 
 
+def format_verdicts(
+    *,
+    statistical: Optional[Dict[str, Any]] = None,
+    execution: Optional[Dict[str, Any]] = None,
+    evidence: Optional[Dict[str, Any]] = None,
+) -> List[str]:
+    """The three facts about a candidate, side by side and separately labelled.
+
+    They were already three verdicts that never collapse into one another, but each was
+    printed by a different command at a different moment, so nothing ever showed a
+    reader all three. That is how a backtest replay reads as "approved" when it only
+    means "this saved config runs and its history looks good".
+
+    A verdict this command could not assess is printed as **not assessed here**, with
+    the command that would assess it - the same rule the prerequisites follow, because
+    an unknown rendered as a blank is an unknown a reader fills in optimistically.
+    """
+    rows = [
+        ("Statistical validation", statistical, "was the edge real, and not overfit", "walkforward"),
+        ("Execution viability", execution, "can this book be traded at this capital", "backtest"),
+        (
+            "Evidence completeness",
+            evidence,
+            "what has actually been checked",
+            "walkforward --bootstrap-skill",
+        ),
+    ]
+    lines = ["", "=== Verdicts ==="]
+    for label, verdict, question, command in rows:
+        if verdict is None:
+            lines.append(f"  {label:24}not assessed here - {question} (`{command}`)")
+            continue
+        lines.append(f"  {label:24}{verdict}")
+    lines.append("  Three separate facts. Clearing one says nothing about the others.")
+    return lines
+
+
 def format_backtest_report(
     metrics: Dict[str, float],
     initial_capital: float,
@@ -144,9 +181,14 @@ def format_backtest_report(
             f"meaningful for a book with no market exposure)"
         )
     lines.extend(_execution_lines(execution))
+    undeflated = not metrics.get("deflation_applied", True)
     for section, rows in _SECTIONS:
         section_lines = []
         for key, label, fmt in rows:
+            if key == "deflated_sharpe_ratio" and undeflated:
+                # One trial deflates against nothing, so the row says what it is rather
+                # than borrowing the name of a correction that was not applied.
+                label = "  Sharpe (undeflated)"
             if key in metrics:
                 value = fmt.format(metrics[key]) if metrics[key] != float("inf") else "inf"
                 section_lines.append(f"{label:28}{value}")
