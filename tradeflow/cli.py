@@ -2788,6 +2788,7 @@ _LIMIT_OVERRIDES = (
     ("max_positions", "max_positions", "--max-positions"),
     ("max_position_size", "max_position_size", "--max-position-size"),
     ("max_gross_exposure", "max_gross_exposure", "--max-gross-exposure"),
+    ("max_net_exposure", "max_net_exposure", "--max-net-exposure"),
     ("max_total_risk", "max_total_risk", "--max-total-risk"),
     ("min_notional", "min_notional", "--min-notional"),
 )
@@ -2907,10 +2908,9 @@ def cmd_live(args) -> None:
 
     _print_live_preflight(args, strategy, broker, universe, capital, ledger)
     _refuse_ambiguous_broker_mode(args)
-    if getattr(args, "preflight", False):
-        print("\n--preflight: nothing was started and no order path ran.")
-        return
 
+    # Constructed before the preflight exit so the preflight can run the same warm-up
+    # the live path runs. Building an engine places nothing.
     engine = LiveEngine(
         strategy,
         data_client,
@@ -2920,6 +2920,19 @@ def cmd_live(args) -> None:
         reconcile_every=args.reconcile_every,
         allow_blind_start=args.allow_blind_start,
     )
+
+    if getattr(args, "preflight", False):
+        warmed, asked = engine.warm_up_coverage(universe)
+        print(f"\n  {'warm-up coverage':22}{warmed} of {asked} symbols have history")
+        if not warmed and asked:
+            # The same verdict the run would reach, reached before it starts.
+            print(
+                "  Every indicator would start blind. The usual cause is a feed the "
+                "account is not entitled to — try --feed iex."
+            )
+        print("\n--preflight: nothing was started and no order path ran.")
+        return
+
     try:
         asyncio.run(engine.start(universe))
     except BlindStartError as exc:
@@ -3041,6 +3054,11 @@ def _print_live_preflight(args, strategy, broker, universe, capital, ledger) -> 
         print(f"  {'max gross exposure':22}{gross:g} ({gross:.0%} of capital = ${gross * capital:,.2f})")
     else:
         print(f"  {'max gross exposure':22}{_limit(gross, lambda v: f'{v:g} ({v:.0%} of capital)')}")
+    net = limits.get("max_net_exposure")
+    if net is not None and capital:
+        print(f"  {'max net exposure':22}{net:g} ({net:.0%} of capital = ${net * capital:,.2f})")
+    else:
+        print(f"  {'max net exposure':22}{_limit(net, lambda v: f'{v:g} ({v:.0%} of capital)')}")
     risk = limits.get("max_total_risk")
     if risk is not None and capital:
         print(f"  {'max total risk':22}{risk:g} ({risk:.0%} of capital = ${risk * capital:,.2f})")
@@ -3813,6 +3831,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Ceiling on gross exposure as a fraction of deployable capital (0.9 = 90%%). "
         "Overrides the strategy's and the saved config's limit",
+    )
+    live.add_argument(
+        "--max-net-exposure",
+        dest="max_net_exposure",
+        type=float,
+        default=None,
+        help="Ceiling on directional tilt - |long - short| as a fraction of deployable "
+        "capital. Distinct from --max-gross-exposure, which bounds long + short",
     )
     live.add_argument(
         "--max-total-risk",

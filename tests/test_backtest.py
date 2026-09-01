@@ -401,6 +401,75 @@ def test_max_gross_exposure_is_off_by_default():
     assert explicit.final_capital == pytest.approx(baseline.final_capital)
 
 
+def test_max_net_exposure_caps_a_one_directional_book():
+    """The gap gross could not see: four all-long entries sit inside any gross cap that
+    admits them, and are a wholly directional bet. 45% of equity admits two $20k longs.
+    """
+    result = _multi(_four_names(), ["BUY", "HOLD", "CLOSE_BUY"], overrides=_limits(max_net_exposure=0.45))
+    notional = (result.trades["size"] * result.trades["entry_price"]).sum()
+    assert len(result.trades) == 2
+    assert notional == pytest.approx(40_000)
+
+
+def test_max_net_exposure_is_off_by_default():
+    """Unset must change nothing — turning a directional cap on by default would
+    silently reshape every existing config's book."""
+    baseline = _multi(_four_names(), ["BUY", "HOLD", "CLOSE_BUY"], overrides=_TIGHT_STOP)
+    explicit = _multi(_four_names(), ["BUY", "HOLD", "CLOSE_BUY"], overrides=_limits(max_net_exposure=None))
+    assert len(explicit.trades) == len(baseline.trades) == 4
+    assert explicit.final_capital == pytest.approx(baseline.final_capital)
+
+
+class _SidedStrategy(ScriptedStrategy):
+    """Longs the cheap names and shorts the dear ones, so the book is genuinely mixed.
+
+    ScriptedStrategy emits one script for every symbol, which can only ever build a
+    one-directional book — the case where gross and net agree, and so the case that
+    cannot tell them apart.
+    """
+
+    def generate_signals(self, data: pd.DataFrame) -> Dict:
+        long = data["close"].iloc[0] < 150
+        script = ["BUY", "HOLD", "CLOSE_BUY"] if long else ["SELL", "HOLD", "CLOSE_SELL"]
+        return dict(zip(data.index, script))
+
+
+def _mixed_book(**limit_changes):
+    """Two names at $100 (long) and two at $200 (short). Risk-based sizing makes every
+    position the same notional, so the book is $80k gross and $0 net."""
+    cheap, dear = (
+        _frame(_FLAT),
+        _frame([{**row, **{k: row[k] * 2 for k in row if k != "volume"}} for row in _FLAT]),
+    )
+    frames = {"AAA": cheap, "BBB": cheap, "CCC": dear, "DDD": dear}
+    strategy = _SidedStrategy([], _limits(**limit_changes))
+    return BacktestEngine(strategy, MarketDataClient(DictMarketData(frames))).run(
+        sorted(frames), datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000
+    )
+
+
+def test_the_same_fraction_admits_a_balanced_book_that_gross_would_refuse():
+    """The two caps are not interchangeable, asserted rather than described.
+
+    The same 0.45 against the same four names: gross sees $80k and stops at two,
+    net sees the shorts cancel the longs and admits all four. A long/short config
+    bounded only by gross is either throttled or unhedged, never neither.
+    """
+    by_gross = _mixed_book(max_gross_exposure=0.45)
+    by_net = _mixed_book(max_net_exposure=0.45)
+
+    assert len(by_gross.trades) == 2
+    assert len(by_net.trades) == 4
+
+
+def test_a_net_cap_still_counts_shorts_by_magnitude():
+    """It bounds |long - short|, so an all-short book is capped exactly as an all-long
+    one is — 90% net short is as directional as 90% net long."""
+    result = _multi(_four_names(), ["SELL", "HOLD", "CLOSE_SELL"], overrides=_limits(max_net_exposure=0.45))
+
+    assert len(result.trades) == 2
+
+
 # --- the benchmark actually reaches the metrics -------------------------------
 def _bench_run(benchmark):
     from tests.fakes import FakeMarketData

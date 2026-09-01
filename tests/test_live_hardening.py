@@ -787,3 +787,28 @@ def test_a_book_that_already_matches_the_score_stays_quiet():
     asyncio.run(engine.start([SYMBOL]))
 
     assert [o["type"] for o in broker.orders] == ["bracket"]  # once, not three times
+
+
+def test_the_preflight_runs_the_same_warm_up_the_run_would():
+    """The gap: --preflight printed the whole contract but never touched market data,
+    so the one number that decides whether a run is viable — how many symbols actually
+    have history — could not be confirmed from it. A lighter probe would not do: a
+    preflight that fetches differently from the run it precedes confirms nothing.
+    """
+    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    feed = ScriptedFeed(["AAA", "BBB"], events=[bar_event(minute=1)], n=10, freq="1D")
+    engine = LiveEngine(
+        strategy,
+        MarketDataClient(feed),
+        LiveTrader(RecordingBroker(), strategy, respect_market_hours=False),
+    )
+
+    assert engine.warm_up_coverage(["AAA", "BBB"]) == (2, 2)
+
+
+def test_the_preflight_reports_a_blind_warm_up_without_raising():
+    """It reports; the refusal belongs to the start path. A preflight that raised would
+    lose the rest of the contract it exists to print."""
+    engine, _ = _blind_engine()
+
+    assert engine.warm_up_coverage(["AAA"]) == (0, 1)

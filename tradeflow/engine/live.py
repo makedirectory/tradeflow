@@ -182,6 +182,15 @@ class LiveEngine:
         if adopted:
             logger.info("Resuming with %d open position(s) adopted from the broker", adopted)
 
+    def warm_up_coverage(self, symbols: List[str]) -> tuple:
+        """Run the real warm-up and report ``(symbols with history, symbols asked)``.
+
+        Deliberately the same call the live path makes, not a lighter probe: a
+        preflight that fetches differently from the run it precedes confirms nothing
+        about that run. Placing no orders, it is safe to call and then exit.
+        """
+        return self._warm_up(symbols), len(symbols)
+
     def _warm_up(self, symbols: List[str]) -> int:
         """Seed each symbol's rolling buffer so indicators are valid on bar one.
 

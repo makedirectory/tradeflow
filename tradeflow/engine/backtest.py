@@ -184,6 +184,18 @@ class _Book:
         """
         return sum(p["size"] * p["last_price"] for p in self.positions.values())
 
+    def net_exposure(self) -> float:
+        """Signed notional across the book: longs positive, shorts negative.
+
+        The directional tilt :meth:`gross_exposure` cannot see. A book that is long
+        $4,000 and short $4,000 has $8,000 gross and $0 net; one that is long $8,000
+        has the same gross and $8,000 net, and only the second is a bet on direction.
+        """
+        return sum(
+            (p["size"] if p["side"] == signals.BUY else -p["size"]) * p["last_price"]
+            for p in self.positions.values()
+        )
+
     def market_value(self) -> float:
         """Reserved notional plus unrealized gross P&L, marked at last seen price."""
         total = 0.0
@@ -624,6 +636,7 @@ class BacktestEngine:
         max_positions = limits["max_positions"]
         max_total_risk = limits["max_total_risk"]
         max_gross_exposure = limits.get("max_gross_exposure")
+        max_net_exposure = limits.get("max_net_exposure")
         min_notional = limits.get("min_notional")
         n_steps = len(master)
         order = sorted(panels)
@@ -702,6 +715,7 @@ class BacktestEngine:
                         equity_now,
                         max_total_risk,
                         max_gross_exposure,
+                        max_net_exposure,
                         min_notional,
                         panel.adv,
                         panel.vol,
@@ -778,6 +792,7 @@ class BacktestEngine:
         equity: float,
         max_total_risk: float,
         max_gross_exposure: Optional[float],
+        max_net_exposure: Optional[float],
         min_notional: Optional[float],
         adv: Optional[np.ndarray],
         vol: Optional[np.ndarray],
@@ -842,6 +857,15 @@ class BacktestEngine:
         # this binds when a config wants to sit deliberately below that.
         if max_gross_exposure and book.gross_exposure() + size * price > equity * max_gross_exposure:
             return None
+
+        # Directional cap. Tested on the resulting |net| rather than on the addition,
+        # so an entry that moves the book *toward* flat is admitted even when the book
+        # is already over the cap - rejecting a hedge for being a trade would leave the
+        # tilt it would have corrected in place.
+        if max_net_exposure:
+            signed = size * price if signal == signals.BUY else -size * price
+            if abs(book.net_exposure() + signed) > equity * max_net_exposure:
+                return None
 
         if signal == signals.BUY:
             stop, take = price * (1 - stop_pct), price * (1 + take_pct)

@@ -85,6 +85,10 @@ DEFAULT_POSITION_LIMITS: Dict[str, Any] = {
     "max_position_size": 1500.0,
     "max_total_risk": 0.05,
     "max_gross_exposure": None,
+    #: Ceiling on |long - short| as a fraction of equity. Distinct from
+    #: ``max_gross_exposure``, which bounds long + short: a book can sit inside a gross
+    #: cap while being entirely one-directional, so a long/short strategy needs both.
+    "max_net_exposure": None,
     "min_notional": None,
 }
 

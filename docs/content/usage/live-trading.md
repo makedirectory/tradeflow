@@ -224,6 +224,7 @@ Every live run prints what it is about to do, before any order logic runs:
   max positions         8
   max position size     $1,200.00
   max gross exposure    0.9 (90% of capital = $7,200.00)
+  max net exposure      0.3 (30% of capital = $2,400.00)
   max total risk        0.05 (5% of capital = $400.00)
   min notional          $50.00
   entries               re-affirmed
@@ -232,7 +233,16 @@ Every live run prints what it is about to do, before any order logic runs:
   ledger                ~/.tradeflow/logs/positions.jsonl
   journal               ~/.tradeflow/logs/research_journal.jsonl
   halt state            ~/.tradeflow/logs/halts.json
+
+  warm-up coverage      61 of 61 symbols have history
 ```
+
+Under `--preflight` the last line runs the **same warm-up the live path runs** and
+reports what came back, so the one number that decides whether a run is viable can be
+confirmed before dropping the flag. A lighter probe would not do: a preflight that
+fetches differently from the run it precedes confirms nothing about that run. It
+reports rather than refuses — the refusal belongs to the start path, and a preflight
+that raised would lose the rest of the contract it exists to print.
 
 `--preflight` prints it and exits without starting anything. It is printed on every run
 regardless, because a check you have to remember to ask for is one that gets skipped
@@ -294,9 +304,17 @@ Only a flag you actually type applies. `--max-positions` carries a default, and 
 an untyped default overrule a frozen config would silently shrink the very book the
 capital freeze exists to pin.
 
-There is no net-exposure limit. `max_gross_exposure` bounds long plus short; nothing
-bounds long minus short, so a long/short book's directional tilt is currently
-unconstrained by the live guard.
+`--max-gross-exposure` and `--max-net-exposure` are not interchangeable, and a
+long/short book wants both. Gross bounds long **plus** short; net bounds long **minus**
+short. A book that is $4,000 long and $4,000 short has $8,000 gross and $0 net; one
+that is $8,000 long has the same gross and $8,000 net, and only the second is a bet on
+direction. Bounded by gross alone, a long/short config is either throttled or unhedged
+and never neither.
+
+The net cap is judged on the **resulting** |net|, so an entry that moves the book
+toward flat is admitted even when the book is already over the cap — refusing a hedge
+for being a trade would leave the tilt it corrects in place. It bounds magnitude, so
+90% net short is capped exactly as 90% net long is. Off unless configured, like gross.
 
 Two limits are stated in different units on purpose. `--max-position-size` is a dollar
 ceiling on one position; `--max-gross-exposure` is a fraction of deployable capital, and

@@ -231,7 +231,7 @@ class LiveTrader:
         # The capped account here too: `max_total_risk` and `max_gross_exposure` are
         # fractions *of equity*, and 5% of a paper account's balance is not 5% of the
         # capital the config was validated at.
-        breach = self._limit_breach(symbol, qty, price, sizing_account)
+        breach = self._limit_breach(symbol, qty, price, sizing_account, signal)
         if breach is not None:
             logger.warning("Refusing %s entry for %s: %s", signal, symbol, breach)
             return decisions.decline(symbol, signal, breach, tuple(guards))
@@ -365,7 +365,9 @@ class LiveTrader:
             trading_blocked=account.trading_blocked,
         )
 
-    def _limit_breach(self, symbol: str, qty: float, price: float, account) -> Optional[str]:
+    def _limit_breach(
+        self, symbol: str, qty: float, price: float, account, signal: Optional[str] = None
+    ) -> Optional[str]:
         """Say which portfolio limit this entry would break, or ``None`` if it fits.
 
         Sizing answers "how big should this position be?" one symbol at a time and
@@ -394,7 +396,8 @@ class LiveTrader:
         max_positions = limits.get("max_positions")
         max_total_risk = limits.get("max_total_risk")
         max_gross_exposure = limits.get("max_gross_exposure")
-        if not (max_positions or max_total_risk or max_gross_exposure):
+        max_net_exposure = limits.get("max_net_exposure")
+        if not (max_positions or max_total_risk or max_gross_exposure or max_net_exposure):
             return None
 
         others = [p for held, p in self._strategy.positions.items() if held != symbol]
@@ -402,7 +405,7 @@ class LiveTrader:
         if max_positions and len(others) + 1 > max_positions:
             return f"book is full: {len(others)} of {max_positions} positions already open"
 
-        if not (max_total_risk or max_gross_exposure):
+        if not (max_total_risk or max_gross_exposure or max_net_exposure):
             return None
 
         equity = account.equity
@@ -428,6 +431,28 @@ class LiveTrader:
             cap = equity * max_gross_exposure
             if held_notional + entry_notional > cap:
                 return f"gross exposure capped: ${held_notional + entry_notional:,.2f} of ${cap:,.2f}"
+
+        if max_net_exposure:
+            # Gross bounds long + short and cannot see direction: a book inside a 90%
+            # gross cap can be entirely long. This bounds |long - short|.
+            #
+            # Sign comes from the recorded side, never from qty. The broker reports a
+            # short's quantity negative while an entry this trader records itself is
+            # positive, so reading the sign off qty would count adopted shorts and
+            # freshly opened ones with opposite signs.
+            held_net = sum(
+                (abs(p["qty"]) if p["side"] == signals.BUY else -abs(p["qty"])) * p["entry_price"]
+                for p in others
+            )
+            signed_entry = entry_notional if signal != signals.SELL else -entry_notional
+            projected = held_net + signed_entry
+            cap = equity * max_net_exposure
+            # Judged on the resulting |net|, so an entry that moves the book toward
+            # flat is admitted even from over the cap - refusing a hedge for being a
+            # trade would leave the tilt it corrects in place.
+            if abs(projected) > cap:
+                direction = "long" if projected > 0 else "short"
+                return f"net exposure capped: ${abs(projected):,.2f} net {direction} of ${cap:,.2f}"
 
         return None
 

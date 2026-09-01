@@ -370,3 +370,26 @@ def test_preflight_shows_the_two_limits_that_were_enforced_but_never_printed(cap
     printed = capsys.readouterr().out
     assert "max total risk" in printed and "$400.00" in printed  # 5% of $8,000
     assert "min notional" in printed and "$50.00" in printed
+
+
+def test_preflight_shows_the_directional_cap_gross_cannot_see(capsys, monkeypatch):
+    """max_gross_exposure bounds long + short, so a book inside it can be entirely
+    one-directional. The net cap needs its own line or it cannot be confirmed."""
+    from unittest import mock
+
+    from tests.fakes import FakeBroker
+    from tradeflow import cli
+    from tradeflow.cli import _apply_limit_overrides, parse_cli
+    from tradeflow.services.registry import STRATEGIES
+
+    monkeypatch.setattr("tradeflow.settings.paper_trade_mode", lambda: True)
+    args = parse_cli(["live", "--scanner", "none", "--max-net-exposure", "0.3"])
+    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    _apply_limit_overrides(args, strategy)
+    ledger = mock.Mock()
+    ledger.path = "/tmp/l.jsonl"
+
+    cli._print_live_preflight(args, strategy, FakeBroker(), ["AAA"], 8_000.0, ledger)
+
+    printed = capsys.readouterr().out
+    assert "max net exposure" in printed and "$2,400.00" in printed  # 30% of $8,000
