@@ -268,3 +268,125 @@ def test_a_torn_final_line_does_not_erase_the_ledger(tmp_path):
         fh.write('{"event": "fill", "symbol": "NK')
 
     assert PositionLedger(path).expected_positions() == {"COP": 8}
+
+
+# --- adoption ---------------------------------------------------------------------
+#: The book a resumed session found already open at the broker.
+ADOPTED = [
+    ("COP", "buy", 8),
+    ("CRM", "buy", 4),
+    ("CVX", "buy", 5),
+    ("NKE", "sell", 31),
+    ("SCHW", "buy", 10),
+    ("WMT", "sell", 11),
+]
+
+
+class _Broker:
+    def __init__(self, held):
+        self._held = held
+
+    def list_positions(self):
+        class P:
+            def __init__(self, symbol, qty):
+                self.symbol, self.qty, self.is_long = symbol, abs(qty), qty > 0
+
+        return [P(s, q) for s, q in self._held.items()]
+
+
+def test_an_adopted_book_reconciles_clean(ledger):
+    """The bug: live adopted six positions into its in-memory book and the durable
+    ledger never heard of them, so the next sweep called all six unexpected — noise
+    exactly where a real divergence has to stand out."""
+    for symbol, side, qty in ADOPTED:
+        ledger.record_adoption(symbol, side, qty)
+    held = {s: (q if side == "buy" else -q) for s, side, q in ADOPTED}
+
+    report = ledger.reconcile(_Broker(held))
+
+    assert report.clean, report.summary()
+
+
+def test_adoption_records_a_short_negative(ledger):
+    ledger.record_adoption("NKE", "sell", 31)
+
+    assert ledger.expected_positions() == {"NKE": -31}
+
+
+def test_adoption_takes_the_magnitude_whatever_sign_the_broker_reports(ledger):
+    """A broker reports a short's quantity negative; the side is what decides."""
+    ledger.record_adoption("NKE", "sell", -31)
+
+    assert ledger.expected_positions() == {"NKE": -31}
+
+
+def test_adoption_replaces_what_came_before_rather_than_adding_to_it(ledger):
+    """A baseline, not a fill. The broker's holding at that moment is the whole truth
+    about the symbol, so adding to a stale belief would double it."""
+    _fills(ledger, "o1", "COP", "buy", [8])
+    ledger.record_adoption("COP", "buy", 8)
+
+    assert ledger.expected_positions() == {"COP": 8}
+
+
+def test_adoption_can_correct_a_ledger_that_had_drifted(ledger):
+    """The recovery path: whatever the ledger believed, the broker's number wins."""
+    _fills(ledger, "o1", "COP", "buy", [21])
+    ledger.record_adoption("COP", "buy", 8)
+
+    assert ledger.expected_positions() == {"COP": 8}
+
+
+def test_fills_after_an_adoption_still_count(ledger):
+    """An adoption is a baseline, not a freeze — trading continues from it."""
+    ledger.record_adoption("COP", "buy", 8)
+    _fills(ledger, "o2", "COP", "buy", [3])
+
+    assert ledger.expected_positions() == {"COP": 11}
+
+
+def test_an_exit_after_an_adoption_nets_against_it(ledger):
+    ledger.record_adoption("COP", "buy", 8)
+    _fills(ledger, "exit", "COP", "sell", [8])
+
+    assert ledger.expected_positions() == {}
+
+
+def test_adopting_nothing_leaves_a_previously_closed_symbol_closed(ledger):
+    _fills(ledger, "o1", "COP", "buy", [8])
+    ledger.record_close("COP")
+
+    assert ledger.expected_positions() == {}
+
+
+def test_adoption_does_not_disturb_other_symbols(ledger):
+    _fills(ledger, "o1", "NKE", "sell", [31])
+    ledger.record_adoption("COP", "buy", 8)
+
+    assert ledger.expected_positions() == {"NKE": -31, "COP": 8}
+
+
+def test_a_later_adoption_supersedes_an_earlier_one(ledger):
+    """Restarting twice must not accumulate baselines."""
+    ledger.record_adoption("COP", "buy", 8)
+    ledger.record_adoption("COP", "buy", 5)
+
+    assert ledger.expected_positions() == {"COP": 5}
+
+
+def test_adoption_of_a_flat_symbol_records_nothing_held(ledger):
+    """Absent is not zero, and zero is not a holding."""
+    ledger.record_adoption("COP", "buy", 0)
+
+    assert ledger.expected_positions() == {}
+
+
+def test_an_adoption_is_not_counted_as_a_legacy_record(ledger, caplog):
+    """It carries no basis because it is not a fill; that must not trip the pre-fix
+    warning, which would then fire on every resumed session."""
+    ledger.record_adoption("COP", "buy", 8)
+
+    with caplog.at_level("ERROR"):
+        ledger.reconcile(_Broker({"COP": 8}))
+
+    assert "before fill accounting" not in caplog.text

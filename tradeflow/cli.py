@@ -25,7 +25,6 @@ for preconfigured combos (``make demo``, ``make backtest``, ...).
 """
 
 import argparse
-import asyncio
 import contextlib
 import logging
 import sys
@@ -2853,9 +2852,10 @@ def _refuse_inert_flags(args) -> None:
 
 
 def cmd_live(args) -> None:
-    from tradeflow.engine.live import BlindStartError, LiveEngine
+    from tradeflow.engine.live import SHUTDOWN_TIMEOUT, BlindStartError, LiveEngine
     from tradeflow.execution.live_trader import LiveTrader
     from tradeflow.services.sizing import build_beta_sizer, build_portfolio_weight_sizer
+    from tradeflow.utils.streaming import run_until_stopped
 
     tuned = apply_run_config(args)
     strategy = _strategy_from(args, tuned)
@@ -2941,7 +2941,7 @@ def cmd_live(args) -> None:
         return
 
     try:
-        asyncio.run(engine.start(universe))
+        run_until_stopped(engine.start(universe), teardown_timeout=SHUTDOWN_TIMEOUT)
     except BlindStartError as exc:
         sys.exit(f"Refusing to start: {exc}")
     except KeyboardInterrupt:

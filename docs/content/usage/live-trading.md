@@ -346,6 +346,17 @@ up until it is wrong. With `PAPER_TRADE=false`, `live` **refuses to start** unle
 same intent, because one of them can be inherited from a shell nobody remembers
 exporting.
 
+### Stopping a session
+
+Ctrl-C stops a live session, and one is enough. The streams are cancelled and given a
+bounded moment to close; anything still running after that is reported as a count and
+the process exits regardless. A shutdown that can hang is one people learn to interrupt
+twice, and the second interrupt lands during cleanup where it can interrupt anything.
+
+The exit says what the process held when it stopped, and does not claim anything about
+what it did not do. Nothing is flattened on the way out — positions stay open at the
+broker, and closing them is a decision, not a shutdown step.
+
 Paper runs are never asked to confirm anything. Making them would train the reflex the
 guard depends on you not having.
 
@@ -370,6 +381,15 @@ visible divergence; a wrongly-signed one does not.
 
 Bracket legs need no special handling: the entry and each protective leg carry their
 own order id, so a stop that fills nets against the entry it closes.
+
+**A resumed session records what it adopted.** Start-up hydrates the strategy's book
+from the broker, and that adoption is written to the ledger as a *baseline* — it
+replaces whatever the ledger believed about the symbol rather than adding to it,
+because the broker's holding at that moment is the whole truth about it. Without it
+the durable record disagrees with the book the process just adopted, and the next
+sweep reports every resumed position as one nobody ordered, which is noise exactly
+where a real divergence has to stand out. Trading continues from the baseline
+normally: later fills add to it, and an exit nets against it.
 
 A ledger containing fill records written before this accounting existed is reported at
 reconciliation rather than silently reinterpreted — those records also defaulted every

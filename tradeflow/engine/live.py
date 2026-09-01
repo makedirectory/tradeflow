@@ -150,7 +150,7 @@ class LiveEngine:
             _, pending = await asyncio.wait(running, timeout=SHUTDOWN_TIMEOUT)
             if pending:
                 logger.warning(
-                    "%d stream(s) did not close within %.0fs; exiting anyway. Nothing "
+                    "%d stream(s) did not close within %gs; exiting anyway. Nothing "
                     "was sent to the broker during shutdown, and open positions are "
                     "untouched.",
                     len(pending),
@@ -221,6 +221,23 @@ class LiveEngine:
         self._last_reconcile = time.monotonic()
         if adopted:
             logger.info("Resuming with %d open position(s) adopted from the broker", adopted)
+            self._record_adoptions()
+
+    def _record_adoptions(self) -> None:
+        """Write what was adopted into the durable ledger, not only the in-memory book.
+
+        The two must agree about a resumed session. Without this the engine resumes
+        holding six positions while the ledger has never heard of them, and the next
+        reconciliation reports all six as positions nobody ordered - noise precisely
+        where a real divergence needs to stand out.
+        """
+        if self.ledger is None:
+            return
+        try:
+            for symbol, position in self.strategy.positions.items():
+                self.ledger.record_adoption(symbol, position["side"], position["qty"])
+        except Exception:  # noqa: BLE001 - bookkeeping never breaks the order path
+            logger.warning("Could not record adopted positions in the ledger", exc_info=True)
 
     def warm_up_coverage(self, symbols: List[str]) -> tuple:
         """Run the real warm-up and report ``(with history, fully warmed, asked)``.

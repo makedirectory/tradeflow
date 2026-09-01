@@ -902,3 +902,50 @@ def test_a_stream_failure_still_propagates():
 
     with pytest.raises(RuntimeError, match="feed died"):
         asyncio.run(engine.start(["AAA"]))
+
+
+def test_a_resumed_session_writes_its_adopted_book_to_the_ledger(tmp_path):
+    """The bug: the engine adopted the broker's positions into its in-memory book and
+    the durable ledger never heard of them, so `tradeflow reconcile` reported every
+    resumed position as one nobody ordered."""
+    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy.config["required_lookback_periods"] = 5
+    broker = RecordingBroker(
+        positions=[
+            Position("COP", 8, "long", 100, 100, 800, 0),
+            Position("NKE", 31, "short", 50, 50, 1550, 0),
+        ]
+    )
+    ledger = PositionLedger(tmp_path / "ledger.jsonl")
+    engine = LiveEngine(
+        strategy,
+        MarketDataClient(ScriptedFeed(["AAA"], events=[], n=10, freq="1D")),
+        LiveTrader(broker, strategy, respect_market_hours=False),
+        ledger=ledger,
+    )
+
+    engine._cold_start()
+
+    assert ledger.expected_positions() == {"COP": 8, "NKE": -31}
+    assert ledger.reconcile(broker).clean
+
+
+def test_adoption_bookkeeping_never_breaks_the_start_path(tmp_path):
+    """A ledger that cannot be written must not stop a session from starting."""
+    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    broker = RecordingBroker(positions=[Position("COP", 8, "long", 100, 100, 800, 0)])
+    ledger = PositionLedger(tmp_path / "ledger.jsonl")
+
+    def explode(*args, **kwargs):
+        raise OSError("disk full")
+
+    ledger.record_adoption = explode
+    engine = LiveEngine(
+        strategy,
+        MarketDataClient(ScriptedFeed(["AAA"], events=[], n=10, freq="1D")),
+        LiveTrader(broker, strategy, respect_market_hours=False),
+        ledger=ledger,
+    )
+
+    engine._cold_start()  # must not raise
+    assert strategy.positions  # and the in-memory adoption still happened

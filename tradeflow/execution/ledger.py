@@ -155,6 +155,26 @@ class PositionLedger:
             }
         )
 
+    def record_adoption(self, symbol: str, side: str, qty: float, source: str = "broker") -> None:
+        """A position found already open and taken over, at start-up or a resync.
+
+        A *baseline*, not a fill: it replaces whatever the ledger believed about the
+        symbol rather than adding to it, because the broker's holding at that moment
+        is the whole truth about it. Without this the durable record disagrees with
+        the very book the process just adopted - the engine resumes six positions and
+        reconciliation calls all six unexpected, which is the one situation where an
+        operator most needs the two to agree.
+        """
+        self._append(
+            {
+                "event": "adopt",
+                "symbol": symbol,
+                "side": side,
+                "qty": abs(float(qty)),
+                "source": source,
+            }
+        )
+
     def record_close(self, symbol: str) -> None:
         """A position we asked to close. Zeroes our expectation for the symbol."""
         self._append({"event": "close", "symbol": symbol})
@@ -213,7 +233,9 @@ class PositionLedger:
         the entry it closes.
         """
         by_order: Dict[str, Dict[str, Any]] = {}
-        closed: Dict[str, int] = {}
+        #: symbol -> (sequence, quantity it was reset to). A close resets to zero; an
+        #: adoption resets to what the broker held. Both discard everything before.
+        reset: Dict[str, tuple] = {}
         legacy = False
         seq = 0
 
@@ -225,7 +247,12 @@ class PositionLedger:
             event = record.get("event")
             if event == "close":
                 # A close zeroes the symbol, so only activity *after* it counts.
-                closed[symbol] = seq
+                reset[symbol] = (seq, 0.0)
+            elif event == "adopt":
+                signed = abs(float(record.get("qty") or 0.0))
+                if str(record.get("side", "")).lower() in {"sell", "short"}:
+                    signed = -signed
+                reset[symbol] = (seq, signed)
             elif event == "fill":
                 basis = record.get("basis")
                 if basis is None:
@@ -245,13 +272,12 @@ class PositionLedger:
                     # alone, keyed uniquely so none overwrites another.
                     by_order[f"#{seq}"] = {"symbol": symbol, "qty": signed, "seq": seq}
 
-        net: Dict[str, float] = {}
+        net: Dict[str, float] = {symbol: qty for symbol, (_, qty) in reset.items()}
         for entry in by_order.values():
-            if entry["seq"] < closed.get(entry["symbol"], 0):
-                continue  # superseded by a close
+            baseline_seq = reset.get(entry["symbol"], (0, 0.0))[0]
+            if entry["seq"] < baseline_seq:
+                continue  # superseded by a close or an adoption
             net[entry["symbol"]] = net.get(entry["symbol"], 0.0) + entry["qty"]
-        for symbol in closed:
-            net.setdefault(symbol, 0.0)
         return {s: q for s, q in net.items() if abs(q) > 1e-9}, legacy
 
     def _read(self) -> Iterable[Dict[str, Any]]:
