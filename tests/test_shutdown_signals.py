@@ -9,6 +9,7 @@ ran. These pin that both signals take the same path.
 import asyncio
 import os
 import signal
+import sys
 import time
 
 import pytest
@@ -340,3 +341,54 @@ def test_one_signal_kills_a_process_whose_loop_is_deadlocked(tmp_path):
     child.send_signal(signal.SIGTERM)  # one signal, and only one
 
     assert child.wait(timeout=20) != 0  # forced, not a clean return
+
+
+# --- finalizer noise --------------------------------------------------------------
+@pytest.fixture
+def _restore_unraisablehook():
+    saved = sys.unraisablehook
+    try:
+        yield
+    finally:
+        sys.unraisablehook = saved
+
+
+class _Unraisable:
+    """Shaped like sys.unraisablehook's argument."""
+
+    def __init__(self, exc):
+        self.exc_type, self.exc_value, self.exc_traceback = type(exc), exc, None
+        self.err_msg, self.object = None, None
+
+
+def _hook_for(exc, _restore):
+    from tradeflow.utils.streaming import _silence_finalizer_noise
+
+    seen = []
+    sys.unraisablehook = lambda u: seen.append(u.exc_value)
+    _silence_finalizer_noise()
+    sys.unraisablehook(_Unraisable(exc))
+    return seen
+
+
+@pytest.mark.parametrize("message", ["no running event loop", "Event loop is closed"])
+def test_finalizer_noise_from_a_closed_loop_is_dropped(_restore_unraisablehook, message):
+    """A stream we gave up on is collected later — possibly at interpreter exit, after
+    everything has been reported — and its cleanup asks for a loop that is gone. Python
+    prints `Exception ignored in: WebSocketCommonProtocol.close_connection`, which is
+    alarming punctuation at the end of an orderly shutdown."""
+    assert _hook_for(RuntimeError(message), _restore_unraisablehook) == []
+
+
+def test_a_real_error_during_finalization_still_surfaces(_restore_unraisablehook):
+    """Narrow on purpose: suppressing everything here would hide genuine faults in
+    objects that happen to be torn down late."""
+    boom = RuntimeError("something actually broke")
+
+    assert _hook_for(boom, _restore_unraisablehook) == [boom]
+
+
+def test_a_non_runtime_error_is_not_swallowed(_restore_unraisablehook):
+    boom = ValueError("no running event loop")  # right words, wrong type
+
+    assert _hook_for(boom, _restore_unraisablehook) == [boom]

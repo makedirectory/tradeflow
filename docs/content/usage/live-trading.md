@@ -364,6 +364,13 @@ wraps, and a daemon watchdog thread — armed the moment a stop begins — force
 shutdown has not completed in time. The watchdog is what makes "a stop signal always
 ends the process" true rather than usually true.
 
+A stream the drain gave up on is still a live object, and whatever collects it later —
+possibly at interpreter exit, after everything has been reported — asks for a loop that
+no longer exists. Python prints that as `Exception ignored in: ...`, which is alarming
+punctuation at the end of an orderly shutdown, so those two specific finalizer errors
+are dropped on the way out. Anything else still surfaces: suppressing more would hide
+genuine faults in objects that happen to be torn down late.
+
 Stopping is signal-driven rather than exception-driven. A bare `KeyboardInterrupt`
 unwinds from wherever the interpreter happened to be, which is not necessarily a point
 where the running coroutine's cleanup can finish; a loop signal handler delivers

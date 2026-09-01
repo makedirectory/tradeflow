@@ -307,6 +307,12 @@ def run_until_stopped(
         try:
             _drain(loop, teardown_timeout)
         finally:
+            _silence_finalizer_noise()
+            with contextlib.suppress(Exception):
+                loop.run_until_complete(loop.shutdown_asyncgens())
+            # Deliberately not shutdown_default_executor(): it waits for the worker
+            # threads, and the one case that matters here is a worker blocked in a
+            # broker call. Waiting for it is the hang this whole path exists to avoid.
             asyncio.set_event_loop(None)
             loop.close()
             if stop is not None:
@@ -351,6 +357,39 @@ def _retrieve(task) -> None:
     """Collect a finished task's outcome so nothing is reported as never retrieved."""
     if task.done() and not task.cancelled():
         task.exception()
+
+
+#: Finalizer errors that only ever mean "the loop this object belonged to is gone".
+#: Abandoned websockets are collected after the loop closes, and their cleanup asks
+#: for a loop that no longer exists.
+_FINALIZER_NOISE = ("no running event loop", "Event loop is closed")
+
+
+def _silence_finalizer_noise() -> None:
+    """Drop finalizer errors from objects whose loop has been closed.
+
+    A stream we gave up on is still a live object, and whatever collects it later —
+    possibly at interpreter exit, after everything has been reported — tries to touch
+    its loop and fails. Python prints that as ``Exception ignored in: ...``, which is
+    alarming punctuation at the end of an orderly shutdown.
+
+    Installed only on the way out, and narrow: anything that is not one of these two
+    RuntimeErrors still reaches the default hook. The hook is deliberately left in
+    place rather than restored, because the collections that produce this noise happen
+    after every restore point there is.
+    """
+    previous = sys.unraisablehook
+
+    def hook(unraisable) -> None:
+        exception = unraisable.exc_value
+        if isinstance(exception, RuntimeError) and any(
+            phrase in str(exception) for phrase in _FINALIZER_NOISE
+        ):
+            logger.debug("Ignoring finalizer noise from a closed loop: %s", exception)
+            return
+        previous(unraisable)
+
+    sys.unraisablehook = hook
 
 
 def _drain(loop, timeout: float) -> None:
