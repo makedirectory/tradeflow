@@ -9,11 +9,14 @@ would make every later run re-evaluate that period by default.
 """
 
 import json
+from datetime import datetime
 
 import pytest
 
-from tradeflow.cli import apply_run_config, parse_cli
+from tradeflow.cli import apply_run_config, build_parser, parse_cli
 from tradeflow.optimization import config_store
+
+_MA_RANGES = __import__("tradeflow.services.registry", fromlist=["x"]).STRATEGIES["ma_crossover"].PARAM_RANGES
 
 _PARAMS = {
     "fast_ema_period": 18,
@@ -369,3 +372,139 @@ def test_without_a_config_nothing_about_scanning_changes(capsys):
 
     assert args.scanner == "volume"
     assert capsys.readouterr().out == ""
+
+
+# --- promoting a validated trial into a portable config ------------------------
+def _journaled_trial(tmp_path, monkeypatch, promotable=True, candidates=None):
+    """One journaled trial plus a store rebuilt from it, as a real run leaves behind."""
+    from tradeflow.services import audit
+    from tradeflow.store.trials import TrialStore, db_path_for_journal
+
+    journal = tmp_path / "journal.jsonl"
+    monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", journal)
+    audit.journal_trial(
+        "walkforward",
+        strategy="ma_crossover",
+        symbols=["R0", "R1", "R2"],
+        candidate_symbols=candidates,
+        start=datetime(2024, 1, 2),
+        end=datetime(2025, 1, 2),
+        params={**{n: s["default"] for n, s in _MA_RANGES.items()}, "_cost": {"gross": False}},
+        metrics={"sharpe_ratio": 1.4},
+        extra={"promotable": promotable, "n_trials": 12},
+        path=journal,
+    )
+    store = TrialStore(db_path_for_journal(journal), journal_path=journal)
+    store.rebuild(journal)
+    trial_id = [
+        json.loads(line)["run_id"]
+        for line in journal.read_text().splitlines()
+        if str(json.loads(line).get("tool", "")).startswith("trial:")
+    ][-1]
+    return store, trial_id
+
+
+def _promote(store, trial_id, out, force=False):
+    from tradeflow.cli import _promote_trial
+
+    argv = ["trials", "promote", trial_id, "--save-config", str(out)] + (["--force"] if force else [])
+    _promote_trial(store, build_parser().parse_args(argv))
+
+
+def test_a_validated_trial_promotes_without_being_re_run(tmp_path, monkeypatch, capsys):
+    """`--save-config` writes after a walk-forward, so saving a config you already
+    validated meant validating it again - and the memo only serves an identical recipe,
+    which it is not once a seed changed to ask a different question."""
+    store, trial_id = _journaled_trial(tmp_path, monkeypatch)
+    out = tmp_path / "promoted.json"
+
+    _promote(store, trial_id, out)
+
+    config = json.loads(out.read_text())
+    assert config["strategy"] == "ma_crossover"
+    assert config["symbols"] == ["R0", "R1", "R2"]
+    assert trial_id in config["provenance"]["notes"]
+    assert "Promoted trial" in capsys.readouterr().out
+
+
+def test_the_dedup_keys_do_not_leak_into_the_promoted_params(tmp_path, monkeypatch):
+    """Journaled params carry the dedup key's reserved entries. `_cost` is not a
+    strategy parameter - the schema has its own field - and passing it through would
+    leave a stray key in every strategy the config constructs."""
+    store, trial_id = _journaled_trial(tmp_path, monkeypatch)
+    out = tmp_path / "promoted.json"
+
+    _promote(store, trial_id, out)
+
+    config = json.loads(out.read_text())
+    assert not [name for name in config["params"] if name.startswith("_")]
+    assert config["cost"] == {"gross": False}  # lifted to where it belongs
+
+
+def test_a_promoted_config_replays_the_book_it_validated(tmp_path, monkeypatch, capsys):
+    """The alignment that makes promotion worth having: promote then replay has to
+    reproduce the validated decision, not run a nearby experiment."""
+    store, trial_id = _journaled_trial(tmp_path, monkeypatch)
+    out = tmp_path / "promoted.json"
+    _promote(store, trial_id, out)
+    capsys.readouterr()
+
+    args = parse_cli(["backtest", "--config", str(out)])
+    apply_run_config(args)
+
+    assert args.symbols == ["R0", "R1", "R2"]
+    assert args.scanner == "none"
+    assert "replayed from config, 3 symbols" in capsys.readouterr().out
+
+
+def test_a_promoted_config_carries_candidates_when_the_trial_recorded_them(tmp_path, monkeypatch, capsys):
+    """So `--re-resolve-universe` can offer a genuine re-scan rather than a second
+    filter over the already-resolved book."""
+    store, trial_id = _journaled_trial(tmp_path, monkeypatch, candidates=["C0", "C1", "C2", "C3"])
+    out = tmp_path / "promoted.json"
+    _promote(store, trial_id, out)
+    capsys.readouterr()
+
+    args = parse_cli(["backtest", "--config", str(out), "--re-resolve-universe"])
+    apply_run_config(args)
+
+    assert len(args.symbols) == 4
+    assert "re-resolved from 4 saved candidates" in capsys.readouterr().out
+
+
+def test_a_trial_without_candidates_promotes_as_incomplete_rather_than_inventing_them(
+    tmp_path, monkeypatch, capsys
+):
+    """Trials journaled before candidates were recorded stay *less complete*. Treating
+    the resolved book as its own candidate list would make a second filter look like a
+    re-resolution."""
+    store, trial_id = _journaled_trial(tmp_path, monkeypatch, candidates=None)
+    out = tmp_path / "promoted.json"
+
+    _promote(store, trial_id, out)
+
+    assert "candidate_symbols" not in json.loads(out.read_text())
+    assert "no candidate list recorded" in capsys.readouterr().out
+
+
+def test_a_trial_that_did_not_clear_its_gates_is_refused_without_force(tmp_path, monkeypatch):
+    """Promoting one silently would put a config on disk whose own provenance says it
+    failed. Refuse, and say how to override."""
+    store, trial_id = _journaled_trial(tmp_path, monkeypatch, promotable=False)
+    out = tmp_path / "promoted.json"
+
+    with pytest.raises(SystemExit) as exit_info:
+        _promote(store, trial_id, out)
+
+    assert "not promotable" in str(exit_info.value) and "--force" in str(exit_info.value)
+    assert not out.exists()
+
+
+def test_forcing_a_failed_trial_records_the_verdict_in_the_config(tmp_path, monkeypatch, capsys):
+    store, trial_id = _journaled_trial(tmp_path, monkeypatch, promotable=False)
+    out = tmp_path / "promoted.json"
+
+    _promote(store, trial_id, out, force=True)
+
+    assert "NOT promotable" in json.loads(out.read_text())["provenance"]["notes"]
+    assert "WARNING" in capsys.readouterr().out

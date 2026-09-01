@@ -83,6 +83,41 @@ from the origin forward to everything it was reused for.
 
 An unknown id exits non-zero with a plain message.
 
+## Promoting a validated trial
+
+`walkforward --save-config` writes the chosen config *after* a validation, so saving a
+config you have already validated means validating it again — and the memo only serves
+an identical recipe, which it is not once a seed has changed to ask a different
+question.
+
+`trials promote` reads the recorded trial instead:
+
+```bash
+tradeflow trials promote 50fd06209f49 --save-config configs/alpha.json
+```
+
+```
+Promoted trial 50fd06209f49 -> configs/alpha.json
+  strategy 'ma_crossover'  universe 61 symbols resolved from 85 candidates
+  Saving a config never trades it - a human promotes it to live.
+```
+
+**This is not a fast path through validation.** The trial store holds what a config
+needs *because a real validation put it there*, so reading from it cannot bless state
+that was never validated. A `--skip-validation` flag could, and would be reached for
+exactly when someone is in a hurry — which is when it matters most that a saved config
+means what it says.
+
+A trial that did not clear its gates is **refused**, because promoting one silently
+would put a config on disk whose own provenance says it failed. `--force` saves it
+anyway with that verdict recorded in the file.
+
+The universe comes from the **journal**, not the store: the store records a universe
+*hash*, not the symbols. That keeps the store passive and derived, and means a trial
+journaled before candidate lists were recorded reads as *less complete* rather than
+being backfilled into looking more authoritative than it is — such a config says so,
+and `--re-resolve-universe` will tell you it has no candidates to re-scan.
+
 ## `trials best` — the honest leaderboard
 
 ```bash

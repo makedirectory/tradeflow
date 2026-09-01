@@ -496,6 +496,7 @@ def cmd_backtest(args) -> None:
             "backtest",
             strategy=strategy_name,
             symbols=universe,
+            candidate_symbols=args.symbols,
             start=args.start,
             end=args.end,
             params=dedup_params,
@@ -1068,6 +1069,7 @@ def cmd_walkforward(args) -> None:
             "walkforward",
             strategy=args.strategy,
             symbols=universe,
+            candidate_symbols=args.symbols,
             start=args.start,
             end=args.end,
             params=dict(chosen),
@@ -2425,6 +2427,10 @@ def cmd_trials(args) -> None:
             )
             return
 
+        if args.trials_command == "promote":
+            _promote_trial(store, args)
+            return
+
         if args.trials_command == "show":
             _print_trial_detail(store, args)
             return
@@ -2474,6 +2480,85 @@ def _print_trials_list(store, args) -> None:
             f"\nCampaign n_trials for '{args.strategy}' over {', '.join(args.symbols)} "
             f"(accounting v{accounting}): {n}"
         )
+
+
+def _promote_trial(store, args) -> None:
+    """Write a portable config from a trial the campaign already validated.
+
+    `--save-config` writes the chosen config *after* a walk-forward, so saving one you
+    have already validated meant validating it again - and the memo only serves an
+    identical recipe, which it is not once a seed has changed to ask a different
+    question. This reads the recorded trial instead.
+
+    Deliberately *not* a fast path through validation. The trial store holds what a
+    config needs because a real validation put it there; reading from it cannot bless
+    state that was never validated, whereas a `--skip-validation` flag would - and
+    would be reached for exactly when someone is in a hurry, which is when it matters
+    most that a saved config means what it says.
+    """
+    from tradeflow.optimization.config_store import Provenance, save_config
+    from tradeflow.services.audit import universe_for_trial
+
+    trial = store.get_trial(args.trial_id)
+    if trial is None:
+        sys.exit(f"No trial with id {args.trial_id!r}. Try `trials list` to see what is recorded.")
+
+    promotable = trial.get("promotable")
+    if not promotable and not args.force:
+        sys.exit(
+            f"Trial {args.trial_id} is not promotable (promotable={promotable!r}). Promoting it "
+            "would put a config on disk whose own provenance says it did not clear the gates. "
+            "Re-run `trials show` to see why, or pass --force to save it with that verdict recorded."
+        )
+
+    universe = universe_for_trial(args.trial_id) or {}
+    symbols = universe.get("symbols")
+    if not symbols:
+        sys.exit(
+            f"Trial {args.trial_id} has no universe in the journal, so a config promoted from it "
+            "could not name the book it validated. The trial store records a universe *hash*, not "
+            "the symbols; the journal is where they live."
+        )
+
+    # The journaled params carry the dedup key's reserved entries (`_cost` and
+    # friends). They are not strategy parameters - the schema has its own `cost` field -
+    # and passing them through would leave a stray key in every constructed strategy.
+    recorded = dict(trial.get("params") or {})
+    cost = recorded.pop("_cost", None)
+    params = {name: value for name, value in recorded.items() if not name.startswith("_")}
+
+    path = save_config(
+        args.save_config,
+        strategy=trial.get("strategy"),
+        scanner=None,
+        params=params,
+        cost=cost,
+        symbols=symbols,
+        candidate_symbols=universe.get("candidate_symbols"),
+        provenance=Provenance(
+            objective="",
+            windows={"start": trial.get("window_start"), "end": trial.get("window_end")},
+            oos_metrics=trial.get("metrics") or {},
+            n_trials=int(trial.get("n_trials_in_session") or 1),
+            seed=trial.get("seed"),
+            git_sha=trial.get("git_sha"),
+            timestamp=trial.get("ts"),
+            accounting=int(trial.get("accounting") or 1),
+            notes=f"promoted from trial {args.trial_id}"
+            + ("" if promotable else " (NOT promotable at the time of promotion)"),
+        ),
+    )
+    print(f"Promoted trial {args.trial_id} -> {path}")
+    print(f"  strategy {trial.get('strategy')!r}  universe {len(symbols)} symbols", end="")
+    if universe.get("candidate_symbols"):
+        print(f" resolved from {len(universe['candidate_symbols'])} candidates")
+    else:
+        # Distinguishable from a config whose candidates equal its universe, because
+        # `--re-resolve-universe` can only be honest about one of those.
+        print(" (no candidate list recorded - --re-resolve-universe will say so)")
+    if not promotable:
+        print("  WARNING: this trial did not clear its gates; the config records that verdict.")
+    print("  Saving a config never trades it - a human promotes it to live.")
 
 
 def _print_trial_detail(store, args) -> None:
@@ -4145,6 +4230,26 @@ def build_parser() -> argparse.ArgumentParser:
     # muscle memory and scripts keep working; the docs describe `list` only.
     t_query = trials_sub.add_parser("query", help="Alias for `trials list` (kept for compatibility)")
     add_list_args(t_query)
+
+    t_promote = trials_sub.add_parser(
+        "promote",
+        help="Write a portable config from a validated trial, without re-running it",
+    )
+    _add_db_flag(t_promote)
+    t_promote.add_argument("trial_id", help="The trial id (see `trials list`)")
+    t_promote.add_argument(
+        "--save-config",
+        dest="save_config",
+        required=True,
+        metavar="PATH",
+        help="Where to write the config",
+    )
+    t_promote.add_argument(
+        "--force",
+        action="store_true",
+        help="Promote a trial that did not clear its gates, recording that verdict in the config",
+    )
+    t_promote.set_defaults(func=cmd_trials)
 
     t_show = trials_sub.add_parser("show", help="Everything the store knows about one trial")
     _add_db_flag(t_show)
