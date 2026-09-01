@@ -80,6 +80,10 @@ class LiveEngine:
         #: Start even when warm-up returned nothing. Off by default: the failure it
         #: guards is silent from inside the loop.
         self._allow_blind_start = allow_blind_start
+        #: Serializes everything that reads-then-changes the position book. One slot,
+        #: deliberately: the trade clock's determinism comes from doing one thing at a
+        #: time, and the threads below exist only to keep blocking I/O off the loop.
+        self._order_lock = asyncio.Semaphore(1)
         #: ``None`` means "never swept", which is deliberately not the same as
         #: "swept at time zero". ``time.monotonic()`` counts from an arbitrary origin
         #: (boot, on Linux), so seeding this with 0.0 made the first sweep depend on
@@ -296,8 +300,21 @@ class LiveEngine:
         )
         return warmed, sufficient
 
-    def _on_bar(self, event: BarEvent) -> None:
-        """Per-bar callback: validate, update the strategy, act on any signal."""
+    async def _on_bar(self, event: BarEvent) -> None:
+        """Per-bar callback: validate, update the strategy, act on any signal.
+
+        Async because the broker SDK is synchronous. Every entry makes several blocking
+        HTTP round trips, and running those on the loop stalls everything else it is
+        carrying: other symbols that signalled on the same bar, the trade-update stream
+        that delivers fills, and the reconciliation sweep. Under a universe of any size
+        that is enough for the socket to fall behind.
+
+        The blocking work is handed to a thread and the order path is serialized behind
+        one semaphore, so submissions keep their order and the read-then-act sequence
+        inside the trader stays atomic. Concurrency here would be a correctness bug, not
+        a speed-up: two entries checking the book at once can both pass a gross-exposure
+        limit that only one of them fits inside.
+        """
         bar = {
             "open": event.open,
             "high": event.high,
@@ -315,14 +332,19 @@ class LiveEngine:
         signal = self.strategy.process_bar(event.symbol, bar, event.timestamp)
         if signal and signal != signals.HOLD:
             logger.info("Signal %s for %s @ $%.4f", signal, event.symbol, event.close)
-            decision = self.live_trader.handle_signal(
-                event.symbol, signal, event.close, bar_timestamp=event.timestamp
-            )
+            async with self._order_lock:
+                decision = await asyncio.to_thread(
+                    self.live_trader.handle_signal,
+                    event.symbol,
+                    signal,
+                    event.close,
+                    bar_timestamp=event.timestamp,
+                )
             if not decision:
                 logger.info("%s", decision)
             self._record_decision(decision)
             self._record_intent(event.symbol, signal, decision.order)
-        self._maybe_reconcile()
+        await self._maybe_reconcile()
 
     def _record_decision(self, decision) -> None:
         """Record why execution acted or declined.
@@ -351,7 +373,7 @@ class LiveEngine:
         except Exception:  # noqa: BLE001 - bookkeeping never breaks the order path
             logger.warning("Could not record intent in the position ledger", exc_info=True)
 
-    def _maybe_reconcile(self) -> None:
+    async def _maybe_reconcile(self) -> None:
         """Sweep on a timer, from inside the loop.
 
         Bounded by construction — one ``list_positions`` call per sweep, never one
@@ -370,13 +392,17 @@ class LiveEngine:
         # Re-read the book first: a bracket leg that filled, or a position closed by
         # hand in the broker's UI, changes what the strategy is entitled to exit.
         try:
-            self.live_trader.sync_strategy_book()
+            # Under the same lock as the order path: this replaces the position book
+            # wholesale, and doing that underneath an entry that has already checked it
+            # would let the entry act on a book that no longer exists.
+            async with self._order_lock:
+                await asyncio.to_thread(self.live_trader.sync_strategy_book)
         except Exception:  # noqa: BLE001 - bookkeeping never breaks the order path
             logger.warning("Could not refresh the strategy's position book", exc_info=True)
         if self.ledger is None:
             return
         try:
-            self.ledger.reconcile(self.live_trader.broker)
+            await asyncio.to_thread(self.ledger.reconcile, self.live_trader.broker)
         except Exception:  # noqa: BLE001
             logger.warning("Scheduled reconciliation failed", exc_info=True)
 

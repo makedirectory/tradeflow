@@ -2941,7 +2941,12 @@ def cmd_live(args) -> None:
         return
 
     try:
-        run_until_stopped(engine.start(universe), teardown_timeout=SHUTDOWN_TIMEOUT)
+        # A margin over the engine's own teardown budget. Both expiring at the same
+        # instant makes one stuck stream log two warnings for one condition, and makes
+        # whether the engine counts as a straggler a coin flip. The engine's warning
+        # names the stream; the drain's should only fire for something it did not know
+        # about.
+        run_until_stopped(engine.start(universe), teardown_timeout=SHUTDOWN_TIMEOUT + 1.0)
     except BlindStartError as exc:
         sys.exit(f"Refusing to start: {exc}")
     except KeyboardInterrupt:

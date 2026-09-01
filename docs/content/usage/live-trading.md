@@ -348,9 +348,21 @@ exporting.
 
 ### Stopping a session
 
-Ctrl-C stops a live session, and one is enough. The streams are cancelled and given a
+`Ctrl-C` and `SIGTERM` take the same path, and one of either is enough. That matters
+beyond the terminal: `SIGTERM` is what a supervisor, a container runtime and plain
+`kill` send, and a shutdown reachable only by a human at a keyboard does not exist
+under any of them.
+
+Stopping is signal-driven rather than exception-driven. A bare `KeyboardInterrupt`
+unwinds from wherever the interpreter happened to be, which is not necessarily a point
+where the running coroutine's cleanup can finish; a loop signal handler delivers
+cancellation at an await instead, so every `finally` on the way out actually runs. A
+second signal restores the default handler, so an operator who wants out immediately
+still gets out immediately. The streams are cancelled and given a
 bounded moment to close; anything still running after that is reported as a count and
-the process exits regardless. A shutdown that can hang is one people learn to interrupt
+the process exits regardless. The budget covers the session's own unwinding too, not
+only the tasks it started — a cleanup that blocks would otherwise hold the process
+open exactly as an unbounded wait did, one level further in. A shutdown that can hang is one people learn to interrupt
 twice, and the second interrupt lands during cleanup where it can interrupt anything.
 
 The exit says what the process held when it stopped, and does not claim anything about
@@ -359,6 +371,23 @@ broker, and closing them is a decision, not a shutdown step.
 
 Paper runs are never asked to confirm anything. Making them would train the reflex the
 guard depends on you not having.
+
+## One loop, one order at a time
+
+The broker SDK is synchronous, and a single entry makes several blocking HTTP round
+trips. Those run in a worker thread rather than on the event loop, because running them
+inline stalls everything else the loop is carrying: other symbols that signalled on the
+same bar, the trade-update stream that delivers fills, and the reconciliation sweep.
+
+There is still exactly one loop and one order at a time. Everything that reads the
+position book and then acts on it — entries, and the reconciliation sweep that replaces
+the book wholesale — is serialized behind a single semaphore. That is a correctness
+requirement, not a performance one: two entries checking the book at once can both pass
+a gross-exposure limit that only one of them fits inside, and a book assembled in a
+different order from the signals that produced it is not the book that was validated.
+
+The threads exist only to keep blocking I/O off the loop. The trade clock's determinism
+comes from doing one thing at a time, and that has not changed.
 
 ## What the ledger counts
 
