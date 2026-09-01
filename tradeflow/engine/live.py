@@ -161,7 +161,7 @@ class LiveEngine:
                     SHUTDOWN_TIMEOUT,
                 )
 
-    def _on_trade_update(self, update) -> None:
+    async def _on_trade_update(self, update) -> None:
         """Log account/order events (fills, cancels, rejects), and record fills.
 
         This is the only place the ledger learns what actually happened, as opposed
@@ -201,6 +201,29 @@ class LiveEngine:
                 )
         except Exception:  # noqa: BLE001 - bookkeeping never breaks the order path
             logger.warning("Could not record a fill in the position ledger", exc_info=True)
+        await self._refresh_after_fill(update)
+
+    async def _refresh_after_fill(self, update) -> None:
+        """Teach the strategy about a position it may not know it holds.
+
+        A sweep that lands between an entry's submission and its fill replaces the book
+        with broker state that does not include the new position yet, erasing what the
+        entry recorded. The fill then updates the ledger and nothing else, so the
+        strategy is flat in a symbol it holds until the next sweep - and cannot exit it.
+
+        Under the order lock, because it changes the same book entries read and act on.
+        """
+        if str(update.event).lower() not in {"fill", "partial_fill"} or not update.filled_qty:
+            return
+        try:
+            async with self._order_lock:
+                await asyncio.to_thread(self.live_trader.refresh_position, update.symbol)
+        except Exception:  # noqa: BLE001 - bookkeeping never breaks the order path
+            logger.warning(
+                "Could not refresh %s after its fill; the next sweep will correct it",
+                update.symbol,
+                exc_info=True,
+            )
 
     def _cold_start(self) -> None:
         """Teach the strategy what it already holds, before the first bar arrives.

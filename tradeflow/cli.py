@@ -35,6 +35,7 @@ from typing import Any, Dict, List, Optional
 from tradeflow.marketdata.base import MarketDataProvider
 from tradeflow.services.registry import STRATEGIES
 from tradeflow.settings import DATA_FEEDS
+from tradeflow.strategies import signals
 from tradeflow.utils.logging_config import setup_logging
 from tradeflow.utils.timeutils import NEW_YORK
 
@@ -2957,15 +2958,8 @@ def cmd_live(args) -> None:
         # after a session that had opened six positions: the shutdown path has no way
         # to know, and a reassuring guess about an open book is the worst thing to
         # print at the one moment somebody is deciding whether to intervene.
-        open_positions = dict(getattr(strategy, "positions", {}) or {})
         print("\nInterrupted - live engine stopped. No orders were sent while shutting down.")
-        if open_positions:
-            print(f"  {len(open_positions)} position(s) were open when this stopped:")
-            for symbol, position in sorted(open_positions.items()):
-                print(f"    {symbol:8}{position.get('side', '?'):5}{position.get('qty', '?')}")
-            print("  These are still open at the broker. Nothing was flattened.")
-        else:
-            print("  This process held no open positions. Check the broker to be sure.")
+        _print_closing_inventory(ledger, strategy)
     finally:
         if bar_filter is not None:
             report = bar_filter.report()
@@ -2981,6 +2975,45 @@ def cmd_live(args) -> None:
                     "ELEVATED bar-rejection rate — this is a data-feed problem wearing "
                     "a quiet market's clothes. Investigate before trusting these results."
                 )
+
+
+def _print_closing_inventory(ledger, strategy) -> None:
+    """What was held when the session stopped.
+
+    Read from the ledger rather than the strategy's in-memory book. The book is a cache
+    the reconciliation sweep rebuilds wholesale, and a sweep landing between an entry's
+    submission and its fill leaves it short a position for the rest of the interval -
+    which is how a stop summary came to list seven positions on a run whose every
+    reconciliation agreed with the broker at eight.
+
+    The ledger is durable, fill-driven, and the thing reconciliation actually checks. It
+    is still not the broker, so the line says so rather than implying otherwise.
+    """
+    held, source = {}, "ledger"
+    if ledger is not None:
+        try:
+            held = ledger.expected_positions()
+        except Exception:  # noqa: BLE001 - a summary must not raise over the real exit
+            logger.warning("Could not read the ledger for the closing summary", exc_info=True)
+            held = {}
+    if not held:
+        # No ledger, or nothing in it. The in-memory book is the weaker source and is
+        # labelled as such rather than silently substituted.
+        held = {
+            symbol: (
+                position.get("qty") if position.get("side") == signals.BUY else -abs(position.get("qty", 0))
+            )
+            for symbol, position in (getattr(strategy, "positions", {}) or {}).items()
+        }
+        source = "this process's own book"
+
+    if not held:
+        print("  No open positions recorded. Check the broker to be sure.")
+        return
+    print(f"  {len(held)} position(s) open per the {source}:")
+    for symbol, qty in sorted(held.items()):
+        print(f"    {symbol:8}{'long' if qty > 0 else 'short':6}{abs(qty):g}")
+    print("  These are still open at the broker. Nothing was flattened.")
 
 
 def _refuse_ambiguous_broker_mode(args) -> None:

@@ -5,6 +5,7 @@ reachable only through a socket, and the engine handler read a field the TradeUp
 type did not have, so `getattr(update, "side", "buy")` resolved to buy forever.
 """
 
+import asyncio
 from enum import Enum
 
 import pytest
@@ -102,7 +103,7 @@ def test_a_short_fill_reaches_the_ledger_negative(tmp_path):
     """End to end for the reported defect: broker holds -31, ledger must agree."""
     engine, ledger = _engine(tmp_path)
 
-    engine._on_trade_update(_update())
+    asyncio.run(engine._on_trade_update(_update()))
 
     assert ledger.expected_positions() == {"NKE": -31.0}
 
@@ -110,7 +111,7 @@ def test_a_short_fill_reaches_the_ledger_negative(tmp_path):
 def test_a_long_fill_reaches_the_ledger_positive(tmp_path):
     engine, ledger = _engine(tmp_path)
 
-    engine._on_trade_update(_update(symbol="COP", side="buy", filled_qty=8.0))
+    asyncio.run(engine._on_trade_update(_update(symbol="COP", side="buy", filled_qty=8.0)))
 
     assert ledger.expected_positions() == {"COP": 8.0}
 
@@ -121,7 +122,7 @@ def test_partial_fills_of_one_order_do_not_accumulate(tmp_path):
     engine, ledger = _engine(tmp_path)
 
     for total in (5, 8, 8):
-        engine._on_trade_update(_update(symbol="COP", side="buy", filled_qty=float(total)))
+        asyncio.run(engine._on_trade_update(_update(symbol="COP", side="buy", filled_qty=float(total))))
 
     assert ledger.expected_positions() == {"COP": 8.0}
 
@@ -132,7 +133,7 @@ def test_a_fill_with_no_side_is_refused_rather_than_guessed(tmp_path, caplog):
     engine, ledger = _engine(tmp_path)
 
     with caplog.at_level("ERROR"):
-        engine._on_trade_update(_update(side=None))
+        asyncio.run(engine._on_trade_update(_update(side=None)))
 
     assert ledger.expected_positions() == {}
     assert "no side" in caplog.text
@@ -143,7 +144,7 @@ def test_non_fill_events_record_nothing(tmp_path, event):
     """Only fills move a position. Counting an acknowledgement would invent one."""
     engine, ledger = _engine(tmp_path)
 
-    engine._on_trade_update(_update(event=event))
+    asyncio.run(engine._on_trade_update(_update(event=event)))
 
     assert ledger.expected_positions() == {}
 
@@ -152,7 +153,7 @@ def test_a_partial_fill_event_is_recorded(tmp_path):
     """Both directions on the event filter — one that drops partials would under-count."""
     engine, ledger = _engine(tmp_path)
 
-    engine._on_trade_update(_update(event="partial_fill", filled_qty=11.0))
+    asyncio.run(engine._on_trade_update(_update(event="partial_fill", filled_qty=11.0)))
 
     assert ledger.expected_positions() == {"NKE": -11.0}
 
@@ -160,7 +161,7 @@ def test_a_partial_fill_event_is_recorded(tmp_path):
 def test_a_zero_quantity_fill_records_nothing(tmp_path):
     engine, ledger = _engine(tmp_path)
 
-    engine._on_trade_update(_update(filled_qty=0.0))
+    asyncio.run(engine._on_trade_update(_update(filled_qty=0.0)))
 
     assert ledger.expected_positions() == {}
 
@@ -174,7 +175,7 @@ def test_bookkeeping_never_breaks_the_order_path(tmp_path):
 
     ledger.record_fill = explode
 
-    engine._on_trade_update(_update())  # must not raise
+    asyncio.run(engine._on_trade_update(_update()))  # must not raise
 
 
 def test_no_ledger_is_not_an_error(tmp_path):
@@ -185,4 +186,4 @@ def test_no_ledger_is_not_an_error(tmp_path):
         LiveTrader(RecordingBroker(), strategy, respect_market_hours=False),
     )
 
-    engine._on_trade_update(_update())  # must not raise
+    asyncio.run(engine._on_trade_update(_update()))  # must not raise

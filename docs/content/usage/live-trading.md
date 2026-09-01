@@ -383,8 +383,14 @@ only the tasks it started — a cleanup that blocks would otherwise hold the pro
 open exactly as an unbounded wait did, one level further in. A shutdown that can hang is one people learn to interrupt
 twice, and the second interrupt lands during cleanup where it can interrupt anything.
 
-The exit says what the process held when it stopped, and does not claim anything about
-what it did not do. Nothing is flattened on the way out — positions stay open at the
+The exit reports what was held **from the ledger**, not from the strategy's in-memory
+book. That book is a cache the reconciliation sweep rebuilds wholesale, and a sweep
+landing between an entry's submission and its fill leaves it short a position — which
+is how a stop summary came to list seven positions on a run whose every reconciliation
+agreed with the broker at eight. The line names which source it read, because a count
+with no provenance is what made the wrong number credible.
+
+The exit does not claim anything about what it did not do. Nothing is flattened on the way out — positions stay open at the
 broker, and closing them is a decision, not a shutdown step.
 
 Paper runs are never asked to confirm anything. Making them would train the reflex the
@@ -428,6 +434,13 @@ visible divergence; a wrongly-signed one does not.
 
 Bracket legs need no special handling: the entry and each protective leg carry their
 own order id, so a stop that fills nets against the entry it closes.
+
+**A fill teaches the book, not just the ledger.** The same mistimed sweep that shortened
+the stop summary also left the strategy believing it was flat in a symbol it held — and
+a strategy that believes it is flat cannot emit an exit, so the position would have been
+closed only by its bracket legs. A fill now re-reads that one symbol from the broker and
+corrects the book. One symbol, on a fill: not a sweep, because this runs on the trade
+clock and must not scale with the universe.
 
 **A resumed session records what it adopted.** Start-up hydrates the strategy's book
 from the broker, and that adoption is written to the ledger as a *baseline* — it

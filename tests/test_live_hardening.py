@@ -27,7 +27,7 @@ from tests.fakes import (
     ScriptedStrategy,
     bar_event,
 )
-from tradeflow.brokers.base import Position
+from tradeflow.brokers.base import Position, TradeUpdate
 from tradeflow.engine.barcheck import BarChecks, BarQualityFilter
 from tradeflow.engine.live import BlindStartError, LiveEngine
 from tradeflow.execution.ledger import MISSING, QUANTITY_DRIFT, UNEXPECTED, PositionLedger
@@ -425,7 +425,9 @@ def test_without_a_filter_the_loop_behaves_exactly_as_before():
 def test_the_loop_records_intent_and_fills_in_the_ledger(tmp_path):
     led = _ledger(tmp_path)
     engine, _, _ = _engine([bar_event(minute=1)], ledger=led)
-    engine._on_trade_update(FakeTradeUpdate(event="fill", symbol="AAA", filled_qty=7, side="buy"))
+    asyncio.run(
+        engine._on_trade_update(FakeTradeUpdate(event="fill", symbol="AAA", filled_qty=7, side="buy"))
+    )
 
     assert led.expected_positions() == {"AAA": 7.0}
     records = [json.loads(line) for line in (tmp_path / "ledger.jsonl").read_text().splitlines()]
@@ -443,7 +445,7 @@ def test_a_ledger_failure_never_breaks_the_order_path(tmp_path):
     led = Exploding(tmp_path / "ledger.jsonl")
     engine, feed, _ = _engine([bar_event(minute=i, close=100 + i) for i in range(1, 4)], ledger=led)
     asyncio.run(engine.start(["AAA"]))  # must not raise
-    engine._on_trade_update(FakeTradeUpdate())
+    asyncio.run(engine._on_trade_update(FakeTradeUpdate()))
     assert feed.delivered == 3
 
 
@@ -949,3 +951,91 @@ def test_adoption_bookkeeping_never_breaks_the_start_path(tmp_path):
 
     engine._cold_start()  # must not raise
     assert strategy.positions  # and the in-memory adoption still happened
+
+
+def test_a_fill_teaches_the_book_about_a_position_a_sweep_erased(tmp_path):
+    """The bug behind the miscounted stop summary, and the more serious half of it.
+
+    An entry records its position at submission. A reconciliation sweep that lands
+    before the broker has materialised it replaces the book wholesale and erases it.
+    The fill then updated the ledger and nothing else — so the strategy was flat in a
+    symbol it held, and a strategy that believes it is flat cannot emit an exit.
+    """
+    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    broker = RecordingBroker(positions=[Position("MSFT", 1, "long", 500.0, 500.0, 500.0, 0)])
+    engine = LiveEngine(
+        strategy,
+        MarketDataClient(ScriptedFeed(["AAA"], events=[], n=10, freq="1D")),
+        LiveTrader(broker, strategy, respect_market_hours=False),
+        ledger=PositionLedger(tmp_path / "ledger.jsonl"),
+    )
+    strategy.positions = {}  # what the mistimed sweep left behind
+
+    asyncio.run(
+        engine._on_trade_update(
+            TradeUpdate(
+                event="fill",
+                symbol="MSFT",
+                order_id="o1",
+                status="filled",
+                filled_qty=1.0,
+                side="buy",
+            )
+        )
+    )
+
+    assert "MSFT" in strategy.positions
+    assert strategy.positions["MSFT"]["qty"] == 1
+    assert strategy.positions["MSFT"]["side"] == signals.BUY
+
+
+def test_a_fill_that_closes_a_position_removes_it_from_the_book(tmp_path):
+    """Both directions: broker truth is what decides, so a symbol the broker no longer
+    holds must leave the book rather than linger as a phantom the strategy would exit."""
+    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    broker = RecordingBroker(positions=[])  # flat now
+    engine = LiveEngine(
+        strategy,
+        MarketDataClient(ScriptedFeed(["AAA"], events=[], n=10, freq="1D")),
+        LiveTrader(broker, strategy, respect_market_hours=False),
+        ledger=PositionLedger(tmp_path / "ledger.jsonl"),
+    )
+    strategy.positions = {
+        "MSFT": {"side": signals.BUY, "qty": 1, "entry_price": 500.0, "stop_loss": 0, "take_profit": 0}
+    }
+
+    asyncio.run(
+        engine._on_trade_update(
+            TradeUpdate(
+                event="fill", symbol="MSFT", order_id="o2", status="filled", filled_qty=1.0, side="sell"
+            )
+        )
+    )
+
+    assert "MSFT" not in strategy.positions
+
+
+def test_the_refresh_never_breaks_the_order_path(tmp_path):
+    """A broker that will not answer must not turn a fill into a raised exception on
+    the trade clock; the next sweep corrects the book anyway."""
+    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    broker = RecordingBroker()
+
+    def explode(symbol):
+        raise RuntimeError("broker down")
+
+    broker.get_position = explode
+    engine = LiveEngine(
+        strategy,
+        MarketDataClient(ScriptedFeed(["AAA"], events=[], n=10, freq="1D")),
+        LiveTrader(broker, strategy, respect_market_hours=False),
+        ledger=PositionLedger(tmp_path / "ledger.jsonl"),
+    )
+
+    asyncio.run(
+        engine._on_trade_update(
+            TradeUpdate(
+                event="fill", symbol="MSFT", order_id="o1", status="filled", filled_qty=1.0, side="buy"
+            )
+        )
+    )  # must not raise

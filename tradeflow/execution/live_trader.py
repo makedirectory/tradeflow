@@ -116,6 +116,38 @@ class LiveTrader:
         self._strategy.positions = book
         return len(book)
 
+    def refresh_position(self, symbol: str) -> bool:
+        """Re-read one symbol from the broker and update the book. Returns True if held.
+
+        The book is a cache of broker state, rebuilt wholesale by
+        :meth:`sync_strategy_book` on a timer. Between sweeps it can be wrong in the
+        one direction that matters: an entry recorded at submission is erased by a
+        sweep that runs before the broker has materialised the position, and the fill
+        that follows updates the ledger but not the book. The strategy then believes it
+        is flat in a symbol it holds — and a strategy that believes it is flat cannot
+        emit an exit, so the position would be closed only by its bracket legs.
+
+        One call, for one symbol, on a fill. Not a sweep: this runs on the trade clock
+        and must not scale with the universe. Broker truth as usual — nothing here
+        infers a quantity from arithmetic.
+        """
+        position = self._broker.get_position(symbol)
+        if position is None or not position.qty:
+            self._strategy.positions.pop(symbol, None)
+            return False
+        side = signals.BUY if position.is_long else signals.SELL
+        stop_loss, take_profit = self._stop_levels(
+            position.avg_entry_price, OrderSide.BUY if position.is_long else OrderSide.SELL
+        )
+        self._strategy.positions[symbol] = {
+            "side": side,
+            "qty": position.qty,
+            "entry_price": position.avg_entry_price,
+            "stop_loss": stop_loss,
+            "take_profit": take_profit,
+        }
+        return True
+
     def handle_signal(
         self,
         symbol: str,
