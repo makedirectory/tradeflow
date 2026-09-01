@@ -229,3 +229,25 @@ def test_live_is_deliberately_excluded_from_the_cache_options():
 
     assert "--cache" not in flags and "--offline" not in flags
     assert "--config" in flags  # but it does take a saved run configuration
+
+
+def test_the_cost_curve_defaults_on_where_a_promotion_is_decided():
+    """Opt-in on `backtest`, where the loop is interactive and each point is a full
+    re-run; on by default on `walkforward`, which is already expensive and is where the
+    promotion decision actually happens - cost sensitivity belongs in that story rather
+    than in an optional follow-up."""
+    parse = build_parser().parse_args
+
+    assert parse(["walkforward", "--strategy", "ma_crossover"]).cost_stress == "all"
+    assert parse(["backtest", "--strategy", "ma_crossover"]).cost_stress is None
+
+
+def test_the_default_can_be_turned_off_without_argument_juggling():
+    """A default that costs time needs a plain way out, not `--cost-stress none`."""
+    parse = build_parser().parse_args
+
+    assert parse(["walkforward", "--strategy", "ma_crossover", "--no-cost-stress"]).cost_stress is None
+    assert (
+        parse(["walkforward", "--strategy", "ma_crossover", "--cost-stress", "borrow"]).cost_stress
+        == "borrow"
+    )

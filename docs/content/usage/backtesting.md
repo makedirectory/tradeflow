@@ -162,6 +162,10 @@ That is a different proposition from a config that reads `+0.05%` at 1x and turn
 negative at 2x — and both are "profitable at 1bp". The curve is the point: *where* an
 edge dies matters more than whether it clears at one assumed cost.
 
+On `backtest` this is opt-in, because the loop is interactive and each point is a full
+re-run. On [`walkforward`](walk-forward.md#promotion-prerequisites) it is on by default:
+that run is already expensive and it is where a promotion decision gets made.
+
 `--cost-stress borrow` scales only the borrow rate. Worth asking separately because a
 long-short book is exposed to it differently — borrow is carry on inventory, so it
 grows with holding period rather than with turnover, and a long-only book is flat under

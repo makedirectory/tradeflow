@@ -3868,10 +3868,19 @@ def build_parser() -> argparse.ArgumentParser:
         dest="cost_stress",
         nargs="?",
         const="all",
-        default=None,
+        default="all",
         choices=["all", "turnover", "borrow"],
-        help="Also stress the chosen config's costs and check it against the paper "
-        "prerequisite (survives >= 3x its assumed cost).",
+        help="Stress the chosen config's costs and check the paper prerequisite "
+        "(survives >= 3x its assumed cost). On by default here: this is where a "
+        "promotion decision is made, and cost sensitivity belongs in that story rather "
+        "than in an optional follow-up.",
+    )
+    wf.add_argument(
+        "--no-cost-stress",
+        dest="cost_stress",
+        action="store_const",
+        const=None,
+        help="Skip the cost stress (it re-runs the chosen config once per multiple)",
     )
     wf.add_argument("--pbo", action="store_true", help="Estimate probability of backtest overfitting")
     wf.add_argument(

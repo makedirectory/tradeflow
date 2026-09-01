@@ -151,8 +151,11 @@ Two further questions come *after* a candidate clears those, and are reported be
   An unevaluated check is not a passed one - what is unknown stays unknown.
 ```
 
-- **`cost_stress`** — the edge survives at least 3x its own assumed cost. Run it with
-  `walkforward --cost-stress`, which stresses the config the folds actually chose.
+- **`cost_stress`** — the edge survives at least 3x its own assumed cost, stressing
+  the config the folds actually chose. **On by default here**: this is where a promotion
+  decision is made, so cost sensitivity belongs in that story rather than in an optional
+  follow-up. `--no-cost-stress` skips it; it re-runs the chosen config once per
+  multiple.
 - **`family_bootstrap`** — still notable once every trial the campaign tried is priced
   in. It does **not** run below 10 usable return-series trials: a family test over two
   series is arithmetic rather than evidence, and a striking p-value on K=2 is exactly
