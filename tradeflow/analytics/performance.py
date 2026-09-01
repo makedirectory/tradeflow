@@ -183,6 +183,77 @@ def execution_verdict(
     }
 
 
+#: Prerequisites checked *before* promotion, beside `promotable` rather than inside it.
+#:
+#: `promotable` stays statistical - median OOS Sharpe, efficiency, drawdown ratio,
+#: deflated Sharpe - and keeps meaning for every trial already recorded. These are the
+#: questions asked of a candidate that has already cleared those: does the edge survive
+#: worse cost assumptions, and does it still look like skill once the whole family of
+#: trials is priced in?
+#:
+#: `min_family_trials` is the interesting one. A family test over two series is
+#: arithmetic rather than evidence, so the check does not run at all below the floor -
+#: and reports that it did not, rather than passing by default. That is also what makes
+#: this safe to add: a campaign with a thin family is told the gate is unevaluated, not
+#: told it passed.
+DEFAULT_PREREQUISITES: Dict[str, float] = {
+    "min_cost_stress_multiple": 3.0,
+    "max_family_p": 0.05,
+    "min_family_trials": 10,
+}
+
+
+def promotion_prerequisites(
+    *,
+    cost_stress: Optional[Dict[str, Any]] = None,
+    bootstrap: Optional[Dict[str, Any]] = None,
+    limits: Optional[Dict[str, float]] = None,
+) -> Dict[str, Any]:
+    """Checks a candidate should clear before paper, reported beside ``promotable``.
+
+    Every check carries ``evaluated``. A check whose input is absent is *not* a pass:
+    a cost curve nobody ran and a family too thin to test are both "unknown", and
+    rendering unknown as green is the failure this whole section exists to avoid.
+
+    ``ready`` is ``None`` when nothing could be evaluated, ``False`` when an evaluated
+    check failed, ``True`` only when every evaluated check passed - and it never
+    implies the unevaluated ones would have.
+    """
+    limit = {**DEFAULT_PREREQUISITES, **(limits or {})}
+    checks: Dict[str, Any] = {}
+
+    survives = (cost_stress or {}).get("survives_to_multiple")
+    checks["cost_stress"] = {
+        "evaluated": survives is not None,
+        "value": float(survives) if survives is not None else None,
+        "threshold": limit["min_cost_stress_multiple"],
+        "passed": survives is not None and float(survives) >= limit["min_cost_stress_multiple"],
+        "note": "the edge survives this multiple of its own assumed cost",
+    }
+
+    family = (bootstrap or {}).get("family") or {}
+    n_used = int(family.get("n_used") or 0)
+    family_p = family.get("family_p")
+    enough_family = bool(family.get("available")) and n_used >= limit["min_family_trials"]
+    checks["family_bootstrap"] = {
+        "evaluated": enough_family and family_p is not None,
+        "value": float(family_p) if family_p is not None else None,
+        "threshold": limit["max_family_p"],
+        "passed": enough_family and family_p is not None and float(family_p) <= limit["max_family_p"],
+        "n_used": n_used,
+        "note": (
+            f"needs {int(limit['min_family_trials'])} usable return-series trials to mean "
+            f"anything; {n_used} available"
+            if not enough_family
+            else "still notable once every trial the campaign tried is priced in"
+        ),
+    }
+
+    evaluated = [check for check in checks.values() if check["evaluated"]]
+    ready = None if not evaluated else all(check["passed"] for check in evaluated)
+    return {"ready": ready, "checks": checks, "evaluated": len(evaluated), "total": len(checks)}
+
+
 def empty_metrics() -> Dict[str, float]:
     """A zeroed metrics dict, returned when no trades occurred."""
     base = {key: 0.0 for key in METRIC_KEYS}

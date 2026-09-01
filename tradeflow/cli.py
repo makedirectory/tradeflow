@@ -1039,10 +1039,11 @@ def cmd_walkforward(args) -> None:
             dedup_params=recipe,
         )
 
+    bootstrap_report = None
     if getattr(args, "bootstrap_skill", False) and result.folds:
         from tradeflow.services.analysis import compute_bootstrap_skill
 
-        report = compute_bootstrap_skill(
+        bootstrap_report = compute_bootstrap_skill(
             result.oos_returns,
             args.strategy,
             universe,
@@ -1052,7 +1053,10 @@ def cmd_walkforward(args) -> None:
             block_length=args.bootstrap_block_length,
             seed=args.bootstrap_seed,
         )
-        _print_bootstrap_skill(report)
+        _print_bootstrap_skill(bootstrap_report)
+
+    if result.folds:
+        _print_promotion_prerequisites(data_client, args, result, universe, bootstrap_report)
 
     if getattr(args, "chart", None):
         from tradeflow.analytics.charts import render_walkforward_chart
@@ -1190,6 +1194,54 @@ def _print_walkforward(result, objective: str) -> None:
         f"{result.median_efficiency():.2f}, {result.total_oos_trades()} OOS trades, "
         f"DSR {agg.get('deflated_sharpe_ratio', 0):.2f}"
     )
+
+
+def _print_promotion_prerequisites(data_client, args, result, universe, bootstrap_report) -> None:
+    """What a candidate should clear before paper, beside `promotable` rather than in it.
+
+    `promotable` stays statistical and keeps meaning for every trial already recorded.
+    These ask the questions that come after: does the edge survive worse cost
+    assumptions, and does it still look like skill once the whole family is priced in?
+
+    Computed here because the family test needs this trial already journaled, which
+    happens above - `gate_report` runs before that and structurally cannot see it.
+    """
+    from tradeflow.analytics.performance import promotion_prerequisites
+    from tradeflow.services.analysis import run_cost_stress
+
+    stress = None
+    if getattr(args, "cost_stress", None):
+        chosen = result.holdout_params or result.folds[-1].is_best_params
+        stress = run_cost_stress(
+            data_client,
+            args.strategy,
+            universe,
+            args.start,
+            args.end,
+            config=dict(chosen),
+            capital=args.capital,
+            commission_bps=args.commission_bps,
+            impact_eta=args.impact_eta,
+            borrow_bps=args.borrow_bps,
+            axis=args.cost_stress,
+        )
+
+    prereq = promotion_prerequisites(cost_stress=stress, bootstrap=bootstrap_report)
+    if not prereq["evaluated"] and prereq["checks"]["family_bootstrap"]["n_used"] == 0:
+        return  # nothing to say: neither input was produced by this run
+
+    print("\n=== Promotion prerequisites (separate from `promotable`) ===")
+    for name, check in prereq["checks"].items():
+        if not check["evaluated"]:
+            print(f"  [ -- ] {name:18}not evaluated - {check['note']}")
+            continue
+        mark = "PASS" if check["passed"] else "FAIL"
+        print(f"  [{mark}] {name:18}{check['value']:.4g} vs {check['threshold']:.4g}")
+    ready = prereq["ready"]
+    verdict = {None: "nothing evaluated", True: "clear", False: "NOT clear"}[ready]
+    print(f"  Prerequisites: {verdict} ({prereq['evaluated']} of {prereq['total']} evaluated)")
+    if ready and prereq["evaluated"] < prereq["total"]:
+        print("  An unevaluated check is not a passed one - the rest is still unknown.")
 
 
 def _print_bootstrap_skill(report: Dict[str, Any]) -> None:
@@ -3526,6 +3578,16 @@ def build_parser() -> argparse.ArgumentParser:
     wf.add_argument("--objective", default="sharpe_ratio")
     wf.add_argument("--max-evals", dest="max_evals", type=int, default=50)
     wf.add_argument("--seed", type=int, default=42)
+    wf.add_argument(
+        "--cost-stress",
+        dest="cost_stress",
+        nargs="?",
+        const="all",
+        default=None,
+        choices=["all", "turnover", "borrow"],
+        help="Also stress the chosen config's costs and check it against the paper "
+        "prerequisite (survives >= 3x its assumed cost).",
+    )
     wf.add_argument("--pbo", action="store_true", help="Estimate probability of backtest overfitting")
     wf.add_argument(
         "--monte-carlo",

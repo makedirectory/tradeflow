@@ -94,6 +94,35 @@ Sharpe, and — when requested — parameter sensitivity and the leakage probe).
 > gitignored `configs/` directory; promoting it to live trading is a manual human
 > step.
 
+## Promotion prerequisites
+
+`promotable` stays **statistical**: median OOS Sharpe, profit factor, walk-forward
+efficiency, drawdown ratio, trade count, parameter sensitivity, deflated Sharpe. It
+means the same thing it meant for every trial already recorded, and nothing added since
+has changed it.
+
+Two further questions come *after* a candidate clears those, and are reported beside it:
+
+```
+=== Promotion prerequisites (separate from `promotable`) ===
+  [PASS] cost_stress        5 vs 3
+  [ -- ] family_bootstrap   not evaluated - needs 10 usable return-series trials to
+                            mean anything; 2 available
+  Prerequisites: clear (1 of 2 evaluated)
+  An unevaluated check is not a passed one - the rest is still unknown.
+```
+
+- **`cost_stress`** — the edge survives at least 3x its own assumed cost. Run it with
+  `walkforward --cost-stress`, which stresses the config the folds actually chose.
+- **`family_bootstrap`** — still notable once every trial the campaign tried is priced
+  in. It does **not** run below 10 usable return-series trials: a family test over two
+  series is arithmetic rather than evidence, and a striking p-value on K=2 is exactly
+  the kind of number that should not gate anything.
+
+**An unevaluated check is not a passed one.** A cost curve nobody ran and a family too
+thin to test are both *unknown*, and `ready` always travels with the count of what was
+actually evaluated — a clear verdict over one of two checks is not a clearance.
+
 ## Reusing a saved config
 
 The file holds the whole run configuration, not just tuned params: `strategy`,

@@ -299,3 +299,82 @@ def test_git_sha_is_none_when_git_is_unavailable(monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     assert config_store.current_git_sha() is None
+
+
+# --- promotion prerequisites --------------------------------------------------
+def test_an_unevaluated_prerequisite_is_never_a_pass():
+    """The failure this whole block exists to avoid.
+
+    A cost curve nobody ran and a family too thin to test are both *unknown*. Rendering
+    unknown as green is how a candidate gets promoted on evidence that was never
+    gathered.
+    """
+    from tradeflow.analytics.performance import promotion_prerequisites
+
+    prereq = promotion_prerequisites()
+
+    assert prereq["ready"] is None
+    assert prereq["evaluated"] == 0
+    assert all(not check["evaluated"] and not check["passed"] for check in prereq["checks"].values())
+
+
+def test_a_family_of_two_is_reported_as_too_thin_rather_than_significant():
+    """Observed in a real run: K=2, p=0.002 - a striking p-value over a family so small
+    the test is arithmetic rather than evidence. It must not gate on that."""
+    from tradeflow.analytics.performance import promotion_prerequisites
+
+    prereq = promotion_prerequisites(
+        bootstrap={"family": {"available": True, "family_p": 0.002, "n_used": 2}}
+    )
+    family = prereq["checks"]["family_bootstrap"]
+
+    assert not family["evaluated"]
+    assert not family["passed"]  # a striking p-value still does not pass on K=2
+    assert "10 usable" in family["note"] and "2 available" in family["note"]
+
+
+def test_a_family_large_enough_is_gated_on_its_p_value():
+    """And once there is enough family, both directions bite."""
+    from tradeflow.analytics.performance import promotion_prerequisites
+
+    strong = promotion_prerequisites(
+        bootstrap={"family": {"available": True, "family_p": 0.002, "n_used": 12}}
+    )
+    weak = promotion_prerequisites(bootstrap={"family": {"available": True, "family_p": 0.30, "n_used": 12}})
+
+    assert strong["checks"]["family_bootstrap"]["passed"]
+    assert not weak["checks"]["family_bootstrap"]["passed"]
+    assert weak["ready"] is False
+
+
+def test_cost_stress_must_clear_three_times_its_assumed_cost():
+    from tradeflow.analytics.performance import promotion_prerequisites
+
+    assert promotion_prerequisites(cost_stress={"survives_to_multiple": 5.0})["ready"] is True
+    assert promotion_prerequisites(cost_stress={"survives_to_multiple": 1.0})["ready"] is False
+
+
+def test_ready_never_implies_the_unevaluated_checks_would_have_passed():
+    """The exact shape of a real run: cost stress clears at 5x, family is too thin.
+
+    `ready` is True because every *evaluated* check passed, and the count has to travel
+    with it or it reads as a full clearance.
+    """
+    from tradeflow.analytics.performance import promotion_prerequisites
+
+    prereq = promotion_prerequisites(
+        cost_stress={"survives_to_multiple": 5.0},
+        bootstrap={"family": {"available": True, "family_p": 0.002, "n_used": 2}},
+    )
+
+    assert prereq["ready"] is True
+    assert (prereq["evaluated"], prereq["total"]) == (1, 2)
+
+
+def test_prerequisites_are_not_the_promotion_gates():
+    """`promotable` stays statistical and keeps meaning for every trial already
+    recorded; nothing here touches it."""
+    from tradeflow.analytics.performance import DEFAULT_PREREQUISITES
+    from tradeflow.optimization.walk_forward import DEFAULT_GATES
+
+    assert not set(DEFAULT_PREREQUISITES) & set(DEFAULT_GATES)
