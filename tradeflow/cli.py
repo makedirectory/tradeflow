@@ -270,6 +270,45 @@ def _load_strategy_from_config(path: str):
     return strategy, strategy_name, payload.get("scanner")
 
 
+def _settle_universe_replay(args, sources, given) -> None:
+    """Replay the config's universe unless a re-resolution is explicitly asked for.
+
+    A saved config means "this is the book we validated". Re-scanning it on use turns
+    that into "a new book from an old recipe" - a different experiment, which can move
+    results in either direction without the reader knowing the universe changed. Worse,
+    the scanner would run over the *resolved* names, applying the filter a second time
+    rather than repeating the original decision.
+
+    Replay is expressed by pinning the scanner off, so every command that resolves a
+    universe - directly or through a service - honours it identically instead of each
+    growing its own replay branch.
+    """
+    if args.universe_source != "config":
+        if getattr(args, "re_resolve_universe", False) and args.universe_source == "flag":
+            # The collision: --symbols already replaced the saved book, so there is
+            # nothing left to re-resolve. Saying so beats letting a flag look honoured.
+            sources.append("universe=<--symbols given; --re-resolve-universe has nothing to re-resolve>")
+        return  # no saved universe in play: behave exactly as before
+
+    if getattr(args, "re_resolve_universe", False):
+        candidates = args.candidate_symbols
+        if candidates:
+            args.symbols = list(candidates)
+            sources.append(f"universe=<re-resolved from {len(candidates)} saved candidates>")
+        else:
+            sources.append("universe=<re-resolved over the saved book; no candidates recorded>")
+        return
+
+    if "scanner" in given and getattr(args, "scanner", None) not in (None, "none"):
+        # An explicitly typed scanner is a decision too, and flags win. Say that the
+        # two instructions disagreed rather than silently honouring one of them.
+        sources.append(f"universe=<--scanner {args.scanner} given; saved book re-scanned>")
+        return
+    if getattr(args, "scanner", None) not in (None, "none"):
+        args.scanner = "none"
+    sources.append(f"universe=<replayed from config, {len(args.symbols)} symbols>")
+
+
 def _strategy_from(args, tuned):
     """The strategy a run should use, from the resolved name and any tuned params.
 
@@ -347,6 +386,10 @@ def apply_run_config(args):
         elif value is not None:
             setattr(args, field, value)
             sources.append(f"{field}=<config>")
+
+    args.candidate_symbols = payload.get("candidate_symbols")
+    args.universe_source = "flag" if "symbols" in given else ("config" if payload.get("symbols") else None)
+    _settle_universe_replay(args, sources, given)
 
     cost = payload.get("cost") or {}
     applied_cost = [
@@ -1105,11 +1148,13 @@ def cmd_walkforward(args) -> None:
             strategy=args.strategy,
             scanner=args.scanner,
             params=chosen,
-            # The run inputs, so the file configures a run rather than only a
-            # strategy. The *resolved* universe, not the candidate list: the scanner
-            # is saved beside it, and re-running it would pick a different set on a
-            # different day - which is not what "this config" meant.
+            # Both universes, because they record different decisions. `symbols` is
+            # the book that was validated and what a replay trades; `candidate_symbols`
+            # is what it was resolved from, and the only thing a genuine re-resolution
+            # can re-scan - running a scanner over the resolved names is a second filter
+            # over an already-filtered set, not the original decision repeated.
             symbols=universe,
+            candidate_symbols=args.symbols,
             capital=args.capital,
             # _cost_key(args) without the vintage: that stamp fingerprints the *data*
             # a run read, and pinning a reusable config to one data snapshot is the
@@ -3013,7 +3058,16 @@ def _add_config_flag(parser) -> None:
         "--config",
         default=None,
         help="Saved run config (walkforward --save-config). Supplies strategy, params, "
-        "scanner, universe, capital and cost settings; any flag you pass wins over it.",
+        "scanner, universe, capital and cost settings; any flag you pass wins over it. "
+        "The saved universe is replayed as-is - see --re-resolve-universe.",
+    )
+    parser.add_argument(
+        "--re-resolve-universe",
+        dest="re_resolve_universe",
+        action="store_true",
+        help="Re-run the scanner instead of replaying the config's universe. Uses the "
+        "saved candidate list where one was recorded, since re-scanning the resolved "
+        "book would filter an already-filtered set rather than repeat the decision.",
     )
 
 
@@ -3194,13 +3248,11 @@ def build_parser() -> argparse.ArgumentParser:
         )
 
     def add_config_flag(p) -> None:
-        p.add_argument(
-            "--config",
-            metavar="PATH",
-            default=None,
-            help="Load strategy/scanner/params from a saved config (e.g. `walkforward --save-config`); "
-            "takes precedence over --strategy/--scanner when given",
-        )
+        # One definition, shared. Two of these existed and drifted: the newer flags
+        # reached the analysis commands and not `backtest`/`live`, which are the two
+        # that had `--config` first. The old help was also stale - a contradictory
+        # `--strategy` is refused now, not silently overridden.
+        _add_config_flag(p)
 
     def add_workers_flag(p) -> None:
         # Default 1: sequential is not "a pool of one", it is the original code path

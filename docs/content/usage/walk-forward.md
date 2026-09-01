@@ -144,7 +144,7 @@ tradeflow risk     --config configs/alpha.json
 ```
 
 `--config` is accepted by `backtest`, `live`, `verdict`, `info`, `alphas`, `horizon`,
-`allocate` and `risk`. Three rules make it predictable:
+`allocate` and `risk`. Four rules make it predictable:
 
 - **Anything you type wins.** The file fills in only what the command line left
   unsaid, so `--symbols ZZZ` beats the file's universe. Each run prints where every
@@ -155,6 +155,20 @@ tradeflow risk     --config configs/alpha.json
 - **A contradictory `--strategy` is refused.** The params in the file belong to the
   strategy in the file; handing one strategy's tuned params to another is not
   something to guess at.
+- **The saved universe is replayed, not re-scanned.** A config records the book that
+  was validated. Re-running the scanner over it would turn that into *a new book from
+  an old recipe* — a different experiment, which can move results either way without
+  the reader knowing the universe changed. `--re-resolve-universe` opts into a genuine
+  re-scan, over the saved **candidate** list rather than the resolved book, because
+  re-scanning what the scanner already picked is a second filter rather than the
+  original decision repeated. Every run says which it did:
+
+  ```
+  universe=<replayed from config, 61 symbols>
+  universe=<re-resolved from 85 saved candidates>
+  universe=<--scanner volume given; saved book re-scanned>
+  universe=<--symbols given; --re-resolve-universe has nothing to re-resolve>
+  ```
 
 **The window is never stored.** A config carrying its own tuning dates would make
 every later run silently re-evaluate that period, so `--start`/`--end` always come

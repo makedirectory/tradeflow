@@ -118,17 +118,25 @@ def save_config(
     params: Dict[str, Any],
     scanner: Optional[str] = None,
     symbols: Optional[Any] = None,
+    candidate_symbols: Optional[Any] = None,
     capital: Optional[float] = None,
     cost: Optional[Dict[str, Any]] = None,
     provenance: Optional[Provenance] = None,
 ) -> Path:
     """Write the run configuration as JSON; return the path.
 
-    ``{strategy, scanner, symbols, capital, cost, params, provenance}``. The first six
-    are *inputs* - what to run - so one file can configure a run whatever its type,
+    ``{strategy, scanner, symbols, candidate_symbols, capital, cost, params,
+    provenance}``. All but ``provenance`` are *inputs* - what to run - so one file can
+    configure a run whatever its type,
     which is the point of a config a private repository versions alongside its
     strategies. ``provenance`` is the opposite: a record of how the params were
     arrived at, never read back as input.
+
+    ``symbols`` is the universe the scanner **resolved**: the book that was validated,
+    and what a replay trades. ``candidate_symbols`` is the list it was resolved *from*,
+    kept because they are different decisions - re-running a scanner over the resolved
+    61 names is a second filter over an already-filtered set, not the original
+    85-candidate scan. Only the candidates make a genuine re-resolution possible.
 
     The window is deliberately absent. A config carrying its own tuning dates would
     make every later run re-evaluate that period by default, which is the one thing a
@@ -150,7 +158,12 @@ def save_config(
         "params": _jsonable(params),
         "provenance": asdict(provenance) if provenance else {},
     }
-    for key, value in (("symbols", symbols), ("capital", capital), ("cost", cost)):
+    for key, value in (
+        ("symbols", symbols),
+        ("candidate_symbols", candidate_symbols),
+        ("capital", capital),
+        ("cost", cost),
+    ):
         if value is not None:
             payload[key] = _jsonable(value)
     path.write_text(json.dumps(payload, indent=2, sort_keys=False))

@@ -49,8 +49,10 @@ def test_the_file_supplies_every_input_the_command_line_left_unsaid(saved):
     tuned = apply_run_config(args)
 
     assert args.strategy == "ma_crossover"
-    assert args.scanner == "volume"
     assert args.symbols == ["AAA", "BBB", "CCC"]
+    # The scanner is read from the config and then pinned off, because the config's
+    # universe is replayed rather than re-scanned - see the universe tests below.
+    assert args.scanner == "none"
     assert args.capital == 250_000.0
     assert args.commission_bps == 2.5
     assert tuned == _PARAMS
@@ -254,3 +256,116 @@ def test_every_command_with_config_shares_one_layering_path():
         source = inspect.getsource(getattr(cli, command))
         assert "apply_run_config" in source, f"{command} does not use the shared layering"
         assert "cfg_scanner" not in source, f"{command} still has its own config branch"
+
+
+# --- the saved universe is a decision, not a starting point --------------------
+@pytest.fixture
+def with_universe(tmp_path):
+    """A config recording both universes: 61 resolved from 85 candidates."""
+    from tradeflow.services.registry import STRATEGIES
+
+    path = tmp_path / "universe.json"
+    path.write_text(
+        json.dumps(
+            {
+                "strategy": "ma_crossover",
+                "scanner": "volume",
+                "symbols": [f"R{i}" for i in range(61)],
+                "candidate_symbols": [f"C{i}" for i in range(85)],
+                "params": {n: s["default"] for n, s in STRATEGIES["ma_crossover"].PARAM_RANGES.items()},
+                "provenance": {},
+            }
+        )
+    )
+    return str(path)
+
+
+def test_a_saved_universe_is_replayed_not_rescanned(with_universe, capsys):
+    """The defect this fixes.
+
+    `--config` restored the 61 names the scanner *resolved*, and the command then
+    passed them straight back through the scanner - filtering an already-filtered set,
+    at a different clock. A config that recorded a 61-name book could silently replay
+    as a subset of it, and nothing said which had happened.
+    """
+    args = parse_cli(["backtest", "--config", with_universe])
+
+    apply_run_config(args)
+
+    assert len(args.symbols) == 61
+    assert args.scanner == "none"  # pinned off, which is how replay is expressed
+    assert "replayed from config, 61 symbols" in capsys.readouterr().out
+
+
+def test_re_resolving_uses_the_saved_candidates_not_the_resolved_book(with_universe, capsys):
+    """Re-running a scanner over the 61 it already picked is a second filter, not the
+    original decision repeated. Only the candidate list makes a genuine re-scan
+    possible, which is why both are saved."""
+    args = parse_cli(["backtest", "--config", with_universe, "--re-resolve-universe"])
+
+    apply_run_config(args)
+
+    assert len(args.symbols) == 85  # the candidates, not the resolved book
+    assert args.scanner == "volume"
+    assert "re-resolved from 85 saved candidates" in capsys.readouterr().out
+
+
+def test_an_older_config_without_candidates_says_what_it_can_only_do(tmp_path, capsys):
+    """Configs saved before candidates were recorded can only re-scan the resolved
+    book. That is a second filter, so it has to be named rather than passed off as a
+    re-resolution."""
+    from tradeflow.services.registry import STRATEGIES
+
+    path = tmp_path / "old.json"
+    path.write_text(
+        json.dumps(
+            {
+                "strategy": "ma_crossover",
+                "scanner": "volume",
+                "symbols": ["R0", "R1"],
+                "params": {n: s["default"] for n, s in STRATEGIES["ma_crossover"].PARAM_RANGES.items()},
+                "provenance": {},
+            }
+        )
+    )
+    args = parse_cli(["backtest", "--config", str(path), "--re-resolve-universe"])
+
+    apply_run_config(args)
+
+    assert "no candidates recorded" in capsys.readouterr().out
+
+
+def test_an_explicit_scanner_beats_the_replay_and_says_so(with_universe, capsys):
+    """Flags win, including over the replay default - but a typed scanner and a saved
+    book are two instructions that disagree, so the report names which was honoured."""
+    args = parse_cli(["backtest", "--config", with_universe, "--scanner", "volume"])
+
+    apply_run_config(args)
+
+    assert args.scanner == "volume"  # not pinned off
+    assert "saved book re-scanned" in capsys.readouterr().out
+
+
+def test_symbols_and_re_resolve_together_report_the_collision(with_universe, capsys):
+    """The edge where "flags win" and "a saved config is a decision" collide.
+
+    `--symbols` has already replaced the saved book, so `--re-resolve-universe` has
+    nothing left to re-resolve. Silently ignoring it would let a flag look honoured.
+    """
+    args = parse_cli(["backtest", "--config", with_universe, "--symbols", "X,Y", "--re-resolve-universe"])
+
+    apply_run_config(args)
+
+    assert args.symbols == ["X", "Y"]
+    assert "has nothing to re-resolve" in capsys.readouterr().out
+
+
+def test_without_a_config_nothing_about_scanning_changes(capsys):
+    """Replay only applies to a universe that came from a config. An ordinary run must
+    behave exactly as it did."""
+    args = parse_cli(["backtest", "--strategy", "volume_spike", "--scanner", "volume"])
+
+    apply_run_config(args)
+
+    assert args.scanner == "volume"
+    assert capsys.readouterr().out == ""
