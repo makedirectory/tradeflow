@@ -35,6 +35,7 @@ from typing import Any, Dict, List, Optional
 
 from tradeflow.marketdata.base import MarketDataProvider
 from tradeflow.services.registry import STRATEGIES
+from tradeflow.settings import DATA_FEEDS
 from tradeflow.utils.logging_config import setup_logging
 from tradeflow.utils.timeutils import NEW_YORK
 
@@ -47,7 +48,12 @@ DEFAULT_UNIVERSE = ["NVDA", "RIVN", "NFLX", "META", "BAC", "MS", "TSLA", "GS", "
 # ---------------------------------------------------------------------------- #
 # Wiring
 # ---------------------------------------------------------------------------- #
-def build_data_and_broker(cache: bool = False, offline: bool = False, cache_dir: Optional[Any] = None):
+def build_data_and_broker(
+    cache: bool = False,
+    offline: bool = False,
+    cache_dir: Optional[Any] = None,
+    feed: Optional[str] = None,
+):
     """Construct the Alpaca-backed broker and market-data client from settings.
 
     ``cache``/``offline``/``cache_dir`` are forwarded to
@@ -62,7 +68,7 @@ def build_data_and_broker(cache: bool = False, offline: bool = False, cache_dir:
 
     settings = load_settings()
     broker = build_broker(settings.alpaca_key, settings.alpaca_secret, settings.paper_trade)
-    data_client = build_data_client(cache=cache, offline=offline, cache_dir=cache_dir)
+    data_client = build_data_client(cache=cache, offline=offline, cache_dir=cache_dir, feed=feed)
     return broker, data_client
 
 
@@ -2782,7 +2788,20 @@ _LIMIT_OVERRIDES = (
     ("max_positions", "max_positions", "--max-positions"),
     ("max_position_size", "max_position_size", "--max-position-size"),
     ("max_gross_exposure", "max_gross_exposure", "--max-gross-exposure"),
+    ("max_total_risk", "max_total_risk", "--max-total-risk"),
+    ("min_notional", "min_notional", "--min-notional"),
 )
+
+
+def _live_feed(args) -> Optional[str]:
+    """The feed this run pins, from the flag or the environment.
+
+    Unset stays unset: pinning a default would mean an entitled account silently
+    trading a partial venue or a delayed tape with nothing in the output to say so.
+    """
+    from tradeflow.settings import data_feed
+
+    return getattr(args, "feed", None) or data_feed()
 
 
 def _apply_limit_overrides(args, strategy) -> None:
@@ -2833,7 +2852,7 @@ def _refuse_inert_flags(args) -> None:
 
 
 def cmd_live(args) -> None:
-    from tradeflow.engine.live import LiveEngine
+    from tradeflow.engine.live import BlindStartError, LiveEngine
     from tradeflow.execution.live_trader import LiveTrader
     from tradeflow.services.sizing import build_beta_sizer, build_portfolio_weight_sizer
 
@@ -2850,7 +2869,7 @@ def cmd_live(args) -> None:
     if args.portfolio:
         _refuse_contradictory_portfolio_cardinality(strategy, args.max_positions)
 
-    broker, data_client = build_data_and_broker()
+    broker, data_client = build_data_and_broker(feed=_live_feed(args))
     universe = resolve_universe(data_client, args.scanner, args.symbols)
 
     sizer = None
@@ -2899,11 +2918,16 @@ def cmd_live(args) -> None:
         bar_filter=bar_filter,
         ledger=ledger,
         reconcile_every=args.reconcile_every,
+        allow_blind_start=args.allow_blind_start,
     )
     try:
         asyncio.run(engine.start(universe))
+    except BlindStartError as exc:
+        sys.exit(f"Refusing to start: {exc}")
     except KeyboardInterrupt:
-        logger.info("Interrupted; shutting down live engine.")
+        # Ctrl-C is how a live session is meant to end. A traceback here reads as a
+        # crash, and buries whether anything was left open.
+        print("\nInterrupted - live engine stopped. No new positions were opened.")
     finally:
         if bar_filter is not None:
             report = bar_filter.report()
@@ -2992,6 +3016,11 @@ def _print_live_preflight(args, strategy, broker, universe, capital, ledger) -> 
     print(
         f"  {'universe':22}{len(universe)} symbols ({'replayed' if args.scanner == 'none' else args.scanner})"
     )
+    # Warm-up and the stream must agree. Left unset the SDK defaults disagree - the
+    # historical half resolves to the full tape, the stream to a single venue - so an
+    # account entitled to one and not the other warms up on nothing and streams fine.
+    feed = _live_feed(args)
+    print(f"  {'data feed':22}{feed or 'SDK default (full tape for history, IEX for the stream)'}")
 
     # Absent is not zero: a limit nobody declared is unbounded, and must not read as 0.
     def _limit(value, render):
@@ -3012,6 +3041,12 @@ def _print_live_preflight(args, strategy, broker, universe, capital, ledger) -> 
         print(f"  {'max gross exposure':22}{gross:g} ({gross:.0%} of capital = ${gross * capital:,.2f})")
     else:
         print(f"  {'max gross exposure':22}{_limit(gross, lambda v: f'{v:g} ({v:.0%} of capital)')}")
+    risk = limits.get("max_total_risk")
+    if risk is not None and capital:
+        print(f"  {'max total risk':22}{risk:g} ({risk:.0%} of capital = ${risk * capital:,.2f})")
+    else:
+        print(f"  {'max total risk':22}{_limit(risk, lambda v: f'{v:g} ({v:.0%} of capital)')}")
+    print(f"  {'min notional':22}{_limit(limits.get('min_notional'), lambda v: f'${v:,.2f}')}")
     print(
         f"  {'entries':22}{'re-affirmed' if strategy.config.get('reaffirm_entries', True) else 'fresh crossings only'}"
     )
@@ -3778,6 +3813,37 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Ceiling on gross exposure as a fraction of deployable capital (0.9 = 90%%). "
         "Overrides the strategy's and the saved config's limit",
+    )
+    live.add_argument(
+        "--max-total-risk",
+        dest="max_total_risk",
+        type=float,
+        default=None,
+        help="Ceiling on total risk across the book as a fraction of deployable capital. "
+        "Overrides the strategy's and the saved config's limit",
+    )
+    live.add_argument(
+        "--min-notional",
+        dest="min_notional",
+        type=float,
+        default=None,
+        help="Skip an entry whose sized order falls below this dollar value, rather than "
+        "sending an order whose costs swamp it",
+    )
+    live.add_argument(
+        "--feed",
+        choices=DATA_FEEDS,
+        default=None,
+        help="Pin the Alpaca market-data feed for both warm-up and the live stream. "
+        "Unset leaves the SDK's defaults, which is the right choice for an entitled "
+        "account; unentitled keys generally need 'iex'",
+    )
+    live.add_argument(
+        "--allow-blind-start",
+        dest="allow_blind_start",
+        action="store_true",
+        help="Start even when no symbol warmed up. Indicators then begin from no history "
+        "and emit confident-looking signals nothing has validated",
     )
     live.add_argument(
         "--max-weight",

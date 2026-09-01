@@ -40,6 +40,14 @@ _CALENDAR_DAYS_PER_TRADING_WEEK = 7 / 5
 _HOLIDAY_PADDING_DAYS = 5
 
 
+class BlindStartError(RuntimeError):
+    """Raised when no symbol has warm-up history, so every indicator starts blind.
+
+    A guard, not a repair: nothing here can invent the history, and starting anyway
+    produces signals that look exactly like valid ones.
+    """
+
+
 class LiveEngine:
     """Streams live bars into a strategy and routes signals to execution."""
 
@@ -52,6 +60,7 @@ class LiveEngine:
         bar_filter: Optional[BarQualityFilter] = None,
         ledger: Optional[PositionLedger] = None,
         reconcile_every: float = 300.0,
+        allow_blind_start: bool = False,
     ):
         self.strategy = strategy
         self.data_client = data_client
@@ -64,6 +73,9 @@ class LiveEngine:
         #: account state is detectable. Never authoritative, never remediating.
         self.ledger = ledger
         self.reconcile_every = reconcile_every
+        #: Start even when warm-up returned nothing. Off by default: the failure it
+        #: guards is silent from inside the loop.
+        self._allow_blind_start = allow_blind_start
         #: ``None`` means "never swept", which is deliberately not the same as
         #: "swept at time zero". ``time.monotonic()`` counts from an arbitrary origin
         #: (boot, on Linux), so seeding this with 0.0 made the first sweep depend on
@@ -79,7 +91,22 @@ class LiveEngine:
         concurrently with the market-data stream so fills are logged.
         """
         self.strategy.initialize()
-        self._warm_up(symbols)
+        warmed = self._warm_up(symbols)
+        if not warmed and symbols and not self._allow_blind_start:
+            # Every indicator would start from nothing. The stream still connects and
+            # bars still arrive, so the run looks healthy while every signal it emits
+            # is computed from history it never had - indistinguishable, from inside
+            # the loop, from a strategy that simply is not triggering.
+            raise BlindStartError(
+                f"Warm-up returned no history for any of the {len(symbols)} symbols, so "
+                f"every indicator would start blind.\n"
+                f"  The usual cause is a market-data feed the account is not entitled to: "
+                f"historical requests resolve to the full consolidated tape by default, "
+                f"while the live stream defaults to a single venue, so an unentitled key "
+                f"warms up on nothing and streams normally.\n"
+                f"  Pin both halves to a feed the account can read (--feed iex), or pass "
+                f"--allow-blind-start to trade without history anyway."
+            )
         self._cold_start()
 
         broker = self.live_trader.broker
@@ -89,7 +116,19 @@ class LiveEngine:
             tasks.append(broker.stream_trade_updates(self._on_trade_update))
 
         logger.info("Starting live stream for %d symbols", len(symbols))
-        await asyncio.gather(*tasks)
+        running = [asyncio.ensure_future(task) for task in tasks]
+        try:
+            await asyncio.gather(*running)
+        except asyncio.CancelledError:
+            # Ctrl-C cancels this coroutine, not the streams it started. Leaving them
+            # to be garbage-collected is what produced the websocket teardown noise:
+            # cancel each one and let it finish unwinding before returning.
+            logger.info("Shutting down live streams.")
+            raise
+        finally:
+            for task in running:
+                task.cancel()
+            await asyncio.gather(*running, return_exceptions=True)
 
     def _on_trade_update(self, update) -> None:
         """Log account/order events (fills, cancels, rejects), and record fills.
@@ -143,14 +182,19 @@ class LiveEngine:
         if adopted:
             logger.info("Resuming with %d open position(s) adopted from the broker", adopted)
 
-    def _warm_up(self, symbols: List[str]) -> None:
-        """Seed each symbol's rolling buffer so indicators are valid on bar one."""
+    def _warm_up(self, symbols: List[str]) -> int:
+        """Seed each symbol's rolling buffer so indicators are valid on bar one.
+
+        Returns how many symbols got any history at all, which the caller uses to
+        decide whether there is enough to trade on.
+        """
         timeframe = Timeframe.parse(self.strategy.config["timeframe"])
         periods = self.strategy.config.get("required_lookback_periods", 50)
         start = self._lookback_start(timeframe, periods)
         end = datetime.now(NEW_YORK)
 
         history = self.data_client.get_bars(symbols, timeframe, start, end)
+        warmed = 0
         for symbol in symbols:
             bars = history.get(symbol)
             # A short warm-up is the failure worth shouting about: the strategy runs
@@ -160,6 +204,7 @@ class LiveEngine:
             if bars is None or bars.empty:
                 logger.error("No warm-up history for %s — its indicators start blind", symbol)
                 continue
+            warmed += 1
             if len(bars) < periods:
                 logger.warning(
                     "Warmed up %s with only %d of the %d bars its indicators need",
@@ -170,6 +215,8 @@ class LiveEngine:
             else:
                 logger.info("Warmed up %s with %d bars", symbol, len(bars))
             self.strategy.warm_up(symbol, self.strategy.process_data(bars))
+        logger.info("Warm-up covered %d of %d symbols", warmed, len(symbols))
+        return warmed
 
     def _on_bar(self, event: BarEvent) -> None:
         """Per-bar callback: validate, update the strategy, act on any signal."""

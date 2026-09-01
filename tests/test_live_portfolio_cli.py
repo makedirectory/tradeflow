@@ -314,3 +314,59 @@ def test_typing_the_cardinality_makes_the_two_caps_agree_by_construction():
     _apply_limit_overrides(args, strategy)
 
     _refuse_contradictory_portfolio_cardinality(strategy, args.max_positions)  # must not raise
+
+
+def test_preflight_states_the_feed_including_that_the_defaults_disagree(capsys, monkeypatch):
+    """The mismatch that produced 0-of-61 warm-up bars is invisible until it bites, so
+    the preflight says which feed each half will use before anything connects."""
+    from unittest import mock
+
+    from tests.fakes import FakeBroker
+    from tradeflow import cli
+    from tradeflow.cli import parse_cli
+    from tradeflow.services.registry import STRATEGIES
+
+    monkeypatch.setattr("tradeflow.settings.paper_trade_mode", lambda: True)
+    monkeypatch.delenv("ALPACA_DATA_FEED", raising=False)
+    ledger = mock.Mock()
+    ledger.path = "/tmp/l.jsonl"
+
+    def show(argv):
+        cli._print_live_preflight(
+            parse_cli(argv),
+            STRATEGIES["ma_crossover"].create_with_defaults(),
+            FakeBroker(buying_power=100_000.0),
+            ["AAA"],
+            8_000.0,
+            ledger,
+        )
+        return capsys.readouterr().out
+
+    assert "iex" in show(["live", "--scanner", "none", "--feed", "iex"])
+    # Unpinned must say so rather than printing nothing — the default is the risky case.
+    unpinned = show(["live", "--scanner", "none"])
+    assert "SDK default" in unpinned and "IEX for the stream" in unpinned
+
+
+def test_preflight_shows_the_two_limits_that_were_enforced_but_never_printed(capsys, monkeypatch):
+    """max_total_risk and min_notional gate every entry and had no preflight line, so a
+    run could be throttled by a limit the operator had no way to see."""
+    from unittest import mock
+
+    from tests.fakes import FakeBroker
+    from tradeflow import cli
+    from tradeflow.cli import _apply_limit_overrides, parse_cli
+    from tradeflow.services.registry import STRATEGIES
+
+    monkeypatch.setattr("tradeflow.settings.paper_trade_mode", lambda: True)
+    args = parse_cli(["live", "--scanner", "none", "--max-total-risk", "0.05", "--min-notional", "50"])
+    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    _apply_limit_overrides(args, strategy)
+    ledger = mock.Mock()
+    ledger.path = "/tmp/l.jsonl"
+
+    cli._print_live_preflight(args, strategy, FakeBroker(), ["AAA"], 8_000.0, ledger)
+
+    printed = capsys.readouterr().out
+    assert "max total risk" in printed and "$400.00" in printed  # 5% of $8,000
+    assert "min notional" in printed and "$50.00" in printed

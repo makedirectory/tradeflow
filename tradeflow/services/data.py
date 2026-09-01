@@ -16,7 +16,10 @@ logger = logging.getLogger(__name__)
 
 
 def build_data_client(
-    cache: bool = False, offline: bool = False, cache_dir: Optional[Any] = None
+    cache: bool = False,
+    offline: bool = False,
+    cache_dir: Optional[Any] = None,
+    feed: Optional[str] = None,
 ) -> MarketDataClient:
     """Construct the Alpaca-backed historical data client from settings.
 
@@ -29,12 +32,15 @@ def build_data_client(
     additionally forbids any network call (a request touching an uncached range
     raises rather than falling through to Alpaca), and implies ``cache`` on its
     own. Default behavior (neither flag) is unchanged - a plain Alpaca provider.
+
+    ``feed`` pins the Alpaca market-data feed; ``None`` (the default) resolves from
+    ``ALPACA_DATA_FEED`` and otherwise leaves the SDK's defaults alone.
     """
     from tradeflow.brokers.alpaca.factory import build_market_data
-    from tradeflow.settings import load_settings
+    from tradeflow.settings import data_feed, load_settings
 
     settings = load_settings()
-    provider = build_market_data(settings.alpaca_key, settings.alpaca_secret)
+    provider = build_market_data(settings.alpaca_key, settings.alpaca_secret, feed=feed or data_feed())
     if cache or offline:
         from tradeflow.store.bars import CachedMarketData
 

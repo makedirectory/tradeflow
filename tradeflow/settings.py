@@ -171,6 +171,30 @@ def paper_trade_mode() -> bool:
     return _resolve_paper_trade()
 
 
+#: Feeds a live run may be pinned to. ``sip`` is the full consolidated tape;
+#: ``iex`` is a single venue, free but partial.
+DATA_FEEDS = ("iex", "sip", "delayed_sip")
+
+
+def data_feed() -> Optional[str]:
+    """Which Alpaca market-data feed to pin, or ``None`` to leave the SDK's defaults.
+
+    ``None`` is deliberately the default and must stay that way. Pinning a feed
+    globally would mean an entitled account silently trading a partial venue, or a
+    delayed tape, with nothing in the output to say so - the failure this exists to
+    prevent, inverted. A run that needs a specific feed says so explicitly.
+    """
+    _load_dotenv_once()
+    value = (os.environ.get("ALPACA_DATA_FEED") or "").strip().lower()
+    if not value:
+        return None
+    if value not in DATA_FEEDS:
+        raise SettingsError(
+            f"ALPACA_DATA_FEED={value!r} is not a feed this supports ({', '.join(DATA_FEEDS)})."
+        )
+    return value
+
+
 @dataclass(frozen=True)
 class Settings:
     """Validated runtime settings - currently the Alpaca account credentials."""

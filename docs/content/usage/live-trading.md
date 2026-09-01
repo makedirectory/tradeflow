@@ -220,9 +220,12 @@ Every live run prints what it is about to do, before any order logic runs:
   account               equity $100,000.00  cash $100,000.00
   capital this run      $8,000.00
   universe              61 symbols (replayed)
+  data feed             iex
   max positions         8
   max position size     $1,200.00
   max gross exposure    0.9 (90% of capital = $7,200.00)
+  max total risk        0.05 (5% of capital = $400.00)
+  min notional          $50.00
   entries               re-affirmed
   bar guards            on
   reconcile every       300s
@@ -250,16 +253,50 @@ on a $3,000 account deploys $3,000. Position limits expressed as fractions —
 account balance. Without it, sizing uses the whole account, which is the historical
 behaviour.
 
+### `--feed` — which market data this run reads
+
+The SDK's two halves default **differently**, and this is worth knowing before it bites:
+a historical request resolves to the full consolidated tape, while the live stream
+defaults to IEX alone. An account entitled to one and not the other warms up on nothing
+and then streams perfectly happily — which looks like an empty market, not a wrong feed.
+The symptom is `subscription does not permit querying recent SIP data` followed by
+`Fetched bars for 0/61 symbols`, and then a stream that connects.
+
+`--feed` (or `ALPACA_DATA_FEED`) pins **both** halves to one feed. Unentitled keys —
+most paper accounts on the free tier — generally need `--feed iex`.
+
+It is deliberately **unset by default, and must stay that way**. Pinning a feed
+globally would mean an entitled account silently reading a single venue, or a tape
+delayed by fifteen minutes, with nothing in the output to say so — the same class of
+failure inverted, and far more expensive on real money. The preflight prints
+`SDK default (full tape for history, IEX for the stream)` when nothing is pinned, so
+the mismatch is visible before it costs a session.
+
+### Refusing to start blind
+
+A run whose warm-up returned no history for **any** symbol now exits instead of
+streaming. Every indicator would start from nothing, and from inside the bar loop that
+is indistinguishable from a strategy that is not triggering — so the run looks healthy
+for as long as you let it go. The refusal names the likely feed cause and both
+remedies. `--allow-blind-start` overrides it.
+
+Partial warm-up is not treated as blind: one symbol without history is logged per
+symbol and counted in a summary line, but does not stop a book that is otherwise valid.
+
 ### Stating the book limits for this run
 
-`--max-positions`, `--max-position-size` and `--max-gross-exposure` set the limits the
-live book is held to, overriding both the strategy's declared limits and any a saved
+`--max-positions`, `--max-position-size`, `--max-gross-exposure`, `--max-total-risk`
+and `--min-notional` set the limits the live book is held to, overriding both the strategy's declared limits and any a saved
 config carries. They map one-to-one onto the preflight lines above, so what you typed
 and what the run will enforce can be compared directly.
 
 Only a flag you actually type applies. `--max-positions` carries a default, and letting
 an untyped default overrule a frozen config would silently shrink the very book the
 capital freeze exists to pin.
+
+There is no net-exposure limit. `max_gross_exposure` bounds long plus short; nothing
+bounds long minus short, so a long/short book's directional tilt is currently
+unconstrained by the live guard.
 
 Two limits are stated in different units on purpose. `--max-position-size` is a dollar
 ceiling on one position; `--max-gross-exposure` is a fraction of deployable capital, and

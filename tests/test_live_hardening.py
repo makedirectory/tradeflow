@@ -28,7 +28,7 @@ from tests.fakes import (
 )
 from tradeflow.brokers.base import Position
 from tradeflow.engine.barcheck import BarChecks, BarQualityFilter
-from tradeflow.engine.live import LiveEngine
+from tradeflow.engine.live import BlindStartError, LiveEngine
 from tradeflow.execution.ledger import MISSING, QUANTITY_DRIFT, UNEXPECTED, PositionLedger
 from tradeflow.execution.live_trader import LiveTrader
 from tradeflow.marketdata.client import MarketDataClient
@@ -347,21 +347,70 @@ def test_a_broker_that_rejects_orders_does_not_stop_the_loop():
     assert feed.delivered == 5  # consumed the whole stream regardless
 
 
-def test_warm_up_with_no_history_still_processes_the_first_live_bar():
-    """An empty warm-up must not leave the loop unable to start."""
+class _EmptyWarmUp(ScriptedFeed):
+    """A feed whose historical half returns nothing — an unentitled key's symptom."""
 
-    class Empty(ScriptedFeed):
-        def get_bars(self, symbols, timeframe, start, end):
-            return {}
+    def get_bars(self, symbols, timeframe, start, end):
+        return {}
 
+
+def _blind_engine(**kwargs):
     strategy = STRATEGIES["ma_crossover"].create_with_defaults()
-    feed = Empty(["AAA"], events=[bar_event(minute=1)], n=10, freq="1D")
-    broker = RecordingBroker()
+    feed = _EmptyWarmUp(["AAA"], events=[bar_event(minute=1)], n=10, freq="1D")
     engine = LiveEngine(
-        strategy, MarketDataClient(feed), LiveTrader(broker, strategy, respect_market_hours=False)
+        strategy,
+        MarketDataClient(feed),
+        LiveTrader(RecordingBroker(), strategy, respect_market_hours=False),
+        **kwargs,
     )
+    return engine, feed
+
+
+def test_a_run_that_warmed_up_on_nothing_refuses_to_start():
+    """The bug: it started, streamed normally, and logged one line per symbol.
+
+    Every indicator then computed from history it never had, and from inside the loop
+    that is indistinguishable from a strategy that simply is not triggering — so the
+    run looks healthy for as long as you let it go.
+    """
+    engine, feed = _blind_engine()
+
+    with pytest.raises(BlindStartError) as exit_info:
+        asyncio.run(engine.start(["AAA"]))
+
+    assert feed.delivered == 0  # refused before the stream, not after
+    # The message must name the likeliest cause and both remedies.
+    assert "--feed iex" in str(exit_info.value)
+    assert "--allow-blind-start" in str(exit_info.value)
+
+
+def test_a_blind_start_is_allowed_when_it_is_asked_for_explicitly():
+    """Both directions. Previously the only behaviour, now opt-in."""
+    engine, feed = _blind_engine(allow_blind_start=True)
+
     asyncio.run(engine.start(["AAA"]))
+
     assert feed.delivered == 1
+
+
+def test_partial_warm_up_is_not_treated_as_blind():
+    """One symbol with history is not the failure this guards, and refusing it would
+    make a single delisted name stop an otherwise valid book."""
+    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    feed = ScriptedFeed(["AAA", "BBB"], events=[bar_event(minute=1)], n=10, freq="1D")
+    original = feed.get_bars
+
+    def only_one(symbols, timeframe, start, end):
+        return {"AAA": original(symbols, timeframe, start, end)["AAA"]}
+
+    feed.get_bars = only_one
+    engine = LiveEngine(
+        strategy,
+        MarketDataClient(feed),
+        LiveTrader(RecordingBroker(), strategy, respect_market_hours=False),
+    )
+
+    asyncio.run(engine.start(["AAA", "BBB"]))  # must not raise
 
 
 def test_without_a_filter_the_loop_behaves_exactly_as_before():
