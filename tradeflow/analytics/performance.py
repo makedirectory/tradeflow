@@ -201,6 +201,7 @@ DEFAULT_PREREQUISITES: Dict[str, float] = {
     "max_family_p": 0.05,
     "min_family_trials": 10,
     "min_benchmark_ir": 0.0,  # median per-fold OOS information ratio
+    "min_benchmark_excess_pct": 0.0,  # median per-fold OOS return less the benchmark's
 }
 
 
@@ -209,6 +210,7 @@ def promotion_prerequisites(
     cost_stress: Optional[Dict[str, Any]] = None,
     bootstrap: Optional[Dict[str, Any]] = None,
     benchmark_ir: Optional[float] = None,
+    benchmark_excess_pct: Optional[float] = None,
     limits: Optional[Dict[str, float]] = None,
 ) -> Dict[str, Any]:
     """Checks a candidate should clear before paper, reported beside ``promotable``.
@@ -261,6 +263,18 @@ def promotion_prerequisites(
         "threshold": limit["min_benchmark_ir"],
         "passed": benchmark_ir is not None and float(benchmark_ir) > limit["min_benchmark_ir"],
         "note": "median per-fold information ratio against the benchmark",
+    }
+
+    # A different question from the ratio above, and a strategy can pass one while
+    # failing the other: a good risk-adjusted number is compatible with losing to the
+    # benchmark outright, which is not something to promote on.
+    checks["benchmark_excess"] = {
+        "evaluated": benchmark_excess_pct is not None,
+        "value": float(benchmark_excess_pct) if benchmark_excess_pct is not None else None,
+        "threshold": limit["min_benchmark_excess_pct"],
+        "passed": benchmark_excess_pct is not None
+        and float(benchmark_excess_pct) > limit["min_benchmark_excess_pct"],
+        "note": "median per-fold return less the benchmark's over the same steps",
     }
 
     evaluated = [check for check in checks.values() if check["evaluated"]]

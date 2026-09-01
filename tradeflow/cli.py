@@ -1285,9 +1285,15 @@ def _print_promotion_prerequisites(data_client, args, result, universe, bootstra
     ):
         benchmark_ir = result.median_oos("information_ratio")
 
+    benchmark_excess = result.median_oos_excess_return() if benchmark_ir is not None else None
+
     prereq = promotion_prerequisites(
-        cost_stress=stress, bootstrap=bootstrap_report, benchmark_ir=benchmark_ir
+        cost_stress=stress,
+        bootstrap=bootstrap_report,
+        benchmark_ir=benchmark_ir,
+        benchmark_excess_pct=benchmark_excess,
     )
+    _print_fold_disagreement(result)
     _print_leg_stability(result)
     _print_walkforward_verdicts(result, prereq)
     if not prereq["evaluated"] and prereq["checks"]["family_bootstrap"]["n_used"] == 0:
@@ -1312,6 +1318,30 @@ def _print_promotion_prerequisites(data_client, args, result, universe, bootstra
     print(f"  Prerequisites: {done} of {total} evaluated - {verdict}{tail}")
     if unknown:
         print("  An unevaluated check is not a passed one - what is unknown stays unknown.")
+
+
+def _print_fold_disagreement(result) -> None:
+    """The spread the median is hiding.
+
+    A median is what the prerequisite gates on, and a median is exactly where regime
+    failure hides: excess returns of +0.2%, -2.0% and +3.2% have a positive median and
+    a five-point spread, and only one of those two numbers would make anyone look
+    closer. Reported rather than gated - the median already gates, and nobody yet knows
+    what "too much disagreement" is worth failing a candidate over.
+    """
+    excess = result.excess_return_by_fold()
+    if len(excess) < 2:
+        return
+    negative = [value for value in excess if value < 0]
+    spread = max(excess) - min(excess)
+    print("\n=== Excess return by fold (diagnostic) ===")
+    print("  " + "  ".join(f"{value:+.2f}%" for value in excess))
+    print(f"  median {result.median_oos_excess_return():+.2f}%   spread {spread:.2f}pp")
+    if negative and len(negative) < len(excess):
+        print(
+            f"  {len(negative)} of {len(excess)} folds lost to the benchmark - the median "
+            "is an average over folds that disagree, not a typical fold."
+        )
 
 
 def _print_leg_stability(result) -> None:

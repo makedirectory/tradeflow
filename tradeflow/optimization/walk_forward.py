@@ -148,6 +148,29 @@ class WalkForwardResult:
         values = [fr.oos_metrics.get(key, 0.0) for fr in self.folds]
         return float(np.median(values)) if values else 0.0
 
+    def excess_return_by_fold(self) -> List[float]:
+        """Each fold's OOS return less the benchmark's over the *same* steps.
+
+        A different question from the information ratio: a strategy can have a good
+        risk-adjusted ratio while losing to the benchmark outright, and a promotion
+        decision cares about both. Empty when no benchmark was supplied, which callers
+        must treat as unevaluated rather than as zero excess.
+        """
+        out: List[float] = []
+        for fold_result in self.folds:
+            metrics = fold_result.oos_metrics
+            if not metrics.get("benchmark_available"):
+                continue
+            out.append(
+                float(metrics.get("total_return", 0.0)) - float(metrics.get("benchmark_buy_hold_return", 0.0))
+            )
+        return out
+
+    def median_oos_excess_return(self) -> Optional[float]:
+        """Median per-fold excess return, or ``None`` when no fold could measure one."""
+        excess = self.excess_return_by_fold()
+        return float(np.median(excess)) if excess else None
+
     def leg_beta_by_fold(self) -> Dict[str, List[Optional[float]]]:
         """Each leg's beta, fold by fold.
 

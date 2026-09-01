@@ -487,3 +487,89 @@ def test_a_long_only_walk_forward_reports_no_leg_split():
     ).run(symbols, datetime(2024, 1, 2), datetime(2025, 6, 1), n_folds=3, method="grid", max_evals=2)
 
     assert "short" not in result.leg_beta_by_fold()
+
+
+def _benchmarked_run(n_folds=3):
+    from datetime import datetime
+
+    from tests.fakes import FakeMarketData
+    from tradeflow.marketdata.client import MarketDataClient
+    from tradeflow.optimization.walk_forward import WalkForwardValidator
+    from tradeflow.services.registry import STRATEGIES
+
+    symbols = ["AAA", "BBB"]
+    client = MarketDataClient(FakeMarketData([*symbols, "SPY"], n=600, freq="1D"))
+    return WalkForwardValidator(
+        STRATEGIES["ma_crossover"], client, initial_capital=100_000, benchmark="SPY"
+    ).run(symbols, datetime(2024, 1, 2), datetime(2025, 6, 1), n_folds=n_folds, method="grid", max_evals=2)
+
+
+def test_excess_return_is_measured_against_the_same_steps():
+    """A different question from the information ratio: a strategy can hold a good
+    risk-adjusted ratio while losing to the benchmark outright, which is not something
+    to promote on."""
+    result = _benchmarked_run()
+
+    per_fold = result.excess_return_by_fold()
+    assert len(per_fold) == len(result.folds)
+    for fold_result, excess in zip(result.folds, per_fold):
+        metrics = fold_result.oos_metrics
+        assert excess == pytest.approx(metrics["total_return"] - metrics["benchmark_buy_hold_return"])
+
+
+def test_without_a_benchmark_excess_is_unmeasured_rather_than_zero():
+    """Zero excess and no benchmark are different facts, and only one of them is
+    evidence."""
+    from datetime import datetime
+
+    from tests.fakes import FakeMarketData
+    from tradeflow.marketdata.client import MarketDataClient
+    from tradeflow.optimization.walk_forward import WalkForwardValidator
+    from tradeflow.services.registry import STRATEGIES
+
+    symbols = ["AAA", "BBB"]
+    client = MarketDataClient(FakeMarketData([*symbols, "SPY"], n=600, freq="1D"))
+    plain = WalkForwardValidator(STRATEGIES["ma_crossover"], client, initial_capital=100_000).run(
+        symbols, datetime(2024, 1, 2), datetime(2025, 6, 1), n_folds=3, method="grid", max_evals=2
+    )
+
+    assert plain.excess_return_by_fold() == []
+    assert plain.median_oos_excess_return() is None
+
+
+def test_excess_and_ratio_are_separate_prerequisites():
+    """Passing one says nothing about the other, so they are two checks."""
+    from tradeflow.analytics.performance import promotion_prerequisites
+
+    # Good ratio, losing to the benchmark outright.
+    mixed = promotion_prerequisites(benchmark_ir=0.8, benchmark_excess_pct=-3.0)
+
+    assert mixed["checks"]["benchmark_relative"]["passed"]
+    assert not mixed["checks"]["benchmark_excess"]["passed"]
+    assert mixed["ready"] is False
+
+
+def test_fold_disagreement_is_reported_beside_the_median_that_hides_it(capsys):
+    """A median is what the prerequisite gates on, and a median is exactly where regime
+    failure hides: an observed run gave +0.25%, -2.02% and +3.18% - a positive median
+    over a five-point spread, and only one of those two numbers makes anyone look
+    closer."""
+    from tradeflow.cli import _print_fold_disagreement
+
+    result = _benchmarked_run()
+    _print_fold_disagreement(result)
+    printed = capsys.readouterr().out
+
+    assert "spread" in printed
+    assert "median" in printed
+    if any(value < 0 for value in result.excess_return_by_fold()):
+        assert "lost to the benchmark" in printed
+        assert "not a typical fold" in printed
+
+
+def test_disagreement_is_reported_not_gated():
+    """The median already gates. Nobody yet knows what "too much disagreement" is worth
+    failing a candidate over, so it is exposed rather than thresholded."""
+    from tradeflow.analytics.performance import DEFAULT_PREREQUISITES
+
+    assert not [name for name in DEFAULT_PREREQUISITES if "spread" in name or "disagree" in name]

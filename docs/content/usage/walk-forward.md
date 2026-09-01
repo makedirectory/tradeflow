@@ -94,6 +94,23 @@ Sharpe, and — when requested — parameter sensitivity and the leakage probe).
 > gitignored `configs/` directory; promoting it to live trading is a manual human
 > step.
 
+## Excess return by fold
+
+The prerequisite gates on a median, and a median is exactly where regime failure hides:
+
+```
+=== Excess return by fold (diagnostic) ===
+  +0.25%  -2.02%  +3.18%
+  median +0.25%   spread 5.20pp
+  1 of 3 folds lost to the benchmark - the median is an average over folds that
+  disagree, not a typical fold.
+```
+
+A median of +0.25% over a five-point spread is not the same result as +0.25% in every
+fold, and only one of those two numbers makes anyone look closer. The spread is
+**reported, not gated** — the median already gates, and nobody yet knows what "too much
+disagreement" is worth failing a candidate over.
+
 ## Leg beta by fold
 
 When a strategy trades both sides, each leg's beta is reported per fold:
@@ -140,6 +157,10 @@ Two further questions come *after* a candidate clears those, and are reported be
   in. It does **not** run below 10 usable return-series trials: a family test over two
   series is arithmetic rather than evidence, and a striking p-value on K=2 is exactly
   the kind of number that should not gate anything.
+- **`benchmark_excess`** — the median per-fold return *less the benchmark's over the
+  same steps* is positive. A different question from the ratio below: a strategy can
+  hold a good risk-adjusted number while losing to the benchmark outright, which is not
+  something to promote on.
 - **`benchmark_relative`** — the median per-fold information ratio against
   `--benchmark` is positive. **Per fold, then median**, because every other fold
   statistic here is a median and a second aggregation convention in one report would
