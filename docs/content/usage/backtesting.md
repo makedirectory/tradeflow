@@ -58,7 +58,7 @@ Every backtest says where its universe came from:
 ```
 === Universe provenance ===
   candidates      85 names from --symbols
-  scanner         alpha_pack_trend_quality as of 2026-08-22T00:00:00-04:00
+  scanner         volume as of 2026-08-22T00:00:00-04:00
   resolved        61 of 85 names
   universe        resolved this run
   survivorship    a hand-supplied list is today's names applied to history; membership

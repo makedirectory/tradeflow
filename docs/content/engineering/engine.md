@@ -36,7 +36,7 @@ live. Each step:
 3. **Rank** entry candidates across the whole universe by the strategy's own
    conviction score, descending, ties broken by symbol so a run is reproducible.
 4. **Admit** in that order while `max_positions`, `max_total_risk`,
-   `max_gross_exposure` and free cash allow. Sizing goes through
+   `max_gross_exposure`, `max_net_exposure` and free cash allow. Sizing goes through
    `Strategy.calculate_position_size` as before, but against *free cash*, which is
    what makes positions actually compete. The two portfolio fractions are not the
    same measurement — see [what `max_total_risk` caps](../usage/configuration.md#what-max_total_risk-caps).
@@ -109,17 +109,31 @@ capital, dates, and the strategy config.
 4. `_on_bar` — feed each full streamed bar to `process_bar`; forward any
    actionable signal to the `LiveTrader`, which returns a `Decision` recording what
    it did and why.
-5. If the broker supports it, run the **trade-update stream concurrently**
-   (`asyncio.gather`) so fills/cancels/rejects are logged alongside trading.
+5. If the broker supports it, run the **trade-update stream concurrently** so
+   fills/cancels/rejects are logged alongside trading, and each fill re-reads its own
+   symbol from the broker — a reconciliation sweep landing between an entry's
+   submission and its fill would otherwise leave the book believing it is flat in a
+   symbol it holds, and a strategy that believes it is flat cannot emit an exit.
 
 Inside the loop, on a timer rather than per bar, the engine re-reads the position
 book and reconciles the ledger against the account. Both are bounded by
 construction — one `list_positions` call per sweep, never one per symbol — because
 this runs on the trade clock and must not scale with universe size.
 
-Both live streams (market data and trade updates) auto-reconnect with capped
-backoff via a shared `run_with_reconnect` helper, and shut down cleanly on
-cancellation.
+**The broker SDK is synchronous, so its calls run in a worker thread.** An entry makes
+several blocking round trips, and running those on the event loop stalls everything else
+it carries: other symbols that signalled on the same bar, the trade-update stream, and
+the reconciliation sweep. There is still exactly one loop and one order at a time —
+everything that reads the position book and then acts on it is serialized behind a
+single semaphore. That is a correctness requirement, not a speed-up: two entries
+checking the book at once can both pass an exposure limit only one of them fits inside.
+
+Both live streams (market data and trade updates) auto-reconnect with capped backoff via
+a shared `run_with_reconnect` helper. Shutdown is signal-driven — `SIGINT` and `SIGTERM`
+take the same path — and every bound in it is deliberately duplicated off the loop,
+because third-party code that blocks the loop takes every loop-scheduled timeout down
+with it, signal handlers included. See [stopping a
+session](../usage/live-trading.md#stopping-a-session).
 
 The engine never calls the broker directly — it delegates to
 [execution](broker-abstraction). That boundary is exactly why the same strategy

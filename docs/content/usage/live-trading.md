@@ -218,14 +218,14 @@ Every live run prints what it is about to do, before any order logic runs:
 === Live preflight ===
   broker mode           PAPER
   account               equity $100,000.00  cash $100,000.00
-  capital this run      $8,000.00
-  universe              61 symbols (replayed)
+  capital this run      $25,000.00
+  universe              40 symbols (replayed)
   data feed             iex
   max positions         8
-  max position size     $1,200.00
-  max gross exposure    0.9 (90% of capital = $7,200.00)
-  max net exposure      0.3 (30% of capital = $2,400.00)
-  max total risk        0.05 (5% of capital = $400.00)
+  max position size     $2,500.00
+  max gross exposure    0.8 (80% of capital = $20,000.00)
+  max net exposure      0.3 (30% of capital = $7,500.00)
+  max total risk        0.05 (5% of capital = $1,250.00)
   min notional          $50.00
   entries               re-affirmed
   bar guards            on
@@ -234,8 +234,8 @@ Every live run prints what it is about to do, before any order logic runs:
   journal               ~/.tradeflow/logs/research_journal.jsonl
   halt state            ~/.tradeflow/logs/halts.json
 
-  warm-up coverage      61 of 61 symbols have history
-                        60 of 61 have the full 102-bar lookback (1 short)
+  warm-up coverage      40 of 40 symbols have history
+                        39 of 40 have the full 120-bar lookback (1 short)
 ```
 
 Under `--preflight` the last line runs the **same warm-up the live path runs** and
@@ -264,8 +264,8 @@ it invalidates the execution telemetry, because fills, slippage and share roundi
 all properties of a book at a size.
 
 `--capital` (or the `capital` a [saved config](walk-forward.md#reusing-a-saved-config)
-carries) caps what the sizer may use. It is a ceiling, never a claim: an $8,000 config
-on a $3,000 account deploys $3,000. Position limits expressed as fractions —
+carries) caps what the sizer may use. It is a ceiling, never a claim: a $25,000 config
+on a $9,000 account deploys $9,000. Position limits expressed as fractions —
 `max_total_risk`, `max_gross_exposure` — are fractions of *that capital*, not of the
 account balance. Without it, sizing uses the whole account, which is the historical
 behaviour.
@@ -277,7 +277,7 @@ a historical request resolves to the full consolidated tape, while the live stre
 defaults to IEX alone. An account entitled to one and not the other warms up on nothing
 and then streams perfectly happily — which looks like an empty market, not a wrong feed.
 The symptom is `subscription does not permit querying recent SIP data` followed by
-`Fetched bars for 0/61 symbols`, and then a stream that connects.
+`Fetched bars for 0/40 symbols`, and then a stream that connects.
 
 `--feed` (or `ALPACA_DATA_FEED`) pins **both** halves to one feed. Unentitled keys —
 most paper accounts on the free tier — generally need `--feed iex`.
@@ -468,16 +468,16 @@ whole. Both are read-only.
   notional              $458.73 submitted, $458.71 filled (100.0%)
   slippage              2 of 2 fills measured
                         median +4.3 bps, mean +4.3 bps  (positive = worse)
-                        worst +4.3 bps (SBUX), best +4.2 bps
+                        worst +4.3 bps (BBB), best +4.2 bps
   decision to fill      2 measured, median 1,845 ms, worst 2,239 ms
   modelled cost         $0.16 over 2 orders (commission $0.05 + spread $0.11; excludes impact)
   broker fees           $0.03 over 2 fills
 
   Signals that produced no order:
        4  gross_exposure_capped
-          e.g. gross exposure capped: $7,617.12 of $7,200.00
+          e.g. gross exposure capped: $21,140.00 of $20,000.00
        1  book_full
-          e.g. book is full: 10 of 10 positions already open
+          e.g. book is full: 8 of 8 positions already open
 ```
 
 **There are no thresholds here, deliberately.** What counts as bad slippage for a given
@@ -509,7 +509,7 @@ saying the same thing. A message the map does not recognise keeps its own text r
 than being forced into a family it may not belong to.
 
 **Refusals group by kind, not by message.** A message embeds the numbers that caused it —
-`gross exposure capped: $7,617.12 of $7,200.00` — so counting messages turns sixteen
+`gross exposure capped: $21,140.00 of $20,000.00` — so counting messages turns sixteen
 refusals of one kind into sixteen rows of one, which hides a throttle rather than showing
 it. Each family keeps one example, because the code alone does not say what the limit was
 or how far over the book had got.

@@ -55,7 +55,7 @@ base class recognizes:
 |---|---|
 | `risk_per_trade` | Fraction of capital risked per trade |
 | `stop_loss` / `take_profit` | Fractional distances from entry price |
-| `position_limits` | Portfolio limits the [engine](../engineering/engine.md) enforces across the book: `max_positions` (open positions), `max_position_size` (notional per position, in dollars), `max_total_risk` (risk budget as a fraction of equity), `max_gross_exposure` (deployed notional as a fraction of equity; unset by default), `min_notional` (dollar floor below which an order would be refused by a venue; unset by default). See [what `max_total_risk` caps](#what-max_total_risk-caps) and [execution and cost](#execution-and-cost). |
+| `position_limits` | Portfolio limits the [engine](../engineering/engine.md) enforces across the book: `max_positions` (open positions), `max_position_size` (notional per position, in dollars), `max_total_risk` (risk budget as a fraction of equity), `max_gross_exposure` (long + short as a fraction of equity; unset by default), `max_net_exposure` (|long − short| as a fraction of equity; unset by default), `min_notional` (dollar floor below which an order would be refused by a venue; unset by default). See [what `max_total_risk` caps](#what-max_total_risk-caps) and [execution and cost](#execution-and-cost). |
 | `reaffirm_entries` | Live only. Open a position the score implies even when its entry edge was missed — a rejected bar, a dropped stream, a restart, or a crossing inside the warm-up history. Default `true`, so a strategy started mid-trend takes the position rather than waiting for the next crossing. `--no-reaffirm-entries` on `live` turns it off. Exits are never gated by it. |
 
 ## What `max_total_risk` caps
@@ -84,16 +84,25 @@ as the only bound — and because [shorts are fully
 cash-collateralized](../engineering/engine.md), that holds a backtest near 1× on its
 own. Set it when a config should sit deliberately below that:
 
+`max_net_exposure` is the cap gross cannot see. Gross bounds long **plus** short, so a
+book sitting inside it can be entirely one-directional: $4,000 long and $4,000 short is
+$8,000 gross and $0 net, while $8,000 long is the same gross and $8,000 net — and only
+the second is a bet on direction. A long/short config bounded by gross alone is either
+throttled or unhedged and never neither. It is judged on the *resulting* net, so an
+entry that moves the book toward flat is admitted even from over the cap; refusing a
+hedge for being a trade would leave the tilt it corrects in place.
+
 ```python
 "position_limits": {
     "max_positions": 5,
     "max_position_size": 1500.0,
-    "max_total_risk": 0.05,     # lose at most 5% if every stop fills
+    "max_total_risk": 0.05,      # lose at most 5% if every stop fills
     "max_gross_exposure": 0.60,  # never deploy more than 60% of equity
+    "max_net_exposure": 0.20,    # never sit more than 20% net long or short
 }
 ```
 
-Both are enforced across the whole book — by the backtest engine on the research
+All of these are enforced across the whole book — by the backtest engine on the research
 clock, and by the live trader on the trade clock (see [portfolio limits are enforced
 live](live-trading.md#portfolio-limits-are-enforced-live), which notes where the two
 counts differ). `Strategy.calculate_position_size` also clamps a *single* position

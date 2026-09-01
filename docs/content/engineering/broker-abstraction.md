@@ -107,8 +107,22 @@ transient, so authentication failures fail closed.
 
 Callers never see Alpaca objects. The broker layer defines plain dataclasses /
 enums — `OrderSide`, `AccountSnapshot`, `Position` (`side` is `"long"`/`"short"`,
-`qty` non-negative), `OrderResult`, `MarketStatus`, and `BarEvent`. The Alpaca
-adapter maps SDK objects to these.
+`qty` non-negative), `OrderResult`, `MarketStatus`, `BarEvent`, and `TradeUpdate`. The
+Alpaca adapter maps SDK objects to these.
+
+`TradeUpdate` carries `side`, `filled_qty`, `filled_avg_price`, `filled_at` and `fee`,
+and two of those fields need care from any adapter:
+
+- **`filled_qty` is cumulative**, not this event's increment — a venue re-reports the
+  order's running total on every partial fill and again on the final one. Summing those
+  events counts the same shares repeatedly. `filled_avg_price` is the price that pairs
+  with it; `price` is this event's own print.
+- **`side` is never defaulted.** An update that arrives without one is dropped and
+  logged rather than guessed, because assuming `buy` records a short as a long and puts
+  the ledger out by twice the position. A dropped record shows up as a visible
+  reconciliation divergence; a wrongly-signed one does not.
+- **`fee` is `None` when the venue does not report one**, which paper accounts never do.
+  That is not the same as zero and must not be averaged as though it were.
 
 ## The Alpaca adapter
 
@@ -118,6 +132,20 @@ adapter maps SDK objects to these.
 factories and never touch SDK clients). `AlpacaMarketData` also converts the
 project's `Timeframe` into Alpaca's `TimeFrame` and normalizes bars into
 per-symbol, New-York-localized OHLCV frames.
+
+Two adapter details worth knowing before writing another one:
+
+**The SDK's two halves can default to different data feeds.** Alpaca's historical
+requests resolve to the full consolidated tape while its stream defaults to a single
+venue, so an account entitled to one and not the other warms up on nothing and streams
+normally — which reads as an empty market rather than a wrong feed. `build_market_data`
+takes a `feed` that pins both halves, unset by default so an entitled account is never
+silently moved to a partial or delayed source.
+
+**A synchronous `stop()` must not be called from inside the event loop.** Alpaca's
+submits a coroutine back to the running loop and blocks the caller waiting for it, which
+from inside that loop can never complete. The shared `close_stream` helper awaits the
+coroutine that wrapper wraps instead.
 
 ## Dropping in another broker
 

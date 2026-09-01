@@ -520,7 +520,7 @@ def test_provenance_names_the_source_and_the_scan_clock():
         format_universe_provenance(
             candidates=[str(i) for i in range(85)],
             resolved=[str(i) for i in range(61)],
-            scanner="alpha_pack_trend_quality",
+            scanner="private_trend_quality",
             scan_clock="2026-08-22T00:00:00-04:00",
             source="--symbols",
             replayed=False,
@@ -528,7 +528,7 @@ def test_provenance_names_the_source_and_the_scan_clock():
     )
 
     assert "85 names from --symbols" in rendered
-    assert "alpha_pack_trend_quality as of 2026-08-22" in rendered
+    assert "private_trend_quality as of 2026-08-22" in rendered
     assert "61 of 85 names" in rendered
     assert "resolved this run" in rendered
 

@@ -28,6 +28,59 @@ index; they are tagged in the repository.
 
 ---
 
+## Unreleased
+
+Live-path validation against a real paper account. Everything below was found by
+*running* it — the preflight, the ledger and the execution report each surfaced a defect
+that every test in the suite agreed was fine.
+
+### Added
+
+- **`tradeflow execution-report`** — what the live path actually did, reconstructed from
+  the ledger: slippage in basis points, decision-to-fill latency, submitted-versus-filled
+  notional, modelled cost beside observed fees, and which refusals stopped a signal.
+  Deliberately ungraded: what counts as bad slippage for a strategy is not knowable from
+  one session. Decisions now carry an id and the order plan they built, and fills carry
+  price, time and fee, so decision → order → fill joins on read and survives a restart.
+- **A live preflight**, printed on every run and exiting early under `--preflight`. It
+  states the contract before any order logic: broker mode, account balance beside the
+  capital this run may deploy, data feed, every book limit in the units it is enforced
+  in, telemetry destinations, and how many symbols actually warmed up.
+- **`--capital`**, so a run deploys what a config was validated at rather than whatever
+  equity a paper account was handed. **`--max-net-exposure`**, which bounds directional
+  tilt — gross bounds long + short and cannot see direction, so a book inside a gross cap
+  can be entirely one-directional. Both clocks enforce it. **`--feed`**, pinning the
+  historical and streaming halves to one data feed.
+
+### Fixed
+
+- **The ledger counted fills twice and recorded every short as a long.** A venue
+  re-reports an order's cumulative filled quantity on each partial fill and again on the
+  final one, and those events were summed; separately, the trade-update type had no
+  `side` field at all, so a defaulted `"buy"` reached every record. An order that filled
+  8 arrived as 21, and a 31-share short as +31. Fills now resolve to the last report per
+  order, and a fill with no side is dropped rather than guessed.
+- **A resumed session disagreed with its own ledger.** Start-up adopted the broker's
+  positions into memory and wrote nothing down, so reconciliation called every resumed
+  position one nobody ordered.
+- **A reconciliation sweep could erase a position the strategy held.** Landing between
+  an entry's submission and its fill, it replaced the book with broker state that did not
+  include the new position yet — leaving the strategy flat in a symbol it held, and a
+  strategy that believes it is flat cannot emit an exit.
+- **Shutdown hung until a second interrupt, and `SIGTERM` was unhandled entirely.** Four
+  passes, each correct and each still wrong one level up, ending at the real cause: a
+  synchronous SDK `stop()` that blocks the very loop that would have to run it. A blocked
+  loop defeats every loop-scheduled bound, signal handlers included, so the one that must
+  always hold now lives on a daemon thread.
+- **Blocking broker calls ran on the event loop**, stalling other symbols' bars, fill
+  delivery and reconciliation for the length of every entry.
+- **Risk-limit flags never reached the live book.** `--max-positions` sized only the
+  portfolio allocator, so without `--portfolio` it was parsed and discarded; there was no
+  way to state a book limit from the command line at all. A flag that cannot reach
+  anything now stops the run instead of being silently ignored.
+
+---
+
 ## 2.1.0 — 2026-08-10
 
 Trade-clock hardening. The live path is the smallest and least-tested part of this

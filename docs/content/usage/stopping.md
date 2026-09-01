@@ -84,7 +84,9 @@ being durable.
    believes; the broker is what is true.
 2. `tradeflow halts` — confirm the halt is in force.
 3. `tradeflow reconcile` — compare the ledger against the account.
-4. Diagnose, fix, then `tradeflow resume all`.
+4. `tradeflow execution-report` — what the live path actually did: slippage,
+   latency, submitted-versus-filled notional, and which refusals stopped a signal.
+5. Diagnose, fix, then `tradeflow resume all`.
 
 ## Practise it
 
@@ -102,5 +104,7 @@ find out on a day you chose, not on the day you need it.
 
 - It does not close positions you opened by hand outside the engine; close those
   yourself.
-- It does not stop the engine process. Use `Ctrl-C` for that.
+- It does not stop the engine process. `Ctrl-C` or `SIGTERM` does that — see
+  [stopping a session](live-trading.md#stopping-a-session). One signal is enough,
+  and the exit reports what was still open.
 - It does not undo fills. Slippage is real and irreversible.

@@ -40,7 +40,7 @@ package route is the intended shape for proprietary signal IP.
 
    ```toml
    [project.entry-points."tradeflow.strategies"]
-   private_trend = "tradeflow_alpha_pack.strategies:PrivateTrendStrategy"
+   private_trend = "yourfirm_signals.strategies:PrivateTrendStrategy"
    ```
 
    Once installed in the same environment, it works in `backtest`, `live`,
@@ -63,7 +63,7 @@ Use the pure [indicators](indicators); don't reach for a compiled TA library.
 
    ```toml
    [project.entry-points."tradeflow.scanners"]
-   private_volume = "tradeflow_alpha_pack.scanners:PrivateVolumeScanner"
+   private_volume = "yourfirm_signals.scanners:PrivateVolumeScanner"
    ```
 
    Keep it TA-Lib-free.
@@ -80,7 +80,7 @@ A private package can also return several contributions from one entry point:
 
 ```toml
 [project.entry-points."tradeflow.strategies"]
-private_pack = "tradeflow_alpha_pack.registry:strategies"
+private_pack = "yourfirm_signals.registry:strategies"
 ```
 
 ```python
