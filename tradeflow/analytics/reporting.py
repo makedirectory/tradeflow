@@ -8,7 +8,7 @@ is a renderer that can disagree with the report it is summarizing.
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from tradeflow.analytics import metrics as m
 from tradeflow.analytics import performance
@@ -158,6 +158,47 @@ def _leg_lines(legs: Optional[Dict[str, Any]]) -> List[str]:
             "  Both legs carry real market exposure - a small net beta here is two "
             "exposures cancelling, not an absence of them."
         )
+    return lines
+
+
+def format_universe_provenance(
+    *,
+    candidates: Sequence[str],
+    resolved: Sequence[str],
+    scanner: Optional[str],
+    scan_clock: Optional[str],
+    source: str,
+    replayed: bool,
+) -> List[str]:
+    """Where this run's universe came from, and what that does and does not guarantee.
+
+    A 61-name large-cap list is not "the market", and a report that leaves the universe
+    in the background invites it to be read as one. The awkward line is the last: a
+    hand-supplied candidate list is *today's* names applied to history, so anything that
+    left the list - delisted, acquired, collapsed - is already absent from every
+    backtest run over it.
+
+    That is stated rather than measured, because measuring it needs point-in-time
+    membership data this project does not ingest. Saying "this is survivorship-prone by
+    construction" is honest; computing a survivorship number from a list that has none
+    would not be.
+    """
+    lines = [
+        "",
+        "=== Universe provenance ===",
+        f"  {'candidates':16}{len(candidates)} names from {source}",
+    ]
+    if scanner and scanner != "none":
+        clock = f" as of {scan_clock}" if scan_clock else ""
+        lines.append(f"  {'scanner':16}{scanner}{clock}")
+        lines.append(f"  {'resolved':16}{len(resolved)} of {len(candidates)} names")
+    else:
+        lines.append(f"  {'scanner':16}none - candidates traded as-is")
+    lines.append(f"  {'universe':16}{'replayed from config' if replayed else 'resolved this run'}")
+    lines.append(
+        f"  {'survivorship':16}a hand-supplied list is today's names applied to history; "
+        "membership was not point-in-time"
+    )
     return lines
 
 

@@ -508,3 +508,68 @@ def test_forcing_a_failed_trial_records_the_verdict_in_the_config(tmp_path, monk
 
     assert "NOT promotable" in json.loads(out.read_text())["provenance"]["notes"]
     assert "WARNING" in capsys.readouterr().out
+
+
+# --- universe provenance --------------------------------------------------------
+def test_provenance_names_the_source_and_the_scan_clock():
+    """A 61-name large-cap list is not "the market", and a report that leaves the
+    universe in the background invites it to be read as one."""
+    from tradeflow.analytics.reporting import format_universe_provenance
+
+    rendered = "\n".join(
+        format_universe_provenance(
+            candidates=[str(i) for i in range(85)],
+            resolved=[str(i) for i in range(61)],
+            scanner="alpha_pack_trend_quality",
+            scan_clock="2026-08-22T00:00:00-04:00",
+            source="--symbols",
+            replayed=False,
+        )
+    )
+
+    assert "85 names from --symbols" in rendered
+    assert "alpha_pack_trend_quality as of 2026-08-22" in rendered
+    assert "61 of 85 names" in rendered
+    assert "resolved this run" in rendered
+
+
+def test_provenance_distinguishes_a_replay_from_a_fresh_resolution():
+    """The distinction 042 §2.2 exists for, carried into the report so a reader never
+    has to infer which happened."""
+    from tradeflow.analytics.reporting import format_universe_provenance
+
+    replayed = "\n".join(
+        format_universe_provenance(
+            candidates=["A", "B"],
+            resolved=["A", "B"],
+            scanner="none",
+            scan_clock=None,
+            source="the saved config",
+            replayed=True,
+        )
+    )
+
+    assert "replayed from config" in replayed
+    assert "candidates traded as-is" in replayed
+
+
+def test_provenance_states_survivorship_rather_than_measuring_it():
+    """Measuring survivorship needs point-in-time membership this project does not
+    ingest. Saying a hand-supplied list is survivorship-prone by construction is
+    honest; computing a number from a list that has none would not be.
+    """
+    from tradeflow.analytics.reporting import format_universe_provenance
+
+    rendered = "\n".join(
+        format_universe_provenance(
+            candidates=["A"],
+            resolved=["A"],
+            scanner="none",
+            scan_clock=None,
+            source="--symbols",
+            replayed=False,
+        )
+    )
+
+    assert "not point-in-time" in rendered
+    assert "today's names applied to history" in rendered

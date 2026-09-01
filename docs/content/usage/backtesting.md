@@ -51,6 +51,31 @@ Profit Factor           1.61
 How fills and P&L are simulated is documented in **[The Engine](../engineering/engine)**;
 how each metric is computed is in **[Indicators & Analytics](../engineering/indicators)**.
 
+## Universe provenance
+
+Every backtest says where its universe came from:
+
+```
+=== Universe provenance ===
+  candidates      85 names from --symbols
+  scanner         alpha_pack_trend_quality as of 2026-08-22T00:00:00-04:00
+  resolved        61 of 85 names
+  universe        resolved this run
+  survivorship    a hand-supplied list is today's names applied to history; membership
+                  was not point-in-time
+```
+
+A 61-name large-cap list is not "the market", and a report that leaves the universe in
+the background invites it to be read as one. The `universe` line distinguishes a
+[replayed config](walk-forward.md#reusing-a-saved-config) from a fresh resolution, so
+you never have to infer which book you are looking at.
+
+**The survivorship line is a statement, not a measurement.** Anything that left a
+hand-supplied list — delisted, acquired, collapsed — is already absent from every
+backtest run over it. Quantifying that needs point-in-time membership data this project
+does not ingest, so the report says the bias exists by construction rather than
+computing a number a static list cannot support.
+
 ## Three verdicts, not one
 
 A backtest answers one of the three questions worth asking, and says so:

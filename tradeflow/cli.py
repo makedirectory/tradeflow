@@ -514,6 +514,7 @@ def cmd_backtest(args) -> None:
         execution=result.execution,
         legs=result.legs,
     )
+    _print_universe_provenance(args, universe)
     _print_verdicts_for_backtest(result)
     if getattr(args, "cost_stress", False):
         _print_cost_stress(data_client, strategy_name, universe, args, tuned)
@@ -2214,6 +2215,40 @@ def _print_policy_ab(data_client, args) -> None:
     print(
         "  (net of the real transaction cost — an aim policy that tracks decay but churns less "
         "yet still loses net IR should, and does, lose here)"
+    )
+
+
+def _print_universe_provenance(args, resolved) -> None:
+    """Where the universe came from, printed with the result rather than inferred.
+
+    A 61-name large-cap list is not "the market", and a report that leaves the universe
+    in the background invites it to be read as one.
+    """
+    from tradeflow.analytics.reporting import format_universe_provenance
+    from tradeflow.scanners.symbol_scanner import resolve_scan_clock
+
+    source = {
+        "config": "the saved config",
+        "flag": "--symbols",
+    }.get(getattr(args, "universe_source", None), "--symbols")
+    if getattr(args, "universe_source", None) is None and args.symbols == DEFAULT_UNIVERSE:
+        source = "the built-in default list"
+    candidates = getattr(args, "candidate_symbols", None) or args.symbols
+    replayed = getattr(args, "universe_source", None) == "config" and not getattr(
+        args, "re_resolve_universe", False
+    )
+    clock = resolve_scan_clock(args.scan_as_of or args.end).isoformat() if args.scanner != "none" else None
+    print(
+        "\n".join(
+            format_universe_provenance(
+                candidates=candidates,
+                resolved=resolved,
+                scanner=args.scanner,
+                scan_clock=clock,
+                source=source,
+                replayed=replayed,
+            )
+        )
     )
 
 
