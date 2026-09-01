@@ -40,6 +40,11 @@ logger = logging.getLogger(__name__)
 
 #: Divergence classes. Named rather than boolean because the three mean genuinely
 #: different things to whoever has to act on them.
+#: What a recorded fill quantity measures. ``CUMULATIVE`` is the order's running
+#: total (what Alpaca reports); ``INCREMENTAL`` is this event's own shares.
+CUMULATIVE = "cumulative"
+INCREMENTAL = "incremental"
+
 MISSING = "missing"  # we believe in a position the broker does not have
 UNEXPECTED = "unexpected"  # the broker holds something we never ordered
 QUANTITY_DRIFT = "quantity_drift"  # both agree it exists, at different sizes
@@ -123,9 +128,21 @@ class PositionLedger:
         )
 
     def record_fill(
-        self, symbol: str, side: str, qty: float, order_id: Optional[str] = None, status: str = "filled"
+        self,
+        symbol: str,
+        side: str,
+        qty: float,
+        order_id: Optional[str] = None,
+        status: str = "filled",
+        basis: str = CUMULATIVE,
     ) -> None:
-        """A fill (or partial fill) the broker reported."""
+        """A fill (or partial fill) the broker reported.
+
+        ``basis`` says what ``qty`` measures, and getting it wrong silently inflates
+        the book. Alpaca reports the order's *running total* on every partial fill and
+        again on the final fill, so summing those events counts the same shares
+        repeatedly - an order that filled 8 in three reports arrives as 21.
+        """
         self._append(
             {
                 "event": "fill",
@@ -134,6 +151,7 @@ class PositionLedger:
                 "qty": float(qty),
                 "order_id": order_id,
                 "status": status,
+                "basis": basis,
             }
         )
 
@@ -178,20 +196,63 @@ class PositionLedger:
         symbol netting to zero is dropped rather than recorded as a zero position —
         "flat" and "never traded" should look the same to a reconciliation.
         """
-        net: Dict[str, float] = {}
+        net, _ = self._replay()
+        return net
+
+    def _replay(self) -> tuple:
+        """``(net signed quantity per symbol, saw pre-basis fill records)``.
+
+        Cumulative fills are resolved to the **last** report per order rather than
+        summed, which makes the replay idempotent: a duplicated event, a stream
+        reconnect that repeats history, or a missed intermediate partial all land on
+        the same answer, because the broker's running total is already the whole truth
+        about that order.
+
+        Bracket legs fall out of this correctly without special-casing - the entry and
+        each protective leg carry their own order id, so a stop that fills nets against
+        the entry it closes.
+        """
+        by_order: Dict[str, Dict[str, Any]] = {}
+        closed: Dict[str, int] = {}
+        legacy = False
+        seq = 0
+
         for record in self._read():
             symbol = record.get("symbol")
             if not symbol:
                 continue
+            seq += 1
             event = record.get("event")
             if event == "close":
-                net[symbol] = 0.0
+                # A close zeroes the symbol, so only activity *after* it counts.
+                closed[symbol] = seq
             elif event == "fill":
+                basis = record.get("basis")
+                if basis is None:
+                    # Written before fill accounting distinguished the two, when the
+                    # side was defaulted as well. Counted the old way so a reconcile
+                    # still runs, and reported, because silently mixing the two would
+                    # produce a number with no meaning.
+                    legacy = True
                 signed = float(record.get("qty") or 0.0)
                 if str(record.get("side", "")).lower() in {"sell", "short"}:
                     signed = -signed
-                net[symbol] = net.get(symbol, 0.0) + signed
-        return {symbol: qty for symbol, qty in net.items() if abs(qty) > 1e-9}
+                order_id = record.get("order_id")
+                if basis == CUMULATIVE and order_id:
+                    by_order[str(order_id)] = {"symbol": symbol, "qty": signed, "seq": seq}
+                else:
+                    # Incremental, or no order id to collapse on: each event stands
+                    # alone, keyed uniquely so none overwrites another.
+                    by_order[f"#{seq}"] = {"symbol": symbol, "qty": signed, "seq": seq}
+
+        net: Dict[str, float] = {}
+        for entry in by_order.values():
+            if entry["seq"] < closed.get(entry["symbol"], 0):
+                continue  # superseded by a close
+            net[entry["symbol"]] = net.get(entry["symbol"], 0.0) + entry["qty"]
+        for symbol in closed:
+            net.setdefault(symbol, 0.0)
+        return {s: q for s, q in net.items() if abs(q) > 1e-9}, legacy
 
     def _read(self) -> Iterable[Dict[str, Any]]:
         if not self.path.exists():
@@ -223,7 +284,15 @@ class PositionLedger:
         clock and must not scale its API usage with the universe.
         """
         checked_at = datetime.now(timezone.utc).isoformat()
-        expected = self.expected_positions()
+        expected, legacy = self._replay()
+        if legacy:
+            logger.error(
+                "This ledger contains fill records written before fill accounting "
+                "distinguished cumulative from incremental quantities, and those "
+                "records also defaulted every side to buy. Divergences below may be "
+                "artefacts of that. Archive %s and start a fresh ledger.",
+                self.path,
+            )
         try:
             positions = broker.list_positions() or []
         except Exception:  # noqa: BLE001 - an unreachable broker is not a divergence

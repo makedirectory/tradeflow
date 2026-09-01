@@ -89,8 +89,13 @@ class TradeUpdate:
     symbol: str
     order_id: str
     status: str
+    #: Cumulative filled quantity for the order, not this event's increment. Alpaca
+    #: re-reports the running total on every partial fill and again on the final fill.
     filled_qty: float = 0.0
     price: Optional[float] = None
+    #: "buy" / "sell". Without it a short fill is indistinguishable from a long one,
+    #: and anything defaulting the side records the whole book long.
+    side: Optional[str] = None
 
 
 #: A trade-update handler may be sync or async.

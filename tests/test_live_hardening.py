@@ -15,6 +15,7 @@ is watching.
 
 import asyncio
 import json
+import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -835,3 +836,69 @@ def test_the_preflight_reports_a_blind_warm_up_without_raising():
     engine, _ = _blind_engine()
 
     assert engine.warm_up_coverage(["AAA"]) == (0, 0, 1)
+
+
+def test_a_stream_that_will_not_close_does_not_hold_the_process_open(monkeypatch):
+    """The bug: shutdown hung after "Shutting down live streams" until a second Ctrl-C.
+
+    A teardown that can block trains people to interrupt twice, and the second one
+    lands during cleanup where it can interrupt anything.
+    """
+    import tradeflow.engine.live as live_module
+
+    monkeypatch.setattr(live_module, "SHUTDOWN_TIMEOUT", 0.05)
+
+    class SlowToClose(ScriptedFeed):
+        """Answers cancellation, but its teardown blocks — a stuck socket close."""
+
+        async def stream_bars(self, symbols, handler):
+            try:
+                await asyncio.sleep(3600)
+            finally:
+                await asyncio.sleep(3600)
+
+    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy.config["required_lookback_periods"] = 5
+    feed = SlowToClose(["AAA"], events=[bar_event(minute=1)], n=10, freq="1D")
+    engine = LiveEngine(
+        strategy,
+        MarketDataClient(feed),
+        LiveTrader(RecordingBroker(), strategy, respect_market_hours=False),
+    )
+
+    async def interrupt_soon():
+        task = asyncio.ensure_future(engine.start(["AAA"]))
+        await asyncio.sleep(0.05)
+        started = time.monotonic()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        return time.monotonic() - started
+
+    # The assertion is the elapsed time, not merely that it returned: an unbounded
+    # await also "returns" here, only after the second interrupt this exists to remove.
+    elapsed = asyncio.run(interrupt_soon())
+
+    assert elapsed < 1.0, f"shutdown took {elapsed:.1f}s — the wait is not bounded"
+
+
+def test_a_stream_failure_still_propagates():
+    """Guards the swap of gather for wait: gather re-raised the first child exception,
+    and a shutdown fix that swallowed stream failures would turn a dead feed into a
+    silent no-op loop."""
+
+    class Failing(ScriptedFeed):
+        async def stream_bars(self, symbols, handler):
+            raise RuntimeError("feed died")
+
+    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy.config["required_lookback_periods"] = 5
+    feed = Failing(["AAA"], events=[bar_event(minute=1)], n=10, freq="1D")
+    engine = LiveEngine(
+        strategy,
+        MarketDataClient(feed),
+        LiveTrader(RecordingBroker(), strategy, respect_market_hours=False),
+    )
+
+    with pytest.raises(RuntimeError, match="feed died"):
+        asyncio.run(engine.start(["AAA"]))

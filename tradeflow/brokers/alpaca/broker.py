@@ -106,6 +106,35 @@ def classify_error(exc: Exception) -> BrokerError:
     return BrokerError(message)
 
 
+def _enum_value(obj, name: str) -> str:
+    """Read an SDK field that may be an enum, a bare string, or absent."""
+    raw = getattr(obj, name, "")
+    return str(getattr(raw, "value", raw) or "")
+
+
+def to_trade_update(data) -> TradeUpdate:
+    """Convert one Alpaca trade-update payload into the project's TradeUpdate.
+
+    Split out of the stream callback so the mapping can be tested without a socket.
+    It was previously a closure, and the field it silently failed to carry - ``side`` -
+    was therefore unreachable from any test: every fill downstream defaulted to buy,
+    and the ledger recorded every short as a long.
+
+    ``filled_qty`` is Alpaca's *cumulative* fill for the order, not this event's
+    increment, and is passed on as such.
+    """
+    order = getattr(data, "order", None)
+    return TradeUpdate(
+        event=str(getattr(data, "event", "")),
+        symbol=getattr(order, "symbol", ""),
+        order_id=str(getattr(order, "id", "")),
+        status=_enum_value(order, "status"),
+        filled_qty=safe_float(getattr(order, "filled_qty", 0)),
+        price=safe_float(getattr(data, "price", None)) if getattr(data, "price", None) else None,
+        side=_enum_value(order, "side") or None,
+    )
+
+
 class AlpacaBroker(Broker):
     """Trade and account operations backed by an Alpaca ``TradingClient``."""
 
@@ -290,15 +319,7 @@ class AlpacaBroker(Broker):
         from alpaca.trading.stream import TradingStream
 
         async def on_alpaca_update(data) -> None:
-            order = data.order
-            update = TradeUpdate(
-                event=str(getattr(data, "event", "")),
-                symbol=getattr(order, "symbol", ""),
-                order_id=str(getattr(order, "id", "")),
-                status=str(getattr(getattr(order, "status", ""), "value", getattr(order, "status", ""))),
-                filled_qty=safe_float(getattr(order, "filled_qty", 0)),
-                price=safe_float(getattr(data, "price", None)) if getattr(data, "price", None) else None,
-            )
+            update = to_trade_update(data)
             result = handler(update)
             if inspect.isawaitable(result):
                 await result

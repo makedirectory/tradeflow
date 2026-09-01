@@ -2947,7 +2947,20 @@ def cmd_live(args) -> None:
     except KeyboardInterrupt:
         # Ctrl-C is how a live session is meant to end. A traceback here reads as a
         # crash, and buries whether anything was left open.
-        print("\nInterrupted - live engine stopped. No new positions were opened.")
+        #
+        # What it must never do is claim nothing was opened. It said exactly that
+        # after a session that had opened six positions: the shutdown path has no way
+        # to know, and a reassuring guess about an open book is the worst thing to
+        # print at the one moment somebody is deciding whether to intervene.
+        open_positions = dict(getattr(strategy, "positions", {}) or {})
+        print("\nInterrupted - live engine stopped. No orders were sent while shutting down.")
+        if open_positions:
+            print(f"  {len(open_positions)} position(s) were open when this stopped:")
+            for symbol, position in sorted(open_positions.items()):
+                print(f"    {symbol:8}{position.get('side', '?'):5}{position.get('qty', '?')}")
+            print("  These are still open at the broker. Nothing was flattened.")
+        else:
+            print("  This process held no open positions. Check the broker to be sure.")
     finally:
         if bar_filter is not None:
             report = bar_filter.report()

@@ -349,6 +349,34 @@ exporting.
 Paper runs are never asked to confirm anything. Making them would train the reflex the
 guard depends on you not having.
 
+## What the ledger counts
+
+The ledger replays fills to a per-symbol expectation and reconciles it against the
+broker, which is always authoritative. Two properties of that replay matter, and both
+were wrong once:
+
+**A fill quantity is the order's running total, not this event's increment.** Alpaca
+re-reports the cumulative filled quantity on every partial fill and again on the final
+fill. Those events are therefore resolved to the **last** report per order id rather
+than summed — summing counts the same shares repeatedly, and an order that filled 8
+across three reports arrives as 21. Collapsing per order also makes the replay
+idempotent: a duplicated event, a stream reconnect that repeats history, or a missed
+intermediate partial all land on the same answer.
+
+**The side comes from the broker and is never defaulted.** A fill whose event carries
+no side is logged and dropped rather than guessed, because guessing records a short as
+a long and puts the ledger out by twice the position. A dropped record shows up as a
+visible divergence; a wrongly-signed one does not.
+
+Bracket legs need no special handling: the entry and each protective leg carry their
+own order id, so a stop that fills nets against the entry it closes.
+
+A ledger containing fill records written before this accounting existed is reported at
+reconciliation rather than silently reinterpreted — those records also defaulted every
+side to buy, so their numbers cannot be recovered. Archive the file and start fresh.
+
+## Portfolio limits are enforced live
+
 ## Portfolio limits are enforced live
 
 The `position_limits` in a strategy's config — `max_positions`, `max_total_risk`,

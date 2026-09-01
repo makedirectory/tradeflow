@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 
 from tradeflow.engine.barcheck import BarQualityFilter
-from tradeflow.execution.ledger import PositionLedger
+from tradeflow.execution.ledger import CUMULATIVE, PositionLedger
 from tradeflow.execution.live_trader import LiveTrader
 from tradeflow.marketdata.base import BarEvent
 from tradeflow.marketdata.client import MarketDataClient
@@ -28,6 +28,10 @@ from tradeflow.strategies.base import Strategy
 from tradeflow.utils.timeutils import NEW_YORK
 
 logger = logging.getLogger(__name__)
+
+#: How long to wait for streams to close on interrupt before exiting regardless. A
+#: shutdown that can hang is a shutdown people learn to send a second interrupt to.
+SHUTDOWN_TIMEOUT = 5.0
 
 # Fetch this multiple of the bare lookback, so a few missing bars still leave enough.
 _WARMUP_BUFFER = 2
@@ -118,7 +122,14 @@ class LiveEngine:
         logger.info("Starting live stream for %d symbols", len(symbols))
         running = [asyncio.ensure_future(task) for task in tasks]
         try:
-            await asyncio.gather(*running)
+            # `wait`, not `gather`. On cancellation `gather` propagates to its children
+            # and then waits for every one of them to finish unwinding, with no bound -
+            # so a stream slow to close its socket held the process open until a second
+            # Ctrl-C, and the cleanup below was never even reached. `wait` hands
+            # cancellation straight back, leaving the teardown to the bounded wait.
+            done, _ = await asyncio.wait(running, return_when=asyncio.FIRST_EXCEPTION)
+            for task in done:
+                task.result()  # re-raise the first stream failure, as gather did
         except asyncio.CancelledError:
             # Ctrl-C cancels this coroutine, not the streams it started. Leaving them
             # to be garbage-collected is what produced the websocket teardown noise:
@@ -128,7 +139,23 @@ class LiveEngine:
         finally:
             for task in running:
                 task.cancel()
-            await asyncio.gather(*running, return_exceptions=True)
+            # Bounded. A stream whose socket teardown blocks used to hold the process
+            # open until a second Ctrl-C, which trains people to kill it twice - and
+            # the second one arrives during cleanup, when it can interrupt anything.
+            #
+            # `asyncio.wait`, not `wait_for`: on timeout `wait_for` cancels the thing
+            # it was waiting on and then *awaits* it, so a teardown that is slow to
+            # answer cancellation hangs the very call meant to bound it. `wait` leaves
+            # stragglers alone and returns, which is the whole point here.
+            _, pending = await asyncio.wait(running, timeout=SHUTDOWN_TIMEOUT)
+            if pending:
+                logger.warning(
+                    "%d stream(s) did not close within %.0fs; exiting anyway. Nothing "
+                    "was sent to the broker during shutdown, and open positions are "
+                    "untouched.",
+                    len(pending),
+                    SHUTDOWN_TIMEOUT,
+                )
 
     def _on_trade_update(self, update) -> None:
         """Log account/order events (fills, cancels, rejects), and record fills.
@@ -148,12 +175,25 @@ class LiveEngine:
             return
         try:
             if str(update.event).lower() in {"fill", "partial_fill"} and update.filled_qty:
+                side = update.side
+                if not side:
+                    # Never default it. A missing side used to resolve to "buy", which
+                    # recorded every short as a long and made the ledger disagree with
+                    # the broker by twice the position.
+                    logger.error(
+                        "Trade update for %s (order %s) carried no side; not recording "
+                        "it, because guessing one would put the wrong sign in the ledger",
+                        update.symbol,
+                        update.order_id,
+                    )
+                    return
                 self.ledger.record_fill(
                     update.symbol,
-                    getattr(update, "side", "buy"),
+                    side,
                     float(update.filled_qty),
                     order_id=update.order_id,
                     status=str(update.status),
+                    basis=CUMULATIVE,
                 )
         except Exception:  # noqa: BLE001 - bookkeeping never breaks the order path
             logger.warning("Could not record a fill in the position ledger", exc_info=True)
