@@ -439,3 +439,51 @@ def test_a_benchmark_relative_prerequisite_needs_a_benchmark():
     assert not absent["evaluated"] and not absent["passed"]
     assert beats["evaluated"] and beats["passed"]
     assert loses["evaluated"] and not loses["passed"]
+
+
+def test_leg_betas_are_kept_per_fold():
+    """Stability is the question an aggregate cannot answer.
+
+    A book that is neutral *on average* and directional *within* folds is a different
+    proposition from one neutral throughout - the same reason the benchmark
+    prerequisite takes a median across folds rather than a figure over the stitched
+    curve. The sign correctness itself is pinned at the backtest level, against a
+    symbol that tracks the benchmark; this asserts the per-fold plumbing carries it.
+    """
+    from datetime import datetime
+
+    from tests.fakes import FakeMarketData
+    from tradeflow.marketdata.client import MarketDataClient
+    from tradeflow.optimization.walk_forward import WalkForwardValidator
+    from tradeflow.services.registry import STRATEGIES
+
+    symbols = [f"S{i}" for i in range(6)]
+    client = MarketDataClient(FakeMarketData([*symbols, "SPY"], n=700, freq="1D"))
+
+    result = WalkForwardValidator(
+        STRATEGIES["volume_spike"], client, initial_capital=100_000, benchmark="SPY"
+    ).run(symbols, datetime(2024, 1, 2), datetime(2025, 9, 1), n_folds=3, method="grid", max_evals=2)
+
+    by_fold = result.leg_beta_by_fold()
+    assert set(by_fold) == {"long", "short"}  # volume_spike trades both sides
+    assert all(len(betas) == len(result.folds) for betas in by_fold.values())
+    assert all(fold.oos_legs for fold in result.folds)
+
+
+def test_a_long_only_walk_forward_reports_no_leg_split():
+    """Nothing to decompose, so nothing is claimed."""
+    from datetime import datetime
+
+    from tests.fakes import FakeMarketData
+    from tradeflow.marketdata.client import MarketDataClient
+    from tradeflow.optimization.walk_forward import WalkForwardValidator
+    from tradeflow.services.registry import STRATEGIES
+
+    symbols = ["AAA", "BBB"]
+    client = MarketDataClient(FakeMarketData([*symbols, "SPY"], n=600, freq="1D"))
+
+    result = WalkForwardValidator(
+        STRATEGIES["ma_crossover"], client, initial_capital=100_000, benchmark="SPY"
+    ).run(symbols, datetime(2024, 1, 2), datetime(2025, 6, 1), n_folds=3, method="grid", max_evals=2)
+
+    assert "short" not in result.leg_beta_by_fold()

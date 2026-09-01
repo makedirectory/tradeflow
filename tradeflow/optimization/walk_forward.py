@@ -101,6 +101,9 @@ class FoldResult:
     oos_metrics: Dict[str, float]
     oos_trades: int
     n_trials: int
+    #: Per-side realized performance for this fold's OOS window. Empty for a long-only
+    #: run, and betas are ``None`` unless the validator was given a benchmark.
+    oos_legs: Dict[str, Any] = field(default_factory=dict)
 
 
 def _concat_trades(frames: List[pd.DataFrame]) -> Optional[pd.DataFrame]:
@@ -144,6 +147,21 @@ class WalkForwardResult:
     def median_oos(self, key: str) -> float:
         values = [fr.oos_metrics.get(key, 0.0) for fr in self.folds]
         return float(np.median(values)) if values else 0.0
+
+    def leg_beta_by_fold(self) -> Dict[str, List[Optional[float]]]:
+        """Each leg's beta, fold by fold.
+
+        A book that is neutral *on average* and directional *within* folds is a
+        different proposition from one that is neutral throughout, and an aggregate
+        cannot distinguish them - which is the same reason the benchmark prerequisite
+        takes a median across folds rather than a figure over the stitched curve.
+        """
+        out: Dict[str, List[Optional[float]]] = {}
+        for fold_result in self.folds:
+            for name, leg in (fold_result.oos_legs or {}).items():
+                if leg.get("trades"):
+                    out.setdefault(name, []).append(leg.get("beta"))
+        return out
 
     def median_efficiency(self) -> float:
         ratios = []
@@ -457,7 +475,7 @@ class WalkForwardValidator:
             all_trial_sharpes.extend(self._trial_sharpes(is_result))
 
             strategy = self.strategy_class(dict(is_result.best_params))
-            oos_metrics, oos_trades = self._oos_backtest(
+            oos_metrics, oos_trades, oos_legs = self._oos_backtest(
                 strategy,
                 sliced,
                 symbols,
@@ -475,6 +493,7 @@ class WalkForwardValidator:
                     oos_metrics=oos_metrics,
                     oos_trades=int(len(oos_trades)),
                     n_trials=len(is_result.results),
+                    oos_legs=oos_legs,
                 )
             )
 
@@ -574,7 +593,7 @@ class WalkForwardValidator:
             is_result = BacktestEngine(cls(dict(params)), sliced, cost_model=self.cost_model).run(
                 symbols, fold.is_start, fold.is_end, self.initial_capital
             )
-            oos_metrics, oos_trades = self._oos_backtest(
+            oos_metrics, oos_trades, oos_legs = self._oos_backtest(
                 cls(dict(params)), sliced, symbols, fold.oos_start, fold.oos_end, warmup_days, n_trials=1
             )
             oos_trade_frames.append(oos_trades)
@@ -586,6 +605,7 @@ class WalkForwardValidator:
                     oos_metrics=oos_metrics,
                     oos_trades=int(len(oos_trades)),
                     n_trials=1,
+                    oos_legs=oos_legs,
                 )
             )
 
@@ -626,7 +646,7 @@ class WalkForwardValidator:
             window_end,
         )
         sliced = MarketDataClient(_PrefetchedProvider(frames))
-        metrics, _ = self._oos_backtest(
+        metrics, _, _ = self._oos_backtest(
             cls(dict(params)),
             sliced,
             symbols,
@@ -679,7 +699,7 @@ class WalkForwardValidator:
             # Deriving a second one here would be a second chance to disagree.
             benchmark_returns=result.benchmark_returns,
         )
-        return metrics, oos_trades
+        return metrics, oos_trades, result.legs
 
     def _with_benchmark(self, symbols):
         """The universe plus the benchmark, which the folds fetch through a *prefetched*
@@ -754,7 +774,7 @@ class WalkForwardValidator:
         if not final.best_params:
             return None, None
         strategy = self.strategy_class(dict(final.best_params))
-        metrics, _ = self._oos_backtest(
+        metrics, _, _ = self._oos_backtest(
             strategy, client, symbols, holdout_start, holdout_end, warmup_days, n_trials=len(final.results)
         )
         return dict(final.best_params), metrics
@@ -842,7 +862,7 @@ class WalkForwardValidator:
 
     def _oos_sharpe(self, client, symbols, params, fold, warmup_days) -> float:
         strategy = self.strategy_class(dict(params))
-        metrics, _ = self._oos_backtest(
+        metrics, _, _ = self._oos_backtest(
             strategy, client, symbols, fold.oos_start, fold.oos_end, warmup_days, n_trials=1
         )
         return metrics.get("sharpe_ratio", 0.0)
@@ -855,7 +875,7 @@ class WalkForwardValidator:
         change materially, so we **fail** when they don't.
         """
         strategy = self.strategy_class(dict(best_params))
-        _, base_trades = self._oos_backtest(
+        _, base_trades, _ = self._oos_backtest(
             strategy, client, symbols, fold.oos_start, fold.oos_end, warmup_days, n_trials=1
         )
 
@@ -868,7 +888,7 @@ class WalkForwardValidator:
             df.dropna(inplace=True)
         shifted_client = MarketDataClient(_PrefetchedProvider(shifted))
         strategy2 = self.strategy_class(dict(best_params))
-        _, shifted_trades = self._oos_backtest(
+        _, shifted_trades, _ = self._oos_backtest(
             strategy2, shifted_client, symbols, fold.oos_start, fold.oos_end, warmup_days, n_trials=1
         )
 

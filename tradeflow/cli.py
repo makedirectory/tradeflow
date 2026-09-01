@@ -1288,6 +1288,7 @@ def _print_promotion_prerequisites(data_client, args, result, universe, bootstra
     prereq = promotion_prerequisites(
         cost_stress=stress, bootstrap=bootstrap_report, benchmark_ir=benchmark_ir
     )
+    _print_leg_stability(result)
     _print_walkforward_verdicts(result, prereq)
     if not prereq["evaluated"] and prereq["checks"]["family_bootstrap"]["n_used"] == 0:
         return  # nothing to say: no input was produced by this run
@@ -1311,6 +1312,23 @@ def _print_promotion_prerequisites(data_client, args, result, universe, bootstra
     print(f"  Prerequisites: {done} of {total} evaluated - {verdict}{tail}")
     if unknown:
         print("  An unevaluated check is not a passed one - what is unknown stays unknown.")
+
+
+def _print_leg_stability(result) -> None:
+    """Each leg's beta fold by fold, when the book trades both sides.
+
+    A book that is neutral on average and directional within folds is a different
+    proposition from one that is neutral throughout, and no aggregate separates them.
+    Diagnostic only - it gates nothing.
+    """
+    by_fold = result.leg_beta_by_fold()
+    if len(by_fold) < 2 or not any(any(b is not None for b in betas) for betas in by_fold.values()):
+        return  # long-only, or no benchmark was given for the folds to score against
+    print("\n=== Leg beta by fold (diagnostic) ===")
+    for name, betas in sorted(by_fold.items()):
+        rendered = "  ".join("n/a" if b is None else f"{b:+.2f}" for b in betas)
+        print(f"  {name:6}{rendered}")
+    print("  A book neutral on average can still be directional inside a fold.")
 
 
 def _print_walkforward_verdicts(result, prereq) -> None:

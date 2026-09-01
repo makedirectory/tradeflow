@@ -94,6 +94,28 @@ Sharpe, and — when requested — parameter sensitivity and the leakage probe).
 > gitignored `configs/` directory; promoting it to live trading is a manual human
 > step.
 
+## Leg beta by fold
+
+When a strategy trades both sides, each leg's beta is reported per fold:
+
+```
+=== Leg beta by fold (diagnostic) ===
+  long    +0.88  +0.91  +0.62
+  short   -0.85  -0.90  -0.14
+  A book neutral on average can still be directional inside a fold.
+```
+
+A book that is neutral *on average* and directional *within* folds is a different
+proposition from one that is neutral throughout, and no aggregate separates them — the
+same reason the [benchmark prerequisite](#promotion-prerequisites) takes a median
+across folds rather than a figure over the stitched curve. In the example the third
+fold's short leg has largely stopped hedging, which the two-year net beta would hide
+completely.
+
+Requires `--benchmark`; diagnostic, and gates nothing. See
+[long/short legs](backtesting.md#longshort-legs) for the per-leg return, volatility,
+drawdown and cost breakdown on a single backtest.
+
 ## Promotion prerequisites
 
 `promotable` stays **statistical**: median OOS Sharpe, profit factor, walk-forward
