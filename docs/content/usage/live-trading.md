@@ -502,6 +502,12 @@ short of what was asked for is. Counting only the second and calling it "partial
 `0 partial` for a session where every order took several prints — true of the outcome and
 silent about the route.
 
+**Refusals written before codes existed are recognised by their message.** The ledger is
+append-only, so its history stays on disk; a report that grouped only the rows carrying a
+code would show one throttle as two — a tidy family beside a scatter of one-off messages
+saying the same thing. A message the map does not recognise keeps its own text rather
+than being forced into a family it may not belong to.
+
 **Refusals group by kind, not by message.** A message embeds the numbers that caused it —
 `gross exposure capped: $7,617.12 of $7,200.00` — so counting messages turns sixteen
 refusals of one kind into sixteen rows of one, which hides a throttle rather than showing

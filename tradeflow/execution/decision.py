@@ -44,6 +44,42 @@ NET_EXPOSURE = "net_exposure_capped"
 RISK_BUDGET = "risk_budget_exhausted"
 EQUITY_UNREADABLE = "equity_unreadable"
 
+#: Message prefixes written before decisions carried a code, mapped to the family they
+#: belong to. A read-path concern only: rows written from here on carry a code and never
+#: consult this. It exists because an append-only ledger keeps its history, so a report
+#: that groups only new rows shows one throttle as two — some tidy families beside a
+#: scatter of one-off messages saying the same thing.
+#:
+#: Matched by prefix because the numbers follow the colon. A message not listed keeps
+#: its own text rather than being forced into a family it may not belong to.
+_LEGACY_REASON_PREFIXES = (
+    ("book is full", BOOK_FULL),
+    ("gross exposure capped", GROSS_EXPOSURE),
+    ("net exposure capped", NET_EXPOSURE),
+    ("risk budget exhausted", RISK_BUDGET),
+    ("cannot check portfolio limits", EQUITY_UNREADABLE),
+)
+
+
+def reason_family(record: Dict[str, Any]) -> str:
+    """The family a recorded decision belongs to, whenever it was written.
+
+    Prefers the code the decision carries. Falls back to recognising the message a
+    pre-code row was written with, and finally to the message itself — which is the
+    right answer for a fixed phrase like "market is closed" that has no numbers in it
+    and therefore never fragmented in the first place.
+    """
+    code = record.get("reason_code")
+    reason = str(record.get("reason") or "")
+    # A pre-code row has no `reason_code` at all; a coded row whose value equals its own
+    # message is one that never had a family, and both are worth normalising.
+    if code and code != reason:
+        return str(code)
+    for prefix, family in _LEGACY_REASON_PREFIXES:
+        if reason.startswith(prefix):
+            return family
+    return reason or "unknown"
+
 
 @dataclass(frozen=True)
 class OrderPlan:

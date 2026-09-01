@@ -134,7 +134,10 @@ def cost_summary(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
 def decline_summary(declines: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     """How often each *kind* of refusal stopped a signal, worst first.
 
-    Grouped by the decision's reason code, not its message. The message embeds the
+    Grouped by the decision's reason family, not its message. Rows written before
+    decisions carried a code are recognised by their message and folded into the same
+    family, because an append-only ledger keeps its history and a report that groups
+    only new rows shows one throttle as two. The message embeds the
     numbers that caused it - "gross exposure capped: $7,617.12 of $7,200.00" - so
     counting messages turned sixteen refusals of one kind into sixteen rows of one,
     which is the shape that hides a throttle rather than showing it.
@@ -142,9 +145,11 @@ def decline_summary(declines: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]
     One example message is kept per family, because the code alone does not say what
     the limit was or how far over it the book had got.
     """
+    from tradeflow.execution.decision import reason_family
+
     families: Dict[str, Dict[str, Any]] = {}
     for record in declines:
-        code = str(record.get("reason_code") or record.get("reason") or "unknown")
+        code = reason_family(record)
         family = families.setdefault(code, {"count": 0, "example": None})
         family["count"] += 1
         if family["example"] is None:

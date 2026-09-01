@@ -266,7 +266,7 @@ def test_the_report_ties_the_whole_session_together(ledger):
     assert report["slippage"]["n_measured"] == 1
     assert report["fills"]["n_orders"] == 1
     assert report["costs"]["model_cost_estimate"] == 0.25
-    assert report["declines"]["gross exposure capped"]["count"] == 1
+    assert report["declines"][decisions.GROSS_EXPOSURE]["count"] == 1
 
 
 # --- refusal families -------------------------------------------------------------
@@ -347,3 +347,67 @@ def test_the_modelled_cost_names_what_it_leaves_out():
 
 def test_no_cost_model_reports_nothing_rather_than_zero():
     assert cost_summary([_rows(cost_estimate=None)])["model_cost_estimate"] is None
+
+
+# --- families across the ledger's own history -------------------------------------
+def test_pre_code_rows_fold_into_the_same_family_as_new_ones(ledger):
+    """The bug: an append-only ledger keeps its history, so a report that grouped only
+    rows carrying a reason_code showed one throttle as two — a tidy `5 book_full`
+    beside `8 book is full: 10 of 10 positions already open` saying the same thing."""
+    ledger._append(
+        {"event": "decision", "allowed": False, "reason": "book is full: 10 of 10 positions already open"}
+    )
+    ledger.record_decision(
+        decisions.decline(
+            "COP", "BUY", "book is full: 12 of 12 positions already open", (), code=decisions.BOOK_FULL
+        )
+    )
+
+    counts = decline_summary(ledger.declines())
+
+    assert list(counts) == [decisions.BOOK_FULL]
+    assert counts[decisions.BOOK_FULL]["count"] == 2
+
+
+@pytest.mark.parametrize(
+    "reason,family",
+    [
+        ("book is full: 10 of 10 positions already open", decisions.BOOK_FULL),
+        ("gross exposure capped: $7,617.12 of $7,200.00", decisions.GROSS_EXPOSURE),
+        ("net exposure capped: $3,100.00 net long of $2,400.00", decisions.NET_EXPOSURE),
+        ("risk budget exhausted: $432.00 of $400.00 at a 12.0% stop", decisions.RISK_BUDGET),
+        ("cannot check portfolio limits against $0.00 of equity", decisions.EQUITY_UNREADABLE),
+    ],
+)
+def test_every_limit_message_this_project_has_written_is_recognised(reason, family):
+    """Each of these was emitted before codes existed, so each has history on disk."""
+    from tradeflow.execution.decision import reason_family
+
+    assert reason_family({"reason": reason}) == family
+
+
+def test_a_message_with_no_family_keeps_its_own_text():
+    """Both directions. A fixed phrase with no numbers never fragmented, and forcing it
+    into a family it may not belong to would lose the only thing it says."""
+    from tradeflow.execution.decision import reason_family
+
+    assert reason_family({"reason": "market is closed"}) == "market is closed"
+
+
+def test_an_unrecognised_message_is_not_swallowed_as_unknown():
+    """Grouping must not become a way to lose refusals nobody has categorised yet."""
+    from tradeflow.execution.decision import reason_family
+
+    assert reason_family({"reason": "broker refused: insufficient day trading buying power"}).startswith(
+        "broker refused"
+    )
+
+
+def test_a_code_still_wins_over_the_message():
+    """The map is a fallback for history, not a re-derivation of what a row already says."""
+    from tradeflow.execution.decision import reason_family
+
+    assert (
+        reason_family({"reason_code": decisions.NET_EXPOSURE, "reason": "book is full: 3 of 3"})
+        == decisions.NET_EXPOSURE
+    )
