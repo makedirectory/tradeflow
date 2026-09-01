@@ -968,6 +968,7 @@ def cmd_walkforward(args) -> None:
             force=args.force,
             workers=args.workers,
             data_spec=data_spec,
+            benchmark=getattr(args, "benchmark", None),
         )
         result = validator.run(
             universe,
@@ -1226,9 +1227,17 @@ def _print_promotion_prerequisites(data_client, args, result, universe, bootstra
             axis=args.cost_stress,
         )
 
-    prereq = promotion_prerequisites(cost_stress=stress, bootstrap=bootstrap_report)
+    benchmark_ir = None
+    if getattr(args, "benchmark", None) and any(
+        fold.oos_metrics.get("benchmark_available") for fold in result.folds
+    ):
+        benchmark_ir = result.median_oos("information_ratio")
+
+    prereq = promotion_prerequisites(
+        cost_stress=stress, bootstrap=bootstrap_report, benchmark_ir=benchmark_ir
+    )
     if not prereq["evaluated"] and prereq["checks"]["family_bootstrap"]["n_used"] == 0:
-        return  # nothing to say: neither input was produced by this run
+        return  # nothing to say: no input was produced by this run
 
     print("\n=== Promotion prerequisites (separate from `promotable`) ===")
     for name, check in prereq["checks"].items():
@@ -1237,11 +1246,18 @@ def _print_promotion_prerequisites(data_client, args, result, universe, bootstra
             continue
         mark = "PASS" if check["passed"] else "FAIL"
         print(f"  [{mark}] {name:18}{check['value']:.4g} vs {check['threshold']:.4g}")
-    ready = prereq["ready"]
-    verdict = {None: "nothing evaluated", True: "clear", False: "NOT clear"}[ready]
-    print(f"  Prerequisites: {verdict} ({prereq['evaluated']} of {prereq['total']} evaluated)")
-    if ready and prereq["evaluated"] < prereq["total"]:
-        print("  An unevaluated check is not a passed one - the rest is still unknown.")
+    # The count leads, and the verdict word never stands alone: "Prerequisites: clear"
+    # can be skimmed as all-clear even with a caveat on the next line, and this is a
+    # display someone reads immediately before risking money.
+    ready, done, total = prereq["ready"], prereq["evaluated"], prereq["total"]
+    unknown = total - done
+    verdict = {None: "nothing assessed", True: "clear so far" if unknown else "clear", False: "NOT clear"}[
+        ready
+    ]
+    tail = f"; {unknown} unknown" if unknown else ""
+    print(f"  Prerequisites: {done} of {total} evaluated - {verdict}{tail}")
+    if unknown:
+        print("  An unevaluated check is not a passed one - what is unknown stays unknown.")
 
 
 def _print_bootstrap_skill(report: Dict[str, Any]) -> None:
@@ -3578,6 +3594,13 @@ def build_parser() -> argparse.ArgumentParser:
     wf.add_argument("--objective", default="sharpe_ratio")
     wf.add_argument("--max-evals", dest="max_evals", type=int, default=50)
     wf.add_argument("--seed", type=int, default=42)
+    wf.add_argument(
+        "--benchmark",
+        default=None,
+        help="Score each fold against this symbol and check the median per-fold "
+        "information ratio as a paper prerequisite. Per fold, then median - the same "
+        "shape as every other fold statistic here.",
+    )
     wf.add_argument(
         "--cost-stress",
         dest="cost_stress",

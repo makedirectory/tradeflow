@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Any, ClassVar, Dict
 
 import pandas as pd
+import pytest
 
 from tests.fakes import FakeMarketData
 from tradeflow.marketdata.client import MarketDataClient
@@ -368,7 +369,8 @@ def test_ready_never_implies_the_unevaluated_checks_would_have_passed():
     )
 
     assert prereq["ready"] is True
-    assert (prereq["evaluated"], prereq["total"]) == (1, 2)
+    assert prereq["evaluated"] == 1 and prereq["total"] > 1
+    assert prereq["evaluated"] < prereq["total"]  # and the caller must say so
 
 
 def test_prerequisites_are_not_the_promotion_gates():
@@ -378,3 +380,62 @@ def test_prerequisites_are_not_the_promotion_gates():
     from tradeflow.optimization.walk_forward import DEFAULT_GATES
 
     assert not set(DEFAULT_PREREQUISITES) & set(DEFAULT_GATES)
+
+
+def test_the_benchmark_check_is_a_median_across_folds():
+    """Per fold, then median - the same shape as every other fold statistic here.
+
+    A figure over the stitched OOS curve would be a second aggregation convention in
+    one report, differing from its neighbours most exactly when the folds disagree. In
+    a real run they disagreed a lot: per-fold IRs of [0.13, -1.25, 2.10].
+    """
+    from datetime import datetime
+
+    from tests.fakes import FakeMarketData
+    from tradeflow.marketdata.client import MarketDataClient
+    from tradeflow.optimization.walk_forward import WalkForwardValidator
+    from tradeflow.services.registry import STRATEGIES
+
+    symbols = ["AAA", "BBB"]
+    client = MarketDataClient(FakeMarketData([*symbols, "SPY"], n=600, freq="1D"))
+
+    scored = WalkForwardValidator(
+        STRATEGIES["ma_crossover"], client, initial_capital=100_000, benchmark="SPY"
+    ).run(symbols, datetime(2024, 1, 2), datetime(2025, 6, 1), n_folds=3, method="grid", max_evals=2)
+
+    assert all(fold.oos_metrics["benchmark_available"] for fold in scored.folds)
+    per_fold = [fold.oos_metrics["information_ratio"] for fold in scored.folds]
+    assert scored.median_oos("information_ratio") == pytest.approx(sorted(per_fold)[1])
+
+
+def test_without_a_benchmark_the_folds_say_so_rather_than_scoring_zero():
+    """The failure mode the prefetch bug produced: the benchmark was not in the fold's
+    sliced provider, so every fold reported an information ratio of 0.0 and nothing
+    distinguished that from a genuine zero."""
+    from datetime import datetime
+
+    from tests.fakes import FakeMarketData
+    from tradeflow.marketdata.client import MarketDataClient
+    from tradeflow.optimization.walk_forward import WalkForwardValidator
+    from tradeflow.services.registry import STRATEGIES
+
+    symbols = ["AAA", "BBB"]
+    client = MarketDataClient(FakeMarketData([*symbols, "SPY"], n=600, freq="1D"))
+
+    plain = WalkForwardValidator(STRATEGIES["ma_crossover"], client, initial_capital=100_000).run(
+        symbols, datetime(2024, 1, 2), datetime(2025, 6, 1), n_folds=3, method="grid", max_evals=2
+    )
+
+    assert not any(fold.oos_metrics["benchmark_available"] for fold in plain.folds)
+
+
+def test_a_benchmark_relative_prerequisite_needs_a_benchmark():
+    from tradeflow.analytics.performance import promotion_prerequisites
+
+    absent = promotion_prerequisites()["checks"]["benchmark_relative"]
+    beats = promotion_prerequisites(benchmark_ir=0.134)["checks"]["benchmark_relative"]
+    loses = promotion_prerequisites(benchmark_ir=-0.40)["checks"]["benchmark_relative"]
+
+    assert not absent["evaluated"] and not absent["passed"]
+    assert beats["evaluated"] and beats["passed"]
+    assert loses["evaluated"] and not loses["passed"]

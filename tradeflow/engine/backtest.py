@@ -235,6 +235,12 @@ class BacktestResult:
     gross_final_capital: float = 0.0  # final capital before cost (for the haircut attribution)
     #: What the sizer asked for versus what was actually tradeable - see :class:`_Execution`.
     execution: Dict[str, Any] = field(default_factory=dict)
+    #: The benchmark returns this run scored against, already aligned positionally to
+    #: ``equity_curve``. Exposed so a caller that recomputes metrics on *this* curve
+    #: (the walk-forward does, to fold in its own trial counts) can reuse the alignment
+    #: instead of deriving a second one - two alignments of the same series is how the
+    #: two quietly stop matching.
+    benchmark_returns: Optional[Any] = None
 
 
 class BacktestEngine:
@@ -361,6 +367,7 @@ class BacktestEngine:
         if not trades_df.empty:
             trades_df = trades_df.sort_values("exit_time").reset_index(drop=True)
 
+        aligned_benchmark = _benchmark_returns(benchmark_closes, equity_times)
         net_pnl = trades_df["pnl"].sum() if not trades_df.empty else 0.0
         total_cost = float(trades_df["cost"].sum()) if "cost" in trades_df else 0.0
         final_capital = initial_capital + net_pnl
@@ -387,7 +394,7 @@ class BacktestEngine:
             # The curve is sampled per merged-timeline step, so it annualizes on that
             # timeline's rate — not the daily default, and not the raw timeframe.
             periods_per_year=self._step_periods_per_year,
-            benchmark_returns=_benchmark_returns(benchmark_closes, equity_times),
+            benchmark_returns=aligned_benchmark,
         )
 
         return BacktestResult(
@@ -402,6 +409,7 @@ class BacktestEngine:
             total_cost=total_cost,
             gross_final_capital=final_capital + total_cost,
             execution=execution,
+            benchmark_returns=aligned_benchmark,
         )
 
     # ------------------------------------------------------------------ #

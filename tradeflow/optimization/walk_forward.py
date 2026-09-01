@@ -271,12 +271,19 @@ class WalkForwardValidator:
         force: bool = False,
         workers: Optional[int] = None,
         data_spec: Optional[Any] = None,
+        benchmark: Optional[str] = None,
     ):
         self.strategy_class = strategy_class
         self.data_client = data_client
         self.initial_capital = initial_capital
         self.seed = seed
         self.gates = gates
+        #: Scored per fold, then aggregated by median - the same shape as every other
+        #: fold statistic here. A benchmark figure over the stitched OOS curve would be
+        #: a second aggregation convention in one report, differing from its neighbours
+        #: most exactly when the folds disagree, which is when a reader needs it least
+        #: ambiguous.
+        self.benchmark = benchmark
         #: Charged on every simulated fill, in-sample and out. Gross-return validation
         #: systematically promotes turnover the strategy could not afford live.
         self.cost_model = cost_model
@@ -432,7 +439,7 @@ class WalkForwardValidator:
 
         # Prefetch the whole window once (plus warmup) and slice per fold.
         fetch_start = start - timedelta(days=warmup_days)
-        frames = self.data_client.get_bars(symbols, self.timeframe, fetch_start, end)
+        frames = self.data_client.get_bars(self._with_benchmark(symbols), self.timeframe, fetch_start, end)
         sliced = MarketDataClient(_PrefetchedProvider(frames))
 
         all_trial_sharpes: List[float] = []
@@ -556,7 +563,9 @@ class WalkForwardValidator:
             holdout_days=0,
         )
         warmup_days = embargo
-        frames = self.data_client.get_bars(symbols, self.timeframe, start - timedelta(days=warmup_days), end)
+        frames = self.data_client.get_bars(
+            self._with_benchmark(symbols), self.timeframe, start - timedelta(days=warmup_days), end
+        )
         sliced = MarketDataClient(_PrefetchedProvider(frames))
 
         fold_results: List[FoldResult] = []
@@ -611,7 +620,10 @@ class WalkForwardValidator:
         cls = strategy_class or self.strategy_class
         warmup_days = embargo_days if embargo_days is not None else self.default_embargo_days()
         frames = self.data_client.get_bars(
-            symbols, self.timeframe, window_start - timedelta(days=warmup_days), window_end
+            self._with_benchmark(symbols),
+            self.timeframe,
+            window_start - timedelta(days=warmup_days),
+            window_end,
         )
         sliced = MarketDataClient(_PrefetchedProvider(frames))
         metrics, _ = self._oos_backtest(
@@ -648,15 +660,41 @@ class WalkForwardValidator:
         """
         fetch_start = oos_start - timedelta(days=warmup_days)
         result = BacktestEngine(strategy, client, cost_model=self.cost_model).run(
-            symbols, fetch_start, oos_end, self.initial_capital, trade_from=oos_start
+            symbols,
+            fetch_start,
+            oos_end,
+            self.initial_capital,
+            trade_from=oos_start,
+            benchmark=self.benchmark,
         )
         oos_trades = _filter_trades_from(result.trades, oos_start)  # belt and braces
         metrics = self._metrics_for_trades(
-            oos_trades, oos_start, oos_end, n_trials, var_of_trial_sr, equity=result.equity_curve
+            oos_trades,
+            oos_start,
+            oos_end,
+            n_trials,
+            var_of_trial_sr,
+            equity=result.equity_curve,
+            # The engine's own alignment, against the very curve being re-measured.
+            # Deriving a second one here would be a second chance to disagree.
+            benchmark_returns=result.benchmark_returns,
         )
         return metrics, oos_trades
 
-    def _metrics_for_trades(self, trades, start, end, n_trials, var_of_trial_sr, equity=None):
+    def _with_benchmark(self, symbols):
+        """The universe plus the benchmark, which the folds fetch through a *prefetched*
+        provider and would otherwise have no bars for.
+
+        Missing it does not error - the engine warns and scores without a benchmark -
+        so the failure mode is a fold quietly reporting an information ratio of zero.
+        """
+        if not self.benchmark or self.benchmark in symbols:
+            return list(symbols)
+        return [*symbols, self.benchmark]
+
+    def _metrics_for_trades(
+        self, trades, start, end, n_trials, var_of_trial_sr, equity=None, benchmark_returns=None
+    ):
         """Metrics for a trade set, preferring a real portfolio curve when available.
 
         ``equity=None`` falls back to accumulating realized P&L, which is all that is
@@ -668,6 +706,11 @@ class WalkForwardValidator:
         if equity is None:
             equity = performance.build_equity_curve(trades, self.initial_capital)
             periods_per_year = TRADING_DAYS_PER_YEAR
+            # A rebuilt curve runs on a different clock (calendar days, not bars), so a
+            # series aligned to the engine's curve no longer lines up with it. Dropped
+            # rather than misaligned: a positional pairing that silently slips is worse
+            # than an absent benchmark, because it still produces a number.
+            benchmark_returns = None
         else:
             periods_per_year = self.timeframe.periods_per_year()
         final = self.initial_capital + (trades["pnl"].sum() if not trades.empty else 0.0)
@@ -682,6 +725,7 @@ class WalkForwardValidator:
             periods_per_year=periods_per_year,
             n_trials=n_trials,
             var_of_trial_sr=var_of_trial_sr,
+            benchmark_returns=benchmark_returns,
         )
 
     def _aggregate_oos(self, oos_trade_frames, folds, n_trials_total, var_trial_sr):

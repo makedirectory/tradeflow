@@ -108,8 +108,8 @@ Two further questions come *after* a candidate clears those, and are reported be
   [PASS] cost_stress        5 vs 3
   [ -- ] family_bootstrap   not evaluated - needs 10 usable return-series trials to
                             mean anything; 2 available
-  Prerequisites: clear (1 of 2 evaluated)
-  An unevaluated check is not a passed one - the rest is still unknown.
+  Prerequisites: 1 of 3 evaluated - clear so far; 2 unknown
+  An unevaluated check is not a passed one - what is unknown stays unknown.
 ```
 
 - **`cost_stress`** — the edge survives at least 3x its own assumed cost. Run it with
@@ -118,6 +118,12 @@ Two further questions come *after* a candidate clears those, and are reported be
   in. It does **not** run below 10 usable return-series trials: a family test over two
   series is arithmetic rather than evidence, and a striking p-value on K=2 is exactly
   the kind of number that should not gate anything.
+- **`benchmark_relative`** — the median per-fold information ratio against
+  `--benchmark` is positive. **Per fold, then median**, because every other fold
+  statistic here is a median and a second aggregation convention in one report would
+  differ from its neighbours most exactly when the folds disagree. They do: a real run
+  produced per-fold IRs of `[0.13, -1.25, 2.10]` for a median of `+0.13`, and a single
+  figure over the stitched curve would have hidden that spread entirely.
 
 **An unevaluated check is not a passed one.** A cost curve nobody ran and a family too
 thin to test are both *unknown*, and `ready` always travels with the count of what was

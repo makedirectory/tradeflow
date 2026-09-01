@@ -200,6 +200,7 @@ DEFAULT_PREREQUISITES: Dict[str, float] = {
     "min_cost_stress_multiple": 3.0,
     "max_family_p": 0.05,
     "min_family_trials": 10,
+    "min_benchmark_ir": 0.0,  # median per-fold OOS information ratio
 }
 
 
@@ -207,6 +208,7 @@ def promotion_prerequisites(
     *,
     cost_stress: Optional[Dict[str, Any]] = None,
     bootstrap: Optional[Dict[str, Any]] = None,
+    benchmark_ir: Optional[float] = None,
     limits: Optional[Dict[str, float]] = None,
 ) -> Dict[str, Any]:
     """Checks a candidate should clear before paper, reported beside ``promotable``.
@@ -247,6 +249,18 @@ def promotion_prerequisites(
             if not enough_family
             else "still notable once every trial the campaign tried is priced in"
         ),
+    }
+
+    # Median across folds, not a figure over the stitched OOS curve. Every other fold
+    # statistic here is a median (`min_oos_sharpe`, `min_wfe`), and a second aggregation
+    # convention in one report would differ from its neighbours most exactly when the
+    # folds disagree - which is when a reader can least afford the ambiguity.
+    checks["benchmark_relative"] = {
+        "evaluated": benchmark_ir is not None,
+        "value": float(benchmark_ir) if benchmark_ir is not None else None,
+        "threshold": limit["min_benchmark_ir"],
+        "passed": benchmark_ir is not None and float(benchmark_ir) > limit["min_benchmark_ir"],
+        "note": "median per-fold information ratio against the benchmark",
     }
 
     evaluated = [check for check in checks.values() if check["evaluated"]]
