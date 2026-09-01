@@ -21,7 +21,7 @@ convenience: see :meth:`LiveTrader.sync_strategy_book`.
 import logging
 import time
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from tradeflow.brokers.base import AccountSnapshot, Broker, OrderSide, Position
 from tradeflow.brokers.errors import AuthenticationError, BrokerError, DuplicateOrderError
@@ -55,6 +55,7 @@ class LiveTrader:
         respect_market_hours: bool = True,
         halt_state: Optional[HaltState] = None,
         capital: Optional[float] = None,
+        cost_model=None,
     ):
         self._broker = broker
         self._strategy = strategy
@@ -66,6 +67,10 @@ class LiveTrader:
         # portfolio-weight sizer to let the portfolio manager drive live sizing.
         self._sizer = sizer or RiskBasedSizer(strategy)
         self._allow_fractional = allow_fractional
+        #: The same cost model the research clock charges, so a modelled cost in a live
+        #: report is comparable with the one a backtest was judged on. ``None`` simply
+        #: means no estimate is recorded - never a zero cost.
+        self._cost_model = cost_model
         #: How much of the account this strategy may deploy, or ``None`` for all of it.
         #: A paper account arrives with whatever equity the venue gave it - typically far
         #: more than the capital a config was validated at - and sizing against that
@@ -116,22 +121,33 @@ class LiveTrader:
         self._strategy.positions = book
         return len(book)
 
-    def _cost_estimate(self, qty: float, price: float) -> Optional[float]:
-        """What the strategy's cost model expects this entry to cost, if it has one.
+    def _cost_estimate(self, qty: float, price: float) -> Optional[Dict[str, Any]]:
+        """What the cost model expects this entry to cost, decomposed.
 
-        Recorded beside the broker's own fee rather than merged with it: the model is a
-        prediction and the fee is an observation, and a paper venue reports no fee at
-        all. Averaging the two together would quietly turn the prediction into evidence.
+        The *same* model the research clock charges, constructed from the same
+        parameters a config carries, so the modelled number in a live report is
+        comparable with the one a backtest was judged on. A second, live-only cost
+        formula would make the comparison meaningless in a way nobody would notice.
+
+        Impact is deliberately absent: it is a function of how much of a day's volume
+        the order demands, and the trade clock has no ADV for a symbol at the moment it
+        sizes one. Rather than invent a participation figure, the estimate says which
+        components it contains. Recorded beside the broker's fee, never merged with it —
+        the model is a prediction, the fee an observation, and a paper venue reports no
+        fee at all.
         """
-        cost = self._strategy.config.get("cost")
-        if not isinstance(cost, dict):
+        if self._cost_model is None:
             return None
-        notional = abs(qty) * price
-        commission = float(cost.get("commission_per_share") or 0.0) * abs(qty)
-        spread = float(cost.get("spread_pct") or 0.0) * notional
-        slippage = float(cost.get("slippage_pct") or 0.0) * notional
-        total = commission + spread + slippage
-        return total or None
+        from tradeflow.costs.base import Trade
+
+        cost = self._cost_model.cost(Trade(symbol="", shares=abs(qty), price=price, adv=0.0, daily_vol=0.0))
+        return {
+            "total": cost.commission + cost.spread_cost,
+            "commission": cost.commission,
+            "spread": cost.spread_cost,
+            # Named rather than reported as zero: unknown at this point in the loop.
+            "excludes": ["impact"],
+        }
 
     def refresh_position(self, symbol: str) -> bool:
         """Re-read one symbol from the broker and update the book. Returns True if held.
@@ -282,8 +298,9 @@ class LiveTrader:
         # capital the config was validated at.
         breach = self._limit_breach(symbol, qty, price, sizing_account, signal)
         if breach is not None:
-            logger.warning("Refusing %s entry for %s: %s", signal, symbol, breach)
-            return decisions.decline(symbol, signal, breach, tuple(guards))
+            code, detail = breach
+            logger.warning("Refusing %s entry for %s: %s", signal, symbol, detail)
+            return decisions.decline(symbol, signal, detail, tuple(guards), code=code)
 
         side = _ENTRY_SIDE[signal]
         stop_loss, take_profit = self._stop_levels(price, side)
@@ -426,8 +443,11 @@ class LiveTrader:
 
     def _limit_breach(
         self, symbol: str, qty: float, price: float, account, signal: Optional[str] = None
-    ) -> Optional[str]:
-        """Say which portfolio limit this entry would break, or ``None`` if it fits.
+    ) -> Optional[tuple]:
+        """The limit this entry would break as ``(code, detail)``, or ``None`` if it fits.
+
+        The code is a stable family and the detail carries the numbers. Reporting only
+        the detail makes every refusal look unique, because the amounts differ each time.
 
         Sizing answers "how big should this position be?" one symbol at a time and
         has no view of the book, so ``max_total_risk`` applied there caps a single
@@ -462,14 +482,20 @@ class LiveTrader:
         others = [p for held, p in self._strategy.positions.items() if held != symbol]
 
         if max_positions and len(others) + 1 > max_positions:
-            return f"book is full: {len(others)} of {max_positions} positions already open"
+            return (
+                decisions.BOOK_FULL,
+                f"book is full: {len(others)} of {max_positions} positions already open",
+            )
 
         if not (max_total_risk or max_gross_exposure or max_net_exposure):
             return None
 
         equity = account.equity
         if equity <= 0:
-            return f"cannot check portfolio limits against ${equity:,.2f} of equity"
+            return (
+                decisions.EQUITY_UNREADABLE,
+                f"cannot check portfolio limits against ${equity:,.2f} of equity",
+            )
 
         held_notional = sum(abs(p["qty"]) * p["entry_price"] for p in others)
         entry_notional = qty * price
@@ -482,14 +508,18 @@ class LiveTrader:
             budget = equity * max_total_risk
             if open_risk + entry_notional * stop_pct > budget:
                 return (
+                    decisions.RISK_BUDGET,
                     f"risk budget exhausted: ${open_risk + entry_notional * stop_pct:,.2f} "
-                    f"of ${budget:,.2f} at a {stop_pct:.1%} stop"
+                    f"of ${budget:,.2f} at a {stop_pct:.1%} stop",
                 )
 
         if max_gross_exposure:
             cap = equity * max_gross_exposure
             if held_notional + entry_notional > cap:
-                return f"gross exposure capped: ${held_notional + entry_notional:,.2f} of ${cap:,.2f}"
+                return (
+                    decisions.GROSS_EXPOSURE,
+                    f"gross exposure capped: ${held_notional + entry_notional:,.2f} of ${cap:,.2f}",
+                )
 
         if max_net_exposure:
             # Gross bounds long + short and cannot see direction: a book inside a 90%
@@ -511,7 +541,10 @@ class LiveTrader:
             # trade would leave the tilt it corrects in place.
             if abs(projected) > cap:
                 direction = "long" if projected > 0 else "short"
-                return f"net exposure capped: ${abs(projected):,.2f} net {direction} of ${cap:,.2f}"
+                return (
+                    decisions.NET_EXPOSURE,
+                    f"net exposure capped: ${abs(projected):,.2f} net {direction} of ${cap:,.2f}",
+                )
 
         return None
 

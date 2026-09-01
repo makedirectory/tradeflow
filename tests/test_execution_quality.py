@@ -141,6 +141,7 @@ def _rows(**overrides):
         "fill_price": 100.1,
         "slippage_bps": 10.0,
         "decision_to_fill_ms": 500.0,
+        "n_fill_events": 1,
         "cost_estimate": None,
         "broker_fee": None,
     }
@@ -187,10 +188,28 @@ def test_unfilled_orders_are_counted_and_shrink_the_fill_ratio():
     assert summary["fill_ratio"] == pytest.approx(100.1 / 200.0)
 
 
-def test_a_partial_fill_is_counted_as_partial():
-    summary = fill_summary([_rows(submitted_qty=10.0, filled_qty=4.0)])
+def test_an_order_that_ended_short_is_counted_as_short():
+    """The outcome that matters: less was filled than was asked for."""
+    summary = fill_summary([_rows(submitted_qty=10.0, filled_qty=4.0, n_fill_events=1)])
 
-    assert summary["n_partial"] == 1
+    assert summary["n_short"] == 1
+    assert summary["n_multi_print"] == 0
+
+
+def test_an_order_filled_in_several_prints_is_not_counted_as_short():
+    """The reported bug: two orders that both filled completely, each across a partial
+    print and a final one, were summarised as "0 partial" — true of the outcome and
+    silent about the route. They are different facts and get different counts."""
+    summary = fill_summary([_rows(submitted_qty=3.0, filled_qty=3.0, n_fill_events=2)])
+
+    assert summary["n_short"] == 0
+    assert summary["n_multi_print"] == 1
+
+
+def test_an_order_can_be_both_short_and_multi_print():
+    summary = fill_summary([_rows(submitted_qty=10.0, filled_qty=4.0, n_fill_events=3)])
+
+    assert summary["n_short"] == 1 and summary["n_multi_print"] == 1
 
 
 def test_nothing_submitted_has_no_fill_ratio():
@@ -201,7 +220,7 @@ def test_nothing_submitted_has_no_fill_ratio():
 def test_a_modelled_cost_is_never_added_to_a_broker_fee():
     """One is a prediction and one is an observation. Summing them turns the
     prediction into evidence."""
-    summary = cost_summary([_rows(cost_estimate=1.50, broker_fee=0.35)])
+    summary = cost_summary([_rows(cost_estimate={"total": 1.50}, broker_fee=0.35)])
 
     assert summary["model_cost_estimate"] == 1.50
     assert summary["broker_fees"] == 0.35
@@ -210,29 +229,33 @@ def test_a_modelled_cost_is_never_added_to_a_broker_fee():
 def test_a_venue_that_reports_no_fees_is_not_a_venue_that_charged_zero():
     """Every paper fill looks like this, and reading it as zero would make a live book
     look more expensive than the paper one for no real reason."""
-    summary = cost_summary([_rows(cost_estimate=1.50)])
+    summary = cost_summary([_rows(cost_estimate={"total": 1.50})])
 
     assert summary["fees_reported"] is False
     assert summary["broker_fees"] is None
 
 
-def test_declines_are_counted_by_reason_worst_first():
+def test_declines_are_counted_by_kind_worst_first():
     """Why a strategy did nothing is the question that leaves no other trace."""
     counts = decline_summary(
-        [{"reason": "book is full"}, {"reason": "gross exposure capped"}, {"reason": "gross exposure capped"}]
+        [
+            {"reason_code": "book_full", "reason": "book is full: 8 of 8"},
+            {"reason_code": "gross_exposure_capped", "reason": "gross exposure capped: $1 of $2"},
+            {"reason_code": "gross_exposure_capped", "reason": "gross exposure capped: $3 of $2"},
+        ]
     )
 
-    assert list(counts) == ["gross exposure capped", "book is full"]
-    assert counts["gross exposure capped"] == 2
+    assert list(counts) == ["gross_exposure_capped", "book_full"]
+    assert counts["gross_exposure_capped"]["count"] == 2
 
 
 def test_a_decline_with_no_reason_is_not_dropped():
     """Absent is not zero here either: an unexplained refusal still happened."""
-    assert decline_summary([{}]) == {"unknown": 1}
+    assert decline_summary([{}])["unknown"]["count"] == 1
 
 
 def test_the_report_ties_the_whole_session_together(ledger):
-    _submit(ledger, "MSFT", "buy", 1, 500.73, "o1", cost_estimate=0.25)
+    _submit(ledger, "MSFT", "buy", 1, 500.73, "o1", cost_estimate={"total": 0.25})
     _fill(ledger, "MSFT", "buy", 1, "o1", 500.91)
     ledger.record_decision(
         decisions.decline("WMT", "BUY", "gross exposure capped", (decisions.POSITION_LIMITS,))
@@ -243,4 +266,84 @@ def test_the_report_ties_the_whole_session_together(ledger):
     assert report["slippage"]["n_measured"] == 1
     assert report["fills"]["n_orders"] == 1
     assert report["costs"]["model_cost_estimate"] == 0.25
-    assert report["declines"] == {"gross exposure capped": 1}
+    assert report["declines"]["gross exposure capped"]["count"] == 1
+
+
+# --- refusal families -------------------------------------------------------------
+def test_refusals_of_one_kind_are_one_row(ledger):
+    """The reported bug: gross-exposure refusals fragmented into sixteen one-off rows
+    because the message embeds the numbers that caused it. Counting messages hides a
+    throttle rather than showing it."""
+    for over in (7_617.12, 7_918.40, 8_004.55):
+        ledger.record_decision(
+            decisions.decline(
+                "WMT",
+                "BUY",
+                f"gross exposure capped: ${over:,.2f} of $7,200.00",
+                (decisions.POSITION_LIMITS,),
+                code=decisions.GROSS_EXPOSURE,
+            )
+        )
+
+    counts = decline_summary(ledger.declines())
+
+    assert list(counts) == [decisions.GROSS_EXPOSURE]
+    assert counts[decisions.GROSS_EXPOSURE]["count"] == 3
+
+
+def test_a_family_keeps_one_example_with_the_numbers(ledger):
+    """The code alone does not say what the limit was or how far over the book had got."""
+    ledger.record_decision(
+        decisions.decline(
+            "WMT",
+            "BUY",
+            "gross exposure capped: $7,617.12 of $7,200.00",
+            (decisions.POSITION_LIMITS,),
+            code=decisions.GROSS_EXPOSURE,
+        )
+    )
+
+    example = decline_summary(ledger.declines())[decisions.GROSS_EXPOSURE]["example"]
+
+    assert "$7,617.12" in example and "$7,200.00" in example
+
+
+def test_different_limits_stay_different_families(ledger):
+    """Grouping must not go so far that a full book and a capped exposure look alike."""
+    for code, reason in [
+        (decisions.GROSS_EXPOSURE, "gross exposure capped: $8,400.00 of $7,200.00"),
+        (decisions.BOOK_FULL, "book is full: 8 of 8 positions already open"),
+        (decisions.NET_EXPOSURE, "net exposure capped: $3,100.00 net long of $2,400.00"),
+    ]:
+        ledger.record_decision(decisions.decline("X", "BUY", reason, (), code=code))
+
+    assert set(decline_summary(ledger.declines())) == {
+        decisions.GROSS_EXPOSURE,
+        decisions.BOOK_FULL,
+        decisions.NET_EXPOSURE,
+    }
+
+
+def test_a_refusal_with_no_code_still_groups_by_its_message(ledger):
+    """Not every decline has a code — the ones whose text carries no numbers do not
+    need one, and must not all collapse into "unknown"."""
+    ledger.record_decision(decisions.decline("X", "BUY", "market is closed", ()))
+
+    assert "market is closed" in decline_summary(ledger.declines())
+
+
+# --- cost model -------------------------------------------------------------------
+def test_the_modelled_cost_names_what_it_leaves_out():
+    """Impact needs the day's volume, which the trade clock does not have when it sizes
+    an order. A total that silently omits it would be read as the whole cost."""
+    summary = cost_summary(
+        [_rows(cost_estimate={"total": 1.5, "commission": 0.5, "spread": 1.0, "excludes": ["impact"]})]
+    )
+
+    assert summary["model_cost_estimate"] == 1.5
+    assert summary["model_excludes"] == ["impact"]
+    assert summary["model_commission"] == 0.5 and summary["model_spread"] == 1.0
+
+
+def test_no_cost_model_reports_nothing_rather_than_zero():
+    assert cost_summary([_rows(cost_estimate=None)])["model_cost_estimate"] is None

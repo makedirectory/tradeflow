@@ -34,6 +34,16 @@ POSITION_LIMITS = "position_limits"
 BROKER = "broker"
 POSITION_MATCH = "position_match"
 
+# Why a refusal happened, as a stable family. The reason *message* embeds the numbers
+# that caused it - "gross exposure capped: $7,617.12 of $7,200.00" - so counting
+# messages turns sixteen refusals of one kind into sixteen rows of one, which hides a
+# throttle rather than showing it. The code groups; the message still explains.
+BOOK_FULL = "book_full"
+GROSS_EXPOSURE = "gross_exposure_capped"
+NET_EXPOSURE = "net_exposure_capped"
+RISK_BUDGET = "risk_budget_exhausted"
+EQUITY_UNREADABLE = "equity_unreadable"
+
 
 @dataclass(frozen=True)
 class OrderPlan:
@@ -89,6 +99,9 @@ class Decision:
     #: for, and a decline with no id cannot be referred to.
     decision_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     plan: Optional[OrderPlan] = None
+    #: Stable family for this outcome, for grouping. ``None`` where the reason text is
+    #: already a fixed phrase with no numbers in it.
+    reason_code: Optional[str] = None
 
     def __bool__(self) -> bool:
         """Truthy when execution acted, so callers can read as `if decision:`."""
@@ -103,6 +116,7 @@ class Decision:
             "guards_consulted": list(self.guards_consulted),
             "order_id": self.order.id if self.order is not None else None,
             "decision_id": self.decision_id,
+            "reason_code": self.reason_code or self.reason,
             "plan": self.plan.as_dict() if self.plan is not None else None,
         }
 
@@ -115,7 +129,10 @@ def allow(symbol, signal, reason, guards, order=None, plan: Optional[OrderPlan] 
     return Decision(symbol, signal, True, reason, guards, order, plan=plan)
 
 
-def decline(symbol, signal, reason, guards, plan: Optional[OrderPlan] = None) -> Decision:
+def decline(symbol, signal, reason, guards, plan=None, code: Optional[str] = None) -> Decision:
     """A refusal. ``plan`` is carried when there was one, so a declined entry still
-    records what it would have sent — otherwise the size a limit rejected is lost."""
-    return Decision(symbol, signal, False, reason, guards, None, plan=plan)
+    records what it would have sent — otherwise the size a limit rejected is lost.
+
+    ``code`` groups refusals of the same kind whose messages differ only in numbers.
+    """
+    return Decision(symbol, signal, False, reason, guards, None, plan=plan, reason_code=code)

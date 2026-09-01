@@ -85,17 +85,23 @@ def fill_summary(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
         if row.get("filled_qty") and row.get("fill_price")
     )
     unfilled = [row for row in rows if not row.get("filled_qty")]
-    partial = [
+    # Two different things, and conflating them reported "0 partial" about a session
+    # where both orders filled in several prints. One is an outcome (the order ended
+    # short of what was asked), the other is a route (it took more than one print to
+    # get there) - and only the first is a problem.
+    short = [
         row
         for row in rows
         if row.get("filled_qty")
         and row.get("submitted_qty")
         and abs(row["filled_qty"]) < abs(row["submitted_qty"]) - 1e-9
     ]
+    multi_print = [row for row in rows if (row.get("n_fill_events") or 0) > 1]
     return {
         "n_orders": len(rows),
         "n_unfilled": len(unfilled),
-        "n_partial": len(partial),
+        "n_short": len(short),
+        "n_multi_print": len(multi_print),
         "submitted_notional": submitted_notional,
         "filled_notional": filled_notional,
         # None rather than 0.0: with nothing submitted there is no ratio to report,
@@ -106,11 +112,17 @@ def fill_summary(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 def cost_summary(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Modelled cost and observed fees, kept apart on purpose."""
-    estimates = _measured(rows, "cost_estimate")
+    estimates = [row["cost_estimate"] for row in rows if isinstance(row.get("cost_estimate"), dict)]
     fees = _measured(rows, "broker_fee")
+    excluded = sorted({part for estimate in estimates for part in estimate.get("excludes", [])})
     return {
         "n_estimated": len(estimates),
-        "model_cost_estimate": sum(estimates) if estimates else None,
+        "model_cost_estimate": sum(e.get("total") or 0.0 for e in estimates) if estimates else None,
+        "model_commission": sum(e.get("commission") or 0.0 for e in estimates) if estimates else None,
+        "model_spread": sum(e.get("spread") or 0.0 for e in estimates) if estimates else None,
+        # Named, so a modelled number that omits a component is not read as the whole
+        # cost. Impact needs the day's volume, which the trade clock does not have.
+        "model_excludes": excluded,
         "n_fees_reported": len(fees),
         "broker_fees": sum(fees) if fees else None,
         # The distinction the operator has to see: a paper venue reports no fees, so
@@ -119,13 +131,25 @@ def cost_summary(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-def decline_summary(declines: List[Dict[str, Any]]) -> Dict[str, int]:
-    """How often each reason stopped a signal, worst first."""
-    counts: Dict[str, int] = {}
+def decline_summary(declines: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """How often each *kind* of refusal stopped a signal, worst first.
+
+    Grouped by the decision's reason code, not its message. The message embeds the
+    numbers that caused it - "gross exposure capped: $7,617.12 of $7,200.00" - so
+    counting messages turned sixteen refusals of one kind into sixteen rows of one,
+    which is the shape that hides a throttle rather than showing it.
+
+    One example message is kept per family, because the code alone does not say what
+    the limit was or how far over it the book had got.
+    """
+    families: Dict[str, Dict[str, Any]] = {}
     for record in declines:
-        reason = str(record.get("reason") or "unknown")
-        counts[reason] = counts.get(reason, 0) + 1
-    return dict(sorted(counts.items(), key=lambda kv: -kv[1]))
+        code = str(record.get("reason_code") or record.get("reason") or "unknown")
+        family = families.setdefault(code, {"count": 0, "example": None})
+        family["count"] += 1
+        if family["example"] is None:
+            family["example"] = record.get("reason")
+    return dict(sorted(families.items(), key=lambda kv: -kv[1]["count"]))
 
 
 def execution_report(

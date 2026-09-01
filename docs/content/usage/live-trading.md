@@ -455,7 +455,75 @@ A ledger containing fill records written before this accounting existed is repor
 reconciliation rather than silently reinterpreted — those records also defaulted every
 side to buy, so their numbers cannot be recovered. Archive the file and start fresh.
 
-## Portfolio limits are enforced live
+## Execution quality
+
+The ledger records enough to reconstruct the whole life of an order: what the strategy
+decided, what was submitted, and what the venue did with it. `tradeflow
+execution-report` rolls that up; `--orders` lists every lifecycle, `--json` emits it
+whole. Both are read-only.
+
+```
+=== Execution quality ===
+  orders                2 submitted, 0 never filled, 0 ended short, 2 filled across several prints
+  notional              $458.73 submitted, $458.71 filled (100.0%)
+  slippage              2 of 2 fills measured
+                        median +4.3 bps, mean +4.3 bps  (positive = worse)
+                        worst +4.3 bps (SBUX), best +4.2 bps
+  decision to fill      2 measured, median 1,845 ms, worst 2,239 ms
+  modelled cost         $0.16 over 2 orders (commission $0.05 + spread $0.11; excludes impact)
+  broker fees           $0.03 over 2 fills
+
+  Signals that produced no order:
+       4  gross_exposure_capped
+          e.g. gross exposure capped: $7,617.12 of $7,200.00
+       1  book_full
+          e.g. book is full: 10 of 10 positions already open
+```
+
+**There are no thresholds here, deliberately.** What counts as bad slippage for a given
+strategy is not knowable from one session, so this reports numbers and declines to grade
+them. Collect a few sessions first.
+
+How the numbers are built, and why:
+
+**Slippage is signed so positive is always worse.** A buy that paid above its reference
+price and a sell that received below it both come out positive. An unsigned measure would
+let a good sell cancel a bad buy in any average taken over it. The reference is the bar
+close the signal fired at — the price the strategy actually decided on.
+
+**The join is derived on read, not written at fill time.** Decision to intent by
+`decision_id`, intent to fill by `order_id`. A process that dies between submitting and
+filling still reconstructs, and nothing in the order path carries state to make the
+arithmetic work.
+
+**"Ended short" and "filled across several prints" are different facts.** An order that
+filled completely across a partial print and a final one is not a problem; one that ended
+short of what was asked for is. Counting only the second and calling it "partial" reports
+`0 partial` for a session where every order took several prints — true of the outcome and
+silent about the route.
+
+**Refusals group by kind, not by message.** A message embeds the numbers that caused it —
+`gross exposure capped: $7,617.12 of $7,200.00` — so counting messages turns sixteen
+refusals of one kind into sixteen rows of one, which hides a throttle rather than showing
+it. Each family keeps one example, because the code alone does not say what the limit was
+or how far over the book had got.
+
+**A modelled cost is never added to an observed fee.** They are separate lines. A paper
+account reports no fees at all, and `None` there means "not reported" — not zero, and it
+must not be averaged as though it were.
+
+The estimate comes from the **same** cost model the research clock charges, built from the
+same `--commission-bps` / `--impact-eta` / `--borrow-bps` a config carries, so the
+modelled number in a live report is comparable with the one a backtest was judged on. A
+second, live-only cost formula would make that comparison meaningless in a way nobody
+would notice. Market impact is excluded and *said* to be excluded: it is a function of how
+much of a day's volume the order demands, and the trade clock has no ADV for a symbol at
+the moment it sizes one.
+
+**Every summary says what it could not measure.** A fill with no recorded price counts as
+unmeasured rather than as zero slippage, and the count leads the line so a tidy average
+over two of twenty fills cannot be read as a verdict. A fill timestamped before its own
+decision is reported as clock skew rather than as negative latency.
 
 ## Portfolio limits are enforced live
 

@@ -45,10 +45,10 @@ def test_a_book_inside_its_gross_cap_can_still_be_refused_for_direction():
         {"AAA": _held(signals.BUY, 40, 100.0)},  # $4,000 long
     )
 
-    breach = trader._limit_breach("BBB", 40, 100.0, _account(), signals.BUY)
+    code, detail = trader._limit_breach("BBB", 40, 100.0, _account(), signals.BUY)
 
-    assert breach is not None and "net exposure" in breach
-    assert "long" in breach  # the direction, not just the number
+    assert code == "net_exposure_capped"  # a stable family, not the dollar text
+    assert "net exposure" in detail and "long" in detail  # the direction, not just a number
 
 
 def test_a_hedge_that_moves_the_book_toward_flat_is_admitted():
@@ -69,9 +69,9 @@ def test_a_short_that_deepens_a_short_tilt_is_refused():
         {"AAA": _held(signals.SELL, 40, 100.0)},
     )
 
-    breach = trader._limit_breach("BBB", 40, 100.0, _account(), signals.SELL)
+    code, detail = trader._limit_breach("BBB", 40, 100.0, _account(), signals.SELL)
 
-    assert breach is not None and "short" in breach
+    assert code == "net_exposure_capped" and "short" in detail
 
 
 def test_the_sign_comes_from_the_recorded_side_not_the_quantity():

@@ -2853,6 +2853,7 @@ def _refuse_inert_flags(args) -> None:
 
 
 def cmd_live(args) -> None:
+    from tradeflow.costs.parametric import ParametricCostModel
     from tradeflow.engine.live import SHUTDOWN_TIMEOUT, BlindStartError, LiveEngine
     from tradeflow.execution.live_trader import LiveTrader
     from tradeflow.services.sizing import build_beta_sizer, build_portfolio_weight_sizer
@@ -2915,7 +2916,19 @@ def cmd_live(args) -> None:
     engine = LiveEngine(
         strategy,
         data_client,
-        LiveTrader(broker, strategy, sizer=sizer, capital=capital),
+        LiveTrader(
+            broker,
+            strategy,
+            sizer=sizer,
+            capital=capital,
+            # Built from the same flags/config a backtest uses, so "modelled cost" in
+            # the execution report means the same thing in both places.
+            cost_model=ParametricCostModel(
+                commission_bps=args.commission_bps,
+                impact_eta=args.impact_eta,
+                annual_borrow_bps=args.borrow_bps,
+            ),
+        ),
         bar_filter=bar_filter,
         ledger=ledger,
         reconcile_every=args.reconcile_every,
@@ -3277,7 +3290,7 @@ def _print_execution_report(report, show_orders: bool = False) -> None:
     print("\n=== Execution quality ===")
     print(
         f"  {'orders':22}{fills['n_orders']} submitted, {fills['n_unfilled']} never filled, "
-        f"{fills['n_partial']} partial"
+        f"{fills['n_short']} ended short, {fills['n_multi_print']} filled across several prints"
     )
     ratio = fills["fill_ratio"]
     print(
@@ -3318,6 +3331,8 @@ def _print_execution_report(report, show_orders: bool = False) -> None:
         f"  {'modelled cost':22}"
         + (
             f"${modelled:,.2f} over {costs['n_estimated']} orders"
+            f" (commission ${costs['model_commission']:,.2f} + spread ${costs['model_spread']:,.2f}"
+            + (f"; excludes {', '.join(costs['model_excludes'])})" if costs["model_excludes"] else ")")
             if modelled is not None
             else "no cost model configured"
         )
@@ -3333,8 +3348,11 @@ def _print_execution_report(report, show_orders: bool = False) -> None:
 
     if report["declines"]:
         print("\n  Signals that produced no order:")
-        for reason, count in report["declines"].items():
-            print(f"    {count:4}  {reason}")
+        for code, family in report["declines"].items():
+            print(f"    {family['count']:4}  {code}")
+            if family["example"]:
+                # One example carries the numbers the code deliberately drops.
+                print(f"          e.g. {family['example']}")
 
     if show_orders and report["orders"]:
         print("\n  Order lifecycles:")
