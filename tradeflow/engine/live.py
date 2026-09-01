@@ -91,7 +91,7 @@ class LiveEngine:
         concurrently with the market-data stream so fills are logged.
         """
         self.strategy.initialize()
-        warmed = self._warm_up(symbols)
+        warmed, _ = self._warm_up(symbols)
         if not warmed and symbols and not self._allow_blind_start:
             # Every indicator would start from nothing. The stream still connects and
             # bars still arrive, so the run looks healthy while every signal it emits
@@ -183,19 +183,24 @@ class LiveEngine:
             logger.info("Resuming with %d open position(s) adopted from the broker", adopted)
 
     def warm_up_coverage(self, symbols: List[str]) -> tuple:
-        """Run the real warm-up and report ``(symbols with history, symbols asked)``.
+        """Run the real warm-up and report ``(with history, fully warmed, asked)``.
+
+        Two counts, not one: a symbol can have bars and still have too few for the
+        indicators to be valid. Reporting only presence would let a short warm-up read
+        as a pass, and "has history" is not the question a preflight is asked.
 
         Deliberately the same call the live path makes, not a lighter probe: a
         preflight that fetches differently from the run it precedes confirms nothing
         about that run. Placing no orders, it is safe to call and then exit.
         """
-        return self._warm_up(symbols), len(symbols)
+        warmed, sufficient = self._warm_up(symbols)
+        return warmed, sufficient, len(symbols)
 
-    def _warm_up(self, symbols: List[str]) -> int:
+    def _warm_up(self, symbols: List[str]) -> tuple:
         """Seed each symbol's rolling buffer so indicators are valid on bar one.
 
-        Returns how many symbols got any history at all, which the caller uses to
-        decide whether there is enough to trade on.
+        Returns ``(symbols with any history, symbols with the full lookback)``. The
+        caller refuses on the first and reports both.
         """
         timeframe = Timeframe.parse(self.strategy.config["timeframe"])
         periods = self.strategy.config.get("required_lookback_periods", 50)
@@ -203,7 +208,7 @@ class LiveEngine:
         end = datetime.now(NEW_YORK)
 
         history = self.data_client.get_bars(symbols, timeframe, start, end)
-        warmed = 0
+        warmed = sufficient = 0
         for symbol in symbols:
             bars = history.get(symbol)
             # A short warm-up is the failure worth shouting about: the strategy runs
@@ -222,10 +227,17 @@ class LiveEngine:
                     periods,
                 )
             else:
+                sufficient += 1
                 logger.info("Warmed up %s with %d bars", symbol, len(bars))
             self.strategy.warm_up(symbol, self.strategy.process_data(bars))
-        logger.info("Warm-up covered %d of %d symbols", warmed, len(symbols))
-        return warmed
+        logger.info(
+            "Warm-up covered %d of %d symbols; %d have the full %d-bar lookback",
+            warmed,
+            len(symbols),
+            sufficient,
+            periods,
+        )
+        return warmed, sufficient
 
     def _on_bar(self, event: BarEvent) -> None:
         """Per-bar callback: validate, update the strategy, act on any signal."""

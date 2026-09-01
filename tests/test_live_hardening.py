@@ -796,6 +796,9 @@ def test_the_preflight_runs_the_same_warm_up_the_run_would():
     preflight that fetches differently from the run it precedes confirms nothing.
     """
     strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    # Fewer bars needed than the feed supplies, so this asserts a genuinely full
+    # warm-up rather than passing because both counts happen to be short.
+    strategy.config["required_lookback_periods"] = 5
     feed = ScriptedFeed(["AAA", "BBB"], events=[bar_event(minute=1)], n=10, freq="1D")
     engine = LiveEngine(
         strategy,
@@ -803,7 +806,27 @@ def test_the_preflight_runs_the_same_warm_up_the_run_would():
         LiveTrader(RecordingBroker(), strategy, respect_market_hours=False),
     )
 
-    assert engine.warm_up_coverage(["AAA", "BBB"]) == (2, 2)
+    assert engine.warm_up_coverage(["AAA", "BBB"]) == (2, 2, 2)
+
+
+def test_a_short_warm_up_is_counted_apart_from_a_full_one():
+    """The gap: coverage counted symbols with *any* history, so a symbol warmed with a
+    third of the bars its indicators need was reported identically to one warmed in
+    full. Presence is not sufficiency, and a preflight that conflates them reads as a
+    pass on a book that is not ready."""
+    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy.config["required_lookback_periods"] = 8
+    feed = ScriptedFeed(["AAA"], events=[bar_event(minute=1)], n=4, freq="1D")
+    engine = LiveEngine(
+        strategy,
+        MarketDataClient(feed),
+        LiveTrader(RecordingBroker(), strategy, respect_market_hours=False),
+    )
+
+    warmed, sufficient, asked = engine.warm_up_coverage(["AAA"])
+
+    assert (warmed, asked) == (1, 1)  # it has history...
+    assert sufficient == 0  # ...and not enough of it
 
 
 def test_the_preflight_reports_a_blind_warm_up_without_raising():
@@ -811,4 +834,4 @@ def test_the_preflight_reports_a_blind_warm_up_without_raising():
     lose the rest of the contract it exists to print."""
     engine, _ = _blind_engine()
 
-    assert engine.warm_up_coverage(["AAA"]) == (0, 1)
+    assert engine.warm_up_coverage(["AAA"]) == (0, 0, 1)

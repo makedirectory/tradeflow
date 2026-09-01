@@ -2922,8 +2922,15 @@ def cmd_live(args) -> None:
     )
 
     if getattr(args, "preflight", False):
-        warmed, asked = engine.warm_up_coverage(universe)
+        warmed, sufficient, asked = engine.warm_up_coverage(universe)
+        needed = strategy.config.get("required_lookback_periods", 50)
         print(f"\n  {'warm-up coverage':22}{warmed} of {asked} symbols have history")
+        # Presence is not sufficiency. A symbol can warm up with too few bars for its
+        # indicators to be valid, and the run would only warn about it at start - so a
+        # coverage line counting bars-or-not would read as a pass on a book that is not.
+        short = warmed - sufficient
+        detail = f"{sufficient} of {asked} have the full {needed}-bar lookback"
+        print(f"  {'':22}{detail}{f' ({short} short)' if short else ''}")
         if not warmed and asked:
             # The same verdict the run would reach, reached before it starts.
             print(

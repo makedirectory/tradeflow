@@ -235,6 +235,7 @@ Every live run prints what it is about to do, before any order logic runs:
   halt state            ~/.tradeflow/logs/halts.json
 
   warm-up coverage      61 of 61 symbols have history
+                        60 of 61 have the full 102-bar lookback (1 short)
 ```
 
 Under `--preflight` the last line runs the **same warm-up the live path runs** and
@@ -243,6 +244,12 @@ confirmed before dropping the flag. A lighter probe would not do: a preflight th
 fetches differently from the run it precedes confirms nothing about that run. It
 reports rather than refuses — the refusal belongs to the start path, and a preflight
 that raised would lose the rest of the contract it exists to print.
+
+Both counts are printed because presence is not sufficiency: a symbol can warm up with
+too few bars for its indicators to be valid, and a line counting only bars-or-not would
+read as a pass on a book that is not ready. A short warm-up still trades — it is a
+warning, not a refusal — so it is worth knowing which names are running on thin
+history before the flag comes off.
 
 `--preflight` prints it and exits without starting anything. It is printed on every run
 regardless, because a check you have to remember to ask for is one that gets skipped
