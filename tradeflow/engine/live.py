@@ -198,6 +198,11 @@ class LiveEngine:
                     order_id=update.order_id,
                     status=str(update.status),
                     basis=CUMULATIVE,
+                    # The average across the order, to pair with the cumulative
+                    # quantity beside it; this event's own print is the fallback.
+                    fill_price=getattr(update, "filled_avg_price", None) or getattr(update, "price", None),
+                    filled_at=getattr(update, "filled_at", None),
+                    broker_fee=getattr(update, "fee", None),
                 )
         except Exception:  # noqa: BLE001 - bookkeeping never breaks the order path
             logger.warning("Could not record a fill in the position ledger", exc_info=True)
@@ -366,7 +371,7 @@ class LiveEngine:
             if not decision:
                 logger.info("%s", decision)
             self._record_decision(decision)
-            self._record_intent(event.symbol, signal, decision.order)
+            self._record_intent(event.symbol, signal, decision.order, decision)
         await self._maybe_reconcile()
 
     def _record_decision(self, decision) -> None:
@@ -384,13 +389,25 @@ class LiveEngine:
         except Exception:  # noqa: BLE001 - bookkeeping never breaks the order path
             logger.warning("Could not record the execution decision", exc_info=True)
 
-    def _record_intent(self, symbol: str, signal: str, order) -> None:
-        """Note what we asked for, so a fill that never arrives is detectable."""
+    def _record_intent(self, symbol: str, signal: str, order, decision=None) -> None:
+        """Note what we asked for, so a fill that never arrives is detectable.
+
+        Carries the decision's id and the plan it built, which is what lets the ledger
+        join a decision to the order it produced and the fills that followed.
+        """
         if self.ledger is None:
             return
         try:
             if order is not None:
-                self.ledger.record_intent(symbol, order.side.value, order.qty, order_id=order.id)
+                plan = getattr(decision, "plan", None)
+                self.ledger.record_intent(
+                    symbol,
+                    order.side.value,
+                    order.qty,
+                    order_id=order.id,
+                    decision_id=getattr(decision, "decision_id", None),
+                    plan=plan.as_dict() if plan is not None else None,
+                )
             elif signal in signals.EXIT_SIGNALS:
                 self.ledger.record_close(symbol)
         except Exception:  # noqa: BLE001 - bookkeeping never breaks the order path

@@ -95,7 +95,18 @@ def _engine(tmp_path):
 
 
 def _update(**kwargs):
-    base = dict(event="fill", symbol="NKE", order_id="o1", status="filled", filled_qty=31.0, side="sell")
+    base = dict(
+        event="fill",
+        symbol="NKE",
+        order_id="o1",
+        status="filled",
+        filled_qty=31.0,
+        side="sell",
+        filled_avg_price=None,
+        price=None,
+        filled_at=None,
+        fee=None,
+    )
     return TradeUpdate(**{**base, **kwargs})
 
 
@@ -187,3 +198,61 @@ def test_no_ledger_is_not_an_error(tmp_path):
     )
 
     asyncio.run(engine._on_trade_update(_update()))  # must not raise
+
+
+# --- execution telemetry ----------------------------------------------------------
+def test_the_fill_price_reaches_the_ledger(tmp_path):
+    """TradeUpdate carried a price all along and the ledger discarded it, so the run
+    could prove what filled but not what it cost."""
+    engine, ledger = _engine(tmp_path)
+
+    asyncio.run(
+        engine._on_trade_update(_update(symbol="MSFT", side="buy", filled_qty=1.0, filled_avg_price=500.91))
+    )
+
+    (record,) = [r for r in ledger._read() if r["event"] == "fill"]
+    assert record["fill_price"] == 500.91
+
+
+def test_the_average_price_is_preferred_over_this_event_s_print(tmp_path):
+    """filled_qty is cumulative, so the price beside it must be the average across the
+    order — pairing a running total with one print's price misstates the cost."""
+    engine, ledger = _engine(tmp_path)
+
+    asyncio.run(
+        engine._on_trade_update(_update(symbol="MSFT", filled_qty=2.0, price=499.00, filled_avg_price=500.50))
+    )
+
+    (record,) = [r for r in ledger._read() if r["event"] == "fill"]
+    assert record["fill_price"] == 500.50
+
+
+def test_a_venue_fee_that_is_not_reported_stays_none(tmp_path):
+    """None means "not reported", which every paper fill is, and which is not zero."""
+    engine, ledger = _engine(tmp_path)
+
+    asyncio.run(engine._on_trade_update(_update(filled_qty=1.0)))
+
+    (record,) = [r for r in ledger._read() if r["event"] == "fill"]
+    assert record["broker_fee"] is None
+
+
+def test_the_mapping_carries_price_time_and_fee():
+    """All three were dropped by the old closure-bound mapping."""
+
+    class Order(_Order):
+        def __init__(self):
+            super().__init__(side=_Side.BUY, filled_qty="2", symbol="MSFT")
+            self.filled_avg_price = "500.50"
+
+    class Payload(_Payload):
+        def __init__(self):
+            super().__init__(Order())
+            self.timestamp = "2026-09-01T17:13:00.850000+00:00"
+            self.fee = "0.35"
+
+    update = to_trade_update(Payload())
+
+    assert update.filled_avg_price == 500.50
+    assert update.filled_at == "2026-09-01T17:13:00.850000+00:00"
+    assert update.fee == 0.35

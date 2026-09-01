@@ -15,6 +15,7 @@ stops being applied and nobody notices.
 Trade-clock code: plain stdlib, no research imports, nothing that can block.
 """
 
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Tuple
 
@@ -35,6 +36,45 @@ POSITION_MATCH = "position_match"
 
 
 @dataclass(frozen=True)
+class OrderPlan:
+    """What execution intended to send, recorded whether or not the venue took it.
+
+    Separate from the :class:`~tradeflow.brokers.base.OrderResult` the broker returns,
+    because the interesting comparison is between the two. A result alone cannot say
+    what price the decision was made at, and so cannot say what the fill cost relative
+    to it.
+    """
+
+    side: str
+    qty: float
+    #: The price the signal fired at — the bar close execution decided on. Everything
+    #: called "slippage" downstream is measured against this and nothing else.
+    reference_price: float
+    order_type: str = "bracket"
+    time_in_force: str = "day"
+    stop_loss: Optional[float] = None
+    take_profit: Optional[float] = None
+    client_order_id: Optional[str] = None
+    #: What the cost model expected this to cost. Deliberately not stored in the same
+    #: field as a broker fee: a paper venue reports no fees, and collapsing the two
+    #: would make a modelled number look like an observed one.
+    cost_estimate: Optional[float] = None
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {
+            "side": self.side,
+            "qty": self.qty,
+            "reference_price": self.reference_price,
+            "order_type": self.order_type,
+            "time_in_force": self.time_in_force,
+            "stop_loss": self.stop_loss,
+            "take_profit": self.take_profit,
+            "client_order_id": self.client_order_id,
+            "cost_estimate": self.cost_estimate,
+        }
+
+
+@dataclass(frozen=True)
 class Decision:
     """The outcome of handing one signal to execution."""
 
@@ -44,6 +84,11 @@ class Decision:
     reason: str
     guards_consulted: Tuple[str, ...] = field(default_factory=tuple)
     order: Optional[OrderResult] = None
+    #: Joins this decision to the intent and the fills that follow it. Generated for
+    #: declines too — "why did nothing happen" is the question the audit trail exists
+    #: for, and a decline with no id cannot be referred to.
+    decision_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    plan: Optional[OrderPlan] = None
 
     def __bool__(self) -> bool:
         """Truthy when execution acted, so callers can read as `if decision:`."""
@@ -57,6 +102,8 @@ class Decision:
             "reason": self.reason,
             "guards_consulted": list(self.guards_consulted),
             "order_id": self.order.id if self.order is not None else None,
+            "decision_id": self.decision_id,
+            "plan": self.plan.as_dict() if self.plan is not None else None,
         }
 
     def __str__(self) -> str:
@@ -64,9 +111,11 @@ class Decision:
         return f"{self.signal} {self.symbol}: {verdict} — {self.reason}"
 
 
-def allow(symbol: str, signal: str, reason: str, guards: Tuple[str, ...], order=None) -> Decision:
-    return Decision(symbol, signal, True, reason, guards, order)
+def allow(symbol, signal, reason, guards, order=None, plan: Optional[OrderPlan] = None) -> Decision:
+    return Decision(symbol, signal, True, reason, guards, order, plan=plan)
 
 
-def decline(symbol: str, signal: str, reason: str, guards: Tuple[str, ...]) -> Decision:
-    return Decision(symbol, signal, False, reason, guards, None)
+def decline(symbol, signal, reason, guards, plan: Optional[OrderPlan] = None) -> Decision:
+    """A refusal. ``plan`` is carried when there was one, so a declined entry still
+    records what it would have sent — otherwise the size a limit rejected is lost."""
+    return Decision(symbol, signal, False, reason, guards, None, plan=plan)

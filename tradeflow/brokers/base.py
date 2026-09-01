@@ -96,6 +96,16 @@ class TradeUpdate:
     #: "buy" / "sell". Without it a short fill is indistinguishable from a long one,
     #: and anything defaulting the side records the whole book long.
     side: Optional[str] = None
+    #: Average price across everything filled on this order so far. Pairs with
+    #: ``filled_qty``, which is also cumulative; ``price`` is this event's own print.
+    filled_avg_price: Optional[float] = None
+    #: When the venue reported the fill, as an ISO timestamp. Distinct from when we
+    #: recorded it — the gap between the two is latency we would otherwise attribute
+    #: to the venue.
+    filled_at: Optional[str] = None
+    #: What the venue charged, when it says. ``None`` means "not reported", which a
+    #: paper account always does, and which is not the same as zero.
+    fee: Optional[float] = None
 
 
 #: A trade-update handler may be sync or async.

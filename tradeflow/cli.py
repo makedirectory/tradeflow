@@ -3242,6 +3242,116 @@ def cmd_reconcile(args) -> None:
         raise SystemExit(1)
 
 
+def cmd_execution_report(args) -> None:
+    """What the live path actually did, rolled up from the ledger.
+
+    Read-only, and deliberately ungraded. What counts as bad slippage for a given
+    strategy is not knowable from one session, so this reports the numbers and leaves
+    the thresholds to somebody who has seen a few.
+    """
+    import json
+
+    from tradeflow.analytics.execution_quality import execution_report
+    from tradeflow.execution.ledger import PositionLedger
+
+    ledger = PositionLedger(args.ledger)
+    report = execution_report(ledger.lifecycles(), ledger.declines())
+    if args.json:
+        print(json.dumps(report, indent=2, default=str))
+        return
+    _print_execution_report(report, show_orders=args.orders)
+
+
+def _fmt(value, spec: str = ",.2f", missing: str = "not measured") -> str:
+    """Absent is not zero, and must not be rendered as a number."""
+    return missing if value is None else format(value, spec)
+
+
+def _print_execution_report(report, show_orders: bool = False) -> None:
+    slippage, latency, fills, costs = (
+        report["slippage"],
+        report["latency"],
+        report["fills"],
+        report["costs"],
+    )
+    print("\n=== Execution quality ===")
+    print(
+        f"  {'orders':22}{fills['n_orders']} submitted, {fills['n_unfilled']} never filled, "
+        f"{fills['n_partial']} partial"
+    )
+    ratio = fills["fill_ratio"]
+    print(
+        f"  {'notional':22}${fills['submitted_notional']:,.2f} submitted, "
+        f"${fills['filled_notional']:,.2f} filled" + (f" ({ratio:.1%})" if ratio is not None else "")
+    )
+
+    # The count leads, so a tidy-looking average over two of twenty fills cannot be
+    # read as a verdict on the session.
+    measured = f"{slippage['n_measured']} of {slippage['n_filled']} fills measured"
+    if slippage["n_unmeasured"]:
+        measured += f"; {slippage['n_unmeasured']} carried no price"
+    print(f"  {'slippage':22}{measured}")
+    if slippage["n_measured"]:
+        print(
+            f"  {'':22}median {_fmt(slippage['median_bps'], '+.1f')} bps, "
+            f"mean {_fmt(slippage['mean_bps'], '+.1f')} bps  (positive = worse)"
+        )
+        print(
+            f"  {'':22}worst {_fmt(slippage['worst_bps'], '+.1f')} bps "
+            f"({slippage['worst_symbol']}), best {_fmt(slippage['best_bps'], '+.1f')} bps"
+        )
+
+    timing = f"{latency['n_measured']} measured"
+    if latency["n_clock_skew"]:
+        # Named rather than dropped: a fill timed before its decision means the two
+        # clocks disagree, which is worth knowing and is not a latency.
+        timing += f"; {latency['n_clock_skew']} unusable (venue clock behind ours)"
+    if latency["n_measured"]:
+        timing += (
+            f", median {_fmt(latency['median_ms'], ',.0f')} ms, worst {_fmt(latency['worst_ms'], ',.0f')} ms"
+        )
+    print(f"  {'decision to fill':22}{timing}")
+
+    # Never summed: one is a prediction, the other an observation.
+    modelled = costs["model_cost_estimate"]
+    print(
+        f"  {'modelled cost':22}"
+        + (
+            f"${modelled:,.2f} over {costs['n_estimated']} orders"
+            if modelled is not None
+            else "no cost model configured"
+        )
+    )
+    print(
+        f"  {'broker fees':22}"
+        + (
+            f"${costs['broker_fees']:,.2f} over {costs['n_fees_reported']} fills"
+            if costs["fees_reported"]
+            else "not reported by this venue — not the same as zero"
+        )
+    )
+
+    if report["declines"]:
+        print("\n  Signals that produced no order:")
+        for reason, count in report["declines"].items():
+            print(f"    {count:4}  {reason}")
+
+    if show_orders and report["orders"]:
+        print("\n  Order lifecycles:")
+        header = (
+            f"    {'SYMBOL':8}{'SIDE':6}{'SUBMIT':>8}{'FILLED':>8}{'REF':>11}{'FILL':>11}{'BPS':>9}{'MS':>12}"
+        )
+        print(header)
+        for row in report["orders"]:
+            print(
+                f"    {str(row['symbol']):8}{str(row['side']):6}"
+                f"{_fmt(row['submitted_qty'], 'g', '-'):>8}{_fmt(row['filled_qty'], 'g', '-'):>8}"
+                f"{_fmt(row['reference_price'], ',.2f', '-'):>11}{_fmt(row['fill_price'], ',.2f', '-'):>11}"
+                f"{_fmt(row['slippage_bps'], '+.1f', '-'):>9}"
+                f"{_fmt(row['decision_to_fill_ms'], ',.0f', '-'):>12}"
+            )
+
+
 def cmd_demo(args) -> None:
     """Run the whole pipeline on synthetic data - no Alpaca keys, no network.
 
@@ -4008,6 +4118,17 @@ def build_parser() -> argparse.ArgumentParser:
     reconcile.add_argument("--ledger", default=None, help="Ledger path (default: logs/position_ledger.jsonl)")
     reconcile.add_argument("--json", action="store_true", help="Emit the report as JSON")
     reconcile.set_defaults(func=cmd_reconcile)
+
+    execution = subparsers.add_parser(
+        "execution-report",
+        help="Summarise how well the live path executed, from the ledger — read-only",
+    )
+    execution.add_argument("--ledger", default=None, help="Ledger path (default: logs/position_ledger.jsonl)")
+    execution.add_argument("--json", action="store_true", help="Emit the report as JSON")
+    execution.add_argument(
+        "--orders", action="store_true", help="List every order's lifecycle, not just the summary"
+    )
+    execution.set_defaults(func=cmd_execution_report)
 
     scan = subparsers.add_parser("scan", help="Run the universe scanner only")
     scan.add_argument("--scanner", default="volume")

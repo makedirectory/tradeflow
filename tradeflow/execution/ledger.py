@@ -52,6 +52,33 @@ QUANTITY_DRIFT = "quantity_drift"  # both agree it exists, at different sizes
 _LOCK = threading.Lock()
 
 
+def slippage_bps(side: Optional[str], reference_price, fill_price) -> Optional[float]:
+    """Adverse price movement between deciding and filling, in basis points.
+
+    Signed so that **positive is always worse**, whichever way the trade went: a buy
+    that paid more than the reference price and a sell that received less both come
+    out positive. An unsigned measure would let a good sell cancel a bad buy in any
+    average taken over it.
+
+    ``None`` when either price is missing — absent is not zero, and a fill with no
+    recorded price must not read as one that filled exactly on reference.
+    """
+    if not reference_price or fill_price is None:
+        return None
+    direction = 1.0 if str(side).lower() in {"buy", "long"} else -1.0
+    return direction * (float(fill_price) - float(reference_price)) / float(reference_price) * 10_000.0
+
+
+def _elapsed_ms(start: Optional[str], end: Optional[str]) -> Optional[float]:
+    """Milliseconds between two ISO timestamps, or None if either is missing."""
+    if not start or not end:
+        return None
+    try:
+        return (datetime.fromisoformat(end) - datetime.fromisoformat(start)).total_seconds() * 1000.0
+    except ValueError:
+        return None
+
+
 def default_ledger_path() -> Path:
     """Where the ledger lives — beside the research journal, under the state root."""
     from tradeflow.settings import state_path
@@ -121,10 +148,32 @@ class PositionLedger:
     # ------------------------------------------------------------------ #
     # Writing
     # ------------------------------------------------------------------ #
-    def record_intent(self, symbol: str, side: str, qty: float, order_id: Optional[str] = None) -> None:
-        """An order we submitted. Written at submission, before any fill is known."""
+    def record_intent(
+        self,
+        symbol: str,
+        side: str,
+        qty: float,
+        order_id: Optional[str] = None,
+        decision_id: Optional[str] = None,
+        plan: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """An order we submitted. Written at submission, before any fill is known.
+
+        ``decision_id`` and ``order_id`` are what make the lifecycle reconstructable:
+        the decision says what the strategy wanted, this says what was sent, and the
+        fills that follow carry the same ``order_id``. Without the pair, "what did we
+        expect, what did we submit, what did the broker do" is three separate guesses.
+        """
         self._append(
-            {"event": "intent", "symbol": symbol, "side": side, "qty": float(qty), "order_id": order_id}
+            {
+                "event": "intent",
+                "symbol": symbol,
+                "side": side,
+                "qty": float(qty),
+                "order_id": order_id,
+                "decision_id": decision_id,
+                **({"plan": plan} if plan else {}),
+            }
         )
 
     def record_fill(
@@ -135,6 +184,9 @@ class PositionLedger:
         order_id: Optional[str] = None,
         status: str = "filled",
         basis: str = CUMULATIVE,
+        fill_price: Optional[float] = None,
+        filled_at: Optional[str] = None,
+        broker_fee: Optional[float] = None,
     ) -> None:
         """A fill (or partial fill) the broker reported.
 
@@ -152,6 +204,12 @@ class PositionLedger:
                 "order_id": order_id,
                 "status": status,
                 "basis": basis,
+                "fill_price": fill_price,
+                "filled_at": filled_at,
+                # Separate from the model's estimate on the intent. A paper venue
+                # reports no fees, and ``None`` there means "not reported", which is
+                # not the same as zero and must not be averaged as though it were.
+                "broker_fee": broker_fee,
             }
         )
 
@@ -279,6 +337,79 @@ class PositionLedger:
                 continue  # superseded by a close or an adoption
             net[entry["symbol"]] = net.get(entry["symbol"], 0.0) + entry["qty"]
         return {s: q for s, q in net.items() if abs(q) > 1e-9}, legacy
+
+    # ------------------------------------------------------------------ #
+    # Execution quality
+    # ------------------------------------------------------------------ #
+    def lifecycles(self) -> List[Dict[str, Any]]:
+        """One row per submitted order: what was decided, sent, and filled.
+
+        The join the ledger exists to make possible — decision to intent by
+        ``decision_id``, intent to fill by ``order_id``. Derived here rather than
+        written at fill time so it is correct across a restart: a process that dies
+        between submitting and filling still has both halves on disk, and nothing in
+        the order path has to carry state to make the arithmetic work.
+        """
+        decisions: Dict[str, Dict[str, Any]] = {}
+        intents: Dict[str, Dict[str, Any]] = {}
+        fills: Dict[str, List[Dict[str, Any]]] = {}
+        for record in self._read():
+            event = record.get("event")
+            if event == "decision" and record.get("decision_id"):
+                decisions[record["decision_id"]] = record
+            elif event == "intent" and record.get("order_id"):
+                intents[record["order_id"]] = record
+            elif event == "fill" and record.get("order_id"):
+                fills.setdefault(record["order_id"], []).append(record)
+
+        rows = []
+        for order_id, intent in intents.items():
+            plan = intent.get("plan") or {}
+            decision = decisions.get(intent.get("decision_id")) or {}
+            order_fills = fills.get(order_id, [])
+            # Cumulative reporting again: the last fill is the whole truth about the
+            # order, so filled quantity is its quantity, not the sum of the reports.
+            last = order_fills[-1] if order_fills else None
+            reference = plan.get("reference_price")
+            fill_price = last.get("fill_price") if last else None
+            rows.append(
+                {
+                    "order_id": order_id,
+                    "decision_id": intent.get("decision_id"),
+                    "symbol": intent.get("symbol"),
+                    "side": intent.get("side"),
+                    "submitted_qty": intent.get("qty"),
+                    "filled_qty": last.get("qty") if last else 0.0,
+                    "reference_price": reference,
+                    "fill_price": fill_price,
+                    "slippage_bps": slippage_bps(intent.get("side"), reference, fill_price),
+                    "submitted_at": intent.get("ts"),
+                    "decided_at": decision.get("ts") or intent.get("ts"),
+                    "filled_at": last.get("filled_at") or last.get("ts") if last else None,
+                    "decision_to_fill_ms": _elapsed_ms(
+                        decision.get("ts") or intent.get("ts"),
+                        (last.get("filled_at") or last.get("ts")) if last else None,
+                    ),
+                    "n_fill_events": len(order_fills),
+                    "order_type": plan.get("order_type"),
+                    "time_in_force": plan.get("time_in_force"),
+                    "stop_loss": plan.get("stop_loss"),
+                    "take_profit": plan.get("take_profit"),
+                    "client_order_id": plan.get("client_order_id"),
+                    "cost_estimate": plan.get("cost_estimate"),
+                    "broker_fee": last.get("broker_fee") if last else None,
+                    "reason": decision.get("reason"),
+                }
+            )
+        return rows
+
+    def declines(self) -> List[Dict[str, Any]]:
+        """Decisions that produced no order, with the reason each gave."""
+        return [
+            record
+            for record in self._read()
+            if record.get("event") == "decision" and not record.get("allowed")
+        ]
 
     def _read(self) -> Iterable[Dict[str, Any]]:
         if not self.path.exists():

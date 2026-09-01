@@ -116,6 +116,23 @@ class LiveTrader:
         self._strategy.positions = book
         return len(book)
 
+    def _cost_estimate(self, qty: float, price: float) -> Optional[float]:
+        """What the strategy's cost model expects this entry to cost, if it has one.
+
+        Recorded beside the broker's own fee rather than merged with it: the model is a
+        prediction and the fee is an observation, and a paper venue reports no fee at
+        all. Averaging the two together would quietly turn the prediction into evidence.
+        """
+        cost = self._strategy.config.get("cost")
+        if not isinstance(cost, dict):
+            return None
+        notional = abs(qty) * price
+        commission = float(cost.get("commission_per_share") or 0.0) * abs(qty)
+        spread = float(cost.get("spread_pct") or 0.0) * notional
+        slippage = float(cost.get("slippage_pct") or 0.0) * notional
+        total = commission + spread + slippage
+        return total or None
+
     def refresh_position(self, symbol: str) -> bool:
         """Re-read one symbol from the broker and update the book. Returns True if held.
 
@@ -281,6 +298,16 @@ class LiveTrader:
         )
         guards.append(decisions.BROKER)
         order_id = client_order_id(self._strategy, symbol, signal, bar_timestamp)
+        # Built before submission so a refusal still records what would have been sent.
+        plan = decisions.OrderPlan(
+            side=side.value,
+            qty=qty,
+            reference_price=price,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            client_order_id=order_id,
+            cost_estimate=self._cost_estimate(qty, price),
+        )
         try:
             order = self._broker.submit_bracket_order(
                 symbol, qty, side, stop_loss, take_profit, client_order_id=order_id
@@ -289,12 +316,12 @@ class LiveTrader:
             # Not a failure: the venue already holds this exact order. Resubmitting is
             # the one thing that must not happen, and the book should still reflect it.
             logger.info("Entry for %s already placed (order id %s); leaving it alone", symbol, order_id)
-            return decisions.decline(symbol, signal, "already placed at the broker", tuple(guards))
+            return decisions.decline(symbol, signal, "already placed at the broker", tuple(guards), plan)
         except BrokerError as exc:
             logger.error("Entry for %s refused: %s (%s)", symbol, exc, type(exc).__name__)
-            return decisions.decline(symbol, signal, f"broker refused: {exc}", tuple(guards))
+            return decisions.decline(symbol, signal, f"broker refused: {exc}", tuple(guards), plan)
         if order is None:
-            return decisions.decline(symbol, signal, "broker returned no order", tuple(guards))
+            return decisions.decline(symbol, signal, "broker returned no order", tuple(guards), plan)
 
         # Intent, not truth: the order is submitted, not filled. Recording it now is
         # what lets the strategy recognize its own position on the very next bar and
@@ -307,7 +334,7 @@ class LiveTrader:
             "stop_loss": stop_loss,
             "take_profit": take_profit,
         }
-        return decisions.allow(symbol, signal, f"entered {qty} @ ~${price:.2f}", tuple(guards), order)
+        return decisions.allow(symbol, signal, f"entered {qty} @ ~${price:.2f}", tuple(guards), order, plan)
 
     def _handle_exit(
         self,

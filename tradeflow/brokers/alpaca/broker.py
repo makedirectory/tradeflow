@@ -112,6 +112,13 @@ def _enum_value(obj, name: str) -> str:
     return str(getattr(raw, "value", raw) or "")
 
 
+def _timestamp(value) -> Optional[str]:
+    """An ISO timestamp from whatever shape the SDK hands over, or None."""
+    if value is None:
+        return None
+    return value.isoformat() if hasattr(value, "isoformat") else str(value)
+
+
 def to_trade_update(data) -> TradeUpdate:
     """Convert one Alpaca trade-update payload into the project's TradeUpdate.
 
@@ -132,6 +139,10 @@ def to_trade_update(data) -> TradeUpdate:
         filled_qty=safe_float(getattr(order, "filled_qty", 0)),
         price=safe_float(getattr(data, "price", None)) if getattr(data, "price", None) else None,
         side=_enum_value(order, "side") or None,
+        filled_avg_price=safe_float(getattr(order, "filled_avg_price", None)),
+        filled_at=_timestamp(getattr(data, "timestamp", None))
+        or _timestamp(getattr(order, "filled_at", None)),
+        fee=safe_float(getattr(data, "fee", None)),
     )
 
 
