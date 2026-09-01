@@ -2923,10 +2923,13 @@ def cmd_live(args) -> None:
             capital=capital,
             # Built from the same flags/config a backtest uses, so "modelled cost" in
             # the execution report means the same thing in both places.
+            # getattr, not attribute access: a caller that builds args without the
+            # cost flags gets the model's own defaults rather than an AttributeError
+            # on the way into the order path.
             cost_model=ParametricCostModel(
-                commission_bps=args.commission_bps,
-                impact_eta=args.impact_eta,
-                annual_borrow_bps=args.borrow_bps,
+                commission_bps=getattr(args, "commission_bps", 1.0),
+                impact_eta=getattr(args, "impact_eta", 0.3),
+                annual_borrow_bps=getattr(args, "borrow_bps", 50.0),
             ),
         ),
         bar_filter=bar_filter,
@@ -3105,6 +3108,13 @@ def _print_live_preflight(args, strategy, broker, universe, capital, ledger) -> 
     # account entitled to one and not the other warms up on nothing and streams fine.
     feed = _live_feed(args)
     print(f"  {'data feed':22}{feed or 'SDK default (full tape for history, IEX for the stream)'}")
+    # Telemetry only — it prices nothing and changes no order. Printed because a cost
+    # model that silently was not configured is exactly what this line exists to catch.
+    print(
+        f"  {'cost model':22}{getattr(args, 'commission_bps', 1.0):g} bps commission, "
+        f"eta {getattr(args, 'impact_eta', 0.3):g}, borrow {getattr(args, 'borrow_bps', 50.0):g} bps"
+        f"  (recorded, not charged)"
+    )
 
     # Absent is not zero: a limit nobody declared is unbounded, and must not read as 0.
     def _limit(value, render):
@@ -3669,7 +3679,14 @@ def _add_neutralize_factors_flag(parser, note: str = "") -> None:
 def _add_cost_flags(parser) -> None:
     """--gross/--commission-bps/--impact-eta/--borrow-bps, shared by every command
     that can price a fill (backtest/optimize/walkforward) so a search or
-    validation is never silently gross by omission."""
+    validation is never silently gross by omission.
+
+    ``live`` takes them too. It prices nothing — the venue does that — but it records
+    what the model *expected* a fill to cost beside what it actually cost, and that
+    comparison is meaningless unless both sides came from the same parameters. Defining
+    them here is also what lets a saved config's ``cost`` block reach a live run:
+    :func:`apply_run_config` only layers a field the command actually has.
+    """
     parser.add_argument(
         "--gross",
         action="store_true",
@@ -4104,6 +4121,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Seconds between position-reconciliation sweeps (0 disables). Reports divergence "
         "from the broker's account state; never corrects it",
     )
+    _add_cost_flags(live)
     live.set_defaults(func=cmd_live)
 
     halt = subparsers.add_parser(

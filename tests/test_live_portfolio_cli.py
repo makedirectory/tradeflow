@@ -393,3 +393,64 @@ def test_preflight_shows_the_directional_cap_gross_cannot_see(capsys, monkeypatc
 
     printed = capsys.readouterr().out
     assert "max net exposure" in printed and "$2,400.00" in printed  # 30% of $8,000
+
+
+# --- cmd_live wiring --------------------------------------------------------------
+def _run_cmd_live(monkeypatch, capsys, argv, tmp_path):
+    """Drive `cmd_live` itself, with fakes behind the broker and data client.
+
+    Nothing exercised this function end to end: the preflight tests call the printer
+    directly, and every other live test constructs LiveEngine by hand. So a reference
+    to an argparse field the live parser did not define crashed a real run while 1256
+    tests stayed green.
+    """
+    from tests.fakes import DictMarketData, FakeBroker
+    from tradeflow import cli
+    from tradeflow.marketdata.client import MarketDataClient
+
+    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
+    monkeypatch.setattr("tradeflow.settings.paper_trade_mode", lambda: True)
+    monkeypatch.setattr(
+        cli, "build_data_and_broker", lambda **kwargs: (FakeBroker(), MarketDataClient(DictMarketData({})))
+    )
+    cli.cmd_live(cli.parse_cli(argv))
+    return capsys.readouterr().out
+
+
+def test_a_preflight_run_reaches_the_end_without_touching_the_order_path(monkeypatch, capsys, tmp_path):
+    """The bug: `live` crashed with AttributeError on args.commission_bps after the
+    preflight had already printed, so the failure looked like a preflight problem and
+    there was no CLI workaround — the flag did not exist on this parser at all."""
+    printed = _run_cmd_live(
+        monkeypatch,
+        capsys,
+        ["live", "--strategy", "ma_crossover", "--scanner", "none", "--symbols", "AAA", "--preflight"],
+        tmp_path,
+    )
+
+    assert "=== Live preflight ===" in printed
+    assert "nothing was started and no order path ran" in printed
+
+
+def test_the_cost_parameters_a_live_run_records_are_stated_up_front(monkeypatch, capsys, tmp_path):
+    """A cost model that silently was not configured is what this line exists to catch."""
+    printed = _run_cmd_live(
+        monkeypatch,
+        capsys,
+        ["live", "--scanner", "none", "--symbols", "AAA", "--commission-bps", "2.5", "--preflight"],
+        tmp_path,
+    )
+
+    assert "cost model" in printed and "2.5 bps commission" in printed
+    # Stated as telemetry, because it prices nothing and changes no order.
+    assert "not charged" in printed
+
+
+def test_live_accepts_the_cost_flags_the_research_commands_take():
+    """They have to be the same flags, or a live report's modelled cost cannot be
+    compared with the backtest number a candidate was actually judged on."""
+    args = build_parser().parse_args(
+        ["live", "--commission-bps", "2.0", "--impact-eta", "0.5", "--borrow-bps", "25"]
+    )
+
+    assert (args.commission_bps, args.impact_eta, args.borrow_bps) == (2.0, 0.5, 25.0)

@@ -512,6 +512,14 @@ or how far over the book had got.
 account reports no fees at all, and `None` there means "not reported" — not zero, and it
 must not be averaged as though it were.
 
+`live` takes `--gross`, `--commission-bps`, `--impact-eta` and `--borrow-bps`, the same
+flags the research commands take, and a saved config's `cost` block fills them in the
+same way. It prices nothing — the venue does that — but recording what the model
+*expected* a fill to cost beside what it actually cost is meaningless unless both sides
+came from the same parameters. The preflight prints them, marked `(recorded, not
+charged)`, because a cost model that silently was not configured is exactly what that
+line exists to catch.
+
 The estimate comes from the **same** cost model the research clock charges, built from the
 same `--commission-bps` / `--impact-eta` / `--borrow-bps` a config carries, so the
 modelled number in a live report is comparable with the one a backtest was judged on. A
