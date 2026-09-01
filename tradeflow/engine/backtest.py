@@ -248,6 +248,65 @@ def _leg_report(leg_curves, trades, initial_capital: float) -> Dict[str, Any]:
     return report
 
 
+def _exposure_report(samples: List[Dict[str, float]]) -> Dict[str, Any]:
+    """The distribution of exposure the book actually carried, as fractions of equity.
+
+    A net cap is a fraction, and choosing one from anything but the strategy's own
+    history is a guess. This is the history: |long - short| and long + short at every
+    step the equity curve was sampled at, so the question "what did this actually run
+    at" has an answer.
+
+    Signed net is kept alongside the absolute value because they answer different
+    questions - the absolute distribution says how large a tilt to allow, the signed
+    mean says whether the strategy leans one way by construction.
+
+    Diagnostic. It sets nothing and gates nothing.
+    """
+    if not samples:
+        return {}
+    net_fracs, gross_fracs, signed = [], [], []
+    for sample in samples:
+        equity = sample["equity"]
+        if equity <= 0:
+            # A book with no equity has no meaningful fraction; skipped rather than
+            # divided, and counted so the sample size is never overstated.
+            continue
+        net_fracs.append(abs(sample["net"]) / equity)
+        gross_fracs.append(sample["gross"] / equity)
+        signed.append(sample["net"] / equity)
+    if not net_fracs:
+        return {}
+    from tradeflow.analytics.exposure import candidate_caps
+
+    series = pd.Series(net_fracs, dtype="float64")
+    stats = {
+        "median": float(series.median()),
+        "p90": float(series.quantile(0.90)),
+        "p95": float(series.quantile(0.95)),
+        "p99": float(series.quantile(0.99)),
+        "max": float(series.max()),
+    }
+    # Evaluated here, where the samples are, and carried as scalars. Keeping the whole
+    # series on the result would put one row per step into anything that serializes it,
+    # for a number only ever read at a handful of caps.
+    candidates = [
+        {
+            "cap": cap,
+            "binding_rate": float((series > cap).mean()),
+            "above_observed_max": cap >= stats["max"],
+        }
+        for cap in candidate_caps(stats)
+    ]
+    return {
+        "samples": len(net_fracs),
+        "skipped": len(samples) - len(net_fracs),
+        "net_abs": stats,
+        "candidates": candidates,
+        "net_signed_mean": float(pd.Series(signed, dtype="float64").mean()),
+        "gross_max": float(pd.Series(gross_fracs, dtype="float64").max()),
+    }
+
+
 def _leg_betas(legs: Dict[str, Any], benchmark_returns) -> None:
     """Add each leg's beta against the benchmark, in place.
 
@@ -313,6 +372,8 @@ class BacktestResult:
     gross_final_capital: float = 0.0  # final capital before cost (for the haircut attribution)
     #: What the sizer asked for versus what was actually tradeable - see :class:`_Execution`.
     execution: Dict[str, Any] = field(default_factory=dict)
+    #: What the book actually carried, step by step - see :func:`_exposure_report`.
+    exposure: Dict[str, Any] = field(default_factory=dict)
     #: Per-side realized performance for a long/short book - see :func:`_leg_report`.
     #: Empty for a long-only run, which has nothing to decompose.
     legs: Dict[str, Any] = field(default_factory=dict)
@@ -440,7 +501,7 @@ class BacktestEngine:
         # A merged-timeline step is the unit for *both* carry accrual and the equity
         # curve, so both have to annualize on the merged timeline's own rate.
         self._step_periods_per_year = self._step_rate(panels, master)
-        all_trades, equity_curve, equity_times, execution, legs = self._replay(
+        all_trades, equity_curve, equity_times, execution, legs, exposure = self._replay(
             panels, master, initial_capital, trade_from
         )
 
@@ -493,6 +554,7 @@ class BacktestEngine:
             execution=execution,
             benchmark_returns=aligned_benchmark,
             legs=legs,
+            exposure=_exposure_report(exposure),
         )
 
     # ------------------------------------------------------------------ #
@@ -622,6 +684,7 @@ class BacktestEngine:
         # what volatility, drawdown and beta are most distorted by.
         realized_by_side: Dict[str, float] = {signals.BUY: 0.0, signals.SELL: 0.0}
         leg_curves: Dict[str, List[float]] = {signals.BUY: [0.0], signals.SELL: [0.0]}
+        exposure_curve: List[Dict[str, float]] = []
         if not panels:
             return (
                 trades,
@@ -629,6 +692,7 @@ class BacktestEngine:
                 equity_times,
                 book.execution.as_dict(),
                 _leg_report(leg_curves, trades, initial_capital),
+                exposure_curve,
             )
 
         cutoff = _align_tz(trade_from, master) if trade_from is not None else None
@@ -728,8 +792,20 @@ class BacktestEngine:
                     book.positions[symbol] = pos
 
             if trading:
-                equity_curve.append(book.equity())
+                equity_now_marked = book.equity()
+                equity_curve.append(equity_now_marked)
                 equity_times.append(master[k])
+                # Sampled every step the equity curve is, so the exposure a book
+                # *carried* is measurable rather than only the exposure it closed at.
+                # This is what a net cap has to be derived from: the fraction is
+                # meaningless without knowing what the strategy actually ran at.
+                exposure_curve.append(
+                    {
+                        "net": book.net_exposure(),
+                        "gross": book.gross_exposure(),
+                        "equity": equity_now_marked,
+                    }
+                )
                 unrealized = {signals.BUY: 0.0, signals.SELL: 0.0}
                 for pos in book.positions.values():
                     direction = 1 if pos["side"] == signals.BUY else -1
@@ -762,6 +838,7 @@ class BacktestEngine:
             equity_times,
             book.execution.as_dict(),
             _leg_report(leg_curves, trades, initial_capital),
+            exposure_curve,
         )
 
     def _trade_cost(self, symbol, shares, price, adv, vol, i) -> float:

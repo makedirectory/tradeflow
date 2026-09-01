@@ -1034,3 +1034,40 @@ def test_genuinely_neutral_legs_are_not_called_out():
 
     assert "--- Legs" in rendered
     assert "two exposures cancelling" not in rendered
+
+
+def test_the_exposure_report_measures_what_the_net_cap_enforces():
+    """The derivation is only worth anything if it measures the same quantity the gate
+    checks. A capture that disagreed with the limit would recommend a cap against a
+    number the engine never uses — and nothing downstream could tell.
+    """
+    result = _mixed_book(max_net_exposure=0.45)
+
+    observed = result.exposure["net_abs"]["max"]
+    assert observed <= 0.45 + 1e-9, f"the gate admitted a book at {observed:.1%} net"
+
+
+def test_exposure_is_sampled_for_every_step_of_the_equity_curve():
+    """Sampled as the book was *carried*, not as it was closed: a cap derived from
+    end-of-trade snapshots would miss every tilt that opened and closed between them."""
+    result = _mixed_book()
+
+    # One fewer than the curve: it is seeded with the opening capital, which is a
+    # starting point rather than a step the book was carried through.
+    assert result.exposure["samples"] == len(result.equity_curve) - 1
+
+
+def test_a_one_directional_book_reports_its_full_tilt():
+    """The case a net cap exists for: gross and net agree, and the book is a bet."""
+    result = _multi(_four_names(), ["BUY", "HOLD", "CLOSE_BUY"], overrides=_TIGHT_STOP)
+
+    assert result.exposure["net_abs"]["max"] == pytest.approx(result.exposure["gross_max"], abs=1e-9)
+    assert result.exposure["net_signed_mean"] > 0  # long, and said to be long
+
+
+def test_a_balanced_book_reports_near_zero_net_against_real_gross():
+    """The other half of the same fact, and the reason gross alone cannot inform a
+    directional cap."""
+    result = _mixed_book()
+
+    assert result.exposure["net_abs"]["max"] < result.exposure["gross_max"]

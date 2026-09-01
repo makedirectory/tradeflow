@@ -539,6 +539,7 @@ def cmd_backtest(args) -> None:
         legs=result.legs,
     )
     _print_universe_provenance(args, universe)
+    _print_net_cap_derivation(result)
     _print_verdicts_for_backtest(result)
     if getattr(args, "cost_stress", False):
         _print_cost_stress(data_client, strategy_name, universe, args, tuned)
@@ -1370,6 +1371,23 @@ def _print_fold_disagreement(result) -> None:
             f"  {len(negative)} of {len(excess)} folds lost to the benchmark - the median "
             "is an average over folds that disagree, not a typical fold."
         )
+
+
+def _print_net_cap_derivation(result) -> None:
+    """What directional tilt this book actually carried, and what a cap would do to it.
+
+    Printed only for a book that traded both sides - a long-only strategy's net is its
+    gross, and a "cap" on it would be a second name for a limit that already exists.
+    """
+    from tradeflow.analytics.exposure import derive_net_cap, format_net_cap
+
+    legs = getattr(result, "legs", None) or {}
+    if not all(legs.get(side, {}).get("trades") for side in ("long", "short")):
+        return
+    derivation = derive_net_cap(getattr(result, "exposure", {}) or {})
+    if not derivation.get("available"):
+        return
+    print("\n".join(format_net_cap(derivation)))
 
 
 def _print_leg_stability(result) -> None:

@@ -92,6 +92,30 @@ throttled or unhedged and never neither. It is judged on the *resulting* net, so
 entry that moves the book toward flat is admitted even from over the cap; refusing a
 hedge for being a trade would leave the tilt it corrects in place.
 
+**Derive it rather than pick it.** A backtest of a book that trades both sides prints
+the tilt it actually carried — median, p90/p95/p99 and maximum as fractions of equity —
+and, for each cap worth considering, how often that cap would have bound:
+
+```
+=== Directional tilt actually carried (400 steps) ===
+  |net| / equity        median 19.2%  p90 29.5%  p95 32.1%  p99 37.1%  max 42.7%
+  signed mean           +18.4% — the book leans long by construction
+  gross max             80.0% of equity
+
+  A cap and what it would have done:
+    --max-net-exposure 0.32   would have bound on 5.0% of steps — a different book from the validated one
+    --max-net-exposure 0.47   never binds — documents the intent, enforces nothing new
+
+  Smallest cap that leaves the validated book intact: 0.47
+```
+
+The trade-off is the point, not the number. **Any cap below the observed maximum would
+have changed the book that was validated** — it either never binds, in which case it
+documents an intent rather than enforcing one, or it binds, in which case the thing
+running is no longer the thing that was tested. A book that never carried a measurable
+tilt is told so plainly, and a history too short for a percentile to mean anything says
+that before it says anything else.
+
 ```python
 "position_limits": {
     "max_positions": 5,
