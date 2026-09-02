@@ -16,10 +16,11 @@ from pathlib import Path
 
 import pytest
 
+from tradeflow import settings
 from tradeflow.settings import (
+    DISTRIBUTION_NAME,
     PROJECT_ROOT,
     git_worktree_containing,
-    orphaned_checkout_state,
     running_from_checkout,
     state_root,
 )
@@ -88,22 +89,67 @@ def test_a_missing_directory_is_not_an_error(tmp_path):
 
 
 # --- the contributor whose evidence is already somewhere else ----------------------
-def test_earlier_checkout_state_is_reported_rather_than_ignored(monkeypatch, tmp_path):
+def _checkout_with(tmp_path, *evidence) -> Path:
+    """A working copy as `_looks_like_checkout` recognises one, holding `evidence`.
+
+    Built rather than borrowed. This asserted against the real `PROJECT_ROOT` and the
+    untracked `logs/` a developer's own checkout happens to have, so it passed on the
+    machine that wrote it and failed on every clean one — CI included. What the check
+    reports must not depend on whose disk it runs from.
+    """
+    checkout = tmp_path / "checkout"
+    (checkout / "logs").mkdir(parents=True)
+    (checkout / "pyproject.toml").write_text(f'[project]\nname = "{DISTRIBUTION_NAME}"\n')
+    for name in evidence:
+        (checkout / "logs" / name).write_text("")
+    return checkout
+
+
+@pytest.mark.parametrize("evidence", ["research_journal.jsonl", "trials.db", "position_ledger.jsonl"])
+def test_earlier_checkout_state_is_reported_rather_than_ignored(monkeypatch, tmp_path, evidence):
     """The failure the fix could have caused: a contributor's journals stayed in their
     checkout while the next campaign deflated against none of them, with nothing
-    erroring — the exact split the state root exists to prevent."""
+    erroring — the exact split the state root exists to prevent.
+
+    Every kind of evidence counts, because any one of them alone is a split campaign.
+    """
+    checkout = _checkout_with(tmp_path, evidence)
+    monkeypatch.setattr(settings, "PROJECT_ROOT", checkout)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
 
-    found = orphaned_checkout_state()
-
-    assert found == PROJECT_ROOT  # this repo has logs/ with a ledger in it
+    assert settings.orphaned_checkout_state() == checkout
 
 
-def test_nothing_is_reported_when_the_checkout_is_the_active_root(monkeypatch):
-    """A contributor who opted back in has no split to warn about."""
-    monkeypatch.setenv("TRADEFLOW_HOME", str(PROJECT_ROOT))
+def test_a_checkout_with_no_evidence_of_its_own_is_not_reported(monkeypatch, tmp_path):
+    """Both directions: a fresh clone has a `logs/` and nothing in it, and a warning
+    that fires for everyone is one nobody reads."""
+    checkout = _checkout_with(tmp_path)
+    monkeypatch.setattr(settings, "PROJECT_ROOT", checkout)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
 
-    assert orphaned_checkout_state() is None
+    assert settings.orphaned_checkout_state() is None
+
+
+def test_a_directory_that_is_not_a_checkout_is_not_reported(monkeypatch, tmp_path):
+    """An installed copy has no working tree to have left evidence in."""
+    stray = tmp_path / "elsewhere"
+    (stray / "logs").mkdir(parents=True)
+    (stray / "logs" / "trials.db").write_text("")
+    monkeypatch.setattr(settings, "PROJECT_ROOT", stray)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+
+    assert settings.orphaned_checkout_state() is None
+
+
+def test_nothing_is_reported_when_the_checkout_is_the_active_root(monkeypatch, tmp_path):
+    """A contributor who opted back in has no split to warn about — and this has to be
+    asserted against a checkout that *does* hold evidence, or it passes for the wrong
+    reason on any machine that has none."""
+    checkout = _checkout_with(tmp_path, "research_journal.jsonl")
+    monkeypatch.setattr(settings, "PROJECT_ROOT", checkout)
+    monkeypatch.setenv("TRADEFLOW_HOME", str(checkout))
+
+    assert settings.orphaned_checkout_state() is None
 
 
 # --- the diagnostic says all of it -------------------------------------------------
