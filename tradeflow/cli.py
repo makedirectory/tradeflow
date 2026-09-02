@@ -1609,6 +1609,9 @@ def cmd_init(args) -> None:
     """
     from tradeflow.services import setup
 
+    if getattr(args, "dev_local_state", False):
+        _print_dev_local_state()
+        return
     if args.check:
         _print_doctor(setup.run_checks())
         return
@@ -1616,6 +1619,29 @@ def cmd_init(args) -> None:
         _init_non_interactive(args, setup)
         return
     _init_interactive(args, setup)
+
+
+def _print_dev_local_state() -> None:
+    """How a contributor opts back in to checkout-local state, and what it costs.
+
+    Printed rather than written: it changes where every future trial is recorded, so it
+    belongs in the shell profile or the command line where its owner can see it, not
+    hidden inside a file this command happens to control.
+    """
+    from tradeflow.settings import PROJECT_ROOT, running_from_checkout
+
+    if not running_from_checkout():
+        sys.exit(
+            "--dev-local-state is for a checkout, and this copy was installed. Its state "
+            "already lives outside any repository, which is where you want it."
+        )
+    print(f"\nTo keep this checkout's state inside it, export:\n\n    TRADEFLOW_HOME={PROJECT_ROOT}\n")
+    print(
+        "  That directory is a git working tree. Everything recorded there - trials,\n"
+        "  saved configs, and any private strategy's evidence - is then one ignore-file\n"
+        "  edit from disclosure, and `git clean -xd` deletes it, live ledger included.\n"
+        "  Unset it and state returns to ~/.tradeflow.\n"
+    )
 
 
 def _print_doctor(checks) -> None:
@@ -1769,11 +1795,11 @@ def _typed_confirmation(phrase: str) -> bool:
 def _print_next_steps() -> None:
     print(
         "\nNext:"
-        f"\n  {_invocation('demo', make_target='demo'):<26}the whole pipeline on synthetic data — no keys, no network"
-        f"\n  {_invocation('verdict'):<26}scan → alphas → portfolio → information, one verdict"
-        f"\n  {_invocation('backtest'):<26}did the idea ever work?"
-        f"\n  {_invocation('mcp'):<26}serve it to an agent over MCP (needs the 'mcp' extra)"
-        f"\n  {_invocation('init --check'):<26}re-run these checks any time\n"
+        f"\n  {_invocation('demo', make_target='demo'):<30}the whole pipeline on synthetic data — no keys, no network"
+        f"\n  {_invocation('verdict'):<30}scan → alphas → portfolio → information, one verdict"
+        f"\n  {_invocation('backtest'):<30}did the idea ever work?"
+        f"\n  {_invocation('mcp'):<30}serve it to an agent over MCP (needs the 'mcp' extra)"
+        f"\n  {_invocation('init --check'):<30}re-run these checks any time\n"
     )
 
 
@@ -2927,9 +2953,9 @@ def _missing_extra_message(extra: str, what: str) -> str:
     An installed copy has no checkout to `uv sync` in, so telling it to is a dead
     end — the same failure the missing-credentials message used to have.
     """
-    from tradeflow.settings import _looks_like_checkout, state_root
+    from tradeflow.settings import running_from_checkout
 
-    if _looks_like_checkout(state_root()):
+    if running_from_checkout():
         command = f"uv sync --extra {extra}"
     else:
         command = f'uv tool install --force "tradeflow-engine[{extra}]"'
@@ -2944,9 +2970,9 @@ def _invocation(command: str, *, make_target: Optional[str] = None) -> str:
     rows already phrase themselves this way; these did not, and they are the lines a
     first run ends on.
     """
-    from tradeflow.settings import _looks_like_checkout, state_root
+    from tradeflow.settings import running_from_checkout
 
-    if not _looks_like_checkout(state_root()):
+    if not running_from_checkout():
         return f"tradeflow {command}"
     return f"make {make_target}" if make_target else f"python main.py {command}"
 
@@ -3324,6 +3350,18 @@ def _print_live_preflight(args, strategy, broker, universe, capital, ledger) -> 
     print(f"  {'ledger':22}{ledger.path if ledger is not None else 'DISABLED (--no-ledger)'}")
     print(f"  {'journal':22}{DEFAULT_TRIAL_JOURNAL}")
     print(f"  {'halt state':22}{HaltState().path}")
+    # Where all of that lands, and whether that place is inside a repository. A user
+    # who arrived over MCP or from PyPI has no reason to know either.
+    from tradeflow.settings import git_worktree_containing, state_root
+
+    root = state_root()
+    print(f"  {'state root':22}{root}")
+    worktree = git_worktree_containing(root)
+    if worktree is not None:
+        print(
+            f"  {'':22}WARNING: inside the git working tree at {worktree}.\n"
+            f"  {'':22}One ignore-file edit from disclosure, and `git clean -xd` deletes it."
+        )
 
 
 def _refuse_contradictory_portfolio_cardinality(strategy, allocator_max_positions) -> None:
@@ -4020,9 +4058,9 @@ def _next_step_hint() -> str:
     An installed copy has no Makefile and no `.env.example` to copy, so pointing at
     either is a dead end for exactly the user this path exists to serve.
     """
-    from tradeflow.settings import _looks_like_checkout, state_root
+    from tradeflow.settings import running_from_checkout
 
-    if _looks_like_checkout(state_root()):
+    if running_from_checkout():
         return (
             "     make init        add your free Alpaca paper keys (or see .env.example)\n"
             "     make backtest    then run it on real market data"
@@ -4746,6 +4784,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     init.add_argument(
         "--cache-dir", dest="cache_dir", default=None, help="Bar cache directory (default: cache/bars)"
+    )
+    init.add_argument(
+        "--dev-local-state",
+        dest="dev_local_state",
+        action="store_true",
+        help="Print the setting that puts this checkout's state back inside it. For "
+        "contributors who want their own logs/ and configs/ again; state then lives in "
+        "a git working tree, which is why it is opt-in and never a default",
     )
     init.set_defaults(func=cmd_init)
 

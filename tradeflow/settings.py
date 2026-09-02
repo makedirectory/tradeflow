@@ -51,36 +51,93 @@ def _looks_like_checkout(path: Path) -> bool:
         return False
 
 
+def running_from_checkout() -> bool:
+    """Whether this copy was reached from a working copy rather than an install.
+
+    Deliberately separate from :func:`state_root`. *How the software was reached*
+    decides which instructions make sense - ``make demo`` against ``tradeflow demo``.
+    *Where state lives* is a safety question with a different answer. Conflating them
+    is how a message meant for a contributor reached an installed user, and it would
+    now also send a contributor the wrong install command.
+    """
+    return _looks_like_checkout(Path.cwd()) or _looks_like_checkout(PROJECT_ROOT)
+
+
 def state_root() -> Path:
     """Where the journal, trial store, bar cache, and configs live.
 
-    Every path in this project used to be relative to the working directory, which
-    is right in a checkout and wrong everywhere else: an installed ``tradeflow``
-    would write its journal into whatever directory the user happened to be standing
-    in, scattering a campaign across the filesystem.
+    Resolved most explicit first:
 
-    That is the failure worth preventing. The entire multiple-testing correction
-    rests on **one** journal accumulating every trial — a campaign split across two
-    roots deflates its Sharpe against half the evidence it should, and nothing
-    errors. So the root is resolved in one place, most explicit first:
+    1. ``TRADEFLOW_HOME``, when set - the escape hatch, what a container mounts, and
+       how a contributor opts back in to checkout-local state.
+    2. ``~/.tradeflow`` otherwise. Always, including inside a checkout.
 
-    1. ``TRADEFLOW_HOME``, when set — the escape hatch, and what a container mounts.
-    2. The current directory, when it is a TradeFlow checkout — so a developer's
-       ``logs/`` and ``configs/`` keep working exactly as they always have.
-    3. ``~/.tradeflow`` otherwise — one predictable home for an installed copy.
+    **The default does not depend on how you got here, and it never writes into a
+    working copy.** It used to: a checkout was its own state root, so a contributor's
+    ``logs/`` kept working the way it always had. That was convenient and it was wrong
+    in two directions at once. A private strategy's trial evidence, saved configs and
+    live position ledger accumulated inside a git working tree, protected by nothing
+    but ``.gitignore``; and ``git clean -xd`` would take the lot, live ledger included.
 
-    ``init --check`` prints the result, because "where did my trials go" must never
-    be a question a user has to reverse-engineer.
+    A user arriving through PyPI or over MCP may never learn there is a working tree,
+    a ``logs/`` directory or an ignore file, so a warning cannot carry this. The safe
+    root has to be the one they get without knowing to ask - which means it cannot be
+    something ``init`` arranges, because ``init`` may never be run.
+
+    The multiple-testing correction still rests on **one** journal per root: a campaign
+    split across two of them deflates its Sharpe against half the evidence it should,
+    and nothing errors. That is why the escape hatch is a single explicit variable
+    rather than a per-pack or per-project rule.
+
+    ``init --check`` prints the result, because "where did my trials go" must never be
+    a question a user has to reverse-engineer - and after this change it is a question
+    every existing contributor will have.
     """
     override = os.environ.get("TRADEFLOW_HOME")
     if override:
         return Path(override).expanduser()
-    cwd = Path.cwd()
-    if _looks_like_checkout(cwd):
-        return cwd
-    if _looks_like_checkout(PROJECT_ROOT):
-        return PROJECT_ROOT
     return Path.home() / ".tradeflow"
+
+
+def git_worktree_containing(path: Path) -> Optional[Path]:
+    """The git working tree ``path`` sits inside, or ``None``.
+
+    State inside a working tree is exposed to everything that acts on a repository:
+    an ignore file one edit away from disclosing it, an archive of the tree, and
+    ``git clean -xd``, which deletes it outright.
+    """
+    try:
+        candidate = path.expanduser().resolve()
+    except OSError:
+        return None
+    for directory in (candidate, *candidate.parents):
+        if (directory / ".git").exists():
+            return directory
+    return None
+
+
+def orphaned_checkout_state() -> Optional[Path]:
+    """A checkout's own state directory that is no longer the active root.
+
+    Returned so it can be *said out loud*. Contributors accumulated journals and trial
+    stores inside their working copies for as long as a checkout was its own root, and
+    silently resolving somewhere else would deflate their next campaign against none of
+    that evidence without erroring - the exact failure :func:`state_root` exists to
+    prevent, caused by the fix for a different one.
+    """
+    if not _looks_like_checkout(PROJECT_ROOT):
+        return None
+    logs = PROJECT_ROOT / "logs"
+    try:
+        if state_root().expanduser().resolve() == PROJECT_ROOT.resolve():
+            return None
+        has_evidence = any(
+            (logs / name).exists()
+            for name in ("research_journal.jsonl", "trials.db", "position_ledger.jsonl")
+        )
+    except OSError:
+        return None
+    return PROJECT_ROOT if has_evidence else None
 
 
 def trial_journal_path() -> Path:
@@ -235,7 +292,7 @@ def _missing_credentials_message(missing: list) -> str:
     setup_path = state_root() / ".env"
     lines = ["Missing Alpaca credentials: " + ", ".join(missing) + "."]
 
-    if _looks_like_checkout(state_root()):
+    if running_from_checkout():
         lines += [
             "",
             "  make init                 guided setup (or copy .env.example to .env)",

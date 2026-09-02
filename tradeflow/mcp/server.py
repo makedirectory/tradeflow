@@ -1162,6 +1162,21 @@ def build_server(data_client=None):
 
 def serve() -> None:
     """Build the server and run it over stdio (what Claude Desktop/Code launch)."""
+    # Said at startup, not on request: an agent driving these tools cannot see
+    # where its evidence is landing, and every journaled trial is permanent.
+    from tradeflow.settings import git_worktree_containing, state_root
+
+    root = state_root()
+    logger.info("MCP state root: %s", root)
+    worktree = git_worktree_containing(root)
+    if worktree is not None:
+        logger.warning(
+            "State root %s is inside the git working tree at %s - trials, configs and "
+            "any private strategy's evidence are being written into a repository.",
+            root,
+            worktree,
+        )
+
     logger.info("Starting TradeFlow MCP server (stdio). Live trading is NOT exposed.")
     build_server().run()
 

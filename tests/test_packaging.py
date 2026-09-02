@@ -48,15 +48,19 @@ def test_the_declared_entry_point_matches_reality():
 
 
 def test_the_repo_itself_is_recognized_as_a_checkout(monkeypatch):
-    """The regression guard for the rename that broke this once. Running from the
-    repo must resolve state to the repo — the alternative is a developer's journal
-    silently moving to ~/.tradeflow while their old one sits in the checkout.
+    """The regression guard for the rename that broke detection once. It no longer
+    decides where state goes — it decides which *instructions* make sense, `make demo`
+    against `tradeflow demo`. Getting it wrong now sends a contributor an install
+    command instead of a Makefile target.
 
     Drops the suite's own TRADEFLOW_HOME: the override is what every other test wants
     and the one thing this test must not have."""
     monkeypatch.delenv("TRADEFLOW_HOME", raising=False)
+
     assert settings._looks_like_checkout(Path.cwd())
-    assert settings.state_root() == Path.cwd()
+    assert settings.running_from_checkout() is True
+    # And deliberately *not* the state root, which is the whole point of the split.
+    assert settings.state_root() != Path.cwd()
 
 
 def test_the_distribution_name_matches_what_is_packaged():
@@ -114,12 +118,17 @@ def test_an_explicit_home_wins_over_everything(tmp_path, monkeypatch):
     assert settings.state_root() == tmp_path / "elsewhere"
 
 
-def test_a_checkout_keeps_using_itself(tmp_path, monkeypatch):
-    """A developer's logs/ and configs/ must keep working exactly as before."""
+def test_a_checkout_is_never_its_own_state_root(tmp_path, monkeypatch):
+    """A checkout used to be its own root, which put a private strategy's trials,
+    configs and live ledger inside a git working tree — protected by nothing but an
+    ignore file, and deleted outright by `git clean -xd`. Contributors opt back in
+    explicitly with TRADEFLOW_HOME; nobody gets it by standing somewhere."""
     (tmp_path / "pyproject.toml").write_text(PYPROJECT)
     monkeypatch.delenv("TRADEFLOW_HOME", raising=False)
     monkeypatch.chdir(tmp_path)
-    assert settings.state_root() == tmp_path
+
+    assert settings.state_root() != tmp_path
+    assert settings.state_root() == Path.home() / ".tradeflow"
 
 
 def test_anywhere_else_resolves_to_one_predictable_home(tmp_path, monkeypatch):
