@@ -28,56 +28,89 @@ index; they are tagged in the repository.
 
 ---
 
-## Unreleased
+## 2.2.0 — 2026-09-02
 
-Live-path validation against a real paper account. Everything below was found by
-*running* it — the preflight, the ledger and the execution report each surfaced a defect
-that every test in the suite agreed was fine.
+Live-path validation against a real paper account, and the defect it eventually found.
+Everything here came from *running* the thing — the preflight, the ledger, the execution
+report and finally a trade table each surfaced something the full test suite agreed was
+fine.
+
+### The headline
+
+**The backtest transacted one bar before it could have known.** A signal at bar `i` comes
+from scores computed on bar `i`'s *close*, and the engine executed it against bar `i`'s
+*open* — for entries and signal exits alike. That is a one-bar look-ahead applied to
+every trade in every result this project had recorded.
+
+It survived because nothing could see it. A feed shift moves signal and price together,
+so the leakage probe passed over it; and it made the backtest structurally impossible to
+match live, where a closed bar produces a signal and a market order fills afterwards.
+Three days of narrowing — a fill-assumption stress, a position-size cap, a per-trade
+excursion study — each eliminated a hypothesis and left the anomaly intact, until the
+question became "is this information causally available at all".
+
+`ACCOUNTING_VERSION` is 4. **Every number recorded under 1–3 overstates what a deployment
+could achieve**, and the trial store keeps the two apart. Causality is now asserted on
+both clocks, in one file, because the two implement it separately and nothing in the
+codebase connects them.
 
 ### Added
 
 - **`tradeflow execution-report`** — what the live path actually did, reconstructed from
   the ledger: slippage in basis points, decision-to-fill latency, submitted-versus-filled
-  notional, modelled cost beside observed fees, and which refusals stopped a signal.
-  Deliberately ungraded: what counts as bad slippage for a strategy is not knowable from
-  one session. Decisions now carry an id and the order plan they built, and fills carry
-  price, time and fee, so decision → order → fill joins on read and survives a restart.
+  notional, modelled cost beside observed fees, and refusals grouped by kind. Ungraded on
+  purpose: what counts as bad slippage is not knowable from one session.
 - **A live preflight**, printed on every run and exiting early under `--preflight`. It
   states the contract before any order logic: broker mode, account balance beside the
-  capital this run may deploy, data feed, every book limit in the units it is enforced
-  in, telemetry destinations, and how many symbols actually warmed up.
+  capital this run may deploy, data feed, every book limit in the units it is enforced in,
+  telemetry destinations, and how many symbols actually warmed up — and whether they
+  warmed up *enough*, which is a different question.
+- **`--fill-stress`** re-runs a backtest requiring the price to trade progressively
+  further *through* each take-profit before it counts as filled. The default fills a
+  target the moment a bar touches it, which models a resting limit always first in the
+  queue; for a strategy whose gain concentrates in target exits, that assumption is the
+  result rather than a detail.
+- **Book limits on both clocks** — `--max-positions`, `--max-position-size`,
+  `--max-gross-exposure`, `--max-net-exposure`, `--max-total-risk`, `--min-notional`.
+  `max_net_exposure` is new and bounds directional tilt: gross bounds long + short and
+  cannot see direction, so a book inside a gross cap can be entirely one-directional. A
+  backtest of a long/short book now derives a cap from the tilt it actually carried, and
+  says when the gross cap already subsumes it.
 - **`--capital`**, so a run deploys what a config was validated at rather than whatever
-  equity a paper account was handed. **`--max-net-exposure`**, which bounds directional
-  tilt — gross bounds long + short and cannot see direction, so a book inside a gross cap
-  can be entirely one-directional. Both clocks enforce it. **`--feed`**, pinning the
-  historical and streaming halves to one data feed.
+  equity a paper account was handed. **`--feed`**, pinning the historical and streaming
+  halves to one data feed. **`walkforward --config`**, so the run type that produces a
+  config can consume one.
+- Every backtest prints net P&L by exit reason, and says so when one winning exit carries
+  over 90% of the gain.
 
 ### Fixed
 
 - **The ledger counted fills twice and recorded every short as a long.** A venue
   re-reports an order's cumulative filled quantity on each partial fill and again on the
-  final one, and those events were summed; separately, the trade-update type had no
-  `side` field at all, so a defaulted `"buy"` reached every record. An order that filled
-  8 arrived as 21, and a 31-share short as +31. Fills now resolve to the last report per
-  order, and a fill with no side is dropped rather than guessed.
-- **A resumed session disagreed with its own ledger.** Start-up adopted the broker's
-  positions into memory and wrote nothing down, so reconciliation called every resumed
-  position one nobody ordered.
-- **A reconciliation sweep could erase a position the strategy held.** Landing between
-  an entry's submission and its fill, it replaced the book with broker state that did not
-  include the new position yet — leaving the strategy flat in a symbol it held, and a
-  strategy that believes it is flat cannot emit an exit.
+  final one, and those events were summed; separately the trade-update type had no `side`
+  field, so a defaulted `"buy"` reached every record. An order that filled 8 arrived as
+  21, and a 31-share short as +31.
+- **A resumed session disagreed with its own ledger**, and a reconciliation sweep landing
+  between an entry's submission and its fill could erase a position the strategy held —
+  leaving it flat in a symbol it owned, and a strategy that believes it is flat cannot
+  emit an exit.
 - **Shutdown hung until a second interrupt, and `SIGTERM` was unhandled entirely.** Four
-  passes, each correct and each still wrong one level up, ending at the real cause: a
-  synchronous SDK `stop()` that blocks the very loop that would have to run it. A blocked
-  loop defeats every loop-scheduled bound, signal handlers included, so the one that must
+  passes, each correct and each still wrong one level up, ending at a synchronous SDK
+  `stop()` that blocks the very loop that would have to run its close. A blocked loop
+  defeats every loop-scheduled bound, signal handlers included, so the one that must
   always hold now lives on a daemon thread.
 - **Blocking broker calls ran on the event loop**, stalling other symbols' bars, fill
-  delivery and reconciliation for the length of every entry.
-- **Risk-limit flags never reached the live book.** `--max-positions` sized only the
-  portfolio allocator, so without `--portfolio` it was parsed and discarded; there was no
-  way to state a book limit from the command line at all. A flag that cannot reach
-  anything now stops the run instead of being silently ignored.
+  delivery and reconciliation for the length of every entry. They run in a worker thread
+  now, with the order path serialized behind one semaphore — a correctness requirement,
+  not a speed-up.
+- **A failed market-data fetch returned "no bars" instead of raising**, so an unreachable
+  provider produced a zero-trade backtest that was journaled as an evaluated trial and
+  then served from cache to the next identical run. Absent is not zero, and unreachable
+  is not absent.
+- **Risk-limit flags never reached the live book**, and a flag that cannot reach anything
+  now stops the run instead of being silently ignored.
+- Position limits went through no cache identity at all, so two runs differing only in
+  `max_gross_exposure` hashed alike and the second was answered from the first.
 
 ---
 
