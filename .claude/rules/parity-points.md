@@ -7,6 +7,8 @@ where two implementations of the same idea can drift apart while both look corre
 every test passes.
 
 **This file is the list.** Before changing anything on it, change both sides.
+[Checking for divergence](check-for-divergence.md) is the obligation to consult it, and
+applies to ideas not yet listed here.
 
 ## The preferred shape: delegate, don't re-implement
 
@@ -31,9 +33,22 @@ two implementations that must produce the same shape, because a trial recorded o
 surface has to be found by the other. The CLI additionally folds a bar-cache vintage.
 *Guarded by* `tests/test_surface_parity.py`.
 
+**A walk-forward's memoization recipe** — *converged*. It was three copies of one dict
+(CLI, service, draft-service). `limits_key` was folded into `run_backtest`'s key and into
+none of them, so two configs differing only in `max_positions` hashed alike and the
+second was served the first's result — reporting a one-position validation as an
+eight-position book, which is the single thing a walk-forward exists to rule out. Now one
+definition in `services.analysis.walk_forward_recipe`; `cli._walkforward_recipe` is the
+namespace adapter over it, the shape `_dedup_params` already had.
+*Guarded by* `tests/test_surface_parity.py`.
+
 **CLI flags ↔ MCP tool parameters** — anything a run can be configured with should be
 reachable from both, and an MCP argument the service does not accept fails only at call
-time. An agent cannot notice a stale description; it acts on one.
+time. An agent cannot notice a stale description; it acts on one. The direction that
+actually bit: `walkforward --benchmark` had no MCP equivalent and no service parameter,
+so over MCP every fold reported `benchmark_available: False` and the benchmark-relative
+promotion prerequisites were never *evaluated* — a gate that cannot be configured on a
+surface is not stricter there, it simply does not run, and nothing says so.
 *Guarded by* `tests/test_surface_parity.py`.
 
 **Config ↔ what actually got validated** — a config's `position_limits` is not a tunable
@@ -53,7 +68,12 @@ can see the other's assumption.
 
 **Ledger write ↔ ledger replay** — what `record_fill` means by a quantity (`basis`) and
 what `_replay` does with it. A cumulative quantity summed as if incremental turned an
-order that filled 8 into 21.
+order that filled 8 into 21. It then diverged a second time on the *other* reader:
+`lifecycles()` ignored `basis` entirely, so an order filled incrementally as 3+3+2
+reported a filled quantity of 2 against a submitted 8 — counted as a short fill, with its
+notional understated. `filled_quantity()` is now the one rule; `_replay` still applies it
+inline because it also carries reset sequencing, so the two are held together by a test
+that reads one ledger both ways rather than by a shared call.
 *Guarded by* `tests/test_ledger_fill_accounting.py`.
 
 **Engine behaviour ↔ `ACCOUNTING_VERSION`** — any change to what the engine computes
