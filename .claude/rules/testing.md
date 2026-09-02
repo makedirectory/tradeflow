@@ -33,3 +33,7 @@ paths:
   compile, pass, and report a confident wrong answer — an invented cost key made the
   model silently unconfigured, and `trades` instead of `total_trades` reported 0 for a
   1952-trade run. Print the real object once; it costs a line.
+- **A parity point needs a test that compares the two.** Two tests that each pass do not
+  establish that two implementations agree — a parity bug looks exactly like two green
+  tests. Build the same thing both ways and assert equality. See
+  [parity points](parity-points.md) for the list of places this applies.

@@ -53,3 +53,6 @@ catch the two drifting, because nothing else in the codebase connects them.
 
 State in the commit which clocks you checked. "Checked live only, backtest has no
 equivalent" is a fine answer; silence is not.
+
+This is one entry in a longer list — see [parity points](parity-points.md) for the
+others, and for how to find a new one.
