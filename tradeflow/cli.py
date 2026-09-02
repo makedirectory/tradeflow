@@ -187,6 +187,7 @@ def _find_cached_trial(
     start: Any,
     end: Any,
     accounting: int,
+    require_trades: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """Look up an exact prior trial via the trial store; ``None`` if none exists
     (including when the store itself is unavailable - see :func:`_open_trial_store`).
@@ -203,6 +204,7 @@ def _find_cached_trial(
             window_start=start,
             window_end=end,
             accounting=accounting,
+            require_trades=require_trades,
             git_sha=current_git_sha(),
         )
 
@@ -465,7 +467,13 @@ def cmd_backtest(args) -> None:
 
     if not args.force:
         cached = _find_cached_trial(
-            strategy_name, dedup_params, universe, args.start, args.end, ACCOUNTING_VERSION
+            strategy_name,
+            dedup_params,
+            universe,
+            args.start,
+            args.end,
+            ACCOUNTING_VERSION,
+            require_trades=True,
         )
         if cached is not None:
             print(
@@ -978,9 +986,14 @@ def cmd_walkforward(args) -> None:
     from tradeflow.optimization.config_store import build_provenance, current_git_sha, save_config
     from tradeflow.optimization.walk_forward import WalkForwardValidator
 
+    # A config is the *output* of a walk-forward, so re-validating one had to be done
+    # by expanding it back onto the command line by hand - which is exactly where a
+    # universe or a cost parameter silently drifts from what was saved.
+    tuned = apply_run_config(args)
+
     _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
     universe = resolve_universe(data_client, args.scanner, args.symbols, as_of=args.scan_as_of or args.end)
-    timeframe = STRATEGIES[args.strategy].create_with_defaults().config["timeframe"]
+    timeframe = _strategy_from(args, tuned).config["timeframe"]
     vintage = _vintage_stamp(data_client, universe, timeframe, args.start, args.end)
 
     # Top-level memoization key: the *validation recipe*, not the chosen params —
@@ -4506,6 +4519,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Save the chosen config (with provenance) to this path",
     )
     _add_cost_flags(wf)
+    _add_config_flag(wf)
     _add_cache_flags(wf)
     add_html_flag(wf)
     add_workers_flag(wf)

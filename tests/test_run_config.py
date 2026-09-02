@@ -661,3 +661,115 @@ def test_a_saved_config_records_its_limits_in_full(tmp_path):
 
     limits = load_config(path)["position_limits"]
     assert set(limits) >= {"max_positions", "max_position_size", "max_total_risk", "max_gross_exposure"}
+
+
+def test_walkforward_accepts_a_saved_config(tmp_path):
+    """Walk-forward is the run type that *produces* a config and could not consume one,
+    so re-validating one meant expanding it back onto the command line by hand — which
+    is exactly where a universe or a cost parameter silently drifts from what was saved.
+    """
+    import json
+
+    from tradeflow.cli import apply_run_config, parse_cli
+
+    path = tmp_path / "c.json"
+    path.write_text(
+        json.dumps(
+            {
+                "strategy": "ma_crossover",
+                "scanner": "volume",
+                "symbols": ["AAA", "BBB"],
+                "capital": 8_000.0,
+                "cost": {"commission_bps": 7.5, "impact_eta": 0.9, "borrow_bps": 120.0},
+                "params": json.loads(
+                    '{"fast_ema_period": 10, "slow_ema_period": 30, "risk_per_trade": 0.02, "stop_loss": 0.03, "take_profit": 0.06}'
+                ),
+            }
+        )
+    )
+
+    args = parse_cli(["walkforward", "--config", str(path)])
+    apply_run_config(args)
+
+    assert args.strategy == "ma_crossover"
+    assert args.symbols == ["AAA", "BBB"]
+    assert args.capital == 8_000.0
+    # The cost block reaches it too, so a re-validation prices fills the way the
+    # original did rather than falling back to defaults.
+    assert (args.commission_bps, args.impact_eta, args.borrow_bps) == (7.5, 0.9, 120.0)
+
+
+def test_walkforward_replays_a_saved_universe_rather_than_re_scanning(tmp_path):
+    """Same rule as every other run type: a saved universe is replayed by default, or
+    the validated book and the re-validated one are different books."""
+    import json
+
+    from tradeflow.cli import apply_run_config, parse_cli
+
+    path = tmp_path / "c.json"
+    path.write_text(
+        json.dumps(
+            {
+                "strategy": "ma_crossover",
+                "scanner": "volume",
+                "symbols": ["AAA"],
+                "params": {
+                    "fast_ema_period": 10,
+                    "slow_ema_period": 30,
+                    "risk_per_trade": 0.02,
+                    "stop_loss": 0.03,
+                    "take_profit": 0.06,
+                },
+            }
+        )
+    )
+
+    args = parse_cli(["walkforward", "--config", str(path)])
+    apply_run_config(args)
+
+    assert args.scanner == "none"
+
+
+def test_a_trial_that_traded_nothing_is_not_served_to_a_backtest(tmp_path, monkeypatch):
+    """The reported pollution: a sandboxed run whose data never arrived produced a
+    zero-trade backtest, was recorded like any other trial, and then answered every
+    later repeat of itself from cache.
+
+    The journal keeps that record — it is append-only and the attempt is a fact. This
+    governs only whether it may stand in for a real answer.
+    """
+    from tradeflow.store.trials import TrialStore
+
+    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
+    store = TrialStore(tmp_path / "trials.db")
+    identity = dict(
+        strategy="ma_crossover",
+        params={"fast_ema_period": 10},
+        symbols=["AAA"],
+        window_start="2024-01-01",
+        window_end="2024-06-01",
+    )
+    store.record(id="empty1", kind="backtest", accounting=1, oos_trades=0, **identity)
+
+    assert store.find(**identity, accounting=1) is not None  # still on record
+    assert store.find(**identity, accounting=1, require_trades=True) is None  # never served
+
+
+def test_a_trial_kind_that_never_trades_is_still_served(tmp_path, monkeypatch):
+    """Both directions, and the bug the first version of this caused: an `alpha` trial
+    is a read-only forecast with no trades by design, and excluding those would be a
+    second defect wearing the first one's clothes."""
+    from tradeflow.store.trials import TrialStore
+
+    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
+    store = TrialStore(tmp_path / "trials.db")
+    identity = dict(
+        strategy="ma_crossover",
+        params={"fast_ema_period": 10},
+        symbols=["AAA"],
+        window_start="2024-01-01",
+        window_end="2024-06-01",
+    )
+    store.record(id="alpha1", kind="alpha", accounting=1, oos_trades=0, **identity)
+
+    assert store.find(**identity, accounting=1) is not None

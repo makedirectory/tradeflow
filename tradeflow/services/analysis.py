@@ -136,7 +136,13 @@ def _open_trial_store():
 
 
 def _find_cached_trial(
-    strategy: str, params: Dict[str, Any], symbols, start, end, accounting: int
+    strategy: str,
+    params: Dict[str, Any],
+    symbols,
+    start,
+    end,
+    accounting: int,
+    require_trades: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """Same lookup CLI's ``main._find_cached_trial`` does, so a trial run over
     MCP and one run over the CLI dedup against each other identically."""
@@ -152,6 +158,7 @@ def _find_cached_trial(
             window_start=start,
             window_end=end,
             accounting=accounting,
+            require_trades=require_trades,
             git_sha=current_git_sha(),
         )
 
@@ -218,7 +225,9 @@ def run_backtest(
     }
 
     if not force:
-        cached = _find_cached_trial(strategy, dedup_params, symbols, start, end, ACCOUNTING_VERSION)
+        cached = _find_cached_trial(
+            strategy, dedup_params, symbols, start, end, ACCOUNTING_VERSION, require_trades=True
+        )
         if cached is not None:
             metrics = json.loads(cached["metrics_json"] or "{}")
             return {
