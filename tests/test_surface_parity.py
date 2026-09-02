@@ -194,3 +194,14 @@ def test_no_mcp_description_sends_an_installed_reader_to_a_checkout():
         line = source[line_start:line_end]
         assert "tradeflow " in line, f"checkout-only instruction with no installed form: {line.strip()}"
     assert invocations or True  # the assertion above is the check; this documents intent
+
+
+def test_the_journal_has_one_location():
+    """`services.audit` writes it and `store.trials` indexes it, from two constants kept
+    in step by a comment. If they diverged the store would index a different file from
+    the one being written, and the multiple-testing correction would deflate against
+    half its evidence — with nothing erroring, because both paths are valid."""
+    from tradeflow.services.audit import DEFAULT_TRIAL_JOURNAL
+    from tradeflow.store.trials import DEFAULT_JOURNAL_PATH
+
+    assert DEFAULT_TRIAL_JOURNAL == DEFAULT_JOURNAL_PATH

@@ -60,6 +60,13 @@ order that filled 8 into 21.
 must bump it, or results from two different models compare as though they were one.
 *Guarded by* the trial store's accounting-scoped lookups.
 
+**The journal's location** — `services.audit.DEFAULT_TRIAL_JOURNAL` and
+`store.trials.DEFAULT_JOURNAL_PATH` are two constants holding one path, kept in step by
+a comment. If they diverged the trial store would index a different file from the one
+being written, and the multiple-testing correction would deflate against half its
+evidence with nothing erroring.
+*Guarded by* `tests/test_surface_parity.py`.
+
 Still parallel and **unguarded**: `cli._find_cached_trial` / `services._find_cached_trial`,
 `cli._open_trial_store` / `services._open_trial_store`, `cli._worker_data_spec` /
 `services._worker_data_spec`, `parallel._build_cost_model` /
