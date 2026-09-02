@@ -186,6 +186,24 @@ gate itself still counts only the current run (see the
 [open item](../engineering/walk-forward#n_trials-still-counts-a-run-at-gate-time-not-a-campaign)).
 Pass `--no-journal` to keep a throwaway or reproducibility run out of that total.
 
+## Stating the book limits
+
+`--max-positions`, `--max-position-size`, `--max-gross-exposure`, `--max-net-exposure`,
+`--max-total-risk` and `--min-notional` set the limits the backtest's book is held to,
+overriding what a strategy declares and what a config carries. The same names, units and
+meanings the [live path](live-trading.md#stating-the-book-limits-for-this-run) uses.
+
+They exist because asking "what would this look like under a cap I could actually
+deploy" otherwise meant editing the saved config, which is exactly where the validated
+book and the tested one drift apart. A limit far above the capital in play — a $100,000
+per-position ceiling on an $8,000 book — is not a limit; it is a default nobody chose,
+and it will not resemble the contract a live run is given.
+
+Only a flag you type applies, and typed limits are part of a run's cache identity. They
+were not before: limits are not tunable params, so they went through no identity at all,
+and two runs differing only in `max_gross_exposure` hashed alike — the second answered
+from the first.
+
 ## Where the P&L came from, and the assumption under it
 
 A headline return says nothing about where it came from. Every backtest now prints the

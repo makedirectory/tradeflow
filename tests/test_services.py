@@ -805,7 +805,10 @@ def test_walkforward_save_config_then_backtest_config_round_trips(monkeypatch, t
 
     backtest_trials = [t for t in _trials(journal) if t["tool"] == "trial:backtest"]
     assert len(backtest_trials) == 1
-    resolved = {k: v for k, v in backtest_trials[0]["resolved_config"].items() if k != "_cost"}
+    # Underscore-prefixed keys are the reserved assumption folds (`_cost`, `_limits`)
+    # that make up a run's dedup identity alongside its params. They are deliberately
+    # part of the recorded config and deliberately not part of the params round-trip.
+    resolved = {k: v for k, v in backtest_trials[0]["resolved_config"].items() if not k.startswith("_")}
     assert resolved == saved["params"]
 
 

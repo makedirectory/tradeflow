@@ -128,11 +128,24 @@ def _cost_key(args, vintage: Optional[str] = None) -> Dict[str, Any]:
     return key
 
 
-def _dedup_params(params: Dict[str, Any], args, vintage: Optional[str] = None) -> Dict[str, Any]:
-    """``params`` plus the cost-model assumptions, folded under a reserved key so
-    the dedup hash (and the journaled/displayed config) reflects everything that
-    can change a trial's outcome, not just the strategy's own tunable params."""
-    return {**params, "_cost": _cost_key(args, vintage)}
+def _dedup_params(
+    params: Dict[str, Any], args, vintage: Optional[str] = None, limits: Optional[Dict] = None
+) -> Dict[str, Any]:
+    """``params`` plus the assumptions that change the outcome, under reserved keys.
+
+    The dedup hash has to reflect everything that can change a trial's result, not just
+    the strategy's own tunable params. Cost was folded in; the book limits were not -
+    and they are not tunable params, so they went through no other identity either. Two
+    runs of the same strategy over the same window differing only in
+    ``max_gross_exposure`` therefore hashed alike, and the second was answered from the
+    first. Limits that are unset are omitted rather than recorded as null, so a config
+    that never mentioned them keys identically to one that does not have the concept.
+    """
+    key = {**params, "_cost": _cost_key(args, vintage)}
+    declared = {name: value for name, value in (limits or {}).items() if value is not None}
+    if declared:
+        key["_limits"] = declared
+    return key
 
 
 def _vintage_stamp(data_client, universe: List[str], timeframe: str, start: Any, end: Any) -> Optional[str]:
@@ -453,6 +466,9 @@ def cmd_backtest(args) -> None:
     tuned = apply_run_config(args)
     strategy_name = args.strategy
     strategy = _strategy_from(args, tuned)
+    # After the config, before anything reads the limits: a typed flag wins over what a
+    # config declares, the same precedence every other flag has.
+    _apply_limit_overrides(args, strategy)
 
     _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
     universe = resolve_universe(data_client, args.scanner, args.symbols, as_of=args.scan_as_of or args.end)
@@ -463,7 +479,7 @@ def cmd_backtest(args) -> None:
     # found - see _vintage_stamp's own docstring.
     vintage = _vintage_stamp(data_client, universe, strategy.config["timeframe"], args.start, args.end)
     tunable = {k: strategy.config[k] for k in strategy.PARAM_RANGES if k in strategy.config}
-    dedup_params = _dedup_params(tunable, args, vintage)
+    dedup_params = _dedup_params(tunable, args, vintage, strategy.position_limits())
 
     if not args.force:
         cached = _find_cached_trial(
@@ -2389,7 +2405,8 @@ def _print_fill_stress(data_client, strategy_name: str, universe, args, tuned) -
     for point in report["points"]:
         label = "touch only" if point["margin_bps"] == 0 else f"{point['margin_bps']:.0f} bps"
         print(
-            f"  {label:>12}{point['sharpe_ratio']:>10.2f}{point['total_return']:>9.2f}%{point['trades']:>9}"
+            f"  {label:>12}{point['sharpe_ratio']:>10.2f}{point['total_return']:>9.2f}%"
+            f"{'—' if point['trades'] is None else point['trades']:>9}"
         )
     survives = report["survives_to_bps"]
     if survives:
@@ -3802,6 +3819,58 @@ def _add_neutralize_factors_flag(parser, note: str = "") -> None:
     )
 
 
+def _add_limit_flags(parser) -> None:
+    """The book limits, on the research clock as well as the trade clock.
+
+    ``live`` could state these from the command line and ``backtest`` could not, so
+    asking "what would this look like under a cap I can actually deploy" meant editing
+    the saved config - which is exactly where the validated book and the tested one
+    drift apart. Same names, same units, same meanings on both clocks.
+    """
+    parser.add_argument(
+        "--max-positions",
+        dest="max_positions",
+        type=int,
+        default=None,
+        help="How many positions the book may hold at once",
+    )
+    parser.add_argument(
+        "--max-position-size",
+        dest="max_position_size",
+        type=float,
+        default=None,
+        help="Dollar ceiling on any one position",
+    )
+    parser.add_argument(
+        "--max-gross-exposure",
+        dest="max_gross_exposure",
+        type=float,
+        default=None,
+        help="Ceiling on long + short as a fraction of equity",
+    )
+    parser.add_argument(
+        "--max-net-exposure",
+        dest="max_net_exposure",
+        type=float,
+        default=None,
+        help="Ceiling on |long - short| as a fraction of equity",
+    )
+    parser.add_argument(
+        "--max-total-risk",
+        dest="max_total_risk",
+        type=float,
+        default=None,
+        help="Ceiling on loss-at-stop across the book, as a fraction of equity",
+    )
+    parser.add_argument(
+        "--min-notional",
+        dest="min_notional",
+        type=float,
+        default=None,
+        help="Skip an entry whose sized order falls below this dollar value",
+    )
+
+
 def _add_cost_flags(parser) -> None:
     """--gross/--commission-bps/--impact-eta/--borrow-bps, shared by every command
     that can price a fill (backtest/optimize/walkforward) so a search or
@@ -4080,6 +4149,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bt.add_argument("--benchmark", default="SPY", help="Benchmark symbol for beta")
     _add_cost_flags(bt)
+    _add_limit_flags(bt)
     bt.add_argument(
         "--fill-stress",
         dest="fill_stress",

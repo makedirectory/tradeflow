@@ -933,7 +933,10 @@ def run_fill_stress(
                 "margin_bps": float(margin),
                 "sharpe_ratio": metrics.get("sharpe_ratio", 0.0),
                 "total_return": metrics.get("total_return", 0.0),
-                "trades": metrics.get("trades", 0),
+                # `total_trades`, and None rather than 0 when it is missing. Read from
+                # the wrong key it reported 0 on every row of a 1952-trade run, and a
+                # zero default is what made a wrong key look like a real answer.
+                "trades": metrics.get("total_trades"),
             }
         )
 

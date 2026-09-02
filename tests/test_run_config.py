@@ -773,3 +773,60 @@ def test_a_trial_kind_that_never_trades_is_still_served(tmp_path, monkeypatch):
     store.record(id="alpha1", kind="alpha", accounting=1, oos_trades=0, **identity)
 
     assert store.find(**identity, accounting=1) is not None
+
+
+# --- book limits on the research clock --------------------------------------------
+def _backtest_limits(argv, declared=None):
+    from tradeflow.cli import _apply_limit_overrides, parse_cli
+    from tradeflow.services.registry import STRATEGIES
+
+    args = parse_cli(argv)
+    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    if declared:
+        strategy.config["position_limits"] = {**strategy.position_limits(), **declared}
+    _apply_limit_overrides(args, strategy)
+    return strategy.position_limits()
+
+
+def test_backtest_can_state_the_book_limits_from_the_command_line():
+    """`live` could and `backtest` could not, so asking "what would this look like under
+    a cap I can actually deploy" meant editing the saved config — which is exactly where
+    the validated book and the tested one drift apart."""
+    limits = _backtest_limits(["backtest", "--max-position-size", "1200", "--max-gross-exposure", "0.9"])
+
+    assert limits["max_position_size"] == 1200.0
+    assert limits["max_gross_exposure"] == 0.9
+
+
+def test_an_untyped_limit_flag_leaves_the_config_alone():
+    """Same precedence rule as everywhere else: only a flag actually typed applies."""
+    limits = _backtest_limits(["backtest"], declared={"max_position_size": 5_000.0})
+
+    assert limits["max_position_size"] == 5_000.0
+
+
+def test_limits_change_the_cache_identity_of_a_run():
+    """The latent trap this opened up: position limits are not tunable params, so they
+    went through no identity at all. Two runs of the same strategy over the same window
+    differing only in max_gross_exposure hashed alike, and the second was answered from
+    the first."""
+    from tradeflow.cli import _dedup_params, parse_cli
+
+    args = parse_cli(["backtest"])
+    loose = _dedup_params({"fast_ema_period": 10}, args, None, {"max_gross_exposure": None})
+    tight = _dedup_params({"fast_ema_period": 10}, args, None, {"max_gross_exposure": 0.5})
+
+    assert loose != tight
+
+
+def test_a_config_with_no_limits_keys_like_one_that_has_no_such_concept():
+    """Unset limits are omitted rather than recorded as null, or every historical trial
+    would re-key and stop matching itself."""
+    from tradeflow.cli import _dedup_params, parse_cli
+
+    args = parse_cli(["backtest"])
+    absent = _dedup_params({"x": 1}, args, None, None)
+    all_none = _dedup_params({"x": 1}, args, None, {"max_gross_exposure": None, "min_notional": None})
+
+    assert absent == all_none
+    assert "_limits" not in absent
