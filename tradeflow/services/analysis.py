@@ -195,6 +195,7 @@ def run_backtest(
     beta_sizing: bool = False,
     benchmark: str = "SPY",
     gross: bool = False,
+    take_profit_margin_bps: float = 0.0,
     commission_bps: float = 1.0,
     impact_eta: float = 0.3,
     participation_cap: float = 0.10,
@@ -244,9 +245,13 @@ def run_backtest(
 
     sizer = build_beta_sizer(data_client, strat, symbols, benchmark, as_of=start) if beta_sizing else None
     cost_model = _build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
-    result = BacktestEngine(strat, data_client, sizer=sizer, cost_model=cost_model).run(
-        symbols, start, end, capital, benchmark=benchmark
-    )
+    result = BacktestEngine(
+        strat,
+        data_client,
+        sizer=sizer,
+        cost_model=cost_model,
+        take_profit_margin_bps=take_profit_margin_bps,
+    ).run(symbols, start, end, capital, benchmark=benchmark)
 
     # `journal=False` exists for re-runs of a config that is already a candidate -
     # a cost-stress curve is one candidate under several stated assumptions, and
@@ -866,6 +871,81 @@ def _universe_overlap(left: set, right: set) -> Dict[str, Any]:
         "added": added,
         "dropped": dropped,
         "turnover_pct": turnover,
+    }
+
+
+#: Basis points a bar must trade *through* a take-profit before it counts as filled.
+#: Zero is the historical assumption; the rest ask what the edge is worth without it.
+DEFAULT_FILL_STRESS_MARGINS: Sequence[float] = (0.0, 5.0, 10.0, 25.0, 50.0)
+
+
+def run_fill_stress(
+    data_client: MarketDataClient,
+    strategy: str,
+    symbols: List[str],
+    start: datetime,
+    end: datetime,
+    *,
+    config: Optional[Dict[str, Any]] = None,
+    capital: float = 100_000.0,
+    benchmark: str = "SPY",
+    commission_bps: float = 1.0,
+    impact_eta: float = 0.3,
+    borrow_bps: float = 50.0,
+    margins: Sequence[float] = DEFAULT_FILL_STRESS_MARGINS,
+) -> Dict[str, Any]:
+    """Re-run one config requiring the price to trade progressively further *through*
+    each take-profit before it counts as filled.
+
+    At zero - the historical assumption - a bar that merely touched the target filled
+    at it, which models a resting limit order that is always first in the queue. For a
+    strategy whose edge is concentrated in target exits that assumption is not a detail;
+    it is the result. This makes it a number that can be moved rather than one that can
+    only be believed.
+
+    The trigger tightens; the fill price does not. A limit order that fills, fills at
+    its limit - the question is whether it filled at all, not whether it filled worse.
+
+    Journals nothing: the same config under stated assumptions, not new candidates.
+    """
+    run_id = new_run_id()
+    points: List[Dict[str, Any]] = []
+    for margin in margins:
+        result = run_backtest(
+            data_client,
+            strategy,
+            symbols,
+            start,
+            end,
+            config=config,
+            capital=capital,
+            benchmark=benchmark,
+            commission_bps=commission_bps,
+            impact_eta=impact_eta,
+            borrow_bps=borrow_bps,
+            take_profit_margin_bps=margin,
+            journal=False,
+            force=True,
+        )
+        metrics = result.get("metrics") or {}
+        points.append(
+            {
+                "margin_bps": float(margin),
+                "sharpe_ratio": metrics.get("sharpe_ratio", 0.0),
+                "total_return": metrics.get("total_return", 0.0),
+                "trades": metrics.get("trades", 0),
+            }
+        )
+
+    survives = [p["margin_bps"] for p in points if p["sharpe_ratio"] > 0 and p["total_return"] > 0]
+    return {
+        "run_id": run_id,
+        "strategy": strategy,
+        "window": {"start": start.isoformat(), "end": end.isoformat()},
+        "points": points,
+        "base_sharpe": points[0].get("sharpe_ratio") if points else None,
+        # The widest margin the edge still clears at, or None if it dies immediately.
+        "survives_to_bps": max(survives) if survives else None,
     }
 
 

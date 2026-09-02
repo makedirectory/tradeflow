@@ -1095,3 +1095,104 @@ def test_partial_coverage_still_runs():
     result = engine.run(["AAA", "MISSING"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000)
 
     assert len(result.trades) == 1
+
+
+# --- the take-profit fill assumption ----------------------------------------------
+#: Entry fills at 100 on bar 1; _TIGHT_STOP's 1% target is therefore 101, and bar 2's
+#: high reaches exactly that and no further. Under the historical assumption that fills;
+#: requiring any move through the target, it does not. The exact touch is the whole
+#: point — a bar that blows through the target fills either way and tests nothing.
+_TOUCHES_TARGET = [
+    {"open": 100, "high": 100, "low": 100, "close": 100, "volume": 1},
+    {"open": 100, "high": 100, "low": 100, "close": 100, "volume": 1},
+    {"open": 100, "high": 101, "low": 100, "close": 100, "volume": 1},
+]
+
+
+def _touch_run(margin_bps):
+    strategy = ScriptedStrategy(["BUY", "HOLD", "CLOSE_BUY"], _TIGHT_STOP)
+    frames = {"AAA": _frame(_TOUCHES_TARGET)}
+    return BacktestEngine(
+        strategy,
+        MarketDataClient(DictMarketData(frames)),
+        take_profit_margin_bps=margin_bps,
+    ).run(["AAA"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000)
+
+
+def test_a_bar_that_only_touches_the_target_fills_under_the_default():
+    """The historical assumption, pinned so a change to it is deliberate: a resting
+    limit that is always first in the queue, filled by a single print at the level."""
+    result = _touch_run(0.0)
+
+    assert list(result.trades["exit_reason"]) == ["TAKE_PROFIT"]
+
+
+def test_requiring_a_move_through_the_target_does_not_fill_on_a_touch():
+    """The assumption made movable. For a strategy whose gain is concentrated in target
+    exits, whether a touch fills is not a detail — it is the result."""
+    result = _touch_run(10.0)
+
+    assert "TAKE_PROFIT" not in list(result.trades["exit_reason"])
+
+
+def test_the_margin_tightens_the_trigger_and_not_the_price():
+    """A limit order that fills, fills at its limit. The question the margin asks is
+    whether it filled at all, not whether it filled worse — a margin that also moved
+    the fill price would double-count the same pessimism."""
+    # Blows well through the target, so it fills at every margin — which is what makes
+    # it the right case for asking whether the *price* moved.
+    generous = [
+        {"open": 100, "high": 100, "low": 100, "close": 100, "volume": 1},
+        {"open": 100, "high": 100, "low": 100, "close": 100, "volume": 1},
+        {"open": 100, "high": 120, "low": 100, "close": 100, "volume": 1},
+    ]
+    frames = {"AAA": _frame(generous)}
+
+    fills = [
+        BacktestEngine(
+            ScriptedStrategy(["BUY", "HOLD", "CLOSE_BUY"], _TIGHT_STOP),
+            MarketDataClient(DictMarketData(frames)),
+            take_profit_margin_bps=margin,
+        )
+        .run(["AAA"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000)
+        .trades["exit_price"]
+        .iloc[0]
+        for margin in (0.0, 10.0)
+    ]
+
+    assert fills[0] == pytest.approx(fills[1])
+
+
+def test_the_default_margin_changes_nothing():
+    """Zero is every historical result. A default that moved would silently restate
+    every number this project has recorded."""
+    baseline = _multi(_four_names(), ["BUY", "HOLD", "CLOSE_BUY"], overrides=_TIGHT_STOP)
+    explicit = BacktestEngine(
+        ScriptedStrategy(["BUY", "HOLD", "CLOSE_BUY"], _TIGHT_STOP),
+        MarketDataClient(DictMarketData(_four_names())),
+        take_profit_margin_bps=0.0,
+    ).run(sorted(_four_names()), datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000)
+
+    assert explicit.final_capital == pytest.approx(baseline.final_capital)
+
+
+def test_a_short_target_needs_the_price_to_trade_below_it():
+    """The mirror case, and the one a sign error gets backwards: a short's target is
+    below entry, so 'through' means lower, not higher."""
+    # A short entered at 100 has its 1% target at 99; this low reaches exactly that.
+    touches_short_target = [
+        {"open": 100, "high": 100, "low": 100, "close": 100, "volume": 1},
+        {"open": 100, "high": 100, "low": 100, "close": 100, "volume": 1},
+        {"open": 100, "high": 100, "low": 99, "close": 100, "volume": 1},
+    ]
+    frames = {"AAA": _frame(touches_short_target)}
+
+    def run(margin):
+        return BacktestEngine(
+            ScriptedStrategy(["SELL", "HOLD", "CLOSE_SELL"], _TIGHT_STOP),
+            MarketDataClient(DictMarketData(frames)),
+            take_profit_margin_bps=margin,
+        ).run(["AAA"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000)
+
+    assert "TAKE_PROFIT" in list(run(0.0).trades["exit_reason"])
+    assert "TAKE_PROFIT" not in list(run(10.0).trades["exit_reason"])

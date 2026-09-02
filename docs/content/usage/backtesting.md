@@ -186,6 +186,46 @@ gate itself still counts only the current run (see the
 [open item](../engineering/walk-forward#n_trials-still-counts-a-run-at-gate-time-not-a-campaign)).
 Pass `--no-journal` to keep a throwaway or reproducibility run out of that total.
 
+## Where the P&L came from, and the assumption under it
+
+A headline return says nothing about where it came from. Every backtest now prints the
+net P&L by exit reason, because a book whose entire gain arrives through one exit path
+is a bet on that path's fill assumption, and nothing in the summary metrics
+distinguishes it from one whose edge is spread across exits. When one winning exit
+accounts for over 90% of the gain, the report says so.
+
+That matters most for take-profit exits, because of how they fill. The engine closes a
+position at its target as soon as a bar's high reaches it — **a single print at the
+level is enough**. That models a resting limit order that is always first in the queue,
+which is the most generous reading available. For a strategy whose gain is concentrated
+in target exits, that is not a modelling detail; it is the result.
+
+`--fill-stress` makes the assumption a number you can move:
+
+```
+=== Take-profit fill stress ===
+    through by    Sharpe    return   trades
+    touch only      1.84     62.40%      420
+         5 bps      1.61     51.80%      398
+        10 bps      1.44     43.20%      377
+        25 bps      0.96     22.10%      321
+        50 bps      0.31      4.70%      248
+  Edge survives requiring 50 bps through the target.
+```
+
+(Shape only — the numbers are illustrative.) A curve that decays gently is a different
+proposition from one that goes negative by 10 bps, and both are "profitable" under the
+default.
+
+Each row requires the price to trade that far *through* the target before the exit
+counts as filled. The trigger tightens; the fill price does not — a limit order that
+fills, fills at its limit, and the question being asked is whether it filled at all.
+`touch only` is the historical assumption and every result this project has recorded.
+
+Nothing is journaled: these are one candidate under stated assumptions, not new
+candidates, and recording them would inflate the multiple-testing count the deflated
+Sharpe deflates against.
+
 ## Tuning the strategy
 
 Once a backtest runs, search for better parameters with

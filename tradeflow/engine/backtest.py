@@ -398,6 +398,7 @@ class BacktestEngine:
         data_client: MarketDataClient,
         sizer: Optional[PositionSizer] = None,
         cost_model: Optional[CostModel] = None,
+        take_profit_margin_bps: float = 0.0,
     ):
         self.strategy = strategy
         self.data_client = data_client
@@ -407,6 +408,19 @@ class BacktestEngine:
         # When set, every simulated fill is charged so metrics are net of cost.
         # None = gross (the engine is a mechanism; the service layer defaults to net).
         self.cost_model = cost_model
+        #: How far a bar must trade *through* a take-profit before it counts as filled.
+        #:
+        #: Zero - the default, and every historical result - means a bar that merely
+        #: touched the target filled at it. That models a resting limit order that is
+        #: always first in the queue, which is the most generous reading available: a
+        #: single print at the level is enough. For a strategy whose edge is
+        #: concentrated in target exits, that assumption *is* the result, so it is worth
+        #: being able to move rather than only being able to believe.
+        #:
+        #: The trigger tightens; the fill price does not change. A limit order that
+        #: fills, fills at its limit - the question this asks is whether it filled at
+        #: all, not whether it filled worse.
+        self.take_profit_margin_bps = take_profit_margin_bps
 
     def run(
         self,
@@ -982,17 +996,18 @@ class BacktestEngine:
         self, position: Dict[str, Any], signal: str, price_open, high, low, timestamp, exit_cost: float = 0.0
     ) -> Optional[Dict[str, Any]]:
         """Return a closed-trade record if an exit triggers this bar, else None."""
+        margin = self.take_profit_margin_bps / 1e4
         if position["side"] == signals.BUY:
             if low <= position["stop_loss"]:
                 return self._close(position, position["stop_loss"], timestamp, "STOP_LOSS", exit_cost)
-            if high >= position["take_profit"]:
+            if high >= position["take_profit"] * (1.0 + margin):
                 return self._close(position, position["take_profit"], timestamp, "TAKE_PROFIT", exit_cost)
             if signal in (signals.SELL, signals.CLOSE_BUY):
                 return self._close(position, price_open, timestamp, "SIGNAL", exit_cost)
         else:  # short
             if high >= position["stop_loss"]:
                 return self._close(position, position["stop_loss"], timestamp, "STOP_LOSS", exit_cost)
-            if low <= position["take_profit"]:
+            if low <= position["take_profit"] * (1.0 - margin):
                 return self._close(position, position["take_profit"], timestamp, "TAKE_PROFIT", exit_cost)
             if signal in (signals.BUY, signals.CLOSE_SELL):
                 return self._close(position, price_open, timestamp, "SIGNAL", exit_cost)

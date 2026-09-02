@@ -549,8 +549,11 @@ def cmd_backtest(args) -> None:
     _print_universe_provenance(args, universe)
     _print_net_cap_derivation(result, strategy.position_limits())
     _print_verdicts_for_backtest(result)
+    _print_exit_concentration(result)
     if getattr(args, "cost_stress", False):
         _print_cost_stress(data_client, strategy_name, universe, args, tuned)
+    if getattr(args, "fill_stress", False):
+        _print_fill_stress(data_client, strategy_name, universe, args, tuned)
     if not args.gross and result.total_cost:
         print(
             f"Transaction cost: ${result.total_cost:,.2f} "
@@ -2331,6 +2334,72 @@ def _print_verdicts_for_backtest(result) -> None:
     print("\n".join(format_verdicts(execution=summary)))
 
 
+def _print_exit_concentration(result) -> None:
+    """Which exit reason produced the P&L, and how much of it came from one.
+
+    A headline return says nothing about where it came from. A book whose entire edge
+    is one exit path is a bet on that path's fill assumption, and nothing in the
+    summary metrics distinguishes it from one whose edge is spread across exits.
+    """
+    trades = getattr(result, "trades", None)
+    if trades is None or len(trades) == 0 or "exit_reason" not in trades:
+        return
+    grouped = trades.groupby("exit_reason")["pnl"].agg(["count", "sum"])
+    total_abs = grouped["sum"].abs().sum()
+    if total_abs <= 0:
+        return
+    print("\n=== Where the P&L came from ===")
+    print(f"  {'exit':16}{'trades':>8}{'share':>8}{'net P&L':>14}")
+    for reason, row in grouped.sort_values("sum", ascending=False).iterrows():
+        share = row["count"] / len(trades)
+        print(f"  {str(reason):16}{int(row['count']):>8}{share:>7.1%}${row['sum']:>13,.0f}")
+    winners = grouped[grouped["sum"] > 0]["sum"]
+    if len(winners) and winners.max() / winners.sum() > 0.9:
+        top = winners.idxmax()
+        print(
+            f"  Nearly all of the gain comes from {top}. The result is a bet on that "
+            f"exit's\n  fill assumption - stress it before believing the headline."
+        )
+
+
+def _print_fill_stress(data_client, strategy_name: str, universe, args, tuned) -> None:
+    """Re-run requiring the price to trade *through* each take-profit, and show the decay.
+
+    The default assumption fills a target when a bar merely touches it, which models a
+    resting limit always first in the queue. For a strategy whose gain is concentrated
+    in target exits, that assumption is the result rather than a detail.
+    """
+    from tradeflow.services.analysis import run_fill_stress
+
+    report = run_fill_stress(
+        data_client,
+        strategy_name,
+        universe,
+        args.start,
+        args.end,
+        config=tuned or None,
+        capital=args.capital,
+        benchmark=args.benchmark,
+        commission_bps=args.commission_bps,
+        impact_eta=args.impact_eta,
+        borrow_bps=args.borrow_bps,
+    )
+    print("\n=== Take-profit fill stress ===")
+    print(f"  {'through by':>12}{'Sharpe':>10}{'return':>10}{'trades':>9}")
+    for point in report["points"]:
+        label = "touch only" if point["margin_bps"] == 0 else f"{point['margin_bps']:.0f} bps"
+        print(
+            f"  {label:>12}{point['sharpe_ratio']:>10.2f}{point['total_return']:>9.2f}%{point['trades']:>9}"
+        )
+    survives = report["survives_to_bps"]
+    if survives:
+        print(f"  Edge survives requiring {survives:.0f} bps through the target.")
+    else:
+        print("  Edge does not survive requiring any move through the target.")
+    print("  'touch only' is the historical assumption: a bar that reached the target filled at it.")
+    print("  Nothing journaled: one candidate under stated assumptions, not new candidates.")
+
+
 def _print_cost_stress(data_client, strategy_name: str, universe, args, tuned) -> None:
     """Re-run this config under worse cost assumptions and show where the edge dies.
 
@@ -2756,11 +2825,34 @@ def _print_trial_detail(store, args) -> None:
     if trial is None:
         sys.exit(f"No trial with id {args.trial_id!r}. Try `trials list` to see what is recorded.")
     if args.json:
-        print(json.dumps(trial, indent=2, default=str))
+        print(json.dumps(_limit_trial_trades(trial, args.trades_limit), indent=2, default=str))
         return
     print(format_trial_detail(trial))
     if trial.get("trades"):
         print(format_trial_trades(trial["trades"], limit=args.trades_limit))
+
+
+def _limit_trial_trades(trial: Dict[str, Any], limit: Optional[int]) -> Dict[str, Any]:
+    """Apply ``--trades-limit`` to the JSON form too, and say when it truncated.
+
+    The flag was read only on the text path, so JSON dumped every stored trade
+    regardless - which for a real trial is thousands of rows nobody asked for.
+
+    A truncated payload that does not say so is worse than an untruncated one: it looks
+    like the whole table. The count of what was dropped travels with it.
+    """
+    trades = trial.get("trades")
+    rows = (trades or {}).get("rows")
+    if not rows or limit is None or limit < 0 or len(rows) <= limit:
+        return trial
+    return {
+        **trial,
+        "trades": {
+            **trades,
+            "rows": rows[:limit],
+            "truncated": {"shown": limit, "total": len(rows), "flag": "--trades-limit"},
+        },
+    }
 
 
 def _print_leaderboard(store, args) -> None:
@@ -3988,6 +4080,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bt.add_argument("--benchmark", default="SPY", help="Benchmark symbol for beta")
     _add_cost_flags(bt)
+    bt.add_argument(
+        "--fill-stress",
+        dest="fill_stress",
+        action="store_true",
+        help="Re-run requiring the price to trade progressively further *through* each "
+        "take-profit before it counts as filled. The default fills a target the moment a "
+        "bar touches it, which models a resting limit always first in the queue - for a "
+        "strategy whose gain is concentrated in target exits, that assumption is the "
+        "result rather than a detail",
+    )
     bt.add_argument(
         "--cost-stress",
         dest="cost_stress",
