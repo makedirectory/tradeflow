@@ -349,7 +349,10 @@ def _writable_check() -> Check:
 _EXTRAS = (
     ("store", "pyarrow", "the bar cache (`--cache`/`--offline`) and the Parquet bar store"),
     ("viz", "matplotlib", "charts in `--chart` and in HTML reports"),
-    ("mcp", "mcp", "the MCP server (`python main.py mcp`)"),
+    # No command in the description: the way to start it differs by how this copy was
+    # reached, and a checkout-only invocation here is a dead end for every installed
+    # reader. The next-steps block names it correctly for the copy that is running.
+    ("mcp", "mcp", "the MCP server (`mcp`)"),
     ("optimize", "sklearn", "`optimize --method bayesian`"),
     ("portfolio", "ortools", "`allocate` (the constraint solver)"),
 )

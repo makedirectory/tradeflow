@@ -141,11 +141,12 @@ def _dedup_params(
     first. Limits that are unset are omitted rather than recorded as null, so a config
     that never mentioned them keys identically to one that does not have the concept.
     """
-    key = {**params, "_cost": _cost_key(args, vintage)}
-    declared = {name: value for name, value in (limits or {}).items() if value is not None}
-    if declared:
-        key["_limits"] = declared
-    return key
+    from tradeflow.services.analysis import limits_key
+
+    # One definition, shared with the service the MCP server calls. Two copies of this
+    # would drift, and the moment they did a trial recorded over one surface would stop
+    # being found by the other.
+    return {**params, "_cost": _cost_key(args, vintage), **limits_key(limits)}
 
 
 def _vintage_stamp(data_client, universe: List[str], timeframe: str, start: Any, end: Any) -> Optional[str]:
@@ -1076,6 +1077,10 @@ def cmd_walkforward(args) -> None:
             workers=args.workers,
             data_spec=data_spec,
             benchmark=getattr(args, "benchmark", None),
+            # The book the config says it will trade. Without this a config asking for
+            # eight positions was validated at whatever the strategy class declares,
+            # so the validated book and the deployed one were different books.
+            position_limits=getattr(args, "config_position_limits", None),
         )
         result = validator.run(
             universe,
@@ -1629,9 +1634,12 @@ def _print_doctor(checks) -> None:
         print(f"  [{'ok' if check.passed else 'FAIL'}] {check.name:<22} {check.detail}")
     essential = [c for c in checks if not c.passed and not c.name.startswith("extra:")]
     if essential:
-        print(f"\n{len(essential)} problem(s) to fix. Run `python main.py init` for the guided setup.")
+        print(f"\n{len(essential)} problem(s) to fix. Run `{_invocation('init')}` for the guided setup.")
         raise SystemExit(1)
-    print("\nSetup looks good. `make demo` needs nothing; `python main.py verdict` needs the keys above.")
+    print(
+        f"\nSetup looks good. `{_invocation('demo', make_target='demo')}` needs nothing; "
+        f"`{_invocation('verdict')}` needs the keys above."
+    )
 
 
 def _init_non_interactive(args, setup) -> None:
@@ -1683,7 +1691,9 @@ def _init_interactive(args, setup) -> None:
     secret = getpass.getpass("  APCA_API_SECRET_KEY (hidden): ").strip() if key else ""
 
     if not key or not secret:
-        print("\nSkipped — no keys written. `make demo` runs offline with no credentials at all.")
+        print(
+            f"\nSkipped — no keys written. `{_invocation('demo', make_target='demo')}` runs offline with no credentials at all."
+        )
         _print_next_steps()
         return
 
@@ -1759,10 +1769,11 @@ def _typed_confirmation(phrase: str) -> bool:
 def _print_next_steps() -> None:
     print(
         "\nNext:"
-        "\n  make demo                 the whole pipeline on synthetic data — no keys, no network"
-        "\n  python main.py verdict    scan → alphas → portfolio → information, one verdict"
-        "\n  python main.py backtest   did the idea ever work?"
-        "\n  python main.py init --check   re-run these checks any time\n"
+        f"\n  {_invocation('demo', make_target='demo'):<26}the whole pipeline on synthetic data — no keys, no network"
+        f"\n  {_invocation('verdict'):<26}scan → alphas → portfolio → information, one verdict"
+        f"\n  {_invocation('backtest'):<26}did the idea ever work?"
+        f"\n  {_invocation('mcp'):<26}serve it to an agent over MCP (needs the 'mcp' extra)"
+        f"\n  {_invocation('init --check'):<26}re-run these checks any time\n"
     )
 
 
@@ -2923,6 +2934,21 @@ def _missing_extra_message(extra: str, what: str) -> str:
     else:
         command = f'uv tool install --force "tradeflow-engine[{extra}]"'
     return f"{what} needs the '{extra}' extra. Install it:\n    {command}"
+
+
+def _invocation(command: str, *, make_target: Optional[str] = None) -> str:
+    """How to run ``command`` on the copy that is actually running.
+
+    An installed copy has no ``main.py`` and no Makefile, so "python main.py verdict"
+    and "make demo" send the reader looking for files that were never there. The extras
+    rows already phrase themselves this way; these did not, and they are the lines a
+    first run ends on.
+    """
+    from tradeflow.settings import _looks_like_checkout, state_root
+
+    if not _looks_like_checkout(state_root()):
+        return f"tradeflow {command}"
+    return f"make {make_target}" if make_target else f"python main.py {command}"
 
 
 # The book limits a live run may override from the command line, and the

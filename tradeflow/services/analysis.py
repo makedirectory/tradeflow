@@ -91,6 +91,22 @@ def _build_cost_model(
     )
 
 
+def limits_key(limits: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """The book limits folded into a trial's dedup key, or ``{}`` when none are set.
+
+    One definition, used by every surface. Limits are not tunable params, so before
+    this they went through no identity at all and two runs differing only in
+    ``max_gross_exposure`` hashed alike. Adding it to one surface and not the other
+    would be worse than leaving it out of both: a trial recorded over the CLI would
+    stop being found by MCP, which is the promise :func:`_find_cached_trial` makes.
+
+    Unset limits are omitted rather than recorded as null, so a config that never
+    mentioned them keys exactly as it did before this existed.
+    """
+    declared = {name: value for name, value in (limits or {}).items() if value is not None}
+    return {"_limits": declared} if declared else {}
+
+
 def _cost_key(gross: bool, commission_bps: float, impact_eta: float, borrow_bps: float) -> Dict[str, Any]:
     """The cost-model assumptions folded into a trial's dedup key - same shape as
     the CLI's ``main._cost_key`` so a trial recorded via one surface is found by
@@ -223,6 +239,7 @@ def run_backtest(
     dedup_params = {
         **_tunable_params(strat),
         "_cost": _cost_key(gross, commission_bps, impact_eta, borrow_bps),
+        **limits_key(strat.position_limits()),
     }
 
     if not force:

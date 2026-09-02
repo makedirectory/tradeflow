@@ -324,7 +324,25 @@ def test_cli_interactive_skip_path_writes_nothing(tmp_path, monkeypatch, capsys)
 
     assert not path.exists()
     out = capsys.readouterr().out
-    assert "Skipped" in out and "make demo" in out
+    # The demo command is named the way *this* copy can run it. A tmp state root is not
+    # a checkout, so the installed form is the correct one here; asserting "make demo"
+    # pinned an instruction that is a dead end for every installed reader.
+    assert "Skipped" in out and "tradeflow demo" in out
+
+
+def test_a_checkout_is_told_to_use_its_makefile(tmp_path, monkeypatch, capsys):
+    """Both directions. The point is not that one phrasing wins — it is that the
+    instruction matches how the software was reached."""
+    import getpass
+
+    from tradeflow import cli as main
+
+    monkeypatch.setattr(getpass, "getpass", lambda *a, **k: "")
+    monkeypatch.setattr("tradeflow.settings._looks_like_checkout", lambda _: True)
+    args = main.build_parser().parse_args(["init", "--env-path", str(tmp_path / ".env")])
+    args.func(args)
+
+    assert "make demo" in capsys.readouterr().out
 
 
 def test_cli_interactive_writes_keys_and_confirms_paper_trading(tmp_path, monkeypatch, capsys):

@@ -313,8 +313,16 @@ class WalkForwardValidator:
         workers: Optional[int] = None,
         data_spec: Optional[Any] = None,
         benchmark: Optional[str] = None,
+        position_limits: Optional[Dict[str, Any]] = None,
     ):
         self.strategy_class = strategy_class
+        #: The book a config says it will trade. `position_limits` is not a tunable
+        #: param, so constructing a candidate from its params alone silently drops it
+        #: and validates against the strategy class's declared defaults instead - a
+        #: config asking for eight positions was validated at one. Validation and
+        #: deployment then describe different books, which is the one thing a
+        #: walk-forward exists to rule out.
+        self.position_limits = position_limits
         self.data_client = data_client
         self.initial_capital = initial_capital
         self.seed = seed
@@ -444,6 +452,23 @@ class WalkForwardValidator:
     # ------------------------------------------------------------------ #
     # Run
     # ------------------------------------------------------------------ #
+    def _make(self, params: Dict[str, Any], strategy_class=None):
+        """Construct a candidate and give it the book the config asked for.
+
+        `position_limits` is not a tunable param, so building from params alone drops
+        it. Applied after construction for the same reason `_strategy_from` does it in
+        the CLI: it does not go through PARAM_RANGES validation, and a strategy built
+        from defaults would otherwise keep the defaults the config exists to override.
+        """
+        cls = strategy_class or self.strategy_class
+        strategy = cls(dict(params))
+        if self.position_limits:
+            strategy.config["position_limits"] = {
+                **strategy.position_limits(),
+                **self.position_limits,
+            }
+        return strategy
+
     def run(
         self,
         symbols: List[str],
@@ -497,7 +522,7 @@ class WalkForwardValidator:
             is_metrics = self._row_metrics(is_result)
             all_trial_sharpes.extend(self._trial_sharpes(is_result))
 
-            strategy = self.strategy_class(dict(is_result.best_params))
+            strategy = self._make(is_result.best_params)
             oos_metrics, oos_trades, oos_legs = self._oos_backtest(
                 strategy,
                 sliced,
@@ -613,11 +638,17 @@ class WalkForwardValidator:
         fold_results: List[FoldResult] = []
         oos_trade_frames: List[pd.DataFrame] = []
         for fold in folds:
-            is_result = BacktestEngine(cls(dict(params)), sliced, cost_model=self.cost_model).run(
+            is_result = BacktestEngine(self._make(params, cls), sliced, cost_model=self.cost_model).run(
                 symbols, fold.is_start, fold.is_end, self.initial_capital
             )
             oos_metrics, oos_trades, oos_legs = self._oos_backtest(
-                cls(dict(params)), sliced, symbols, fold.oos_start, fold.oos_end, warmup_days, n_trials=1
+                self._make(params, cls),
+                sliced,
+                symbols,
+                fold.oos_start,
+                fold.oos_end,
+                warmup_days,
+                n_trials=1,
             )
             oos_trade_frames.append(oos_trades)
             fold_results.append(
@@ -670,7 +701,7 @@ class WalkForwardValidator:
         )
         sliced = MarketDataClient(_PrefetchedProvider(frames))
         metrics, _, _ = self._oos_backtest(
-            cls(dict(params)),
+            self._make(params, cls),
             sliced,
             symbols,
             window_start,
@@ -796,7 +827,7 @@ class WalkForwardValidator:
         final = self._optimize(opt, symbols, region_start, holdout_start, method, objective, max_evals)
         if not final.best_params:
             return None, None
-        strategy = self.strategy_class(dict(final.best_params))
+        strategy = self._make(final.best_params)
         metrics, _, _ = self._oos_backtest(
             strategy, client, symbols, holdout_start, holdout_end, warmup_days, n_trials=len(final.results)
         )
@@ -884,7 +915,7 @@ class WalkForwardValidator:
         return {"base_sharpe": base, "max_sharpe_loss": float(worst_loss), "perturbed": details}
 
     def _oos_sharpe(self, client, symbols, params, fold, warmup_days) -> float:
-        strategy = self.strategy_class(dict(params))
+        strategy = self._make(params)
         metrics, _, _ = self._oos_backtest(
             strategy, client, symbols, fold.oos_start, fold.oos_end, warmup_days, n_trials=1
         )
@@ -897,7 +928,7 @@ class WalkForwardValidator:
         the feed forward leaves results unchanged. A *clean* strategy's results
         change materially, so we **fail** when they don't.
         """
-        strategy = self.strategy_class(dict(best_params))
+        strategy = self._make(best_params)
         _, base_trades, _ = self._oos_backtest(
             strategy, client, symbols, fold.oos_start, fold.oos_end, warmup_days, n_trials=1
         )
@@ -910,7 +941,7 @@ class WalkForwardValidator:
                     df[col] = df[col].shift(-5)
             df.dropna(inplace=True)
         shifted_client = MarketDataClient(_PrefetchedProvider(shifted))
-        strategy2 = self.strategy_class(dict(best_params))
+        strategy2 = self._make(best_params)
         _, shifted_trades, _ = self._oos_backtest(
             strategy2, shifted_client, symbols, fold.oos_start, fold.oos_end, warmup_days, n_trials=1
         )

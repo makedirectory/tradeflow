@@ -8,7 +8,8 @@ placing an order. The hard wall is the *absence* of any
 order/live/account-mutation tool; it cannot be prompt-injected around because the
 capability is not wired in.
 
-Run with: ``python main.py mcp`` (needs the ``mcp`` extra).
+Run with ``tradeflow mcp`` when installed, or ``python main.py mcp`` from a checkout
+(needs the ``mcp`` extra either way).
 """
 
 import contextlib
@@ -298,6 +299,7 @@ def build_server(data_client=None):
         beta_sizing: bool = False,
         benchmark: str = "SPY",
         gross: bool = False,
+        take_profit_margin_bps: float = 0.0,
         force: bool = False,
     ) -> Dict[str, Any]:
         """Backtest `strategy` on `symbols` over [start, end] (YYYY-MM-DD).
@@ -307,11 +309,18 @@ def build_server(data_client=None):
         count, total cost, and a path to the trades CSV (trades are not inlined).
         `config` overrides default params.
 
-        Journals this as a trial (same research journal/trial store
-        `python main.py backtest` uses) so it counts toward the campaign's
-        multiple-testing total. An exact prior trial is served instead (result
-        has `memoized: true`) unless `force=True`, which re-runs and appends a
-        new trial rather than overwriting the memoized one.
+        `take_profit_margin_bps` requires the price to trade that far *through* a
+        take-profit before it counts as filled. Zero — the default — fills a target the
+        moment a bar touches it, which models a resting limit always first in the queue.
+        For a strategy whose gain concentrates in target exits that assumption is the
+        result rather than a detail, so raising it is how you find out which you have.
+
+        Journals this as a trial (the same research journal and trial store the
+        `backtest` command uses) so it counts toward the campaign's multiple-testing
+        total. An exact prior trial is served instead (result has `memoized: true`)
+        unless `force=True`, which re-runs and appends a new trial rather than
+        overwriting the memoized one. Memoization is scoped to the engine's accounting
+        version, so results from an older engine are never served to a newer one.
         """
         inputs = {
             "strategy": strategy,
@@ -322,6 +331,7 @@ def build_server(data_client=None):
             "config": config,
             "beta_sizing": beta_sizing,
             "gross": gross,
+            "take_profit_margin_bps": take_profit_margin_bps,
             "force": force,
         }
         result = analysis.run_backtest(
@@ -335,6 +345,7 @@ def build_server(data_client=None):
             beta_sizing,
             benchmark,
             gross=gross,
+            take_profit_margin_bps=take_profit_margin_bps,
             force=force,
         )
         return _logged("run_backtest", inputs, result)
