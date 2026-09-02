@@ -71,7 +71,10 @@ def derive_net_cap(exposure: Dict[str, Any], gross_cap: Optional[float] = None) 
 
     candidates = net_cap_candidates(exposure)
     never_binds = [c for c in candidates if c["binding_rate"] == 0.0]
-    recommended = min(never_binds, key=lambda c: c["cap"]) if never_binds else None
+    # The cap itself, not the candidate that carries it. Holding the dict here and
+    # unwrapping it only at the return meant the same name was a dict on one line and a
+    # float three lines later, which is how the comparison below came to be a TypeError.
+    recommended = min(never_binds, key=lambda candidate: candidate["cap"])["cap"] if never_binds else None
     samples = exposure.get("samples", 0)
     # |long - short| <= long + short identically, so a net cap at or above the gross cap
     # can never bind. Worth saying out loud: a recommendation the gross cap already
@@ -90,7 +93,7 @@ def derive_net_cap(exposure: Dict[str, Any], gross_cap: Optional[float] = None) 
         "subsumed_by_gross": subsumed,
         # None when every candidate would have bound: the honest answer is then "no cap
         # derived from this history leaves it unchanged", not the least-bad number.
-        "recommended": recommended["cap"] if recommended else None,
+        "recommended": recommended,
     }
 
 

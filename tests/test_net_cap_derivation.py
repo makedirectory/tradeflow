@@ -145,3 +145,40 @@ def test_the_output_never_presents_itself_as_a_verdict():
     printed = "\n".join(format_net_cap(derive_net_cap(_exposure(_tilted()))))
 
     assert "starting point, not a verdict" in printed
+
+
+# --- the gross cap it may already sit under ---------------------------------------
+def test_a_recommendation_the_gross_cap_subsumes_says_so():
+    """|net| never exceeds gross, so a net cap at or above the gross cap documents an
+    intent rather than adding a constraint."""
+    derivation = derive_net_cap(_exposure(_tilted()), gross_cap=0.30)
+
+    assert derivation["subsumed_by_gross"] is True
+    printed = "\n".join(format_net_cap(derivation))
+    assert "cannot bind while that gross cap stands" in printed
+
+
+def test_a_recommendation_below_the_gross_cap_is_a_real_constraint():
+    """Both directions: a net cap tighter than gross does bind, and must not be
+    described as documentation."""
+    derivation = derive_net_cap(_exposure(_tilted()), gross_cap=0.95)
+
+    assert derivation["subsumed_by_gross"] is False
+    assert "cannot bind" not in "\n".join(format_net_cap(derivation))
+
+
+def test_passing_a_gross_cap_does_not_crash_the_derivation():
+    """The bug: `recommended` held the candidate dict at the comparison and the cap
+    float at the return — the same name meaning two things three lines apart. It only
+    fired when a gross cap was given, and no test had ever passed one alongside a real
+    candidate, so the branch was never evaluated."""
+    derivation = derive_net_cap(_exposure(_tilted()), gross_cap=0.9)
+
+    assert isinstance(derivation["recommended"], float)
+
+
+def test_the_recommendation_is_a_number_whether_or_not_a_gross_cap_is_given():
+    """The two paths must agree about what `recommended` is."""
+    exposure = _exposure(_tilted())
+
+    assert derive_net_cap(exposure)["recommended"] == derive_net_cap(exposure, gross_cap=0.9)["recommended"]
