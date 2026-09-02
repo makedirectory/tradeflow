@@ -80,22 +80,28 @@ def test_take_profit_exit():
 
 
 def test_stop_loss_exit():
+    # Bar 0 carries the BUY; bar 1 is the first bar that may act on it. A stop can only
+    # be hit by a bar the position was already open for, so the break comes on bar 2.
     rows = [
+        {"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1},
         {"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1},
         {"open": 99, "high": 100, "low": 89, "close": 92, "volume": 1},
     ]
-    result = _run(rows, [signals.BUY, signals.HOLD])
+    result = _run(rows, [signals.BUY, signals.HOLD, signals.HOLD])
     trade = result.trades.iloc[0]
     assert trade["exit_reason"] == "STOP_LOSS"
     assert trade["exit_price"] == pytest.approx(90) and trade["pnl"] == pytest.approx(-100)
 
 
 def test_signal_exit_at_open():
+    # The comment this test always carried is now true: the SELL on bar 1 closes the
+    # long at the *next* open, which is bar 2's.
     rows = [
+        {"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1},
         {"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1},
         {"open": 103, "high": 104, "low": 99, "close": 103, "volume": 1},
     ]
-    result = _run(rows, [signals.BUY, signals.SELL])  # SELL closes the long at next open
+    result = _run(rows, [signals.BUY, signals.SELL, signals.HOLD])
     trade = result.trades.iloc[0]
     assert trade["exit_reason"] == "SIGNAL"
     assert trade["exit_price"] == 103 and trade["pnl"] == 30
@@ -104,9 +110,10 @@ def test_signal_exit_at_open():
 def test_end_of_period_exit():
     rows = [
         {"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1},
+        {"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1},
         {"open": 101, "high": 103, "low": 99, "close": 105, "volume": 1},
     ]
-    result = _run(rows, [signals.BUY, signals.HOLD])  # never hits stop/take/exit
+    result = _run(rows, [signals.BUY, signals.HOLD, signals.HOLD])  # never hits stop/take/exit
     trade = result.trades.iloc[0]
     assert trade["exit_reason"] == "END_OF_PERIOD"
     assert trade["exit_price"] == 105 and trade["pnl"] == 50
@@ -120,9 +127,10 @@ def test_backtest_honors_injected_sizer():
 
     rows = [
         {"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1},
+        {"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1},  # the entry bar
         {"open": 108, "high": 112, "low": 107, "close": 111, "volume": 1},  # take-profit
     ]
-    strategy = ScriptedStrategy([signals.BUY, signals.HOLD])
+    strategy = ScriptedStrategy([signals.BUY, signals.HOLD, signals.HOLD])
     data_client = MarketDataClient(DictMarketData({"AAA": _frame(rows)}))
     sizer = PortfolioWeightSizer({"AAA": 0.5})  # 0.5 * equity(=100k) / price(100) = 500 shares
 

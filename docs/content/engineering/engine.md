@@ -29,6 +29,13 @@ The simulation runs on **one clock against one capital pool** — every symbol o
 single merged timeline, positions competing for the same dollars as they would
 live. Each step:
 
+0. **Decide on the previous bar.** A signal at bar `i` comes from `calculate_scores`
+   at bar `i`, and scores are computed from that bar's *close*. So the signal a bar may
+   act on is always the one before it, executed at this bar's open. Through accounting
+   v3 the engine executed `signal[i]` at `open[i]` — a one-bar look-ahead on every entry
+   and every signal exit, applied to the whole history. A feed shift cannot detect it:
+   shifting moves signal and price together, so the relationship survives intact, which
+   is why the leakage probe passed over it for as long as it did.
 1. **Mark** open positions to market (and track excursion extremes).
 2. **Exit** — stop-loss, take-profit, then signal exit, in that order. Stop/take
    fill at their level; a signal exit fills at the next open. Exits run *before*
@@ -134,6 +141,12 @@ take the same path — and every bound in it is deliberately duplicated off the 
 because third-party code that blocks the loop takes every loop-scheduled timeout down
 with it, signal handlers included. See [stopping a
 session](../usage/live-trading.md#stopping-a-session).
+
+This matches the live path rather than being more conservative than it. Live has always
+been causal — a closed bar arrives, `process_bar` emits a signal, and a market order
+fills strictly afterwards — so through v3 the backtest was transacting at a price live
+could never get, and every validated number overstated what a deployment could achieve.
+See [cross-clock parity](../../.claude/rules/cross-clock-parity.md).
 
 The engine never calls the broker directly — it delegates to
 [execution](broker-abstraction). That boundary is exactly why the same strategy

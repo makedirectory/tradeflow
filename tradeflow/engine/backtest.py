@@ -56,8 +56,17 @@ logger = logging.getLogger(__name__)
 #:   rate. Identical to 2 for a universe whose symbols share a grid; corrects inflated
 #:   Sharpe/volatility and understated carry when they don't.
 #:
+#: * **4** — the current model. A signal is executed one bar after the bar that produced
+#:   it. Through v3 a signal derived from bar i's close was filled at bar i's *open*,
+#:   for entries and signal exits alike - a one-bar look-ahead applied to every trade in
+#:   every recorded result. It survived the leakage probe because a feed shift moves
+#:   signal and price together, and it made the backtest structurally unable to be
+#:   matched live, where a closed bar produces a signal and a market order fills after
+#:   it. Every number recorded under 1-3 overstates what a deployment could achieve; a
+#:   v4 result is not comparable with them and the store keeps the two apart.
+#:
 #: Records written before this field existed carry no version; absence means 1.
-ACCOUNTING_VERSION = 3
+ACCOUNTING_VERSION = 4
 
 
 class BacktestError(RuntimeError):
@@ -751,9 +760,10 @@ class BacktestEngine:
                 exit_cost = self._trade_cost(
                     symbol, pos["size"], panel.opens[i], panel.adv, panel.vol, i
                 ) + self._carry(pos, k)
+                decided_signal, _ = self._decided(panel, i)
                 closed = self._maybe_close(
                     pos,
-                    panel.sig[i],
+                    decided_signal,
                     panel.opens[i],
                     panel.highs[i],
                     panel.lows[i],
@@ -777,8 +787,11 @@ class BacktestEngine:
                 i = panel.rows[k]
                 if i < 0:
                     continue
-                if panel.sig[i] in signals.ENTRY_SIGNALS:
-                    candidates.append((abs(float(panel.score[i])), symbol, i))
+                decided_signal, decided_score = self._decided(panel, i)
+                if decided_signal in signals.ENTRY_SIGNALS:
+                    # Ranked on the same bar's score the signal came from, or the
+                    # ordering would reintroduce the look-ahead the signal just lost.
+                    candidates.append((abs(float(decided_score)), symbol, i, decided_signal))
 
             # 4. Admit in conviction order while limits and cash allow. Ranking by the
             #    strategy's own score keeps one source of truth; the symbol tie-break
@@ -786,13 +799,13 @@ class BacktestEngine:
             if candidates:
                 candidates.sort(key=lambda c: (-c[0], c[1]))
                 equity_now = book.equity()
-                for _, symbol, i in candidates:
+                for _, symbol, i, decided_signal in candidates:
                     if len(book.positions) >= max_positions:
                         break
                     panel = panels[symbol]
                     pos = self._open_position(
                         symbol,
-                        panel.sig[i],
+                        decided_signal,
                         panel.opens[i],
                         panel.timestamps[i],
                         book,
@@ -991,6 +1004,26 @@ class BacktestEngine:
             "lowest": price,
             "highest": price,
         }
+
+    @staticmethod
+    def _decided(panel, i: int):
+        """The signal and score a bar may act on: the *previous* bar's, always.
+
+        A signal at bar ``i`` comes from ``calculate_scores`` at bar ``i``, and scores
+        are computed from that bar's close. Acting on it at bar ``i``'s open transacted
+        at a price that existed hours before the information did — a one-bar look-ahead
+        on every entry and every signal exit, applied to the whole history.
+
+        A feed shift cannot detect it: shifting moves signal and price together, so the
+        relationship survives intact. That is why the leakage probe passed.
+
+        The live path has always been causal — a closed bar arrives, a signal is emitted,
+        a market order fills strictly afterwards. This is the backtest matching it, not a
+        new conservatism.
+        """
+        if i <= 0:
+            return signals.HOLD, 0.0
+        return panel.sig[i - 1], panel.score[i - 1]
 
     def _maybe_close(
         self, position: Dict[str, Any], signal: str, price_open, high, low, timestamp, exit_cost: float = 0.0

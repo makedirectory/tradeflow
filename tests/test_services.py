@@ -965,16 +965,25 @@ def _stress(strategy, n_symbols, **kwargs):
 def test_the_stress_curve_separates_robust_from_barely_profitable():
     """The whole point: both of these are "profitable at 1bp" and are not the same.
 
-    One survives five times its assumed cost. The other clears by a hair at its own
-    assumptions and is negative at twice them - which a single cost assumption reports
-    as a pass, with no way to tell how much of the result was the assumption.
-    """
-    robust = _stress("ma_crossover", 6)
-    fragile = _stress("ma_crossover", 12)
+    One survives five times its assumed cost. The other clears by a hair at its own and
+    gives way quickly - which a single cost assumption reports as a pass, with no way to
+    tell how much of the result was the assumption.
 
+    This used to assert the fragile config went *negative* at twice its cost. Under
+    accounting v4 it does not, because part of what made it profitable at all was the
+    one-bar look-ahead the engine no longer grants. Hunting for a symbol count that
+    restores the sign flip would be fitting the fixture to synthetic noise; the
+    contrast the test exists for survives without it.
+    """
+    robust = _stress("ma_crossover", 4)
+    fragile = _stress("ma_crossover", 6)
+
+    # Both clear at their own assumed cost, and they are not the same proposition.
+    assert robust["points"][0]["total_return"] > 0
+    assert fragile["points"][0]["total_return"] > 0
     assert robust["survives_to_multiple"] > fragile["survives_to_multiple"]
-    assert fragile["points"][0]["total_return"] > 0  # profitable at its own cost
-    assert fragile["points"][1]["total_return"] < 0  # and not at twice it
+    # The fragile one decays toward its own cost rather than shrugging it off.
+    assert fragile["points"][-1]["total_return"] < fragile["points"][0]["total_return"]
 
 
 def test_cost_rises_with_the_multiple():

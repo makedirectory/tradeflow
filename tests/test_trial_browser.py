@@ -18,9 +18,12 @@ from tradeflow.analytics.reporting import (
     format_trial_detail,
     format_trials_table,
 )
+from tradeflow.engine.backtest import ACCOUNTING_VERSION
 from tradeflow.store.trials import TrialStore
 
-ACCOUNTING = 3
+# Read from the engine, never copied: a hardcoded number here is a fixture that agrees
+# with a *past* accounting version, and it goes quietly stale the moment one is bumped.
+ACCOUNTING = ACCOUNTING_VERSION
 
 
 @pytest.fixture
