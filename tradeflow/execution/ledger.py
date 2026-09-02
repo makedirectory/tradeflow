@@ -63,6 +63,29 @@ LEDGER_VERSION = 1
 CUMULATIVE = "cumulative"
 INCREMENTAL = "incremental"
 
+
+def filled_quantity(fill_events: Iterable[Dict[str, Any]]) -> float:
+    """How much of one order actually filled, from its fill events.
+
+    The same rule :meth:`PositionLedger._replay` applies, in one place, because the
+    two had already diverged: a cumulative report is the whole truth about the order
+    so the last one wins, while incremental events each stand alone and sum. Reading
+    every fill as cumulative reported an order filled 3+3+2 as having filled 2, which
+    ``fill_summary`` then counted as a short fill against a submitted 8.
+
+    Records written before ``basis`` existed carry none, and are read the old way -
+    as cumulative - which is what they were.
+    """
+    total = 0.0
+    for event in fill_events:
+        qty = float(event.get("qty") or 0.0)
+        if event.get("basis") == INCREMENTAL:
+            total += qty
+        else:
+            total = qty
+    return total
+
+
 MISSING = "missing"  # we believe in a position the broker does not have
 UNEXPECTED = "unexpected"  # the broker holds something we never ordered
 QUANTITY_DRIFT = "quantity_drift"  # both agree it exists, at different sizes
@@ -388,8 +411,6 @@ class PositionLedger:
             plan = intent.get("plan") or {}
             decision = decisions.get(intent.get("decision_id")) or {}
             order_fills = fills.get(order_id, [])
-            # Cumulative reporting again: the last fill is the whole truth about the
-            # order, so filled quantity is its quantity, not the sum of the reports.
             last = order_fills[-1] if order_fills else None
             reference = plan.get("reference_price")
             fill_price = last.get("fill_price") if last else None
@@ -400,7 +421,7 @@ class PositionLedger:
                     "symbol": intent.get("symbol"),
                     "side": intent.get("side"),
                     "submitted_qty": intent.get("qty"),
-                    "filled_qty": last.get("qty") if last else 0.0,
+                    "filled_qty": filled_quantity(order_fills),
                     "reference_price": reference,
                     "fill_price": fill_price,
                     "slippage_bps": slippage_bps(intent.get("side"), reference, fill_price),

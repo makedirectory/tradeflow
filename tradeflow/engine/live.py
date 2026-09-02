@@ -166,6 +166,11 @@ class LiveEngine:
 
         This is the only place the ledger learns what actually happened, as opposed
         to what was intended — which is precisely the gap it exists to close.
+
+        Recording and refreshing are separate and both unconditional: a fill the
+        ledger declines to record is still a fill the strategy's book has to learn
+        about, and the two failures used to be one ``return``. The refresh needs no
+        ledger and no side, so a missing either must not cost it.
         """
         logger.info(
             "Trade update: %s %s (order %s, status %s, filled %s)",
@@ -175,38 +180,43 @@ class LiveEngine:
             update.status,
             update.filled_qty,
         )
-        if self.ledger is None:
-            return
         try:
-            if str(update.event).lower() in {"fill", "partial_fill"} and update.filled_qty:
-                side = update.side
-                if not side:
-                    # Never default it. A missing side used to resolve to "buy", which
-                    # recorded every short as a long and made the ledger disagree with
-                    # the broker by twice the position.
-                    logger.error(
-                        "Trade update for %s (order %s) carried no side; not recording "
-                        "it, because guessing one would put the wrong sign in the ledger",
-                        update.symbol,
-                        update.order_id,
-                    )
-                    return
-                self.ledger.record_fill(
-                    update.symbol,
-                    side,
-                    float(update.filled_qty),
-                    order_id=update.order_id,
-                    status=str(update.status),
-                    basis=CUMULATIVE,
-                    # The average across the order, to pair with the cumulative
-                    # quantity beside it; this event's own print is the fallback.
-                    fill_price=getattr(update, "filled_avg_price", None) or getattr(update, "price", None),
-                    filled_at=getattr(update, "filled_at", None),
-                    broker_fee=getattr(update, "fee", None),
-                )
+            self._record_fill(update)
         except Exception:  # noqa: BLE001 - bookkeeping never breaks the order path
             logger.warning("Could not record a fill in the position ledger", exc_info=True)
         await self._refresh_after_fill(update)
+
+    def _record_fill(self, update) -> None:
+        """Append this update to the ledger, if it is a fill we can sign."""
+        if self.ledger is None:
+            return
+        if str(update.event).lower() not in {"fill", "partial_fill"} or not update.filled_qty:
+            return
+        side = update.side
+        if not side:
+            # Never default it. A missing side used to resolve to "buy", which
+            # recorded every short as a long and made the ledger disagree with
+            # the broker by twice the position.
+            logger.error(
+                "Trade update for %s (order %s) carried no side; not recording "
+                "it, because guessing one would put the wrong sign in the ledger",
+                update.symbol,
+                update.order_id,
+            )
+            return
+        self.ledger.record_fill(
+            update.symbol,
+            side,
+            float(update.filled_qty),
+            order_id=update.order_id,
+            status=str(update.status),
+            basis=CUMULATIVE,
+            # The average across the order, to pair with the cumulative
+            # quantity beside it; this event's own print is the fallback.
+            fill_price=getattr(update, "filled_avg_price", None) or getattr(update, "price", None),
+            filled_at=getattr(update, "filled_at", None),
+            broker_fee=getattr(update, "fee", None),
+        )
 
     async def _refresh_after_fill(self, update) -> None:
         """Teach the strategy about a position it may not know it holds.

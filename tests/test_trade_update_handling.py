@@ -256,3 +256,85 @@ def test_the_mapping_carries_price_time_and_fee():
     assert update.filled_avg_price == 500.50
     assert update.filled_at == "2026-09-01T17:13:00.850000+00:00"
     assert update.fee == 0.35
+
+
+def test_a_paper_venue_reporting_no_fee_maps_to_none_not_zero(tmp_path):
+    """The mapping used `safe_float`, whose default is 0.0. A paper account reports
+    no fee at all, so every paper fill arrived claiming an *observed* zero — and the
+    ledger it lands in is append-only, with nothing behind it to correct from."""
+
+    class Payload(_Payload):
+        def __init__(self):
+            super().__init__(_Order(side=_Side.BUY, filled_qty="2", symbol="MSFT"))
+            # No `fee` attribute at all: exactly what a paper stream sends.
+
+    assert to_trade_update(Payload()).fee is None
+
+
+def test_an_unreported_average_price_maps_to_none_not_zero():
+    """Same shape, same field contract: None means the venue did not say."""
+    assert to_trade_update(_Payload()).filled_avg_price is None
+
+
+def test_an_unreported_fee_reaches_the_ledger_as_not_reported(tmp_path):
+    """Both links at once, which is where the zero actually did its damage: the
+    mapping turned silence into 0.0 and the ledger recorded it as an observed fee,
+    which `cost_summary` then reports with `fees_reported: True`."""
+    engine, ledger = _engine(tmp_path)
+
+    asyncio.run(engine._on_trade_update(to_trade_update(_Payload())))
+
+    (record,) = [r for r in ledger._read() if r["event"] == "fill"]
+    assert record["broker_fee"] is None
+
+
+# --- the book gets refreshed whether or not the ledger records -------------------
+def _refresh_recorder(engine):
+    refreshed = []
+    engine.live_trader.refresh_position = lambda symbol: refreshed.append(symbol)
+    return refreshed
+
+
+def test_a_fill_with_no_side_still_refreshes_the_strategy_s_book(tmp_path):
+    """The `return` that refuses to guess a side sat in the handler body, so it also
+    skipped the refresh. A fill the ledger declines to record is still a fill the
+    strategy's book has to learn about — and a strategy that believes it is flat in a
+    symbol it holds cannot emit an exit for it."""
+    engine, ledger = _engine(tmp_path)
+    refreshed = _refresh_recorder(engine)
+
+    asyncio.run(engine._on_trade_update(_update(side=None)))
+
+    assert [r for r in ledger._read() if r["event"] == "fill"] == []
+    assert refreshed == ["NKE"]
+
+
+def test_a_fill_refreshes_the_book_even_with_no_ledger(tmp_path):
+    """Same defect, one line earlier: the ledger is optional, the book is not."""
+    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    engine = LiveEngine(
+        strategy,
+        MarketDataClient(None),
+        LiveTrader(RecordingBroker(), strategy, respect_market_hours=False),
+        ledger=None,
+    )
+    refreshed = _refresh_recorder(engine)
+
+    asyncio.run(engine._on_trade_update(_update()))
+
+    assert refreshed == ["NKE"]
+
+
+def test_a_failed_ledger_write_still_refreshes_the_book(tmp_path):
+    """Bookkeeping never breaks the order path — and never costs the book either."""
+    engine, ledger = _engine(tmp_path)
+    refreshed = _refresh_recorder(engine)
+    engine.ledger.record_fill = _raise
+
+    asyncio.run(engine._on_trade_update(_update()))
+
+    assert refreshed == ["NKE"]
+
+
+def _raise(*args, **kwargs):
+    raise RuntimeError("disk full")

@@ -434,3 +434,59 @@ def test_the_version_does_not_disturb_the_replay(ledger):
     _fills(ledger, "o1", "COP", "buy", [5, 8])
 
     assert ledger.expected_positions() == {"COP": 8.0}
+
+
+# --- the write and the two readers must agree -------------------------------------
+@pytest.mark.parametrize(
+    "basis,reports",
+    [
+        (CUMULATIVE, [3, 6, 8]),  # a running total, re-reported on every partial
+        (INCREMENTAL, [3, 3, 2]),  # this event's own shares
+    ],
+)
+def test_lifecycles_and_the_replay_read_a_fill_the_same_way(ledger, basis, reports):
+    """Two green tests do not establish parity — this compares the two readers.
+
+    `_replay` respected `basis` and `lifecycles` did not, so an order recorded
+    incrementally reported `filled_qty: 2` against a `submitted_qty: 8`: counted as a
+    short fill, and its notional understated, on an order that filled in full.
+    """
+    ledger.record_intent("COP", "buy", 8, order_id="o1")
+    for qty in reports:
+        ledger.record_fill("COP", "buy", qty, order_id="o1", basis=basis)
+
+    (row,) = ledger.lifecycles()
+
+    assert row["filled_qty"] == 8
+    assert row["filled_qty"] == ledger.expected_positions()["COP"]
+
+
+def test_a_fully_filled_incremental_order_is_not_counted_as_short(ledger):
+    """What the divergence cost downstream: `fill_summary` reads these rows."""
+    from tradeflow.analytics.execution_quality import fill_summary
+
+    ledger.record_intent("COP", "buy", 8, order_id="o1")
+    for qty in (3, 3, 2):
+        ledger.record_fill("COP", "buy", qty, order_id="o1", basis=INCREMENTAL)
+
+    assert fill_summary(ledger.lifecycles())["n_short"] == 0
+
+
+def test_a_genuinely_short_incremental_fill_is_still_short(ledger):
+    """Both directions: the fix must not make every order look complete."""
+    from tradeflow.analytics.execution_quality import fill_summary
+
+    ledger.record_intent("COP", "buy", 8, order_id="o1")
+    ledger.record_fill("COP", "buy", 3, order_id="o1", basis=INCREMENTAL)
+
+    assert fill_summary(ledger.lifecycles())["n_short"] == 1
+
+
+def test_a_pre_basis_fill_is_still_read_as_cumulative(ledger):
+    """Records written before `basis` existed were cumulative; re-reading them as
+    incremental would silently restate history."""
+    ledger.record_intent("COP", "buy", 8, order_id="o1")
+    for qty in (3, 6, 8):
+        ledger._append({"event": "fill", "symbol": "COP", "side": "buy", "qty": qty, "order_id": "o1"})
+
+    assert ledger.lifecycles()[0]["filled_qty"] == 8
