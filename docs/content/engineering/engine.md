@@ -146,7 +146,10 @@ This matches the live path rather than being more conservative than it. Live has
 been causal — a closed bar arrives, `process_bar` emits a signal, and a market order
 fills strictly afterwards — so through v3 the backtest was transacting at a price live
 could never get, and every validated number overstated what a deployment could achieve.
-See [cross-clock parity](../../.claude/rules/cross-clock-parity.md).
+
+That is the general hazard of the two-clock design: the same rule is implemented twice,
+in code that cannot reference itself, so a defect on one side is a defect on the other
+until someone checks. See [separation of concerns](separation-of-concerns.md).
 
 The engine never calls the broker directly — it delegates to
 [execution](broker-abstraction). That boundary is exactly why the same strategy
