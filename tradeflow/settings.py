@@ -83,6 +83,20 @@ def state_root() -> Path:
     return Path.home() / ".tradeflow"
 
 
+def trial_journal_path() -> Path:
+    """Where the research journal lives — one definition, for every reader and writer.
+
+    It was defined twice, in ``services.audit`` and ``store.trials``, kept in step by a
+    comment. Had they diverged the store would have indexed a different file from the
+    one being written, and the multiple-testing correction would have deflated against
+    half its evidence — with nothing erroring, because both paths are valid.
+
+    Here rather than in either of them because ``settings`` is the layer both already
+    depend on; the reverse would be a cycle.
+    """
+    return state_path("logs", "research_journal.jsonl")
+
+
 def state_path(*parts: str) -> Path:
     """A path under the state root, with its parent directory created.
 

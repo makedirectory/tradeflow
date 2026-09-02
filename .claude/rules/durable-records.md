@@ -54,15 +54,21 @@ changed and whose name did not is unreadable afterwards by anyone, including you
 Pre-code refusals are recognised by message prefix; a message the map does not know
 keeps its own text rather than being forced into a family it may not belong to.
 
-### Open weakness
+### The version is the thing that stops the improvising
 
-The position ledger has **no version marker of any kind**. Every compatibility decision
-in it is per-field improvisation, which has worked twice and is not a system. If a third
-field needs it, add a record-level version first.
+`LEDGER_VERSION` is stamped on every record the ledger writes. A reader asks what shape
+it is looking at rather than inferring it from which keys happen to be present, and
+`version_summary()` counts the shapes in a file so an operator can decide whether to
+archive rather than guess.
+
+Bump it when the meaning of a field changes or a reader would need to behave differently.
+Absent means "written before this existed" and stays permanently readable as that — the
+pre-version records cannot be recovered and are reported, never reinterpreted.
 
 ## Paths are part of the format
 
 `state_root()`, always — never a relative path. The multiple-testing correction rests on
 one journal, and a campaign split across two roots deflates against half its evidence
 while nothing errors. The journal's location is currently defined in two modules and
-kept in sync by a comment; see [parity points](parity-points.md).
+defined once in ``settings.trial_journal_path()``, which is the layer both the writer
+and the indexer already depend on — defining it in either of them would be a cycle.

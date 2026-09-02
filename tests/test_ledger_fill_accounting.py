@@ -9,6 +9,8 @@ The fixtures here therefore emit what a broker actually emits: running totals ac
 partial fills, repeated events, bracket legs with their own order ids, and both sides.
 """
 
+import json
+
 import pytest
 
 from tradeflow.execution.ledger import CUMULATIVE, INCREMENTAL, PositionLedger
@@ -390,3 +392,45 @@ def test_an_adoption_is_not_counted_as_a_legacy_record(ledger, caplog):
         ledger.reconcile(_Broker({"COP": 8}))
 
     assert "before fill accounting" not in caplog.text
+
+
+# --- record shape -----------------------------------------------------------------
+def test_every_record_carries_the_shape_it_was_written_in(ledger):
+    """This file is append-only with nothing behind it to rebuild from, so a record
+    written badly is readable but not fixable, forever. Two compatibility decisions were
+    already improvised per-field — a fill's `basis`, a decision's `reason_code` — and
+    each cost a live session before it was noticed. A version is what stops the third
+    being improvised: a reader can ask what shape it is looking at rather than inferring
+    it from which keys happen to be present."""
+    from tradeflow.execution.ledger import LEDGER_VERSION
+
+    ledger.record_fill("AAA", "buy", 1, order_id="o1", basis=CUMULATIVE)
+    ledger.record_intent("AAA", "buy", 1, order_id="o1")
+    ledger.record_adoption("AAA", "buy", 1)
+    ledger.record_close("AAA")
+
+    written = [json.loads(line) for line in ledger.path.read_text().splitlines() if line.strip()]
+    assert written and all(record["v"] == LEDGER_VERSION for record in written)
+
+
+def test_a_pre_version_record_is_counted_apart(ledger):
+    """A file that mixes shapes is the normal case for anything append-only, and the
+    counts are what let an operator decide whether to archive rather than guess."""
+    ledger.path.write_text('{"event": "fill", "symbol": "AAA", "side": "buy", "qty": 8}\n')
+    ledger.record_fill("BBB", "sell", 2, order_id="o1", basis=CUMULATIVE)
+
+    summary = ledger.version_summary()
+
+    assert summary["pre-version"] == 1
+    assert summary["1"] == 1
+
+
+def test_an_empty_ledger_summarises_to_nothing(ledger):
+    assert ledger.version_summary() == {}
+
+
+def test_the_version_does_not_disturb_the_replay(ledger):
+    """The stamp is metadata; adding it must not change a single expected position."""
+    _fills(ledger, "o1", "COP", "buy", [5, 8])
+
+    assert ledger.expected_positions() == {"COP": 8.0}

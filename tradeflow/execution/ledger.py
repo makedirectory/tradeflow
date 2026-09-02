@@ -40,6 +40,24 @@ logger = logging.getLogger(__name__)
 
 #: Divergence classes. Named rather than boolean because the three mean genuinely
 #: different things to whoever has to act on them.
+#: The shape of a record written by this code. Stamped on every line.
+#:
+#: This file is append-only and has nothing behind it to rebuild from, so a record
+#: written badly is readable but not fixable, forever. Two compatibility decisions have
+#: already been improvised per-field - a fill's ``basis``, a decision's ``reason_code`` -
+#: and each cost a live session before it was noticed. A version is what stops the third
+#: being improvised too: a reader can ask what shape it is looking at rather than
+#: inferring it from which keys happen to be present.
+#:
+#: * **absent** - written before this existed. Fill quantities carry no ``basis`` and may
+#:   have been summed as if incremental when they were cumulative; sides were defaulted
+#:   to buy, so shorts were recorded long. Reported at reconciliation, never
+#:   reinterpreted, because those numbers cannot be recovered.
+#: * **1** - the current shape. Fills carry ``basis``, ``fill_price``, ``filled_at`` and
+#:   ``broker_fee``; intents carry ``decision_id`` and the order plan; decisions carry
+#:   ``reason_code``; adoptions are their own event.
+LEDGER_VERSION = 1
+
 #: What a recorded fill quantity measures. ``CUMULATIVE`` is the order's running
 #: total (what Alpaca reports); ``INCREMENTAL`` is this event's own shares.
 CUMULATIVE = "cumulative"
@@ -255,7 +273,7 @@ class PositionLedger:
         raises. A gap in the ledger is a visible reconciliation divergence, which
         is exactly the signal it exists to produce.
         """
-        record = {"ts": datetime.now(timezone.utc).isoformat(), **record}
+        record = {"ts": datetime.now(timezone.utc).isoformat(), "v": LEDGER_VERSION, **record}
         try:
             with _LOCK:
                 with self.path.open("a") as fh:
@@ -314,6 +332,9 @@ class PositionLedger:
             elif event == "fill":
                 basis = record.get("basis")
                 if basis is None:
+                    # Version and basis are checked separately on purpose: a record can
+                    # be current-shape and still lack a basis if a writer omitted it,
+                    # and that is as unreadable as a pre-version one.
                     # Written before fill accounting distinguished the two, when the
                     # side was defaulted as well. Counted the old way so a reconcile
                     # still runs, and reported, because silently mixing the two would
@@ -410,6 +431,18 @@ class PositionLedger:
             for record in self._read()
             if record.get("event") == "decision" and not record.get("allowed")
         ]
+
+    def version_summary(self) -> Dict[str, int]:
+        """How many records of each shape this ledger holds.
+
+        A file that mixes shapes is the normal case for anything append-only, and the
+        counts are what let an operator decide whether to archive it rather than guess.
+        """
+        counts: Dict[str, int] = {}
+        for record in self._read():
+            key = str(record.get("v", "pre-version"))
+            counts[key] = counts.get(key, 0) + 1
+        return counts
 
     def _read(self) -> Iterable[Dict[str, Any]]:
         if not self.path.exists():

@@ -16,7 +16,7 @@ from typing import Any, Dict, Optional
 
 from tradeflow.engine.backtest import ACCOUNTING_VERSION
 from tradeflow.optimization.config_store import current_git_sha
-from tradeflow.settings import state_root
+from tradeflow.settings import state_root, trial_journal_path
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ DEFAULT_AUDIT_PATH = state_root() / "logs" / "mcp_audit.jsonl"
 #: indexes so multiple-testing counts can span a campaign, not one run.
 #: The research agent and CLI ``backtest``/``optimize`` all append here, so they must
 #: name the *same* file — see :data:`src.research.agent.DEFAULT_JOURNAL`.
-DEFAULT_TRIAL_JOURNAL = state_root() / "logs" / "research_journal.jsonl"
+DEFAULT_TRIAL_JOURNAL = trial_journal_path()
 
 #: Metrics denormalized onto a trial record — enough for the gates and the Deflated
 #: Sharpe without dumping the full metric block per config.
