@@ -435,6 +435,8 @@ def build_server(data_client=None):
         gross: bool = False,
         force: bool = False,
         workers: int = 1,
+        benchmark: Optional[str] = None,
+        position_limits: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Honest out-of-sample evaluation across folds - your advancement criterion.
 
@@ -448,9 +450,16 @@ def build_server(data_client=None):
         disable) — gross validation systematically promotes turnover the
         strategy could not afford live.
 
+        `benchmark` is a symbol to measure against (e.g. "SPY"). Without it every
+        fold reports `benchmark_available: false`, information ratio 0 and no betas,
+        so any benchmark-relative promotion prerequisite is left unevaluated rather
+        than failed. `position_limits` is the book the config says it will trade
+        (e.g. {"max_positions": 8}); without it the validation runs at whatever the
+        strategy class declares, which is not what would be deployed.
+
         Journals the OOS aggregate as one validated trial. An identical prior
-        validation (same recipe: mode/folds/method/objective/max_evals/seed/cost
-        over the same window) is served instead (result has `memoized: true`)
+        validation (same recipe: mode/folds/method/objective/max_evals/seed/cost/
+        book over the same window) is served instead (result has `memoized: true`)
         unless `force=True`.
         """
         inputs = {
@@ -469,6 +478,8 @@ def build_server(data_client=None):
             "include_pbo": include_pbo,
             "gross": gross,
             "force": force,
+            "benchmark": benchmark,
+            "position_limits": position_limits,
         }
         result = analysis.run_walk_forward(
             dc,
@@ -491,6 +502,8 @@ def build_server(data_client=None):
             gross=gross,
             force=force,
             workers=workers,
+            benchmark=benchmark,
+            position_limits=position_limits,
         )
         return _logged("run_walk_forward", inputs, result)
 

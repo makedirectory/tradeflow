@@ -149,6 +149,34 @@ def _dedup_params(
     return {**params, "_cost": _cost_key(args, vintage), **limits_key(limits)}
 
 
+def _walkforward_recipe(args, vintage: Optional[str] = None) -> Dict[str, Any]:
+    """The validation recipe this run is memoized under, from an argparse namespace.
+
+    A thin adapter over ``services.analysis.walk_forward_recipe``, for the same reason
+    ``_dedup_params`` is one: a namespace is not a function signature, but there must
+    still be only one definition of what identifies a repeat. The second copy that
+    used to live in ``cmd_walkforward`` dropped the book limits, so two configs
+    differing only in ``max_positions`` hashed alike and the second was answered from
+    the first.
+    """
+    from tradeflow.services.analysis import walk_forward_recipe
+
+    return walk_forward_recipe(
+        mode=args.mode,
+        n_folds=args.folds,
+        train_days=args.train_days,
+        test_days=args.test_days,
+        embargo_days=args.embargo_days,
+        holdout_days=args.holdout_days,
+        method=args.method,
+        objective=args.objective,
+        max_evals=args.max_evals,
+        seed=args.seed,
+        cost_key=_cost_key(args, vintage),
+        limits=getattr(args, "config_position_limits", None),
+    )
+
+
 def _vintage_stamp(data_client, universe: List[str], timeframe: str, start: Any, end: Any) -> Optional[str]:
     """The bar cache's data-vintage stamp for this exact fetch, or ``None`` when
     the data client isn't cache-backed (today's behavior - no vintage guarantee).
@@ -1019,20 +1047,8 @@ def cmd_walkforward(args) -> None:
     # Top-level memoization key: the *validation recipe*, not the chosen params —
     # those aren't known until the search runs. Same seed + same recipe + same
     # window is deterministic, so serving a prior result is honest, not a
-    # shortcut.
-    recipe = {
-        "mode": args.mode,
-        "n_folds": args.folds,
-        "train_days": args.train_days,
-        "test_days": args.test_days,
-        "embargo_days": args.embargo_days,
-        "holdout_days": args.holdout_days,
-        "method": args.method,
-        "objective": args.objective,
-        "max_evals": args.max_evals,
-        "seed": args.seed,
-        "_cost": _cost_key(args, vintage),
-    }
+    # shortcut. Built by the service the MCP server calls, not rebuilt here.
+    recipe = _walkforward_recipe(args, vintage)
 
     with _open_trial_store() as trial_store:
         if not args.force and trial_store is not None:

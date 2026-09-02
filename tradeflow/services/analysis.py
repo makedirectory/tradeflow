@@ -107,6 +107,49 @@ def limits_key(limits: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     return {"_limits": declared} if declared else {}
 
 
+def walk_forward_recipe(
+    *,
+    mode: str,
+    n_folds: Optional[int],
+    train_days: Optional[int],
+    test_days: Optional[int],
+    embargo_days: Optional[int],
+    holdout_days: int,
+    method: str,
+    objective: str,
+    max_evals: int,
+    seed: int,
+    cost_key: Dict[str, Any],
+    limits: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """A walk-forward's memoization key: the *validation recipe*, not the params.
+
+    The chosen params are not known until the search runs, so what identifies a repeat
+    here is the recipe - same window, same folds, same objective, same cost, same book.
+
+    One definition, reached from both surfaces, because the alternative was tried: the
+    book limits were folded into ``run_backtest``'s key and not into this one, so two
+    validations differing only in ``max_positions`` hashed alike and the second was
+    answered from the first - reporting a one-position validation as an eight-position
+    book. That is the failure a walk-forward exists to rule out, so the fold belongs
+    here rather than at each call site where it can be forgotten again.
+    """
+    return {
+        "mode": mode,
+        "n_folds": n_folds,
+        "train_days": train_days,
+        "test_days": test_days,
+        "embargo_days": embargo_days,
+        "holdout_days": holdout_days,
+        "method": method,
+        "objective": objective,
+        "max_evals": max_evals,
+        "seed": seed,
+        "_cost": cost_key,
+        **limits_key(limits),
+    }
+
+
 def _cost_key(gross: bool, commission_bps: float, impact_eta: float, borrow_bps: float) -> Dict[str, Any]:
     """The cost-model assumptions folded into a trial's dedup key - same shape as
     the CLI's ``main._cost_key`` so a trial recorded via one surface is found by
@@ -559,6 +602,8 @@ def run_walk_forward(
     workers: Optional[int] = None,
     cache_dir: Optional[Any] = None,
     offline: bool = False,
+    benchmark: Optional[str] = None,
+    position_limits: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Honest evaluation: optimize IS, score OOS across folds, gate the verdict.
 
@@ -578,6 +623,13 @@ def run_walk_forward(
     so those, not params, are what identifies a repeat here). ``force=True``
     bypasses that and re-runs, appending a new trial.
 
+    ``benchmark`` and ``position_limits`` are the same two the CLI passes. Without
+    the first, every fold reports ``benchmark_available: False`` and the
+    benchmark-relative promotion prerequisites are never evaluated - silently, which
+    is the worst way for a gate not to run. Without the second, a config asking for
+    eight positions is validated at whatever the strategy class declares, so the
+    validated book and the deployed one are different books.
+
     ``workers`` parallelizes each fold's in-sample candidate search — folds
     themselves stay sequential, since the candidates are where the work is and the
     per-fold progress stays readable. Journaling is unaffected: this process still
@@ -596,19 +648,20 @@ def run_walk_forward(
 
         timeframe = cls.create_with_defaults().config.get("timeframe", "1Day")
         warm_for(wf_data_spec, symbols, timeframe, start, end)
-    recipe = {
-        "mode": mode,
-        "n_folds": n_folds,
-        "train_days": train_days,
-        "test_days": test_days,
-        "embargo_days": embargo_days,
-        "holdout_days": holdout_days,
-        "method": method,
-        "objective": objective,
-        "max_evals": max_evals,
-        "seed": seed,
-        "_cost": cost_key,
-    }
+    recipe = walk_forward_recipe(
+        mode=mode,
+        n_folds=n_folds,
+        train_days=train_days,
+        test_days=test_days,
+        embargo_days=embargo_days,
+        holdout_days=holdout_days,
+        method=method,
+        objective=objective,
+        max_evals=max_evals,
+        seed=seed,
+        cost_key=cost_key,
+        limits=position_limits,
+    )
 
     with _open_trial_store() as trial_store:
         if not force and trial_store is not None:
@@ -654,6 +707,8 @@ def run_walk_forward(
             force=force,
             workers=workers,
             data_spec=wf_data_spec,
+            benchmark=benchmark,
+            position_limits=position_limits,
         )
         result = validator.run(
             symbols,
@@ -1117,20 +1172,25 @@ def run_draft_walk_forward(
     draft_strategy = f"draft:{cls.__name__}:{code_hash}"
     cost_model = _build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
     cost_key = _cost_key(gross, commission_bps, impact_eta, borrow_bps)
+    # The draft's own identity (its source) on top of the same recipe every other
+    # walk-forward is keyed by - a third copy of that dict is a third place for the
+    # next thing folded into the key to be forgotten.
     recipe = {
         "code_hash": code_hash,
         "class_name": cls.__name__,
-        "mode": mode,
-        "n_folds": n_folds,
-        "train_days": train_days,
-        "test_days": test_days,
-        "embargo_days": embargo_days,
-        "holdout_days": holdout_days,
-        "method": method,
-        "objective": objective,
-        "max_evals": max_evals,
-        "seed": seed,
-        "_cost": cost_key,
+        **walk_forward_recipe(
+            mode=mode,
+            n_folds=n_folds,
+            train_days=train_days,
+            test_days=test_days,
+            embargo_days=embargo_days,
+            holdout_days=holdout_days,
+            method=method,
+            objective=objective,
+            max_evals=max_evals,
+            seed=seed,
+            cost_key=cost_key,
+        ),
     }
 
     with _open_trial_store() as trial_store:

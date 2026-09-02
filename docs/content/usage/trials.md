@@ -63,7 +63,9 @@ python main.py trials show a1b2c3d4e5f6
 ```
 
 Prints everything the store knows about one trial: its full params (including the
-folded `_cost` and data-vintage keys that make up its dedup identity), provenance
+folded `_cost`, `_limits` and data-vintage keys that make up its dedup identity —
+`_limits` is the book the run was given, so two otherwise identical runs at different
+position caps are different trials rather than one served twice), provenance
 (git SHA, timestamp, accounting version), headline metrics, and what was stored
 alongside it —
 

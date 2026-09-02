@@ -205,3 +205,109 @@ def test_the_journal_has_one_location():
     from tradeflow.store.trials import DEFAULT_JOURNAL_PATH
 
     assert DEFAULT_TRIAL_JOURNAL == DEFAULT_JOURNAL_PATH
+
+
+# --- a walk-forward is memoized by its recipe, and both surfaces build one ---------
+def _wf_service_key(limits=None, **overrides):
+    """Built exactly as `run_walk_forward` builds it."""
+    from tradeflow.services.analysis import walk_forward_recipe
+
+    kwargs = dict(
+        mode="anchored",
+        n_folds=4,
+        train_days=None,
+        test_days=None,
+        embargo_days=None,
+        holdout_days=0,
+        method="grid",
+        objective="sharpe_ratio",
+        max_evals=50,
+        seed=42,
+        cost_key=service_cost_key(False, 1.0, 0.3, 50.0),
+        limits=limits,
+    )
+    return walk_forward_recipe(**{**kwargs, **overrides})
+
+
+def _wf_cli_key(argv, limits=None):
+    from tradeflow.cli import _walkforward_recipe
+
+    args = parse_cli(argv)
+    args.config_position_limits = limits
+    return _walkforward_recipe(args, None)
+
+
+def test_the_two_surfaces_agree_on_the_same_walk_forward():
+    """Like for like: `--folds` defaults to None on the CLI and 4 in the service, so
+    the two surfaces' *defaults* differ. That is a defaults question, not a
+    key-construction one — this asserts the construction."""
+    assert _wf_cli_key(["walkforward", "--folds", "4"]) == _wf_service_key()
+
+
+def test_the_two_surfaces_agree_on_the_book_a_walk_forward_validated():
+    """The case that broke: `run_backtest` folded the book limits into its key and the
+    walk-forward recipe did not, so two configs differing only in `max_positions`
+    hashed alike — and the second was served the first's result, reporting a
+    one-position validation as an eight-position book."""
+    limits = {"max_positions": 8, "max_gross_exposure": 0.9}
+
+    assert _wf_cli_key(["walkforward", "--folds", "4"], limits) == _wf_service_key(limits)
+
+
+def test_the_book_actually_changes_a_walk_forward_s_identity():
+    """Both directions: an equivalence that folds nothing on either side passes
+    trivially, so the fold has to be shown to do something first."""
+    from tradeflow.store.trials import params_hash
+
+    one = _wf_service_key({"max_positions": 1})
+    eight = _wf_service_key({"max_positions": 8})
+
+    assert params_hash(one) != params_hash(eight)
+
+
+def test_a_walk_forward_without_limits_keys_exactly_as_before_they_existed():
+    """Every validation already in the store must still find itself."""
+    assert "_limits" not in _wf_service_key(None)
+
+
+# --- MCP is a transport over the same service -------------------------------------
+@pytest.mark.parametrize("tool", ["run_backtest", "run_walk_forward"])
+def test_every_mcp_argument_is_one_the_service_accepts(tool):
+    """MCP is a transport: parse, call one service function, render. An argument it
+    accepts that the service does not is a call that fails at runtime, and an agent
+    cannot notice a stale signature — it acts on one."""
+    import inspect
+
+    from tradeflow.mcp import server as mcp_server
+    from tradeflow.services import analysis
+
+    source = inspect.getsource(mcp_server)
+    start = source.index(f"def {tool}(")
+    signature = source[start : source.index(") -> Dict[str, Any]:", start)]
+    names = {
+        line.split(":")[0].strip()
+        for line in signature.splitlines()[1:]
+        if ":" in line and not line.strip().startswith("#")
+    }
+    service = set(inspect.signature(getattr(analysis, tool)).parameters)
+
+    assert names - service - {"strategy", "symbols", "start", "end"} == set()
+
+
+@pytest.mark.parametrize("flag", ["benchmark", "position_limits"])
+def test_a_walk_forward_knob_the_cli_has_is_reachable_over_mcp(flag):
+    """A gate that cannot be configured over a surface is not a stricter gate on that
+    surface — it is one that never runs. Without `benchmark` every fold reports
+    `benchmark_available: False`, so the benchmark-relative prerequisites come back
+    unevaluated rather than failed, and nothing says so."""
+    import inspect
+
+    from tradeflow.mcp import server as mcp_server
+    from tradeflow.services import analysis
+
+    assert flag in inspect.signature(analysis.run_walk_forward).parameters
+
+    source = inspect.getsource(mcp_server)
+    start = source.index("def run_walk_forward(")
+    body = source[start : source.index("return _logged(", start)]
+    assert f"{flag}={flag}" in body, f"MCP accepts no {flag}, or accepts it and drops it"
