@@ -1,0 +1,413 @@
+"""Execution telemetry: what was decided, what was sent, what the venue did.
+
+The ledger already proved quantity and sign correct. This is the layer above it —
+price, latency, cost — and its whole value is that the numbers mean what they say.
+Two rules do most of the work here: a measure that can be missing must never be
+rendered as zero, and a modelled cost must never be added to an observed one.
+"""
+
+import pytest
+
+from tradeflow.analytics.execution_quality import (
+    cost_summary,
+    decline_summary,
+    execution_report,
+    fill_summary,
+    latency_summary,
+    slippage_summary,
+)
+from tradeflow.execution import decision as decisions
+from tradeflow.execution.ledger import CUMULATIVE, PositionLedger, slippage_bps
+
+
+@pytest.fixture
+def ledger(tmp_path):
+    return PositionLedger(tmp_path / "ledger.jsonl")
+
+
+def _submit(ledger, symbol, side, qty, reference, order_id, **plan_kwargs):
+    plan = decisions.OrderPlan(
+        side=side, qty=qty, reference_price=reference, client_order_id=f"c-{order_id}", **plan_kwargs
+    )
+    decision = decisions.allow(symbol, "BUY", f"entered {qty}", (decisions.BROKER,), None, plan)
+    ledger.record_decision(decision)
+    ledger.record_intent(
+        symbol, side, qty, order_id=order_id, decision_id=decision.decision_id, plan=plan.as_dict()
+    )
+    return decision
+
+
+def _fill(ledger, symbol, side, qty, order_id, price, at=None, **kwargs):
+    ledger.record_fill(
+        symbol, side, qty, order_id=order_id, basis=CUMULATIVE, fill_price=price, filled_at=at, **kwargs
+    )
+
+
+# --- slippage sign ----------------------------------------------------------------
+def test_a_buy_that_paid_more_is_positive():
+    """Positive is always worse, whichever way the trade went."""
+    assert slippage_bps("buy", 100.0, 100.1) == pytest.approx(10.0)
+
+
+def test_a_buy_that_paid_less_is_negative():
+    assert slippage_bps("buy", 100.0, 99.9) == pytest.approx(-10.0)
+
+
+def test_a_sell_that_received_less_is_positive():
+    """The case an unsigned measure gets backwards: a short filling below reference is
+    adverse, and must not cancel out a bad buy in the same average."""
+    assert slippage_bps("sell", 100.0, 99.9) == pytest.approx(10.0)
+
+
+def test_a_sell_that_received_more_is_negative():
+    assert slippage_bps("sell", 100.0, 100.1) == pytest.approx(-10.0)
+
+
+@pytest.mark.parametrize("reference,fill", [(None, 100.0), (100.0, None), (0.0, 100.0)])
+def test_slippage_is_unmeasurable_rather_than_zero(reference, fill):
+    """Absent is not zero: a fill with no price must not read as one that filled
+    exactly on reference."""
+    assert slippage_bps("buy", reference, fill) is None
+
+
+# --- the join ---------------------------------------------------------------------
+def test_a_lifecycle_joins_decision_to_intent_to_fill(ledger):
+    """The question the ledger exists to answer: what did the strategy expect, what did
+    we submit, what did the broker fill?"""
+    decision = _submit(ledger, "MSFT", "buy", 1, 500.73, "o1", stop_loss=440.0, take_profit=560.0)
+    _fill(ledger, "MSFT", "buy", 1, "o1", 500.91)
+
+    (row,) = ledger.lifecycles()
+
+    assert row["decision_id"] == decision.decision_id
+    assert (row["symbol"], row["submitted_qty"], row["filled_qty"]) == ("MSFT", 1.0, 1.0)
+    assert row["reference_price"] == 500.73 and row["fill_price"] == 500.91
+    assert row["slippage_bps"] == pytest.approx(3.595, abs=0.01)
+    assert (row["stop_loss"], row["take_profit"]) == (440.0, 560.0)
+    assert row["client_order_id"] == "c-o1"
+
+
+def test_partial_fills_report_the_final_quantity_not_their_sum(ledger):
+    """Cumulative reporting again — the last fill is the whole truth about the order."""
+    _submit(ledger, "NKE", "sell", 31, 78.40, "o3")
+    _fill(ledger, "NKE", "sell", 12, "o3", 78.30, status="partially_filled")
+    _fill(ledger, "NKE", "sell", 31, "o3", 78.22)
+
+    (row,) = ledger.lifecycles()
+
+    assert row["filled_qty"] == 31.0
+    assert row["n_fill_events"] == 2  # both events are still visible
+    assert row["fill_price"] == 78.22
+
+
+def test_an_order_that_never_filled_still_appears(ledger):
+    """An order with no fill is the most interesting row on the page, and a join keyed
+    off fills would drop it entirely."""
+    _submit(ledger, "CVX", "buy", 5, 150.0, "o4")
+
+    (row,) = ledger.lifecycles()
+
+    assert row["filled_qty"] == 0.0
+    assert row["fill_price"] is None and row["slippage_bps"] is None
+
+
+def test_the_join_survives_a_restart(tmp_path):
+    """Derived on read, not written at fill time: a process that dies between
+    submitting and filling still has both halves on disk."""
+    path = tmp_path / "ledger.jsonl"
+    _submit(PositionLedger(path), "MSFT", "buy", 1, 500.0, "o1")
+    _fill(PositionLedger(path), "MSFT", "buy", 1, "o1", 501.0)
+
+    (row,) = PositionLedger(path).lifecycles()
+
+    assert row["slippage_bps"] == pytest.approx(20.0)
+
+
+def test_orders_from_different_decisions_do_not_merge(ledger):
+    _submit(ledger, "MSFT", "buy", 1, 500.0, "o1")
+    _submit(ledger, "AMGN", "buy", 2, 430.0, "o2")
+
+    assert {row["symbol"] for row in ledger.lifecycles()} == {"MSFT", "AMGN"}
+
+
+# --- summaries --------------------------------------------------------------------
+def _rows(**overrides):
+    base = {
+        "symbol": "AAA",
+        "side": "buy",
+        "submitted_qty": 1.0,
+        "filled_qty": 1.0,
+        "reference_price": 100.0,
+        "fill_price": 100.1,
+        "slippage_bps": 10.0,
+        "decision_to_fill_ms": 500.0,
+        "n_fill_events": 1,
+        "cost_estimate": None,
+        "broker_fee": None,
+    }
+    return {**base, **overrides}
+
+
+def test_a_fill_with_no_price_is_counted_as_unmeasured(capsys):
+    """A clean-looking average over two of twenty fills is worse than no average."""
+    summary = slippage_summary([_rows(), _rows(slippage_bps=None, fill_price=None)])
+
+    assert summary["n_filled"] == 2
+    assert summary["n_measured"] == 1
+    assert summary["n_unmeasured"] == 1
+
+
+def test_the_worst_fill_is_named(capsys):
+    summary = slippage_summary(
+        [_rows(symbol="AAA", slippage_bps=2.0), _rows(symbol="BBB", slippage_bps=40.0)]
+    )
+
+    assert summary["worst_bps"] == 40.0 and summary["worst_symbol"] == "BBB"
+
+
+def test_no_measurable_fills_reports_nothing_rather_than_zero():
+    summary = slippage_summary([_rows(slippage_bps=None)])
+
+    assert summary["mean_bps"] is None and summary["median_bps"] is None
+
+
+def test_a_fill_timed_before_its_decision_is_not_a_latency():
+    """Negative elapsed means the clocks disagree, not that a fill preceded its
+    request. Averaging it in would drag the median negative and look like speed."""
+    summary = latency_summary([_rows(decision_to_fill_ms=500.0), _rows(decision_to_fill_ms=-1_287_158.0)])
+
+    assert summary["n_measured"] == 1
+    assert summary["n_clock_skew"] == 1
+    assert summary["median_ms"] == 500.0
+
+
+def test_unfilled_orders_are_counted_and_shrink_the_fill_ratio():
+    summary = fill_summary([_rows(), _rows(filled_qty=0.0, fill_price=None)])
+
+    assert summary["n_unfilled"] == 1
+    assert summary["fill_ratio"] == pytest.approx(100.1 / 200.0)
+
+
+def test_an_order_that_ended_short_is_counted_as_short():
+    """The outcome that matters: less was filled than was asked for."""
+    summary = fill_summary([_rows(submitted_qty=10.0, filled_qty=4.0, n_fill_events=1)])
+
+    assert summary["n_short"] == 1
+    assert summary["n_multi_print"] == 0
+
+
+def test_an_order_filled_in_several_prints_is_not_counted_as_short():
+    """The reported bug: two orders that both filled completely, each across a partial
+    print and a final one, were summarised as "0 partial" — true of the outcome and
+    silent about the route. They are different facts and get different counts."""
+    summary = fill_summary([_rows(submitted_qty=3.0, filled_qty=3.0, n_fill_events=2)])
+
+    assert summary["n_short"] == 0
+    assert summary["n_multi_print"] == 1
+
+
+def test_an_order_can_be_both_short_and_multi_print():
+    summary = fill_summary([_rows(submitted_qty=10.0, filled_qty=4.0, n_fill_events=3)])
+
+    assert summary["n_short"] == 1 and summary["n_multi_print"] == 1
+
+
+def test_nothing_submitted_has_no_fill_ratio():
+    """0.0 would read as "nothing filled"; there is simply no ratio."""
+    assert fill_summary([])["fill_ratio"] is None
+
+
+def test_a_modelled_cost_is_never_added_to_a_broker_fee():
+    """One is a prediction and one is an observation. Summing them turns the
+    prediction into evidence."""
+    summary = cost_summary([_rows(cost_estimate={"total": 1.50}, broker_fee=0.35)])
+
+    assert summary["model_cost_estimate"] == 1.50
+    assert summary["broker_fees"] == 0.35
+
+
+def test_a_venue_that_reports_no_fees_is_not_a_venue_that_charged_zero():
+    """Every paper fill looks like this, and reading it as zero would make a live book
+    look more expensive than the paper one for no real reason."""
+    summary = cost_summary([_rows(cost_estimate={"total": 1.50})])
+
+    assert summary["fees_reported"] is False
+    assert summary["broker_fees"] is None
+
+
+def test_declines_are_counted_by_kind_worst_first():
+    """Why a strategy did nothing is the question that leaves no other trace."""
+    counts = decline_summary(
+        [
+            {"reason_code": "book_full", "reason": "book is full: 8 of 8"},
+            {"reason_code": "gross_exposure_capped", "reason": "gross exposure capped: $1 of $2"},
+            {"reason_code": "gross_exposure_capped", "reason": "gross exposure capped: $3 of $2"},
+        ]
+    )
+
+    assert list(counts) == ["gross_exposure_capped", "book_full"]
+    assert counts["gross_exposure_capped"]["count"] == 2
+
+
+def test_a_decline_with_no_reason_is_not_dropped():
+    """Absent is not zero here either: an unexplained refusal still happened."""
+    assert decline_summary([{}])["unknown"]["count"] == 1
+
+
+def test_the_report_ties_the_whole_session_together(ledger):
+    _submit(ledger, "MSFT", "buy", 1, 500.73, "o1", cost_estimate={"total": 0.25})
+    _fill(ledger, "MSFT", "buy", 1, "o1", 500.91)
+    ledger.record_decision(
+        decisions.decline("WMT", "BUY", "gross exposure capped", (decisions.POSITION_LIMITS,))
+    )
+
+    report = execution_report(ledger.lifecycles(), ledger.declines())
+
+    assert report["slippage"]["n_measured"] == 1
+    assert report["fills"]["n_orders"] == 1
+    assert report["costs"]["model_cost_estimate"] == 0.25
+    assert report["declines"][decisions.GROSS_EXPOSURE]["count"] == 1
+
+
+# --- refusal families -------------------------------------------------------------
+def test_refusals_of_one_kind_are_one_row(ledger):
+    """The reported bug: gross-exposure refusals fragmented into sixteen one-off rows
+    because the message embeds the numbers that caused it. Counting messages hides a
+    throttle rather than showing it."""
+    for over in (7_617.12, 7_918.40, 8_004.55):
+        ledger.record_decision(
+            decisions.decline(
+                "WMT",
+                "BUY",
+                f"gross exposure capped: ${over:,.2f} of $7,200.00",
+                (decisions.POSITION_LIMITS,),
+                code=decisions.GROSS_EXPOSURE,
+            )
+        )
+
+    counts = decline_summary(ledger.declines())
+
+    assert list(counts) == [decisions.GROSS_EXPOSURE]
+    assert counts[decisions.GROSS_EXPOSURE]["count"] == 3
+
+
+def test_a_family_keeps_one_example_with_the_numbers(ledger):
+    """The code alone does not say what the limit was or how far over the book had got."""
+    ledger.record_decision(
+        decisions.decline(
+            "WMT",
+            "BUY",
+            "gross exposure capped: $7,617.12 of $7,200.00",
+            (decisions.POSITION_LIMITS,),
+            code=decisions.GROSS_EXPOSURE,
+        )
+    )
+
+    example = decline_summary(ledger.declines())[decisions.GROSS_EXPOSURE]["example"]
+
+    assert "$7,617.12" in example and "$7,200.00" in example
+
+
+def test_different_limits_stay_different_families(ledger):
+    """Grouping must not go so far that a full book and a capped exposure look alike."""
+    for code, reason in [
+        (decisions.GROSS_EXPOSURE, "gross exposure capped: $8,400.00 of $7,200.00"),
+        (decisions.BOOK_FULL, "book is full: 8 of 8 positions already open"),
+        (decisions.NET_EXPOSURE, "net exposure capped: $3,100.00 net long of $2,400.00"),
+    ]:
+        ledger.record_decision(decisions.decline("X", "BUY", reason, (), code=code))
+
+    assert set(decline_summary(ledger.declines())) == {
+        decisions.GROSS_EXPOSURE,
+        decisions.BOOK_FULL,
+        decisions.NET_EXPOSURE,
+    }
+
+
+def test_a_refusal_with_no_code_still_groups_by_its_message(ledger):
+    """Not every decline has a code — the ones whose text carries no numbers do not
+    need one, and must not all collapse into "unknown"."""
+    ledger.record_decision(decisions.decline("X", "BUY", "market is closed", ()))
+
+    assert "market is closed" in decline_summary(ledger.declines())
+
+
+# --- cost model -------------------------------------------------------------------
+def test_the_modelled_cost_names_what_it_leaves_out():
+    """Impact needs the day's volume, which the trade clock does not have when it sizes
+    an order. A total that silently omits it would be read as the whole cost."""
+    summary = cost_summary(
+        [_rows(cost_estimate={"total": 1.5, "commission": 0.5, "spread": 1.0, "excludes": ["impact"]})]
+    )
+
+    assert summary["model_cost_estimate"] == 1.5
+    assert summary["model_excludes"] == ["impact"]
+    assert summary["model_commission"] == 0.5 and summary["model_spread"] == 1.0
+
+
+def test_no_cost_model_reports_nothing_rather_than_zero():
+    assert cost_summary([_rows(cost_estimate=None)])["model_cost_estimate"] is None
+
+
+# --- families across the ledger's own history -------------------------------------
+def test_pre_code_rows_fold_into_the_same_family_as_new_ones(ledger):
+    """The bug: an append-only ledger keeps its history, so a report that grouped only
+    rows carrying a reason_code showed one throttle as two — a tidy `5 book_full`
+    beside `8 book is full: 10 of 10 positions already open` saying the same thing."""
+    ledger._append(
+        {"event": "decision", "allowed": False, "reason": "book is full: 10 of 10 positions already open"}
+    )
+    ledger.record_decision(
+        decisions.decline(
+            "COP", "BUY", "book is full: 12 of 12 positions already open", (), code=decisions.BOOK_FULL
+        )
+    )
+
+    counts = decline_summary(ledger.declines())
+
+    assert list(counts) == [decisions.BOOK_FULL]
+    assert counts[decisions.BOOK_FULL]["count"] == 2
+
+
+@pytest.mark.parametrize(
+    "reason,family",
+    [
+        ("book is full: 10 of 10 positions already open", decisions.BOOK_FULL),
+        ("gross exposure capped: $7,617.12 of $7,200.00", decisions.GROSS_EXPOSURE),
+        ("net exposure capped: $3,100.00 net long of $2,400.00", decisions.NET_EXPOSURE),
+        ("risk budget exhausted: $432.00 of $400.00 at a 12.0% stop", decisions.RISK_BUDGET),
+        ("cannot check portfolio limits against $0.00 of equity", decisions.EQUITY_UNREADABLE),
+    ],
+)
+def test_every_limit_message_this_project_has_written_is_recognised(reason, family):
+    """Each of these was emitted before codes existed, so each has history on disk."""
+    from tradeflow.execution.decision import reason_family
+
+    assert reason_family({"reason": reason}) == family
+
+
+def test_a_message_with_no_family_keeps_its_own_text():
+    """Both directions. A fixed phrase with no numbers never fragmented, and forcing it
+    into a family it may not belong to would lose the only thing it says."""
+    from tradeflow.execution.decision import reason_family
+
+    assert reason_family({"reason": "market is closed"}) == "market is closed"
+
+
+def test_an_unrecognised_message_is_not_swallowed_as_unknown():
+    """Grouping must not become a way to lose refusals nobody has categorised yet."""
+    from tradeflow.execution.decision import reason_family
+
+    assert reason_family({"reason": "broker refused: insufficient day trading buying power"}).startswith(
+        "broker refused"
+    )
+
+
+def test_a_code_still_wins_over_the_message():
+    """The map is a fallback for history, not a re-derivation of what a row already says."""
+    from tradeflow.execution.decision import reason_family
+
+    assert (
+        reason_family({"reason_code": decisions.NET_EXPOSURE, "reason": "book is full: 3 of 3"})
+        == decisions.NET_EXPOSURE
+    )

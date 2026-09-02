@@ -8,7 +8,10 @@ is a renderer that can disagree with the report it is summarizing.
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
+
+from tradeflow.analytics import metrics as m
+from tradeflow.analytics import performance
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +22,8 @@ _SECTIONS = [
         [
             ("total_return", "Total Return", "{:.2f}%"),
             ("cagr", "CAGR", "{:.2f}%"),
-            ("buy_hold_return", "Buy & Hold Return", "{:.2f}%"),
+            ("buy_hold_return", "Buy & Hold (universe)", "{:.2f}%"),
+            ("benchmark_buy_hold_return", "Buy & Hold (benchmark)", "{:.2f}%"),
             ("annualized_volatility", "Annualized Volatility", "{:.2f}%"),
         ],
     ),
@@ -84,11 +88,164 @@ _SECTIONS = [
 _ROWS = [row for _, rows in _SECTIONS for row in rows]
 
 
+def _execution_lines(execution: Optional[Dict[str, Any]]) -> List[str]:
+    """The gap between the book the sizer asked for and the one that could be traded.
+
+    Silent by construction until now: whole-share rounding just happens, and it scales
+    with how small the account is. Shown whenever anything was lost, and shown with
+    both numbers beside their thresholds rather than as a verdict on its own - the same
+    rule the promotion gates follow.
+    """
+    if not execution:
+        return []
+    verdict = performance.execution_verdict(execution)
+    if verdict["executable"] is None or (verdict["executable"] and not execution.get("rounding_drag_pct")):
+        return []
+
+    mark = "(!)" if not verdict["executable"] else "(i)"
+    lines = [
+        "",
+        f"--- Execution & cost {mark} ---",
+        f"{'Intended notional':28}${execution.get('requested_notional', 0.0):,.2f}",
+        f"{'Filled notional':28}${execution.get('filled_notional', 0.0):,.2f}",
+    ]
+    for name, check in verdict["checks"].items():
+        flag = "PASS" if check["passed"] else "FAIL"
+        lines.append(f"  [{flag}] {name:22}{check['value']:.2f}% vs {check['threshold']:.2f}%")
+    lost = execution.get("positions_rounded_to_zero", 0) + execution.get("positions_below_min_notional", 0)
+    if lost:
+        lines.append(
+            f"{'  entries never opened':28}{lost} "
+            f"({execution.get('positions_rounded_to_zero', 0)} rounded to zero, "
+            f"{execution.get('positions_below_min_notional', 0)} below min notional)"
+        )
+    if not verdict["executable"]:
+        lines.append("  Not the book that was validated - see the failing check above.")
+    return lines
+
+
+def _leg_lines(legs: Optional[Dict[str, Any]]) -> List[str]:
+    """Each side of a long/short book, separately.
+
+    Shown only when both sides actually traded: a long-only run has nothing to
+    decompose, and a table with an empty short row is noise that teaches readers to
+    skip the block.
+
+    The question it exists to answer is what a net figure structurally cannot: a
+    near-zero net beta is either genuinely small exposure on both sides, or a large
+    long beta cancelling a large short one. Same number, opposite risk.
+    """
+    if not legs or not all(legs.get(side, {}).get("trades") for side in ("long", "short")):
+        return []
+    lines = [
+        "",
+        "--- Legs (diagnostic; no thresholds) ---",
+        f"  {'leg':7}{'return':>9}{'vol':>8}{'max DD':>9}{'beta':>8}{'corr':>7}{'trades':>8}{'cost':>11}",
+    ]
+    for name in ("long", "short"):
+        leg = legs[name]
+        beta, corr = leg.get("beta"), leg.get("benchmark_correlation")
+        lines.append(
+            f"  {name:7}{leg['return_pct']:>+8.2f}%{leg['volatility_pct']:>7.3f}%"
+            f"{leg['max_drawdown_pct']:>8.2f}%"
+            f"{'n/a' if beta is None else format(beta, '.3f'):>8}"
+            f"{'n/a' if corr is None else format(corr, '.2f'):>7}"
+            f"{leg['trades']:>8}{leg['cost']:>11,.0f}"
+        )
+    betas = [legs[name].get("beta") for name in ("long", "short")]
+    if all(b is not None for b in betas) and min(abs(b) for b in betas) > 0.3:
+        lines.append(
+            "  Both legs carry real market exposure - a small net beta here is two "
+            "exposures cancelling, not an absence of them."
+        )
+    return lines
+
+
+def format_universe_provenance(
+    *,
+    candidates: Sequence[str],
+    resolved: Sequence[str],
+    scanner: Optional[str],
+    scan_clock: Optional[str],
+    source: str,
+    replayed: bool,
+) -> List[str]:
+    """Where this run's universe came from, and what that does and does not guarantee.
+
+    A 61-name large-cap list is not "the market", and a report that leaves the universe
+    in the background invites it to be read as one. The awkward line is the last: a
+    hand-supplied candidate list is *today's* names applied to history, so anything that
+    left the list - delisted, acquired, collapsed - is already absent from every
+    backtest run over it.
+
+    That is stated rather than measured, because measuring it needs point-in-time
+    membership data this project does not ingest. Saying "this is survivorship-prone by
+    construction" is honest; computing a survivorship number from a list that has none
+    would not be.
+    """
+    lines = [
+        "",
+        "=== Universe provenance ===",
+        f"  {'candidates':16}{len(candidates)} names from {source}",
+    ]
+    if scanner and scanner != "none":
+        clock = f" as of {scan_clock}" if scan_clock else ""
+        lines.append(f"  {'scanner':16}{scanner}{clock}")
+        lines.append(f"  {'resolved':16}{len(resolved)} of {len(candidates)} names")
+    else:
+        lines.append(f"  {'scanner':16}none - candidates traded as-is")
+    lines.append(f"  {'universe':16}{'replayed from config' if replayed else 'resolved this run'}")
+    lines.append(
+        f"  {'survivorship':16}a hand-supplied list is today's names applied to history; "
+        "membership was not point-in-time"
+    )
+    return lines
+
+
+def format_verdicts(
+    *,
+    statistical: Optional[Dict[str, Any]] = None,
+    execution: Optional[Dict[str, Any]] = None,
+    evidence: Optional[Dict[str, Any]] = None,
+) -> List[str]:
+    """The three facts about a candidate, side by side and separately labelled.
+
+    They were already three verdicts that never collapse into one another, but each was
+    printed by a different command at a different moment, so nothing ever showed a
+    reader all three. That is how a backtest replay reads as "approved" when it only
+    means "this saved config runs and its history looks good".
+
+    A verdict this command could not assess is printed as **not assessed here**, with
+    the command that would assess it - the same rule the prerequisites follow, because
+    an unknown rendered as a blank is an unknown a reader fills in optimistically.
+    """
+    rows = [
+        ("Statistical validation", statistical, "was the edge real, and not overfit", "walkforward"),
+        ("Execution viability", execution, "can this book be traded at this capital", "backtest"),
+        (
+            "Evidence completeness",
+            evidence,
+            "what has actually been checked",
+            "walkforward --bootstrap-skill",
+        ),
+    ]
+    lines = ["", "=== Verdicts ==="]
+    for label, verdict, question, command in rows:
+        if verdict is None:
+            lines.append(f"  {label:24}not assessed here - {question} (`{command}`)")
+            continue
+        lines.append(f"  {label:24}{verdict}")
+    lines.append("  Three separate facts. Clearing one says nothing about the others.")
+    return lines
+
+
 def format_backtest_report(
     metrics: Dict[str, float],
     initial_capital: float,
     final_capital: float,
     title: str = "Backtest Results",
+    execution: Optional[Dict[str, Any]] = None,
+    legs: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Render metrics as an aligned, fixed-width text block, grouped by section."""
     lines = [f"=== {title} ===", f"{'Capital':28}${initial_capital:,.2f} -> ${final_capital:,.2f}"]
@@ -96,9 +253,22 @@ def format_backtest_report(
         lines.append(f"{'(!) low sample':28}fewer than {30} trades - treat ratios with caution")
     if not metrics.get("benchmark_available", True):
         lines.append(f"{'(i) no benchmark':28}alpha/beta/information-ratio unavailable")
+    elif not metrics.get("treynor_available", True):
+        lines.append(
+            f"{'(i) beta near zero':28}Treynor unavailable (|beta| < "
+            f"{m.MIN_ABS_BETA_FOR_TREYNOR:g}; excess return per unit of beta is not "
+            f"meaningful for a book with no market exposure)"
+        )
+    lines.extend(_execution_lines(execution))
+    lines.extend(_leg_lines(legs))
+    undeflated = not metrics.get("deflation_applied", True)
     for section, rows in _SECTIONS:
         section_lines = []
         for key, label, fmt in rows:
+            if key == "deflated_sharpe_ratio" and undeflated:
+                # One trial deflates against nothing, so the row says what it is rather
+                # than borrowing the name of a correction that was not applied.
+                label = "  Sharpe (undeflated)"
             if key in metrics:
                 value = fmt.format(metrics[key]) if metrics[key] != float("inf") else "inf"
                 section_lines.append(f"{label:28}{value}")
@@ -109,9 +279,15 @@ def format_backtest_report(
     return "\n".join(lines)
 
 
-def log_backtest_report(metrics: Dict[str, float], initial_capital: float, final_capital: float) -> None:
+def log_backtest_report(
+    metrics: Dict[str, float],
+    initial_capital: float,
+    final_capital: float,
+    execution: Optional[Dict[str, Any]] = None,
+    legs: Optional[Dict[str, Any]] = None,
+) -> None:
     """Log the rendered report at INFO."""
-    logger.info("\n%s", format_backtest_report(metrics, initial_capital, final_capital))
+    logger.info("\n%s", format_backtest_report(metrics, initial_capital, final_capital, execution=execution))
 
 
 def _age_str(ts: Optional[str]) -> str:
@@ -204,7 +380,7 @@ def format_verdict_report(result: Dict[str, Any]) -> str:
         lines.append(
             f"  provenance: git {provenance.get('git_sha') or 'unknown'} | "
             f"campaign trials {provenance.get('n_trials', '?')} | "
-            f"bar fetches {_fetch_summary(provenance.get('bar_requests'))}"
+            f"bar requests: {_fetch_summary(provenance.get('bar_requests'))}"
         )
 
     lines.extend(_verdict_step_lines(result))
@@ -237,11 +413,36 @@ def _cost_summary(cost: Optional[Dict[str, Any]]) -> str:
     )
 
 
+def format_offline_scan_notice(as_of) -> str:
+    """Say plainly that an offline scan saw only what the cache already holds.
+
+    A scan picks a universe at a clock. Offline it reads local Parquet and nothing
+    else, so the selection is exactly as current as the cache and no more - and
+    nothing errors when coverage ends before that clock: the newest cached bar simply
+    becomes "the latest", and a universe chosen from stale bars is indistinguishable
+    from one chosen from fresh ones. That is precisely the case that has to announce
+    itself.
+    """
+    return (
+        f"OFFLINE: universe resolved at {as_of.isoformat()} from cached bars only - "
+        "as current as the cache and no more. `cache status` shows the coverage."
+    )
+
+
 def _fetch_summary(stats: Optional[Dict[str, Any]]) -> str:
-    """How much of the "one shared fetch" claim actually held, as measured."""
+    """How much of the "one shared fetch" claim actually held, as measured.
+
+    This counts *in-run sharing*, not provider access. ``fetches`` is the number of
+    requests that missed this run's own memo and reached the data client underneath -
+    and on an ``--offline`` run that client is the local bar cache, so the old wording
+    ("hit the provider") reported a network round trip on a run that made none. A
+    provenance line that overstates where data came from is worse than no line, since
+    provenance is the one thing a reader cannot check for themselves.
+    """
     if not stats:
         return "not measured"
-    return f"{stats.get('fetches', '?')} of {stats.get('requests', '?')} bar requests hit the provider"
+    fetches, requests = stats.get("fetches", "?"), stats.get("requests", "?")
+    return f"{fetches} of {requests} reached the data client, the rest shared within this run"
 
 
 def _verdict_step_lines(result: Dict[str, Any]) -> list:
@@ -355,10 +556,14 @@ def _verdict_banner_lines(result: Dict[str, Any]) -> list:
     verdict = result.get("verdict") or {}
     lines = ["", f"  VERDICT: {verdict.get('summary', 'unknown')}"]
     for name, check in sorted((verdict.get("checks") or {}).items()):
-        mark = "PASS" if check.get("passed") else "FAIL"
+        passed = bool(check.get("passed"))
         value, threshold = check.get("value"), check.get("threshold")
         detail = f"{_num(value)} vs {_num(threshold)}"
-        lines.append(f"    [{mark}] {name}: {detail} — {check.get('note', '')}")
+        # Every note states the *failing* condition ("...is indistinguishable from
+        # zero"), so printing it beside a PASS produced a line that contradicted its
+        # own verdict. On a pass the value and its threshold already say everything.
+        note = f" — {check['note']}" if not passed and check.get("note") else ""
+        lines.append(f"    [{'PASS' if passed else 'FAIL'}] {name}: {detail}{note}")
     if verdict.get("verdict") == "incomplete":
         lines.append("    No verdict is offered for a partial run — do not act on the sections above.")
     lines.append("")

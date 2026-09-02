@@ -15,6 +15,7 @@ is watching.
 
 import asyncio
 import json
+import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -26,9 +27,9 @@ from tests.fakes import (
     ScriptedStrategy,
     bar_event,
 )
-from tradeflow.brokers.base import Position
+from tradeflow.brokers.base import Position, TradeUpdate
 from tradeflow.engine.barcheck import BarChecks, BarQualityFilter
-from tradeflow.engine.live import LiveEngine
+from tradeflow.engine.live import BlindStartError, LiveEngine
 from tradeflow.execution.ledger import MISSING, QUANTITY_DRIFT, UNEXPECTED, PositionLedger
 from tradeflow.execution.live_trader import LiveTrader
 from tradeflow.marketdata.client import MarketDataClient
@@ -347,21 +348,70 @@ def test_a_broker_that_rejects_orders_does_not_stop_the_loop():
     assert feed.delivered == 5  # consumed the whole stream regardless
 
 
-def test_warm_up_with_no_history_still_processes_the_first_live_bar():
-    """An empty warm-up must not leave the loop unable to start."""
+class _EmptyWarmUp(ScriptedFeed):
+    """A feed whose historical half returns nothing — an unentitled key's symptom."""
 
-    class Empty(ScriptedFeed):
-        def get_bars(self, symbols, timeframe, start, end):
-            return {}
+    def get_bars(self, symbols, timeframe, start, end):
+        return {}
 
+
+def _blind_engine(**kwargs):
     strategy = STRATEGIES["ma_crossover"].create_with_defaults()
-    feed = Empty(["AAA"], events=[bar_event(minute=1)], n=10, freq="1D")
-    broker = RecordingBroker()
+    feed = _EmptyWarmUp(["AAA"], events=[bar_event(minute=1)], n=10, freq="1D")
     engine = LiveEngine(
-        strategy, MarketDataClient(feed), LiveTrader(broker, strategy, respect_market_hours=False)
+        strategy,
+        MarketDataClient(feed),
+        LiveTrader(RecordingBroker(), strategy, respect_market_hours=False),
+        **kwargs,
     )
+    return engine, feed
+
+
+def test_a_run_that_warmed_up_on_nothing_refuses_to_start():
+    """The bug: it started, streamed normally, and logged one line per symbol.
+
+    Every indicator then computed from history it never had, and from inside the loop
+    that is indistinguishable from a strategy that simply is not triggering — so the
+    run looks healthy for as long as you let it go.
+    """
+    engine, feed = _blind_engine()
+
+    with pytest.raises(BlindStartError) as exit_info:
+        asyncio.run(engine.start(["AAA"]))
+
+    assert feed.delivered == 0  # refused before the stream, not after
+    # The message must name the likeliest cause and both remedies.
+    assert "--feed iex" in str(exit_info.value)
+    assert "--allow-blind-start" in str(exit_info.value)
+
+
+def test_a_blind_start_is_allowed_when_it_is_asked_for_explicitly():
+    """Both directions. Previously the only behaviour, now opt-in."""
+    engine, feed = _blind_engine(allow_blind_start=True)
+
     asyncio.run(engine.start(["AAA"]))
+
     assert feed.delivered == 1
+
+
+def test_partial_warm_up_is_not_treated_as_blind():
+    """One symbol with history is not the failure this guards, and refusing it would
+    make a single delisted name stop an otherwise valid book."""
+    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    feed = ScriptedFeed(["AAA", "BBB"], events=[bar_event(minute=1)], n=10, freq="1D")
+    original = feed.get_bars
+
+    def only_one(symbols, timeframe, start, end):
+        return {"AAA": original(symbols, timeframe, start, end)["AAA"]}
+
+    feed.get_bars = only_one
+    engine = LiveEngine(
+        strategy,
+        MarketDataClient(feed),
+        LiveTrader(RecordingBroker(), strategy, respect_market_hours=False),
+    )
+
+    asyncio.run(engine.start(["AAA", "BBB"]))  # must not raise
 
 
 def test_without_a_filter_the_loop_behaves_exactly_as_before():
@@ -375,7 +425,9 @@ def test_without_a_filter_the_loop_behaves_exactly_as_before():
 def test_the_loop_records_intent_and_fills_in_the_ledger(tmp_path):
     led = _ledger(tmp_path)
     engine, _, _ = _engine([bar_event(minute=1)], ledger=led)
-    engine._on_trade_update(FakeTradeUpdate(event="fill", symbol="AAA", filled_qty=7, side="buy"))
+    asyncio.run(
+        engine._on_trade_update(FakeTradeUpdate(event="fill", symbol="AAA", filled_qty=7, side="buy"))
+    )
 
     assert led.expected_positions() == {"AAA": 7.0}
     records = [json.loads(line) for line in (tmp_path / "ledger.jsonl").read_text().splitlines()]
@@ -393,7 +445,7 @@ def test_a_ledger_failure_never_breaks_the_order_path(tmp_path):
     led = Exploding(tmp_path / "ledger.jsonl")
     engine, feed, _ = _engine([bar_event(minute=i, close=100 + i) for i in range(1, 4)], ledger=led)
     asyncio.run(engine.start(["AAA"]))  # must not raise
-    engine._on_trade_update(FakeTradeUpdate())
+    asyncio.run(engine._on_trade_update(FakeTradeUpdate()))
     assert feed.delivered == 3
 
 
@@ -578,6 +630,8 @@ def test_the_live_path_imports_no_research_machinery():
         "tradeflow/engine/live.py",
         "tradeflow/engine/barcheck.py",
         "tradeflow/execution/ledger.py",
+        "tradeflow/execution/live_trader.py",
+        "tradeflow/execution/sizing.py",
     ):
         source = Path(module).read_text()
         for forbidden in (
@@ -736,3 +790,252 @@ def test_a_book_that_already_matches_the_score_stays_quiet():
     asyncio.run(engine.start([SYMBOL]))
 
     assert [o["type"] for o in broker.orders] == ["bracket"]  # once, not three times
+
+
+def test_the_preflight_runs_the_same_warm_up_the_run_would():
+    """The gap: --preflight printed the whole contract but never touched market data,
+    so the one number that decides whether a run is viable — how many symbols actually
+    have history — could not be confirmed from it. A lighter probe would not do: a
+    preflight that fetches differently from the run it precedes confirms nothing.
+    """
+    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    # Fewer bars needed than the feed supplies, so this asserts a genuinely full
+    # warm-up rather than passing because both counts happen to be short.
+    strategy.config["required_lookback_periods"] = 5
+    feed = ScriptedFeed(["AAA", "BBB"], events=[bar_event(minute=1)], n=10, freq="1D")
+    engine = LiveEngine(
+        strategy,
+        MarketDataClient(feed),
+        LiveTrader(RecordingBroker(), strategy, respect_market_hours=False),
+    )
+
+    assert engine.warm_up_coverage(["AAA", "BBB"]) == (2, 2, 2)
+
+
+def test_a_short_warm_up_is_counted_apart_from_a_full_one():
+    """The gap: coverage counted symbols with *any* history, so a symbol warmed with a
+    third of the bars its indicators need was reported identically to one warmed in
+    full. Presence is not sufficiency, and a preflight that conflates them reads as a
+    pass on a book that is not ready."""
+    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy.config["required_lookback_periods"] = 8
+    feed = ScriptedFeed(["AAA"], events=[bar_event(minute=1)], n=4, freq="1D")
+    engine = LiveEngine(
+        strategy,
+        MarketDataClient(feed),
+        LiveTrader(RecordingBroker(), strategy, respect_market_hours=False),
+    )
+
+    warmed, sufficient, asked = engine.warm_up_coverage(["AAA"])
+
+    assert (warmed, asked) == (1, 1)  # it has history...
+    assert sufficient == 0  # ...and not enough of it
+
+
+def test_the_preflight_reports_a_blind_warm_up_without_raising():
+    """It reports; the refusal belongs to the start path. A preflight that raised would
+    lose the rest of the contract it exists to print."""
+    engine, _ = _blind_engine()
+
+    assert engine.warm_up_coverage(["AAA"]) == (0, 0, 1)
+
+
+def test_a_stream_that_will_not_close_does_not_hold_the_process_open(monkeypatch):
+    """The bug: shutdown hung after "Shutting down live streams" until a second Ctrl-C.
+
+    A teardown that can block trains people to interrupt twice, and the second one
+    lands during cleanup where it can interrupt anything.
+    """
+    import tradeflow.engine.live as live_module
+
+    monkeypatch.setattr(live_module, "SHUTDOWN_TIMEOUT", 0.05)
+
+    class SlowToClose(ScriptedFeed):
+        """Answers cancellation, but its teardown blocks — a stuck socket close."""
+
+        async def stream_bars(self, symbols, handler):
+            try:
+                await asyncio.sleep(3600)
+            finally:
+                await asyncio.sleep(3600)
+
+    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy.config["required_lookback_periods"] = 5
+    feed = SlowToClose(["AAA"], events=[bar_event(minute=1)], n=10, freq="1D")
+    engine = LiveEngine(
+        strategy,
+        MarketDataClient(feed),
+        LiveTrader(RecordingBroker(), strategy, respect_market_hours=False),
+    )
+
+    async def interrupt_soon():
+        task = asyncio.ensure_future(engine.start(["AAA"]))
+        await asyncio.sleep(0.05)
+        started = time.monotonic()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        return time.monotonic() - started
+
+    # The assertion is the elapsed time, not merely that it returned: an unbounded
+    # await also "returns" here, only after the second interrupt this exists to remove.
+    elapsed = asyncio.run(interrupt_soon())
+
+    assert elapsed < 1.0, f"shutdown took {elapsed:.1f}s — the wait is not bounded"
+
+
+def test_a_stream_failure_still_propagates():
+    """Guards the swap of gather for wait: gather re-raised the first child exception,
+    and a shutdown fix that swallowed stream failures would turn a dead feed into a
+    silent no-op loop."""
+
+    class Failing(ScriptedFeed):
+        async def stream_bars(self, symbols, handler):
+            raise RuntimeError("feed died")
+
+    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy.config["required_lookback_periods"] = 5
+    feed = Failing(["AAA"], events=[bar_event(minute=1)], n=10, freq="1D")
+    engine = LiveEngine(
+        strategy,
+        MarketDataClient(feed),
+        LiveTrader(RecordingBroker(), strategy, respect_market_hours=False),
+    )
+
+    with pytest.raises(RuntimeError, match="feed died"):
+        asyncio.run(engine.start(["AAA"]))
+
+
+def test_a_resumed_session_writes_its_adopted_book_to_the_ledger(tmp_path):
+    """The bug: the engine adopted the broker's positions into its in-memory book and
+    the durable ledger never heard of them, so `tradeflow reconcile` reported every
+    resumed position as one nobody ordered."""
+    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy.config["required_lookback_periods"] = 5
+    broker = RecordingBroker(
+        positions=[
+            Position("COP", 8, "long", 100, 100, 800, 0),
+            Position("NKE", 31, "short", 50, 50, 1550, 0),
+        ]
+    )
+    ledger = PositionLedger(tmp_path / "ledger.jsonl")
+    engine = LiveEngine(
+        strategy,
+        MarketDataClient(ScriptedFeed(["AAA"], events=[], n=10, freq="1D")),
+        LiveTrader(broker, strategy, respect_market_hours=False),
+        ledger=ledger,
+    )
+
+    engine._cold_start()
+
+    assert ledger.expected_positions() == {"COP": 8, "NKE": -31}
+    assert ledger.reconcile(broker).clean
+
+
+def test_adoption_bookkeeping_never_breaks_the_start_path(tmp_path):
+    """A ledger that cannot be written must not stop a session from starting."""
+    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    broker = RecordingBroker(positions=[Position("COP", 8, "long", 100, 100, 800, 0)])
+    ledger = PositionLedger(tmp_path / "ledger.jsonl")
+
+    def explode(*args, **kwargs):
+        raise OSError("disk full")
+
+    ledger.record_adoption = explode
+    engine = LiveEngine(
+        strategy,
+        MarketDataClient(ScriptedFeed(["AAA"], events=[], n=10, freq="1D")),
+        LiveTrader(broker, strategy, respect_market_hours=False),
+        ledger=ledger,
+    )
+
+    engine._cold_start()  # must not raise
+    assert strategy.positions  # and the in-memory adoption still happened
+
+
+def test_a_fill_teaches_the_book_about_a_position_a_sweep_erased(tmp_path):
+    """The bug behind the miscounted stop summary, and the more serious half of it.
+
+    An entry records its position at submission. A reconciliation sweep that lands
+    before the broker has materialised it replaces the book wholesale and erases it.
+    The fill then updated the ledger and nothing else — so the strategy was flat in a
+    symbol it held, and a strategy that believes it is flat cannot emit an exit.
+    """
+    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    broker = RecordingBroker(positions=[Position("MSFT", 1, "long", 500.0, 500.0, 500.0, 0)])
+    engine = LiveEngine(
+        strategy,
+        MarketDataClient(ScriptedFeed(["AAA"], events=[], n=10, freq="1D")),
+        LiveTrader(broker, strategy, respect_market_hours=False),
+        ledger=PositionLedger(tmp_path / "ledger.jsonl"),
+    )
+    strategy.positions = {}  # what the mistimed sweep left behind
+
+    asyncio.run(
+        engine._on_trade_update(
+            TradeUpdate(
+                event="fill",
+                symbol="MSFT",
+                order_id="o1",
+                status="filled",
+                filled_qty=1.0,
+                side="buy",
+            )
+        )
+    )
+
+    assert "MSFT" in strategy.positions
+    assert strategy.positions["MSFT"]["qty"] == 1
+    assert strategy.positions["MSFT"]["side"] == signals.BUY
+
+
+def test_a_fill_that_closes_a_position_removes_it_from_the_book(tmp_path):
+    """Both directions: broker truth is what decides, so a symbol the broker no longer
+    holds must leave the book rather than linger as a phantom the strategy would exit."""
+    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    broker = RecordingBroker(positions=[])  # flat now
+    engine = LiveEngine(
+        strategy,
+        MarketDataClient(ScriptedFeed(["AAA"], events=[], n=10, freq="1D")),
+        LiveTrader(broker, strategy, respect_market_hours=False),
+        ledger=PositionLedger(tmp_path / "ledger.jsonl"),
+    )
+    strategy.positions = {
+        "MSFT": {"side": signals.BUY, "qty": 1, "entry_price": 500.0, "stop_loss": 0, "take_profit": 0}
+    }
+
+    asyncio.run(
+        engine._on_trade_update(
+            TradeUpdate(
+                event="fill", symbol="MSFT", order_id="o2", status="filled", filled_qty=1.0, side="sell"
+            )
+        )
+    )
+
+    assert "MSFT" not in strategy.positions
+
+
+def test_the_refresh_never_breaks_the_order_path(tmp_path):
+    """A broker that will not answer must not turn a fill into a raised exception on
+    the trade clock; the next sweep corrects the book anyway."""
+    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    broker = RecordingBroker()
+
+    def explode(symbol):
+        raise RuntimeError("broker down")
+
+    broker.get_position = explode
+    engine = LiveEngine(
+        strategy,
+        MarketDataClient(ScriptedFeed(["AAA"], events=[], n=10, freq="1D")),
+        LiveTrader(broker, strategy, respect_market_hours=False),
+        ledger=PositionLedger(tmp_path / "ledger.jsonl"),
+    )
+
+    asyncio.run(
+        engine._on_trade_update(
+            TradeUpdate(
+                event="fill", symbol="MSFT", order_id="o1", status="filled", filled_qty=1.0, side="buy"
+            )
+        )
+    )  # must not raise

@@ -56,8 +56,17 @@ logger = logging.getLogger(__name__)
 #:   rate. Identical to 2 for a universe whose symbols share a grid; corrects inflated
 #:   Sharpe/volatility and understated carry when they don't.
 #:
+#: * **4** — the current model. A signal is executed one bar after the bar that produced
+#:   it. Through v3 a signal derived from bar i's close was filled at bar i's *open*,
+#:   for entries and signal exits alike - a one-bar look-ahead applied to every trade in
+#:   every recorded result. It survived the leakage probe because a feed shift moves
+#:   signal and price together, and it made the backtest structurally unable to be
+#:   matched live, where a closed bar produces a signal and a market order fills after
+#:   it. Every number recorded under 1-3 overstates what a deployment could achieve; a
+#:   v4 result is not comparable with them and the store keeps the two apart.
+#:
 #: Records written before this field existed carry no version; absence means 1.
-ACCOUNTING_VERSION = 3
+ACCOUNTING_VERSION = 4
 
 
 class BacktestError(RuntimeError):
@@ -82,14 +91,6 @@ def _align_tz(when, index: pd.DatetimeIndex) -> pd.Timestamp:
     if tz is None and ts.tz is not None:
         return ts.tz_localize(None)
     return ts
-
-
-#: Fallback when a strategy declares no ``position_limits`` (mirrors the base class).
-DEFAULT_POSITION_LIMITS: Dict[str, float] = {
-    "max_positions": 5,
-    "max_position_size": 1500.0,
-    "max_total_risk": 0.05,
-}
 
 
 @dataclass
@@ -121,15 +122,88 @@ class _Panel:
 
 
 @dataclass
+class _Execution:
+    """What the sizer asked for versus what could actually be traded.
+
+    Whole-share rounding is silent, and at small capital it is not a rounding error:
+    the sizer asks for 0.4 shares of a $500 name, the engine floors it to zero, and the
+    equity curve is correct while the reason for it is invisible. These counters make
+    the difference between the intended book and the executed one a number rather than
+    an inference.
+
+    Filled and requested notional are accumulated over *opened* positions only, so the
+    ratio is pure rounding drag; positions lost outright are counted separately, since
+    a book that cannot open a name at all is a different problem from one that opens a
+    slightly smaller one.
+    """
+
+    requested_notional: float = 0.0
+    filled_notional: float = 0.0
+    filled: int = 0
+    rounded_to_zero: int = 0
+    below_min_notional: int = 0
+
+    def drag_pct(self) -> float:
+        """Requested notional that whole-share rounding removed, as a percentage."""
+        if self.requested_notional <= 0:
+            return 0.0
+        return float((1.0 - self.filled_notional / self.requested_notional) * 100.0)
+
+    def unfillable_pct(self) -> float:
+        """Share of intended entries that could not be opened at all, as a percentage.
+
+        Separate from the drag: a book that opens every name slightly smaller is a
+        different proposition from one that silently never opens a quarter of them.
+        """
+        attempted = self.filled + self.rounded_to_zero + self.below_min_notional
+        if attempted <= 0:
+            return 0.0
+        return float((self.rounded_to_zero + self.below_min_notional) / attempted * 100.0)
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {
+            "requested_notional": self.requested_notional,
+            "filled_notional": self.filled_notional,
+            "rounding_drag_pct": self.drag_pct(),
+            "positions_filled": self.filled,
+            "positions_rounded_to_zero": self.rounded_to_zero,
+            "positions_below_min_notional": self.below_min_notional,
+            "unfillable_pct": self.unfillable_pct(),
+        }
+
+
+@dataclass
 class _Book:
     """Mutable portfolio state carried across the merged timeline."""
 
     cash: float
     positions: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    execution: _Execution = field(default_factory=_Execution)
 
     def open_risk(self) -> float:
         """Sum of per-position risk (notional x stop distance) across the book."""
         return sum(p["risk"] for p in self.positions.values())
+
+    def gross_exposure(self) -> float:
+        """Marked gross notional across the book, shorts counted by magnitude.
+
+        Deliberately not :meth:`market_value`, which is an accounting number -
+        reserved notional plus unrealized P&L under full cash collateral. This is
+        the market exposure the book is actually carrying.
+        """
+        return sum(p["size"] * p["last_price"] for p in self.positions.values())
+
+    def net_exposure(self) -> float:
+        """Signed notional across the book: longs positive, shorts negative.
+
+        The directional tilt :meth:`gross_exposure` cannot see. A book that is long
+        $4,000 and short $4,000 has $8,000 gross and $0 net; one that is long $8,000
+        has the same gross and $8,000 net, and only the second is a bet on direction.
+        """
+        return sum(
+            (p["size"] if p["side"] == signals.BUY else -p["size"]) * p["last_price"]
+            for p in self.positions.values()
+        )
 
     def market_value(self) -> float:
         """Reserved notional plus unrealized gross P&L, marked at last seen price."""
@@ -141,6 +215,154 @@ class _Book:
 
     def equity(self) -> float:
         return self.cash + self.market_value()
+
+
+def _leg_report(leg_curves, trades, initial_capital: float) -> Dict[str, Any]:
+    """What each side of a long/short book actually did, separately.
+
+    A near-zero net beta is the headline of any market-neutral result, and it has two
+    completely different causes: genuinely small exposure on both sides, or a large long
+    beta cancelling a large short one. Those are the same number and opposite risks, and
+    nothing in a net-level report tells them apart.
+
+    Curves are realized-plus-unrealized per side, sampled on the equity curve's own
+    steps, so the per-leg volatility, drawdown and beta describe the position as it was
+    held rather than only as it was closed.
+
+    Diagnostic only: no threshold, no verdict. Make the risk visible first and decide
+    afterwards whether any of it deserves to gate something.
+    """
+    report: Dict[str, Any] = {}
+    trades_df = pd.DataFrame(trades) if trades else pd.DataFrame()
+    for side, curve in leg_curves.items():
+        name = "long" if side == signals.BUY else "short"
+        if trades_df.empty or "side" not in trades_df:
+            leg_trades = pd.DataFrame()
+        else:
+            leg_trades = trades_df[trades_df["side"] == side]
+        if len(curve) < 2 and leg_trades.empty:
+            continue
+        # As a fraction of capital, so the two legs are on one scale and the pair adds
+        # up to something a reader can check against the headline return.
+        series = pd.Series(curve, dtype="float64") / initial_capital if initial_capital else pd.Series(curve)
+        report[name] = {
+            "pnl": float(leg_trades["pnl"].sum()) if not leg_trades.empty else 0.0,
+            "return_pct": float(series.iloc[-1] * 100.0),
+            "volatility_pct": float(series.diff().std() * 100.0),
+            "max_drawdown_pct": float(abs(m.max_drawdown(list(1.0 + series))) * 100.0),
+            "trades": int(len(leg_trades)),
+            "cost": float(leg_trades["cost"].sum()) if "cost" in leg_trades else 0.0,
+            "_returns": series.diff().dropna(),  # for beta, dropped before serialization
+        }
+    return report
+
+
+def _exposure_report(samples: List[Dict[str, float]]) -> Dict[str, Any]:
+    """The distribution of exposure the book actually carried, as fractions of equity.
+
+    A net cap is a fraction, and choosing one from anything but the strategy's own
+    history is a guess. This is the history: |long - short| and long + short at every
+    step the equity curve was sampled at, so the question "what did this actually run
+    at" has an answer.
+
+    Signed net is kept alongside the absolute value because they answer different
+    questions - the absolute distribution says how large a tilt to allow, the signed
+    mean says whether the strategy leans one way by construction.
+
+    Diagnostic. It sets nothing and gates nothing.
+    """
+    if not samples:
+        return {}
+    net_fracs, gross_fracs, signed = [], [], []
+    for sample in samples:
+        equity = sample["equity"]
+        if equity <= 0:
+            # A book with no equity has no meaningful fraction; skipped rather than
+            # divided, and counted so the sample size is never overstated.
+            continue
+        net_fracs.append(abs(sample["net"]) / equity)
+        gross_fracs.append(sample["gross"] / equity)
+        signed.append(sample["net"] / equity)
+    if not net_fracs:
+        return {}
+    from tradeflow.analytics.exposure import candidate_caps
+
+    series = pd.Series(net_fracs, dtype="float64")
+    stats = {
+        "median": float(series.median()),
+        "p90": float(series.quantile(0.90)),
+        "p95": float(series.quantile(0.95)),
+        "p99": float(series.quantile(0.99)),
+        "max": float(series.max()),
+    }
+    # Evaluated here, where the samples are, and carried as scalars. Keeping the whole
+    # series on the result would put one row per step into anything that serializes it,
+    # for a number only ever read at a handful of caps.
+    candidates = [
+        {
+            "cap": cap,
+            "binding_rate": float((series > cap).mean()),
+            "above_observed_max": cap >= stats["max"],
+        }
+        for cap in candidate_caps(stats)
+    ]
+    return {
+        "samples": len(net_fracs),
+        "skipped": len(samples) - len(net_fracs),
+        "net_abs": stats,
+        "candidates": candidates,
+        "net_signed_mean": float(pd.Series(signed, dtype="float64").mean()),
+        "gross_max": float(pd.Series(gross_fracs, dtype="float64").max()),
+    }
+
+
+def _leg_betas(legs: Dict[str, Any], benchmark_returns) -> None:
+    """Add each leg's beta against the benchmark, in place.
+
+    Separate from :func:`_leg_report` because the benchmark is aligned later - and
+    because a leg beta is exactly the number that distinguishes "no exposure" from
+    "two exposures cancelling", so it is worth its own step rather than a side effect.
+    """
+    for leg in legs.values():
+        leg_returns = leg.pop("_returns", None)
+        if benchmark_returns is None or leg_returns is None or len(leg_returns) < 2:
+            leg["beta"] = None
+            leg["benchmark_correlation"] = None
+            continue
+        paired = pd.concat(
+            [pd.Series(leg_returns.to_numpy()), pd.Series(pd.Series(benchmark_returns).to_numpy())],
+            axis=1,
+            keys=["leg", "bench"],
+        ).dropna()
+        if len(paired) < 2 or paired["bench"].std() == 0 or paired["leg"].std() == 0:
+            leg["beta"] = None
+            leg["benchmark_correlation"] = None
+            continue
+        leg["beta"] = float(paired["leg"].cov(paired["bench"]) / paired["bench"].var())
+        leg["benchmark_correlation"] = float(paired["leg"].corr(paired["bench"]))
+
+
+def _benchmark_returns(closes, equity_times) -> Optional[pd.Series]:
+    """Benchmark returns sampled at the equity curve's own instants.
+
+    Positional, not date-indexed, because that is the only alignment the metrics can
+    use: the equity curve reaches them as a bare list of floats, so its returns carry
+    a RangeIndex and a date-indexed benchmark would join to nothing at all - silently,
+    producing an empty regression rather than an error.
+
+    Reindexed onto those instants and forward-filled, so a benchmark that does not
+    trade on one of the universe's bars carries its last close rather than dropping
+    the step and shifting every later pairing by one.
+    """
+    if closes is None or closes.empty or len(equity_times) < 2:
+        return None
+    stamps = pd.DatetimeIndex([t for t in equity_times[1:]])
+    aligned = closes.reindex(closes.index.union(stamps)).ffill().reindex(stamps)
+    returns = aligned.pct_change()
+    if returns.notna().sum() < 2:
+        return None
+    # Drop the index: the pairing is by position against the equity curve's own steps.
+    return pd.Series(returns.to_numpy(), dtype="float64")
 
 
 @dataclass
@@ -157,6 +379,19 @@ class BacktestResult:
     strategy_config: Dict[str, Any]
     total_cost: float = 0.0  # total transaction cost charged across all trades
     gross_final_capital: float = 0.0  # final capital before cost (for the haircut attribution)
+    #: What the sizer asked for versus what was actually tradeable - see :class:`_Execution`.
+    execution: Dict[str, Any] = field(default_factory=dict)
+    #: What the book actually carried, step by step - see :func:`_exposure_report`.
+    exposure: Dict[str, Any] = field(default_factory=dict)
+    #: Per-side realized performance for a long/short book - see :func:`_leg_report`.
+    #: Empty for a long-only run, which has nothing to decompose.
+    legs: Dict[str, Any] = field(default_factory=dict)
+    #: The benchmark returns this run scored against, already aligned positionally to
+    #: ``equity_curve``. Exposed so a caller that recomputes metrics on *this* curve
+    #: (the walk-forward does, to fold in its own trial counts) can reuse the alignment
+    #: instead of deriving a second one - two alignments of the same series is how the
+    #: two quietly stop matching.
+    benchmark_returns: Optional[Any] = None
 
 
 class BacktestEngine:
@@ -172,6 +407,7 @@ class BacktestEngine:
         data_client: MarketDataClient,
         sizer: Optional[PositionSizer] = None,
         cost_model: Optional[CostModel] = None,
+        take_profit_margin_bps: float = 0.0,
     ):
         self.strategy = strategy
         self.data_client = data_client
@@ -181,6 +417,19 @@ class BacktestEngine:
         # When set, every simulated fill is charged so metrics are net of cost.
         # None = gross (the engine is a mechanism; the service layer defaults to net).
         self.cost_model = cost_model
+        #: How far a bar must trade *through* a take-profit before it counts as filled.
+        #:
+        #: Zero - the default, and every historical result - means a bar that merely
+        #: touched the target filled at it. That models a resting limit order that is
+        #: always first in the queue, which is the most generous reading available: a
+        #: single print at the level is enough. For a strategy whose edge is
+        #: concentrated in target exits, that assumption *is* the result, so it is worth
+        #: being able to move rather than only being able to believe.
+        #:
+        #: The trigger tightens; the fill price does not change. A limit order that
+        #: fills, fills at its limit - the question this asks is whether it filled at
+        #: all, not whether it filled worse.
+        self.take_profit_margin_bps = take_profit_margin_bps
 
     def run(
         self,
@@ -189,6 +438,7 @@ class BacktestEngine:
         end: datetime,
         initial_capital: float,
         trade_from: Optional[datetime] = None,
+        benchmark: Optional[str] = None,
     ) -> BacktestResult:
         """Backtest ``symbols`` over ``[start, end]`` starting from ``initial_capital``.
 
@@ -205,7 +455,10 @@ class BacktestEngine:
         timeframe = self.strategy.config["timeframe"]
         self._periods_per_year = Timeframe.parse(timeframe).periods_per_year()
         data = self.data_client.get_bars(symbols, timeframe, start, end)
-        return self._simulate(((s, b) for s, b in data.items()), start, end, initial_capital, trade_from)
+        bench = self._benchmark_closes(benchmark, timeframe, start, end)
+        return self._simulate(
+            ((s, b) for s, b in data.items()), start, end, initial_capital, trade_from, bench
+        )
 
     def run_streaming(
         self,
@@ -243,21 +496,65 @@ class BacktestEngine:
 
         return self._simulate(per_symbol(), start, end, initial_capital, trade_from)
 
-    def _simulate(self, symbol_bars, start, end, initial_capital: float, trade_from=None) -> BacktestResult:
+    def _benchmark_closes(self, benchmark: Optional[str], timeframe, start, end):
+        """The benchmark's close series, or ``None`` when there is nothing usable.
+
+        A benchmark that cannot be fetched degrades to no benchmark rather than
+        failing the run - but it says so, because silently scoring alpha against
+        nothing is exactly the reading this whole path got wrong before.
+        """
+        if not benchmark:
+            return None
+        try:
+            bars = self.data_client.get_bars([benchmark], timeframe, start, end)
+        except Exception as exc:  # noqa: BLE001 - a missing benchmark is not a failed run
+            logger.warning("Benchmark %s unavailable (%s); alpha/beta/IR will be unavailable", benchmark, exc)
+            return None
+        frame = bars.get(benchmark)
+        if frame is None or frame.empty or "close" not in frame:
+            logger.warning("Benchmark %s returned no bars; alpha/beta/IR will be unavailable", benchmark)
+            return None
+        return frame["close"]
+
+    def _simulate(
+        self,
+        symbol_bars,
+        start,
+        end,
+        initial_capital: float,
+        trade_from=None,
+        benchmark_closes=None,
+    ) -> BacktestResult:
         """Simulate the whole universe on one clock against one capital pool."""
         panels, market_data, master = self._prepare(symbol_bars)
         # A merged-timeline step is the unit for *both* carry accrual and the equity
         # curve, so both have to annualize on the merged timeline's own rate.
         self._step_periods_per_year = self._step_rate(panels, master)
-        all_trades, equity_curve = self._replay(panels, master, initial_capital, trade_from)
+        all_trades, equity_curve, equity_times, execution, legs, exposure = self._replay(
+            panels, master, initial_capital, trade_from
+        )
 
         trades_df = pd.DataFrame(all_trades)
         if not trades_df.empty:
             trades_df = trades_df.sort_values("exit_time").reset_index(drop=True)
 
+        aligned_benchmark = _benchmark_returns(benchmark_closes, equity_times)
+        _leg_betas(legs, aligned_benchmark)
         net_pnl = trades_df["pnl"].sum() if not trades_df.empty else 0.0
         total_cost = float(trades_df["cost"].sum()) if "cost" in trades_df else 0.0
         final_capital = initial_capital + net_pnl
+        # Cost belongs beside the fill diagnostics: both answer "what did executing
+        # this actually take out of the book". Gross profit is the honest denominator -
+        # 3% of capital in cost is fine against 40% gross and fatal against 4%.
+        execution["total_cost"] = total_cost
+        execution["gross_profit"] = float(net_pnl + total_cost)
+        # The shape of the book that was actually validated. All three shipped
+        # strategies declare max_positions=1, so a run over a scanned universe of
+        # sixty names can validate a one-position book without ever saying so.
+        limits = self.strategy.position_limits()
+        execution["max_positions"] = limits.get("max_positions")
+        execution["universe_size"] = len(market_data)
+        execution["symbols_traded"] = int(trades_df["symbol"].nunique()) if not trades_df.empty else 0
         metrics = performance.compute_backtest_metrics(
             trades_df,
             equity_curve,
@@ -269,6 +566,7 @@ class BacktestEngine:
             # The curve is sampled per merged-timeline step, so it annualizes on that
             # timeline's rate — not the daily default, and not the raw timeframe.
             periods_per_year=self._step_periods_per_year,
+            benchmark_returns=aligned_benchmark,
         )
 
         return BacktestResult(
@@ -282,6 +580,10 @@ class BacktestEngine:
             strategy_config=dict(self.strategy.config),
             total_cost=total_cost,
             gross_final_capital=final_capital + total_cost,
+            execution=execution,
+            benchmark_returns=aligned_benchmark,
+            legs=legs,
+            exposure=_exposure_report(exposure),
         )
 
     # ------------------------------------------------------------------ #
@@ -400,13 +702,35 @@ class BacktestEngine:
         book = _Book(cash=initial_capital)
         trades: List[Dict[str, Any]] = []
         equity_curve: List[float] = [initial_capital]
+        # One timestamp per recorded equity point. The curve is a bare list of floats
+        # by the time metrics see it, so alpha/beta against a date-indexed benchmark
+        # can only be computed if something remembers which instants those floats
+        # belong to - and nothing did.
+        equity_times: List[Any] = [None]
+        # Realized-plus-unrealized P&L per side, sampled on the same steps as the equity
+        # curve. Built here rather than from the trade list because a curve
+        # reconstructed from closed trades only sees P&L at exit - which is precisely
+        # what volatility, drawdown and beta are most distorted by.
+        realized_by_side: Dict[str, float] = {signals.BUY: 0.0, signals.SELL: 0.0}
+        leg_curves: Dict[str, List[float]] = {signals.BUY: [0.0], signals.SELL: [0.0]}
+        exposure_curve: List[Dict[str, float]] = []
         if not panels:
-            return trades, equity_curve
+            return (
+                trades,
+                equity_curve,
+                equity_times,
+                book.execution.as_dict(),
+                _leg_report(leg_curves, trades, initial_capital),
+                exposure_curve,
+            )
 
         cutoff = _align_tz(trade_from, master) if trade_from is not None else None
-        limits = {**DEFAULT_POSITION_LIMITS, **(self.strategy.config.get("position_limits") or {})}
+        limits = self.strategy.position_limits()
         max_positions = limits["max_positions"]
         max_total_risk = limits["max_total_risk"]
+        max_gross_exposure = limits.get("max_gross_exposure")
+        max_net_exposure = limits.get("max_net_exposure")
+        min_notional = limits.get("min_notional")
         n_steps = len(master)
         order = sorted(panels)
 
@@ -436,9 +760,10 @@ class BacktestEngine:
                 exit_cost = self._trade_cost(
                     symbol, pos["size"], panel.opens[i], panel.adv, panel.vol, i
                 ) + self._carry(pos, k)
+                decided_signal, _ = self._decided(panel, i)
                 closed = self._maybe_close(
                     pos,
-                    panel.sig[i],
+                    decided_signal,
                     panel.opens[i],
                     panel.highs[i],
                     panel.lows[i],
@@ -447,6 +772,7 @@ class BacktestEngine:
                 )
                 if closed is not None:
                     trades.append(closed)
+                    realized_by_side[pos["side"]] += closed["pnl"]
                     book.cash += pos["notional"] + closed["gross_pnl"] - exit_cost
                     del book.positions[symbol]
 
@@ -461,8 +787,11 @@ class BacktestEngine:
                 i = panel.rows[k]
                 if i < 0:
                     continue
-                if panel.sig[i] in signals.ENTRY_SIGNALS:
-                    candidates.append((abs(float(panel.score[i])), symbol, i))
+                decided_signal, decided_score = self._decided(panel, i)
+                if decided_signal in signals.ENTRY_SIGNALS:
+                    # Ranked on the same bar's score the signal came from, or the
+                    # ordering would reintroduce the look-ahead the signal just lost.
+                    candidates.append((abs(float(decided_score)), symbol, i, decided_signal))
 
             # 4. Admit in conviction order while limits and cash allow. Ranking by the
             #    strategy's own score keeps one source of truth; the symbol tie-break
@@ -470,18 +799,21 @@ class BacktestEngine:
             if candidates:
                 candidates.sort(key=lambda c: (-c[0], c[1]))
                 equity_now = book.equity()
-                for _, symbol, i in candidates:
+                for _, symbol, i, decided_signal in candidates:
                     if len(book.positions) >= max_positions:
                         break
                     panel = panels[symbol]
                     pos = self._open_position(
                         symbol,
-                        panel.sig[i],
+                        decided_signal,
                         panel.opens[i],
                         panel.timestamps[i],
                         book,
                         equity_now,
                         max_total_risk,
+                        max_gross_exposure,
+                        max_net_exposure,
+                        min_notional,
                         panel.adv,
                         panel.vol,
                         i,
@@ -493,7 +825,28 @@ class BacktestEngine:
                     book.positions[symbol] = pos
 
             if trading:
-                equity_curve.append(book.equity())
+                equity_now_marked = book.equity()
+                equity_curve.append(equity_now_marked)
+                equity_times.append(master[k])
+                # Sampled every step the equity curve is, so the exposure a book
+                # *carried* is measurable rather than only the exposure it closed at.
+                # This is what a net cap has to be derived from: the fraction is
+                # meaningless without knowing what the strategy actually ran at.
+                exposure_curve.append(
+                    {
+                        "net": book.net_exposure(),
+                        "gross": book.gross_exposure(),
+                        "equity": equity_now_marked,
+                    }
+                )
+                unrealized = {signals.BUY: 0.0, signals.SELL: 0.0}
+                for pos in book.positions.values():
+                    direction = 1 if pos["side"] == signals.BUY else -1
+                    unrealized[pos["side"]] += (
+                        (pos["last_price"] - pos["entry_price"]) * pos["size"] * direction
+                    )
+                for side, curve in leg_curves.items():
+                    curve.append(realized_by_side[side] + unrealized[side])
 
         # Force-close whatever is still open, each at its own last bar.
         for symbol in order:
@@ -512,7 +865,14 @@ class BacktestEngine:
         if len(equity_curve) > 1:
             equity_curve[-1] = book.equity()
 
-        return trades, equity_curve
+        return (
+            trades,
+            equity_curve,
+            equity_times,
+            book.execution.as_dict(),
+            _leg_report(leg_curves, trades, initial_capital),
+            exposure_curve,
+        )
 
     def _trade_cost(self, symbol, shares, price, adv, vol, i) -> float:
         """Dollar cost of trading ``shares`` at bar ``i`` (0 when no cost model)."""
@@ -541,6 +901,9 @@ class BacktestEngine:
         book: _Book,
         equity: float,
         max_total_risk: float,
+        max_gross_exposure: Optional[float],
+        max_net_exposure: Optional[float],
+        min_notional: Optional[float],
         adv: Optional[np.ndarray],
         vol: Optional[np.ndarray],
         i: int,
@@ -564,8 +927,20 @@ class BacktestEngine:
             buying_power=book.cash,
             portfolio_value=equity,
         )
-        size = round_quantity(self.sizer.size(symbol, price, account))
+        # Requested before rounding, so the gap between intent and fill is measurable
+        # rather than inferred. Whole shares: the live path floors too, and the two
+        # clocks must agree about what is fillable.
+        requested = self.sizer.size(symbol, price, account)
+        size = round_quantity(requested)
         if size <= 0:
+            if requested > 0:
+                book.execution.rounded_to_zero += 1
+            return None
+        if min_notional and size * price < min_notional:
+            # A venue floor is an execution fact, not a preference: an order below it
+            # would be refused, so filling it here would validate a book that could not
+            # be traded.
+            book.execution.below_min_notional += 1
             return None
         # The affordability check must include what this fill will cost to enter,
         # not just its notional - otherwise a maximally-sized position can push
@@ -579,15 +954,40 @@ class BacktestEngine:
         # Portfolio-level risk budget. calculate_position_size caps a *single*
         # position against max_total_risk; nothing capped the book as a whole, so
         # "max_total_risk" was per-symbol in practice.
+        #
+        # What it bounds is loss-at-stop, not deployed notional: at a 0.5% stop a 5%
+        # budget admits ten times equity in notional before this gate binds. It is
+        # not a gross exposure cap, and max_gross_exposure below is the one that is.
         risk = size * price * stop_pct
         if max_total_risk and book.open_risk() + risk > equity * max_total_risk:
             return None
+
+        # Gross notional cap, off unless configured. Free cash already holds the book
+        # near 1x on its own (shorts are fully collateralized, per the docstring), so
+        # this binds when a config wants to sit deliberately below that.
+        if max_gross_exposure and book.gross_exposure() + size * price > equity * max_gross_exposure:
+            return None
+
+        # Directional cap. Tested on the resulting |net| rather than on the addition,
+        # so an entry that moves the book *toward* flat is admitted even when the book
+        # is already over the cap - rejecting a hedge for being a trade would leave the
+        # tilt it would have corrected in place.
+        if max_net_exposure:
+            signed = size * price if signal == signals.BUY else -size * price
+            if abs(book.net_exposure() + signed) > equity * max_net_exposure:
+                return None
 
         if signal == signals.BUY:
             stop, take = price * (1 - stop_pct), price * (1 + take_pct)
         else:
             stop, take = price * (1 + stop_pct), price * (1 - take_pct)
 
+        # Counted here rather than at the sizing call, because everything between the
+        # two can still decline the entry - and a position the book refused to fund is
+        # not evidence about whether rounding was affordable.
+        book.execution.requested_notional += requested * price
+        book.execution.filled_notional += size * price
+        book.execution.filled += 1
         return {
             "symbol": symbol,
             "side": signal,
@@ -605,21 +1005,42 @@ class BacktestEngine:
             "highest": price,
         }
 
+    @staticmethod
+    def _decided(panel, i: int):
+        """The signal and score a bar may act on: the *previous* bar's, always.
+
+        A signal at bar ``i`` comes from ``calculate_scores`` at bar ``i``, and scores
+        are computed from that bar's close. Acting on it at bar ``i``'s open transacted
+        at a price that existed hours before the information did — a one-bar look-ahead
+        on every entry and every signal exit, applied to the whole history.
+
+        A feed shift cannot detect it: shifting moves signal and price together, so the
+        relationship survives intact. That is why the leakage probe passed.
+
+        The live path has always been causal — a closed bar arrives, a signal is emitted,
+        a market order fills strictly afterwards. This is the backtest matching it, not a
+        new conservatism.
+        """
+        if i <= 0:
+            return signals.HOLD, 0.0
+        return panel.sig[i - 1], panel.score[i - 1]
+
     def _maybe_close(
         self, position: Dict[str, Any], signal: str, price_open, high, low, timestamp, exit_cost: float = 0.0
     ) -> Optional[Dict[str, Any]]:
         """Return a closed-trade record if an exit triggers this bar, else None."""
+        margin = self.take_profit_margin_bps / 1e4
         if position["side"] == signals.BUY:
             if low <= position["stop_loss"]:
                 return self._close(position, position["stop_loss"], timestamp, "STOP_LOSS", exit_cost)
-            if high >= position["take_profit"]:
+            if high >= position["take_profit"] * (1.0 + margin):
                 return self._close(position, position["take_profit"], timestamp, "TAKE_PROFIT", exit_cost)
             if signal in (signals.SELL, signals.CLOSE_BUY):
                 return self._close(position, price_open, timestamp, "SIGNAL", exit_cost)
         else:  # short
             if high >= position["stop_loss"]:
                 return self._close(position, position["stop_loss"], timestamp, "STOP_LOSS", exit_cost)
-            if low <= position["take_profit"]:
+            if low <= position["take_profit"] * (1.0 - margin):
                 return self._close(position, position["take_profit"], timestamp, "TAKE_PROFIT", exit_cost)
             if signal in (signals.BUY, signals.CLOSE_SELL):
                 return self._close(position, price_open, timestamp, "SIGNAL", exit_cost)

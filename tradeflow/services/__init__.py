@@ -12,10 +12,13 @@ Nothing here can place an order: service functions take a
 
 from tradeflow.services.analysis import (
     run_backtest,
+    run_draft_walk_forward,
     run_optimization,
     run_scan,
     run_walk_forward,
     summarize_bars,
+    validate_draft_scanner_code,
+    validate_draft_strategy_code,
 )
 from tradeflow.services.configs import list_configs, load_config, save_config
 from tradeflow.services.glossary import metrics_glossary
@@ -37,6 +40,9 @@ __all__ = [
     "run_backtest",
     "run_optimization",
     "run_walk_forward",
+    "validate_draft_strategy_code",
+    "validate_draft_scanner_code",
+    "run_draft_walk_forward",
     "summarize_bars",
     "metrics_glossary",
     "save_config",

@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 
 from tradeflow.engine.barcheck import BarQualityFilter
-from tradeflow.execution.ledger import PositionLedger
+from tradeflow.execution.ledger import CUMULATIVE, PositionLedger
 from tradeflow.execution.live_trader import LiveTrader
 from tradeflow.marketdata.base import BarEvent
 from tradeflow.marketdata.client import MarketDataClient
@@ -29,6 +29,10 @@ from tradeflow.utils.timeutils import NEW_YORK
 
 logger = logging.getLogger(__name__)
 
+#: How long to wait for streams to close on interrupt before exiting regardless. A
+#: shutdown that can hang is a shutdown people learn to send a second interrupt to.
+SHUTDOWN_TIMEOUT = 5.0
+
 # Fetch this multiple of the bare lookback, so a few missing bars still leave enough.
 _WARMUP_BUFFER = 2
 
@@ -38,6 +42,14 @@ _CALENDAR_DAYS_PER_TRADING_WEEK = 7 / 5
 #: Slack for market holidays, which the ratio above does not model. Cheap insurance:
 #: extra history is discarded by the buffer, missing history is silent.
 _HOLIDAY_PADDING_DAYS = 5
+
+
+class BlindStartError(RuntimeError):
+    """Raised when no symbol has warm-up history, so every indicator starts blind.
+
+    A guard, not a repair: nothing here can invent the history, and starting anyway
+    produces signals that look exactly like valid ones.
+    """
 
 
 class LiveEngine:
@@ -52,6 +64,7 @@ class LiveEngine:
         bar_filter: Optional[BarQualityFilter] = None,
         ledger: Optional[PositionLedger] = None,
         reconcile_every: float = 300.0,
+        allow_blind_start: bool = False,
     ):
         self.strategy = strategy
         self.data_client = data_client
@@ -64,6 +77,13 @@ class LiveEngine:
         #: account state is detectable. Never authoritative, never remediating.
         self.ledger = ledger
         self.reconcile_every = reconcile_every
+        #: Start even when warm-up returned nothing. Off by default: the failure it
+        #: guards is silent from inside the loop.
+        self._allow_blind_start = allow_blind_start
+        #: Serializes everything that reads-then-changes the position book. One slot,
+        #: deliberately: the trade clock's determinism comes from doing one thing at a
+        #: time, and the threads below exist only to keep blocking I/O off the loop.
+        self._order_lock = asyncio.Semaphore(1)
         #: ``None`` means "never swept", which is deliberately not the same as
         #: "swept at time zero". ``time.monotonic()`` counts from an arbitrary origin
         #: (boot, on Linux), so seeding this with 0.0 made the first sweep depend on
@@ -79,7 +99,22 @@ class LiveEngine:
         concurrently with the market-data stream so fills are logged.
         """
         self.strategy.initialize()
-        self._warm_up(symbols)
+        warmed, _ = self._warm_up(symbols)
+        if not warmed and symbols and not self._allow_blind_start:
+            # Every indicator would start from nothing. The stream still connects and
+            # bars still arrive, so the run looks healthy while every signal it emits
+            # is computed from history it never had - indistinguishable, from inside
+            # the loop, from a strategy that simply is not triggering.
+            raise BlindStartError(
+                f"Warm-up returned no history for any of the {len(symbols)} symbols, so "
+                f"every indicator would start blind.\n"
+                f"  The usual cause is a market-data feed the account is not entitled to: "
+                f"historical requests resolve to the full consolidated tape by default, "
+                f"while the live stream defaults to a single venue, so an unentitled key "
+                f"warms up on nothing and streams normally.\n"
+                f"  Pin both halves to a feed the account can read (--feed iex), or pass "
+                f"--allow-blind-start to trade without history anyway."
+            )
         self._cold_start()
 
         broker = self.live_trader.broker
@@ -89,13 +124,53 @@ class LiveEngine:
             tasks.append(broker.stream_trade_updates(self._on_trade_update))
 
         logger.info("Starting live stream for %d symbols", len(symbols))
-        await asyncio.gather(*tasks)
+        running = [asyncio.ensure_future(task) for task in tasks]
+        try:
+            # `wait`, not `gather`. On cancellation `gather` propagates to its children
+            # and then waits for every one of them to finish unwinding, with no bound -
+            # so a stream slow to close its socket held the process open until a second
+            # Ctrl-C, and the cleanup below was never even reached. `wait` hands
+            # cancellation straight back, leaving the teardown to the bounded wait.
+            done, _ = await asyncio.wait(running, return_when=asyncio.FIRST_EXCEPTION)
+            for task in done:
+                task.result()  # re-raise the first stream failure, as gather did
+        except asyncio.CancelledError:
+            # Ctrl-C cancels this coroutine, not the streams it started. Leaving them
+            # to be garbage-collected is what produced the websocket teardown noise:
+            # cancel each one and let it finish unwinding before returning.
+            logger.info("Shutting down live streams.")
+            raise
+        finally:
+            for task in running:
+                task.cancel()
+            # Bounded. A stream whose socket teardown blocks used to hold the process
+            # open until a second Ctrl-C, which trains people to kill it twice - and
+            # the second one arrives during cleanup, when it can interrupt anything.
+            #
+            # `asyncio.wait`, not `wait_for`: on timeout `wait_for` cancels the thing
+            # it was waiting on and then *awaits* it, so a teardown that is slow to
+            # answer cancellation hangs the very call meant to bound it. `wait` leaves
+            # stragglers alone and returns, which is the whole point here.
+            _, pending = await asyncio.wait(running, timeout=SHUTDOWN_TIMEOUT)
+            if pending:
+                logger.warning(
+                    "%d stream(s) did not close within %gs; exiting anyway. Nothing "
+                    "was sent to the broker during shutdown, and open positions are "
+                    "untouched.",
+                    len(pending),
+                    SHUTDOWN_TIMEOUT,
+                )
 
-    def _on_trade_update(self, update) -> None:
+    async def _on_trade_update(self, update) -> None:
         """Log account/order events (fills, cancels, rejects), and record fills.
 
         This is the only place the ledger learns what actually happened, as opposed
         to what was intended — which is precisely the gap it exists to close.
+
+        Recording and refreshing are separate and both unconditional: a fill the
+        ledger declines to record is still a fill the strategy's book has to learn
+        about, and the two failures used to be one ``return``. The refresh needs no
+        ledger and no side, so a missing either must not cost it.
         """
         logger.info(
             "Trade update: %s %s (order %s, status %s, filled %s)",
@@ -105,19 +180,65 @@ class LiveEngine:
             update.status,
             update.filled_qty,
         )
-        if self.ledger is None:
-            return
         try:
-            if str(update.event).lower() in {"fill", "partial_fill"} and update.filled_qty:
-                self.ledger.record_fill(
-                    update.symbol,
-                    getattr(update, "side", "buy"),
-                    float(update.filled_qty),
-                    order_id=update.order_id,
-                    status=str(update.status),
-                )
+            self._record_fill(update)
         except Exception:  # noqa: BLE001 - bookkeeping never breaks the order path
             logger.warning("Could not record a fill in the position ledger", exc_info=True)
+        await self._refresh_after_fill(update)
+
+    def _record_fill(self, update) -> None:
+        """Append this update to the ledger, if it is a fill we can sign."""
+        if self.ledger is None:
+            return
+        if str(update.event).lower() not in {"fill", "partial_fill"} or not update.filled_qty:
+            return
+        side = update.side
+        if not side:
+            # Never default it. A missing side used to resolve to "buy", which
+            # recorded every short as a long and made the ledger disagree with
+            # the broker by twice the position.
+            logger.error(
+                "Trade update for %s (order %s) carried no side; not recording "
+                "it, because guessing one would put the wrong sign in the ledger",
+                update.symbol,
+                update.order_id,
+            )
+            return
+        self.ledger.record_fill(
+            update.symbol,
+            side,
+            float(update.filled_qty),
+            order_id=update.order_id,
+            status=str(update.status),
+            basis=CUMULATIVE,
+            # The average across the order, to pair with the cumulative
+            # quantity beside it; this event's own print is the fallback.
+            fill_price=getattr(update, "filled_avg_price", None) or getattr(update, "price", None),
+            filled_at=getattr(update, "filled_at", None),
+            broker_fee=getattr(update, "fee", None),
+        )
+
+    async def _refresh_after_fill(self, update) -> None:
+        """Teach the strategy about a position it may not know it holds.
+
+        A sweep that lands between an entry's submission and its fill replaces the book
+        with broker state that does not include the new position yet, erasing what the
+        entry recorded. The fill then updates the ledger and nothing else, so the
+        strategy is flat in a symbol it holds until the next sweep - and cannot exit it.
+
+        Under the order lock, because it changes the same book entries read and act on.
+        """
+        if str(update.event).lower() not in {"fill", "partial_fill"} or not update.filled_qty:
+            return
+        try:
+            async with self._order_lock:
+                await asyncio.to_thread(self.live_trader.refresh_position, update.symbol)
+        except Exception:  # noqa: BLE001 - bookkeeping never breaks the order path
+            logger.warning(
+                "Could not refresh %s after its fill; the next sweep will correct it",
+                update.symbol,
+                exc_info=True,
+            )
 
     def _cold_start(self) -> None:
         """Teach the strategy what it already holds, before the first bar arrives.
@@ -142,15 +263,51 @@ class LiveEngine:
         self._last_reconcile = time.monotonic()
         if adopted:
             logger.info("Resuming with %d open position(s) adopted from the broker", adopted)
+            self._record_adoptions()
 
-    def _warm_up(self, symbols: List[str]) -> None:
-        """Seed each symbol's rolling buffer so indicators are valid on bar one."""
+    def _record_adoptions(self) -> None:
+        """Write what was adopted into the durable ledger, not only the in-memory book.
+
+        The two must agree about a resumed session. Without this the engine resumes
+        holding six positions while the ledger has never heard of them, and the next
+        reconciliation reports all six as positions nobody ordered - noise precisely
+        where a real divergence needs to stand out.
+        """
+        if self.ledger is None:
+            return
+        try:
+            for symbol, position in self.strategy.positions.items():
+                self.ledger.record_adoption(symbol, position["side"], position["qty"])
+        except Exception:  # noqa: BLE001 - bookkeeping never breaks the order path
+            logger.warning("Could not record adopted positions in the ledger", exc_info=True)
+
+    def warm_up_coverage(self, symbols: List[str]) -> tuple:
+        """Run the real warm-up and report ``(with history, fully warmed, asked)``.
+
+        Two counts, not one: a symbol can have bars and still have too few for the
+        indicators to be valid. Reporting only presence would let a short warm-up read
+        as a pass, and "has history" is not the question a preflight is asked.
+
+        Deliberately the same call the live path makes, not a lighter probe: a
+        preflight that fetches differently from the run it precedes confirms nothing
+        about that run. Placing no orders, it is safe to call and then exit.
+        """
+        warmed, sufficient = self._warm_up(symbols)
+        return warmed, sufficient, len(symbols)
+
+    def _warm_up(self, symbols: List[str]) -> tuple:
+        """Seed each symbol's rolling buffer so indicators are valid on bar one.
+
+        Returns ``(symbols with any history, symbols with the full lookback)``. The
+        caller refuses on the first and reports both.
+        """
         timeframe = Timeframe.parse(self.strategy.config["timeframe"])
         periods = self.strategy.config.get("required_lookback_periods", 50)
         start = self._lookback_start(timeframe, periods)
         end = datetime.now(NEW_YORK)
 
         history = self.data_client.get_bars(symbols, timeframe, start, end)
+        warmed = sufficient = 0
         for symbol in symbols:
             bars = history.get(symbol)
             # A short warm-up is the failure worth shouting about: the strategy runs
@@ -160,6 +317,7 @@ class LiveEngine:
             if bars is None or bars.empty:
                 logger.error("No warm-up history for %s — its indicators start blind", symbol)
                 continue
+            warmed += 1
             if len(bars) < periods:
                 logger.warning(
                     "Warmed up %s with only %d of the %d bars its indicators need",
@@ -168,11 +326,33 @@ class LiveEngine:
                     periods,
                 )
             else:
+                sufficient += 1
                 logger.info("Warmed up %s with %d bars", symbol, len(bars))
             self.strategy.warm_up(symbol, self.strategy.process_data(bars))
+        logger.info(
+            "Warm-up covered %d of %d symbols; %d have the full %d-bar lookback",
+            warmed,
+            len(symbols),
+            sufficient,
+            periods,
+        )
+        return warmed, sufficient
 
-    def _on_bar(self, event: BarEvent) -> None:
-        """Per-bar callback: validate, update the strategy, act on any signal."""
+    async def _on_bar(self, event: BarEvent) -> None:
+        """Per-bar callback: validate, update the strategy, act on any signal.
+
+        Async because the broker SDK is synchronous. Every entry makes several blocking
+        HTTP round trips, and running those on the loop stalls everything else it is
+        carrying: other symbols that signalled on the same bar, the trade-update stream
+        that delivers fills, and the reconciliation sweep. Under a universe of any size
+        that is enough for the socket to fall behind.
+
+        The blocking work is handed to a thread and the order path is serialized behind
+        one semaphore, so submissions keep their order and the read-then-act sequence
+        inside the trader stays atomic. Concurrency here would be a correctness bug, not
+        a speed-up: two entries checking the book at once can both pass a gross-exposure
+        limit that only one of them fits inside.
+        """
         bar = {
             "open": event.open,
             "high": event.high,
@@ -190,14 +370,19 @@ class LiveEngine:
         signal = self.strategy.process_bar(event.symbol, bar, event.timestamp)
         if signal and signal != signals.HOLD:
             logger.info("Signal %s for %s @ $%.4f", signal, event.symbol, event.close)
-            decision = self.live_trader.handle_signal(
-                event.symbol, signal, event.close, bar_timestamp=event.timestamp
-            )
+            async with self._order_lock:
+                decision = await asyncio.to_thread(
+                    self.live_trader.handle_signal,
+                    event.symbol,
+                    signal,
+                    event.close,
+                    bar_timestamp=event.timestamp,
+                )
             if not decision:
                 logger.info("%s", decision)
             self._record_decision(decision)
-            self._record_intent(event.symbol, signal, decision.order)
-        self._maybe_reconcile()
+            self._record_intent(event.symbol, signal, decision.order, decision)
+        await self._maybe_reconcile()
 
     def _record_decision(self, decision) -> None:
         """Record why execution acted or declined.
@@ -214,19 +399,31 @@ class LiveEngine:
         except Exception:  # noqa: BLE001 - bookkeeping never breaks the order path
             logger.warning("Could not record the execution decision", exc_info=True)
 
-    def _record_intent(self, symbol: str, signal: str, order) -> None:
-        """Note what we asked for, so a fill that never arrives is detectable."""
+    def _record_intent(self, symbol: str, signal: str, order, decision=None) -> None:
+        """Note what we asked for, so a fill that never arrives is detectable.
+
+        Carries the decision's id and the plan it built, which is what lets the ledger
+        join a decision to the order it produced and the fills that followed.
+        """
         if self.ledger is None:
             return
         try:
             if order is not None:
-                self.ledger.record_intent(symbol, order.side.value, order.qty, order_id=order.id)
+                plan = getattr(decision, "plan", None)
+                self.ledger.record_intent(
+                    symbol,
+                    order.side.value,
+                    order.qty,
+                    order_id=order.id,
+                    decision_id=getattr(decision, "decision_id", None),
+                    plan=plan.as_dict() if plan is not None else None,
+                )
             elif signal in signals.EXIT_SIGNALS:
                 self.ledger.record_close(symbol)
         except Exception:  # noqa: BLE001 - bookkeeping never breaks the order path
             logger.warning("Could not record intent in the position ledger", exc_info=True)
 
-    def _maybe_reconcile(self) -> None:
+    async def _maybe_reconcile(self) -> None:
         """Sweep on a timer, from inside the loop.
 
         Bounded by construction — one ``list_positions`` call per sweep, never one
@@ -245,13 +442,17 @@ class LiveEngine:
         # Re-read the book first: a bracket leg that filled, or a position closed by
         # hand in the broker's UI, changes what the strategy is entitled to exit.
         try:
-            self.live_trader.sync_strategy_book()
+            # Under the same lock as the order path: this replaces the position book
+            # wholesale, and doing that underneath an entry that has already checked it
+            # would let the entry act on a book that no longer exists.
+            async with self._order_lock:
+                await asyncio.to_thread(self.live_trader.sync_strategy_book)
         except Exception:  # noqa: BLE001 - bookkeeping never breaks the order path
             logger.warning("Could not refresh the strategy's position book", exc_info=True)
         if self.ledger is None:
             return
         try:
-            self.ledger.reconcile(self.live_trader.broker)
+            await asyncio.to_thread(self.ledger.reconcile, self.live_trader.broker)
         except Exception:  # noqa: BLE001
             logger.warning("Scheduled reconciliation failed", exc_info=True)
 

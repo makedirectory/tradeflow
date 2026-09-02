@@ -7,6 +7,7 @@ import pytest
 from tests.fakes import FakeMarketData
 from tradeflow.marketdata.client import MarketDataClient
 from tradeflow.optimization.optimizer import ParameterOptimizer
+from tradeflow.services.registry import STRATEGIES
 from tradeflow.strategies.volume_spike import VolumeSpikeStrategy
 
 SYMBOLS = ["AAA", "BBB"]
@@ -60,3 +61,50 @@ def test_best_params_retains_pinned_parameters():
 
     grid = space.grid()
     assert all(combo["pinned"] == 0.02 for combo in grid)
+
+
+def test_best_params_are_plain_python_scalars():
+    """They are read off a DataFrame row, so they arrived as numpy scalars — which
+    NumPy 2 reprs as `np.int64(50)`. The CLI printed that back as the chosen config,
+    and every other consumer had to re-normalize it."""
+    client = MarketDataClient(FakeMarketData(["AAA", "BBB"], n=400, freq="1D"))
+    optimizer = ParameterOptimizer(STRATEGIES["ma_crossover"], client, initial_capital=100_000)
+
+    result = optimizer.random_search(
+        ["AAA", "BBB"], datetime(2024, 1, 2), datetime(2025, 1, 2), "sharpe_ratio", n_samples=3
+    )
+
+    assert result.best_params
+    for name, value in result.best_params.items():
+        assert type(value) in (int, float, str, bool), f"{name} is {type(value).__name__}"
+    assert "np." not in repr(result.best_params)
+
+
+def test_the_seed_selects_which_candidates_a_random_search_draws():
+    """`optimize` accepted no --seed, so every random search used the built-in 42.
+
+    That is reproducible and uncontrollable: you could not draw a second independent
+    sample, and could not reproduce a `walkforward --seed N` run's inner search with a
+    standalone optimize. Both directions matter — same seed same draw, different seed
+    different draw — or the flag is decorative.
+    """
+    client = MarketDataClient(FakeMarketData(["AAA", "BBB"], n=400, freq="1D"))
+
+    def draw(seed):
+        optimizer = ParameterOptimizer(STRATEGIES["ma_crossover"], client, initial_capital=100_000, seed=seed)
+        result = optimizer.random_search(
+            ["AAA", "BBB"], datetime(2024, 1, 2), datetime(2025, 1, 2), "sharpe_ratio", n_samples=4
+        )
+        return [tuple(sorted(row.items())) for row in result.results.to_dict("records")]
+
+    assert draw(27) == draw(27)
+    assert draw(27) != draw(42)
+
+
+def test_optimize_exposes_the_seed_walkforward_already_had():
+    from tradeflow.cli import build_parser
+
+    args = build_parser().parse_args(
+        ["optimize", "--strategy", "ma_crossover", "--method", "random", "--seed", "27"]
+    )
+    assert args.seed == 27

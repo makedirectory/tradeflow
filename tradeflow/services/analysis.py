@@ -7,6 +7,7 @@ artifact file and referenced by path - never inlined.
 """
 
 import contextlib
+import hashlib
 import json
 import logging
 from datetime import datetime, timedelta
@@ -27,6 +28,7 @@ from tradeflow.alphas import (
     strategy_scorer,
 )
 from tradeflow.analytics import metrics as m
+from tradeflow.analytics import performance
 from tradeflow.data import (
     ClientBarSource,
     FeaturePanel,
@@ -89,6 +91,65 @@ def _build_cost_model(
     )
 
 
+def limits_key(limits: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """The book limits folded into a trial's dedup key, or ``{}`` when none are set.
+
+    One definition, used by every surface. Limits are not tunable params, so before
+    this they went through no identity at all and two runs differing only in
+    ``max_gross_exposure`` hashed alike. Adding it to one surface and not the other
+    would be worse than leaving it out of both: a trial recorded over the CLI would
+    stop being found by MCP, which is the promise :func:`_find_cached_trial` makes.
+
+    Unset limits are omitted rather than recorded as null, so a config that never
+    mentioned them keys exactly as it did before this existed.
+    """
+    declared = {name: value for name, value in (limits or {}).items() if value is not None}
+    return {"_limits": declared} if declared else {}
+
+
+def walk_forward_recipe(
+    *,
+    mode: str,
+    n_folds: Optional[int],
+    train_days: Optional[int],
+    test_days: Optional[int],
+    embargo_days: Optional[int],
+    holdout_days: int,
+    method: str,
+    objective: str,
+    max_evals: int,
+    seed: int,
+    cost_key: Dict[str, Any],
+    limits: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """A walk-forward's memoization key: the *validation recipe*, not the params.
+
+    The chosen params are not known until the search runs, so what identifies a repeat
+    here is the recipe - same window, same folds, same objective, same cost, same book.
+
+    One definition, reached from both surfaces, because the alternative was tried: the
+    book limits were folded into ``run_backtest``'s key and not into this one, so two
+    validations differing only in ``max_positions`` hashed alike and the second was
+    answered from the first - reporting a one-position validation as an eight-position
+    book. That is the failure a walk-forward exists to rule out, so the fold belongs
+    here rather than at each call site where it can be forgotten again.
+    """
+    return {
+        "mode": mode,
+        "n_folds": n_folds,
+        "train_days": train_days,
+        "test_days": test_days,
+        "embargo_days": embargo_days,
+        "holdout_days": holdout_days,
+        "method": method,
+        "objective": objective,
+        "max_evals": max_evals,
+        "seed": seed,
+        "_cost": cost_key,
+        **limits_key(limits),
+    }
+
+
 def _cost_key(gross: bool, commission_bps: float, impact_eta: float, borrow_bps: float) -> Dict[str, Any]:
     """The cost-model assumptions folded into a trial's dedup key - same shape as
     the CLI's ``main._cost_key`` so a trial recorded via one surface is found by
@@ -134,7 +195,13 @@ def _open_trial_store():
 
 
 def _find_cached_trial(
-    strategy: str, params: Dict[str, Any], symbols, start, end, accounting: int
+    strategy: str,
+    params: Dict[str, Any],
+    symbols,
+    start,
+    end,
+    accounting: int,
+    require_trades: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """Same lookup CLI's ``main._find_cached_trial`` does, so a trial run over
     MCP and one run over the CLI dedup against each other identically."""
@@ -150,6 +217,7 @@ def _find_cached_trial(
             window_start=start,
             window_end=end,
             accounting=accounting,
+            require_trades=require_trades,
             git_sha=current_git_sha(),
         )
 
@@ -159,14 +227,17 @@ def run_scan(
     scanner: str,
     symbols: List[str],
     config: Optional[Dict[str, Any]] = None,
+    as_of: Optional[datetime] = None,
 ) -> Dict[str, Any]:
     """Run a universe scanner; return the flagged ``(symbol, signal)`` pairs."""
-    from tradeflow.scanners.symbol_scanner import SymbolScanner
+    from tradeflow.scanners.symbol_scanner import SymbolScanner, resolve_scan_clock
 
-    flagged = SymbolScanner(data_client, scanner, config).scan(symbols)
+    flagged = SymbolScanner(data_client, scanner, config).scan(symbols, as_of=as_of)
     return {
         "scanner": scanner,
         "candidates": list(symbols),
+        # The clock the scan actually resolved at, not the argument that asked for it.
+        "as_of": resolve_scan_clock(as_of).isoformat(),
         "flagged": [{"symbol": s, "signal": sig} for s, sig in flagged],
         "flagged_count": len(flagged),
     }
@@ -183,11 +254,13 @@ def run_backtest(
     beta_sizing: bool = False,
     benchmark: str = "SPY",
     gross: bool = False,
+    take_profit_margin_bps: float = 0.0,
     commission_bps: float = 1.0,
     impact_eta: float = 0.3,
     participation_cap: float = 0.10,
     borrow_bps: float = 50.0,
     force: bool = False,
+    journal: bool = True,
 ) -> Dict[str, Any]:
     """Backtest a strategy; return the full metrics dict + a path to the trades CSV.
 
@@ -209,10 +282,13 @@ def run_backtest(
     dedup_params = {
         **_tunable_params(strat),
         "_cost": _cost_key(gross, commission_bps, impact_eta, borrow_bps),
+        **limits_key(strat.position_limits()),
     }
 
     if not force:
-        cached = _find_cached_trial(strategy, dedup_params, symbols, start, end, ACCOUNTING_VERSION)
+        cached = _find_cached_trial(
+            strategy, dedup_params, symbols, start, end, ACCOUNTING_VERSION, require_trades=True
+        )
         if cached is not None:
             metrics = json.loads(cached["metrics_json"] or "{}")
             return {
@@ -229,21 +305,31 @@ def run_backtest(
 
     sizer = build_beta_sizer(data_client, strat, symbols, benchmark, as_of=start) if beta_sizing else None
     cost_model = _build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
-    result = BacktestEngine(strat, data_client, sizer=sizer, cost_model=cost_model).run(
-        symbols, start, end, capital
-    )
+    result = BacktestEngine(
+        strat,
+        data_client,
+        sizer=sizer,
+        cost_model=cost_model,
+        take_profit_margin_bps=take_profit_margin_bps,
+    ).run(symbols, start, end, capital, benchmark=benchmark)
 
-    from tradeflow.services.audit import journal_trial
+    # `journal=False` exists for re-runs of a config that is already a candidate -
+    # a cost-stress curve is one candidate under several stated assumptions, and
+    # recording each point would inflate the multiple-testing total the deflated
+    # Sharpe deflates against. It must never be the default: a run that quietly does
+    # not count is how a campaign loses track of what it tried.
+    if journal:
+        from tradeflow.services.audit import journal_trial
 
-    journal_trial(
-        "backtest",
-        strategy=strategy,
-        symbols=symbols,
-        start=start,
-        end=end,
-        params=dedup_params,
-        metrics=result.metrics,
-    )
+        journal_trial(
+            "backtest",
+            strategy=strategy,
+            symbols=symbols,
+            start=start,
+            end=end,
+            params=dedup_params,
+            metrics=result.metrics,
+        )
 
     trades_csv = None
     if not result.trades.empty:
@@ -260,6 +346,7 @@ def run_backtest(
         end=end,
         capital=capital,
         gross=gross,
+        benchmark=benchmark,
         trades_csv=trades_csv,
     )
 
@@ -298,6 +385,7 @@ def backtest_payload(
     end: datetime,
     capital: float,
     gross: bool,
+    benchmark: Optional[str] = None,
     trades_csv: Optional[str] = None,
 ) -> Dict[str, Any]:
     """A ``BacktestResult`` as the JSON-serializable dict every surface consumes.
@@ -315,11 +403,19 @@ def backtest_payload(
         "window": {"start": start.isoformat(), "end": end.isoformat()},
         "initial_capital": capital,
         "final_capital": result.final_capital,
+        # Named here so a report cannot show "Benchmark —" beside metrics that were
+        # in fact scored against one, or the reverse.
+        "benchmark": benchmark if result.metrics.get("benchmark_available") else None,
         "gross": gross,
         "total_cost": result.total_cost,
         "gross_final_capital": result.gross_final_capital,
         "cost_drag_pct": (result.total_cost / capital * 100.0) if capital else 0.0,
         "metrics": _jsonable(result.metrics),
+        # The gap between the intended book and the tradeable one, plus the verdict on
+        # it - separate from `metrics` because it judges executability at this capital,
+        # not whether the edge was real.
+        "execution": _jsonable(getattr(result, "execution", {}) or {}),
+        "executability": _jsonable(performance.execution_verdict(getattr(result, "execution", None))),
         "total_trades": int(len(result.trades)),
         "trades_csv": trades_csv,
         "resolved_config": _jsonable(result.strategy_config),
@@ -506,6 +602,8 @@ def run_walk_forward(
     workers: Optional[int] = None,
     cache_dir: Optional[Any] = None,
     offline: bool = False,
+    benchmark: Optional[str] = None,
+    position_limits: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Honest evaluation: optimize IS, score OOS across folds, gate the verdict.
 
@@ -525,6 +623,13 @@ def run_walk_forward(
     so those, not params, are what identifies a repeat here). ``force=True``
     bypasses that and re-runs, appending a new trial.
 
+    ``benchmark`` and ``position_limits`` are the same two the CLI passes. Without
+    the first, every fold reports ``benchmark_available: False`` and the
+    benchmark-relative promotion prerequisites are never evaluated - silently, which
+    is the worst way for a gate not to run. Without the second, a config asking for
+    eight positions is validated at whatever the strategy class declares, so the
+    validated book and the deployed one are different books.
+
     ``workers`` parallelizes each fold's in-sample candidate search — folds
     themselves stay sequential, since the candidates are where the work is and the
     per-fold progress stays readable. Journaling is unaffected: this process still
@@ -543,19 +648,20 @@ def run_walk_forward(
 
         timeframe = cls.create_with_defaults().config.get("timeframe", "1Day")
         warm_for(wf_data_spec, symbols, timeframe, start, end)
-    recipe = {
-        "mode": mode,
-        "n_folds": n_folds,
-        "train_days": train_days,
-        "test_days": test_days,
-        "embargo_days": embargo_days,
-        "holdout_days": holdout_days,
-        "method": method,
-        "objective": objective,
-        "max_evals": max_evals,
-        "seed": seed,
-        "_cost": cost_key,
-    }
+    recipe = walk_forward_recipe(
+        mode=mode,
+        n_folds=n_folds,
+        train_days=train_days,
+        test_days=test_days,
+        embargo_days=embargo_days,
+        holdout_days=holdout_days,
+        method=method,
+        objective=objective,
+        max_evals=max_evals,
+        seed=seed,
+        cost_key=cost_key,
+        limits=position_limits,
+    )
 
     with _open_trial_store() as trial_store:
         if not force and trial_store is not None:
@@ -601,6 +707,8 @@ def run_walk_forward(
             force=force,
             workers=workers,
             data_spec=wf_data_spec,
+            benchmark=benchmark,
+            position_limits=position_limits,
         )
         result = validator.run(
             symbols,
@@ -657,6 +765,563 @@ def run_walk_forward(
         seed=seed,
         gates=gates,
     )
+
+
+def _draft_rejection(run_id: str, kind: str, code: str, exc: Exception, *, hygiene: bool) -> Dict[str, Any]:
+    """The one shape every draft entry point returns when it cannot proceed.
+
+    ``error_kind`` separates the two cases rather than flattening them into "invalid",
+    because they call for opposite responses and only one of them is about the draft:
+
+    * ``invalid_draft`` - the source was rejected. Rewrite it.
+    * ``validator_error`` - the validator itself failed on this input. The draft may
+      be fine; this is a defect here, and reporting it as invalid code would send an
+      agent rewriting something that was never the problem.
+
+    Neither consumes a trial, and the note says so: a caller tracking its own
+    multiple-testing budget cannot tell that from an absent metrics block.
+    """
+    return {
+        "run_id": run_id,
+        "valid": False,
+        "kind": kind,
+        "error": str(exc),
+        "error_kind": "invalid_draft" if hygiene else "validator_error",
+        "code_hash": draft_code_hash(code),
+        "note": "Nothing was run and no trial was journaled.",
+    }
+
+
+def validate_draft_strategy_code(code: str, class_name: Optional[str] = None) -> Dict[str, Any]:
+    """Validate generated/private strategy source without registering or running it.
+
+    Answers with a verdict, never an exception: a tool whose only job is to say
+    whether code is valid has failed if invalid code makes it raise.
+    """
+    from tradeflow.research.sandbox import HygieneError, load_strategy_from_code
+
+    run_id = new_run_id()
+    try:
+        cls = load_strategy_from_code(code, class_name=class_name)
+    except HygieneError as exc:
+        return _draft_rejection(run_id, "strategy", code, exc, hygiene=True)
+    except Exception as exc:  # noqa: BLE001 - a validator that crashes answers nothing
+        logger.warning("Draft strategy validation failed unexpectedly", exc_info=True)
+        return _draft_rejection(run_id, "strategy", code, exc, hygiene=False)
+    return {
+        "run_id": run_id,
+        "valid": True,
+        "kind": "strategy",
+        "class_name": cls.__name__,
+        "description": (cls.__doc__ or "").strip().split("\n", 1)[0],
+        "timeframe": getattr(cls, "TIMEFRAME", ""),
+        "param_ranges": _jsonable(cls.PARAM_RANGES),
+        "code_hash": draft_code_hash(code),
+    }
+
+
+def validate_draft_scanner_code(code: str, class_name: Optional[str] = None) -> Dict[str, Any]:
+    """Validate generated/private scanner source without registering or running it.
+
+    Answers with a verdict, never an exception - see
+    :func:`validate_draft_strategy_code`.
+    """
+    from tradeflow.research.sandbox import HygieneError, load_scanner_from_code
+
+    run_id = new_run_id()
+    try:
+        cls = load_scanner_from_code(code, class_name=class_name)
+    except HygieneError as exc:
+        return _draft_rejection(run_id, "scanner", code, exc, hygiene=True)
+    except Exception as exc:  # noqa: BLE001 - a validator that crashes answers nothing
+        logger.warning("Draft scanner validation failed unexpectedly", exc_info=True)
+        return _draft_rejection(run_id, "scanner", code, exc, hygiene=False)
+    return {
+        "run_id": run_id,
+        "valid": True,
+        "kind": "scanner",
+        "class_name": cls.__name__,
+        "description": (cls.__doc__ or "").strip().split("\n", 1)[0],
+        "timeframe": getattr(cls, "TIMEFRAME", ""),
+        "param_ranges": _jsonable(cls.PARAM_RANGES),
+        "code_hash": draft_code_hash(code),
+    }
+
+
+#: Cost multiples the stress curve walks. 1x is the run's own assumptions, so the
+#: curve always contains its own baseline and the reader can see the slope rather than
+#: a single pass/fail. Points rather than one 3x check because *where* an edge dies is
+#: the useful part: a strategy that survives 5x and one that dies just past 1x are both
+#: "passes at 1x" and are not the same proposition.
+DEFAULT_COST_STRESS_MULTIPLES = (1.0, 2.0, 3.0, 5.0)
+
+
+def run_scanner_drift(
+    data_client: MarketDataClient,
+    scanner: str,
+    symbols: List[str],
+    as_of: datetime,
+    *,
+    config: Optional[Dict[str, Any]] = None,
+    offsets_days: Sequence[int] = (-1, -2, -5),
+    saved_universe: Optional[Sequence[str]] = None,
+) -> Dict[str, Any]:
+    """How much the selected universe moves when the scan clock moves.
+
+    A universe that turns over 40% across one session is a different object from one
+    that is stable, and nothing said which you had. That matters more than it looks: a
+    validated config carries the universe its scanner *resolved*, so if the scan is
+    unstable the book you get on the day you deploy is not the book that was validated,
+    and no promotion gate would notice.
+
+    Needs no new machinery - `--as-of` already resolves a scanner at an arbitrary
+    historical clock, so this is that seam asked several times and differenced.
+
+    ``saved_universe`` compares against what a config recorded rather than against
+    another scan, which is the question a deployment actually has: *is the file still
+    describing today's universe?*
+    """
+    from tradeflow.scanners.symbol_scanner import resolve_scan_clock
+
+    run_id = new_run_id()
+    baseline = {symbol for symbol, _ in _scan_at(data_client, scanner, symbols, config, as_of)}
+
+    comparisons: List[Dict[str, Any]] = []
+    for offset in offsets_days:
+        when = as_of + timedelta(days=offset)
+        other = {symbol for symbol, _ in _scan_at(data_client, scanner, symbols, config, when)}
+        comparisons.append(
+            {
+                "offset_days": int(offset),
+                "as_of": resolve_scan_clock(when).isoformat(),
+                "size": len(other),
+                **_universe_overlap(baseline, other),
+            }
+        )
+
+    saved = None
+    if saved_universe is not None:
+        saved = {
+            "size": len(set(saved_universe)),
+            **_universe_overlap(set(saved_universe), baseline),
+        }
+
+    drifts = [c["turnover_pct"] for c in comparisons]
+    return {
+        "run_id": run_id,
+        "scanner": scanner,
+        "as_of": resolve_scan_clock(as_of).isoformat(),
+        "candidates": len(symbols),
+        "baseline_size": len(baseline),
+        "comparisons": comparisons,
+        "saved_vs_current": saved,
+        "max_turnover_pct": max(drifts) if drifts else 0.0,
+        "note": "Turnover is the share of the baseline universe that changes at each "
+        "clock. A config records the universe its scanner resolved, so drift is the "
+        "gap between the book that was validated and the one a deployment would get.",
+    }
+
+
+def _scan_at(data_client, scanner: str, symbols, config, when):
+    from tradeflow.scanners.symbol_scanner import SymbolScanner
+
+    return SymbolScanner(data_client, scanner, config).scan(list(symbols), as_of=when)
+
+
+def _universe_overlap(left: set, right: set) -> Dict[str, Any]:
+    """Symmetric difference between two universes, as counts and a turnover share.
+
+    Turnover is measured against ``left`` (the reference), so "40% turnover" reads as
+    "40% of the universe I am comparing from is not in the other one" rather than as an
+    unanchored symmetric statistic.
+    """
+    added, dropped = sorted(right - left), sorted(left - right)
+    reference = len(left)
+    turnover = float((len(added) + len(dropped)) / reference * 100.0) if reference else 0.0
+    return {
+        "overlap": len(left & right),
+        "added": added,
+        "dropped": dropped,
+        "turnover_pct": turnover,
+    }
+
+
+#: Basis points a bar must trade *through* a take-profit before it counts as filled.
+#: Zero is the historical assumption; the rest ask what the edge is worth without it.
+DEFAULT_FILL_STRESS_MARGINS: Sequence[float] = (0.0, 5.0, 10.0, 25.0, 50.0)
+
+
+def run_fill_stress(
+    data_client: MarketDataClient,
+    strategy: str,
+    symbols: List[str],
+    start: datetime,
+    end: datetime,
+    *,
+    config: Optional[Dict[str, Any]] = None,
+    capital: float = 100_000.0,
+    benchmark: str = "SPY",
+    commission_bps: float = 1.0,
+    impact_eta: float = 0.3,
+    borrow_bps: float = 50.0,
+    margins: Sequence[float] = DEFAULT_FILL_STRESS_MARGINS,
+) -> Dict[str, Any]:
+    """Re-run one config requiring the price to trade progressively further *through*
+    each take-profit before it counts as filled.
+
+    At zero - the historical assumption - a bar that merely touched the target filled
+    at it, which models a resting limit order that is always first in the queue. For a
+    strategy whose edge is concentrated in target exits that assumption is not a detail;
+    it is the result. This makes it a number that can be moved rather than one that can
+    only be believed.
+
+    The trigger tightens; the fill price does not. A limit order that fills, fills at
+    its limit - the question is whether it filled at all, not whether it filled worse.
+
+    Journals nothing: the same config under stated assumptions, not new candidates.
+    """
+    run_id = new_run_id()
+    points: List[Dict[str, Any]] = []
+    for margin in margins:
+        result = run_backtest(
+            data_client,
+            strategy,
+            symbols,
+            start,
+            end,
+            config=config,
+            capital=capital,
+            benchmark=benchmark,
+            commission_bps=commission_bps,
+            impact_eta=impact_eta,
+            borrow_bps=borrow_bps,
+            take_profit_margin_bps=margin,
+            journal=False,
+            force=True,
+        )
+        metrics = result.get("metrics") or {}
+        points.append(
+            {
+                "margin_bps": float(margin),
+                "sharpe_ratio": metrics.get("sharpe_ratio", 0.0),
+                "total_return": metrics.get("total_return", 0.0),
+                # `total_trades`, and None rather than 0 when it is missing. Read from
+                # the wrong key it reported 0 on every row of a 1952-trade run, and a
+                # zero default is what made a wrong key look like a real answer.
+                "trades": metrics.get("total_trades"),
+            }
+        )
+
+    survives = [p["margin_bps"] for p in points if p["sharpe_ratio"] > 0 and p["total_return"] > 0]
+    return {
+        "run_id": run_id,
+        "strategy": strategy,
+        "window": {"start": start.isoformat(), "end": end.isoformat()},
+        "points": points,
+        "base_sharpe": points[0].get("sharpe_ratio") if points else None,
+        # The widest margin the edge still clears at, or None if it dies immediately.
+        "survives_to_bps": max(survives) if survives else None,
+    }
+
+
+def run_cost_stress(
+    data_client: MarketDataClient,
+    strategy: str,
+    symbols: List[str],
+    start: datetime,
+    end: datetime,
+    *,
+    config: Optional[Dict[str, Any]] = None,
+    capital: float = 100_000.0,
+    benchmark: str = "SPY",
+    commission_bps: float = 1.0,
+    impact_eta: float = 0.3,
+    participation_cap: float = 0.10,
+    borrow_bps: float = 50.0,
+    multiples: Sequence[float] = DEFAULT_COST_STRESS_MULTIPLES,
+    axis: str = "all",
+) -> Dict[str, Any]:
+    """Re-run one config under progressively worse cost assumptions.
+
+    An edge that clears its gates at 1bp and evaporates at 2bp is a different
+    proposition from one that survives five times its assumed cost, and nothing
+    distinguished them: a single cost assumption produces a single number, and the
+    reader cannot tell how much of the result was the assumption.
+
+    ``axis`` restricts what is scaled. ``"all"`` scales commission, impact and borrow
+    together. ``"borrow"`` scales only the borrow rate, which is worth asking
+    separately because a long-short book's exposure to it is qualitatively different
+    from its exposure to commission - it is a carry on inventory rather than a toll on
+    turnover, so it grows with holding period rather than with trading.
+
+    Read-only research clock: re-runs a backtest per point and reports the curve.
+    Journals nothing - these are the same config under stated assumptions, not new
+    candidates, and recording them as trials would inflate the multiple-testing count
+    that the deflated Sharpe deflates against.
+    """
+    run_id = new_run_id()
+    points: List[Dict[str, Any]] = []
+    for multiple in multiples:
+        scale_turnover = multiple if axis in ("all", "turnover") else 1.0
+        scale_borrow = multiple if axis in ("all", "borrow") else 1.0
+        result = run_backtest(
+            data_client,
+            strategy,
+            symbols,
+            start,
+            end,
+            config=config,
+            capital=capital,
+            benchmark=benchmark,
+            commission_bps=commission_bps * scale_turnover,
+            impact_eta=impact_eta * scale_turnover,
+            participation_cap=participation_cap,
+            borrow_bps=borrow_bps * scale_borrow,
+            journal=False,
+            force=True,
+        )
+        metrics = result.get("metrics") or {}
+        points.append(
+            {
+                "multiple": float(multiple),
+                "sharpe_ratio": metrics.get("sharpe_ratio", 0.0),
+                "total_return": metrics.get("total_return", 0.0),
+                "total_cost": result.get("total_cost", 0.0),
+                "executability": result.get("executability", {}),
+            }
+        )
+
+    survives = [p["multiple"] for p in points if p["sharpe_ratio"] > 0 and p["total_return"] > 0]
+    return {
+        "run_id": run_id,
+        "strategy": strategy,
+        "axis": axis,
+        "window": {"start": start.isoformat(), "end": end.isoformat()},
+        "base_cost": {
+            "commission_bps": commission_bps,
+            "impact_eta": impact_eta,
+            "borrow_bps": borrow_bps,
+        },
+        "points": points,
+        # The headline: the largest multiple of its own assumed cost the edge survives.
+        # 0.0 means it does not survive its own assumptions, which is worth saying
+        # plainly rather than leaving to be read off a table.
+        "survives_to_multiple": max(survives) if survives else 0.0,
+        "note": "Each point re-runs the same config under scaled cost assumptions. "
+        "Nothing is journaled: these are one candidate under stated assumptions, not "
+        "new candidates, and counting them would inflate the multiple-testing total.",
+    }
+
+
+def run_draft_walk_forward(
+    data_client: MarketDataClient,
+    code: str,
+    symbols: List[str],
+    start: datetime,
+    end: datetime,
+    *,
+    class_name: Optional[str] = None,
+    mode: str = "anchored",
+    n_folds: Optional[int] = 4,
+    train_days: Optional[int] = None,
+    test_days: Optional[int] = None,
+    embargo_days: Optional[int] = None,
+    holdout_days: int = 0,
+    method: str = "grid",
+    objective: str = "sharpe_ratio",
+    max_evals: int = 50,
+    seed: int = 42,
+    capital: float = 100_000.0,
+    include_pbo: bool = False,
+    include_monte_carlo: bool = False,
+    parameter_sensitivity: bool = False,
+    leakage_probe: bool = False,
+    gates: Optional[Dict[str, float]] = None,
+    gross: bool = False,
+    commission_bps: float = 1.0,
+    impact_eta: float = 0.3,
+    participation_cap: float = 0.10,
+    borrow_bps: float = 50.0,
+    journal: bool = True,
+    force: bool = False,
+) -> Dict[str, Any]:
+    """Validate strategy source, then run it through the normal walk-forward gates.
+
+    Draft code is never registered globally and never written into the public repo.
+    When ``journal`` is true, the validated run is recorded under a stable
+    ``draft:<ClassName>:<hash>`` strategy id so the campaign can still see that a
+    generated/private candidate consumed a test.
+    """
+    from tradeflow.optimization.config_store import current_git_sha
+    from tradeflow.research.sandbox import HygieneError, load_strategy_from_code
+    from tradeflow.services.audit import journal_trial
+
+    run_id = new_run_id()
+    code_hash = draft_code_hash(code)
+    # The same verdict the validators return. This entry point guarded nothing at
+    # all, so even the anticipated rejection - a draft that simply does not pass
+    # hygiene - came back as a raised exception rather than an answer, from the one
+    # of the three tools that costs a trial to call.
+    try:
+        cls = load_strategy_from_code(code, class_name=class_name)
+    except HygieneError as exc:
+        return _draft_rejection(run_id, "strategy", code, exc, hygiene=True)
+    except Exception as exc:  # noqa: BLE001 - see validate_draft_strategy_code
+        logger.warning("Draft strategy validation failed unexpectedly", exc_info=True)
+        return _draft_rejection(run_id, "strategy", code, exc, hygiene=False)
+    draft_strategy = f"draft:{cls.__name__}:{code_hash}"
+    cost_model = _build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
+    cost_key = _cost_key(gross, commission_bps, impact_eta, borrow_bps)
+    # The draft's own identity (its source) on top of the same recipe every other
+    # walk-forward is keyed by - a third copy of that dict is a third place for the
+    # next thing folded into the key to be forgotten.
+    recipe = {
+        "code_hash": code_hash,
+        "class_name": cls.__name__,
+        **walk_forward_recipe(
+            mode=mode,
+            n_folds=n_folds,
+            train_days=train_days,
+            test_days=test_days,
+            embargo_days=embargo_days,
+            holdout_days=holdout_days,
+            method=method,
+            objective=objective,
+            max_evals=max_evals,
+            seed=seed,
+            cost_key=cost_key,
+        ),
+    }
+
+    with _open_trial_store() as trial_store:
+        if journal and not force and trial_store is not None:
+            cached = trial_store.find(
+                strategy=draft_strategy,
+                params=recipe,
+                symbols=symbols,
+                window_start=start,
+                window_end=end,
+                accounting=ACCOUNTING_VERSION,
+                git_sha=current_git_sha(),
+            )
+            if cached is not None:
+                metrics = json.loads(cached["metrics_json"] or "{}")
+                return {
+                    "run_id": run_id,
+                    "strategy": draft_strategy,
+                    "symbols": list(symbols),
+                    "window": {"start": start.isoformat(), "end": end.isoformat()},
+                    "memoized": True,
+                    "trial_id": cached["id"],
+                    "trial_ts": cached["ts"],
+                    "note": "Served from an identical prior draft validation, not re-run. "
+                    "Pass force=True to re-verify.",
+                    "oos_aggregate": _jsonable(metrics),
+                    "promotable": bool(cached["promotable"]) if cached["promotable"] is not None else None,
+                    "efficiency": cached["efficiency"],
+                    "n_trials_total": cached["n_trials_in_session"],
+                    "draft": {
+                        "class_name": cls.__name__,
+                        "code_hash": code_hash,
+                        "journaled": True,
+                    },
+                }
+
+        validator = WalkForwardValidator(
+            cls,
+            data_client,
+            initial_capital=capital,
+            seed=seed,
+            gates=gates,
+            cost_model=cost_model,
+            trial_store=None,
+            strategy_name=None,
+            cost_key=cost_key,
+            accounting=ACCOUNTING_VERSION,
+            force=True,
+        )
+        result = validator.run(
+            symbols,
+            start,
+            end,
+            mode=mode,
+            n_folds=n_folds,
+            train_days=train_days,
+            test_days=test_days,
+            embargo_days=embargo_days,
+            holdout_days=holdout_days,
+            method=method,
+            objective=objective,
+            max_evals=max_evals,
+            pbo=include_pbo,
+            monte_carlo=include_monte_carlo,
+            parameter_sensitivity=parameter_sensitivity,
+            leakage_probe=leakage_probe,
+        )
+    # Outside the trial-store block, and not conditioned on it: the store is a
+    # derived memo cache, the journal is the campaign's multiple-testing record. A
+    # store that will not open must not quietly turn a spent out-of-sample test into
+    # an unrecorded one. Same placement as run_walk_forward, for the same reason.
+    journaled = bool(journal and result.folds)
+    if journaled:
+        chosen = result.holdout_params or result.folds[-1].is_best_params
+        gate_report = result.gate_report(gates)
+        journal_trial(
+            "walkforward",
+            strategy=draft_strategy,
+            symbols=symbols,
+            start=start,
+            end=end,
+            params={**dict(chosen), "_draft": {"class_name": cls.__name__, "code_hash": code_hash}},
+            metrics=result.oos_aggregate,
+            objective=objective,
+            extra={
+                "n_trials": result.n_trials_total,
+                "promotable": gate_report["promotable"],
+                "efficiency": result.median_efficiency(),
+            },
+            returns=result.oos_returns,
+            dedup_params=recipe,
+        )
+
+    payload = walk_forward_payload(
+        result,
+        run_id=run_id,
+        strategy=draft_strategy,
+        symbols=symbols,
+        start=start,
+        end=end,
+        mode=mode,
+        objective=objective,
+        method=method,
+        gross=gross,
+        seed=seed,
+        gates=gates,
+    )
+    payload["draft"] = {
+        "class_name": cls.__name__,
+        "code_hash": code_hash,
+        "journaled": journaled,
+        "note": "Draft source was validated and run in-memory; install it through entry points to use it by name.",
+    }
+    if journal and not journaled:
+        # Asked for and not done. Saying so is the point: a caller counting its own
+        # multiple-testing budget cannot infer this from a `false` alone.
+        payload["draft"]["not_journaled_reason"] = (
+            "the run produced no folds, so there was no out-of-sample result to record"
+        )
+    return payload
+
+
+def draft_code_hash(code: str) -> str:
+    """Short digest identifying draft source.
+
+    Public because the MCP layer logs it against calls the journal records under
+    ``draft:<ClassName>:<hash>``. That layer had its own byte-identical copy, so the
+    two would have silently named different things the first time either changed - and
+    what they name is how a draft's calls are tied to the trials it spent.
+    """
+    return hashlib.sha256(code.encode("utf-8")).hexdigest()[:12]
 
 
 def walk_forward_payload(
@@ -901,6 +1566,7 @@ def compute_alphas(
     timeframe: Optional[str] = None,
     scaling: str = "case1",
     price_derived: bool = True,
+    config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Turn a per-name view into ranked residual-return alphas, via a feature panel.
 
@@ -921,7 +1587,7 @@ def compute_alphas(
     echoed under ``case`` whenever the test runs so a wrong call is visible.
     """
     run_id = new_run_id()
-    strat = _strategy(strategy, None)
+    strat = _strategy(strategy, config)
     tf = timeframe or strat.config.get("timeframe", "1Day")
     periods_per_year = Timeframe.parse(tf).periods_per_year()
 
@@ -1135,6 +1801,7 @@ def compute_information(
     n_trials: int = 1,
     timeframe: str = "1Day",
     risk_model: str = "shrinkage",
+    config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Measure a strategy's information coefficient, breadth, and information ratio.
 
@@ -1156,7 +1823,7 @@ def compute_information(
     from tradeflow.indicators import indicators
 
     run_id = new_run_id()
-    strat = _strategy(strategy, None)
+    strat = _strategy(strategy, config)
     periods_per_year = Timeframe.parse(timeframe).periods_per_year()
     rebalances_per_year = periods_per_year / horizon
 
@@ -1320,6 +1987,7 @@ def run_verdict(
     start: datetime,
     end: datetime,
     *,
+    config: Optional[Dict[str, Any]] = None,
     scanner: str = "volume",
     signals: Optional[Sequence[str]] = None,
     source: str = "strategy",
@@ -1352,9 +2020,9 @@ def run_verdict(
     universe and applies its own defaults, and the joined-up story can silently be
     five different stories.
 
-    Answers "what does the cross-sectional pipeline say about this universe now" -
-    a forecast and a proposed book, not a historical simulation. For "did this ever
-    work", that is ``run_backtest``/``run_walk_forward``.
+    Answers "what does the cross-sectional pipeline say about this universe as of
+    the window end" - a forecast and a proposed book, not a historical simulation.
+    For "did this ever work", that is ``run_backtest``/``run_walk_forward``.
 
     A step that fails does not kill the run: the composite records what ran, what
     did not, and why, and the overall verdict for any incomplete run is
@@ -1398,7 +2066,7 @@ def run_verdict(
     # is likely to vary - two materially different composites must never collide as
     # "the same trial" just because the flags they differ on live inside a step.
     dedup_params = {
-        **_tunable_params(_strategy(strategy, None)),
+        **_tunable_params(_strategy(strategy, config)),
         "_verdict": {
             "signals": sorted(signal_list),
             "source": source,
@@ -1466,7 +2134,7 @@ def run_verdict(
         steps["scan"] = {"status": "skipped", "reason": "no scanner — candidates used as-is"}
         scan, universe = None, list(symbols)
     else:
-        scan = _step("scan", lambda: run_scan(client, scanner, list(symbols)))
+        scan = _step("scan", lambda: run_scan(client, scanner, list(symbols), as_of=end))
         universe = [row["symbol"] for row in (scan or {}).get("flagged", [])]
         if not universe:
             # Same fallback the single-step commands use: an empty scan means "nothing
@@ -1485,6 +2153,7 @@ def run_verdict(
             strategy,
             universe,
             end,
+            config=config,
             source=source,
             scanner=scanner,
             benchmark=benchmark,
@@ -1550,6 +2219,7 @@ def run_verdict(
             universe,
             start,
             end,
+            config=config,
             source=source,
             scanner=scanner,
             benchmark=benchmark,
@@ -1947,6 +2617,7 @@ def compute_attribution(
     component_names = ["systematic", *risk_names, *signal_names, "specific"]
     series: Dict[str, List[float]] = {name: [] for name in component_names}
     r_active_series, r_bench_series, beta_a_series, psi2_series, bench_vol_series = [], [], [], [], []
+    gross_series: List[float] = []  # the paper book's gross per rebalance, for the level scale
 
     for j in points:
         t, t_fwd = window[j], window[j + horizon]
@@ -2013,7 +2684,29 @@ def compute_attribution(
         beta_a_series.append(result.beta_a)
         w_vec = w_active.reindex(matrix.symbols).fillna(0.0).to_numpy()
         psi2_series.append(float(w_vec @ matrix.sigma @ w_vec))
+        gross_series.append(float(np.abs(w_vec).sum()))
         bench_vol_series.append(trailing_vol)
+
+    # The paper book is a z-scored alpha vector - mean-zero, unit cross-sectional SD,
+    # deliberately not normalized to unit gross, because scale cancels in an IR. It
+    # does not cancel in a *level*: with 61 names that book carries roughly 50x
+    # notional, which is how a reported mean of 644%/yr and a tracking error of 374%
+    # arise from a perfectly sound IR of 1.7. Printed as percentages they read as fund
+    # returns, which is a trap rather than a diagnostic.
+    #
+    # So every level is divided by one constant - the book's mean gross - which leaves
+    # every ratio built from these series exactly unchanged: IR is mean/vol and the
+    # t-stat is mean/sd x sqrt(t), and a constant cancels in both. Levels become
+    # readable as a unit-gross long-short book; IR and t-stat are bit-identical.
+    # Per-period normalization would not be: a time-varying divisor reshapes the
+    # series and moves the IR with it.
+    gross_scale = float(np.mean(gross_series)) if gross_series else 0.0
+    if gross_scale > 0:
+        for key in list(series):
+            series[key] = [value / gross_scale for value in series[key]]
+        r_active_series = [value / gross_scale for value in r_active_series]
+        beta_a_series = [value / gross_scale for value in beta_a_series]
+        psi2_series = [value / (gross_scale**2) for value in psi2_series]  # a variance
 
     periods = len(r_active_series)
     if periods < 5:
@@ -2360,6 +3053,7 @@ def compute_horizon(
     max_lag: int = 10,
     n_points: int = 20,
     timeframe: str = "1Day",
+    config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Measure an alpha's decay and recommend a rebalance cadence + lagged blend.
 
@@ -2375,7 +3069,7 @@ def compute_horizon(
     from tradeflow.indicators import indicators
 
     run_id = new_run_id()
-    strat = _strategy(strategy, None)
+    strat = _strategy(strategy, config)
     periods_per_year = Timeframe.parse(timeframe).periods_per_year()
 
     bars = ClientBarSource(data_client).scan([*symbols, benchmark], timeframe, end, _window_days(start, end))
@@ -2684,6 +3378,7 @@ def construct_portfolio(
     strategy: str,
     symbols: List[str],
     as_of: datetime,
+    config: Optional[Dict[str, Any]] = None,
     source: str = "strategy",
     scanner: str = "volume",
     target_te: float = 0.04,
@@ -2803,7 +3498,7 @@ def construct_portfolio(
     from tradeflow.portfolio.optimizer import MeanVarianceOptimizer
 
     run_id = new_run_id()
-    strat = _strategy(strategy, None)
+    strat = _strategy(strategy, config)
     tf = timeframe
     periods_per_year = Timeframe.parse(tf).periods_per_year()
 
@@ -3338,6 +4033,7 @@ def longshort_report(
     strategy: str,
     symbols: List[str],
     as_of: datetime,
+    config: Optional[Dict[str, Any]] = None,
     source: str = "strategy",
     scanner: str = "volume",
     target_te: float = 0.04,

@@ -21,7 +21,7 @@ python main.py verdict \
 === Research verdict: 'volume_spike' 2024-01-01..2024-12-31 ===
   universe: 8 names (NVDA, AAPL, META, AMD, TSLA, GOOG, MSFT, AMZN)
   timeframe 1Day | benchmark SPY | cost 1.0bps commission, impact η=0.3, borrow 50.0bps
-  provenance: git 4f2c1ab | campaign trials 14 | bar fetches 3 of 7 bar requests hit the provider
+  provenance: git 4f2c1ab | campaign trials 14 | bar requests: 3 of 7 reached the data client, the rest shared within this run
 
   Scan (volume): 5 of 8 candidates flagged
 
@@ -56,8 +56,10 @@ distinct set of bars once, and hands every step the same window, universe, and c
 model. The provenance line reports how many of its bar requests actually reached the
 provider, so "one shared fetch" is a measured claim rather than a promise.
 
-It answers **"what does the pipeline say about this universe now"** — a forecast and
-a proposed book. For **"did this ever work"**, that is
+It answers **"what does the pipeline say about this universe as of `--end`"** — a
+forecast and a proposed book. The scanner is resolved at `--end`, not at wall-clock
+now, so an older window does not accidentally inherit today's universe. For **"did
+this ever work"**, that is
 [`backtest`](backtesting) and [`walkforward`](walk-forward); `verdict` does not
 replace them, and it is not a historical simulation.
 

@@ -8,7 +8,8 @@ placing an order. The hard wall is the *absence* of any
 order/live/account-mutation tool; it cannot be prompt-injected around because the
 capability is not wired in.
 
-Run with: ``python main.py mcp`` (needs the ``mcp`` extra).
+Run with ``tradeflow mcp`` when installed, or ``python main.py mcp`` from a checkout
+(needs the ``mcp`` extra either way).
 """
 
 import contextlib
@@ -32,6 +33,9 @@ EXPOSED_TOOLS = (
     "run_backtest",
     "run_optimization",
     "run_walk_forward",
+    "validate_draft_strategy_code",
+    "validate_draft_scanner_code",
+    "run_draft_walk_forward",
     "run_verdict",
     "compute_alphas",
     "combine_alphas",
@@ -53,7 +57,9 @@ EXPOSED_TOOLS = (
 #: Tools that record a trial. An agent that does not know a call costs a trial will
 #: burn a campaign's multiple-testing budget at machine speed, so every one of these
 #: says so in its description - asserted by a test, not left to good intentions.
-JOURNALING_TOOLS = frozenset({"run_backtest", "run_optimization", "run_walk_forward", "run_verdict"})
+JOURNALING_TOOLS = frozenset(
+    {"run_backtest", "run_optimization", "run_walk_forward", "run_draft_walk_forward", "run_verdict"}
+)
 
 #: Evidence-gated features that ship **off**. Where a tool exposes one, its
 #: description must name the gate and its current verdict rather than presenting the
@@ -246,7 +252,12 @@ def build_server(data_client=None):
 
     # ---------------- Read / analyze (safe) ---------------- #
     @tool()
-    def run_scan(scanner: str, symbols: List[str], config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def run_scan(
+        scanner: str,
+        symbols: List[str],
+        config: Optional[Dict[str, Any]] = None,
+        as_of: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Run a universe scanner over `symbols` and return the names it flags.
 
         Narrows a candidate list to the symbols worth analyzing, with each one's
@@ -254,12 +265,21 @@ def build_server(data_client=None):
         performs internally — call it when you want to see or reuse the selection,
         not as a prerequisite.
 
+        `as_of` can pin the scan to a historical ISO date/datetime. Omit it only when
+        you genuinely want "now"; historical backtests and verdicts resolve scanner
+        state at their own window end to avoid mixing today's universe with an older
+        evaluation window.
+
         Scanning is a research decision, not a tuning knob: picking a universe by
         which one produces the best backtest is look-ahead, and it will not survive
         out-of-sample. Read-only, journals nothing.
         """
-        inputs = {"scanner": scanner, "symbols": symbols, "config": config}
-        return _logged("run_scan", inputs, analysis.run_scan(dc, scanner, symbols, config))
+        inputs = {"scanner": scanner, "symbols": symbols, "config": config, "as_of": as_of}
+        return _logged(
+            "run_scan",
+            inputs,
+            analysis.run_scan(dc, scanner, symbols, config, as_of=_parse_date(as_of) if as_of else None),
+        )
 
     @tool(
         "sharpe_ratio",
@@ -279,6 +299,7 @@ def build_server(data_client=None):
         beta_sizing: bool = False,
         benchmark: str = "SPY",
         gross: bool = False,
+        take_profit_margin_bps: float = 0.0,
         force: bool = False,
     ) -> Dict[str, Any]:
         """Backtest `strategy` on `symbols` over [start, end] (YYYY-MM-DD).
@@ -288,11 +309,18 @@ def build_server(data_client=None):
         count, total cost, and a path to the trades CSV (trades are not inlined).
         `config` overrides default params.
 
-        Journals this as a trial (same research journal/trial store
-        `python main.py backtest` uses) so it counts toward the campaign's
-        multiple-testing total. An exact prior trial is served instead (result
-        has `memoized: true`) unless `force=True`, which re-runs and appends a
-        new trial rather than overwriting the memoized one.
+        `take_profit_margin_bps` requires the price to trade that far *through* a
+        take-profit before it counts as filled. Zero — the default — fills a target the
+        moment a bar touches it, which models a resting limit always first in the queue.
+        For a strategy whose gain concentrates in target exits that assumption is the
+        result rather than a detail, so raising it is how you find out which you have.
+
+        Journals this as a trial (the same research journal and trial store the
+        `backtest` command uses) so it counts toward the campaign's multiple-testing
+        total. An exact prior trial is served instead (result has `memoized: true`)
+        unless `force=True`, which re-runs and appends a new trial rather than
+        overwriting the memoized one. Memoization is scoped to the engine's accounting
+        version, so results from an older engine are never served to a newer one.
         """
         inputs = {
             "strategy": strategy,
@@ -303,6 +331,7 @@ def build_server(data_client=None):
             "config": config,
             "beta_sizing": beta_sizing,
             "gross": gross,
+            "take_profit_margin_bps": take_profit_margin_bps,
             "force": force,
         }
         result = analysis.run_backtest(
@@ -316,6 +345,7 @@ def build_server(data_client=None):
             beta_sizing,
             benchmark,
             gross=gross,
+            take_profit_margin_bps=take_profit_margin_bps,
             force=force,
         )
         return _logged("run_backtest", inputs, result)
@@ -405,6 +435,8 @@ def build_server(data_client=None):
         gross: bool = False,
         force: bool = False,
         workers: int = 1,
+        benchmark: Optional[str] = None,
+        position_limits: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Honest out-of-sample evaluation across folds - your advancement criterion.
 
@@ -418,9 +450,16 @@ def build_server(data_client=None):
         disable) — gross validation systematically promotes turnover the
         strategy could not afford live.
 
+        `benchmark` is a symbol to measure against (e.g. "SPY"). Without it every
+        fold reports `benchmark_available: false`, information ratio 0 and no betas,
+        so any benchmark-relative promotion prerequisite is left unevaluated rather
+        than failed. `position_limits` is the book the config says it will trade
+        (e.g. {"max_positions": 8}); without it the validation runs at whatever the
+        strategy class declares, which is not what would be deployed.
+
         Journals the OOS aggregate as one validated trial. An identical prior
-        validation (same recipe: mode/folds/method/objective/max_evals/seed/cost
-        over the same window) is served instead (result has `memoized: true`)
+        validation (same recipe: mode/folds/method/objective/max_evals/seed/cost/
+        book over the same window) is served instead (result has `memoized: true`)
         unless `force=True`.
         """
         inputs = {
@@ -439,6 +478,8 @@ def build_server(data_client=None):
             "include_pbo": include_pbo,
             "gross": gross,
             "force": force,
+            "benchmark": benchmark,
+            "position_limits": position_limits,
         }
         result = analysis.run_walk_forward(
             dc,
@@ -461,8 +502,147 @@ def build_server(data_client=None):
             gross=gross,
             force=force,
             workers=workers,
+            benchmark=benchmark,
+            position_limits=position_limits,
         )
         return _logged("run_walk_forward", inputs, result)
+
+    @tool()
+    def validate_draft_strategy_code(code: str, class_name: Optional[str] = None) -> Dict[str, Any]:
+        """Validate draft Strategy source without registering or running it.
+
+        Use this for agent-authored or private-package-bound strategy code before
+        spending market-data calls on it. The code is compiled in the research
+        sandbox with restricted imports, then checked for the Strategy contract:
+        concrete subclass, docstring, valid PARAM_RANGES with no more than five
+        searchable params, default construction, required sizing/risk config, and
+        one continuous score source. It writes no files and journals no trials.
+
+        Always answers, never raises: a rejection comes back as `valid: false` with
+        `error_kind` either `invalid_draft` (rewrite the source - `error` names what
+        to fix) or `validator_error` (the validator itself failed on this input; the
+        draft may be fine, so rewriting it is the wrong response).
+
+        This is a drafting aid, not promotion. To make validated code available by
+        name, ship it in a package exposing the `tradeflow.strategies` entry-point
+        group, or keep using `run_draft_walk_forward` with source attached.
+        """
+        inputs = {"class_name": class_name, "code_hash": analysis.draft_code_hash(code)}
+        return _logged(
+            "validate_draft_strategy_code",
+            inputs,
+            analysis.validate_draft_strategy_code(code, class_name=class_name),
+        )
+
+    @tool()
+    def validate_draft_scanner_code(code: str, class_name: Optional[str] = None) -> Dict[str, Any]:
+        """Validate draft ScannerStrategy source without registering or running it.
+
+        Use this for agent-authored or private-package-bound scanner code before it
+        becomes part of a universe-selection workflow. The code is compiled in the
+        research sandbox with restricted imports, then checked for the scanner
+        contract: concrete subclass, docstring, valid PARAM_RANGES with no more than
+        five searchable params, default construction, and a generated signal frame
+        containing `signal` plus numeric `signal_strength` using the scanner signal
+        vocabulary. It writes no files and journals no trials. It answers with the
+        same verdict shape as `validate_draft_strategy_code`, including on rejection.
+
+        To make validated scanner code available by name, ship it in a package
+        exposing the `tradeflow.scanners` entry-point group.
+        """
+        inputs = {"class_name": class_name, "code_hash": analysis.draft_code_hash(code)}
+        return _logged(
+            "validate_draft_scanner_code",
+            inputs,
+            analysis.validate_draft_scanner_code(code, class_name=class_name),
+        )
+
+    @tool("sharpe_ratio", "deflated_sharpe_ratio", "profit_factor", "max_drawdown", notes=[_JOURNALING_NOTE])
+    def run_draft_walk_forward(
+        code: str,
+        symbols: List[str],
+        start: str,
+        end: str,
+        class_name: Optional[str] = None,
+        mode: str = "anchored",
+        n_folds: int = 4,
+        embargo_days: Optional[int] = None,
+        holdout_days: int = 0,
+        method: str = "grid",
+        objective: str = "sharpe_ratio",
+        max_evals: int = 50,
+        seed: int = 42,
+        capital: float = 100_000.0,
+        include_pbo: bool = False,
+        include_monte_carlo: bool = False,
+        parameter_sensitivity: bool = False,
+        leakage_probe: bool = False,
+        gross: bool = False,
+        journal: bool = True,
+        force: bool = False,
+    ) -> Dict[str, Any]:
+        """Validate draft Strategy source, then run normal walk-forward gates.
+
+        This is the bridge from "agent can propose or modify strategy code" to
+        "TradeFlow can validate it" without putting proprietary code in this repo.
+        The source is compiled in-memory through the same sandbox as
+        `validate_draft_strategy_code`, never registered globally, and never made
+        live. Results are regular walk-forward results with a `draft` block carrying
+        class name, source hash, and whether the run was journaled.
+
+        Source that does not validate comes back as the same `valid: false` verdict
+        the two validators return, rather than as an error: nothing ran and no trial
+        was spent, so a rejected draft costs nothing against the campaign's budget.
+        Validating first with `validate_draft_strategy_code` is still cheaper.
+
+        By default this journals one validated trial under
+        `draft:<ClassName>:<code_hash>` so campaign history still reflects that the
+        source consumed a test. Set `journal=false` only for smoke tests that should
+        not enter the campaign record. An identical prior draft validation is served
+        from the trial store unless `force=true`.
+        """
+        inputs = {
+            "code_hash": analysis.draft_code_hash(code),
+            "symbols": symbols,
+            "start": start,
+            "end": end,
+            "class_name": class_name,
+            "mode": mode,
+            "n_folds": n_folds,
+            "holdout_days": holdout_days,
+            "method": method,
+            "objective": objective,
+            "max_evals": max_evals,
+            "seed": seed,
+            "gross": gross,
+            "journal": journal,
+            "force": force,
+        }
+        result = analysis.run_draft_walk_forward(
+            dc,
+            code,
+            symbols,
+            _parse_date(start),
+            _parse_date(end),
+            class_name=class_name,
+            mode=mode,
+            n_folds=n_folds,
+            embargo_days=embargo_days,
+            holdout_days=holdout_days,
+            method=method,
+            objective=objective,
+            max_evals=max_evals,
+            seed=seed,
+            capital=capital,
+            include_pbo=include_pbo,
+            include_monte_carlo=include_monte_carlo,
+            parameter_sensitivity=parameter_sensitivity,
+            leakage_probe=leakage_probe,
+            gross=gross,
+            journal=journal,
+            force=force,
+        )
+        return _logged("run_draft_walk_forward", inputs, result)
 
     @tool()
     def compute_alphas(
@@ -732,8 +912,10 @@ def build_server(data_client=None):
         is `incomplete` and carries NO verdict, whatever the completed sections say:
         do not act on a partial run's weights.
 
-        This answers "what does the pipeline say about this universe now" - a forecast
-        and a proposed book. For "did this ever work", use `run_backtest` or
+        This answers "what does the pipeline say about this universe as of `end`" -
+        a forecast and a proposed book. The scanner is resolved at `end`, not at
+        wall-clock now, so a historical verdict does not mix today's universe into an
+        older evaluation window. For "did this ever work", use `run_backtest` or
         `run_walk_forward`.
 
         Read-only research clock: proposes a portfolio, never places an order. Journals
@@ -993,6 +1175,21 @@ def build_server(data_client=None):
 
 def serve() -> None:
     """Build the server and run it over stdio (what Claude Desktop/Code launch)."""
+    # Said at startup, not on request: an agent driving these tools cannot see
+    # where its evidence is landing, and every journaled trial is permanent.
+    from tradeflow.settings import git_worktree_containing, state_root
+
+    root = state_root()
+    logger.info("MCP state root: %s", root)
+    worktree = git_worktree_containing(root)
+    if worktree is not None:
+        logger.warning(
+            "State root %s is inside the git working tree at %s - trials, configs and "
+            "any private strategy's evidence are being written into a repository.",
+            root,
+            worktree,
+        )
+
     logger.info("Starting TradeFlow MCP server (stdio). Live trading is NOT exposed.")
     build_server().run()
 

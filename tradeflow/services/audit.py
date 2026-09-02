@@ -16,7 +16,7 @@ from typing import Any, Dict, Optional
 
 from tradeflow.engine.backtest import ACCOUNTING_VERSION
 from tradeflow.optimization.config_store import current_git_sha
-from tradeflow.settings import state_root
+from tradeflow.settings import state_root, trial_journal_path
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ DEFAULT_AUDIT_PATH = state_root() / "logs" / "mcp_audit.jsonl"
 #: indexes so multiple-testing counts can span a campaign, not one run.
 #: The research agent and CLI ``backtest``/``optimize`` all append here, so they must
 #: name the *same* file — see :data:`src.research.agent.DEFAULT_JOURNAL`.
-DEFAULT_TRIAL_JOURNAL = state_root() / "logs" / "research_journal.jsonl"
+DEFAULT_TRIAL_JOURNAL = trial_journal_path()
 
 #: Metrics denormalized onto a trial record — enough for the gates and the Deflated
 #: Sharpe without dumping the full metric block per config.
@@ -89,6 +89,7 @@ def journal_trial(
     *,
     strategy: str,
     symbols: Any,
+    candidate_symbols: Optional[Any] = None,
     start: Any,
     end: Any,
     params: Dict[str, Any],
@@ -152,6 +153,13 @@ def journal_trial(
         "symbols": sorted({str(s).upper() for s in symbols}),
         "window": {"start": _iso(start), "end": _iso(end)},
     }
+    if candidate_symbols:
+        # The list the universe was resolved *from*, so a config promoted out of this
+        # trial can offer a genuine re-resolution rather than a second filter over an
+        # already-filtered book. Omitted when absent: a trial that never recorded its
+        # candidates should read as incomplete, not as one whose universe was its own
+        # candidate list.
+        inputs["candidate_symbols"] = sorted({str(s).upper() for s in candidate_symbols})
     if objective:
         inputs["objective"] = objective
     result_summary = {k: metrics[k] for k in _TRIAL_METRICS if k in metrics}
@@ -266,3 +274,36 @@ def _safe(value: Any) -> Any:
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     return str(value)
+
+
+def universe_for_trial(trial_id: str, path: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+    """The universe a journaled trial ran on, read from the journal itself.
+
+    The trial store records a ``universe_hash``, not the symbols, so the store alone
+    cannot say what a trial traded. Read through to the journal rather than adding a
+    column: the store is passive and derived by contract, the journal is the source of
+    truth, and a trial written before candidates were recorded then reads as *less
+    complete* instead of being backfilled into looking more authoritative than it is.
+
+    Returns ``None`` when no journaled trial carries this id - which is different from
+    a trial whose journal line has no ``candidate_symbols``, and callers must keep the
+    two apart.
+    """
+    journal = Path(path or DEFAULT_TRIAL_JOURNAL)
+    if not journal.exists():
+        return None
+    for line in journal.read_text().splitlines():
+        try:
+            record = json.loads(line)
+        except ValueError:  # a torn final line loses one record, never the file
+            continue
+        if record.get("run_id") != trial_id or not str(record.get("tool", "")).startswith("trial:"):
+            continue
+        inputs = record.get("inputs") or {}
+        return {
+            "symbols": list(inputs.get("symbols") or []),
+            "candidate_symbols": list(inputs.get("candidate_symbols") or []) or None,
+            "strategy": inputs.get("strategy"),
+            "window": inputs.get("window") or {},
+        }
+    return None

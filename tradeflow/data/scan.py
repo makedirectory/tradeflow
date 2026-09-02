@@ -60,13 +60,25 @@ class ClientBarSource:
 def slice_to_as_of(frame: pd.DataFrame, as_of: datetime) -> pd.DataFrame:
     """Return only bars at or before ``as_of`` - the leakage guard.
 
-    Handles a tz-aware bar index against a possibly-naive ``as_of`` by localizing
-    the cutoff to the frame's timezone.
+    Aligns the cutoff to the frame in **both** directions. Handling only the aware
+    index / naive cutoff pair was enough while callers passed naive cutoffs, and
+    stopped being enough the moment the scanner began localizing its window
+    unconditionally: an aware cutoff against a naive index raised ``Invalid
+    comparison between dtype=datetime64[ns] and Timestamp`` on any provider whose
+    bar timestamps carry no zone - a frame this guard had always accepted.
+
+    Being the single seam means owning the whole coercion, not half of it. A naive
+    bar index is taken as UTC, the assumption
+    :func:`~tradeflow.utils.timeutils.localize_index_to_new_york` already makes about
+    a provider's timestamps.
     """
     if frame is None or frame.empty:
         return frame
     ts = pd.Timestamp(as_of)
     idx = frame.index
-    if isinstance(idx, pd.DatetimeIndex) and idx.tz is not None:
-        ts = ts.tz_localize(idx.tz) if ts.tzinfo is None else ts.tz_convert(idx.tz)
+    if isinstance(idx, pd.DatetimeIndex):
+        if idx.tz is not None:
+            ts = ts.tz_localize(idx.tz) if ts.tzinfo is None else ts.tz_convert(idx.tz)
+        elif ts.tzinfo is not None:
+            ts = ts.tz_convert("UTC").tz_localize(None)
     return frame.loc[idx <= ts]

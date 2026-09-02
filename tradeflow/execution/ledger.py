@@ -40,11 +40,84 @@ logger = logging.getLogger(__name__)
 
 #: Divergence classes. Named rather than boolean because the three mean genuinely
 #: different things to whoever has to act on them.
+#: The shape of a record written by this code. Stamped on every line.
+#:
+#: This file is append-only and has nothing behind it to rebuild from, so a record
+#: written badly is readable but not fixable, forever. Two compatibility decisions have
+#: already been improvised per-field - a fill's ``basis``, a decision's ``reason_code`` -
+#: and each cost a live session before it was noticed. A version is what stops the third
+#: being improvised too: a reader can ask what shape it is looking at rather than
+#: inferring it from which keys happen to be present.
+#:
+#: * **absent** - written before this existed. Fill quantities carry no ``basis`` and may
+#:   have been summed as if incremental when they were cumulative; sides were defaulted
+#:   to buy, so shorts were recorded long. Reported at reconciliation, never
+#:   reinterpreted, because those numbers cannot be recovered.
+#: * **1** - the current shape. Fills carry ``basis``, ``fill_price``, ``filled_at`` and
+#:   ``broker_fee``; intents carry ``decision_id`` and the order plan; decisions carry
+#:   ``reason_code``; adoptions are their own event.
+LEDGER_VERSION = 1
+
+#: What a recorded fill quantity measures. ``CUMULATIVE`` is the order's running
+#: total (what Alpaca reports); ``INCREMENTAL`` is this event's own shares.
+CUMULATIVE = "cumulative"
+INCREMENTAL = "incremental"
+
+
+def filled_quantity(fill_events: Iterable[Dict[str, Any]]) -> float:
+    """How much of one order actually filled, from its fill events.
+
+    The same rule :meth:`PositionLedger._replay` applies, in one place, because the
+    two had already diverged: a cumulative report is the whole truth about the order
+    so the last one wins, while incremental events each stand alone and sum. Reading
+    every fill as cumulative reported an order filled 3+3+2 as having filled 2, which
+    ``fill_summary`` then counted as a short fill against a submitted 8.
+
+    Records written before ``basis`` existed carry none, and are read the old way -
+    as cumulative - which is what they were.
+    """
+    total = 0.0
+    for event in fill_events:
+        qty = float(event.get("qty") or 0.0)
+        if event.get("basis") == INCREMENTAL:
+            total += qty
+        else:
+            total = qty
+    return total
+
+
 MISSING = "missing"  # we believe in a position the broker does not have
 UNEXPECTED = "unexpected"  # the broker holds something we never ordered
 QUANTITY_DRIFT = "quantity_drift"  # both agree it exists, at different sizes
 
 _LOCK = threading.Lock()
+
+
+def slippage_bps(side: Optional[str], reference_price, fill_price) -> Optional[float]:
+    """Adverse price movement between deciding and filling, in basis points.
+
+    Signed so that **positive is always worse**, whichever way the trade went: a buy
+    that paid more than the reference price and a sell that received less both come
+    out positive. An unsigned measure would let a good sell cancel a bad buy in any
+    average taken over it.
+
+    ``None`` when either price is missing — absent is not zero, and a fill with no
+    recorded price must not read as one that filled exactly on reference.
+    """
+    if not reference_price or fill_price is None:
+        return None
+    direction = 1.0 if str(side).lower() in {"buy", "long"} else -1.0
+    return direction * (float(fill_price) - float(reference_price)) / float(reference_price) * 10_000.0
+
+
+def _elapsed_ms(start: Optional[str], end: Optional[str]) -> Optional[float]:
+    """Milliseconds between two ISO timestamps, or None if either is missing."""
+    if not start or not end:
+        return None
+    try:
+        return (datetime.fromisoformat(end) - datetime.fromisoformat(start)).total_seconds() * 1000.0
+    except ValueError:
+        return None
 
 
 def default_ledger_path() -> Path:
@@ -116,16 +189,53 @@ class PositionLedger:
     # ------------------------------------------------------------------ #
     # Writing
     # ------------------------------------------------------------------ #
-    def record_intent(self, symbol: str, side: str, qty: float, order_id: Optional[str] = None) -> None:
-        """An order we submitted. Written at submission, before any fill is known."""
+    def record_intent(
+        self,
+        symbol: str,
+        side: str,
+        qty: float,
+        order_id: Optional[str] = None,
+        decision_id: Optional[str] = None,
+        plan: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """An order we submitted. Written at submission, before any fill is known.
+
+        ``decision_id`` and ``order_id`` are what make the lifecycle reconstructable:
+        the decision says what the strategy wanted, this says what was sent, and the
+        fills that follow carry the same ``order_id``. Without the pair, "what did we
+        expect, what did we submit, what did the broker do" is three separate guesses.
+        """
         self._append(
-            {"event": "intent", "symbol": symbol, "side": side, "qty": float(qty), "order_id": order_id}
+            {
+                "event": "intent",
+                "symbol": symbol,
+                "side": side,
+                "qty": float(qty),
+                "order_id": order_id,
+                "decision_id": decision_id,
+                **({"plan": plan} if plan else {}),
+            }
         )
 
     def record_fill(
-        self, symbol: str, side: str, qty: float, order_id: Optional[str] = None, status: str = "filled"
+        self,
+        symbol: str,
+        side: str,
+        qty: float,
+        order_id: Optional[str] = None,
+        status: str = "filled",
+        basis: str = CUMULATIVE,
+        fill_price: Optional[float] = None,
+        filled_at: Optional[str] = None,
+        broker_fee: Optional[float] = None,
     ) -> None:
-        """A fill (or partial fill) the broker reported."""
+        """A fill (or partial fill) the broker reported.
+
+        ``basis`` says what ``qty`` measures, and getting it wrong silently inflates
+        the book. Alpaca reports the order's *running total* on every partial fill and
+        again on the final fill, so summing those events counts the same shares
+        repeatedly - an order that filled 8 in three reports arrives as 21.
+        """
         self._append(
             {
                 "event": "fill",
@@ -134,6 +244,33 @@ class PositionLedger:
                 "qty": float(qty),
                 "order_id": order_id,
                 "status": status,
+                "basis": basis,
+                "fill_price": fill_price,
+                "filled_at": filled_at,
+                # Separate from the model's estimate on the intent. A paper venue
+                # reports no fees, and ``None`` there means "not reported", which is
+                # not the same as zero and must not be averaged as though it were.
+                "broker_fee": broker_fee,
+            }
+        )
+
+    def record_adoption(self, symbol: str, side: str, qty: float, source: str = "broker") -> None:
+        """A position found already open and taken over, at start-up or a resync.
+
+        A *baseline*, not a fill: it replaces whatever the ledger believed about the
+        symbol rather than adding to it, because the broker's holding at that moment
+        is the whole truth about it. Without this the durable record disagrees with
+        the very book the process just adopted - the engine resumes six positions and
+        reconciliation calls all six unexpected, which is the one situation where an
+        operator most needs the two to agree.
+        """
+        self._append(
+            {
+                "event": "adopt",
+                "symbol": symbol,
+                "side": side,
+                "qty": abs(float(qty)),
+                "source": source,
             }
         )
 
@@ -159,7 +296,7 @@ class PositionLedger:
         raises. A gap in the ledger is a visible reconciliation divergence, which
         is exactly the signal it exists to produce.
         """
-        record = {"ts": datetime.now(timezone.utc).isoformat(), **record}
+        record = {"ts": datetime.now(timezone.utc).isoformat(), "v": LEDGER_VERSION, **record}
         try:
             with _LOCK:
                 with self.path.open("a") as fh:
@@ -178,20 +315,155 @@ class PositionLedger:
         symbol netting to zero is dropped rather than recorded as a zero position —
         "flat" and "never traded" should look the same to a reconciliation.
         """
-        net: Dict[str, float] = {}
+        net, _ = self._replay()
+        return net
+
+    def _replay(self) -> tuple:
+        """``(net signed quantity per symbol, saw pre-basis fill records)``.
+
+        Cumulative fills are resolved to the **last** report per order rather than
+        summed, which makes the replay idempotent: a duplicated event, a stream
+        reconnect that repeats history, or a missed intermediate partial all land on
+        the same answer, because the broker's running total is already the whole truth
+        about that order.
+
+        Bracket legs fall out of this correctly without special-casing - the entry and
+        each protective leg carry their own order id, so a stop that fills nets against
+        the entry it closes.
+        """
+        by_order: Dict[str, Dict[str, Any]] = {}
+        #: symbol -> (sequence, quantity it was reset to). A close resets to zero; an
+        #: adoption resets to what the broker held. Both discard everything before.
+        reset: Dict[str, tuple] = {}
+        legacy = False
+        seq = 0
+
         for record in self._read():
             symbol = record.get("symbol")
             if not symbol:
                 continue
+            seq += 1
             event = record.get("event")
             if event == "close":
-                net[symbol] = 0.0
+                # A close zeroes the symbol, so only activity *after* it counts.
+                reset[symbol] = (seq, 0.0)
+            elif event == "adopt":
+                signed = abs(float(record.get("qty") or 0.0))
+                if str(record.get("side", "")).lower() in {"sell", "short"}:
+                    signed = -signed
+                reset[symbol] = (seq, signed)
             elif event == "fill":
+                basis = record.get("basis")
+                if basis is None:
+                    # Version and basis are checked separately on purpose: a record can
+                    # be current-shape and still lack a basis if a writer omitted it,
+                    # and that is as unreadable as a pre-version one.
+                    # Written before fill accounting distinguished the two, when the
+                    # side was defaulted as well. Counted the old way so a reconcile
+                    # still runs, and reported, because silently mixing the two would
+                    # produce a number with no meaning.
+                    legacy = True
                 signed = float(record.get("qty") or 0.0)
                 if str(record.get("side", "")).lower() in {"sell", "short"}:
                     signed = -signed
-                net[symbol] = net.get(symbol, 0.0) + signed
-        return {symbol: qty for symbol, qty in net.items() if abs(qty) > 1e-9}
+                order_id = record.get("order_id")
+                if basis == CUMULATIVE and order_id:
+                    by_order[str(order_id)] = {"symbol": symbol, "qty": signed, "seq": seq}
+                else:
+                    # Incremental, or no order id to collapse on: each event stands
+                    # alone, keyed uniquely so none overwrites another.
+                    by_order[f"#{seq}"] = {"symbol": symbol, "qty": signed, "seq": seq}
+
+        net: Dict[str, float] = {symbol: qty for symbol, (_, qty) in reset.items()}
+        for entry in by_order.values():
+            baseline_seq = reset.get(entry["symbol"], (0, 0.0))[0]
+            if entry["seq"] < baseline_seq:
+                continue  # superseded by a close or an adoption
+            net[entry["symbol"]] = net.get(entry["symbol"], 0.0) + entry["qty"]
+        return {s: q for s, q in net.items() if abs(q) > 1e-9}, legacy
+
+    # ------------------------------------------------------------------ #
+    # Execution quality
+    # ------------------------------------------------------------------ #
+    def lifecycles(self) -> List[Dict[str, Any]]:
+        """One row per submitted order: what was decided, sent, and filled.
+
+        The join the ledger exists to make possible — decision to intent by
+        ``decision_id``, intent to fill by ``order_id``. Derived here rather than
+        written at fill time so it is correct across a restart: a process that dies
+        between submitting and filling still has both halves on disk, and nothing in
+        the order path has to carry state to make the arithmetic work.
+        """
+        decisions: Dict[str, Dict[str, Any]] = {}
+        intents: Dict[str, Dict[str, Any]] = {}
+        fills: Dict[str, List[Dict[str, Any]]] = {}
+        for record in self._read():
+            event = record.get("event")
+            if event == "decision" and record.get("decision_id"):
+                decisions[record["decision_id"]] = record
+            elif event == "intent" and record.get("order_id"):
+                intents[record["order_id"]] = record
+            elif event == "fill" and record.get("order_id"):
+                fills.setdefault(record["order_id"], []).append(record)
+
+        rows = []
+        for order_id, intent in intents.items():
+            plan = intent.get("plan") or {}
+            decision = decisions.get(intent.get("decision_id")) or {}
+            order_fills = fills.get(order_id, [])
+            last = order_fills[-1] if order_fills else None
+            reference = plan.get("reference_price")
+            fill_price = last.get("fill_price") if last else None
+            rows.append(
+                {
+                    "order_id": order_id,
+                    "decision_id": intent.get("decision_id"),
+                    "symbol": intent.get("symbol"),
+                    "side": intent.get("side"),
+                    "submitted_qty": intent.get("qty"),
+                    "filled_qty": filled_quantity(order_fills),
+                    "reference_price": reference,
+                    "fill_price": fill_price,
+                    "slippage_bps": slippage_bps(intent.get("side"), reference, fill_price),
+                    "submitted_at": intent.get("ts"),
+                    "decided_at": decision.get("ts") or intent.get("ts"),
+                    "filled_at": last.get("filled_at") or last.get("ts") if last else None,
+                    "decision_to_fill_ms": _elapsed_ms(
+                        decision.get("ts") or intent.get("ts"),
+                        (last.get("filled_at") or last.get("ts")) if last else None,
+                    ),
+                    "n_fill_events": len(order_fills),
+                    "order_type": plan.get("order_type"),
+                    "time_in_force": plan.get("time_in_force"),
+                    "stop_loss": plan.get("stop_loss"),
+                    "take_profit": plan.get("take_profit"),
+                    "client_order_id": plan.get("client_order_id"),
+                    "cost_estimate": plan.get("cost_estimate"),
+                    "broker_fee": last.get("broker_fee") if last else None,
+                    "reason": decision.get("reason"),
+                }
+            )
+        return rows
+
+    def declines(self) -> List[Dict[str, Any]]:
+        """Decisions that produced no order, with the reason each gave."""
+        return [
+            record
+            for record in self._read()
+            if record.get("event") == "decision" and not record.get("allowed")
+        ]
+
+    def version_summary(self) -> Dict[str, int]:
+        """How many records of each shape this ledger holds.
+
+        A file that mixes shapes is the normal case for anything append-only, and the
+        counts are what let an operator decide whether to archive it rather than guess.
+        """
+        counts: Dict[str, int] = {}
+        for record in self._read():
+            key = str(record.get("v", "pre-version"))
+            counts[key] = counts.get(key, 0) + 1
+        return counts
 
     def _read(self) -> Iterable[Dict[str, Any]]:
         if not self.path.exists():
@@ -223,7 +495,15 @@ class PositionLedger:
         clock and must not scale its API usage with the universe.
         """
         checked_at = datetime.now(timezone.utc).isoformat()
-        expected = self.expected_positions()
+        expected, legacy = self._replay()
+        if legacy:
+            logger.error(
+                "This ledger contains fill records written before fill accounting "
+                "distinguished cumulative from incremental quantities, and those "
+                "records also defaulted every side to buy. Divergences below may be "
+                "artefacts of that. Archive %s and start a fresh ledger.",
+                self.path,
+            )
         try:
             positions = broker.list_positions() or []
         except Exception:  # noqa: BLE001 - an unreachable broker is not a divergence

@@ -101,6 +101,9 @@ class FoldResult:
     oos_metrics: Dict[str, float]
     oos_trades: int
     n_trials: int
+    #: Per-side realized performance for this fold's OOS window. Empty for a long-only
+    #: run, and betas are ``None`` unless the validator was given a benchmark.
+    oos_legs: Dict[str, Any] = field(default_factory=dict)
 
 
 def _concat_trades(frames: List[pd.DataFrame]) -> Optional[pd.DataFrame]:
@@ -144,6 +147,44 @@ class WalkForwardResult:
     def median_oos(self, key: str) -> float:
         values = [fr.oos_metrics.get(key, 0.0) for fr in self.folds]
         return float(np.median(values)) if values else 0.0
+
+    def excess_return_by_fold(self) -> List[float]:
+        """Each fold's OOS return less the benchmark's over the *same* steps.
+
+        A different question from the information ratio: a strategy can have a good
+        risk-adjusted ratio while losing to the benchmark outright, and a promotion
+        decision cares about both. Empty when no benchmark was supplied, which callers
+        must treat as unevaluated rather than as zero excess.
+        """
+        out: List[float] = []
+        for fold_result in self.folds:
+            metrics = fold_result.oos_metrics
+            if not metrics.get("benchmark_available"):
+                continue
+            out.append(
+                float(metrics.get("total_return", 0.0)) - float(metrics.get("benchmark_buy_hold_return", 0.0))
+            )
+        return out
+
+    def median_oos_excess_return(self) -> Optional[float]:
+        """Median per-fold excess return, or ``None`` when no fold could measure one."""
+        excess = self.excess_return_by_fold()
+        return float(np.median(excess)) if excess else None
+
+    def leg_beta_by_fold(self) -> Dict[str, List[Optional[float]]]:
+        """Each leg's beta, fold by fold.
+
+        A book that is neutral *on average* and directional *within* folds is a
+        different proposition from one that is neutral throughout, and an aggregate
+        cannot distinguish them - which is the same reason the benchmark prerequisite
+        takes a median across folds rather than a figure over the stitched curve.
+        """
+        out: Dict[str, List[Optional[float]]] = {}
+        for fold_result in self.folds:
+            for name, leg in (fold_result.oos_legs or {}).items():
+                if leg.get("trades"):
+                    out.setdefault(name, []).append(leg.get("beta"))
+        return out
 
     def median_efficiency(self) -> float:
         ratios = []
@@ -271,12 +312,27 @@ class WalkForwardValidator:
         force: bool = False,
         workers: Optional[int] = None,
         data_spec: Optional[Any] = None,
+        benchmark: Optional[str] = None,
+        position_limits: Optional[Dict[str, Any]] = None,
     ):
         self.strategy_class = strategy_class
+        #: The book a config says it will trade. `position_limits` is not a tunable
+        #: param, so constructing a candidate from its params alone silently drops it
+        #: and validates against the strategy class's declared defaults instead - a
+        #: config asking for eight positions was validated at one. Validation and
+        #: deployment then describe different books, which is the one thing a
+        #: walk-forward exists to rule out.
+        self.position_limits = position_limits
         self.data_client = data_client
         self.initial_capital = initial_capital
         self.seed = seed
         self.gates = gates
+        #: Scored per fold, then aggregated by median - the same shape as every other
+        #: fold statistic here. A benchmark figure over the stitched OOS curve would be
+        #: a second aggregation convention in one report, differing from its neighbours
+        #: most exactly when the folds disagree, which is when a reader needs it least
+        #: ambiguous.
+        self.benchmark = benchmark
         #: Charged on every simulated fill, in-sample and out. Gross-return validation
         #: systematically promotes turnover the strategy could not afford live.
         self.cost_model = cost_model
@@ -396,6 +452,23 @@ class WalkForwardValidator:
     # ------------------------------------------------------------------ #
     # Run
     # ------------------------------------------------------------------ #
+    def _make(self, params: Dict[str, Any], strategy_class=None):
+        """Construct a candidate and give it the book the config asked for.
+
+        `position_limits` is not a tunable param, so building from params alone drops
+        it. Applied after construction for the same reason `_strategy_from` does it in
+        the CLI: it does not go through PARAM_RANGES validation, and a strategy built
+        from defaults would otherwise keep the defaults the config exists to override.
+        """
+        cls = strategy_class or self.strategy_class
+        strategy = cls(dict(params))
+        if self.position_limits:
+            strategy.config["position_limits"] = {
+                **strategy.position_limits(),
+                **self.position_limits,
+            }
+        return strategy
+
     def run(
         self,
         symbols: List[str],
@@ -432,7 +505,7 @@ class WalkForwardValidator:
 
         # Prefetch the whole window once (plus warmup) and slice per fold.
         fetch_start = start - timedelta(days=warmup_days)
-        frames = self.data_client.get_bars(symbols, self.timeframe, fetch_start, end)
+        frames = self.data_client.get_bars(self._with_benchmark(symbols), self.timeframe, fetch_start, end)
         sliced = MarketDataClient(_PrefetchedProvider(frames))
 
         all_trial_sharpes: List[float] = []
@@ -449,8 +522,8 @@ class WalkForwardValidator:
             is_metrics = self._row_metrics(is_result)
             all_trial_sharpes.extend(self._trial_sharpes(is_result))
 
-            strategy = self.strategy_class(dict(is_result.best_params))
-            oos_metrics, oos_trades = self._oos_backtest(
+            strategy = self._make(is_result.best_params)
+            oos_metrics, oos_trades, oos_legs = self._oos_backtest(
                 strategy,
                 sliced,
                 symbols,
@@ -468,6 +541,7 @@ class WalkForwardValidator:
                     oos_metrics=oos_metrics,
                     oos_trades=int(len(oos_trades)),
                     n_trials=len(is_result.results),
+                    oos_legs=oos_legs,
                 )
             )
 
@@ -556,17 +630,25 @@ class WalkForwardValidator:
             holdout_days=0,
         )
         warmup_days = embargo
-        frames = self.data_client.get_bars(symbols, self.timeframe, start - timedelta(days=warmup_days), end)
+        frames = self.data_client.get_bars(
+            self._with_benchmark(symbols), self.timeframe, start - timedelta(days=warmup_days), end
+        )
         sliced = MarketDataClient(_PrefetchedProvider(frames))
 
         fold_results: List[FoldResult] = []
         oos_trade_frames: List[pd.DataFrame] = []
         for fold in folds:
-            is_result = BacktestEngine(cls(dict(params)), sliced, cost_model=self.cost_model).run(
+            is_result = BacktestEngine(self._make(params, cls), sliced, cost_model=self.cost_model).run(
                 symbols, fold.is_start, fold.is_end, self.initial_capital
             )
-            oos_metrics, oos_trades = self._oos_backtest(
-                cls(dict(params)), sliced, symbols, fold.oos_start, fold.oos_end, warmup_days, n_trials=1
+            oos_metrics, oos_trades, oos_legs = self._oos_backtest(
+                self._make(params, cls),
+                sliced,
+                symbols,
+                fold.oos_start,
+                fold.oos_end,
+                warmup_days,
+                n_trials=1,
             )
             oos_trade_frames.append(oos_trades)
             fold_results.append(
@@ -577,6 +659,7 @@ class WalkForwardValidator:
                     oos_metrics=oos_metrics,
                     oos_trades=int(len(oos_trades)),
                     n_trials=1,
+                    oos_legs=oos_legs,
                 )
             )
 
@@ -611,11 +694,14 @@ class WalkForwardValidator:
         cls = strategy_class or self.strategy_class
         warmup_days = embargo_days if embargo_days is not None else self.default_embargo_days()
         frames = self.data_client.get_bars(
-            symbols, self.timeframe, window_start - timedelta(days=warmup_days), window_end
+            self._with_benchmark(symbols),
+            self.timeframe,
+            window_start - timedelta(days=warmup_days),
+            window_end,
         )
         sliced = MarketDataClient(_PrefetchedProvider(frames))
-        metrics, _ = self._oos_backtest(
-            cls(dict(params)),
+        metrics, _, _ = self._oos_backtest(
+            self._make(params, cls),
             sliced,
             symbols,
             window_start,
@@ -648,15 +734,41 @@ class WalkForwardValidator:
         """
         fetch_start = oos_start - timedelta(days=warmup_days)
         result = BacktestEngine(strategy, client, cost_model=self.cost_model).run(
-            symbols, fetch_start, oos_end, self.initial_capital, trade_from=oos_start
+            symbols,
+            fetch_start,
+            oos_end,
+            self.initial_capital,
+            trade_from=oos_start,
+            benchmark=self.benchmark,
         )
         oos_trades = _filter_trades_from(result.trades, oos_start)  # belt and braces
         metrics = self._metrics_for_trades(
-            oos_trades, oos_start, oos_end, n_trials, var_of_trial_sr, equity=result.equity_curve
+            oos_trades,
+            oos_start,
+            oos_end,
+            n_trials,
+            var_of_trial_sr,
+            equity=result.equity_curve,
+            # The engine's own alignment, against the very curve being re-measured.
+            # Deriving a second one here would be a second chance to disagree.
+            benchmark_returns=result.benchmark_returns,
         )
-        return metrics, oos_trades
+        return metrics, oos_trades, result.legs
 
-    def _metrics_for_trades(self, trades, start, end, n_trials, var_of_trial_sr, equity=None):
+    def _with_benchmark(self, symbols):
+        """The universe plus the benchmark, which the folds fetch through a *prefetched*
+        provider and would otherwise have no bars for.
+
+        Missing it does not error - the engine warns and scores without a benchmark -
+        so the failure mode is a fold quietly reporting an information ratio of zero.
+        """
+        if not self.benchmark or self.benchmark in symbols:
+            return list(symbols)
+        return [*symbols, self.benchmark]
+
+    def _metrics_for_trades(
+        self, trades, start, end, n_trials, var_of_trial_sr, equity=None, benchmark_returns=None
+    ):
         """Metrics for a trade set, preferring a real portfolio curve when available.
 
         ``equity=None`` falls back to accumulating realized P&L, which is all that is
@@ -668,6 +780,11 @@ class WalkForwardValidator:
         if equity is None:
             equity = performance.build_equity_curve(trades, self.initial_capital)
             periods_per_year = TRADING_DAYS_PER_YEAR
+            # A rebuilt curve runs on a different clock (calendar days, not bars), so a
+            # series aligned to the engine's curve no longer lines up with it. Dropped
+            # rather than misaligned: a positional pairing that silently slips is worse
+            # than an absent benchmark, because it still produces a number.
+            benchmark_returns = None
         else:
             periods_per_year = self.timeframe.periods_per_year()
         final = self.initial_capital + (trades["pnl"].sum() if not trades.empty else 0.0)
@@ -682,6 +799,7 @@ class WalkForwardValidator:
             periods_per_year=periods_per_year,
             n_trials=n_trials,
             var_of_trial_sr=var_of_trial_sr,
+            benchmark_returns=benchmark_returns,
         )
 
     def _aggregate_oos(self, oos_trade_frames, folds, n_trials_total, var_trial_sr):
@@ -709,8 +827,8 @@ class WalkForwardValidator:
         final = self._optimize(opt, symbols, region_start, holdout_start, method, objective, max_evals)
         if not final.best_params:
             return None, None
-        strategy = self.strategy_class(dict(final.best_params))
-        metrics, _ = self._oos_backtest(
+        strategy = self._make(final.best_params)
+        metrics, _, _ = self._oos_backtest(
             strategy, client, symbols, holdout_start, holdout_end, warmup_days, n_trials=len(final.results)
         )
         return dict(final.best_params), metrics
@@ -797,8 +915,8 @@ class WalkForwardValidator:
         return {"base_sharpe": base, "max_sharpe_loss": float(worst_loss), "perturbed": details}
 
     def _oos_sharpe(self, client, symbols, params, fold, warmup_days) -> float:
-        strategy = self.strategy_class(dict(params))
-        metrics, _ = self._oos_backtest(
+        strategy = self._make(params)
+        metrics, _, _ = self._oos_backtest(
             strategy, client, symbols, fold.oos_start, fold.oos_end, warmup_days, n_trials=1
         )
         return metrics.get("sharpe_ratio", 0.0)
@@ -810,8 +928,8 @@ class WalkForwardValidator:
         the feed forward leaves results unchanged. A *clean* strategy's results
         change materially, so we **fail** when they don't.
         """
-        strategy = self.strategy_class(dict(best_params))
-        _, base_trades = self._oos_backtest(
+        strategy = self._make(best_params)
+        _, base_trades, _ = self._oos_backtest(
             strategy, client, symbols, fold.oos_start, fold.oos_end, warmup_days, n_trials=1
         )
 
@@ -823,8 +941,8 @@ class WalkForwardValidator:
                     df[col] = df[col].shift(-5)
             df.dropna(inplace=True)
         shifted_client = MarketDataClient(_PrefetchedProvider(shifted))
-        strategy2 = self.strategy_class(dict(best_params))
-        _, shifted_trades = self._oos_backtest(
+        strategy2 = self._make(best_params)
+        _, shifted_trades, _ = self._oos_backtest(
             strategy2, shifted_client, symbols, fold.oos_start, fold.oos_end, warmup_days, n_trials=1
         )
 

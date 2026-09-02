@@ -16,6 +16,7 @@ import pandas as pd  # noqa: E402
 from tests.fakes import make_ohlcv  # noqa: E402
 from tradeflow.data.store import ParquetBarStore  # noqa: E402
 from tradeflow.marketdata.base import MarketDataProvider  # noqa: E402
+from tradeflow.marketdata.timeframe import Timeframe  # noqa: E402
 from tradeflow.store.bars import BarCoverage, CachedMarketData, CacheMiss  # noqa: E402
 
 SYMBOLS = ["AAA", "BBB"]
@@ -31,6 +32,7 @@ class WindowedFakeProvider(MarketDataProvider):
         self.calls = []  # list of (symbol, start, end)
 
     def get_bars(self, symbols, timeframe, start, end):
+        assert isinstance(timeframe, Timeframe)
         start_ts = pd.Timestamp(start)
         end_ts = pd.Timestamp(end)
         out = {}

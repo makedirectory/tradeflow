@@ -323,6 +323,19 @@ class RecordingBroker(FakeBroker):
             return self._forced_positions
         return super().list_positions()
 
+    def get_position(self, symbol):
+        """Consistent with :meth:`list_positions`.
+
+        Forced positions used to be visible to the list call and invisible to the
+        single-symbol one, so a fake broker could report holding a symbol and deny
+        holding it in the same test. No real venue does that, and a fixture that
+        contradicts itself proves whatever the code under test happens to ask for.
+        """
+        self.calls.append(f"get_position:{symbol}")
+        if self._forced_positions is not None:
+            return next((p for p in self._forced_positions if p.symbol == symbol), None)
+        return super().get_position(symbol)
+
 
 class FakeTradeUpdate:
     """A broker trade update, shaped like the live path expects one."""

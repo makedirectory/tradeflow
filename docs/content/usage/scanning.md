@@ -6,13 +6,20 @@ title: Scanning the universe
 # Scanning the universe
 
 The scanner filters a list of *candidate* symbols down to the ones worth trading
-right now. It runs a `ScannerStrategy` over each symbol's recent bars and keeps
-those that produce an actionable scan signal.
+at a specific research clock. It runs a `ScannerStrategy` over each symbol's
+recent bars and keeps those that produce an actionable scan signal.
 
 ```bash
 make scan
 # or
 uv run python main.py scan --scanner volume --symbols NVDA,META,TSLA,AMD
+```
+
+Standalone scans default to wall-clock now. Pin them to a historical clock with
+`--as-of`:
+
+```bash
+uv run python main.py scan --scanner volume --symbols NVDA,META,TSLA,AMD --as-of 2024-06-01
 ```
 
 Example output:
@@ -29,12 +36,49 @@ The bundled `volume` scanner flags a symbol when its latest bar shows **unusuall
 high volume** (relative to its moving average) **and** a meaningful price move. It
 is pure pandas/numpy — see [Scanners](../engineering/scanners) for the internals.
 
+## Is the universe stable?
+
+A config records the universe its scanner **resolved**, not the scanner. So if the scan
+moves, the book a deployment gets is not the book that was validated — and no promotion
+gate would notice, because the gates never see the scan twice.
+
+```bash
+uv run python main.py scan --scanner volume --drift --as-of 2026-08-22
+```
+
+```
+=== Scanner drift (61 flagged at 2026-08-22) ===
+       clock  flagged  overlap  turnover
+         -1d       59       57      6.6%
+         -2d       62       55     19.7%
+         -5d       48       40     47.5%
+  Universe turnover peaks at 47.5% across these clocks.
+```
+
+Turnover is measured against the baseline universe, so "47.5%" reads as *this share of
+the universe I am comparing from is not in the other one*. A selection that turns over
+half its names across a week is a different object from one that is stable, and which
+you have decides how much a single validated run tells you.
+
+This needs no new machinery: `--as-of` already resolves a scanner at an arbitrary
+historical clock, so drift is that seam asked several times and differenced.
+
 ## How it feeds the other commands
 
-`backtest`, `live`, and `optimize` accept a `--scanner` option. When set, they run
-the scanner first and trade only the flagged symbols; if the scanner flags
-nothing, they fall back to the candidate list. Pass `--scanner none` to skip
-scanning and use the symbols as-is.
+`backtest`, `optimize`, `walkforward`, `research`, `cache warm` and `live` all accept
+a `--scanner` option. When set, they run the scanner first and trade only the flagged
+symbols; if the scanner flags nothing, they fall back to the candidate list. Pass
+`--scanner none` to skip scanning and use the symbols as-is.
+
+The historical commands resolve the scanner at `--end` by default, so a validation
+window does not mix in today's universe, and `--scan-as-of` pins a different scanner
+clock. **`live` is the exception, and deliberately so:** it resolves at wall-clock
+now, because a live book is selected from the universe as it stands, not as it stood
+at the end of some window. It therefore takes no `--scan-as-of`.
+
+Every scan reports the clock it resolved at, in the exchange zone — including the ones
+that resolved to "now", so a payload never leaves which universe it selected from as
+something to be inferred.
 
 ```bash
 uv run python main.py backtest --scanner none --symbols AAPL,MSFT --start 2024-01-02 --end 2024-04-01

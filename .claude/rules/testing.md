@@ -22,3 +22,18 @@ paths:
   the failure actually was.
 - **Cover both directions.** A guard that rejects the bad case must also accept the
   boundary case, or it is indistinguishable from one that rejects everything.
+- **Verify the test fails without the fix.** A test written after the fact usually
+  passes either way, and then proves only that the code runs. Revert the change, watch
+  it fail, restore it. Repeatedly in this project a green test has sat over a real
+  break: a total that was 20 whichever arrangement ran, a shutdown that "returned"
+  because an outer timeout cancelled the wait, sequential awaits that pass whatever a
+  lock does. If reverting is awkward, that is a signal the test is asserting the wrong
+  thing.
+- **Read the schema before writing against it.** Field names guessed from memory
+  compile, pass, and report a confident wrong answer — an invented cost key made the
+  model silently unconfigured, and `trades` instead of `total_trades` reported 0 for a
+  1952-trade run. Print the real object once; it costs a line.
+- **A parity point needs a test that compares the two.** Two tests that each pass do not
+  establish that two implementations agree — a parity bug looks exactly like two green
+  tests. Build the same thing both ways and assert equality. See
+  [parity points](parity-points.md) for the list of places this applies.

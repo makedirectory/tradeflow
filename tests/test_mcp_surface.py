@@ -15,6 +15,7 @@ from datetime import datetime
 import pytest
 
 from tests.fakes import FakeMarketData
+from tests.test_research import _VALID_CODE, _VALID_SCANNER_CODE
 from tradeflow.marketdata.client import MarketDataClient
 from tradeflow.mcp import server as mcp_server
 from tradeflow.mcp.server import EVIDENCE_GATED, EXPOSED_TOOLS, FORBIDDEN_TOOLS, JOURNALING_TOOLS
@@ -128,6 +129,52 @@ def test_the_leaderboard_tool_warns_in_its_own_description(built):
     assert "selection bias" in description
     assert "deflated" in description.lower()
     assert "n_trials" in description
+
+
+def test_run_scan_accepts_a_historical_as_of(built):
+    payload = _call(
+        built,
+        "run_scan",
+        scanner="volume",
+        symbols=SYMBOLS,
+        as_of="2024-06-01T16:00:00-04:00",
+    )
+
+    assert payload["as_of"] == "2024-06-01T16:00:00-04:00"
+    assert payload["candidates"] == SYMBOLS
+
+
+# --- draft strategy/scanner workflow ---------------------------------------
+def test_draft_validation_tools_return_contract_metadata(built):
+    strategy = _call(built, "validate_draft_strategy_code", code=_VALID_CODE)
+    scanner = _call(built, "validate_draft_scanner_code", code=_VALID_SCANNER_CODE)
+
+    assert strategy["valid"] is True
+    assert strategy["class_name"] == "GenStrat"
+    assert strategy["code_hash"]
+    assert scanner["valid"] is True
+    assert scanner["class_name"] == "GenScanner"
+
+
+def test_draft_walk_forward_runs_without_registering_source(built):
+    payload = _call(
+        built,
+        "run_draft_walk_forward",
+        code=_VALID_CODE,
+        symbols=SYMBOLS,
+        start=START.strftime("%Y-%m-%d"),
+        end=END.strftime("%Y-%m-%d"),
+        n_folds=2,
+        method="grid",
+        max_evals=1,
+        journal=False,
+    )
+
+    assert payload["strategy"].startswith("draft:GenStrat:")
+    assert payload["draft"]["journaled"] is False
+    assert payload["n_trials_total"] == 2
+    assert "gate_report" in payload
+    assert "GenStrat" not in mcp_server.registry.STRATEGIES
 
 
 # --- run_verdict parity -----------------------------------------------------
@@ -300,3 +347,28 @@ def test_the_server_entry_point_the_sdk_provides_still_exists():
     from mcp.server.fastmcp import FastMCP
 
     assert callable(FastMCP)
+
+
+def test_the_mcp_log_and_the_journal_name_a_draft_the_same_way(built):
+    """One hash, not two byte-identical ones.
+
+    The MCP layer logged a `code_hash` from its own copy of the digest while the
+    service journalled the trial under `draft:<ClassName>:<hash>` from another. They
+    agreed only for as long as nobody touched either, and what they name is how a
+    draft's calls are tied to the trials it spent.
+    """
+    payload = _call(
+        built,
+        "run_draft_walk_forward",
+        code=_VALID_CODE,
+        symbols=SYMBOLS,
+        start=START.strftime("%Y-%m-%d"),
+        end=END.strftime("%Y-%m-%d"),
+        n_folds=2,
+        method="grid",
+        max_evals=1,
+        journal=False,
+    )
+
+    assert payload["strategy"] == f"draft:GenStrat:{analysis.draft_code_hash(_VALID_CODE)}"
+    assert payload["draft"]["code_hash"] == analysis.draft_code_hash(_VALID_CODE)

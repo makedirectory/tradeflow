@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Any, ClassVar, Dict
 
 import pandas as pd
+import pytest
 
 from tests.fakes import FakeMarketData
 from tradeflow.marketdata.client import MarketDataClient
@@ -299,3 +300,276 @@ def test_git_sha_is_none_when_git_is_unavailable(monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     assert config_store.current_git_sha() is None
+
+
+# --- promotion prerequisites --------------------------------------------------
+def test_an_unevaluated_prerequisite_is_never_a_pass():
+    """The failure this whole block exists to avoid.
+
+    A cost curve nobody ran and a family too thin to test are both *unknown*. Rendering
+    unknown as green is how a candidate gets promoted on evidence that was never
+    gathered.
+    """
+    from tradeflow.analytics.performance import promotion_prerequisites
+
+    prereq = promotion_prerequisites()
+
+    assert prereq["ready"] is None
+    assert prereq["evaluated"] == 0
+    assert all(not check["evaluated"] and not check["passed"] for check in prereq["checks"].values())
+
+
+def test_a_family_of_two_is_reported_as_too_thin_rather_than_significant():
+    """Observed in a real run: K=2, p=0.002 - a striking p-value over a family so small
+    the test is arithmetic rather than evidence. It must not gate on that."""
+    from tradeflow.analytics.performance import promotion_prerequisites
+
+    prereq = promotion_prerequisites(
+        bootstrap={"family": {"available": True, "family_p": 0.002, "n_used": 2}}
+    )
+    family = prereq["checks"]["family_bootstrap"]
+
+    assert not family["evaluated"]
+    assert not family["passed"]  # a striking p-value still does not pass on K=2
+    assert "10 usable" in family["note"] and "2 available" in family["note"]
+
+
+def test_a_family_large_enough_is_gated_on_its_p_value():
+    """And once there is enough family, both directions bite."""
+    from tradeflow.analytics.performance import promotion_prerequisites
+
+    strong = promotion_prerequisites(
+        bootstrap={"family": {"available": True, "family_p": 0.002, "n_used": 12}}
+    )
+    weak = promotion_prerequisites(bootstrap={"family": {"available": True, "family_p": 0.30, "n_used": 12}})
+
+    assert strong["checks"]["family_bootstrap"]["passed"]
+    assert not weak["checks"]["family_bootstrap"]["passed"]
+    assert weak["ready"] is False
+
+
+def test_cost_stress_must_clear_three_times_its_assumed_cost():
+    from tradeflow.analytics.performance import promotion_prerequisites
+
+    assert promotion_prerequisites(cost_stress={"survives_to_multiple": 5.0})["ready"] is True
+    assert promotion_prerequisites(cost_stress={"survives_to_multiple": 1.0})["ready"] is False
+
+
+def test_ready_never_implies_the_unevaluated_checks_would_have_passed():
+    """The exact shape of a real run: cost stress clears at 5x, family is too thin.
+
+    `ready` is True because every *evaluated* check passed, and the count has to travel
+    with it or it reads as a full clearance.
+    """
+    from tradeflow.analytics.performance import promotion_prerequisites
+
+    prereq = promotion_prerequisites(
+        cost_stress={"survives_to_multiple": 5.0},
+        bootstrap={"family": {"available": True, "family_p": 0.002, "n_used": 2}},
+    )
+
+    assert prereq["ready"] is True
+    assert prereq["evaluated"] == 1 and prereq["total"] > 1
+    assert prereq["evaluated"] < prereq["total"]  # and the caller must say so
+
+
+def test_prerequisites_are_not_the_promotion_gates():
+    """`promotable` stays statistical and keeps meaning for every trial already
+    recorded; nothing here touches it."""
+    from tradeflow.analytics.performance import DEFAULT_PREREQUISITES
+    from tradeflow.optimization.walk_forward import DEFAULT_GATES
+
+    assert not set(DEFAULT_PREREQUISITES) & set(DEFAULT_GATES)
+
+
+def test_the_benchmark_check_is_a_median_across_folds():
+    """Per fold, then median - the same shape as every other fold statistic here.
+
+    A figure over the stitched OOS curve would be a second aggregation convention in
+    one report, differing from its neighbours most exactly when the folds disagree. In
+    a real run they disagreed a lot: per-fold IRs of [0.13, -1.25, 2.10].
+    """
+    from datetime import datetime
+
+    from tests.fakes import FakeMarketData
+    from tradeflow.marketdata.client import MarketDataClient
+    from tradeflow.optimization.walk_forward import WalkForwardValidator
+    from tradeflow.services.registry import STRATEGIES
+
+    symbols = ["AAA", "BBB"]
+    client = MarketDataClient(FakeMarketData([*symbols, "SPY"], n=600, freq="1D"))
+
+    scored = WalkForwardValidator(
+        STRATEGIES["ma_crossover"], client, initial_capital=100_000, benchmark="SPY"
+    ).run(symbols, datetime(2024, 1, 2), datetime(2025, 6, 1), n_folds=3, method="grid", max_evals=2)
+
+    assert all(fold.oos_metrics["benchmark_available"] for fold in scored.folds)
+    per_fold = [fold.oos_metrics["information_ratio"] for fold in scored.folds]
+    assert scored.median_oos("information_ratio") == pytest.approx(sorted(per_fold)[1])
+
+
+def test_without_a_benchmark_the_folds_say_so_rather_than_scoring_zero():
+    """The failure mode the prefetch bug produced: the benchmark was not in the fold's
+    sliced provider, so every fold reported an information ratio of 0.0 and nothing
+    distinguished that from a genuine zero."""
+    from datetime import datetime
+
+    from tests.fakes import FakeMarketData
+    from tradeflow.marketdata.client import MarketDataClient
+    from tradeflow.optimization.walk_forward import WalkForwardValidator
+    from tradeflow.services.registry import STRATEGIES
+
+    symbols = ["AAA", "BBB"]
+    client = MarketDataClient(FakeMarketData([*symbols, "SPY"], n=600, freq="1D"))
+
+    plain = WalkForwardValidator(STRATEGIES["ma_crossover"], client, initial_capital=100_000).run(
+        symbols, datetime(2024, 1, 2), datetime(2025, 6, 1), n_folds=3, method="grid", max_evals=2
+    )
+
+    assert not any(fold.oos_metrics["benchmark_available"] for fold in plain.folds)
+
+
+def test_a_benchmark_relative_prerequisite_needs_a_benchmark():
+    from tradeflow.analytics.performance import promotion_prerequisites
+
+    absent = promotion_prerequisites()["checks"]["benchmark_relative"]
+    beats = promotion_prerequisites(benchmark_ir=0.134)["checks"]["benchmark_relative"]
+    loses = promotion_prerequisites(benchmark_ir=-0.40)["checks"]["benchmark_relative"]
+
+    assert not absent["evaluated"] and not absent["passed"]
+    assert beats["evaluated"] and beats["passed"]
+    assert loses["evaluated"] and not loses["passed"]
+
+
+def test_leg_betas_are_kept_per_fold():
+    """Stability is the question an aggregate cannot answer.
+
+    A book that is neutral *on average* and directional *within* folds is a different
+    proposition from one neutral throughout - the same reason the benchmark
+    prerequisite takes a median across folds rather than a figure over the stitched
+    curve. The sign correctness itself is pinned at the backtest level, against a
+    symbol that tracks the benchmark; this asserts the per-fold plumbing carries it.
+    """
+    from datetime import datetime
+
+    from tests.fakes import FakeMarketData
+    from tradeflow.marketdata.client import MarketDataClient
+    from tradeflow.optimization.walk_forward import WalkForwardValidator
+    from tradeflow.services.registry import STRATEGIES
+
+    symbols = [f"S{i}" for i in range(6)]
+    client = MarketDataClient(FakeMarketData([*symbols, "SPY"], n=700, freq="1D"))
+
+    result = WalkForwardValidator(
+        STRATEGIES["volume_spike"], client, initial_capital=100_000, benchmark="SPY"
+    ).run(symbols, datetime(2024, 1, 2), datetime(2025, 9, 1), n_folds=3, method="grid", max_evals=2)
+
+    by_fold = result.leg_beta_by_fold()
+    assert set(by_fold) == {"long", "short"}  # volume_spike trades both sides
+    assert all(len(betas) == len(result.folds) for betas in by_fold.values())
+    assert all(fold.oos_legs for fold in result.folds)
+
+
+def test_a_long_only_walk_forward_reports_no_leg_split():
+    """Nothing to decompose, so nothing is claimed."""
+    from datetime import datetime
+
+    from tests.fakes import FakeMarketData
+    from tradeflow.marketdata.client import MarketDataClient
+    from tradeflow.optimization.walk_forward import WalkForwardValidator
+    from tradeflow.services.registry import STRATEGIES
+
+    symbols = ["AAA", "BBB"]
+    client = MarketDataClient(FakeMarketData([*symbols, "SPY"], n=600, freq="1D"))
+
+    result = WalkForwardValidator(
+        STRATEGIES["ma_crossover"], client, initial_capital=100_000, benchmark="SPY"
+    ).run(symbols, datetime(2024, 1, 2), datetime(2025, 6, 1), n_folds=3, method="grid", max_evals=2)
+
+    assert "short" not in result.leg_beta_by_fold()
+
+
+def _benchmarked_run(n_folds=3):
+    from datetime import datetime
+
+    from tests.fakes import FakeMarketData
+    from tradeflow.marketdata.client import MarketDataClient
+    from tradeflow.optimization.walk_forward import WalkForwardValidator
+    from tradeflow.services.registry import STRATEGIES
+
+    symbols = ["AAA", "BBB"]
+    client = MarketDataClient(FakeMarketData([*symbols, "SPY"], n=600, freq="1D"))
+    return WalkForwardValidator(
+        STRATEGIES["ma_crossover"], client, initial_capital=100_000, benchmark="SPY"
+    ).run(symbols, datetime(2024, 1, 2), datetime(2025, 6, 1), n_folds=n_folds, method="grid", max_evals=2)
+
+
+def test_excess_return_is_measured_against_the_same_steps():
+    """A different question from the information ratio: a strategy can hold a good
+    risk-adjusted ratio while losing to the benchmark outright, which is not something
+    to promote on."""
+    result = _benchmarked_run()
+
+    per_fold = result.excess_return_by_fold()
+    assert len(per_fold) == len(result.folds)
+    for fold_result, excess in zip(result.folds, per_fold):
+        metrics = fold_result.oos_metrics
+        assert excess == pytest.approx(metrics["total_return"] - metrics["benchmark_buy_hold_return"])
+
+
+def test_without_a_benchmark_excess_is_unmeasured_rather_than_zero():
+    """Zero excess and no benchmark are different facts, and only one of them is
+    evidence."""
+    from datetime import datetime
+
+    from tests.fakes import FakeMarketData
+    from tradeflow.marketdata.client import MarketDataClient
+    from tradeflow.optimization.walk_forward import WalkForwardValidator
+    from tradeflow.services.registry import STRATEGIES
+
+    symbols = ["AAA", "BBB"]
+    client = MarketDataClient(FakeMarketData([*symbols, "SPY"], n=600, freq="1D"))
+    plain = WalkForwardValidator(STRATEGIES["ma_crossover"], client, initial_capital=100_000).run(
+        symbols, datetime(2024, 1, 2), datetime(2025, 6, 1), n_folds=3, method="grid", max_evals=2
+    )
+
+    assert plain.excess_return_by_fold() == []
+    assert plain.median_oos_excess_return() is None
+
+
+def test_excess_and_ratio_are_separate_prerequisites():
+    """Passing one says nothing about the other, so they are two checks."""
+    from tradeflow.analytics.performance import promotion_prerequisites
+
+    # Good ratio, losing to the benchmark outright.
+    mixed = promotion_prerequisites(benchmark_ir=0.8, benchmark_excess_pct=-3.0)
+
+    assert mixed["checks"]["benchmark_relative"]["passed"]
+    assert not mixed["checks"]["benchmark_excess"]["passed"]
+    assert mixed["ready"] is False
+
+
+def test_fold_disagreement_is_reported_beside_the_median_that_hides_it(capsys):
+    """A median is what the prerequisite gates on, and a median is exactly where regime
+    failure hides: an observed run gave +0.25%, -2.02% and +3.18% - a positive median
+    over a five-point spread, and only one of those two numbers makes anyone look
+    closer."""
+    from tradeflow.cli import _print_fold_disagreement
+
+    result = _benchmarked_run()
+    _print_fold_disagreement(result)
+    printed = capsys.readouterr().out
+
+    assert "spread" in printed
+    assert "median" in printed
+    if any(value < 0 for value in result.excess_return_by_fold()):
+        assert "lost to the benchmark" in printed
+        assert "not a typical fold" in printed
+
+
+def test_disagreement_is_reported_not_gated():
+    """The median already gates. Nobody yet knows what "too much disagreement" is worth
+    failing a candidate over, so it is exposed rather than thresholded."""
+    from tradeflow.analytics.performance import DEFAULT_PREREQUISITES
+
+    assert not [name for name in DEFAULT_PREREQUISITES if "spread" in name or "disagree" in name]

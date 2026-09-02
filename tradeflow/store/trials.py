@@ -40,14 +40,16 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
-from tradeflow.settings import state_root
+from tradeflow.settings import state_root, trial_journal_path
 
 logger = logging.getLogger(__name__)
 
 #: Default trial-store location (gitignored, alongside the journal it indexes).
 DEFAULT_DB_PATH = state_root() / "logs" / "trials.db"
-#: Default journal location - kept in sync with ``tradeflow.services.audit.DEFAULT_TRIAL_JOURNAL``.
-DEFAULT_JOURNAL_PATH = state_root() / "logs" / "research_journal.jsonl"
+#: Default journal location. One definition in ``settings``, so this and
+#: ``services.audit.DEFAULT_TRIAL_JOURNAL`` cannot drift into indexing one file while
+#: writing another.
+DEFAULT_JOURNAL_PATH = trial_journal_path()
 
 #: Bump when the schema changes shape. On mismatch the store rebuilds from the
 #: journal rather than running migration code - the journal is the source of truth,
@@ -709,6 +711,7 @@ class TrialStore:
         window_end: Optional[Any] = None,
         accounting: Optional[int] = None,
         git_sha: Optional[str] = None,
+        require_trades: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """The most recent stored trial matching this exact
         ``(strategy, params, universe, window[, accounting])``, or ``None``.
@@ -743,6 +746,23 @@ class TrialStore:
             if git_sha is not None:
                 clauses.append("(git_sha IS NULL OR git_sha = ?)")
                 args.append(git_sha)
+            if require_trades:
+                # Never serve a trial that evaluated nothing. A run whose data fetch
+                # failed produces zero trades and zero everything, and is recorded like
+                # any other trial - so the next identical run is answered from it
+                # instead of being re-run, which is how one broken run poisons every
+                # repeat of itself.
+                #
+                # Opt-in, because "no trades" is only evidence of failure for a kind
+                # that trades. An `alpha` trial is a read-only forecast and never has
+                # any, and excluding those would be a second bug wearing the first
+                # one's clothes.
+                #
+                # The journal keeps the record either way - it is append-only and the
+                # attempt is a fact. This governs only whether it may stand in for a
+                # real answer. Falling back to a fresh run is always safe; serving an
+                # empty one never is.
+                clauses.append("IFNULL(oos_trades, 0) > 0")
             cur = self._conn.execute(
                 f"SELECT * FROM trials WHERE {' AND '.join(clauses)} ORDER BY ts DESC LIMIT 1", args
             )

@@ -19,6 +19,7 @@ from tradeflow.marketdata.session import SessionBarCache, session_client
 from tradeflow.marketdata.timeframe import Timeframe
 from tradeflow.services import analysis, audit
 from tradeflow.store.trials import TrialStore, db_path_for_journal
+from tradeflow.utils.timeutils import NEW_YORK
 
 # Six names, not three: the default weight cap can't fund a book from three, and
 # the information sampler needs a cross-section wide enough to correlate.
@@ -84,6 +85,11 @@ def test_one_universe_and_one_window_across_every_section():
 
     assert result["portfolio"]["as_of"] == END.isoformat()
     assert result["alphas"]["as_of"] == END.isoformat()
+    # The scan names its clock in the exchange zone rather than echoing the argument,
+    # so this is the same instant spelled differently - which is what the section has
+    # to agree on. Comparing the strings would make the section coherent only while
+    # every section happened to render a datetime the same way.
+    assert datetime.fromisoformat(result["scan"]["as_of"]) == NEW_YORK.localize(END)
     assert result["information"]["window"] == {"start": START.isoformat(), "end": END.isoformat()}
     # Every step scored the universe the scan resolved, not the candidate list and
     # not a universe of its own.
@@ -416,3 +422,64 @@ def test_provenance_identifies_the_code_even_without_a_git_repository(monkeypatc
 
     monkeypatch.setattr(config_store, "current_git_sha", lambda: "abc1234")
     assert analysis.code_version() == "abc1234"
+
+
+def test_the_provenance_line_does_not_claim_provider_access_it_cannot_vouch_for():
+    """It read "N of M bar requests hit the provider".
+
+    The number comes from the per-run bar memo: `fetches` counts requests that missed
+    it and reached the data client underneath. On an `--offline` run that client is
+    the local cache, so the line reported a network round trip on a run that made
+    none. Provenance is the one thing a reader cannot check for themselves, so
+    overstating where data came from is worse than saying nothing.
+    """
+    from tradeflow.analytics.reporting import _fetch_summary
+
+    summary = _fetch_summary({"requests": 12, "fetches": 3, "distinct": 3})
+
+    assert "provider" not in summary
+    assert "3" in summary and "12" in summary
+    assert _fetch_summary(None) == "not measured"
+
+
+def test_a_passing_gate_does_not_print_the_failure_that_did_not_happen():
+    """Reported from a real verdict: `[PASS] ir_above_noise ... realized IR inside its
+    own standard-error band is indistinguishable from zero`.
+
+    Every gate's note states the *failing* condition, so printing it beside a PASS
+    produced a line that contradicted its own verdict - and a reader who trusts the
+    prose over the mark reads a pass as a failure.
+    """
+    from tradeflow.analytics.reporting import _verdict_banner_lines
+
+    lines = _verdict_banner_lines(
+        {
+            "verdict": {
+                "summary": "mixed",
+                "checks": {
+                    "ir_above_noise": {
+                        "value": 1.78,
+                        "threshold": 0.62,
+                        "passed": True,
+                        "note": "realized IR inside its own standard-error band is indistinguishable from zero",
+                    },
+                    "ic_tstat": {
+                        "value": 0.4,
+                        "threshold": 2.0,
+                        "passed": False,
+                        "note": "IC t-stat below 2 is not distinguishable from luck",
+                    },
+                },
+            }
+        }
+    )
+    rendered = "\n".join(lines)
+
+    passing = next(line for line in lines if "ir_above_noise" in line)
+    assert "PASS" in passing
+    assert "indistinguishable" not in passing  # the failure text is not on the pass
+
+    # And the failing gate keeps its explanation, or the note would be useless.
+    failing = next(line for line in lines if "ic_tstat" in line)
+    assert "FAIL" in failing and "not distinguishable from luck" in failing
+    assert "1.78 vs 0.62" in rendered  # values still shown on a pass

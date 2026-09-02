@@ -210,6 +210,375 @@ that never ran, which is how a check silently stops being applied and nobody
 notices. Declined decisions are recorded precisely because they leave no other
 trace.
 
+## Preflight: the contract before the order path
+
+Every live run prints what it is about to do, before any order logic runs:
+
+```
+=== Live preflight ===
+  broker mode           PAPER
+  account               equity $100,000.00  cash $100,000.00
+  capital this run      $25,000.00
+  universe              40 symbols (replayed)
+  data feed             iex
+  max positions         8
+  max position size     $2,500.00
+  max gross exposure    0.8 (80% of capital = $20,000.00)
+  max net exposure      0.3 (30% of capital = $7,500.00)
+  max total risk        0.05 (5% of capital = $1,250.00)
+  min notional          $50.00
+  entries               re-affirmed
+  bar guards            on
+  reconcile every       300s
+  ledger                ~/.tradeflow/logs/positions.jsonl
+  journal               ~/.tradeflow/logs/research_journal.jsonl
+  halt state            ~/.tradeflow/logs/halts.json
+
+  warm-up coverage      40 of 40 symbols have history
+                        39 of 40 have the full 120-bar lookback (1 short)
+```
+
+Under `--preflight` the last line runs the **same warm-up the live path runs** and
+reports what came back, so the one number that decides whether a run is viable can be
+confirmed before dropping the flag. A lighter probe would not do: a preflight that
+fetches differently from the run it precedes confirms nothing about that run. It
+reports rather than refuses — the refusal belongs to the start path, and a preflight
+that raised would lose the rest of the contract it exists to print.
+
+Both counts are printed because presence is not sufficiency: a symbol can warm up with
+too few bars for its indicators to be valid, and a line counting only bars-or-not would
+read as a pass on a book that is not ready. A short warm-up still trades — it is a
+warning, not a refusal — so it is worth knowing which names are running on thin
+history before the flag comes off.
+
+`--preflight` prints it and exits without starting anything. It is printed on every run
+regardless, because a check you have to remember to ask for is one that gets skipped
+exactly when it matters.
+
+### `--capital` — what this run may deploy
+
+The two most important lines above are adjacent on purpose: a paper account arrives
+with whatever equity the venue handed out, and sizing against **that** trades a
+different book from the one that was validated. It does not merely flatter the result —
+it invalidates the execution telemetry, because fills, slippage and share rounding are
+all properties of a book at a size.
+
+`--capital` (or the `capital` a [saved config](walk-forward.md#reusing-a-saved-config)
+carries) caps what the sizer may use. It is a ceiling, never a claim: a $25,000 config
+on a $9,000 account deploys $9,000. Position limits expressed as fractions —
+`max_total_risk`, `max_gross_exposure` — are fractions of *that capital*, not of the
+account balance. Without it, sizing uses the whole account, which is the historical
+behaviour.
+
+### `--feed` — which market data this run reads
+
+The SDK's two halves default **differently**, and this is worth knowing before it bites:
+a historical request resolves to the full consolidated tape, while the live stream
+defaults to IEX alone. An account entitled to one and not the other warms up on nothing
+and then streams perfectly happily — which looks like an empty market, not a wrong feed.
+The symptom is `subscription does not permit querying recent SIP data` followed by
+`Fetched bars for 0/40 symbols`, and then a stream that connects.
+
+`--feed` (or `ALPACA_DATA_FEED`) pins **both** halves to one feed. Unentitled keys —
+most paper accounts on the free tier — generally need `--feed iex`.
+
+It is deliberately **unset by default, and must stay that way**. Pinning a feed
+globally would mean an entitled account silently reading a single venue, or a tape
+delayed by fifteen minutes, with nothing in the output to say so — the same class of
+failure inverted, and far more expensive on real money. The preflight prints
+`SDK default (full tape for history, IEX for the stream)` when nothing is pinned, so
+the mismatch is visible before it costs a session.
+
+### Refusing to start blind
+
+A run whose warm-up returned no history for **any** symbol now exits instead of
+streaming. Every indicator would start from nothing, and from inside the bar loop that
+is indistinguishable from a strategy that is not triggering — so the run looks healthy
+for as long as you let it go. The refusal names the likely feed cause and both
+remedies. `--allow-blind-start` overrides it.
+
+Partial warm-up is not treated as blind: one symbol without history is logged per
+symbol and counted in a summary line, but does not stop a book that is otherwise valid.
+
+### Stating the book limits for this run
+
+`--max-positions`, `--max-position-size`, `--max-gross-exposure`, `--max-total-risk`
+and `--min-notional` set the limits the live book is held to, overriding both the strategy's declared limits and any a saved
+config carries. They map one-to-one onto the preflight lines above, so what you typed
+and what the run will enforce can be compared directly.
+
+Only a flag you actually type applies. `--max-positions` carries a default, and letting
+an untyped default overrule a frozen config would silently shrink the very book the
+capital freeze exists to pin.
+
+`--max-gross-exposure` and `--max-net-exposure` are not interchangeable, and a
+long/short book wants both. Gross bounds long **plus** short; net bounds long **minus**
+short. A book that is $4,000 long and $4,000 short has $8,000 gross and $0 net; one
+that is $8,000 long has the same gross and $8,000 net, and only the second is a bet on
+direction. Bounded by gross alone, a long/short config is either throttled or unhedged
+and never neither.
+
+The net cap is judged on the **resulting** |net|, so an entry that moves the book
+toward flat is admitted even when the book is already over the cap — refusing a hedge
+for being a trade would leave the tilt it corrects in place. It bounds magnitude, so
+90% net short is capped exactly as 90% net long is. Off unless configured, like gross.
+
+Two limits are stated in different units on purpose. `--max-position-size` is a dollar
+ceiling on one position; `--max-gross-exposure` is a fraction of deployable capital, and
+the preflight prints the dollars it works out to, because the fraction on its own is the
+one number that cannot be sanity-checked by eye. A per-position ceiling larger than the
+whole book is marked as not binding rather than printed as though somebody chose it.
+
+**`--max-weight` is not one of these.** It is the largest weight the
+[allocator](portfolio.md) may give one name, so it does nothing without `--portfolio`.
+A run that types it without the allocator is refused rather than started, with the
+book-limit equivalent worked out for you — at `--capital 8000`, `--max-weight 0.15`
+is `--max-position-size 1200`. `--benchmark` is refused the same way without
+`--beta-sizing`: a flag that cannot reach anything stops the run instead of being
+parsed and discarded, which is what makes a preflight worth reading.
+
+### Real money must be said twice
+
+`PAPER_TRADE` defaults to `true`, which is the right default and precisely why the
+check exists: a default nobody set looks identical to a decision somebody made, right
+up until it is wrong. With `PAPER_TRADE=false`, `live` **refuses to start** unless
+`--live-money` also says so on the command line — two independent statements of the
+same intent, because one of them can be inherited from a shell nobody remembers
+exporting.
+
+### Stopping a session
+
+`Ctrl-C` and `SIGTERM` take the same path, and one of either is enough. That matters
+beyond the terminal: `SIGTERM` is what a supervisor, a container runtime and plain
+`kill` send, and a shutdown reachable only by a human at a keyboard does not exist
+under any of them.
+
+**No bound scheduled on the event loop can be trusted on its own.** Third-party code
+called from a coroutine can block the loop, and when that happens every loop-scheduled
+timeout fails at once — including the signal handlers themselves, which asyncio
+delivers as loop callbacks. That is not hypothetical: alpaca-py's synchronous
+`stream.stop()` submits a coroutine to the running loop and then blocks the calling
+thread waiting for it, so calling it from inside that loop deadlocks until its own
+timeout expires. Streams are therefore closed by awaiting the coroutine that wrapper
+wraps, and a daemon watchdog thread — armed the moment a stop begins — force-exits if
+shutdown has not completed in time. The watchdog is what makes "a stop signal always
+ends the process" true rather than usually true.
+
+A stream the drain gave up on is still a live object, and whatever collects it later —
+possibly at interpreter exit, after everything has been reported — asks for a loop that
+no longer exists. Python prints that as `Exception ignored in: ...`, which is alarming
+punctuation at the end of an orderly shutdown, so those two specific finalizer errors
+are dropped on the way out. Anything else still surfaces: suppressing more would hide
+genuine faults in objects that happen to be torn down late.
+
+Stopping is signal-driven rather than exception-driven. A bare `KeyboardInterrupt`
+unwinds from wherever the interpreter happened to be, which is not necessarily a point
+where the running coroutine's cleanup can finish; a loop signal handler delivers
+cancellation at an await instead, so every `finally` on the way out actually runs. A
+second signal restores the default handler, so an operator who wants out immediately
+still gets out immediately. The streams are cancelled and given a
+bounded moment to close; anything still running after that is reported as a count and
+the process exits regardless. The budget covers the session's own unwinding too, not
+only the tasks it started — a cleanup that blocks would otherwise hold the process
+open exactly as an unbounded wait did, one level further in. A shutdown that can hang is one people learn to interrupt
+twice, and the second interrupt lands during cleanup where it can interrupt anything.
+
+The exit reports what was held **from the ledger**, not from the strategy's in-memory
+book. That book is a cache the reconciliation sweep rebuilds wholesale, and a sweep
+landing between an entry's submission and its fill leaves it short a position — which
+is how a stop summary came to list seven positions on a run whose every reconciliation
+agreed with the broker at eight. The line names which source it read, because a count
+with no provenance is what made the wrong number credible.
+
+The exit does not claim anything about what it did not do. Nothing is flattened on the way out — positions stay open at the
+broker, and closing them is a decision, not a shutdown step.
+
+Paper runs are never asked to confirm anything. Making them would train the reflex the
+guard depends on you not having.
+
+## One loop, one order at a time
+
+The broker SDK is synchronous, and a single entry makes several blocking HTTP round
+trips. Those run in a worker thread rather than on the event loop, because running them
+inline stalls everything else the loop is carrying: other symbols that signalled on the
+same bar, the trade-update stream that delivers fills, and the reconciliation sweep.
+
+There is still exactly one loop and one order at a time. Everything that reads the
+position book and then acts on it — entries, and the reconciliation sweep that replaces
+the book wholesale — is serialized behind a single semaphore. That is a correctness
+requirement, not a performance one: two entries checking the book at once can both pass
+a gross-exposure limit that only one of them fits inside, and a book assembled in a
+different order from the signals that produced it is not the book that was validated.
+
+The threads exist only to keep blocking I/O off the loop. The trade clock's determinism
+comes from doing one thing at a time, and that has not changed.
+
+## What the ledger counts
+
+The ledger replays fills to a per-symbol expectation and reconciles it against the
+broker, which is always authoritative. Two properties of that replay matter, and both
+were wrong once:
+
+**A fill quantity is the order's running total, not this event's increment.** Alpaca
+re-reports the cumulative filled quantity on every partial fill and again on the final
+fill. Those events are therefore resolved to the **last** report per order id rather
+than summed — summing counts the same shares repeatedly, and an order that filled 8
+across three reports arrives as 21. Collapsing per order also makes the replay
+idempotent: a duplicated event, a stream reconnect that repeats history, or a missed
+intermediate partial all land on the same answer.
+
+**The side comes from the broker and is never defaulted.** A fill whose event carries
+no side is logged and dropped rather than guessed, because guessing records a short as
+a long and puts the ledger out by twice the position. A dropped record shows up as a
+visible divergence; a wrongly-signed one does not.
+
+Bracket legs need no special handling: the entry and each protective leg carry their
+own order id, so a stop that fills nets against the entry it closes.
+
+**A fill teaches the book, not just the ledger.** The same mistimed sweep that shortened
+the stop summary also left the strategy believing it was flat in a symbol it held — and
+a strategy that believes it is flat cannot emit an exit, so the position would have been
+closed only by its bracket legs. A fill now re-reads that one symbol from the broker and
+corrects the book. One symbol, on a fill: not a sweep, because this runs on the trade
+clock and must not scale with the universe.
+
+**A resumed session records what it adopted.** Start-up hydrates the strategy's book
+from the broker, and that adoption is written to the ledger as a *baseline* — it
+replaces whatever the ledger believed about the symbol rather than adding to it,
+because the broker's holding at that moment is the whole truth about it. Without it
+the durable record disagrees with the book the process just adopted, and the next
+sweep reports every resumed position as one nobody ordered, which is noise exactly
+where a real divergence has to stand out. Trading continues from the baseline
+normally: later fills add to it, and an exit nets against it.
+
+A ledger containing fill records written before this accounting existed is reported at
+reconciliation rather than silently reinterpreted — those records also defaulted every
+side to buy, so their numbers cannot be recovered. Archive the file and start fresh.
+
+## Execution quality
+
+The ledger records enough to reconstruct the whole life of an order: what the strategy
+decided, what was submitted, and what the venue did with it. `tradeflow
+execution-report` rolls that up; `--orders` lists every lifecycle, `--json` emits it
+whole. Both are read-only.
+
+```
+=== Execution quality ===
+  orders                2 submitted, 0 never filled, 0 ended short, 2 filled across several prints
+  notional              $458.73 submitted, $458.71 filled (100.0%)
+  slippage              2 of 2 fills measured
+                        median +4.3 bps, mean +4.3 bps  (positive = worse)
+                        worst +4.3 bps (BBB), best +4.2 bps
+  decision to fill      2 measured, median 1,845 ms, worst 2,239 ms
+  modelled cost         $0.16 over 2 orders (commission $0.05 + spread $0.11; excludes impact)
+  broker fees           $0.03 over 2 fills
+
+  Signals that produced no order:
+       4  gross_exposure_capped
+          e.g. gross exposure capped: $21,140.00 of $20,000.00
+       1  book_full
+          e.g. book is full: 8 of 8 positions already open
+```
+
+**There are no thresholds here, deliberately.** What counts as bad slippage for a given
+strategy is not knowable from one session, so this reports numbers and declines to grade
+them. Collect a few sessions first.
+
+How the numbers are built, and why:
+
+**Slippage is signed so positive is always worse.** A buy that paid above its reference
+price and a sell that received below it both come out positive. An unsigned measure would
+let a good sell cancel a bad buy in any average taken over it. The reference is the bar
+close the signal fired at — the price the strategy actually decided on.
+
+**The join is derived on read, not written at fill time.** Decision to intent by
+`decision_id`, intent to fill by `order_id`. A process that dies between submitting and
+filling still reconstructs, and nothing in the order path carries state to make the
+arithmetic work.
+
+**"Ended short" and "filled across several prints" are different facts.** An order that
+filled completely across a partial print and a final one is not a problem; one that ended
+short of what was asked for is. Counting only the second and calling it "partial" reports
+`0 partial` for a session where every order took several prints — true of the outcome and
+silent about the route.
+
+**Refusals written before codes existed are recognised by their message.** The ledger is
+append-only, so its history stays on disk; a report that grouped only the rows carrying a
+code would show one throttle as two — a tidy family beside a scatter of one-off messages
+saying the same thing. A message the map does not recognise keeps its own text rather
+than being forced into a family it may not belong to.
+
+**Refusals group by kind, not by message.** A message embeds the numbers that caused it —
+`gross exposure capped: $21,140.00 of $20,000.00` — so counting messages turns sixteen
+refusals of one kind into sixteen rows of one, which hides a throttle rather than showing
+it. Each family keeps one example, because the code alone does not say what the limit was
+or how far over the book had got.
+
+**A modelled cost is never added to an observed fee.** They are separate lines. A paper
+account reports no fees at all, and `None` there means "not reported" — not zero, and it
+must not be averaged as though it were.
+
+`live` takes `--gross`, `--commission-bps`, `--impact-eta` and `--borrow-bps`, the same
+flags the research commands take, and a saved config's `cost` block fills them in the
+same way. It prices nothing — the venue does that — but recording what the model
+*expected* a fill to cost beside what it actually cost is meaningless unless both sides
+came from the same parameters. The preflight prints them, marked `(recorded, not
+charged)`, because a cost model that silently was not configured is exactly what that
+line exists to catch.
+
+The estimate comes from the **same** cost model the research clock charges, built from the
+same `--commission-bps` / `--impact-eta` / `--borrow-bps` a config carries, so the
+modelled number in a live report is comparable with the one a backtest was judged on. A
+second, live-only cost formula would make that comparison meaningless in a way nobody
+would notice. Market impact is excluded and *said* to be excluded: it is a function of how
+much of a day's volume the order demands, and the trade clock has no ADV for a symbol at
+the moment it sizes one.
+
+**Every summary says what it could not measure.** A fill with no recorded price counts as
+unmeasured rather than as zero slippage, and the count leads the line so a tidy average
+over two of twenty fills cannot be read as a verdict. A fill timestamped before its own
+decision is reported as clock skew rather than as negative latency.
+
+## Portfolio limits are enforced live
+
+The `position_limits` in a strategy's config — `max_positions`, `max_total_risk`,
+`max_gross_exposure` — are checked against the whole book before every entry, under
+the `position_limits` guard. **This is newer than the rest of live trading.** Sizing
+clamps one position at a time and has no view of what is already open, so before
+this guard existed each entry could consume the entire risk budget on its own and
+nothing capped the count at all. A config validated in a backtest at five positions
+could run unbounded live, against a margin account whose buying power is a multiple
+of equity.
+
+Two things to know before your next run:
+
+- **The defaults now bite.** A strategy that declares no `position_limits` gets
+  `max_positions: 5` — the same default the backtest has always applied. If you are
+  running more names than that, set the limit to what you actually intend.
+- **A portfolio-weight deployment must reconcile its two caps, and `live` refuses to
+  start until it does.** `--portfolio` lets the [allocator](portfolio.md) choose the
+  book, but `position_limits.max_positions` still bounds what the book holds. When the
+  allocator funds more names than the book can hold, the surplus are funded and never
+  traded, and which ones survive is decided by signal arrival order rather than by the
+  allocation — so `live --portfolio` exits with both numbers and both remedies instead
+  of starting. Typing `--max-positions` now sets both, so the two cannot disagree; the
+  refusal still applies when the allocator's untyped default of `5` meets a smaller
+  limit declared by the strategy or a saved config. Every strategy shipped here
+  declares `max_positions: 1`, so a bare `live --portfolio` is one of the
+  configurations that gets refused: raise the declared limit or pass
+  `--max-positions 1`.
+
+Every refusal is logged with the numbers that caused it and recorded as a decision,
+so a limit that is quietly throttling a run is visible rather than inferred.
+
+The live count differs from the backtest's in two ways, both deliberate. It reads
+the strategy's position book — broker truth at start-up and at each reconciliation —
+rather than querying the broker per entry, because several symbols can signal on one
+bar and a round trip on each is exactly what the bar loop must not do. And it
+measures exposure at entry price rather than marking it, because the trade clock has
+no price for a symbol it is not currently handling. A book that has run up is
+carrying more market exposure than this counts.
+
 ## Stopping
 
 `Ctrl-C` stops the process, but it records nothing — restart the engine and it trades

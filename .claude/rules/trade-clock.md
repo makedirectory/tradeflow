@@ -9,6 +9,10 @@ paths:
 
 This is the only code that can lose money. Different rules apply.
 
+The separation costs something, and [cross-clock parity](cross-clock-parity.md) is how
+that cost is paid: the same idea is implemented twice, so a defect on one side is a
+defect on the other until checked.
+
 - **Import nothing from the research clock** — not `services/`, `analytics/`,
   `optimization/`, or `research/`. A structural test asserts this; keep it true.
 - **No vendor SDK above `tradeflow/brokers/`.** The broker layer is the only place

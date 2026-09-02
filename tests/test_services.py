@@ -6,6 +6,7 @@ audit log, and - critically - the safety wall (no live/order tool is exposed and
 the server refuses a non-data client).
 """
 
+import contextlib
 import json
 import re
 from datetime import datetime
@@ -13,6 +14,7 @@ from datetime import datetime
 import pytest
 
 from tests.fakes import FakeMarketData
+from tests.test_research import _VALID_CODE, _VALID_SCANNER_CODE
 from tradeflow.analytics.performance import FLAG_KEYS, METRIC_KEYS
 from tradeflow.marketdata.client import MarketDataClient
 from tradeflow.services import analysis, audit, glossary, registry
@@ -803,7 +805,10 @@ def test_walkforward_save_config_then_backtest_config_round_trips(monkeypatch, t
 
     backtest_trials = [t for t in _trials(journal) if t["tool"] == "trial:backtest"]
     assert len(backtest_trials) == 1
-    resolved = {k: v for k, v in backtest_trials[0]["resolved_config"].items() if k != "_cost"}
+    # Underscore-prefixed keys are the reserved assumption folds (`_cost`, `_limits`)
+    # that make up a run's dedup identity alongside its params. They are deliberately
+    # part of the recorded config and deliberately not part of the params round-trip.
+    resolved = {k: v for k, v in backtest_trials[0]["resolved_config"].items() if not k.startswith("_")}
     assert resolved == saved["params"]
 
 
@@ -855,3 +860,167 @@ def test_analysis_run_backtest_journals_a_trial_and_memoizes_a_repeat():
     result3 = analysis.run_backtest(_client(), "volume_spike", SYMBOLS, START, END, force=True)
     assert not result3.get("memoized")
     assert len(_trials(audit.DEFAULT_TRIAL_JOURNAL)) == 2
+
+
+# --- draft walk-forward journaling ------------------------------------------
+@contextlib.contextmanager
+def _store_that_will_not_open():
+    """What ``_open_trial_store`` yields when the memo DB cannot be opened."""
+    yield None
+
+
+def test_a_draft_run_is_journaled_even_when_the_trial_store_will_not_open(monkeypatch, tmp_path):
+    """The store is a derived memo cache; the journal is the campaign's own record.
+
+    Journaling used to be gated on the store, so a store that failed to open spent an
+    out-of-sample test without recording it - and the trial count the deflated Sharpe
+    rests on then under-counts, silently, which is the one number that must not.
+    """
+    monkeypatch.setattr(analysis, "_open_trial_store", _store_that_will_not_open)
+
+    payload = analysis.run_draft_walk_forward(
+        _client(), _VALID_CODE, SYMBOLS, START, END, n_folds=2, method="grid", max_evals=1
+    )
+
+    assert payload["strategy"].startswith("draft:GenStrat:")
+    assert payload["draft"]["journaled"] is True
+    assert "not_journaled_reason" not in payload["draft"]
+    recorded = [
+        t for t in _trials(tmp_path / "journal.jsonl") if t["inputs"]["strategy"] == payload["strategy"]
+    ]
+    assert len(recorded) == 1
+
+
+# --- draft entry points answer, never raise ---------------------------------
+_MALFORMED_STRATEGY = _VALID_CODE.replace(
+    '{"type": "float", "min": 0.0, "max": 0.05, "step": 0.01, "default": 0.01}', "0.01"
+)
+_MALFORMED_SCANNER = _VALID_SCANNER_CODE.replace(
+    '{"type": "float", "min": 0.0, "max": 5.0, "step": 0.5, "default": 0.5}', "0.5"
+)
+
+
+def test_draft_validators_return_a_verdict_for_a_malformed_param_spec():
+    """A bare spec value used to raise `TypeError: argument of type 'int' is not
+    iterable` out of tools whose only job is to say whether the code is usable."""
+    strategy = analysis.validate_draft_strategy_code(_MALFORMED_STRATEGY)
+    scanner = analysis.validate_draft_scanner_code(_MALFORMED_SCANNER)
+
+    for verdict, param in ((strategy, "threshold"), (scanner, "min_move")):
+        assert verdict["valid"] is False
+        assert verdict["error_kind"] == "invalid_draft"
+        assert param in verdict["error"]  # names what to fix, not just that it failed
+
+
+def test_a_draft_walk_forward_reports_a_rejection_instead_of_raising(tmp_path):
+    """This entry point guarded nothing at all, so even the anticipated rejection -
+    source that simply fails hygiene - came back as an exception rather than an
+    answer, from the one of the three draft tools that costs a trial to call.
+    """
+    payload = analysis.run_draft_walk_forward(
+        _client(), _MALFORMED_STRATEGY, SYMBOLS, START, END, n_folds=2, max_evals=1
+    )
+
+    assert payload["valid"] is False
+    assert payload["error_kind"] == "invalid_draft"
+    assert "threshold" in payload["error"]
+    # Nothing ran, so nothing may have been charged against the campaign's budget.
+    assert _trials(tmp_path / "journal.jsonl") == []
+
+
+def test_a_validator_that_breaks_does_not_blame_the_draft(monkeypatch):
+    """The two failures need opposite responses, so they cannot share one label.
+
+    Reporting a defect in the validator as `invalid_draft` sends an agent rewriting
+    source that was never the problem - and it would keep rewriting it.
+    """
+    from tradeflow.research import sandbox
+
+    def _explode(*args, **kwargs):
+        raise RuntimeError("validator fell over")
+
+    monkeypatch.setattr(sandbox, "load_strategy_from_code", _explode)
+    verdict = analysis.validate_draft_strategy_code(_VALID_CODE)
+
+    assert verdict["valid"] is False
+    assert verdict["error_kind"] == "validator_error"
+    assert "validator fell over" in verdict["error"]
+
+
+def test_valid_draft_source_is_still_accepted():
+    """The other direction: the guards must not reject everything."""
+    assert analysis.validate_draft_strategy_code(_VALID_CODE)["valid"] is True
+    assert analysis.validate_draft_scanner_code(_VALID_SCANNER_CODE)["valid"] is True
+
+
+# --- cost stress --------------------------------------------------------------
+def _stress(strategy, n_symbols, **kwargs):
+    symbols = [f"S{i}" for i in range(n_symbols)]
+    client = MarketDataClient(FakeMarketData([*symbols, "SPY"], n=500, freq="1D"))
+    return analysis.run_cost_stress(
+        client, strategy, symbols, datetime(2024, 1, 2), datetime(2025, 3, 1), capital=100_000.0, **kwargs
+    )
+
+
+def test_the_stress_curve_separates_robust_from_barely_profitable():
+    """The whole point: both of these are "profitable at 1bp" and are not the same.
+
+    One survives five times its assumed cost. The other clears by a hair at its own and
+    gives way quickly - which a single cost assumption reports as a pass, with no way to
+    tell how much of the result was the assumption.
+
+    This used to assert the fragile config went *negative* at twice its cost. Under
+    accounting v4 it does not, because part of what made it profitable at all was the
+    one-bar look-ahead the engine no longer grants. Hunting for a symbol count that
+    restores the sign flip would be fitting the fixture to synthetic noise; the
+    contrast the test exists for survives without it.
+    """
+    robust = _stress("ma_crossover", 4)
+    fragile = _stress("ma_crossover", 6)
+
+    # Both clear at their own assumed cost, and they are not the same proposition.
+    assert robust["points"][0]["total_return"] > 0
+    assert fragile["points"][0]["total_return"] > 0
+    assert robust["survives_to_multiple"] > fragile["survives_to_multiple"]
+    # The fragile one decays toward its own cost rather than shrugging it off.
+    assert fragile["points"][-1]["total_return"] < fragile["points"][0]["total_return"]
+
+
+def test_cost_rises_with_the_multiple():
+    """The curve has to actually scale what it says it scales."""
+    report = _stress("ma_crossover", 6)
+    costs = [point["total_cost"] for point in report["points"]]
+
+    assert costs == sorted(costs)
+    assert costs[-1] > costs[0]
+
+
+def test_the_borrow_axis_isolates_borrow():
+    """Worth asking separately because it is carry on inventory rather than a toll on
+    turnover — so a long-only book, which borrows nothing, must be flat under it while
+    the combined axis still bites."""
+    borrow_only = _stress("ma_crossover", 6, axis="borrow")
+    everything = _stress("ma_crossover", 6, axis="all")
+
+    assert len({point["total_cost"] for point in borrow_only["points"]}) == 1
+    assert len({point["total_cost"] for point in everything["points"]}) > 1
+
+
+def test_a_stress_curve_journals_nothing(tmp_path):
+    """Each point is one candidate under a stated assumption, not a new candidate.
+
+    Journaling them would inflate the multiple-testing total that the deflated Sharpe
+    deflates against — the campaign would punish a user for asking how robust their
+    strategy was.
+    """
+    _stress("ma_crossover", 6)
+
+    assert _trials(tmp_path / "journal.jsonl") == []
+
+
+def test_journaling_is_on_unless_a_caller_opts_out():
+    """A run that quietly does not count is how a campaign loses track of what it
+    tried, so the opt-out must never be the default."""
+    import inspect
+
+    assert inspect.signature(analysis.run_backtest).parameters["journal"].default is True

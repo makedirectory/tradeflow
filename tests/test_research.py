@@ -137,12 +137,81 @@ def test_sandbox_loads_valid_strategy_code():
     assert instance.config["timeframe"] == "1Day"
 
 
+_VALID_SCANNER_CODE = '''
+import pandas as pd
+from tradeflow.scanners.base import SCANNER_BUY, SCANNER_HOLD, ScannerStrategy
+
+class GenScanner(ScannerStrategy):
+    """Flags up bars. Hypothesis: attention follows simple upward pressure."""
+    TIMEFRAME = "1Day"
+    PARAM_RANGES = {"min_move": {"type": "float", "min": 0.0, "max": 5.0, "step": 0.5, "default": 0.5}}
+
+    def initialize(self):
+        pass
+
+    def process_data(self, data):
+        enriched = data.copy()
+        enriched["move"] = (enriched["close"] - enriched["open"]) / enriched["open"] * 100
+        return enriched
+
+    def generate_signals_df(self, data):
+        out = pd.DataFrame(index=data.index)
+        out["signal"] = SCANNER_HOLD
+        out["signal_strength"] = data["move"].abs()
+        out.loc[data["move"] > self.config["min_move"], "signal"] = SCANNER_BUY
+        return out
+'''
+
+
+def test_sandbox_loads_valid_scanner_code():
+    cls = sandbox.load_scanner_from_code(_VALID_SCANNER_CODE)
+    assert cls.__name__ == "GenScanner"
+    assert cls({}).config["min_move"] == 0.5
+
+
+def test_sandbox_requires_scanner_signal_strength():
+    bad = _VALID_SCANNER_CODE.replace('        out["signal_strength"] = data["move"].abs()\n', "")
+    with pytest.raises(sandbox.HygieneError):
+        sandbox.load_scanner_from_code(bad)
+
+
 def test_sandbox_blocks_disallowed_imports():
     # `os` is denied outright; the broker layer is a real module that is simply not
     # on the allowlist — generated code may reach the strategy base, never a venue.
     bad = "import os\nfrom tradeflow.brokers.base import Broker\n"
     with pytest.raises(sandbox.HygieneError):
         sandbox.load_strategy_from_code(bad)
+
+
+def test_a_malformed_strategy_param_spec_is_a_rejection_not_a_crash():
+    """`PARAM_RANGES = {"threshold": 0.01}` is what generated code actually writes.
+
+    Reading it raised a bare `TypeError` out of `ParameterSpace` - straight through
+    validators whose entire contract is to answer "is this valid?" with a verdict.
+    Every rejection has to leave the sandbox as a HygieneError or callers are left
+    enumerating the exception types its internals happen to use.
+    """
+    bad = _VALID_CODE.replace(
+        '{"type": "float", "min": 0.0, "max": 0.05, "step": 0.01, "default": 0.01}', "0.01"
+    )
+    with pytest.raises(sandbox.HygieneError, match="threshold"):
+        sandbox.load_strategy_from_code(bad)
+
+
+def test_a_malformed_scanner_param_spec_is_a_rejection_not_a_crash():
+    """Same defect on the scanner path, which reaches it twice - once in the spec
+    scan and again in `_defaults()` reading `spec["default"]`."""
+    bad = _VALID_SCANNER_CODE.replace(
+        '{"type": "float", "min": 0.0, "max": 5.0, "step": 0.5, "default": 0.5}', "0.5"
+    )
+    with pytest.raises(sandbox.HygieneError, match="min_move"):
+        sandbox.load_scanner_from_code(bad)
+
+
+def test_a_well_formed_param_spec_is_still_accepted():
+    """The other direction. A shape check that rejects every spec is not a check."""
+    assert sandbox.load_strategy_from_code(_VALID_CODE).__name__ == "GenStrat"
+    assert sandbox.load_scanner_from_code(_VALID_SCANNER_CODE).__name__ == "GenScanner"
 
 
 def test_sandbox_requires_docstring_and_caps_params():
@@ -435,3 +504,83 @@ def test_observer_sees_events_and_cannot_break_the_loop(tmp_path):
     result = agent.run(SYMBOLS, START, END)  # must not raise
     assert "session_start" in seen and "session_end" in seen
     assert result.rounds == 1
+
+
+# --- the validators must accept what this package already ships ---------------
+def _shipped_source(cls):
+    import inspect
+
+    return inspect.getsource(inspect.getmodule(cls))
+
+
+#: The one rejection a curated shipped strategy is allowed to draw. The tunable-param
+#: cap is deliberately stricter for an unreviewed draft than for code that went
+#: through review, and two shipped strategies declare six searchable params. Any
+#: *other* rejection means the validator is measuring itself.
+_DRAFT_ONLY_RULE = "searchable params"
+
+
+def test_every_shipped_strategy_satisfies_the_draft_contract():
+    """A fixture written to pass a validator proves nothing about the validator.
+
+    All three shipped strategies were rejected outright - they annotate their
+    PARAM_RANGES, and `typing` was not on the import allowlist, which grants no
+    capability and was never what the list is for. The suite stayed green because
+    every fixture had been hand-written to avoid the import.
+    """
+    from tradeflow.services.registry import BUILTIN_STRATEGIES
+
+    accepted = []
+    for name, cls in BUILTIN_STRATEGIES.items():
+        try:
+            sandbox.load_strategy_from_code(_shipped_source(cls), class_name=cls.__name__)
+            accepted.append(name)
+        except sandbox.HygieneError as exc:
+            assert _DRAFT_ONLY_RULE in str(exc), f"{name} rejected by the draft validator: {exc}"
+    assert accepted, "no shipped strategy passed at all — the contract itself is broken"
+
+
+def test_every_shipped_scanner_satisfies_the_draft_contract():
+    """Same rule for scanners, which is where the sample-size defect also lived."""
+    from tradeflow.services.registry import BUILTIN_SCANNERS
+
+    for name, cls in BUILTIN_SCANNERS.items():
+        try:
+            sandbox.load_scanner_from_code(_shipped_source(cls), class_name=cls.__name__)
+        except sandbox.HygieneError as exc:
+            raise AssertionError(f"shipped scanner {name} fails its own validator: {exc}") from exc
+
+
+def test_the_scanner_sample_is_long_enough_for_the_scanner_it_validates():
+    """It was a fixed five bars against a scanner needing eleven, so the frame the
+    contract was checked on was entirely warm-up."""
+    from tradeflow.services.registry import BUILTIN_SCANNERS
+
+    cls = BUILTIN_SCANNERS["volume"]
+    instance = cls({p: s["default"] for p, s in cls.PARAM_RANGES.items()})
+    instance.initialize()
+
+    sample = sandbox._scanner_sample(cls, instance)
+    assert len(sample) > instance.required_data_points()
+
+
+def test_the_signal_vocabulary_check_sees_actionable_labels():
+    """The check could not fail. On five bars a real scanner emits only HOLD, and
+    `{HOLD}` is a subset of the vocabulary — so a scanner emitting a bogus label once
+    its indicators warmed up would have passed."""
+    from tradeflow.services.registry import BUILTIN_SCANNERS
+
+    cls = BUILTIN_SCANNERS["volume"]
+    instance = cls({p: s["default"] for p, s in cls.PARAM_RANGES.items()})
+    instance.initialize()
+
+    sample = sandbox._scanner_sample(cls, instance)
+    emitted = set(instance.generate_signals_df(instance.process_data(sample))["signal"].dropna())
+    assert emitted - {"SCANNER_HOLD"}, f"sample only ever produced {emitted}"
+
+
+def test_a_scanner_emitting_an_unknown_label_is_rejected():
+    """The other direction: the check must be able to fail, not merely to pass."""
+    bad = _VALID_SCANNER_CODE.replace('out["signal"] = SCANNER_HOLD', 'out["signal"] = "MAYBE"')
+    with pytest.raises(sandbox.HygieneError, match="unknown scanner signals"):
+        sandbox.load_scanner_from_code(bad)

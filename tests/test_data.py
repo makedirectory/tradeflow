@@ -37,6 +37,38 @@ def test_slice_to_as_of_handles_naive_cutoff_on_tz_index():
     assert len(sliced) == 21
 
 
+def test_slice_to_as_of_handles_an_aware_cutoff_on_a_naive_index():
+    """The other direction, which used to raise.
+
+    Only the aware-index/naive-cutoff pair was aligned. That was enough until the
+    scanner began localizing its window unconditionally, at which point every
+    provider returning naive bar timestamps hit ``Invalid comparison between
+    dtype=datetime64[ns] and Timestamp`` on a frame this guard had always accepted.
+    A naive index is read as UTC, matching what the project assumes of a provider's
+    own timestamps.
+    """
+    naive = make_ohlcv(n=50, seed=0, freq="1D")
+    naive.index = naive.index.tz_convert("UTC").tz_localize(None)
+    cutoff = pd.Timestamp(naive.index[20], tz="UTC")
+
+    sliced = slice_to_as_of(naive, cutoff.to_pydatetime())
+
+    assert len(sliced) == 21
+    assert sliced.index.max() <= naive.index[20]
+
+
+def test_slice_to_as_of_reads_an_aware_cutoff_in_the_index_own_terms():
+    """A zone is a shift, not a label: the same instant expressed two ways must cut
+    at the same bar, or the guard silently keeps or drops a bar by hours."""
+    naive = make_ohlcv(n=50, seed=0, freq="1D")
+    naive.index = naive.index.tz_convert("UTC").tz_localize(None)
+    in_utc = pd.Timestamp(naive.index[20], tz="UTC")
+
+    assert len(slice_to_as_of(naive, in_utc.to_pydatetime())) == len(
+        slice_to_as_of(naive, in_utc.tz_convert("America/New_York").to_pydatetime())
+    )
+
+
 # --- panel -------------------------------------------------------------------
 def test_panel_set_aligns_to_universe_and_get_roundtrips():
     panel = FeaturePanel.for_universe(datetime(2024, 6, 1), ["AAA", "BBB"])

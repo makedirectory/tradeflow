@@ -21,9 +21,9 @@ convenience: see :meth:`LiveTrader.sync_strategy_book`.
 import logging
 import time
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
-from tradeflow.brokers.base import Broker, OrderSide, Position
+from tradeflow.brokers.base import AccountSnapshot, Broker, OrderSide, Position
 from tradeflow.brokers.errors import AuthenticationError, BrokerError, DuplicateOrderError
 from tradeflow.execution import decision as decisions
 from tradeflow.execution.decision import Decision
@@ -54,6 +54,8 @@ class LiveTrader:
         allow_fractional: bool = False,
         respect_market_hours: bool = True,
         halt_state: Optional[HaltState] = None,
+        capital: Optional[float] = None,
+        cost_model=None,
     ):
         self._broker = broker
         self._strategy = strategy
@@ -65,6 +67,16 @@ class LiveTrader:
         # portfolio-weight sizer to let the portfolio manager drive live sizing.
         self._sizer = sizer or RiskBasedSizer(strategy)
         self._allow_fractional = allow_fractional
+        #: The same cost model the research clock charges, so a modelled cost in a live
+        #: report is comparable with the one a backtest was judged on. ``None`` simply
+        #: means no estimate is recorded - never a zero cost.
+        self._cost_model = cost_model
+        #: How much of the account this strategy may deploy, or ``None`` for all of it.
+        #: A paper account arrives with whatever equity the venue gave it - typically far
+        #: more than the capital a config was validated at - and sizing against that
+        #: trades a different book from the one that was tested, which would invalidate
+        #: the execution telemetry the run exists to gather.
+        self._capital = capital
         self._respect_market_hours = respect_market_hours
         self._market_status_cache: Optional[tuple] = None  # (monotonic_ts, is_open)
 
@@ -108,6 +120,66 @@ class LiveTrader:
             }
         self._strategy.positions = book
         return len(book)
+
+    def _cost_estimate(self, qty: float, price: float) -> Optional[Dict[str, Any]]:
+        """What the cost model expects this entry to cost, decomposed.
+
+        The *same* model the research clock charges, constructed from the same
+        parameters a config carries, so the modelled number in a live report is
+        comparable with the one a backtest was judged on. A second, live-only cost
+        formula would make the comparison meaningless in a way nobody would notice.
+
+        Impact is deliberately absent: it is a function of how much of a day's volume
+        the order demands, and the trade clock has no ADV for a symbol at the moment it
+        sizes one. Rather than invent a participation figure, the estimate says which
+        components it contains. Recorded beside the broker's fee, never merged with it —
+        the model is a prediction, the fee an observation, and a paper venue reports no
+        fee at all.
+        """
+        if self._cost_model is None:
+            return None
+        from tradeflow.costs.base import Trade
+
+        cost = self._cost_model.cost(Trade(symbol="", shares=abs(qty), price=price, adv=0.0, daily_vol=0.0))
+        return {
+            "total": cost.commission + cost.spread_cost,
+            "commission": cost.commission,
+            "spread": cost.spread_cost,
+            # Named rather than reported as zero: unknown at this point in the loop.
+            "excludes": ["impact"],
+        }
+
+    def refresh_position(self, symbol: str) -> bool:
+        """Re-read one symbol from the broker and update the book. Returns True if held.
+
+        The book is a cache of broker state, rebuilt wholesale by
+        :meth:`sync_strategy_book` on a timer. Between sweeps it can be wrong in the
+        one direction that matters: an entry recorded at submission is erased by a
+        sweep that runs before the broker has materialised the position, and the fill
+        that follows updates the ledger but not the book. The strategy then believes it
+        is flat in a symbol it holds — and a strategy that believes it is flat cannot
+        emit an exit, so the position would be closed only by its bracket legs.
+
+        One call, for one symbol, on a fill. Not a sweep: this runs on the trade clock
+        and must not scale with the universe. Broker truth as usual — nothing here
+        infers a quantity from arithmetic.
+        """
+        position = self._broker.get_position(symbol)
+        if position is None or not position.qty:
+            self._strategy.positions.pop(symbol, None)
+            return False
+        side = signals.BUY if position.is_long else signals.SELL
+        stop_loss, take_profit = self._stop_levels(
+            position.avg_entry_price, OrderSide.BUY if position.is_long else OrderSide.SELL
+        )
+        self._strategy.positions[symbol] = {
+            "side": side,
+            "qty": position.qty,
+            "entry_price": position.avg_entry_price,
+            "stop_loss": stop_loss,
+            "take_profit": take_profit,
+        }
+        return True
 
     def handle_signal(
         self,
@@ -192,9 +264,15 @@ class LiveTrader:
             logger.error("Cannot size %s entry: account unavailable", symbol)
             return decisions.decline(symbol, signal, "account unavailable", tuple(guards))
 
+        # Size against the capital this strategy was given, not the account's whole
+        # balance. The affordability check below deliberately keeps using the *real*
+        # account: capital is how much of it may be deployed, buying power is what the
+        # venue will actually let through, and a cap must never make the second look
+        # larger than it is.
+        sizing_account = self._deployable(account)
         guards.append(decisions.SIZING)
         qty = round_quantity(
-            self._sizer.size(symbol, price, account),
+            self._sizer.size(symbol, price, sizing_account),
             allow_fractional=self._allow_fractional,
         )
         if qty <= 0:
@@ -214,6 +292,16 @@ class LiveTrader:
                 tuple(guards),
             )
 
+        guards.append(decisions.POSITION_LIMITS)
+        # The capped account here too: `max_total_risk` and `max_gross_exposure` are
+        # fractions *of equity*, and 5% of a paper account's balance is not 5% of the
+        # capital the config was validated at.
+        breach = self._limit_breach(symbol, qty, price, sizing_account, signal)
+        if breach is not None:
+            code, detail = breach
+            logger.warning("Refusing %s entry for %s: %s", signal, symbol, detail)
+            return decisions.decline(symbol, signal, detail, tuple(guards), code=code)
+
         side = _ENTRY_SIDE[signal]
         stop_loss, take_profit = self._stop_levels(price, side)
         logger.info(
@@ -227,6 +315,16 @@ class LiveTrader:
         )
         guards.append(decisions.BROKER)
         order_id = client_order_id(self._strategy, symbol, signal, bar_timestamp)
+        # Built before submission so a refusal still records what would have been sent.
+        plan = decisions.OrderPlan(
+            side=side.value,
+            qty=qty,
+            reference_price=price,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            client_order_id=order_id,
+            cost_estimate=self._cost_estimate(qty, price),
+        )
         try:
             order = self._broker.submit_bracket_order(
                 symbol, qty, side, stop_loss, take_profit, client_order_id=order_id
@@ -235,12 +333,12 @@ class LiveTrader:
             # Not a failure: the venue already holds this exact order. Resubmitting is
             # the one thing that must not happen, and the book should still reflect it.
             logger.info("Entry for %s already placed (order id %s); leaving it alone", symbol, order_id)
-            return decisions.decline(symbol, signal, "already placed at the broker", tuple(guards))
+            return decisions.decline(symbol, signal, "already placed at the broker", tuple(guards), plan)
         except BrokerError as exc:
             logger.error("Entry for %s refused: %s (%s)", symbol, exc, type(exc).__name__)
-            return decisions.decline(symbol, signal, f"broker refused: {exc}", tuple(guards))
+            return decisions.decline(symbol, signal, f"broker refused: {exc}", tuple(guards), plan)
         if order is None:
-            return decisions.decline(symbol, signal, "broker returned no order", tuple(guards))
+            return decisions.decline(symbol, signal, "broker returned no order", tuple(guards), plan)
 
         # Intent, not truth: the order is submitted, not filled. Recording it now is
         # what lets the strategy recognize its own position on the very next bar and
@@ -253,7 +351,7 @@ class LiveTrader:
             "stop_loss": stop_loss,
             "take_profit": take_profit,
         }
-        return decisions.allow(symbol, signal, f"entered {qty} @ ~${price:.2f}", tuple(guards), order)
+        return decisions.allow(symbol, signal, f"entered {qty} @ ~${price:.2f}", tuple(guards), order, plan)
 
     def _handle_exit(
         self,
@@ -325,6 +423,130 @@ class LiveTrader:
             is_open = True
         self._market_status_cache = (now, is_open)
         return is_open
+
+    def _deployable(self, account: AccountSnapshot) -> AccountSnapshot:
+        """The account as this strategy may use it, capped at its configured capital.
+
+        Returns the account untouched when no capital was set, so an unconfigured run
+        behaves exactly as before. Caps rather than replaces: a $8,000 config on an
+        account holding $3,000 may deploy $3,000, never the number written in the file.
+        """
+        if not self._capital:
+            return account
+        return AccountSnapshot(
+            cash=min(account.cash, self._capital),
+            equity=min(account.equity, self._capital),
+            buying_power=min(account.buying_power, self._capital),
+            portfolio_value=min(account.portfolio_value, self._capital),
+            trading_blocked=account.trading_blocked,
+        )
+
+    def _limit_breach(
+        self, symbol: str, qty: float, price: float, account, signal: Optional[str] = None
+    ) -> Optional[tuple]:
+        """The limit this entry would break as ``(code, detail)``, or ``None`` if it fits.
+
+        The code is a stable family and the detail carries the numbers. Reporting only
+        the detail makes every refusal look unique, because the amounts differ each time.
+
+        Sizing answers "how big should this position be?" one symbol at a time and
+        has no view of the book, so ``max_total_risk`` applied there caps a single
+        position against the *whole* budget - N open positions could each consume all
+        of it. The backtest enforces these across the book; live did not enforce them
+        at all, so a config validated at five positions and a 5% risk budget could run
+        unbounded against a margin account whose buying power is a multiple of equity.
+
+        Counted from the strategy's own position book rather than a fresh broker read.
+        That book is broker truth at start-up and at every reconciliation, and this
+        path runs inside the bar loop - a ``list_positions`` per entry would put a
+        broker round trip on a path several symbols can take on the same bar. Two
+        consequences, both deliberate:
+
+        * Exposure is measured at entry price, not marked. The trade clock has no
+          price for a symbol it is not currently handling, and inventing one is worse
+          than measuring at cost. A book that has run up is therefore carrying more
+          market exposure than this counts.
+        * Freshness is bounded by the reconciliation interval, not the bar. A position
+          this trader did not open is invisible until the next sync.
+
+        Reports and rejects; it never resizes an entry to fit.
+        """
+        limits = self._strategy.position_limits()
+        max_positions = limits.get("max_positions")
+        max_total_risk = limits.get("max_total_risk")
+        max_gross_exposure = limits.get("max_gross_exposure")
+        max_net_exposure = limits.get("max_net_exposure")
+        if not (max_positions or max_total_risk or max_gross_exposure or max_net_exposure):
+            return None
+
+        others = [p for held, p in self._strategy.positions.items() if held != symbol]
+
+        if max_positions and len(others) + 1 > max_positions:
+            return (
+                decisions.BOOK_FULL,
+                f"book is full: {len(others)} of {max_positions} positions already open",
+            )
+
+        if not (max_total_risk or max_gross_exposure or max_net_exposure):
+            return None
+
+        equity = account.equity
+        if equity <= 0:
+            return (
+                decisions.EQUITY_UNREADABLE,
+                f"cannot check portfolio limits against ${equity:,.2f} of equity",
+            )
+
+        held_notional = sum(abs(p["qty"]) * p["entry_price"] for p in others)
+        entry_notional = qty * price
+
+        if max_total_risk:
+            # Same accounting as the engine: notional x stop distance, one stop
+            # fraction for the whole strategy.
+            stop_pct = self._strategy.config["stop_loss"]
+            open_risk = held_notional * stop_pct
+            budget = equity * max_total_risk
+            if open_risk + entry_notional * stop_pct > budget:
+                return (
+                    decisions.RISK_BUDGET,
+                    f"risk budget exhausted: ${open_risk + entry_notional * stop_pct:,.2f} "
+                    f"of ${budget:,.2f} at a {stop_pct:.1%} stop",
+                )
+
+        if max_gross_exposure:
+            cap = equity * max_gross_exposure
+            if held_notional + entry_notional > cap:
+                return (
+                    decisions.GROSS_EXPOSURE,
+                    f"gross exposure capped: ${held_notional + entry_notional:,.2f} of ${cap:,.2f}",
+                )
+
+        if max_net_exposure:
+            # Gross bounds long + short and cannot see direction: a book inside a 90%
+            # gross cap can be entirely long. This bounds |long - short|.
+            #
+            # Sign comes from the recorded side, never from qty. The broker reports a
+            # short's quantity negative while an entry this trader records itself is
+            # positive, so reading the sign off qty would count adopted shorts and
+            # freshly opened ones with opposite signs.
+            held_net = sum(
+                (abs(p["qty"]) if p["side"] == signals.BUY else -abs(p["qty"])) * p["entry_price"]
+                for p in others
+            )
+            signed_entry = entry_notional if signal != signals.SELL else -entry_notional
+            projected = held_net + signed_entry
+            cap = equity * max_net_exposure
+            # Judged on the resulting |net|, so an entry that moves the book toward
+            # flat is admitted even from over the cap - refusing a hedge for being a
+            # trade would leave the tilt it corrects in place.
+            if abs(projected) > cap:
+                direction = "long" if projected > 0 else "short"
+                return (
+                    decisions.NET_EXPOSURE,
+                    f"net exposure capped: ${abs(projected):,.2f} net {direction} of ${cap:,.2f}",
+                )
+
+        return None
 
     def _stop_levels(self, entry_price: float, side: OrderSide) -> tuple[float, float]:
         """Compute (stop_loss, take_profit) prices from the strategy's config."""

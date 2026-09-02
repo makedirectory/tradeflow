@@ -6,7 +6,7 @@ and P&L exactly - independent of any indicator behavior.
 """
 
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import pandas as pd
 import pytest
@@ -31,9 +31,9 @@ _CONFIG = {
 class ScriptedStrategy(Strategy):
     PARAM_RANGES: Dict = {}
 
-    def __init__(self, per_bar_signals: List[str]):
+    def __init__(self, per_bar_signals: List[str], overrides: Optional[Dict] = None):
         self._signals = per_bar_signals
-        super().__init__(dict(_CONFIG))
+        super().__init__({**_CONFIG, **(overrides or {})})
 
     def calculate_required_lookback(self) -> int:
         return 1
@@ -80,22 +80,28 @@ def test_take_profit_exit():
 
 
 def test_stop_loss_exit():
+    # Bar 0 carries the BUY; bar 1 is the first bar that may act on it. A stop can only
+    # be hit by a bar the position was already open for, so the break comes on bar 2.
     rows = [
+        {"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1},
         {"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1},
         {"open": 99, "high": 100, "low": 89, "close": 92, "volume": 1},
     ]
-    result = _run(rows, [signals.BUY, signals.HOLD])
+    result = _run(rows, [signals.BUY, signals.HOLD, signals.HOLD])
     trade = result.trades.iloc[0]
     assert trade["exit_reason"] == "STOP_LOSS"
     assert trade["exit_price"] == pytest.approx(90) and trade["pnl"] == pytest.approx(-100)
 
 
 def test_signal_exit_at_open():
+    # The comment this test always carried is now true: the SELL on bar 1 closes the
+    # long at the *next* open, which is bar 2's.
     rows = [
+        {"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1},
         {"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1},
         {"open": 103, "high": 104, "low": 99, "close": 103, "volume": 1},
     ]
-    result = _run(rows, [signals.BUY, signals.SELL])  # SELL closes the long at next open
+    result = _run(rows, [signals.BUY, signals.SELL, signals.HOLD])
     trade = result.trades.iloc[0]
     assert trade["exit_reason"] == "SIGNAL"
     assert trade["exit_price"] == 103 and trade["pnl"] == 30
@@ -104,9 +110,10 @@ def test_signal_exit_at_open():
 def test_end_of_period_exit():
     rows = [
         {"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1},
+        {"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1},
         {"open": 101, "high": 103, "low": 99, "close": 105, "volume": 1},
     ]
-    result = _run(rows, [signals.BUY, signals.HOLD])  # never hits stop/take/exit
+    result = _run(rows, [signals.BUY, signals.HOLD, signals.HOLD])  # never hits stop/take/exit
     trade = result.trades.iloc[0]
     assert trade["exit_reason"] == "END_OF_PERIOD"
     assert trade["exit_price"] == 105 and trade["pnl"] == 50
@@ -120,9 +127,10 @@ def test_backtest_honors_injected_sizer():
 
     rows = [
         {"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1},
+        {"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1},  # the entry bar
         {"open": 108, "high": 112, "low": 107, "close": 111, "volume": 1},  # take-profit
     ]
-    strategy = ScriptedStrategy([signals.BUY, signals.HOLD])
+    strategy = ScriptedStrategy([signals.BUY, signals.HOLD, signals.HOLD])
     data_client = MarketDataClient(DictMarketData({"AAA": _frame(rows)}))
     sizer = PortfolioWeightSizer({"AAA": 0.5})  # 0.5 * equity(=100k) / price(100) = 500 shares
 
@@ -188,8 +196,8 @@ def test_one_bad_symbol_still_completes_the_run():
 # --------------------------------------------------------------------------- #
 # Portfolio accounting
 # --------------------------------------------------------------------------- #
-def _multi(frames: Dict[str, pd.DataFrame], per_bar_signals: List[str], capital=100_000):
-    strategy = ScriptedStrategy(per_bar_signals)
+def _multi(frames: Dict[str, pd.DataFrame], per_bar_signals: List[str], capital=100_000, overrides=None):
+    strategy = ScriptedStrategy(per_bar_signals, overrides)
     data_client = MarketDataClient(DictMarketData(frames))
     return BacktestEngine(strategy, data_client).run(
         sorted(frames), datetime(2024, 1, 2), datetime(2024, 1, 10), capital
@@ -339,3 +347,860 @@ def test_aligned_grid_keeps_the_timeframe_rate():
     )
     engine.run(["AAA", "BBB"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000)
     assert engine._step_periods_per_year == pytest.approx(engine._periods_per_year)
+
+
+# --------------------------------------------------------------------------- #
+# Risk budget vs. gross exposure
+# --------------------------------------------------------------------------- #
+#: Flat prices, so nothing stops or takes profit and every admitted position
+#: survives to the closing signal - the trade count is the admission count.
+_FLAT = [{"open": 100, "high": 100, "low": 100, "close": 100, "volume": 1}] * 3
+
+#: A 1% stop with a $20k notional cap risks $200 per position, so four positions
+#: spend $800 of budget while deploying $80k of notional against $100k of equity.
+_TIGHT_STOP = {
+    "stop_loss": 0.01,
+    "take_profit": 0.01,
+    "position_limits": {"max_positions": 4, "max_position_size": 20_000.0, "max_total_risk": 0.05},
+}
+
+
+def _four_names():
+    return {sym: _frame(_FLAT) for sym in ("AAA", "BBB", "CCC", "DDD")}
+
+
+def _limits(**changes):
+    return {**_TIGHT_STOP, "position_limits": {**_TIGHT_STOP["position_limits"], **changes}}
+
+
+def test_max_total_risk_does_not_bound_deployed_notional():
+    """The distinction the config docs turn on, asserted rather than described.
+
+    max_total_risk is loss-at-stop, so a tight stop buys a lot of notional for very
+    little of it. Here a 5% budget admits 80% of equity in notional - anyone reading
+    the fraction as an exposure cap is off by 16x.
+    """
+    result = _multi(_four_names(), ["BUY", "HOLD", "CLOSE_BUY"], overrides=_TIGHT_STOP)
+    notional = (result.trades["size"] * result.trades["entry_price"]).sum()
+    assert len(result.trades) == 4
+    assert notional == pytest.approx(80_000)
+    assert notional > 0.05 * result.initial_capital
+
+
+def test_max_total_risk_bounds_loss_at_stop():
+    """The budget it does enforce: $200 of risk per position against a $300 budget."""
+    result = _multi(_four_names(), ["BUY", "HOLD", "CLOSE_BUY"], overrides=_limits(max_total_risk=0.003))
+    assert len(result.trades) == 1
+
+
+def test_max_gross_exposure_caps_deployed_notional():
+    """The notional cap the risk budget is not: 45% of equity admits two $20k positions."""
+    result = _multi(_four_names(), ["BUY", "HOLD", "CLOSE_BUY"], overrides=_limits(max_gross_exposure=0.45))
+    notional = (result.trades["size"] * result.trades["entry_price"]).sum()
+    assert len(result.trades) == 2
+    assert notional == pytest.approx(40_000)
+
+
+def test_max_gross_exposure_is_off_by_default():
+    """Unset must change nothing - free cash stays the only bound on notional."""
+    baseline = _multi(_four_names(), ["BUY", "HOLD", "CLOSE_BUY"], overrides=_TIGHT_STOP)
+    explicit = _multi(_four_names(), ["BUY", "HOLD", "CLOSE_BUY"], overrides=_limits(max_gross_exposure=None))
+    assert len(explicit.trades) == len(baseline.trades) == 4
+    assert explicit.final_capital == pytest.approx(baseline.final_capital)
+
+
+def test_max_net_exposure_caps_a_one_directional_book():
+    """The gap gross could not see: four all-long entries sit inside any gross cap that
+    admits them, and are a wholly directional bet. 45% of equity admits two $20k longs.
+    """
+    result = _multi(_four_names(), ["BUY", "HOLD", "CLOSE_BUY"], overrides=_limits(max_net_exposure=0.45))
+    notional = (result.trades["size"] * result.trades["entry_price"]).sum()
+    assert len(result.trades) == 2
+    assert notional == pytest.approx(40_000)
+
+
+def test_max_net_exposure_is_off_by_default():
+    """Unset must change nothing — turning a directional cap on by default would
+    silently reshape every existing config's book."""
+    baseline = _multi(_four_names(), ["BUY", "HOLD", "CLOSE_BUY"], overrides=_TIGHT_STOP)
+    explicit = _multi(_four_names(), ["BUY", "HOLD", "CLOSE_BUY"], overrides=_limits(max_net_exposure=None))
+    assert len(explicit.trades) == len(baseline.trades) == 4
+    assert explicit.final_capital == pytest.approx(baseline.final_capital)
+
+
+class _SidedStrategy(ScriptedStrategy):
+    """Longs the cheap names and shorts the dear ones, so the book is genuinely mixed.
+
+    ScriptedStrategy emits one script for every symbol, which can only ever build a
+    one-directional book — the case where gross and net agree, and so the case that
+    cannot tell them apart.
+    """
+
+    def generate_signals(self, data: pd.DataFrame) -> Dict:
+        long = data["close"].iloc[0] < 150
+        script = ["BUY", "HOLD", "CLOSE_BUY"] if long else ["SELL", "HOLD", "CLOSE_SELL"]
+        return dict(zip(data.index, script))
+
+
+def _mixed_book(**limit_changes):
+    """Two names at $100 (long) and two at $200 (short). Risk-based sizing makes every
+    position the same notional, so the book is $80k gross and $0 net."""
+    cheap, dear = (
+        _frame(_FLAT),
+        _frame([{**row, **{k: row[k] * 2 for k in row if k != "volume"}} for row in _FLAT]),
+    )
+    frames = {"AAA": cheap, "BBB": cheap, "CCC": dear, "DDD": dear}
+    strategy = _SidedStrategy([], _limits(**limit_changes))
+    return BacktestEngine(strategy, MarketDataClient(DictMarketData(frames))).run(
+        sorted(frames), datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000
+    )
+
+
+def test_the_same_fraction_admits_a_balanced_book_that_gross_would_refuse():
+    """The two caps are not interchangeable, asserted rather than described.
+
+    The same 0.45 against the same four names: gross sees $80k and stops at two,
+    net sees the shorts cancel the longs and admits all four. A long/short config
+    bounded only by gross is either throttled or unhedged, never neither.
+    """
+    by_gross = _mixed_book(max_gross_exposure=0.45)
+    by_net = _mixed_book(max_net_exposure=0.45)
+
+    assert len(by_gross.trades) == 2
+    assert len(by_net.trades) == 4
+
+
+def test_a_net_cap_still_counts_shorts_by_magnitude():
+    """It bounds |long - short|, so an all-short book is capped exactly as an all-long
+    one is — 90% net short is as directional as 90% net long."""
+    result = _multi(_four_names(), ["SELL", "HOLD", "CLOSE_SELL"], overrides=_limits(max_net_exposure=0.45))
+
+    assert len(result.trades) == 2
+
+
+# --- the benchmark actually reaches the metrics -------------------------------
+def _bench_run(benchmark):
+    from tests.fakes import FakeMarketData
+    from tradeflow.services.registry import STRATEGIES
+
+    client = MarketDataClient(FakeMarketData(["AAA", "BBB", "SPY"], n=400, freq="1D"))
+    engine = BacktestEngine(STRATEGIES["ma_crossover"].create_with_defaults(), client)
+    return engine.run(
+        ["AAA", "BBB"], datetime(2024, 1, 2), datetime(2025, 1, 2), 100_000, benchmark=benchmark
+    )
+
+
+def test_a_supplied_benchmark_reaches_the_metrics():
+    """Reported from a real run: `--benchmark SPY` was accepted and the report still
+    said `(i) no benchmark` with beta 0, beside a Buy & Hold of 95.56%.
+
+    Both were true. Buy & Hold comes from the traded universe's own bars, while the
+    benchmark never reached the engine at all - `run()` had no parameter for one, so
+    `benchmark_returns` was always None and alpha/beta/IR were structurally zero.
+    """
+    result = _bench_run("SPY")
+
+    assert result.metrics["benchmark_available"] is True
+    assert result.metrics["beta"] != 0.0
+
+
+def test_no_benchmark_still_says_so():
+    """The other direction: the flag means something, so its absence must too."""
+    result = _bench_run(None)
+
+    assert result.metrics["benchmark_available"] is False
+    assert result.metrics["beta"] == 0.0
+    assert result.metrics["information_ratio"] == 0.0
+
+
+def test_the_benchmark_is_aligned_to_the_curve_positionally():
+    """The failure this had to avoid is silent, not loud.
+
+    The equity curve reaches the metrics as a bare list of floats, so its returns carry
+    a RangeIndex. A date-indexed benchmark would join to nothing, `dropna` would empty
+    it, and the regression would report a confident zero rather than raising.
+    """
+    import pandas as pd
+
+    from tests.fakes import FakeMarketData
+    from tradeflow.engine.backtest import _benchmark_returns
+
+    client = MarketDataClient(FakeMarketData(["SPY"], n=120, freq="1D"))
+    closes = client.get_bars(["SPY"], "1Day", datetime(2024, 1, 2), datetime(2024, 6, 1))["SPY"]["close"]
+    steps = list(closes.index[:20])
+
+    aligned = _benchmark_returns(closes, [None, *steps])
+
+    assert isinstance(aligned.index, pd.RangeIndex)  # positional, or it pairs with nothing
+    assert len(aligned) == len(steps)
+    assert aligned.notna().sum() >= len(steps) - 1
+
+
+def test_an_unfetchable_benchmark_degrades_instead_of_failing_the_run():
+    """A benchmark that cannot be loaded is a missing comparison, not a broken
+    backtest — but it must land as `benchmark_available: False` rather than as a
+    number scored against nothing."""
+    result = _bench_run("NOT_A_REAL_SYMBOL")
+
+    assert result.metrics["benchmark_available"] is False
+    assert result.metrics["total_return"] == _bench_run(None).metrics["total_return"]
+
+
+# --- two reporting fixes, both found by reading a real report ------------------
+def test_buy_and_hold_names_what_it_holds():
+    """It stayed 95.56% for both SPY and QQQ, which is how it surfaced.
+
+    `buy_hold_return` averages the *traded universe*, so it cannot move when the
+    benchmark does. The number was right and the label said only "Buy & Hold Return",
+    which reads as the benchmark's return to anyone who just passed `--benchmark`.
+    """
+    from tradeflow.analytics.reporting import format_backtest_report
+
+    rendered = format_backtest_report(
+        {"buy_hold_return": 95.56, "benchmark_buy_hold_return": 41.2, "benchmark_available": True},
+        4000.0,
+        4480.0,
+        title="t",
+    )
+
+    assert "Buy & Hold (universe)" in rendered
+    assert "Buy & Hold (benchmark)" in rendered
+    assert "Buy & Hold Return" not in rendered  # the ambiguous label is gone
+
+
+def test_the_two_buy_and_holds_differ_and_only_one_tracks_the_benchmark():
+    """The property the label now promises, asserted end to end rather than by name."""
+    from tests.fakes import FakeMarketData
+    from tradeflow.services.registry import STRATEGIES
+
+    client = MarketDataClient(FakeMarketData(["AAA", "BBB", "SPY", "QQQ"], n=400, freq="1D"))
+    engine = BacktestEngine(STRATEGIES["ma_crossover"].create_with_defaults(), client)
+
+    spy = engine.run(["AAA", "BBB"], datetime(2024, 1, 2), datetime(2025, 1, 2), 100_000, benchmark="SPY")
+    qqq = engine.run(["AAA", "BBB"], datetime(2024, 1, 2), datetime(2025, 1, 2), 100_000, benchmark="QQQ")
+
+    # The universe figure cannot move: it never looked at the benchmark.
+    assert spy.metrics["buy_hold_return"] == qqq.metrics["buy_hold_return"]
+    # The benchmark figure must, or it is measuring the same thing twice.
+    assert spy.metrics["benchmark_buy_hold_return"] != qqq.metrics["benchmark_buy_hold_return"]
+
+
+def test_treynor_is_suppressed_rather_than_unbounded_at_a_near_zero_beta():
+    """Reported as Treynor -262.22 beside a beta rendered "-0.00".
+
+    The guard was `beta == 0` exactly, so -0.0001 divided. Excess return *per unit of
+    beta* has no meaning for a book with no market exposure, and `--beta-sizing` puts
+    books in that regime deliberately - so this is the common case, not an edge one.
+    """
+    from tradeflow.analytics import metrics as m
+
+    returns = [0.001] * 250
+
+    assert m.treynor_ratio(returns, -0.0002) == 0.0
+    assert m.treynor_ratio(returns, 0.02) == 0.0
+    # And it still reports where beta is real, or the guard just deletes the metric.
+    assert m.treynor_ratio(returns, 0.9) != 0.0
+    assert m.treynor_ratio(returns, m.MIN_ABS_BETA_FOR_TREYNOR) != 0.0
+
+
+def test_a_suppressed_treynor_is_distinguishable_from_a_real_zero():
+    """0.0 is the established "unavailable" value for these metrics, so the flag is
+    what stops a suppressed ratio reading as a measured one. It fails independently of
+    `benchmark_available`: the benchmark here is present and fine."""
+    import pandas as pd
+
+    from tradeflow.analytics.performance import compute_backtest_metrics
+    from tradeflow.analytics.reporting import format_backtest_report
+
+    trades = pd.DataFrame({"pnl": [1.0, -0.5, 2.0]})
+    curve = [100.0 + i * 0.01 for i in range(300)]
+    flat_benchmark = pd.Series([0.0005] * (len(curve) - 1))  # near-zero covariance -> tiny beta
+
+    metrics = compute_backtest_metrics(trades, curve, 100.0, 103.0, {}, benchmark_returns=flat_benchmark)
+
+    assert metrics["benchmark_available"] is True
+    assert metrics["treynor_available"] is False
+    assert metrics["treynor_ratio"] == 0.0
+    assert "beta near zero" in format_backtest_report(metrics, 100.0, 103.0, title="t")
+
+
+# --- execution at small capital ----------------------------------------------
+def _small_account_run(capital, min_notional=None):
+    from tests.fakes import FakeMarketData
+    from tradeflow.services.registry import STRATEGIES
+
+    symbols = [f"S{i}" for i in range(8)]
+    client = MarketDataClient(FakeMarketData(symbols, n=300, freq="1D"))
+    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy.config["position_limits"] = {
+        **strategy.position_limits(),
+        "max_positions": 8,
+        "max_position_size": 50_000.0,
+        "min_notional": min_notional,
+    }
+    return BacktestEngine(strategy, client).run(symbols, datetime(2024, 1, 2), datetime(2024, 12, 1), capital)
+
+
+def test_share_rounding_drag_grows_as_the_account_shrinks():
+    """The thing that was invisible. Whole-share rounding just happened.
+
+    The same config drags a fraction of a percent at $100k and double digits at $500,
+    and nothing in the result said so - the equity curve was right while the reason for
+    it was unexplained. Asserted as a direction rather than a constant, because the
+    exact figures are a property of the fake feed.
+    """
+    big = _small_account_run(100_000.0).execution
+    small = _small_account_run(4_000.0).execution
+    tiny = _small_account_run(500.0).execution
+
+    assert big["rounding_drag_pct"] < small["rounding_drag_pct"] < tiny["rounding_drag_pct"]
+    assert big["positions_rounded_to_zero"] == 0
+    assert tiny["positions_rounded_to_zero"] > small["positions_rounded_to_zero"]
+
+
+def test_intended_and_filled_notional_are_both_reported():
+    """The gap is the point, so both sides of it have to be visible - a drag percentage
+    with no notional behind it cannot be checked."""
+    execution = _small_account_run(4_000.0).execution
+
+    assert execution["requested_notional"] > execution["filled_notional"] > 0
+    expected = (1 - execution["filled_notional"] / execution["requested_notional"]) * 100
+    assert execution["rounding_drag_pct"] == pytest.approx(expected)
+
+
+def test_a_min_notional_floor_refuses_orders_a_venue_would():
+    """Nothing modelled a venue minimum, so the backtest filled positions a real
+    account could not open - and validated a book that could not be traded."""
+    without = _small_account_run(4_000.0, min_notional=None)
+    with_floor = _small_account_run(4_000.0, min_notional=2_000.0)
+
+    assert without.execution["positions_below_min_notional"] == 0
+    assert with_floor.execution["positions_below_min_notional"] > 0
+    assert len(with_floor.trades) < len(without.trades)
+
+
+def test_the_default_leaves_the_floor_off():
+    """Absent is not zero: a config that never mentioned a venue minimum keeps the
+    behaviour it was validated under."""
+    from tradeflow.strategies.base import DEFAULT_POSITION_LIMITS
+
+    assert DEFAULT_POSITION_LIMITS["min_notional"] is None
+    assert _small_account_run(4_000.0).execution["positions_below_min_notional"] == 0
+
+
+def test_executability_is_judged_separately_from_the_edge():
+    """A verdict on whether the book can be traded at this capital, kept apart from
+    whether the edge was real - collapsing the two would make one number mean two
+    things and silently redefine `promotable` for every trial already recorded."""
+    from tradeflow.analytics.performance import execution_verdict
+
+    assert execution_verdict(_small_account_run(100_000.0).execution)["executable"] is True
+
+    failing = execution_verdict(_small_account_run(500.0).execution)
+    assert failing["executable"] is False
+    assert failing["reason"]
+    assert not failing["checks"]["rounding_drag"]["passed"]
+
+
+def test_nothing_attempted_is_not_the_same_as_passing():
+    """`executable: None` rather than True, or a run that never tried to open anything
+    would read as one that traded cleanly."""
+    from tradeflow.analytics.performance import execution_verdict
+
+    verdict = execution_verdict({})
+
+    assert verdict["executable"] is None
+    assert verdict["checks"] == {}
+
+
+def test_the_report_shows_the_gap_and_names_the_failing_check():
+    from tradeflow.analytics.reporting import format_backtest_report
+
+    result = _small_account_run(500.0)
+    rendered = format_backtest_report(result.metrics, 500.0, result.final_capital, execution=result.execution)
+
+    assert "Execution & cost" in rendered
+    assert "Intended notional" in rendered and "Filled notional" in rendered
+    assert "FAIL" in rendered and "rounding_drag" in rendered
+    assert "Not the book that was validated" in rendered
+
+
+def test_a_healthy_run_does_not_grow_an_execution_section():
+    """A diagnostic that always fires is one people learn to skip."""
+    from tradeflow.analytics.reporting import format_backtest_report
+
+    result = _small_account_run(100_000.0)
+    rendered = format_backtest_report(result.metrics, 100_000.0, result.final_capital, execution=None)
+
+    assert "Execution & cost" not in rendered
+
+
+def test_cost_is_judged_against_gross_profit_not_capital():
+    """The honest denominator, and the one the two disagree about.
+
+    The same dollar cost is unremarkable against a large gross return and fatal against
+    a small one. Measuring against capital would call a strategy that spent its entire
+    edge on commission "3% of capital in cost" and pass it.
+    """
+    from tests.fakes import FakeMarketData
+    from tradeflow.analytics.performance import execution_verdict
+    from tradeflow.costs.parametric import ParametricCostModel
+    from tradeflow.services.registry import STRATEGIES
+
+    symbols = [f"S{i}" for i in range(8)]
+    client = MarketDataClient(FakeMarketData(symbols, n=300, freq="1D"))
+
+    def share(bps):
+        strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+        strategy.config["position_limits"] = {
+            **strategy.position_limits(),
+            "max_positions": 8,
+            "max_position_size": 50_000.0,
+        }
+        result = BacktestEngine(strategy, client, cost_model=ParametricCostModel(commission_bps=bps)).run(
+            symbols, datetime(2024, 1, 2), datetime(2024, 12, 1), 100_000.0
+        )
+        return execution_verdict(result.execution)["checks"]["cost_share_of_gross"]
+
+    cheap, dear = share(1.0), share(60.0)
+
+    assert cheap["value"] < dear["value"]
+    assert not dear["passed"]
+
+
+def test_no_gross_profit_means_no_cost_ratio_rather_than_a_guessed_one():
+    """A ratio against a non-positive denominator is arithmetic, not a fact: there was
+    no edge for cost to eat, and reporting a number would imply there was."""
+    from tradeflow.analytics.performance import execution_verdict
+
+    verdict = execution_verdict(
+        {"positions_filled": 3, "gross_profit": -50.0, "total_cost": 20.0, "rounding_drag_pct": 0.0}
+    )
+
+    assert "cost_share_of_gross" not in verdict["checks"]
+    assert verdict["executable"] is True  # the checks that *could* run all passed
+
+
+def _breadth_run(max_positions, n_symbols=20):
+    from tests.fakes import FakeMarketData
+    from tradeflow.services.registry import STRATEGIES
+
+    symbols = [f"S{i}" for i in range(n_symbols)]
+    client = MarketDataClient(FakeMarketData(symbols, n=400, freq="1D"))
+    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy.config["position_limits"] = {
+        **strategy.position_limits(),
+        "max_positions": max_positions,
+        "max_position_size": 50_000.0,
+    }
+    return BacktestEngine(strategy, client).run(
+        symbols, datetime(2024, 1, 2), datetime(2025, 1, 2), 100_000.0
+    )
+
+
+def test_a_one_position_book_over_a_wide_universe_is_flagged():
+    """Every shipped strategy declares `max_positions: 1`.
+
+    So a backtest over a scanned universe of sixty names validates a book that holds
+    one position at a time, and nothing said so - measured here, a cap of 1 over twenty
+    candidates ever touches nine of them. The result is correct and describes a
+    different strategy from the one the user thinks they are testing.
+    """
+    from tradeflow.analytics.performance import execution_verdict
+
+    result = _breadth_run(1)
+    check = execution_verdict(result.execution)["checks"]["book_breadth"]
+
+    assert not check["passed"]
+    assert "1 of 20 candidates" in check["note"]
+    assert result.execution["symbols_traded"] < result.execution["universe_size"]
+
+
+def test_a_deliberately_concentrated_book_is_not_flagged():
+    """The check is "was the cap ever chosen", not "is the cap small".
+
+    Concentrating in the best five of twenty is a legitimate design, and a gate that
+    called it a defect would be one people learn to switch off.
+    """
+    from tradeflow.analytics.performance import execution_verdict
+
+    check = execution_verdict(_breadth_run(5).execution)["checks"]["book_breadth"]
+
+    assert check["passed"]
+
+
+def test_breadth_is_not_judged_on_a_single_name_universe():
+    """A one-position book over one candidate is the only book available, so there is
+    nothing to flag and a check that fired would be noise."""
+    from tradeflow.analytics.performance import execution_verdict
+
+    assert "book_breadth" not in execution_verdict(_breadth_run(1, n_symbols=1).execution)["checks"]
+
+
+# --- three verdicts, shown together --------------------------------------------
+def test_a_command_says_which_verdicts_it_did_not_assess():
+    """The fix for "a backtest replay reads as approved".
+
+    The three verdicts already never collapsed into one another, but each was printed
+    by a different command at a different moment, so nothing showed a reader all three.
+    A backtest can speak to execution and to nothing else, and saying so is the point -
+    an unknown rendered as a blank is an unknown a reader fills in optimistically.
+    """
+    from tradeflow.analytics.reporting import format_verdicts
+
+    rendered = "\n".join(format_verdicts(execution="PASS"))
+
+    assert "Execution viability" in rendered and "PASS" in rendered
+    assert "Statistical validation" in rendered and "not assessed here" in rendered
+    assert "walkforward" in rendered  # and names what would assess it
+    assert "Clearing one says nothing about the others" in rendered
+
+
+def test_the_three_verdicts_are_never_merged_into_one():
+    """Each carries its own answer; none is derived from another."""
+    from tradeflow.analytics.reporting import format_verdicts
+
+    rendered = "\n".join(
+        format_verdicts(statistical="FAIL - min_oos_sharpe", execution="PASS", evidence="2 of 3 evaluated")
+    )
+
+    assert "FAIL - min_oos_sharpe" in rendered
+    assert "PASS" in rendered
+    assert "2 of 3 evaluated" in rendered
+    assert "not assessed here" not in rendered
+
+
+def test_one_trial_reports_an_undeflated_sharpe_by_that_name():
+    """At one trial there is nothing to deflate against - the deflated Sharpe is
+    identically the probabilistic one, so the name promised a multiple-testing
+    correction that was never applied. The number was always right."""
+    import pandas as pd
+
+    from tradeflow.analytics.performance import compute_backtest_metrics
+    from tradeflow.analytics.reporting import format_backtest_report
+
+    curve = [100.0 + i * 0.01 for i in range(300)]
+    trades = pd.DataFrame({"pnl": [1.0, -0.5, 2.0]})
+
+    alone = compute_backtest_metrics(trades, curve, 100.0, 103.0, {}, n_trials=1)
+    campaign = compute_backtest_metrics(trades, curve, 100.0, 103.0, {}, n_trials=12)
+
+    assert alone["deflation_applied"] is False
+    assert campaign["deflation_applied"] is True
+    assert "Sharpe (undeflated)" in format_backtest_report(alone, 100.0, 103.0, title="t")
+    assert "Deflated Sharpe" in format_backtest_report(campaign, 100.0, 103.0, title="t")
+
+
+def test_the_undeflated_number_itself_is_unchanged():
+    """Only the label was wrong. Hiding or altering a correct number would be a
+    different defect."""
+    import numpy as np
+
+    from tradeflow.analytics.metrics import deflated_sharpe_ratio, probabilistic_sharpe_ratio
+
+    returns = np.random.default_rng(7).normal(0.0004, 0.01, 300)
+
+    assert deflated_sharpe_ratio(returns, 1) == pytest.approx(probabilistic_sharpe_ratio(returns))
+    # And a real campaign count still deflates, hard.
+    assert deflated_sharpe_ratio(returns, 50) < deflated_sharpe_ratio(returns, 1)
+
+
+# --- long/short legs, separately -----------------------------------------------
+def _tracking_feed(n=120):
+    """One symbol that tracks the benchmark exactly, so a leg beta's *sign* is
+    determinate rather than noise. Independent random walks would give both legs a beta
+    near zero and prove nothing about direction."""
+    import numpy as np
+
+    from tests.fakes import DictMarketData
+    from tradeflow.utils.timeutils import NEW_YORK
+
+    index = pd.date_range("2024-01-02", periods=n, freq="D", tz=NEW_YORK)
+    close = 100.0 * np.exp(np.cumsum(np.random.default_rng(3).normal(0, 0.01, n)))
+    frame = pd.DataFrame(
+        {
+            "open": close,
+            "high": close * 1.001,
+            "low": close * 0.999,
+            "close": close,
+            "volume": np.full(n, 1e6),
+        },
+        index=index,
+    )
+    return MarketDataClient(DictMarketData({"AAA": frame.copy(), "SPY": frame.copy()})), n
+
+
+def _one_sided_run(signal, n):
+    strategy = ScriptedStrategy(
+        [signal] + ["HOLD"] * (n - 2) + ["CLOSE_" + signal],
+        overrides={
+            "stop_loss": 0.9,
+            "take_profit": 0.9,
+            "position_limits": {"max_positions": 1, "max_position_size": 50_000.0, "max_total_risk": 1.0},
+        },
+    )
+    client, _ = _tracking_feed(n)
+    return BacktestEngine(strategy, client).run(
+        ["AAA"], datetime(2024, 1, 2), datetime(2024, 5, 1), 100_000.0, benchmark="SPY"
+    )
+
+
+def test_leg_betas_carry_the_sign_of_the_side():
+    """The number the whole diagnostic turns on.
+
+    A near-zero net beta is either genuinely small exposure on both sides or a large
+    long beta cancelling a large short one - the same figure and opposite risks. Only a
+    *signed* per-leg beta separates them, so the sign is asserted against a symbol that
+    tracks the benchmark exactly rather than against noise.
+    """
+    n = 120
+    long_beta = _one_sided_run("BUY", n).legs["long"]["beta"]
+    short_beta = _one_sided_run("SELL", n).legs["short"]["beta"]
+
+    assert long_beta > 0.3
+    assert short_beta < -0.3
+    assert long_beta == pytest.approx(-short_beta, rel=1e-6)  # same exposure, opposite sign
+
+
+def test_leg_curves_are_marked_not_only_realized():
+    """Built from the book as held, not reconstructed from closed trades.
+
+    A curve that only sees P&L at exit is exactly the one whose volatility, drawdown
+    and beta are most distorted - a position held through a large excursion and closed
+    flat would look like it never moved.
+    """
+    result = _one_sided_run("BUY", 120)
+    leg = result.legs["long"]
+
+    assert leg["trades"] == 1  # a single position, opened once and closed once
+    assert leg["volatility_pct"] > 0  # yet it has a volatility, because it was marked
+    assert leg["max_drawdown_pct"] > 0
+
+
+def test_a_long_only_run_has_nothing_to_decompose():
+    """The block is shown only when both sides traded: a table with an empty short row
+    is noise, and noise teaches readers to skip the block that matters."""
+    from tradeflow.analytics.reporting import format_backtest_report
+
+    result = _one_sided_run("BUY", 120)
+    rendered = format_backtest_report(result.metrics, 100_000.0, result.final_capital, legs=result.legs)
+
+    assert result.legs["short"]["trades"] == 0
+    assert "--- Legs" not in rendered
+
+
+def test_two_cancelling_legs_are_called_out():
+    """+0.92 and -0.89 netting to 0.03 is the case this exists for, and the report says
+    so rather than leaving a reader to compare two columns."""
+    from tradeflow.analytics.reporting import format_backtest_report
+
+    legs = {
+        "long": {
+            "return_pct": 18.0,
+            "volatility_pct": 0.31,
+            "max_drawdown_pct": 9.4,
+            "beta": 0.92,
+            "benchmark_correlation": 0.88,
+            "trades": 54,
+            "cost": 1200.0,
+        },
+        "short": {
+            "return_pct": -11.0,
+            "volatility_pct": 0.29,
+            "max_drawdown_pct": 12.1,
+            "beta": -0.89,
+            "benchmark_correlation": -0.85,
+            "trades": 61,
+            "cost": 3400.0,
+        },
+    }
+    rendered = format_backtest_report({"beta": 0.03}, 100_000.0, 107_000.0, legs=legs)
+
+    assert "two exposures cancelling" in rendered
+    assert "+18.00%" in rendered and "-11.00%" in rendered  # one leg subsidising the other
+    assert "3,400" in rendered  # and what the short side cost to carry
+
+
+def test_genuinely_neutral_legs_are_not_called_out():
+    """The other direction. A warning that fires on every long/short book is one nobody
+    reads."""
+    from tradeflow.analytics.reporting import format_backtest_report
+
+    legs = {
+        name: {
+            "return_pct": 1.0,
+            "volatility_pct": 0.1,
+            "max_drawdown_pct": 1.0,
+            "beta": sign * 0.04,
+            "benchmark_correlation": sign * 0.05,
+            "trades": 10,
+            "cost": 0.0,
+        }
+        for name, sign in (("long", 1), ("short", -1))
+    }
+    rendered = format_backtest_report({"beta": 0.0}, 100_000.0, 101_000.0, legs=legs)
+
+    assert "--- Legs" in rendered
+    assert "two exposures cancelling" not in rendered
+
+
+def test_the_exposure_report_measures_what_the_net_cap_enforces():
+    """The derivation is only worth anything if it measures the same quantity the gate
+    checks. A capture that disagreed with the limit would recommend a cap against a
+    number the engine never uses — and nothing downstream could tell.
+    """
+    result = _mixed_book(max_net_exposure=0.45)
+
+    observed = result.exposure["net_abs"]["max"]
+    assert observed <= 0.45 + 1e-9, f"the gate admitted a book at {observed:.1%} net"
+
+
+def test_exposure_is_sampled_for_every_step_of_the_equity_curve():
+    """Sampled as the book was *carried*, not as it was closed: a cap derived from
+    end-of-trade snapshots would miss every tilt that opened and closed between them."""
+    result = _mixed_book()
+
+    # One fewer than the curve: it is seeded with the opening capital, which is a
+    # starting point rather than a step the book was carried through.
+    assert result.exposure["samples"] == len(result.equity_curve) - 1
+
+
+def test_a_one_directional_book_reports_its_full_tilt():
+    """The case a net cap exists for: gross and net agree, and the book is a bet."""
+    result = _multi(_four_names(), ["BUY", "HOLD", "CLOSE_BUY"], overrides=_TIGHT_STOP)
+
+    assert result.exposure["net_abs"]["max"] == pytest.approx(result.exposure["gross_max"], abs=1e-9)
+    assert result.exposure["net_signed_mean"] > 0  # long, and said to be long
+
+
+def test_a_balanced_book_reports_near_zero_net_against_real_gross():
+    """The other half of the same fact, and the reason gross alone cannot inform a
+    directional cap."""
+    result = _mixed_book()
+
+    assert result.exposure["net_abs"]["max"] < result.exposure["gross_max"]
+
+
+def test_an_empty_universe_is_still_a_valid_run():
+    """A window that genuinely holds no bars is a legitimate outcome — a fold can slice
+    one — and must not be confused with a fetch that could not happen. That distinction
+    is drawn at the provider, which raises; see tests/test_market_data_feed.py."""
+    engine = BacktestEngine(ScriptedStrategy(["HOLD"]), MarketDataClient(DictMarketData({})))
+
+    result = engine.run([], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000)
+
+    assert result.final_capital == 100_000
+
+
+def test_partial_coverage_still_runs():
+    """One symbol with data is a real backtest over one symbol, not a failure — a
+    universe always loses some names to delistings and halts."""
+    frames = {"AAA": _frame(_FLAT)}
+    engine = BacktestEngine(
+        ScriptedStrategy(["BUY", "HOLD", "CLOSE_BUY"]), MarketDataClient(DictMarketData(frames))
+    )
+
+    result = engine.run(["AAA", "MISSING"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000)
+
+    assert len(result.trades) == 1
+
+
+# --- the take-profit fill assumption ----------------------------------------------
+#: Entry fills at 100 on bar 1; _TIGHT_STOP's 1% target is therefore 101, and bar 2's
+#: high reaches exactly that and no further. Under the historical assumption that fills;
+#: requiring any move through the target, it does not. The exact touch is the whole
+#: point — a bar that blows through the target fills either way and tests nothing.
+_TOUCHES_TARGET = [
+    {"open": 100, "high": 100, "low": 100, "close": 100, "volume": 1},
+    {"open": 100, "high": 100, "low": 100, "close": 100, "volume": 1},
+    {"open": 100, "high": 101, "low": 100, "close": 100, "volume": 1},
+]
+
+
+def _touch_run(margin_bps):
+    strategy = ScriptedStrategy(["BUY", "HOLD", "CLOSE_BUY"], _TIGHT_STOP)
+    frames = {"AAA": _frame(_TOUCHES_TARGET)}
+    return BacktestEngine(
+        strategy,
+        MarketDataClient(DictMarketData(frames)),
+        take_profit_margin_bps=margin_bps,
+    ).run(["AAA"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000)
+
+
+def test_a_bar_that_only_touches_the_target_fills_under_the_default():
+    """The historical assumption, pinned so a change to it is deliberate: a resting
+    limit that is always first in the queue, filled by a single print at the level."""
+    result = _touch_run(0.0)
+
+    assert list(result.trades["exit_reason"]) == ["TAKE_PROFIT"]
+
+
+def test_requiring_a_move_through_the_target_does_not_fill_on_a_touch():
+    """The assumption made movable. For a strategy whose gain is concentrated in target
+    exits, whether a touch fills is not a detail — it is the result."""
+    result = _touch_run(10.0)
+
+    assert "TAKE_PROFIT" not in list(result.trades["exit_reason"])
+
+
+def test_the_margin_tightens_the_trigger_and_not_the_price():
+    """A limit order that fills, fills at its limit. The question the margin asks is
+    whether it filled at all, not whether it filled worse — a margin that also moved
+    the fill price would double-count the same pessimism."""
+    # Blows well through the target, so it fills at every margin — which is what makes
+    # it the right case for asking whether the *price* moved.
+    generous = [
+        {"open": 100, "high": 100, "low": 100, "close": 100, "volume": 1},
+        {"open": 100, "high": 100, "low": 100, "close": 100, "volume": 1},
+        {"open": 100, "high": 120, "low": 100, "close": 100, "volume": 1},
+    ]
+    frames = {"AAA": _frame(generous)}
+
+    fills = [
+        BacktestEngine(
+            ScriptedStrategy(["BUY", "HOLD", "CLOSE_BUY"], _TIGHT_STOP),
+            MarketDataClient(DictMarketData(frames)),
+            take_profit_margin_bps=margin,
+        )
+        .run(["AAA"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000)
+        .trades["exit_price"]
+        .iloc[0]
+        for margin in (0.0, 10.0)
+    ]
+
+    assert fills[0] == pytest.approx(fills[1])
+
+
+def test_the_default_margin_changes_nothing():
+    """Zero is every historical result. A default that moved would silently restate
+    every number this project has recorded."""
+    baseline = _multi(_four_names(), ["BUY", "HOLD", "CLOSE_BUY"], overrides=_TIGHT_STOP)
+    explicit = BacktestEngine(
+        ScriptedStrategy(["BUY", "HOLD", "CLOSE_BUY"], _TIGHT_STOP),
+        MarketDataClient(DictMarketData(_four_names())),
+        take_profit_margin_bps=0.0,
+    ).run(sorted(_four_names()), datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000)
+
+    assert explicit.final_capital == pytest.approx(baseline.final_capital)
+
+
+def test_a_short_target_needs_the_price_to_trade_below_it():
+    """The mirror case, and the one a sign error gets backwards: a short's target is
+    below entry, so 'through' means lower, not higher."""
+    # A short entered at 100 has its 1% target at 99; this low reaches exactly that.
+    touches_short_target = [
+        {"open": 100, "high": 100, "low": 100, "close": 100, "volume": 1},
+        {"open": 100, "high": 100, "low": 100, "close": 100, "volume": 1},
+        {"open": 100, "high": 100, "low": 99, "close": 100, "volume": 1},
+    ]
+    frames = {"AAA": _frame(touches_short_target)}
+
+    def run(margin):
+        return BacktestEngine(
+            ScriptedStrategy(["SELL", "HOLD", "CLOSE_SELL"], _TIGHT_STOP),
+            MarketDataClient(DictMarketData(frames)),
+            take_profit_margin_bps=margin,
+        ).run(["AAA"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000)
+
+    assert "TAKE_PROFIT" in list(run(0.0).trades["exit_reason"])
+    assert "TAKE_PROFIT" not in list(run(10.0).trades["exit_reason"])

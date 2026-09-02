@@ -88,3 +88,17 @@ so the two price the same model. Surfaced as backtest flags (`--gross`,
 `--gross-objective`/`--holding-period`/`--capital`, and folded into
 `compute_risk`-adjacent flows; the backtest report and the MCP `run_backtest`
 tool both return net metrics + `total_cost`.
+
+**Live runs use it too, to record rather than to charge.** The venue prices the fill;
+the model says what the fill was *expected* to cost, and `tradeflow execution-report`
+shows the two side by side. That comparison is only meaningful if both came from the
+same parameters, so `live` takes the same cost flags and a saved config's `cost` block
+fills them the same way — a second, live-only cost formula would make the number look
+comparable while meaning something else.
+
+The live estimate is commission + half-spread only, and **says that it excludes
+impact**: impact is a function of how much of a day's volume the order demands, and the
+trade clock has no ADV for a symbol at the moment it sizes one. Reporting the two
+components as though they were the whole cost would understate it silently. The
+modelled figure is never added to the venue's own fee — one is a prediction, the other
+an observation, and a paper account reports no fee at all.

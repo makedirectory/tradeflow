@@ -63,6 +63,14 @@ once, at the very end — it never reaches any optimizer call.
 The honest performance number is the **OOS aggregate**: metrics recomputed over
 the concatenation of every fold's OOS trades, not an average of per-fold numbers.
 
+:::tip The file it writes
+
+`--save-config` produces a [run config](run-configs.md) — the artefact backtest,
+walk-forward and live all read. That page covers what is in it and how the universe is
+replayed rather than re-scanned.
+
+:::
+
 ## Key options
 
 | Flag | Meaning |
@@ -78,7 +86,7 @@ the concatenation of every fold's OOS trades, not an average of per-fold numbers
 | `--param-sensitivity` | Perturb the chosen params ±10% and re-test robustness. |
 | `--leakage-probe` | Shift the data feed forward to detect future-data leakage. |
 | `--bootstrap-skill` | Nonparametric own p-value (stationary block bootstrap) next to the FAMILY p from White's Reality Check over every OOS return series the trial store has recorded for this strategy/universe/accounting — advisory only, not a gate. See [below](#nonparametric-skill-check). |
-| `--save-config PATH` | Save the chosen config (with provenance) for a human to review. |
+| `--save-config PATH` | Save the chosen config — params *and* run inputs — for a human to review. See [Reusing a saved config](#reusing-a-saved-config). |
 | `--results-csv PATH` | Write the per-fold table to CSV. |
 
 ## Reading the output
@@ -93,6 +101,140 @@ Sharpe, and — when requested — parameter sensitivity and the leakage probe).
 > Saving a config never changes live behavior. It writes a JSON file to a
 > gitignored `configs/` directory; promoting it to live trading is a manual human
 > step.
+
+## Excess return by fold
+
+The prerequisite gates on a median, and a median is exactly where regime failure hides:
+
+```
+=== Excess return by fold (diagnostic) ===
+  +0.25%  -2.02%  +3.18%
+  median +0.25%   spread 5.20pp
+  1 of 3 folds lost to the benchmark - the median is an average over folds that
+  disagree, not a typical fold.
+```
+
+A median of +0.25% over a five-point spread is not the same result as +0.25% in every
+fold, and only one of those two numbers makes anyone look closer. The spread is
+**reported, not gated** — the median already gates, and nobody yet knows what "too much
+disagreement" is worth failing a candidate over.
+
+## Leg beta by fold
+
+When a strategy trades both sides, each leg's beta is reported per fold:
+
+```
+=== Leg beta by fold (diagnostic) ===
+  long    +0.88  +0.91  +0.62
+  short   -0.85  -0.90  -0.14
+  A book neutral on average can still be directional inside a fold.
+```
+
+A book that is neutral *on average* and directional *within* folds is a different
+proposition from one that is neutral throughout, and no aggregate separates them — the
+same reason the [benchmark prerequisite](#promotion-prerequisites) takes a median
+across folds rather than a figure over the stitched curve. In the example the third
+fold's short leg has largely stopped hedging, which the two-year net beta would hide
+completely.
+
+Requires `--benchmark`; diagnostic, and gates nothing. See
+[long/short legs](backtesting.md#longshort-legs) for the per-leg return, volatility,
+drawdown and cost breakdown on a single backtest.
+
+## Promotion prerequisites
+
+`promotable` stays **statistical**: median OOS Sharpe, profit factor, walk-forward
+efficiency, drawdown ratio, trade count, parameter sensitivity, deflated Sharpe. It
+means the same thing it meant for every trial already recorded, and nothing added since
+has changed it.
+
+Two further questions come *after* a candidate clears those, and are reported beside it:
+
+```
+=== Promotion prerequisites (separate from `promotable`) ===
+  [PASS] cost_stress        5 vs 3
+  [ -- ] family_bootstrap   not evaluated - needs 10 usable return-series trials to
+                            mean anything; 2 available
+  Prerequisites: 1 of 3 evaluated - clear so far; 2 unknown
+  An unevaluated check is not a passed one - what is unknown stays unknown.
+```
+
+- **`cost_stress`** — the edge survives at least 3x its own assumed cost, stressing
+  the config the folds actually chose. **On by default here**: this is where a promotion
+  decision is made, so cost sensitivity belongs in that story rather than in an optional
+  follow-up. `--no-cost-stress` skips it; it re-runs the chosen config once per
+  multiple.
+- **`family_bootstrap`** — still notable once every trial the campaign tried is priced
+  in. It does **not** run below 10 usable return-series trials: a family test over two
+  series is arithmetic rather than evidence, and a striking p-value on K=2 is exactly
+  the kind of number that should not gate anything.
+- **`benchmark_excess`** — the median per-fold return *less the benchmark's over the
+  same steps* is positive. A different question from the ratio below: a strategy can
+  hold a good risk-adjusted number while losing to the benchmark outright, which is not
+  something to promote on.
+- **`benchmark_relative`** — the median per-fold information ratio against
+  `--benchmark` is positive. **Per fold, then median**, because every other fold
+  statistic here is a median and a second aggregation convention in one report would
+  differ from its neighbours most exactly when the folds disagree. They do: a real run
+  produced per-fold IRs of `[0.13, -1.25, 2.10]` for a median of `+0.13`, and a single
+  figure over the stitched curve would have hidden that spread entirely.
+
+**An unevaluated check is not a passed one.** A cost curve nobody ran and a family too
+thin to test are both *unknown*, and `ready` always travels with the count of what was
+actually evaluated — a clear verdict over one of two checks is not a clearance.
+
+## Reusing a saved config
+
+The file holds the whole run configuration, not just tuned params: `strategy`,
+`params`, `scanner`, `symbols` (the universe the scanner *resolved*, not the candidate
+list), `candidate_symbols`, `capital`, `position_limits` and the cost model.
+
+**`position_limits` is written out in full**, not left to the strategy's defaults. A
+config is what a paper or live run gets frozen from, and the shipped default of
+`max_positions: 1` is exactly the kind of inheritance nobody chose — a 61-name config
+that quietly holds one position. What a run risks belongs in the file rather than being
+resolved from somewhere else at start-up. A config written before this still works:
+recorded keys win, unrecorded ones fall back to the strategy's own. So one file drives any run type, and can be
+versioned in a private repository beside the strategies it belongs to:
+
+```bash
+tradeflow backtest --config configs/alpha.json --start 2024-01-02 --end 2024-06-01
+tradeflow verdict  --config configs/alpha.json --start 2024-01-02 --end 2024-06-01
+tradeflow alphas   --config configs/alpha.json
+tradeflow risk     --config configs/alpha.json
+```
+
+`--config` is accepted by `backtest`, `live`, `verdict`, `info`, `alphas`, `horizon`,
+`allocate` and `risk`. Four rules make it predictable:
+
+- **Anything you type wins.** The file fills in only what the command line left
+  unsaid, so `--symbols ZZZ` beats the file's universe. Each run prints where every
+  value came from.
+- **A command takes only the fields it has.** `risk` summarizes a universe's
+  covariance and has no strategy, so it uses the file's `symbols` and nothing else —
+  and says so rather than naming a strategy it never ran.
+- **A contradictory `--strategy` is refused.** The params in the file belong to the
+  strategy in the file; handing one strategy's tuned params to another is not
+  something to guess at.
+- **The saved universe is replayed, not re-scanned.** A config records the book that
+  was validated. Re-running the scanner over it would turn that into *a new book from
+  an old recipe* — a different experiment, which can move results either way without
+  the reader knowing the universe changed. `--re-resolve-universe` opts into a genuine
+  re-scan, over the saved **candidate** list rather than the resolved book, because
+  re-scanning what the scanner already picked is a second filter rather than the
+  original decision repeated. Every run says which it did:
+
+  ```
+  universe=<replayed from config, 61 symbols>
+  universe=<re-resolved from 85 saved candidates>
+  universe=<--scanner volume given; saved book re-scanned>
+  universe=<--symbols given; --re-resolve-universe has nothing to re-resolve>
+  ```
+
+**The window is never stored.** A config carrying its own tuning dates would make
+every later run silently re-evaluate that period, so `--start`/`--end` always come
+from the run and the output says so. What the config *was* tuned on is recorded under
+`provenance.windows`, for reading rather than replaying.
 
 ## Nonparametric skill check
 

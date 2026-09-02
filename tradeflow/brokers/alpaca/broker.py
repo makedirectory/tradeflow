@@ -44,7 +44,7 @@ from tradeflow.brokers.errors import (
     RateLimitedError,
 )
 from tradeflow.utils.numeric import safe_float
-from tradeflow.utils.streaming import run_with_reconnect
+from tradeflow.utils.streaming import close_stream, run_with_reconnect
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +104,65 @@ def classify_error(exc: Exception) -> BrokerError:
     if status is not None and 400 <= status < 500:
         return OrderRejectedError(message)
     return BrokerError(message)
+
+
+def _enum_value(obj, name: str) -> str:
+    """Read an SDK field that may be an enum, a bare string, or absent."""
+    raw = getattr(obj, name, "")
+    return str(getattr(raw, "value", raw) or "")
+
+
+def _timestamp(value) -> Optional[str]:
+    """An ISO timestamp from whatever shape the SDK hands over, or None."""
+    if value is None:
+        return None
+    return value.isoformat() if hasattr(value, "isoformat") else str(value)
+
+
+def _optional_float(value) -> Optional[float]:
+    """A float, or ``None`` when the venue did not report the field at all.
+
+    ``safe_float`` defaults to ``0.0``, which is right for a quantity and wrong for
+    any field whose contract says ``None`` means "not reported" - it turns a paper
+    account's silence about fees into an *observed* zero fee, which ``cost_summary``
+    then counts and reports as measured. The ledger it lands in is append-only, so
+    there is nothing behind it to correct the record from.
+    """
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def to_trade_update(data) -> TradeUpdate:
+    """Convert one Alpaca trade-update payload into the project's TradeUpdate.
+
+    Split out of the stream callback so the mapping can be tested without a socket.
+    It was previously a closure, and the field it silently failed to carry - ``side`` -
+    was therefore unreachable from any test: every fill downstream defaulted to buy,
+    and the ledger recorded every short as a long.
+
+    ``filled_qty`` is Alpaca's *cumulative* fill for the order, not this event's
+    increment, and is passed on as such.
+    """
+    order = getattr(data, "order", None)
+    return TradeUpdate(
+        event=str(getattr(data, "event", "")),
+        symbol=getattr(order, "symbol", ""),
+        order_id=str(getattr(order, "id", "")),
+        status=_enum_value(order, "status"),
+        filled_qty=safe_float(getattr(order, "filled_qty", 0)),
+        price=safe_float(getattr(data, "price", None)) if getattr(data, "price", None) else None,
+        side=_enum_value(order, "side") or None,
+        filled_avg_price=_optional_float(getattr(order, "filled_avg_price", None)),
+        filled_at=_timestamp(getattr(data, "timestamp", None))
+        or _timestamp(getattr(order, "filled_at", None)),
+        # Not ``safe_float``: a venue that reports no fee has not reported a fee of
+        # zero, and the two must stay distinguishable all the way to the ledger.
+        fee=_optional_float(getattr(data, "fee", None)),
+    )
 
 
 class AlpacaBroker(Broker):
@@ -290,15 +349,7 @@ class AlpacaBroker(Broker):
         from alpaca.trading.stream import TradingStream
 
         async def on_alpaca_update(data) -> None:
-            order = data.order
-            update = TradeUpdate(
-                event=str(getattr(data, "event", "")),
-                symbol=getattr(order, "symbol", ""),
-                order_id=str(getattr(order, "id", "")),
-                status=str(getattr(getattr(order, "status", ""), "value", getattr(order, "status", ""))),
-                filled_qty=safe_float(getattr(order, "filled_qty", 0)),
-                price=safe_float(getattr(data, "price", None)) if getattr(data, "price", None) else None,
-            )
+            update = to_trade_update(data)
             result = handler(update)
             if inspect.isawaitable(result):
                 await result
@@ -310,12 +361,9 @@ class AlpacaBroker(Broker):
                 logger.info("Subscribed to trade updates")
                 await stream._run_forever()
             finally:
-                try:
-                    stop = stream.stop()
-                    if inspect.isawaitable(stop):
-                        await stop
-                except Exception:  # noqa: BLE001
-                    pass
+                # Never the SDK's synchronous stop() from inside the loop; it blocks
+                # the very loop that would have to run its close. See close_stream.
+                await close_stream(stream)
 
         await run_with_reconnect("trade-updates", connect)
 

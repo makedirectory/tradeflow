@@ -62,6 +62,19 @@ CREATE INDEX IF NOT EXISTS idx_fetches_symbol ON fetches(symbol, timeframe);
 """
 
 
+#: Printed beside every offline cache miss while the date-contract change washes
+#: through. A bare date now means that market date in New York, so coverage recorded
+#: when a naive date was read as UTC sits a few hours short of what the same command
+#: asks for today. The window is genuinely uncached under the new reading - the fix is
+#: a re-warm, not a tolerance - and saying so turns an unexplained miss on data the
+#: user knows they have into provenance.
+DATE_CONTRACT_NOTICE = (
+    "Note: a bare date now means that market date in America/New_York, not UTC midnight. "
+    "Coverage recorded under the older naive-date reading is a few hours short of the same "
+    "window today, so daily windows warmed before that change need one re-warm."
+)
+
+
 class CacheMiss(RuntimeError):
     """Raised in ``--offline`` mode when a requested window isn't fully cached."""
 
@@ -72,7 +85,8 @@ class CacheMiss(RuntimeError):
         ranges = ", ".join(f"{s.isoformat()}..{e.isoformat()}" for s, e in gaps)
         super().__init__(
             f"--offline: {symbol} ({timeframe}) is missing cached bars for {ranges}. "
-            f"Run `python main.py cache warm --symbols {symbol} --timeframe {timeframe}` first."
+            f"Run `python main.py cache warm --symbols {symbol} --timeframe {timeframe}` first.\n"
+            f"{DATE_CONTRACT_NOTICE}"
         )
 
 
@@ -273,6 +287,16 @@ class BarCoverage:
         return {"db_path": str(self.db_path), "entries": entries, "drift": drift}
 
 
+def _as_timeframe(timeframe: TimeframeLike) -> Timeframe:
+    """The parsed form, from either spelling a caller may hand in.
+
+    Callers used to write this out and immediately stringify it, then `_fill_gaps`
+    parsed the string back - so a value was parsed, flattened and re-parsed on the way
+    to the provider that declares it wants the parsed form.
+    """
+    return Timeframe.parse(timeframe) if isinstance(timeframe, str) else timeframe
+
+
 class CachedMarketData(MarketDataProvider):
     """A :class:`MarketDataProvider` that transparently caches OHLCV bars on the
     Parquet/DuckDB substrate, fetching only missing date ranges.
@@ -317,11 +341,12 @@ class CachedMarketData(MarketDataProvider):
     def get_bars(
         self, symbols: List[str], timeframe: TimeframeLike, start: datetime, end: datetime
     ) -> Dict[str, pd.DataFrame]:
-        tf = str(Timeframe.parse(timeframe) if isinstance(timeframe, str) else timeframe)
+        tf_obj = _as_timeframe(timeframe)
+        tf = str(tf_obj)
         start_ts, end_ts = _to_utc(start), _to_utc(end)
         result: Dict[str, pd.DataFrame] = {}
         for symbol in dict.fromkeys(symbols):
-            self._fill_gaps(symbol, tf, start_ts, end_ts)
+            self._fill_gaps(symbol, tf_obj, start_ts, end_ts)
             scanned = self.store.scan(
                 [symbol], tf, end_ts.to_pydatetime(), lookback_days=self._lookback_days(start_ts, end_ts)
             )
@@ -343,12 +368,16 @@ class CachedMarketData(MarketDataProvider):
     # ------------------------------------------------------------------ #
     # Gap-fill (the core of the cache)
     # ------------------------------------------------------------------ #
-    def _fill_gaps(self, symbol: str, timeframe: str, start: pd.Timestamp, end: pd.Timestamp) -> None:
-        gaps = self.coverage.gaps(symbol, timeframe, start, end)
+    def _fill_gaps(self, symbol: str, timeframe: Timeframe, start: pd.Timestamp, end: pd.Timestamp) -> None:
+        # Takes the parsed form and derives the storage key from it, rather than
+        # taking the key and re-parsing: the caller has already done the work, and a
+        # second parse is a second chance for the two to disagree about what they name.
+        key = str(timeframe)
+        gaps = self.coverage.gaps(symbol, key, start, end)
         if not gaps:
             return
         if self.offline:
-            raise CacheMiss(symbol, timeframe, gaps)
+            raise CacheMiss(symbol, key, gaps)
 
         fetched_frames: List[pd.DataFrame] = []
         for gap_start, gap_end in gaps:
@@ -364,10 +393,10 @@ class CachedMarketData(MarketDataProvider):
                 sliced = frame.loc[(frame.index >= gap_start) & (frame.index <= gap_end)]
                 if not sliced.empty:
                     fetched_frames.append(sliced)
-            self.coverage.record_fetch(symbol, timeframe, gap_start, gap_end, self.adjustment)
+            self.coverage.record_fetch(symbol, key, gap_start, gap_end, self.adjustment)
 
         if fetched_frames:
-            self._merge_write(symbol, timeframe, fetched_frames)
+            self._merge_write(symbol, key, fetched_frames)
 
     def _merge_write(self, symbol: str, timeframe: str, new_frames: List[pd.DataFrame]) -> None:
         """Read the symbol's full existing history, merge in the newly-fetched
@@ -402,10 +431,11 @@ class CachedMarketData(MarketDataProvider):
         """Ensure ``[start, end]`` is cached for ``symbols`` (gap-filling exactly as
         :meth:`get_bars` would), then return the data-vintage stamp for that
         window - suitable for folding into a trial's dedup key."""
-        tf = str(Timeframe.parse(timeframe) if isinstance(timeframe, str) else timeframe)
+        tf_obj = _as_timeframe(timeframe)
+        tf = str(tf_obj)
         start_ts, end_ts = _to_utc(start), _to_utc(end)
         for symbol in dict.fromkeys(symbols):
-            self._fill_gaps(symbol, tf, start_ts, end_ts)
+            self._fill_gaps(symbol, tf_obj, start_ts, end_ts)
         return self.coverage.vintage(symbols, tf, start_ts, end_ts)
 
     def warm(
@@ -414,12 +444,13 @@ class CachedMarketData(MarketDataProvider):
         """Explicit prefetch for ``cache warm``: fetch and cache ``[start, end]``
         for ``symbols``, returning a summary of what was already covered vs.
         newly fetched."""
-        tf = str(Timeframe.parse(timeframe) if isinstance(timeframe, str) else timeframe)
+        tf_obj = _as_timeframe(timeframe)
+        tf = str(tf_obj)
         start_ts, end_ts = _to_utc(start), _to_utc(end)
         summary: Dict[str, Any] = {}
         for symbol in dict.fromkeys(symbols):
             gaps_before = self.coverage.gaps(symbol, tf, start_ts, end_ts)
-            self._fill_gaps(symbol, tf, start_ts, end_ts)
+            self._fill_gaps(symbol, tf_obj, start_ts, end_ts)
             summary[symbol] = {"already_cached": not gaps_before, "gaps_fetched": len(gaps_before)}
         return summary
 
@@ -435,7 +466,8 @@ class CachedMarketData(MarketDataProvider):
         served stale. Re-fetches ``[start, end]`` if given, otherwise the
         symbol's previously-known covered extent (or is a no-op if neither is
         available)."""
-        tf = str(Timeframe.parse(timeframe) if isinstance(timeframe, str) else timeframe)
+        tf_obj = _as_timeframe(timeframe)
+        tf = str(tf_obj)
         summary: Dict[str, Any] = {}
         for symbol in dict.fromkeys(symbols):
             window = self._resolve_refresh_window(symbol, tf, start, end)
@@ -447,7 +479,7 @@ class CachedMarketData(MarketDataProvider):
                     "reason": "no prior coverage and no --start/--end given",
                 }
                 continue
-            self._fill_gaps(symbol, tf, window[0], window[1])
+            self._fill_gaps(symbol, tf_obj, window[0], window[1])
             summary[symbol] = {"refreshed": True, "start": _iso(window[0]), "end": _iso(window[1])}
         return summary
 
@@ -472,7 +504,7 @@ class CachedMarketData(MarketDataProvider):
             wanted = set(symbols)
             entries = [e for e in entries if e["symbol"] in wanted]
         if timeframe is not None:
-            tf = str(Timeframe.parse(timeframe) if isinstance(timeframe, str) else timeframe)
+            tf = str(_as_timeframe(timeframe))
             entries = [e for e in entries if e["timeframe"] == tf]
         return {
             "db_path": info["db_path"],

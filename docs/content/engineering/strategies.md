@@ -98,6 +98,14 @@ and `stop_loss`, then clamps it to the configured limits (`max_position_size`,
 `max_total_risk`). It is the smallest of the three constraints — risk target, per-
 position notional cap, and total-risk cap.
 
+The total-risk clamp here applies the *whole book's* budget to one position, since
+sizing has no view of what is already open: it only answers "could this position
+alone exhaust the budget?". Enforcing the budget across the book — and the separate
+`max_gross_exposure` notional cap, which no single-position sizing call can
+meaningfully apply — is the [engine](engine)'s job. What each fraction actually
+measures is spelled out under
+[what `max_total_risk` caps](../usage/configuration.md#what-max_total_risk-caps).
+
 ## Parameters & validation
 
 Each strategy declares `PARAM_RANGES` with `min`/`max`/`step`/`default`/`type`.

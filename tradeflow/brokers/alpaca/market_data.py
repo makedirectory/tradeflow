@@ -9,17 +9,19 @@ returned bars into per-symbol, NY-localized OHLCV frames.
 import inspect
 import logging
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import pandas as pd
+from alpaca.data.enums import DataFeed
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.live import StockDataStream
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 
+from tradeflow.brokers.alpaca.broker import classify_error
 from tradeflow.marketdata.base import BarEvent, BarHandler, MarketDataProvider
 from tradeflow.marketdata.timeframe import DAY, HOUR, MINUTE, WEEK, Timeframe
-from tradeflow.utils.streaming import run_with_reconnect
+from tradeflow.utils.streaming import close_stream, run_with_reconnect
 from tradeflow.utils.timeutils import localize_index_to_new_york
 
 logger = logging.getLogger(__name__)
@@ -43,10 +45,17 @@ class AlpacaMarketData(MarketDataProvider):
         api_secret: str,
         base_reconnect_delay: float = 5.0,
         max_reconnect_delay: float = 60.0,
+        feed: Optional[str] = None,
     ):
         self._historical = historical_client
         self._api_key = api_key
         self._api_secret = api_secret
+        # One feed for both halves when pinned. Left unset the SDK's own defaults
+        # apply, and those disagree with each other: historical resolves to the full
+        # consolidated tape while the stream defaults to a single venue. An account
+        # entitled to one and not the other then warms up on nothing and streams
+        # fine, which reads as an empty market rather than as a wrong feed.
+        self._feed = feed
         self._base_reconnect_delay = base_reconnect_delay
         self._max_reconnect_delay = max_reconnect_delay
 
@@ -62,13 +71,19 @@ class AlpacaMarketData(MarketDataProvider):
             start=start,
             end=end,
             adjustment="split",
+            **({"feed": DataFeed(self._feed)} if self._feed else {}),
         )
 
         try:
             combined = self._historical.get_stock_bars(request).df
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Failed to fetch bars for %s: %s", symbols, exc)
-            return {}
+        except Exception as exc:  # noqa: BLE001 - re-raised as a typed failure below
+            # Raised, not swallowed into an empty result. A fetch that could not happen
+            # and a window that genuinely held no bars are different facts, and
+            # returning {} for both made them the same one: an unreachable provider
+            # produced a backtest with no trades, which was journaled as an evaluated
+            # trial and then served from cache to the next identical run. Absent is not
+            # zero, and unreachable is not absent.
+            raise classify_error(exc) from exc
 
         if combined is None or combined.empty:
             return {}
@@ -125,17 +140,14 @@ class AlpacaMarketData(MarketDataProvider):
 
     def _new_stream(self) -> StockDataStream:
         """Create a fresh stream (isolated for testability)."""
+        if self._feed:
+            return StockDataStream(self._api_key, self._api_secret, feed=DataFeed(self._feed))
         return StockDataStream(self._api_key, self._api_secret)
 
     @staticmethod
     async def _safe_stop(stream) -> None:
-        """Best-effort stream shutdown; never raises."""
-        try:
-            result = stream.stop()
-            if inspect.isawaitable(result):
-                await result
-        except Exception:  # noqa: BLE001 - cleanup must not mask the real error
-            pass
+        """Best-effort stream shutdown. See :func:`close_stream` for why not ``stop()``."""
+        await close_stream(stream)
 
     # ------------------------------------------------------------------ #
     # Helpers

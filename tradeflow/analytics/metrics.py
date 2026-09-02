@@ -173,10 +173,26 @@ def calmar_ratio(cagr_value: float, max_drawdown_value: float) -> float:
     return float(abs(cagr_value / max_drawdown_value))
 
 
+#: Below this, a book has no market exposure worth dividing by and Treynor stops
+#: meaning anything: the ratio's error grows as 1/beta², and a beta this small is not
+#: resolvable from zero by the regression that produced it. Guarding only the exact
+#: ``beta == 0`` let a beta of -0.0001 through and produced a Treynor of -262 beside a
+#: beta the report rendered as "-0.00" - an unbounded number whose cause was invisible
+#: on the same screen. :class:`~tradeflow.execution.sizing.BetaSizer` already clamps
+#: for this when it *sizes* on beta; the same blow-up applies when reporting on it, and
+#: `--beta-sizing` puts books in exactly this regime by design, so it is not exotic.
+MIN_ABS_BETA_FOR_TREYNOR = 0.05
+
+
 def treynor_ratio(returns: Numbers, beta: float, periods_per_year: int = TRADING_DAYS_PER_YEAR) -> float:
-    """Annualized excess return per unit of market beta. ``0.0`` if beta is zero."""
+    """Annualized excess return per unit of market beta.
+
+    ``0.0`` when ``|beta|`` is below :data:`MIN_ABS_BETA_FOR_TREYNOR` - the established
+    "unavailable" value for the benchmark-relative metrics, flagged alongside them so a
+    suppressed ratio is distinguishable from a genuine zero.
+    """
     r = _as_series(returns)
-    if len(r) < 2 or beta == 0:
+    if len(r) < 2 or abs(beta) < MIN_ABS_BETA_FOR_TREYNOR:
         return 0.0
     return float(r.mean() * periods_per_year / beta)
 

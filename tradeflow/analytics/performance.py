@@ -15,7 +15,7 @@ these as mark-to-market figures.
 """
 
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -73,6 +73,7 @@ METRIC_KEYS = (
     "r_squared",
     "treynor_ratio",
     "information_ratio",
+    "benchmark_buy_hold_return",
     # --- Tier 3: nice-to-have ---
     "skew",
     "kurtosis",
@@ -85,7 +86,200 @@ METRIC_KEYS = (
 )
 
 #: Non-numeric flags also always present in a results dict.
-FLAG_KEYS = ("benchmark_available", "low_sample")
+#:
+#: ``treynor_available`` is separate from ``benchmark_available`` because the two fail
+#: independently: a benchmark can be present and Treynor still meaningless, when the
+#: book's beta is too near zero to divide by. Without the flag a suppressed ratio and a
+#: genuine zero are the same number.
+FLAG_KEYS = ("benchmark_available", "low_sample", "treynor_available", "deflation_applied")
+
+
+#: Thresholds for the executability verdict. Judgment calls, not evidence-derived:
+#: they mark where an executed book stops resembling the one that was validated, and
+#: they are exposed so a deployment can set its own. Deliberately **separate** from the
+#: promotion gates - those ask whether the edge was real, this asks whether the book
+#: can be traded at this capital, and collapsing the two would make one number mean two
+#: things and silently redefine `promotable` for every trial already recorded.
+DEFAULT_EXECUTION_LIMITS: Dict[str, float] = {
+    "max_rounding_drag_pct": 10.0,  # executed notional this far below intended
+    "max_unfillable_pct": 5.0,  # this share of intended entries never opened
+    "max_cost_share_of_gross_pct": 40.0,  # transaction cost as a share of gross profit
+}
+
+
+def execution_verdict(
+    execution: Optional[Dict[str, Any]], limits: Optional[Dict[str, float]] = None
+) -> Dict[str, Any]:
+    """Whether the book the engine actually traded resembles the one it was asked for.
+
+    Whole-share rounding is invisible and scales with how small the account is: the
+    same config that drags 0.3% at $100,000 drags 5% at $4,000 and 22% at $500, and
+    nothing in the result said so. This turns that into a check with its numbers shown,
+    in the house style - every threshold beside its value, no single reassuring summary.
+
+    Returns ``executable: None`` when there is nothing to judge (no entries attempted),
+    which is not the same as passing and must not be rendered as one.
+    """
+    checks: Dict[str, Any] = {}
+    if not execution or not (
+        execution.get("positions_filled", 0)
+        or execution.get("positions_rounded_to_zero", 0)
+        or execution.get("positions_below_min_notional", 0)
+    ):
+        return {"executable": None, "checks": checks, "reason": "no entries were attempted"}
+
+    limit = {**DEFAULT_EXECUTION_LIMITS, **(limits or {})}
+    drag = float(execution.get("rounding_drag_pct", 0.0))
+    unfillable = float(execution.get("unfillable_pct", 0.0))
+    checks["rounding_drag"] = {
+        "value": drag,
+        "threshold": limit["max_rounding_drag_pct"],
+        "passed": drag <= limit["max_rounding_drag_pct"],
+        "note": "share rounding removed this much of the intended notional at this capital",
+    }
+    checks["unfillable_entries"] = {
+        "value": unfillable,
+        "threshold": limit["max_unfillable_pct"],
+        "passed": unfillable <= limit["max_unfillable_pct"],
+        "note": "this share of intended entries could not be opened at all",
+    }
+    # Against *gross profit*, not capital: the same cost is unremarkable against a
+    # large gross return and fatal against a small one, and the two denominators
+    # disagree most exactly when the answer matters. Skipped rather than guessed when
+    # the strategy did not make money gross - there is no edge for cost to eat, and a
+    # ratio against a non-positive denominator would be arithmetic rather than a fact.
+    # Breadth: not "is the cap small" - a strategy that concentrates in the best five
+    # of sixty is a legitimate design - but "was the cap ever chosen". A one-position
+    # book selected from many candidates is a different strategy from a many-position
+    # one, and 1 is what every shipped strategy declares by default, so this is
+    # overwhelmingly a setting nobody changed rather than a decision anybody made.
+    max_positions = execution.get("max_positions")
+    universe_size = int(execution.get("universe_size") or 0)
+    if max_positions is not None and universe_size > 1:
+        checks["book_breadth"] = {
+            "value": float(max_positions),
+            "threshold": 2.0,
+            "passed": float(max_positions) > 1,
+            "note": (
+                f"the book holds at most {max_positions} of {universe_size} candidates - "
+                "max_positions is 1, the shipped default; set it to the book you intend"
+            ),
+        }
+
+    gross_profit = float(execution.get("gross_profit", 0.0))
+    if gross_profit > 0:
+        cost_share = float(execution.get("total_cost", 0.0)) / gross_profit * 100.0
+        checks["cost_share_of_gross"] = {
+            "value": cost_share,
+            "threshold": limit["max_cost_share_of_gross_pct"],
+            "passed": cost_share <= limit["max_cost_share_of_gross_pct"],
+            "note": "transaction cost ate this share of the gross profit",
+        }
+    failed = [name for name, check in checks.items() if not check["passed"]]
+    return {
+        "executable": not failed,
+        "checks": checks,
+        "reason": "" if not failed else f"{', '.join(failed)} beyond limit at this capital",
+    }
+
+
+#: Prerequisites checked *before* promotion, beside `promotable` rather than inside it.
+#:
+#: `promotable` stays statistical - median OOS Sharpe, efficiency, drawdown ratio,
+#: deflated Sharpe - and keeps meaning for every trial already recorded. These are the
+#: questions asked of a candidate that has already cleared those: does the edge survive
+#: worse cost assumptions, and does it still look like skill once the whole family of
+#: trials is priced in?
+#:
+#: `min_family_trials` is the interesting one. A family test over two series is
+#: arithmetic rather than evidence, so the check does not run at all below the floor -
+#: and reports that it did not, rather than passing by default. That is also what makes
+#: this safe to add: a campaign with a thin family is told the gate is unevaluated, not
+#: told it passed.
+DEFAULT_PREREQUISITES: Dict[str, float] = {
+    "min_cost_stress_multiple": 3.0,
+    "max_family_p": 0.05,
+    "min_family_trials": 10,
+    "min_benchmark_ir": 0.0,  # median per-fold OOS information ratio
+    "min_benchmark_excess_pct": 0.0,  # median per-fold OOS return less the benchmark's
+}
+
+
+def promotion_prerequisites(
+    *,
+    cost_stress: Optional[Dict[str, Any]] = None,
+    bootstrap: Optional[Dict[str, Any]] = None,
+    benchmark_ir: Optional[float] = None,
+    benchmark_excess_pct: Optional[float] = None,
+    limits: Optional[Dict[str, float]] = None,
+) -> Dict[str, Any]:
+    """Checks a candidate should clear before paper, reported beside ``promotable``.
+
+    Every check carries ``evaluated``. A check whose input is absent is *not* a pass:
+    a cost curve nobody ran and a family too thin to test are both "unknown", and
+    rendering unknown as green is the failure this whole section exists to avoid.
+
+    ``ready`` is ``None`` when nothing could be evaluated, ``False`` when an evaluated
+    check failed, ``True`` only when every evaluated check passed - and it never
+    implies the unevaluated ones would have.
+    """
+    limit = {**DEFAULT_PREREQUISITES, **(limits or {})}
+    checks: Dict[str, Any] = {}
+
+    survives = (cost_stress or {}).get("survives_to_multiple")
+    checks["cost_stress"] = {
+        "evaluated": survives is not None,
+        "value": float(survives) if survives is not None else None,
+        "threshold": limit["min_cost_stress_multiple"],
+        "passed": survives is not None and float(survives) >= limit["min_cost_stress_multiple"],
+        "note": "the edge survives this multiple of its own assumed cost",
+    }
+
+    family = (bootstrap or {}).get("family") or {}
+    n_used = int(family.get("n_used") or 0)
+    family_p = family.get("family_p")
+    enough_family = bool(family.get("available")) and n_used >= limit["min_family_trials"]
+    checks["family_bootstrap"] = {
+        "evaluated": enough_family and family_p is not None,
+        "value": float(family_p) if family_p is not None else None,
+        "threshold": limit["max_family_p"],
+        "passed": enough_family and family_p is not None and float(family_p) <= limit["max_family_p"],
+        "n_used": n_used,
+        "note": (
+            f"needs {int(limit['min_family_trials'])} usable return-series trials to mean "
+            f"anything; {n_used} available"
+            if not enough_family
+            else "still notable once every trial the campaign tried is priced in"
+        ),
+    }
+
+    # Median across folds, not a figure over the stitched OOS curve. Every other fold
+    # statistic here is a median (`min_oos_sharpe`, `min_wfe`), and a second aggregation
+    # convention in one report would differ from its neighbours most exactly when the
+    # folds disagree - which is when a reader can least afford the ambiguity.
+    checks["benchmark_relative"] = {
+        "evaluated": benchmark_ir is not None,
+        "value": float(benchmark_ir) if benchmark_ir is not None else None,
+        "threshold": limit["min_benchmark_ir"],
+        "passed": benchmark_ir is not None and float(benchmark_ir) > limit["min_benchmark_ir"],
+        "note": "median per-fold information ratio against the benchmark",
+    }
+
+    # A different question from the ratio above, and a strategy can pass one while
+    # failing the other: a good risk-adjusted number is compatible with losing to the
+    # benchmark outright, which is not something to promote on.
+    checks["benchmark_excess"] = {
+        "evaluated": benchmark_excess_pct is not None,
+        "value": float(benchmark_excess_pct) if benchmark_excess_pct is not None else None,
+        "threshold": limit["min_benchmark_excess_pct"],
+        "passed": benchmark_excess_pct is not None
+        and float(benchmark_excess_pct) > limit["min_benchmark_excess_pct"],
+        "note": "median per-fold return less the benchmark's over the same steps",
+    }
+
+    evaluated = [check for check in checks.values() if check["evaluated"]]
+    ready = None if not evaluated else all(check["passed"] for check in evaluated)
+    return {"ready": ready, "checks": checks, "evaluated": len(evaluated), "total": len(checks)}
 
 
 def empty_metrics() -> Dict[str, float]:
@@ -93,6 +287,8 @@ def empty_metrics() -> Dict[str, float]:
     base = {key: 0.0 for key in METRIC_KEYS}
     base["benchmark_available"] = False
     base["low_sample"] = True
+    base["treynor_available"] = False
+    base["deflation_applied"] = False
     return base
 
 
@@ -151,10 +347,16 @@ def compute_backtest_metrics(
     cagr_frac = m.cagr(equity_curve, years)
 
     has_benchmark = benchmark_returns is not None and len(benchmark_returns) > 0
+    benchmark_buy_hold = 0.0
     if has_benchmark:
         alpha, beta, r_squared = m.alpha_beta(returns, benchmark_returns)
         info_ratio = m.information_ratio(returns, benchmark_returns, periods_per_year)
         treynor = m.treynor_ratio(returns, beta, periods_per_year)
+        # Compounded over exactly the steps the strategy was measured on, rather than
+        # the benchmark's own first/last close: the two differ whenever the curve does
+        # not start on the benchmark's first bar, and the comparison is only fair over
+        # one window.
+        benchmark_buy_hold = float(((1.0 + pd.Series(benchmark_returns).dropna()).prod() - 1.0) * 100)
     else:
         alpha = beta = r_squared = info_ratio = treynor = 0.0
 
@@ -162,6 +364,7 @@ def compute_backtest_metrics(
         # --- original headline set ---
         "total_return": total_return_pct,
         "buy_hold_return": _buy_hold_return(market_data),
+        "benchmark_buy_hold_return": benchmark_buy_hold,
         "sharpe_ratio": m.sharpe_ratio(returns, periods_per_year),
         "sortino_ratio": m.sortino_ratio(returns, periods_per_year),
         "calmar_ratio": m.calmar_ratio(cagr_frac, drawdown_frac),
@@ -214,6 +417,11 @@ def compute_backtest_metrics(
         "turnover": _turnover(trades_df, initial_capital),
         # --- flags ---
         "benchmark_available": bool(has_benchmark),
+        "treynor_available": bool(has_benchmark and abs(beta) >= m.MIN_ABS_BETA_FOR_TREYNOR),
+        # At one trial there is nothing to deflate against: the "deflated" Sharpe is
+        # identically the probabilistic one, so the name promises a multiple-testing
+        # correction that was not applied. The number is right; the label was not.
+        "deflation_applied": bool(n_trials > 1),
         "low_sample": bool(len(trades_df) < LOW_SAMPLE_TRADES),
     }
     return result

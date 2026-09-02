@@ -25,7 +25,6 @@ for preconfigured combos (``make demo``, ``make backtest``, ...).
 """
 
 import argparse
-import asyncio
 import contextlib
 import logging
 import sys
@@ -35,7 +34,10 @@ from typing import Any, Dict, List, Optional
 
 from tradeflow.marketdata.base import MarketDataProvider
 from tradeflow.services.registry import STRATEGIES
+from tradeflow.settings import DATA_FEEDS
+from tradeflow.strategies import signals
 from tradeflow.utils.logging_config import setup_logging
+from tradeflow.utils.timeutils import NEW_YORK
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +48,12 @@ DEFAULT_UNIVERSE = ["NVDA", "RIVN", "NFLX", "META", "BAC", "MS", "TSLA", "GS", "
 # ---------------------------------------------------------------------------- #
 # Wiring
 # ---------------------------------------------------------------------------- #
-def build_data_and_broker(cache: bool = False, offline: bool = False, cache_dir: Optional[Any] = None):
+def build_data_and_broker(
+    cache: bool = False,
+    offline: bool = False,
+    cache_dir: Optional[Any] = None,
+    feed: Optional[str] = None,
+):
     """Construct the Alpaca-backed broker and market-data client from settings.
 
     ``cache``/``offline``/``cache_dir`` are forwarded to
@@ -61,18 +68,20 @@ def build_data_and_broker(cache: bool = False, offline: bool = False, cache_dir:
 
     settings = load_settings()
     broker = build_broker(settings.alpaca_key, settings.alpaca_secret, settings.paper_trade)
-    data_client = build_data_client(cache=cache, offline=offline, cache_dir=cache_dir)
+    data_client = build_data_client(cache=cache, offline=offline, cache_dir=cache_dir, feed=feed)
     return broker, data_client
 
 
-def resolve_universe(data_client, scanner_name: Optional[str], candidates: List[str]) -> List[str]:
+def resolve_universe(
+    data_client, scanner_name: Optional[str], candidates: List[str], as_of: Optional[datetime] = None
+) -> List[str]:
     """Filter ``candidates`` through the scanner, falling back to them if none flag.
 
     Delegates to the shared service core so the CLI and MCP server use one path.
     """
     from tradeflow.services.data import resolve_universe as _resolve
 
-    return _resolve(data_client, scanner_name, candidates)
+    return _resolve(data_client, scanner_name, candidates, as_of=as_of)
 
 
 def build_cost_model(args):
@@ -119,11 +128,53 @@ def _cost_key(args, vintage: Optional[str] = None) -> Dict[str, Any]:
     return key
 
 
-def _dedup_params(params: Dict[str, Any], args, vintage: Optional[str] = None) -> Dict[str, Any]:
-    """``params`` plus the cost-model assumptions, folded under a reserved key so
-    the dedup hash (and the journaled/displayed config) reflects everything that
-    can change a trial's outcome, not just the strategy's own tunable params."""
-    return {**params, "_cost": _cost_key(args, vintage)}
+def _dedup_params(
+    params: Dict[str, Any], args, vintage: Optional[str] = None, limits: Optional[Dict] = None
+) -> Dict[str, Any]:
+    """``params`` plus the assumptions that change the outcome, under reserved keys.
+
+    The dedup hash has to reflect everything that can change a trial's result, not just
+    the strategy's own tunable params. Cost was folded in; the book limits were not -
+    and they are not tunable params, so they went through no other identity either. Two
+    runs of the same strategy over the same window differing only in
+    ``max_gross_exposure`` therefore hashed alike, and the second was answered from the
+    first. Limits that are unset are omitted rather than recorded as null, so a config
+    that never mentioned them keys identically to one that does not have the concept.
+    """
+    from tradeflow.services.analysis import limits_key
+
+    # One definition, shared with the service the MCP server calls. Two copies of this
+    # would drift, and the moment they did a trial recorded over one surface would stop
+    # being found by the other.
+    return {**params, "_cost": _cost_key(args, vintage), **limits_key(limits)}
+
+
+def _walkforward_recipe(args, vintage: Optional[str] = None) -> Dict[str, Any]:
+    """The validation recipe this run is memoized under, from an argparse namespace.
+
+    A thin adapter over ``services.analysis.walk_forward_recipe``, for the same reason
+    ``_dedup_params`` is one: a namespace is not a function signature, but there must
+    still be only one definition of what identifies a repeat. The second copy that
+    used to live in ``cmd_walkforward`` dropped the book limits, so two configs
+    differing only in ``max_positions`` hashed alike and the second was answered from
+    the first.
+    """
+    from tradeflow.services.analysis import walk_forward_recipe
+
+    return walk_forward_recipe(
+        mode=args.mode,
+        n_folds=args.folds,
+        train_days=args.train_days,
+        test_days=args.test_days,
+        embargo_days=args.embargo_days,
+        holdout_days=args.holdout_days,
+        method=args.method,
+        objective=args.objective,
+        max_evals=args.max_evals,
+        seed=args.seed,
+        cost_key=_cost_key(args, vintage),
+        limits=getattr(args, "config_position_limits", None),
+    )
 
 
 def _vintage_stamp(data_client, universe: List[str], timeframe: str, start: Any, end: Any) -> Optional[str]:
@@ -178,6 +229,7 @@ def _find_cached_trial(
     start: Any,
     end: Any,
     accounting: int,
+    require_trades: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """Look up an exact prior trial via the trial store; ``None`` if none exists
     (including when the store itself is unavailable - see :func:`_open_trial_store`).
@@ -194,6 +246,7 @@ def _find_cached_trial(
             window_start=start,
             window_end=end,
             accounting=accounting,
+            require_trades=require_trades,
             git_sha=current_git_sha(),
         )
 
@@ -217,10 +270,40 @@ def _write_html(args, result: Dict[str, Any], kind: str, extras: Optional[Dict[s
         print(f"HTML report skipped: {exc}")
 
 
+def _flags_given(parser, argv: List[str], command: Optional[str]) -> set:
+    """Which options the user actually typed, as argparse dests.
+
+    Needed because a saved config fills in what the command line left unsaid, and
+    "left unsaid" cannot be inferred from the parsed value: a flag passed explicitly
+    with its default value is indistinguishable from one omitted. Reading the tokens
+    is the only way to tell, and getting it wrong means a config silently overriding
+    something the user typed.
+    """
+    sub = parser
+    if command is not None:
+        choices = parser._subparsers._group_actions[0].choices
+        sub = choices.get(command, parser)
+    by_option = {opt: action.dest for action in sub._actions for opt in action.option_strings}
+    given = set()
+    for token in argv:
+        if token.startswith("-") and (dest := by_option.get(token.split("=", 1)[0])) is not None:
+            given.add(dest)
+    return given
+
+
+def parse_cli(argv: Optional[List[str]] = None):
+    """Parse argv and record which flags were typed, for config layering."""
+    argv = list(sys.argv[1:]) if argv is None else list(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    args.flags_given = _flags_given(parser, argv, getattr(args, "command", None))
+    return args
+
+
 def _load_strategy_from_config(path: str):
-    """Load a saved config (``walkforward --save-config``) and construct the
-    strategy directly from its params - the ``--config`` path shared by
-    ``backtest``/``live``. Returns ``(strategy, strategy_name, scanner_name)``.
+    """Load a saved config and construct the strategy directly from its params.
+
+    Returns ``(strategy, strategy_name, scanner_name)``.
 
     Construction goes through ``Strategy.__init__`` exactly as
     ``create_with_defaults()`` does, so out-of-range/unrecognized params raise
@@ -237,6 +320,164 @@ def _load_strategy_from_config(path: str):
     return strategy, strategy_name, payload.get("scanner")
 
 
+def _settle_universe_replay(args, sources, given) -> None:
+    """Replay the config's universe unless a re-resolution is explicitly asked for.
+
+    A saved config means "this is the book we validated". Re-scanning it on use turns
+    that into "a new book from an old recipe" - a different experiment, which can move
+    results in either direction without the reader knowing the universe changed. Worse,
+    the scanner would run over the *resolved* names, applying the filter a second time
+    rather than repeating the original decision.
+
+    Replay is expressed by pinning the scanner off, so every command that resolves a
+    universe - directly or through a service - honours it identically instead of each
+    growing its own replay branch.
+    """
+    if args.universe_source != "config":
+        if getattr(args, "re_resolve_universe", False) and args.universe_source == "flag":
+            # The collision: --symbols already replaced the saved book, so there is
+            # nothing left to re-resolve. Saying so beats letting a flag look honoured.
+            sources.append("universe=<--symbols given; --re-resolve-universe has nothing to re-resolve>")
+        return  # no saved universe in play: behave exactly as before
+
+    if getattr(args, "re_resolve_universe", False):
+        candidates = args.candidate_symbols
+        if candidates:
+            args.symbols = list(candidates)
+            sources.append(f"universe=<re-resolved from {len(candidates)} saved candidates>")
+        else:
+            sources.append("universe=<re-resolved over the saved book; no candidates recorded>")
+        return
+
+    if "scanner" in given and getattr(args, "scanner", None) not in (None, "none"):
+        # An explicitly typed scanner is a decision too, and flags win. Say that the
+        # two instructions disagreed rather than silently honouring one of them.
+        sources.append(f"universe=<--scanner {args.scanner} given; saved book re-scanned>")
+        return
+    if getattr(args, "scanner", None) not in (None, "none"):
+        args.scanner = "none"
+    sources.append(f"universe=<replayed from config, {len(args.symbols)} symbols>")
+
+
+def _strategy_from(args, tuned):
+    """The strategy a run should use, from the resolved name and any tuned params.
+
+    Construction goes through ``Strategy.__init__`` exactly as
+    ``create_with_defaults()`` does, so params an older strategy can no longer honour
+    raise loudly rather than trading on a config it cannot actually run.
+    """
+    cls = STRATEGIES[args.strategy]
+    strategy = cls(dict(tuned)) if tuned else cls.create_with_defaults()
+    limits = getattr(args, "config_position_limits", None)
+    if limits:
+        # After construction: `position_limits` is not a tunable parameter, so it does
+        # not go through PARAM_RANGES validation, and a strategy built from defaults
+        # would otherwise silently keep the defaults the file exists to override.
+        strategy.config["position_limits"] = {**strategy.position_limits(), **limits}
+    return strategy
+
+
+def apply_run_config(args):
+    """Layer a saved config under the command line; explicit flags win.
+
+    One file configures a run whatever its type, so this is shared by every command
+    that accepts ``--config`` rather than reimplemented per command. Only fields the
+    command actually has are filled - ``risk`` takes a universe but no strategy - so
+    a config saved from a walk-forward is usable everywhere without being meaningful
+    everywhere.
+
+    Returns the config's tuned params (``{}`` when there is no ``--config``), because
+    the analysis services take a strategy *name* plus a params overlay rather than a
+    constructed strategy. A command that ignores that return would run the config's
+    universe with the strategy's *default* params while reporting that it loaded the
+    config, which is the failure this whole surface exists to avoid.
+
+    A ``--strategy`` that contradicts the config is refused rather than resolved. The
+    params in the file belong to the strategy in the file, and quietly handing one
+    strategy's tuned params to another is not an outcome worth guessing at.
+    """
+    from tradeflow.optimization.config_store import load_config
+
+    if not getattr(args, "config", None):
+        return {}
+
+    given = getattr(args, "flags_given", None)
+    if given is None:
+        # Parsed without parse_cli - a direct parse_args, as tests and embedders do.
+        # Fall back to comparing against the parser's own defaults. Less precise than
+        # reading the tokens (a flag typed with its default value reads as absent), but
+        # it is the only signal available, and it errs toward letting the file fill in
+        # rather than inventing a contradiction the user never wrote.
+        parser = build_parser()
+        choices = parser._subparsers._group_actions[0].choices
+        sub = choices.get(getattr(args, "command", ""), parser)
+        given = {
+            action.dest
+            for action in sub._actions
+            if action.dest != "help" and getattr(args, action.dest, None) != sub.get_default(action.dest)
+        }
+
+    payload = load_config(args.config)
+    name = payload["strategy"]
+    if "strategy" in given and getattr(args, "strategy", name) != name:
+        raise SystemExit(
+            f"--config {args.config} holds strategy {name!r} and its tuned params, but "
+            f"--strategy {args.strategy!r} was given. Those params belong to {name!r}; "
+            f"drop --strategy, or drop --config and tune {args.strategy!r} on its own."
+        )
+
+    sources = []
+    if hasattr(args, "strategy"):
+        sources.append(f"strategy={name!r}")
+        # Construct it here purely to validate: params an older strategy can no longer
+        # honour must fail now, not four steps into a pipeline.
+        _load_strategy_from_config(args.config)
+        args.strategy = name
+
+    for field, flag in (("scanner", "--scanner"), ("symbols", "--symbols"), ("capital", "--capital")):
+        if not hasattr(args, field):
+            continue
+        value = payload.get(field)
+        if field in given:
+            sources.append(f"{field}=<{flag} given>")
+        elif value is not None:
+            setattr(args, field, value)
+            sources.append(f"{field}=<config>")
+
+    # Limits recorded in the file win over the strategy class's defaults, because the
+    # file is what was validated. Merged rather than replaced so a config written before
+    # this still gets the defaults for keys it never recorded.
+    limits = payload.get("position_limits")
+    if limits:
+        tuned_limits = dict(limits)
+        sources.append("position_limits=<config>")
+    else:
+        tuned_limits = None
+    args.config_position_limits = tuned_limits
+
+    args.candidate_symbols = payload.get("candidate_symbols")
+    args.universe_source = "flag" if "symbols" in given else ("config" if payload.get("symbols") else None)
+    _settle_universe_replay(args, sources, given)
+
+    cost = payload.get("cost") or {}
+    applied_cost = [
+        field
+        for field in ("gross", "commission_bps", "impact_eta", "borrow_bps")
+        if hasattr(args, field) and field not in given and field in cost
+    ]
+    for field in applied_cost:
+        setattr(args, field, cost[field])
+    if applied_cost:
+        sources.append("cost=<config>")
+
+    print(f"Config {args.config}: {', '.join(sources) or 'nothing this command can use'}")
+    # The window is never stored - see save_config - so it is always this run's own,
+    # and saying so is what stops a reader assuming the config pinned it.
+    if hasattr(args, "start") and hasattr(args, "end"):
+        print(f"  window {args.start:%Y-%m-%d}..{args.end:%Y-%m-%d} (from this run, not the config)")
+    return dict(payload.get("params") or {})
+
+
 # ---------------------------------------------------------------------------- #
 # Commands
 # ---------------------------------------------------------------------------- #
@@ -251,18 +492,15 @@ def cmd_backtest(args) -> None:
     from tradeflow.engine.backtest import ACCOUNTING_VERSION, BacktestEngine
     from tradeflow.services.sizing import build_beta_sizer
 
-    scanner = args.scanner
-    if args.config:
-        strategy, strategy_name, cfg_scanner = _load_strategy_from_config(args.config)
-        if cfg_scanner:
-            scanner = cfg_scanner
-        print(f"Loaded config {args.config} -> strategy={strategy_name!r} scanner={scanner!r}")
-    else:
-        strategy_name = args.strategy
-        strategy = STRATEGIES[strategy_name].create_with_defaults()
+    tuned = apply_run_config(args)
+    strategy_name = args.strategy
+    strategy = _strategy_from(args, tuned)
+    # After the config, before anything reads the limits: a typed flag wins over what a
+    # config declares, the same precedence every other flag has.
+    _apply_limit_overrides(args, strategy)
 
     _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
-    universe = resolve_universe(data_client, scanner, args.symbols)
+    universe = resolve_universe(data_client, args.scanner, args.symbols, as_of=args.scan_as_of or args.end)
 
     # Computed once, up front: it warms the cache as a side effect (when
     # cache-backed) and must match exactly between the lookup below and the
@@ -270,11 +508,17 @@ def cmd_backtest(args) -> None:
     # found - see _vintage_stamp's own docstring.
     vintage = _vintage_stamp(data_client, universe, strategy.config["timeframe"], args.start, args.end)
     tunable = {k: strategy.config[k] for k in strategy.PARAM_RANGES if k in strategy.config}
-    dedup_params = _dedup_params(tunable, args, vintage)
+    dedup_params = _dedup_params(tunable, args, vintage, strategy.position_limits())
 
     if not args.force:
         cached = _find_cached_trial(
-            strategy_name, dedup_params, universe, args.start, args.end, ACCOUNTING_VERSION
+            strategy_name,
+            dedup_params,
+            universe,
+            args.start,
+            args.end,
+            ACCOUNTING_VERSION,
+            require_trades=True,
         )
         if cached is not None:
             print(
@@ -310,7 +554,7 @@ def cmd_backtest(args) -> None:
     # Metrics are net of transaction cost by default; --gross disables the charge.
     cost_model = build_cost_model(args)
     result = BacktestEngine(strategy, data_client, sizer=sizer, cost_model=cost_model).run(
-        universe, args.start, args.end, args.capital
+        universe, args.start, args.end, args.capital, benchmark=args.benchmark
     )
 
     if not args.no_journal:
@@ -329,6 +573,7 @@ def cmd_backtest(args) -> None:
             "backtest",
             strategy=strategy_name,
             symbols=universe,
+            candidate_symbols=args.symbols,
             start=args.start,
             end=args.end,
             params=dedup_params,
@@ -339,7 +584,21 @@ def cmd_backtest(args) -> None:
             trades=trades_payload(result.trades) if args.record_trades else None,
         )
 
-    log_backtest_report(result.metrics, result.initial_capital, result.final_capital)
+    log_backtest_report(
+        result.metrics,
+        result.initial_capital,
+        result.final_capital,
+        execution=result.execution,
+        legs=result.legs,
+    )
+    _print_universe_provenance(args, universe)
+    _print_net_cap_derivation(result, strategy.position_limits())
+    _print_verdicts_for_backtest(result)
+    _print_exit_concentration(result)
+    if getattr(args, "cost_stress", False):
+        _print_cost_stress(data_client, strategy_name, universe, args, tuned)
+    if getattr(args, "fill_stress", False):
+        _print_fill_stress(data_client, strategy_name, universe, args, tuned)
     if not args.gross and result.total_cost:
         print(
             f"Transaction cost: ${result.total_cost:,.2f} "
@@ -371,6 +630,7 @@ def cmd_backtest(args) -> None:
                 end=args.end,
                 capital=args.capital,
                 gross=args.gross,
+                benchmark=args.benchmark,
             ),
             "backtest",
             # The equity curve is not in the result dict (it can run to tens of
@@ -385,27 +645,60 @@ def cmd_backtest(args) -> None:
 
 
 def cmd_scan(args) -> None:
-    from tradeflow.scanners.symbol_scanner import SymbolScanner
+    from tradeflow.analytics.reporting import format_offline_scan_notice
+    from tradeflow.scanners.symbol_scanner import SymbolScanner, resolve_scan_clock
 
-    _, data_client = build_data_and_broker()
-    flagged = SymbolScanner(data_client, args.scanner).scan(args.symbols)
+    _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
+    # Before the result, not after it: a caveat under a list of symbols is a caveat
+    # most readers have already scrolled past.
+    if args.offline:
+        print(format_offline_scan_notice(resolve_scan_clock(args.as_of)))
+    flagged = SymbolScanner(data_client, args.scanner).scan(args.symbols, as_of=args.as_of)
     if not flagged:
         print("No symbols flagged.")
         return
     print(f"{'SYMBOL':10}SIGNAL")
     for symbol, signal in flagged:
         print(f"{symbol:10}{signal}")
+    if getattr(args, "drift", False):
+        _print_scanner_drift(data_client, args)
+
+
+def _print_scanner_drift(data_client, args) -> None:
+    """How much this universe moves when the scan clock moves.
+
+    A config records the universe its scanner *resolved*, so an unstable scan means the
+    book a deployment gets is not the book that was validated - and no promotion gate
+    would notice, because the gates never see the scan twice.
+    """
+    from tradeflow.services.analysis import run_scanner_drift
+
+    report = run_scanner_drift(data_client, args.scanner, args.symbols, args.as_of)
+    print(f"\n=== Scanner drift ({report['baseline_size']} flagged at {report['as_of'][:10]}) ===")
+    print(f"  {'clock':>10}{'flagged':>9}{'overlap':>9}{'turnover':>10}")
+    for row in report["comparisons"]:
+        print(f"  {row['offset_days']:>9}d{row['size']:>9}{row['overlap']:>9}{row['turnover_pct']:>9.1f}%")
+    worst = report["max_turnover_pct"]
+    print(
+        f"  Universe turnover peaks at {worst:.1f}% across these clocks."
+        if worst
+        else "  Universe is identical across these clocks."
+    )
 
 
 def cmd_allocate(args) -> None:
+    # The scalar-weight path scores no strategy, so only the config's universe,
+    # scanner and capital reach it; the utility path can use the tuned params too.
+    tuned = apply_run_config(args)
+
     if getattr(args, "objective", "weights") == "utility":
-        _allocate_utility(args)
+        _allocate_utility(args, tuned)
         return
 
     from tradeflow.scanners.symbol_scanner import SymbolScanner
     from tradeflow.services.sizing import allocate_portfolio
 
-    _, data_client = build_data_and_broker()
+    _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
     scanner = SymbolScanner(data_client, args.scanner)
     flagged = [symbol for symbol, _ in scanner.scan(args.symbols)]
     if not flagged:
@@ -424,11 +717,11 @@ def cmd_allocate(args) -> None:
         print(f"{a.symbol:10}{a.weight:>7.1%}{a.dollars:>14,.2f}{a.shares:>10.0f}")
 
 
-def _allocate_utility(args) -> None:
+def _allocate_utility(args, tuned=None) -> None:
     """Mean-variance portfolio construction (alpha + Σ) — a read-only proposal."""
     from tradeflow.services.analysis import construct_portfolio, longshort_report
 
-    _, data_client = build_data_and_broker()
+    _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
     book = args.book.replace("-", "_")
 
     if args.longshort_report:
@@ -437,6 +730,7 @@ def _allocate_utility(args) -> None:
             args.strategy,
             args.symbols,
             args.as_of,
+            config=tuned,
             source=args.source,
             scanner=args.scanner,
             target_te=args.target_te,
@@ -457,6 +751,7 @@ def _allocate_utility(args) -> None:
         args.strategy,
         args.symbols,
         as_of=args.as_of,
+        config=tuned,
         source=args.source,
         scanner=args.scanner,
         target_te=args.target_te,
@@ -653,7 +948,7 @@ def cmd_optimize(args) -> None:
     from tradeflow.optimization.optimizer import ParameterOptimizer
 
     _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
-    universe = resolve_universe(data_client, args.scanner, args.symbols)
+    universe = resolve_universe(data_client, args.scanner, args.symbols, as_of=args.scan_as_of or args.end)
     timeframe = STRATEGIES[args.strategy].create_with_defaults().config["timeframe"]
     vintage = _vintage_stamp(data_client, universe, timeframe, args.start, args.end)
     # Workers, when asked for, read bars from the local cache rather than the API —
@@ -682,6 +977,7 @@ def cmd_optimize(args) -> None:
             force=args.force,
             workers=args.workers,
             data_spec=data_spec,
+            seed=args.seed,
         )
 
         if args.method == "grid":
@@ -738,28 +1034,21 @@ def cmd_walkforward(args) -> None:
     from tradeflow.optimization.config_store import build_provenance, current_git_sha, save_config
     from tradeflow.optimization.walk_forward import WalkForwardValidator
 
+    # A config is the *output* of a walk-forward, so re-validating one had to be done
+    # by expanding it back onto the command line by hand - which is exactly where a
+    # universe or a cost parameter silently drifts from what was saved.
+    tuned = apply_run_config(args)
+
     _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
-    universe = resolve_universe(data_client, args.scanner, args.symbols)
-    timeframe = STRATEGIES[args.strategy].create_with_defaults().config["timeframe"]
+    universe = resolve_universe(data_client, args.scanner, args.symbols, as_of=args.scan_as_of or args.end)
+    timeframe = _strategy_from(args, tuned).config["timeframe"]
     vintage = _vintage_stamp(data_client, universe, timeframe, args.start, args.end)
 
     # Top-level memoization key: the *validation recipe*, not the chosen params —
     # those aren't known until the search runs. Same seed + same recipe + same
     # window is deterministic, so serving a prior result is honest, not a
-    # shortcut.
-    recipe = {
-        "mode": args.mode,
-        "n_folds": args.folds,
-        "train_days": args.train_days,
-        "test_days": args.test_days,
-        "embargo_days": args.embargo_days,
-        "holdout_days": args.holdout_days,
-        "method": args.method,
-        "objective": args.objective,
-        "max_evals": args.max_evals,
-        "seed": args.seed,
-        "_cost": _cost_key(args, vintage),
-    }
+    # shortcut. Built by the service the MCP server calls, not rebuilt here.
+    recipe = _walkforward_recipe(args, vintage)
 
     with _open_trial_store() as trial_store:
         if not args.force and trial_store is not None:
@@ -803,6 +1092,11 @@ def cmd_walkforward(args) -> None:
             force=args.force,
             workers=args.workers,
             data_spec=data_spec,
+            benchmark=getattr(args, "benchmark", None),
+            # The book the config says it will trade. Without this a config asking for
+            # eight positions was validated at whatever the strategy class declares,
+            # so the validated book and the deployed one were different books.
+            position_limits=getattr(args, "config_position_limits", None),
         )
         result = validator.run(
             universe,
@@ -859,6 +1153,7 @@ def cmd_walkforward(args) -> None:
             "walkforward",
             strategy=args.strategy,
             symbols=universe,
+            candidate_symbols=args.symbols,
             start=args.start,
             end=args.end,
             params=dict(chosen),
@@ -874,10 +1169,11 @@ def cmd_walkforward(args) -> None:
             dedup_params=recipe,
         )
 
+    bootstrap_report = None
     if getattr(args, "bootstrap_skill", False) and result.folds:
         from tradeflow.services.analysis import compute_bootstrap_skill
 
-        report = compute_bootstrap_skill(
+        bootstrap_report = compute_bootstrap_skill(
             result.oos_returns,
             args.strategy,
             universe,
@@ -887,7 +1183,10 @@ def cmd_walkforward(args) -> None:
             block_length=args.bootstrap_block_length,
             seed=args.bootstrap_seed,
         )
-        _print_bootstrap_skill(report)
+        _print_bootstrap_skill(bootstrap_report)
+
+    if result.folds:
+        _print_promotion_prerequisites(data_client, args, result, universe, bootstrap_report)
 
     if getattr(args, "chart", None):
         from tradeflow.analytics.charts import render_walkforward_chart
@@ -935,6 +1234,21 @@ def cmd_walkforward(args) -> None:
             strategy=args.strategy,
             scanner=args.scanner,
             params=chosen,
+            # Both universes, because they record different decisions. `symbols` is
+            # the book that was validated and what a replay trades; `candidate_symbols`
+            # is what it was resolved from, and the only thing a genuine re-resolution
+            # can re-scan - running a scanner over the resolved names is a second filter
+            # over an already-filtered set, not the original decision repeated.
+            symbols=universe,
+            candidate_symbols=args.symbols,
+            capital=args.capital,
+            # Written out in full so a frozen config states what it risks rather than
+            # inheriting it. The strategy's own defaults are a decision nobody made.
+            position_limits=STRATEGIES[args.strategy].create_with_defaults().position_limits(),
+            # _cost_key(args) without the vintage: that stamp fingerprints the *data*
+            # a run read, and pinning a reusable config to one data snapshot is the
+            # opposite of what it is for.
+            cost=_cost_key(args),
             provenance=provenance,
         )
         print(f"Chosen config saved to {path} (a human promotes it to live; nothing auto-flips)")
@@ -1017,6 +1331,156 @@ def _print_walkforward(result, objective: str) -> None:
     )
 
 
+def _print_promotion_prerequisites(data_client, args, result, universe, bootstrap_report) -> None:
+    """What a candidate should clear before paper, beside `promotable` rather than in it.
+
+    `promotable` stays statistical and keeps meaning for every trial already recorded.
+    These ask the questions that come after: does the edge survive worse cost
+    assumptions, and does it still look like skill once the whole family is priced in?
+
+    Computed here because the family test needs this trial already journaled, which
+    happens above - `gate_report` runs before that and structurally cannot see it.
+    """
+    from tradeflow.analytics.performance import promotion_prerequisites
+    from tradeflow.services.analysis import run_cost_stress
+
+    stress = None
+    if getattr(args, "cost_stress", None):
+        chosen = result.holdout_params or result.folds[-1].is_best_params
+        stress = run_cost_stress(
+            data_client,
+            args.strategy,
+            universe,
+            args.start,
+            args.end,
+            config=dict(chosen),
+            capital=args.capital,
+            commission_bps=args.commission_bps,
+            impact_eta=args.impact_eta,
+            borrow_bps=args.borrow_bps,
+            axis=args.cost_stress,
+        )
+
+    benchmark_ir = None
+    if getattr(args, "benchmark", None) and any(
+        fold.oos_metrics.get("benchmark_available") for fold in result.folds
+    ):
+        benchmark_ir = result.median_oos("information_ratio")
+
+    benchmark_excess = result.median_oos_excess_return() if benchmark_ir is not None else None
+
+    prereq = promotion_prerequisites(
+        cost_stress=stress,
+        bootstrap=bootstrap_report,
+        benchmark_ir=benchmark_ir,
+        benchmark_excess_pct=benchmark_excess,
+    )
+    _print_fold_disagreement(result)
+    _print_leg_stability(result)
+    _print_walkforward_verdicts(result, prereq)
+    if not prereq["evaluated"] and prereq["checks"]["family_bootstrap"]["n_used"] == 0:
+        return  # nothing to say: no input was produced by this run
+
+    print("\n=== Promotion prerequisites (separate from `promotable`) ===")
+    for name, check in prereq["checks"].items():
+        if not check["evaluated"]:
+            print(f"  [ -- ] {name:18}not evaluated - {check['note']}")
+            continue
+        mark = "PASS" if check["passed"] else "FAIL"
+        print(f"  [{mark}] {name:18}{check['value']:.4g} vs {check['threshold']:.4g}")
+    # The count leads, and the verdict word never stands alone: "Prerequisites: clear"
+    # can be skimmed as all-clear even with a caveat on the next line, and this is a
+    # display someone reads immediately before risking money.
+    ready, done, total = prereq["ready"], prereq["evaluated"], prereq["total"]
+    unknown = total - done
+    verdict = {None: "nothing assessed", True: "clear so far" if unknown else "clear", False: "NOT clear"}[
+        ready
+    ]
+    tail = f"; {unknown} unknown" if unknown else ""
+    print(f"  Prerequisites: {done} of {total} evaluated - {verdict}{tail}")
+    if unknown:
+        print("  An unevaluated check is not a passed one - what is unknown stays unknown.")
+
+
+def _print_fold_disagreement(result) -> None:
+    """The spread the median is hiding.
+
+    A median is what the prerequisite gates on, and a median is exactly where regime
+    failure hides: excess returns of +0.2%, -2.0% and +3.2% have a positive median and
+    a five-point spread, and only one of those two numbers would make anyone look
+    closer. Reported rather than gated - the median already gates, and nobody yet knows
+    what "too much disagreement" is worth failing a candidate over.
+    """
+    excess = result.excess_return_by_fold()
+    if len(excess) < 2:
+        return
+    negative = [value for value in excess if value < 0]
+    spread = max(excess) - min(excess)
+    print("\n=== Excess return by fold (diagnostic) ===")
+    print("  " + "  ".join(f"{value:+.2f}%" for value in excess))
+    print(f"  median {result.median_oos_excess_return():+.2f}%   spread {spread:.2f}pp")
+    if negative and len(negative) < len(excess):
+        print(
+            f"  {len(negative)} of {len(excess)} folds lost to the benchmark - the median "
+            "is an average over folds that disagree, not a typical fold."
+        )
+
+
+def _print_net_cap_derivation(result, limits=None) -> None:
+    """What directional tilt this book actually carried, and what a cap would do to it.
+
+    Printed only for a book that traded both sides - a long-only strategy's net is its
+    gross, and a "cap" on it would be a second name for a limit that already exists.
+    """
+    from tradeflow.analytics.exposure import derive_net_cap, format_net_cap
+
+    limits = limits or {}
+    legs = getattr(result, "legs", None) or {}
+    if not all(legs.get(side, {}).get("trades") for side in ("long", "short")):
+        return
+    derivation = derive_net_cap(
+        getattr(result, "exposure", {}) or {}, gross_cap=limits.get("max_gross_exposure")
+    )
+    if not derivation.get("available"):
+        return
+    print("\n".join(format_net_cap(derivation)))
+
+
+def _print_leg_stability(result) -> None:
+    """Each leg's beta fold by fold, when the book trades both sides.
+
+    A book that is neutral on average and directional within folds is a different
+    proposition from one that is neutral throughout, and no aggregate separates them.
+    Diagnostic only - it gates nothing.
+    """
+    by_fold = result.leg_beta_by_fold()
+    if len(by_fold) < 2 or not any(any(b is not None for b in betas) for betas in by_fold.values()):
+        return  # long-only, or no benchmark was given for the folds to score against
+    print("\n=== Leg beta by fold (diagnostic) ===")
+    for name, betas in sorted(by_fold.items()):
+        rendered = "  ".join("n/a" if b is None else f"{b:+.2f}" for b in betas)
+        print(f"  {name:6}{rendered}")
+    print("  A book neutral on average can still be directional inside a fold.")
+
+
+def _print_walkforward_verdicts(result, prereq) -> None:
+    """Statistical validation and evidence completeness. Execution is not measurable
+    here - it is a property of a book at a capital, which a backtest reports."""
+    from tradeflow.analytics.reporting import format_verdicts
+
+    gates = result.gate_report()
+    failed = [name for name, check in gates["checks"].items() if not check.get("passed")]
+    statistical = "PASS" if gates["promotable"] else f"FAIL - {', '.join(failed)}"
+
+    done, total = prereq["evaluated"], prereq["total"]
+    unknown = total - done
+    ready = {None: "nothing assessed", True: "clear so far" if unknown else "clear", False: "NOT clear"}[
+        prereq["ready"]
+    ]
+    evidence = f"{done} of {total} evaluated - {ready}" + (f"; {unknown} unknown" if unknown else "")
+    print("\n".join(format_verdicts(statistical=statistical, evidence=evidence)))
+
+
 def _print_bootstrap_skill(report: Dict[str, Any]) -> None:
     """The bootstrap-skill report (`walkforward --bootstrap-skill`):
     own p next to family p, ALWAYS together — a great own p and a terrible
@@ -1078,7 +1542,7 @@ def cmd_research(args) -> None:
     from tradeflow.services.data import build_data_client
 
     data_client = build_data_client()
-    universe = resolve_universe(data_client, args.scanner, args.symbols)
+    universe = resolve_universe(data_client, args.scanner, args.symbols, as_of=args.scan_as_of or args.end)
     cfg = ResearchConfig(
         goal=args.goal,
         mode=args.mode,
@@ -1161,6 +1625,9 @@ def cmd_init(args) -> None:
     """
     from tradeflow.services import setup
 
+    if getattr(args, "dev_local_state", False):
+        _print_dev_local_state()
+        return
     if args.check:
         _print_doctor(setup.run_checks())
         return
@@ -1168,6 +1635,29 @@ def cmd_init(args) -> None:
         _init_non_interactive(args, setup)
         return
     _init_interactive(args, setup)
+
+
+def _print_dev_local_state() -> None:
+    """How a contributor opts back in to checkout-local state, and what it costs.
+
+    Printed rather than written: it changes where every future trial is recorded, so it
+    belongs in the shell profile or the command line where its owner can see it, not
+    hidden inside a file this command happens to control.
+    """
+    from tradeflow.settings import PROJECT_ROOT, running_from_checkout
+
+    if not running_from_checkout():
+        sys.exit(
+            "--dev-local-state is for a checkout, and this copy was installed. Its state "
+            "already lives outside any repository, which is where you want it."
+        )
+    print(f"\nTo keep this checkout's state inside it, export:\n\n    TRADEFLOW_HOME={PROJECT_ROOT}\n")
+    print(
+        "  That directory is a git working tree. Everything recorded there - trials,\n"
+        "  saved configs, and any private strategy's evidence - is then one ignore-file\n"
+        "  edit from disclosure, and `git clean -xd` deletes it, live ledger included.\n"
+        "  Unset it and state returns to ~/.tradeflow.\n"
+    )
 
 
 def _print_doctor(checks) -> None:
@@ -1186,9 +1676,12 @@ def _print_doctor(checks) -> None:
         print(f"  [{'ok' if check.passed else 'FAIL'}] {check.name:<22} {check.detail}")
     essential = [c for c in checks if not c.passed and not c.name.startswith("extra:")]
     if essential:
-        print(f"\n{len(essential)} problem(s) to fix. Run `python main.py init` for the guided setup.")
+        print(f"\n{len(essential)} problem(s) to fix. Run `{_invocation('init')}` for the guided setup.")
         raise SystemExit(1)
-    print("\nSetup looks good. `make demo` needs nothing; `python main.py verdict` needs the keys above.")
+    print(
+        f"\nSetup looks good. `{_invocation('demo', make_target='demo')}` needs nothing; "
+        f"`{_invocation('verdict')}` needs the keys above."
+    )
 
 
 def _init_non_interactive(args, setup) -> None:
@@ -1240,7 +1733,9 @@ def _init_interactive(args, setup) -> None:
     secret = getpass.getpass("  APCA_API_SECRET_KEY (hidden): ").strip() if key else ""
 
     if not key or not secret:
-        print("\nSkipped — no keys written. `make demo` runs offline with no credentials at all.")
+        print(
+            f"\nSkipped — no keys written. `{_invocation('demo', make_target='demo')}` runs offline with no credentials at all."
+        )
         _print_next_steps()
         return
 
@@ -1316,10 +1811,11 @@ def _typed_confirmation(phrase: str) -> bool:
 def _print_next_steps() -> None:
     print(
         "\nNext:"
-        "\n  make demo                 the whole pipeline on synthetic data — no keys, no network"
-        "\n  python main.py verdict    scan → alphas → portfolio → information, one verdict"
-        "\n  python main.py backtest   did the idea ever work?"
-        "\n  python main.py init --check   re-run these checks any time\n"
+        f"\n  {_invocation('demo', make_target='demo'):<30}the whole pipeline on synthetic data — no keys, no network"
+        f"\n  {_invocation('verdict'):<30}scan → alphas → portfolio → information, one verdict"
+        f"\n  {_invocation('backtest'):<30}did the idea ever work?"
+        f"\n  {_invocation('mcp'):<30}serve it to an agent over MCP (needs the 'mcp' extra)"
+        f"\n  {_invocation('init --check'):<30}re-run these checks any time\n"
     )
 
 
@@ -1339,6 +1835,7 @@ def cmd_verdict(args) -> None:
     from tradeflow.analytics.reporting import format_cached_notice, format_verdict_report
     from tradeflow.services.analysis import run_verdict
 
+    tuned = apply_run_config(args)
     _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
 
     result = run_verdict(
@@ -1347,6 +1844,7 @@ def cmd_verdict(args) -> None:
         args.symbols,
         args.start,
         args.end,
+        config=tuned,
         scanner=args.scanner,
         signals=args.combine,
         source=args.source,
@@ -1397,9 +1895,11 @@ def cmd_alphas(args) -> None:
     cross-section into comparable annualized-return forecasts, and ranks them.
     Produces no orders and saves no config.
     """
+    tuned = apply_run_config(args)
+
     from tradeflow.services.analysis import compute_alphas, compute_combined_alphas
 
-    _, data_client = build_data_and_broker()
+    _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
 
     if args.combine:
         combined = compute_combined_alphas(
@@ -1421,6 +1921,7 @@ def cmd_alphas(args) -> None:
         args.strategy,
         args.symbols,
         as_of=args.as_of,
+        config=tuned,
         source=args.source,
         scanner=args.scanner,
         ic=args.ic,
@@ -1523,7 +2024,9 @@ def cmd_risk(args) -> None:
     shrinkage intensity, conditioning, mean correlation, equal-weight portfolio
     volatility, and the top risk contributors. Produces no orders.
     """
-    _, data_client = build_data_and_broker()
+    apply_run_config(args)
+
+    _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
 
     if getattr(args, "evaluate_conditional", False):
         _print_conditional_evidence_gate(data_client, args)
@@ -1612,9 +2115,11 @@ def cmd_info(args) -> None:
     effective breadth over [start, end] and reconciles predicted IR with realized,
     surfacing the research-integrity guardrails. Produces no orders.
     """
+    tuned = apply_run_config(args)
+
     from tradeflow.services.analysis import compute_information
 
-    _, data_client = build_data_and_broker()
+    _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
 
     if getattr(args, "scaling_ab", False):
         _print_scaling_ab(data_client, args)
@@ -1635,6 +2140,7 @@ def cmd_info(args) -> None:
         args.symbols,
         args.start,
         args.end,
+        config=tuned,
         source=args.source,
         scanner=args.scanner,
         benchmark=args.benchmark,
@@ -1845,6 +2351,164 @@ def _print_policy_ab(data_client, args) -> None:
     )
 
 
+def _print_universe_provenance(args, resolved) -> None:
+    """Where the universe came from, printed with the result rather than inferred.
+
+    A 61-name large-cap list is not "the market", and a report that leaves the universe
+    in the background invites it to be read as one.
+    """
+    from tradeflow.analytics.reporting import format_universe_provenance
+    from tradeflow.scanners.symbol_scanner import resolve_scan_clock
+
+    source = {
+        "config": "the saved config",
+        "flag": "--symbols",
+    }.get(getattr(args, "universe_source", None), "--symbols")
+    if getattr(args, "universe_source", None) is None and args.symbols == DEFAULT_UNIVERSE:
+        source = "the built-in default list"
+    candidates = getattr(args, "candidate_symbols", None) or args.symbols
+    replayed = getattr(args, "universe_source", None) == "config" and not getattr(
+        args, "re_resolve_universe", False
+    )
+    clock = resolve_scan_clock(args.scan_as_of or args.end).isoformat() if args.scanner != "none" else None
+    print(
+        "\n".join(
+            format_universe_provenance(
+                candidates=candidates,
+                resolved=resolved,
+                scanner=args.scanner,
+                scan_clock=clock,
+                source=source,
+                replayed=replayed,
+            )
+        )
+    )
+
+
+def _print_verdicts_for_backtest(result) -> None:
+    """A backtest can speak to execution and to nothing else.
+
+    Saying so is the point: the statistical verdict comes from a walk-forward and the
+    evidence one from a campaign, and a backtest that stayed silent about both is how a
+    replay reads as approval.
+    """
+    from tradeflow.analytics.performance import execution_verdict
+    from tradeflow.analytics.reporting import format_verdicts
+
+    verdict = execution_verdict(getattr(result, "execution", None))
+    executable = verdict["executable"]
+    summary = {None: "UNKNOWN - nothing was attempted", True: "PASS", False: f"FAIL - {verdict['reason']}"}[
+        executable
+    ]
+    print("\n".join(format_verdicts(execution=summary)))
+
+
+def _print_exit_concentration(result) -> None:
+    """Which exit reason produced the P&L, and how much of it came from one.
+
+    A headline return says nothing about where it came from. A book whose entire edge
+    is one exit path is a bet on that path's fill assumption, and nothing in the
+    summary metrics distinguishes it from one whose edge is spread across exits.
+    """
+    trades = getattr(result, "trades", None)
+    if trades is None or len(trades) == 0 or "exit_reason" not in trades:
+        return
+    grouped = trades.groupby("exit_reason")["pnl"].agg(["count", "sum"])
+    total_abs = grouped["sum"].abs().sum()
+    if total_abs <= 0:
+        return
+    print("\n=== Where the P&L came from ===")
+    print(f"  {'exit':16}{'trades':>8}{'share':>8}{'net P&L':>14}")
+    for reason, row in grouped.sort_values("sum", ascending=False).iterrows():
+        share = row["count"] / len(trades)
+        print(f"  {str(reason):16}{int(row['count']):>8}{share:>7.1%}${row['sum']:>13,.0f}")
+    winners = grouped[grouped["sum"] > 0]["sum"]
+    if len(winners) and winners.max() / winners.sum() > 0.9:
+        top = winners.idxmax()
+        print(
+            f"  Nearly all of the gain comes from {top}. The result is a bet on that "
+            f"exit's\n  fill assumption - stress it before believing the headline."
+        )
+
+
+def _print_fill_stress(data_client, strategy_name: str, universe, args, tuned) -> None:
+    """Re-run requiring the price to trade *through* each take-profit, and show the decay.
+
+    The default assumption fills a target when a bar merely touches it, which models a
+    resting limit always first in the queue. For a strategy whose gain is concentrated
+    in target exits, that assumption is the result rather than a detail.
+    """
+    from tradeflow.services.analysis import run_fill_stress
+
+    report = run_fill_stress(
+        data_client,
+        strategy_name,
+        universe,
+        args.start,
+        args.end,
+        config=tuned or None,
+        capital=args.capital,
+        benchmark=args.benchmark,
+        commission_bps=args.commission_bps,
+        impact_eta=args.impact_eta,
+        borrow_bps=args.borrow_bps,
+    )
+    print("\n=== Take-profit fill stress ===")
+    print(f"  {'through by':>12}{'Sharpe':>10}{'return':>10}{'trades':>9}")
+    for point in report["points"]:
+        label = "touch only" if point["margin_bps"] == 0 else f"{point['margin_bps']:.0f} bps"
+        print(
+            f"  {label:>12}{point['sharpe_ratio']:>10.2f}{point['total_return']:>9.2f}%"
+            f"{'—' if point['trades'] is None else point['trades']:>9}"
+        )
+    survives = report["survives_to_bps"]
+    if survives:
+        print(f"  Edge survives requiring {survives:.0f} bps through the target.")
+    else:
+        print("  Edge does not survive requiring any move through the target.")
+    print("  'touch only' is the historical assumption: a bar that reached the target filled at it.")
+    print("  Nothing journaled: one candidate under stated assumptions, not new candidates.")
+
+
+def _print_cost_stress(data_client, strategy_name: str, universe, args, tuned) -> None:
+    """Re-run this config under worse cost assumptions and show where the edge dies.
+
+    A single cost assumption produces a single number and no way to tell how much of
+    the result was the assumption. The curve separates a strategy that survives five
+    times its assumed cost from one that clears by a hair at 1x - both of which are
+    "profitable at 1bp" and are not the same proposition.
+    """
+    from tradeflow.services.analysis import run_cost_stress
+
+    report = run_cost_stress(
+        data_client,
+        strategy_name,
+        universe,
+        args.start,
+        args.end,
+        config=tuned or None,
+        capital=args.capital,
+        benchmark=args.benchmark,
+        commission_bps=args.commission_bps,
+        impact_eta=args.impact_eta,
+        borrow_bps=args.borrow_bps,
+        axis=args.cost_stress,
+    )
+    print(f"\n=== Cost stress ({report['axis']} axis) ===")
+    print(f"  {'multiple':>10}{'Sharpe':>10}{'return':>10}{'cost':>14}")
+    for point in report["points"]:
+        print(
+            f"  {point['multiple']:>9.1f}x{point['sharpe_ratio']:>10.2f}"
+            f"{point['total_return']:>9.2f}%${point['total_cost']:>12,.0f}"
+        )
+    survives = report["survives_to_multiple"]
+    if survives:
+        print(f"  Edge survives to {survives:.0f}x its assumed cost.")
+    else:
+        print("  Edge does not survive its own cost assumptions.")
+    print("  Nothing journaled: one candidate under stated assumptions, not new candidates.")
+
+
 def _print_attribution(r, strategy: str, start, end) -> None:
     """Render a ``compute_attribution`` report: per-row mean/IR/t/share-of-variance,
     honest cumulation, and the skill-vs-luck verdict."""
@@ -1854,17 +2518,23 @@ def _print_attribution(r, strategy: str, start, end) -> None:
 
     print(f"\nPerformance attribution: '{strategy}' {start:%Y-%m-%d}..{end:%Y-%m-%d}")
     print(f"  measured over {r['periods']} rebalances (horizon {r['horizon_bars']} bars)")
-    print(f"  {'row':28}{'mean/yr':>9}{'IR':>8}{'t':>8}{'share ψ²':>10}")
+    # Named for what it is on every line that carries a level. These come from a paper
+    # book built from the signal's own cross-section, scaled to unit gross - not from
+    # anything the execution engine did, which is why a strategy the engine declined to
+    # trade at all still has rows here.
+    print("  paper book at unit gross — signal quality, not an executed track record;")
+    print("  a strategy the engine takes zero trades in can still score here.")
+    print(f"  {'row':28}{'p-b mean/yr':>13}{'p-b IR':>9}{'t':>8}{'share ψ²':>10}")
 
     rows = r["rows"]
 
     def _line(label: str, key: str, not_skill: bool = False) -> None:
         row = rows[key]
         if not_skill:
-            print(f"  {label:28}{'—':>9}{'—':>8}{'—':>8}{'(not skill)':>12}")
+            print(f"  {label:28}{'—':>13}{'—':>9}{'—':>8}{'(not skill)':>12}")
         else:
             print(
-                f"  {label:28}{row['annualized_mean'] * 100:>8.2f}%{row['ir']:>8.2f}"
+                f"  {label:28}{row['annualized_mean'] * 100:>12.2f}%{row['ir']:>9.2f}"
                 f"{row['t_stat']:>8.2f}{row['share_of_variance'] * 100:>9.1f}%"
             )
 
@@ -1929,15 +2599,18 @@ def cmd_horizon(args) -> None:
     Read-only research diagnostic: measures how fast the signal's IC decays and turns
     that into a rebalance cadence and a current/lagged blend. Produces no orders.
     """
+    tuned = apply_run_config(args)
+
     from tradeflow.services.analysis import compute_horizon
 
-    _, data_client = build_data_and_broker()
+    _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
     r = compute_horizon(
         data_client,
         args.strategy,
         args.symbols,
         args.start,
         args.end,
+        config=tuned,
         source=args.source,
         scanner=args.scanner,
         benchmark=args.benchmark,
@@ -2010,7 +2683,9 @@ def cmd_cache(args) -> None:
     assert isinstance(provider, CachedMarketData)  # build_data_client(cache=True) guarantees this
 
     if args.cache_command == "warm":
-        universe = resolve_universe(data_client, args.scanner, args.symbols)
+        universe = resolve_universe(
+            data_client, args.scanner, args.symbols, as_of=args.scan_as_of or args.end
+        )
         summary = provider.warm(universe, args.timeframe, args.start, args.end)
         for symbol, s in summary.items():
             state = "already cached" if s["already_cached"] else f"fetched {s['gaps_fetched']} gap(s)"
@@ -2077,6 +2752,10 @@ def cmd_trials(args) -> None:
             )
             return
 
+        if args.trials_command == "promote":
+            _promote_trial(store, args)
+            return
+
         if args.trials_command == "show":
             _print_trial_detail(store, args)
             return
@@ -2128,6 +2807,85 @@ def _print_trials_list(store, args) -> None:
         )
 
 
+def _promote_trial(store, args) -> None:
+    """Write a portable config from a trial the campaign already validated.
+
+    `--save-config` writes the chosen config *after* a walk-forward, so saving one you
+    have already validated meant validating it again - and the memo only serves an
+    identical recipe, which it is not once a seed has changed to ask a different
+    question. This reads the recorded trial instead.
+
+    Deliberately *not* a fast path through validation. The trial store holds what a
+    config needs because a real validation put it there; reading from it cannot bless
+    state that was never validated, whereas a `--skip-validation` flag would - and
+    would be reached for exactly when someone is in a hurry, which is when it matters
+    most that a saved config means what it says.
+    """
+    from tradeflow.optimization.config_store import Provenance, save_config
+    from tradeflow.services.audit import universe_for_trial
+
+    trial = store.get_trial(args.trial_id)
+    if trial is None:
+        sys.exit(f"No trial with id {args.trial_id!r}. Try `trials list` to see what is recorded.")
+
+    promotable = trial.get("promotable")
+    if not promotable and not args.force:
+        sys.exit(
+            f"Trial {args.trial_id} is not promotable (promotable={promotable!r}). Promoting it "
+            "would put a config on disk whose own provenance says it did not clear the gates. "
+            "Re-run `trials show` to see why, or pass --force to save it with that verdict recorded."
+        )
+
+    universe = universe_for_trial(args.trial_id) or {}
+    symbols = universe.get("symbols")
+    if not symbols:
+        sys.exit(
+            f"Trial {args.trial_id} has no universe in the journal, so a config promoted from it "
+            "could not name the book it validated. The trial store records a universe *hash*, not "
+            "the symbols; the journal is where they live."
+        )
+
+    # The journaled params carry the dedup key's reserved entries (`_cost` and
+    # friends). They are not strategy parameters - the schema has its own `cost` field -
+    # and passing them through would leave a stray key in every constructed strategy.
+    recorded = dict(trial.get("params") or {})
+    cost = recorded.pop("_cost", None)
+    params = {name: value for name, value in recorded.items() if not name.startswith("_")}
+
+    path = save_config(
+        args.save_config,
+        strategy=trial.get("strategy"),
+        scanner=None,
+        params=params,
+        cost=cost,
+        symbols=symbols,
+        candidate_symbols=universe.get("candidate_symbols"),
+        provenance=Provenance(
+            objective="",
+            windows={"start": trial.get("window_start"), "end": trial.get("window_end")},
+            oos_metrics=trial.get("metrics") or {},
+            n_trials=int(trial.get("n_trials_in_session") or 1),
+            seed=trial.get("seed"),
+            git_sha=trial.get("git_sha"),
+            timestamp=trial.get("ts"),
+            accounting=int(trial.get("accounting") or 1),
+            notes=f"promoted from trial {args.trial_id}"
+            + ("" if promotable else " (NOT promotable at the time of promotion)"),
+        ),
+    )
+    print(f"Promoted trial {args.trial_id} -> {path}")
+    print(f"  strategy {trial.get('strategy')!r}  universe {len(symbols)} symbols", end="")
+    if universe.get("candidate_symbols"):
+        print(f" resolved from {len(universe['candidate_symbols'])} candidates")
+    else:
+        # Distinguishable from a config whose candidates equal its universe, because
+        # `--re-resolve-universe` can only be honest about one of those.
+        print(" (no candidate list recorded - --re-resolve-universe will say so)")
+    if not promotable:
+        print("  WARNING: this trial did not clear its gates; the config records that verdict.")
+    print("  Saving a config never trades it - a human promotes it to live.")
+
+
 def _print_trial_detail(store, args) -> None:
     import json
 
@@ -2137,11 +2895,34 @@ def _print_trial_detail(store, args) -> None:
     if trial is None:
         sys.exit(f"No trial with id {args.trial_id!r}. Try `trials list` to see what is recorded.")
     if args.json:
-        print(json.dumps(trial, indent=2, default=str))
+        print(json.dumps(_limit_trial_trades(trial, args.trades_limit), indent=2, default=str))
         return
     print(format_trial_detail(trial))
     if trial.get("trades"):
         print(format_trial_trades(trial["trades"], limit=args.trades_limit))
+
+
+def _limit_trial_trades(trial: Dict[str, Any], limit: Optional[int]) -> Dict[str, Any]:
+    """Apply ``--trades-limit`` to the JSON form too, and say when it truncated.
+
+    The flag was read only on the text path, so JSON dumped every stored trade
+    regardless - which for a real trial is thousands of rows nobody asked for.
+
+    A truncated payload that does not say so is worse than an untruncated one: it looks
+    like the whole table. The count of what was dropped travels with it.
+    """
+    trades = trial.get("trades")
+    rows = (trades or {}).get("rows")
+    if not rows or limit is None or limit < 0 or len(rows) <= limit:
+        return trial
+    return {
+        **trial,
+        "trades": {
+            **trades,
+            "rows": rows[:limit],
+            "truncated": {"shown": limit, "total": len(rows), "flag": "--trades-limit"},
+        },
+    }
 
 
 def _print_leaderboard(store, args) -> None:
@@ -2188,35 +2969,122 @@ def _missing_extra_message(extra: str, what: str) -> str:
     An installed copy has no checkout to `uv sync` in, so telling it to is a dead
     end — the same failure the missing-credentials message used to have.
     """
-    from tradeflow.settings import _looks_like_checkout, state_root
+    from tradeflow.settings import running_from_checkout
 
-    if _looks_like_checkout(state_root()):
+    if running_from_checkout():
         command = f"uv sync --extra {extra}"
     else:
         command = f'uv tool install --force "tradeflow-engine[{extra}]"'
     return f"{what} needs the '{extra}' extra. Install it:\n    {command}"
 
 
+def _invocation(command: str, *, make_target: Optional[str] = None) -> str:
+    """How to run ``command`` on the copy that is actually running.
+
+    An installed copy has no ``main.py`` and no Makefile, so "python main.py verdict"
+    and "make demo" send the reader looking for files that were never there. The extras
+    rows already phrase themselves this way; these did not, and they are the lines a
+    first run ends on.
+    """
+    from tradeflow.settings import running_from_checkout
+
+    if not running_from_checkout():
+        return f"tradeflow {command}"
+    return f"make {make_target}" if make_target else f"python main.py {command}"
+
+
+# The book limits a live run may override from the command line, and the
+# `position_limits` key each one sets.
+_LIMIT_OVERRIDES = (
+    ("max_positions", "max_positions", "--max-positions"),
+    ("max_position_size", "max_position_size", "--max-position-size"),
+    ("max_gross_exposure", "max_gross_exposure", "--max-gross-exposure"),
+    ("max_net_exposure", "max_net_exposure", "--max-net-exposure"),
+    ("max_total_risk", "max_total_risk", "--max-total-risk"),
+    ("min_notional", "min_notional", "--min-notional"),
+)
+
+
+def _live_feed(args) -> Optional[str]:
+    """The feed this run pins, from the flag or the environment.
+
+    Unset stays unset: pinning a default would mean an entitled account silently
+    trading a partial venue or a delayed tape with nothing in the output to say so.
+    """
+    from tradeflow.settings import data_feed
+
+    return getattr(args, "feed", None) or data_feed()
+
+
+def _apply_limit_overrides(args, strategy) -> None:
+    """Let the command line override the book limits a saved config or strategy declares.
+
+    Only flags actually typed apply. `--max-positions` carries a default, so applying it
+    unconditionally would let an untyped default silently overrule the limit a frozen
+    config exists to pin.
+    """
+    given = getattr(args, "flags_given", set())
+    overrides = {
+        key: getattr(args, dest)
+        for key, dest, _ in _LIMIT_OVERRIDES
+        if dest in given and getattr(args, dest, None) is not None
+    }
+    if overrides:
+        strategy.config["position_limits"] = {**strategy.position_limits(), **overrides}
+
+
+def _refuse_inert_flags(args) -> None:
+    """Stop a run whose typed flag cannot reach anything.
+
+    A sizing flag that needs `--portfolio` or `--beta-sizing` is otherwise parsed and
+    discarded in silence, so the preflight prints the limits the run really has while
+    the operator reads the ones they asked for and concludes the two agree.
+    """
+    given = getattr(args, "flags_given", set())
+    if "max_weight" in given and not args.portfolio:
+        equivalent = ""
+        capital = _live_capital(args)
+        if capital:
+            equivalent = (
+                f"\n  For a per-position ceiling on this book, that weight is "
+                f"--max-position-size {args.max_weight * capital:.0f} "
+                f"({args.max_weight:.0%} of ${capital:,.0f})."
+            )
+        sys.exit(
+            f"--max-weight {args.max_weight} sizes the --portfolio allocator, which this "
+            f"run does not use, so it would have been ignored.\n"
+            f"  Add --portfolio to allocate, or drop the flag.{equivalent}"
+        )
+    if "benchmark" in given and not args.beta_sizing:
+        sys.exit(
+            f"--benchmark {args.benchmark} selects the symbol beta sizing measures against, "
+            f"and this run does not size by beta, so it would have been ignored.\n"
+            f"  Add --beta-sizing to use it, or drop the flag."
+        )
+
+
 def cmd_live(args) -> None:
-    from tradeflow.engine.live import LiveEngine
+    from tradeflow.costs.parametric import ParametricCostModel
+    from tradeflow.engine.live import SHUTDOWN_TIMEOUT, BlindStartError, LiveEngine
     from tradeflow.execution.live_trader import LiveTrader
     from tradeflow.services.sizing import build_beta_sizer, build_portfolio_weight_sizer
+    from tradeflow.utils.streaming import run_until_stopped
 
-    scanner = args.scanner
-    if args.config:
-        strategy, strategy_name, cfg_scanner = _load_strategy_from_config(args.config)
-        if cfg_scanner:
-            scanner = cfg_scanner
-        logger.info("Loaded config %s -> strategy=%r scanner=%r", args.config, strategy_name, scanner)
-    else:
-        strategy = STRATEGIES[args.strategy].create_with_defaults()
+    tuned = apply_run_config(args)
+    strategy = _strategy_from(args, tuned)
+    _apply_limit_overrides(args, strategy)
+    _refuse_inert_flags(args)
+    capital = _live_capital(args)
 
     if getattr(args, "no_reaffirm_entries", False):
         strategy.config["reaffirm_entries"] = False
         logger.info("Entry re-affirmation off: waiting for a fresh crossing before entering")
 
-    broker, data_client = build_data_and_broker()
-    universe = resolve_universe(data_client, scanner, args.symbols)
+    if args.portfolio:
+        _refuse_contradictory_portfolio_cardinality(strategy, args.max_positions)
+
+    broker, data_client = build_data_and_broker(feed=_live_feed(args))
+    universe = resolve_universe(data_client, args.scanner, args.symbols)
 
     sizer = None
     if args.portfolio:
@@ -2251,18 +3119,74 @@ def cmd_live(args) -> None:
         )
     ledger = None if args.no_ledger else PositionLedger()
 
+    _print_live_preflight(args, strategy, broker, universe, capital, ledger)
+    _refuse_ambiguous_broker_mode(args)
+
+    # Constructed before the preflight exit so the preflight can run the same warm-up
+    # the live path runs. Building an engine places nothing.
     engine = LiveEngine(
         strategy,
         data_client,
-        LiveTrader(broker, strategy, sizer=sizer),
+        LiveTrader(
+            broker,
+            strategy,
+            sizer=sizer,
+            capital=capital,
+            # Built from the same flags/config a backtest uses, so "modelled cost" in
+            # the execution report means the same thing in both places.
+            # getattr, not attribute access: a caller that builds args without the
+            # cost flags gets the model's own defaults rather than an AttributeError
+            # on the way into the order path.
+            cost_model=ParametricCostModel(
+                commission_bps=getattr(args, "commission_bps", 1.0),
+                impact_eta=getattr(args, "impact_eta", 0.3),
+                annual_borrow_bps=getattr(args, "borrow_bps", 50.0),
+            ),
+        ),
         bar_filter=bar_filter,
         ledger=ledger,
         reconcile_every=args.reconcile_every,
+        allow_blind_start=args.allow_blind_start,
     )
+
+    if getattr(args, "preflight", False):
+        warmed, sufficient, asked = engine.warm_up_coverage(universe)
+        needed = strategy.config.get("required_lookback_periods", 50)
+        print(f"\n  {'warm-up coverage':22}{warmed} of {asked} symbols have history")
+        # Presence is not sufficiency. A symbol can warm up with too few bars for its
+        # indicators to be valid, and the run would only warn about it at start - so a
+        # coverage line counting bars-or-not would read as a pass on a book that is not.
+        short = warmed - sufficient
+        detail = f"{sufficient} of {asked} have the full {needed}-bar lookback"
+        print(f"  {'':22}{detail}{f' ({short} short)' if short else ''}")
+        if not warmed and asked:
+            # The same verdict the run would reach, reached before it starts.
+            print(
+                "  Every indicator would start blind. The usual cause is a feed the "
+                "account is not entitled to — try --feed iex."
+            )
+        print("\n--preflight: nothing was started and no order path ran.")
+        return
+
     try:
-        asyncio.run(engine.start(universe))
+        # A margin over the engine's own teardown budget. Both expiring at the same
+        # instant makes one stuck stream log two warnings for one condition, and makes
+        # whether the engine counts as a straggler a coin flip. The engine's warning
+        # names the stream; the drain's should only fire for something it did not know
+        # about.
+        run_until_stopped(engine.start(universe), teardown_timeout=SHUTDOWN_TIMEOUT + 1.0)
+    except BlindStartError as exc:
+        sys.exit(f"Refusing to start: {exc}")
     except KeyboardInterrupt:
-        logger.info("Interrupted; shutting down live engine.")
+        # Ctrl-C is how a live session is meant to end. A traceback here reads as a
+        # crash, and buries whether anything was left open.
+        #
+        # What it must never do is claim nothing was opened. It said exactly that
+        # after a session that had opened six positions: the shutdown path has no way
+        # to know, and a reassuring guess about an open book is the worst thing to
+        # print at the one moment somebody is deciding whether to intervene.
+        print("\nInterrupted - live engine stopped. No orders were sent while shutting down.")
+        _print_closing_inventory(ledger, strategy)
     finally:
         if bar_filter is not None:
             report = bar_filter.report()
@@ -2278,6 +3202,212 @@ def cmd_live(args) -> None:
                     "ELEVATED bar-rejection rate — this is a data-feed problem wearing "
                     "a quiet market's clothes. Investigate before trusting these results."
                 )
+
+
+def _print_closing_inventory(ledger, strategy) -> None:
+    """What was held when the session stopped.
+
+    Read from the ledger rather than the strategy's in-memory book. The book is a cache
+    the reconciliation sweep rebuilds wholesale, and a sweep landing between an entry's
+    submission and its fill leaves it short a position for the rest of the interval -
+    which is how a stop summary came to list seven positions on a run whose every
+    reconciliation agreed with the broker at eight.
+
+    The ledger is durable, fill-driven, and the thing reconciliation actually checks. It
+    is still not the broker, so the line says so rather than implying otherwise.
+    """
+    held, source = {}, "ledger"
+    if ledger is not None:
+        try:
+            held = ledger.expected_positions()
+        except Exception:  # noqa: BLE001 - a summary must not raise over the real exit
+            logger.warning("Could not read the ledger for the closing summary", exc_info=True)
+            held = {}
+    if not held:
+        # No ledger, or nothing in it. The in-memory book is the weaker source and is
+        # labelled as such rather than silently substituted.
+        held = {
+            symbol: (
+                position.get("qty") if position.get("side") == signals.BUY else -abs(position.get("qty", 0))
+            )
+            for symbol, position in (getattr(strategy, "positions", {}) or {}).items()
+        }
+        source = "this process's own book"
+
+    if not held:
+        print("  No open positions recorded. Check the broker to be sure.")
+        return
+    print(f"  {len(held)} position(s) open per the {source}:")
+    for symbol, qty in sorted(held.items()):
+        print(f"    {symbol:8}{'long' if qty > 0 else 'short':6}{abs(qty):g}")
+    print("  These are still open at the broker. Nothing was flattened.")
+
+
+def _refuse_ambiguous_broker_mode(args) -> None:
+    """Refuse to reach the order path on real money without it being said out loud.
+
+    ``PAPER_TRADE`` defaults to true, which is the right default and also the reason
+    this check exists: a default nobody set is indistinguishable from a decision
+    somebody made, right up until it is wrong. A live run therefore has to be asserted
+    on the command line as well as in the environment - two independent statements of
+    the same intent, because one of them can be inherited from a shell nobody remembers
+    exporting.
+    """
+    from tradeflow.settings import paper_trade_mode
+
+    if paper_trade_mode():
+        return
+    if getattr(args, "live_money", False):
+        print("  LIVE MONEY confirmed by --live-money. Orders will use real capital.")
+        return
+    raise SystemExit(
+        "PAPER_TRADE is false, so this would place orders with real money. Refusing to "
+        "start on an environment variable alone: pass --live-money to say so on the "
+        "command line, or set PAPER_TRADE=true to trade the paper account."
+    )
+
+
+def _live_capital(args) -> Optional[float]:
+    """How much of the account this run may deploy.
+
+    A paper account arrives with whatever equity the venue handed it - typically far
+    more than the capital a config was validated at - and sizing against that balance
+    trades a different book from the one that was tested. That does not merely flatter
+    the result; it invalidates the execution telemetry the run exists to gather, because
+    fills, slippage and rounding are all properties of a book at a size.
+
+    ``None`` means "the whole account", which is the historical behaviour and stays the
+    default for a run that never mentioned capital.
+    """
+    capital = getattr(args, "capital", None)
+    if capital:
+        return float(capital)
+    return None
+
+
+def _print_live_preflight(args, strategy, broker, universe, capital, ledger) -> None:
+    """The exact contract this run will trade under, printed before any order logic.
+
+    Everything here is a read. It places nothing, and it is printed on every live run
+    rather than only under ``--preflight`` - the point is that the contract is never
+    implicit, and a check you have to remember to ask for is one that gets skipped
+    exactly when it matters.
+    """
+    from tradeflow.execution.halt import HaltState
+    from tradeflow.services.audit import DEFAULT_TRIAL_JOURNAL
+    from tradeflow.settings import paper_trade_mode
+
+    limits = strategy.position_limits()
+    account = None
+    try:
+        account = broker.get_account()
+    except Exception as exc:  # noqa: BLE001 - a preflight reports, it does not fail the run
+        print(f"  (account unreadable: {exc})")
+
+    print("\n=== Live preflight ===")
+    mode = "PAPER" if paper_trade_mode() else "LIVE - REAL MONEY"
+    print(f"  {'broker mode':22}{mode}")
+    if account is not None:
+        print(f"  {'account':22}equity ${account.equity:,.2f}  cash ${account.cash:,.2f}")
+    deployable = f"${capital:,.2f}" if capital else "the whole account (no --capital set)"
+    print(f"  {'capital this run':22}{deployable}")
+    print(
+        f"  {'universe':22}{len(universe)} symbols ({'replayed' if args.scanner == 'none' else args.scanner})"
+    )
+    # Warm-up and the stream must agree. Left unset the SDK defaults disagree - the
+    # historical half resolves to the full tape, the stream to a single venue - so an
+    # account entitled to one and not the other warms up on nothing and streams fine.
+    feed = _live_feed(args)
+    print(f"  {'data feed':22}{feed or 'SDK default (full tape for history, IEX for the stream)'}")
+    # Telemetry only — it prices nothing and changes no order. Printed because a cost
+    # model that silently was not configured is exactly what this line exists to catch.
+    print(
+        f"  {'cost model':22}{getattr(args, 'commission_bps', 1.0):g} bps commission, "
+        f"eta {getattr(args, 'impact_eta', 0.3):g}, borrow {getattr(args, 'borrow_bps', 50.0):g} bps"
+        f"  (recorded, not charged)"
+    )
+
+    # Absent is not zero: a limit nobody declared is unbounded, and must not read as 0.
+    def _limit(value, render):
+        return render(value) if value is not None else "unset"
+
+    print(f"  {'max positions':22}{_limit(limits.get('max_positions'), str)}")
+    size = limits.get("max_position_size")
+    # A per-position ceiling above the whole deployable book cannot bind. Saying so
+    # here stops it reading as a limit somebody chose.
+    inert = (
+        "  (above this run's capital - not a binding limit)" if size and capital and size >= capital else ""
+    )
+    print(f"  {'max position size':22}{_limit(size, lambda v: f'${v:,.2f}')}{inert}")
+    # Gross exposure is a fraction of deployable capital, so show the dollars it means
+    # here - the fraction alone is the one number an operator cannot sanity-check.
+    gross = limits.get("max_gross_exposure")
+    if gross is not None and capital:
+        print(f"  {'max gross exposure':22}{gross:g} ({gross:.0%} of capital = ${gross * capital:,.2f})")
+    else:
+        print(f"  {'max gross exposure':22}{_limit(gross, lambda v: f'{v:g} ({v:.0%} of capital)')}")
+    net = limits.get("max_net_exposure")
+    if net is not None and capital:
+        print(f"  {'max net exposure':22}{net:g} ({net:.0%} of capital = ${net * capital:,.2f})")
+    else:
+        print(f"  {'max net exposure':22}{_limit(net, lambda v: f'{v:g} ({v:.0%} of capital)')}")
+    risk = limits.get("max_total_risk")
+    if risk is not None and capital:
+        print(f"  {'max total risk':22}{risk:g} ({risk:.0%} of capital = ${risk * capital:,.2f})")
+    else:
+        print(f"  {'max total risk':22}{_limit(risk, lambda v: f'{v:g} ({v:.0%} of capital)')}")
+    print(f"  {'min notional':22}{_limit(limits.get('min_notional'), lambda v: f'${v:,.2f}')}")
+    print(
+        f"  {'entries':22}{'re-affirmed' if strategy.config.get('reaffirm_entries', True) else 'fresh crossings only'}"
+    )
+    print(f"  {'bar guards':22}{'off' if args.no_bar_checks else 'on'}")
+    print(f"  {'reconcile every':22}{args.reconcile_every:g}s")
+    # Where the drift data lands. Telemetry nobody can find is telemetry nobody checks.
+    print(f"  {'ledger':22}{ledger.path if ledger is not None else 'DISABLED (--no-ledger)'}")
+    print(f"  {'journal':22}{DEFAULT_TRIAL_JOURNAL}")
+    print(f"  {'halt state':22}{HaltState().path}")
+    # Where all of that lands, and whether that place is inside a repository. A user
+    # who arrived over MCP or from PyPI has no reason to know either.
+    from tradeflow.settings import git_worktree_containing, state_root
+
+    root = state_root()
+    print(f"  {'state root':22}{root}")
+    worktree = git_worktree_containing(root)
+    if worktree is not None:
+        print(
+            f"  {'':22}WARNING: inside the git working tree at {worktree}.\n"
+            f"  {'':22}One ignore-file edit from disclosure, and `git clean -xd` deletes it."
+        )
+
+
+def _refuse_contradictory_portfolio_cardinality(strategy, allocator_max_positions) -> None:
+    """Refuse a live portfolio run whose two position caps cannot both be honored.
+
+    ``--max-positions`` bounds what the allocator may fund; the strategy's
+    ``position_limits.max_positions`` bounds what the live book will hold. When the
+    first exceeds the second, the book is truncated to the smaller number and which
+    names survive is decided by which signals arrive first, not by the allocation -
+    so what trades is not the book that was allocated, and not the one that was
+    validated. There is no reading of that configuration worth starting.
+
+    Checked against the declared caps rather than the funded set, and before the
+    broker is reached. The allocator hard-caps its own cardinality, so a run that
+    happens to fund few enough names today would otherwise start and the same
+    configuration would truncate tomorrow; and the operator learns this before a
+    market-data fetch and a solve rather than after.
+    """
+    limit = (strategy.position_limits() or {}).get("max_positions")
+    if not limit or not allocator_max_positions:
+        return
+    limit, funded_cap = int(limit), int(allocator_max_positions)
+    if funded_cap <= limit:
+        return
+    raise SystemExit(
+        f"--portfolio would fund up to {funded_cap} names, but this strategy holds at most "
+        f"{limit} (position_limits.max_positions), so {funded_cap - limit} of them would never "
+        f"be traded. Reconcile the two before trading: raise position_limits.max_positions to "
+        f"{funded_cap} in the strategy config, or pass --max-positions {limit}."
+    )
 
 
 def cmd_halt(args) -> None:
@@ -2356,6 +3486,121 @@ def cmd_reconcile(args) -> None:
         print(report.summary())
     if not report.clean:
         raise SystemExit(1)
+
+
+def cmd_execution_report(args) -> None:
+    """What the live path actually did, rolled up from the ledger.
+
+    Read-only, and deliberately ungraded. What counts as bad slippage for a given
+    strategy is not knowable from one session, so this reports the numbers and leaves
+    the thresholds to somebody who has seen a few.
+    """
+    import json
+
+    from tradeflow.analytics.execution_quality import execution_report
+    from tradeflow.execution.ledger import PositionLedger
+
+    ledger = PositionLedger(args.ledger)
+    report = execution_report(ledger.lifecycles(), ledger.declines())
+    if args.json:
+        print(json.dumps(report, indent=2, default=str))
+        return
+    _print_execution_report(report, show_orders=args.orders)
+
+
+def _fmt(value, spec: str = ",.2f", missing: str = "not measured") -> str:
+    """Absent is not zero, and must not be rendered as a number."""
+    return missing if value is None else format(value, spec)
+
+
+def _print_execution_report(report, show_orders: bool = False) -> None:
+    slippage, latency, fills, costs = (
+        report["slippage"],
+        report["latency"],
+        report["fills"],
+        report["costs"],
+    )
+    print("\n=== Execution quality ===")
+    print(
+        f"  {'orders':22}{fills['n_orders']} submitted, {fills['n_unfilled']} never filled, "
+        f"{fills['n_short']} ended short, {fills['n_multi_print']} filled across several prints"
+    )
+    ratio = fills["fill_ratio"]
+    print(
+        f"  {'notional':22}${fills['submitted_notional']:,.2f} submitted, "
+        f"${fills['filled_notional']:,.2f} filled" + (f" ({ratio:.1%})" if ratio is not None else "")
+    )
+
+    # The count leads, so a tidy-looking average over two of twenty fills cannot be
+    # read as a verdict on the session.
+    measured = f"{slippage['n_measured']} of {slippage['n_filled']} fills measured"
+    if slippage["n_unmeasured"]:
+        measured += f"; {slippage['n_unmeasured']} carried no price"
+    print(f"  {'slippage':22}{measured}")
+    if slippage["n_measured"]:
+        print(
+            f"  {'':22}median {_fmt(slippage['median_bps'], '+.1f')} bps, "
+            f"mean {_fmt(slippage['mean_bps'], '+.1f')} bps  (positive = worse)"
+        )
+        print(
+            f"  {'':22}worst {_fmt(slippage['worst_bps'], '+.1f')} bps "
+            f"({slippage['worst_symbol']}), best {_fmt(slippage['best_bps'], '+.1f')} bps"
+        )
+
+    timing = f"{latency['n_measured']} measured"
+    if latency["n_clock_skew"]:
+        # Named rather than dropped: a fill timed before its decision means the two
+        # clocks disagree, which is worth knowing and is not a latency.
+        timing += f"; {latency['n_clock_skew']} unusable (venue clock behind ours)"
+    if latency["n_measured"]:
+        timing += (
+            f", median {_fmt(latency['median_ms'], ',.0f')} ms, worst {_fmt(latency['worst_ms'], ',.0f')} ms"
+        )
+    print(f"  {'decision to fill':22}{timing}")
+
+    # Never summed: one is a prediction, the other an observation.
+    modelled = costs["model_cost_estimate"]
+    print(
+        f"  {'modelled cost':22}"
+        + (
+            f"${modelled:,.2f} over {costs['n_estimated']} orders"
+            f" (commission ${costs['model_commission']:,.2f} + spread ${costs['model_spread']:,.2f}"
+            + (f"; excludes {', '.join(costs['model_excludes'])})" if costs["model_excludes"] else ")")
+            if modelled is not None
+            else "no cost model configured"
+        )
+    )
+    print(
+        f"  {'broker fees':22}"
+        + (
+            f"${costs['broker_fees']:,.2f} over {costs['n_fees_reported']} fills"
+            if costs["fees_reported"]
+            else "not reported by this venue — not the same as zero"
+        )
+    )
+
+    if report["declines"]:
+        print("\n  Signals that produced no order:")
+        for code, family in report["declines"].items():
+            print(f"    {family['count']:4}  {code}")
+            if family["example"]:
+                # One example carries the numbers the code deliberately drops.
+                print(f"          e.g. {family['example']}")
+
+    if show_orders and report["orders"]:
+        print("\n  Order lifecycles:")
+        header = (
+            f"    {'SYMBOL':8}{'SIDE':6}{'SUBMIT':>8}{'FILLED':>8}{'REF':>11}{'FILL':>11}{'BPS':>9}{'MS':>12}"
+        )
+        print(header)
+        for row in report["orders"]:
+            print(
+                f"    {str(row['symbol']):8}{str(row['side']):6}"
+                f"{_fmt(row['submitted_qty'], 'g', '-'):>8}{_fmt(row['filled_qty'], 'g', '-'):>8}"
+                f"{_fmt(row['reference_price'], ',.2f', '-'):>11}{_fmt(row['fill_price'], ',.2f', '-'):>11}"
+                f"{_fmt(row['slippage_bps'], '+.1f', '-'):>9}"
+                f"{_fmt(row['decision_to_fill_ms'], ',.0f', '-'):>12}"
+            )
 
 
 def cmd_demo(args) -> None:
@@ -2654,10 +3899,69 @@ def _add_neutralize_factors_flag(parser, note: str = "") -> None:
     )
 
 
+def _add_limit_flags(parser) -> None:
+    """The book limits, on the research clock as well as the trade clock.
+
+    ``live`` could state these from the command line and ``backtest`` could not, so
+    asking "what would this look like under a cap I can actually deploy" meant editing
+    the saved config - which is exactly where the validated book and the tested one
+    drift apart. Same names, same units, same meanings on both clocks.
+    """
+    parser.add_argument(
+        "--max-positions",
+        dest="max_positions",
+        type=int,
+        default=None,
+        help="How many positions the book may hold at once",
+    )
+    parser.add_argument(
+        "--max-position-size",
+        dest="max_position_size",
+        type=float,
+        default=None,
+        help="Dollar ceiling on any one position",
+    )
+    parser.add_argument(
+        "--max-gross-exposure",
+        dest="max_gross_exposure",
+        type=float,
+        default=None,
+        help="Ceiling on long + short as a fraction of equity",
+    )
+    parser.add_argument(
+        "--max-net-exposure",
+        dest="max_net_exposure",
+        type=float,
+        default=None,
+        help="Ceiling on |long - short| as a fraction of equity",
+    )
+    parser.add_argument(
+        "--max-total-risk",
+        dest="max_total_risk",
+        type=float,
+        default=None,
+        help="Ceiling on loss-at-stop across the book, as a fraction of equity",
+    )
+    parser.add_argument(
+        "--min-notional",
+        dest="min_notional",
+        type=float,
+        default=None,
+        help="Skip an entry whose sized order falls below this dollar value",
+    )
+
+
 def _add_cost_flags(parser) -> None:
     """--gross/--commission-bps/--impact-eta/--borrow-bps, shared by every command
     that can price a fill (backtest/optimize/walkforward) so a search or
-    validation is never silently gross by omission."""
+    validation is never silently gross by omission.
+
+    ``live`` takes them too. It prices nothing — the venue does that — but it records
+    what the model *expected* a fill to cost beside what it actually cost, and that
+    comparison is meaningless unless both sides came from the same parameters. Defining
+    them here is also what lets a saved config's ``cost`` block reach a live run:
+    :func:`apply_run_config` only layers a field the command actually has.
+    """
     parser.add_argument(
         "--gross",
         action="store_true",
@@ -2672,9 +3976,38 @@ def _add_cost_flags(parser) -> None:
     )
 
 
+def _add_config_flag(parser) -> None:
+    """``--config``: a saved run configuration, filling what the command line omits.
+
+    One file for every run type, so a tuned config can be versioned beside the
+    strategies it belongs to and then used to backtest, allocate, or produce a verdict
+    without restating the universe each time.
+    """
+    parser.add_argument(
+        "--config",
+        default=None,
+        help="Saved run config (walkforward --save-config). Supplies strategy, params, "
+        "scanner, universe, capital and cost settings; any flag you pass wins over it. "
+        "The saved universe is replayed as-is - see --re-resolve-universe.",
+    )
+    parser.add_argument(
+        "--re-resolve-universe",
+        dest="re_resolve_universe",
+        action="store_true",
+        help="Re-run the scanner instead of replaying the config's universe. Uses the "
+        "saved candidate list where one was recorded, since re-scanning the resolved "
+        "book would filter an already-filtered set rather than repeat the decision.",
+    )
+
+
 def _add_cache_flags(parser) -> None:
-    """--cache/--offline/--cache-dir, shared by backtest/optimize/walkforward -
-    the same selectivity as :func:`_add_cost_flags` (not live/research/scan/...).
+    """--cache/--offline/--cache-dir, on every read-only command that fetches bars.
+
+    Not on `live`, which must read the market as it is, and not on `research`, which
+    drives the others. Everything else that reads history takes them: a warm cache is
+    useless if the command you want to run against it has no way to say so, and the
+    commands that lacked these degraded into empty results when the network was down
+    rather than reading the bars already on disk.
 
     ``--cache`` wraps the data client in the persistent bar cache
     (``tradeflow.store.bars.CachedMarketData``): a repeated request for the same
@@ -2699,7 +4032,40 @@ def _add_cache_flags(parser) -> None:
 
 
 def _date(value: str) -> datetime:
-    return datetime.strptime(value, "%Y-%m-%d")
+    """Parse a date or ISO datetime into a New York instant.
+
+    **One date contract.** ``2026-08-22`` means that market date in the exchange's own
+    zone, everywhere in this program. That is a domain decision: someone typing a date
+    at a trading tool means the session, not UTC midnight.
+
+    Leaving the value naive and letting each consumer localize it is what produced the
+    bug this replaced. ``cache warm --end 2026-08-22`` recorded coverage through
+    00:00Z (the store reads a naive datetime as UTC) while ``scan --as-of 2026-08-22``
+    asked for 04:00Z (the scanner reads one as New York), so a cache holding exactly
+    the right daily bar reported a four-hour hole and refused an offline run whose
+    data was complete. Two readings of one string is a semantic fork; it surfaced in
+    the cache first and would have surfaced next in reports, or in live/backtest
+    parity.
+
+    Returning an *aware* value is what stops the contract re-forking: a naive datetime
+    carries no zone to disagree about because it carries no zone at all.
+    """
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        parsed = datetime.strptime(value, "%Y-%m-%d")
+    if parsed.tzinfo is None:
+        return NEW_YORK.localize(parsed)
+    return parsed.astimezone(NEW_YORK)
+
+
+def _now() -> datetime:
+    """Now, on the clock every parsed date uses.
+
+    The window defaults have to share the contract or they reintroduce the mixed-
+    awareness comparison the contract exists to remove.
+    """
+    return datetime.now(NEW_YORK)
 
 
 def _next_step_hint() -> str:
@@ -2708,9 +4074,9 @@ def _next_step_hint() -> str:
     An installed copy has no Makefile and no `.env.example` to copy, so pointing at
     either is a dead end for exactly the user this path exists to serve.
     """
-    from tradeflow.settings import _looks_like_checkout, state_root
+    from tradeflow.settings import running_from_checkout
 
-    if _looks_like_checkout(state_root()):
+    if running_from_checkout():
         return (
             "     make init        add your free Alpaca paper keys (or see .env.example)\n"
             "     make backtest    then run it on real market data"
@@ -2769,15 +4135,31 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     def add_common(p, *, with_dates: bool) -> None:
-        p.add_argument("--strategy", choices=STRATEGIES, default="volume_spike")
+        # The default is an example, and says so. Someone reaching for this flag with
+        # nothing installed is choosing between demonstrations of the interface, not
+        # between candidate edges.
+        p.add_argument(
+            "--strategy",
+            choices=STRATEGIES,
+            default="volume_spike",
+            help="Which strategy to run. The three built-ins are examples that "
+            "demonstrate the interface; bring your own in an installed package",
+        )
         p.add_argument("--scanner", default="volume", help="Universe scanner ('none' to skip)")
         p.add_argument(
             "--symbols", type=_symbols, default=DEFAULT_UNIVERSE, help="Comma-separated candidate symbols"
         )
         if with_dates:
-            p.add_argument("--start", type=_date, default=datetime.now() - timedelta(days=30))
-            p.add_argument("--end", type=_date, default=datetime.now())
+            p.add_argument("--start", type=_date, default=_now() - timedelta(days=30))
+            p.add_argument("--end", type=_date, default=_now())
             p.add_argument("--capital", type=float, default=100_000.0)
+            p.add_argument(
+                "--scan-as-of",
+                dest="scan_as_of",
+                type=_date,
+                default=None,
+                help="Resolve the scanner at this date/datetime; defaults to --end for historical runs",
+            )
 
     def add_no_journal(p) -> None:
         # Trials are journaled so a campaign-level Deflated Sharpe can count them
@@ -2804,13 +4186,11 @@ def build_parser() -> argparse.ArgumentParser:
         )
 
     def add_config_flag(p) -> None:
-        p.add_argument(
-            "--config",
-            metavar="PATH",
-            default=None,
-            help="Load strategy/scanner/params from a saved config (e.g. `walkforward --save-config`); "
-            "takes precedence over --strategy/--scanner when given",
-        )
+        # One definition, shared. Two of these existed and drifted: the newer flags
+        # reached the analysis commands and not `backtest`/`live`, which are the two
+        # that had `--config` first. The old help was also stale - a contradictory
+        # `--strategy` is refused now, not silently overridden.
+        _add_config_flag(p)
 
     def add_workers_flag(p) -> None:
         # Default 1: sequential is not "a pool of one", it is the original code path
@@ -2858,6 +4238,28 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bt.add_argument("--benchmark", default="SPY", help="Benchmark symbol for beta")
     _add_cost_flags(bt)
+    _add_limit_flags(bt)
+    bt.add_argument(
+        "--fill-stress",
+        dest="fill_stress",
+        action="store_true",
+        help="Re-run requiring the price to trade progressively further *through* each "
+        "take-profit before it counts as filled. The default fills a target the moment a "
+        "bar touches it, which models a resting limit always first in the queue - for a "
+        "strategy whose gain is concentrated in target exits, that assumption is the "
+        "result rather than a detail",
+    )
+    bt.add_argument(
+        "--cost-stress",
+        dest="cost_stress",
+        nargs="?",
+        const="all",
+        default=None,
+        choices=["all", "turnover", "borrow"],
+        help="Re-run under scaled cost assumptions and show where the edge dies. "
+        "'borrow' scales only the borrow rate, which a long-short book is exposed to "
+        "differently: it is carry on inventory, not a toll on turnover.",
+    )
     _add_cache_flags(bt)
     bt.add_argument(
         "--chart",
@@ -2886,8 +4288,95 @@ def build_parser() -> argparse.ArgumentParser:
         help="Scale position sizing inversely by each symbol's beta",
     )
     live.add_argument("--benchmark", default="SPY", help="Benchmark symbol for beta")
-    live.add_argument("--max-positions", dest="max_positions", type=int, default=5)
-    live.add_argument("--max-weight", dest="max_weight", type=float, default=0.25)
+    live.add_argument(
+        "--capital",
+        type=float,
+        default=None,
+        help="How much of the account this run may deploy. A saved config supplies it; "
+        "without either, sizing uses the whole account balance - which on a paper "
+        "account is whatever the venue handed out, not what was validated.",
+    )
+    live.add_argument(
+        "--preflight",
+        action="store_true",
+        help="Print the run contract and exit without starting the order path",
+    )
+    live.add_argument(
+        "--live-money",
+        dest="live_money",
+        action="store_true",
+        help="Acknowledge on the command line that PAPER_TRADE=false means real capital",
+    )
+    live.add_argument(
+        "--max-positions",
+        dest="max_positions",
+        type=int,
+        default=5,
+        help="How many positions the book may hold at once. Overrides the strategy's and "
+        "the saved config's limit, and bounds the allocator under --portfolio",
+    )
+    live.add_argument(
+        "--max-position-size",
+        dest="max_position_size",
+        type=float,
+        default=None,
+        help="Dollar ceiling on any one position. Overrides the strategy's and the saved config's limit",
+    )
+    live.add_argument(
+        "--max-gross-exposure",
+        dest="max_gross_exposure",
+        type=float,
+        default=None,
+        help="Ceiling on gross exposure as a fraction of deployable capital (0.9 = 90%%). "
+        "Overrides the strategy's and the saved config's limit",
+    )
+    live.add_argument(
+        "--max-net-exposure",
+        dest="max_net_exposure",
+        type=float,
+        default=None,
+        help="Ceiling on directional tilt - |long - short| as a fraction of deployable "
+        "capital. Distinct from --max-gross-exposure, which bounds long + short",
+    )
+    live.add_argument(
+        "--max-total-risk",
+        dest="max_total_risk",
+        type=float,
+        default=None,
+        help="Ceiling on total risk across the book as a fraction of deployable capital. "
+        "Overrides the strategy's and the saved config's limit",
+    )
+    live.add_argument(
+        "--min-notional",
+        dest="min_notional",
+        type=float,
+        default=None,
+        help="Skip an entry whose sized order falls below this dollar value, rather than "
+        "sending an order whose costs swamp it",
+    )
+    live.add_argument(
+        "--feed",
+        choices=DATA_FEEDS,
+        default=None,
+        help="Pin the Alpaca market-data feed for both warm-up and the live stream. "
+        "Unset leaves the SDK's defaults, which is the right choice for an entitled "
+        "account; unentitled keys generally need 'iex'",
+    )
+    live.add_argument(
+        "--allow-blind-start",
+        dest="allow_blind_start",
+        action="store_true",
+        help="Start even when no symbol warmed up. Indicators then begin from no history "
+        "and emit confident-looking signals nothing has validated",
+    )
+    live.add_argument(
+        "--max-weight",
+        dest="max_weight",
+        type=float,
+        default=0.25,
+        help="Largest weight the --portfolio allocator may give one name. Sizes the "
+        "allocation only; use --max-position-size to bound what the book will hold",
+    )
     # Guards are opt-OUT. The live loop is the only place a corrupt bar or a missed
     # fill costs money, so the safe configuration is the default one.
     live.add_argument(
@@ -2927,6 +4416,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Seconds between position-reconciliation sweeps (0 disables). Reports divergence "
         "from the broker's account state; never corrects it",
     )
+    _add_cost_flags(live)
     live.set_defaults(func=cmd_live)
 
     halt = subparsers.add_parser(
@@ -2960,9 +4450,35 @@ def build_parser() -> argparse.ArgumentParser:
     reconcile.add_argument("--json", action="store_true", help="Emit the report as JSON")
     reconcile.set_defaults(func=cmd_reconcile)
 
+    execution = subparsers.add_parser(
+        "execution-report",
+        help="Summarise how well the live path executed, from the ledger — read-only",
+    )
+    execution.add_argument("--ledger", default=None, help="Ledger path (default: logs/position_ledger.jsonl)")
+    execution.add_argument("--json", action="store_true", help="Emit the report as JSON")
+    execution.add_argument(
+        "--orders", action="store_true", help="List every order's lifecycle, not just the summary"
+    )
+    execution.set_defaults(func=cmd_execution_report)
+
     scan = subparsers.add_parser("scan", help="Run the universe scanner only")
     scan.add_argument("--scanner", default="volume")
     scan.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
+    scan.add_argument(
+        "--drift",
+        action="store_true",
+        help="Also re-scan at nearby clocks and report how much the universe moves. "
+        "A config records the universe its scanner resolved, so drift is the gap "
+        "between the validated book and the one a deployment would get.",
+    )
+    scan.add_argument(
+        "--as-of",
+        dest="as_of",
+        type=_date,
+        default=None,
+        help="Resolve scanner state at this date/datetime instead of now",
+    )
+    _add_cache_flags(scan)
     scan.set_defaults(func=cmd_scan)
 
     alloc = subparsers.add_parser("allocate", help="Weight a portfolio over scanned symbols")
@@ -2987,9 +4503,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="strategy",
         help="Score origin (utility)",
     )
-    alloc.add_argument(
-        "--as-of", dest="as_of", type=_date, default=datetime.now(), help="Rebalance date (utility)"
-    )
+    alloc.add_argument("--as-of", dest="as_of", type=_date, default=_now(), help="Rebalance date (utility)")
     alloc.add_argument(
         "--target-te", dest="target_te", type=float, default=0.04, help="Target tracking error"
     )
@@ -3132,6 +4646,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Override the derived κ (utility; only with --policy aim)",
     )
+    _add_cache_flags(alloc)
+    _add_config_flag(alloc)
     alloc.set_defaults(func=cmd_allocate)
 
     opt = subparsers.add_parser(
@@ -3141,6 +4657,14 @@ def build_parser() -> argparse.ArgumentParser:
     opt.add_argument("--method", choices=["grid", "random", "bayesian"], default="grid")
     opt.add_argument("--objective", default="sharpe_ratio")
     opt.add_argument("--max-evals", dest="max_evals", type=int, default=50)
+    opt.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Seed for candidate sampling. Affects --method random and bayesian, and "
+        "grid too once --max-evals caps the grid (the cap is sampled, not truncated). "
+        "Matches walkforward's --seed, so the same value reproduces its inner search.",
+    )
     opt.add_argument("--output", default="optimization_results.csv")
     _add_cost_flags(opt)
     _add_cache_flags(opt)
@@ -3170,6 +4694,32 @@ def build_parser() -> argparse.ArgumentParser:
     wf.add_argument("--objective", default="sharpe_ratio")
     wf.add_argument("--max-evals", dest="max_evals", type=int, default=50)
     wf.add_argument("--seed", type=int, default=42)
+    wf.add_argument(
+        "--benchmark",
+        default=None,
+        help="Score each fold against this symbol and check the median per-fold "
+        "information ratio as a paper prerequisite. Per fold, then median - the same "
+        "shape as every other fold statistic here.",
+    )
+    wf.add_argument(
+        "--cost-stress",
+        dest="cost_stress",
+        nargs="?",
+        const="all",
+        default="all",
+        choices=["all", "turnover", "borrow"],
+        help="Stress the chosen config's costs and check the paper prerequisite "
+        "(survives >= 3x its assumed cost). On by default here: this is where a "
+        "promotion decision is made, and cost sensitivity belongs in that story rather "
+        "than in an optional follow-up.",
+    )
+    wf.add_argument(
+        "--no-cost-stress",
+        dest="cost_stress",
+        action="store_const",
+        const=None,
+        help="Skip the cost stress (it re-runs the chosen config once per multiple)",
+    )
     wf.add_argument("--pbo", action="store_true", help="Estimate probability of backtest overfitting")
     wf.add_argument(
         "--monte-carlo",
@@ -3181,7 +4731,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--param-sensitivity",
         dest="param_sensitivity",
         action="store_true",
-        help="Perturb chosen params +-10% and re-test",
+        # `%%`, not `%`: argparse %-formats help text against the action's own
+        # attributes, so a literal percent renders the action's __dict__ mid-sentence.
+        help="Perturb chosen params +-10%% and re-test",
     )
     wf.add_argument(
         "--leakage-probe",
@@ -3228,6 +4780,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Save the chosen config (with provenance) to this path",
     )
     _add_cost_flags(wf)
+    _add_config_flag(wf)
     _add_cache_flags(wf)
     add_html_flag(wf)
     add_workers_flag(wf)
@@ -3257,6 +4810,14 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument(
         "--cache-dir", dest="cache_dir", default=None, help="Bar cache directory (default: cache/bars)"
     )
+    init.add_argument(
+        "--dev-local-state",
+        dest="dev_local_state",
+        action="store_true",
+        help="Print the setting that puts this checkout's state back inside it. For "
+        "contributors who want their own logs/ and configs/ again; state then lives in "
+        "a git working tree, which is why it is opt-in and never a default",
+    )
     init.set_defaults(func=cmd_init)
 
     # The shared knobs, once. Step-specific tuning stays on the individual commands:
@@ -3270,8 +4831,8 @@ def build_parser() -> argparse.ArgumentParser:
     verdict.add_argument("--strategy", choices=STRATEGIES, default="volume_spike")
     verdict.add_argument("--scanner", default="volume", help="Universe scanner ('none' to skip)")
     verdict.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
-    verdict.add_argument("--start", type=_date, default=datetime.now() - timedelta(days=365))
-    verdict.add_argument("--end", type=_date, default=datetime.now())
+    verdict.add_argument("--start", type=_date, default=_now() - timedelta(days=365))
+    verdict.add_argument("--end", type=_date, default=_now())
     verdict.add_argument("--capital", type=float, default=100_000.0)
     verdict.add_argument(
         "--source", choices=["strategy", "signal", "scanner"], default="strategy", help="Alpha score origin"
@@ -3311,6 +4872,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_html_flag(verdict)
     add_no_journal(verdict)
     add_force(verdict)
+    _add_config_flag(verdict)
     verdict.set_defaults(func=cmd_verdict)
 
     alphas = subparsers.add_parser(
@@ -3321,7 +4883,7 @@ def build_parser() -> argparse.ArgumentParser:
     alphas.add_argument("--scanner", default="volume", help="Scanner used as the --source score metric")
     alphas.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
     alphas.add_argument(
-        "--as-of", dest="as_of", type=_date, default=datetime.now(), help="Rebalance date (YYYY-MM-DD)"
+        "--as-of", dest="as_of", type=_date, default=_now(), help="Rebalance date (YYYY-MM-DD)"
     )
     alphas.add_argument(
         "--source",
@@ -3354,6 +4916,8 @@ def build_parser() -> argparse.ArgumentParser:
         "(no per-name vol multiply); 'auto' = let a Std_TS-vs-ω regression decide",
     )
     add_no_journal(alphas)
+    _add_cache_flags(alphas)
+    _add_config_flag(alphas)
     alphas.set_defaults(func=cmd_alphas)
 
     info = subparsers.add_parser(
@@ -3366,8 +4930,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     info.add_argument("--scanner", default="volume", help="Scanner used when --source scanner")
     info.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
-    info.add_argument("--start", type=_date, default=datetime.now() - timedelta(days=365))
-    info.add_argument("--end", type=_date, default=datetime.now())
+    info.add_argument("--start", type=_date, default=_now() - timedelta(days=365))
+    info.add_argument("--end", type=_date, default=_now())
     info.add_argument("--benchmark", default="SPY", help="Benchmark for residual returns")
     info.add_argument("--horizon", type=int, default=5, help="Forward-return horizon in bars")
     info.add_argument(
@@ -3448,6 +5012,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_neutralize_factors_flag(info, note="; measure the alpha you deploy")
     add_html_flag(info)
+    _add_cache_flags(info)
+    _add_config_flag(info)
     info.set_defaults(func=cmd_info)
 
     hz = subparsers.add_parser(
@@ -3458,14 +5024,16 @@ def build_parser() -> argparse.ArgumentParser:
     hz.add_argument("--source", choices=["strategy", "signal", "scanner"], default="strategy")
     hz.add_argument("--scanner", default="volume")
     hz.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
-    hz.add_argument("--start", type=_date, default=datetime.now() - timedelta(days=365))
-    hz.add_argument("--end", type=_date, default=datetime.now())
+    hz.add_argument("--start", type=_date, default=_now() - timedelta(days=365))
+    hz.add_argument("--end", type=_date, default=_now())
     hz.add_argument("--benchmark", default="SPY")
     hz.add_argument(
         "--max-lag", dest="max_lag", type=int, default=10, help="Largest lag (periods) to measure"
     )
     hz.add_argument("--timeframe", default="1Day")
     _add_neutralize_factors_flag(hz, note="; measure the alpha you deploy")
+    _add_cache_flags(hz)
+    _add_config_flag(hz)
     hz.set_defaults(func=cmd_horizon)
 
     risk = subparsers.add_parser(
@@ -3473,9 +5041,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Estimate the universe covariance Σ and summarize its risk structure — read-only",
     )
     risk.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
-    risk.add_argument(
-        "--as-of", dest="as_of", type=_date, default=datetime.now(), help="Rebalance date (YYYY-MM-DD)"
-    )
+    risk.add_argument("--as-of", dest="as_of", type=_date, default=_now(), help="Rebalance date (YYYY-MM-DD)")
     risk.add_argument(
         "--model",
         choices=["shrinkage", "sample", "factor"],
@@ -3510,6 +5076,8 @@ def build_parser() -> argparse.ArgumentParser:
         "by realized-vol regime — the report that decides whether --conditional is "
         "worth turning on for this universe/window.",
     )
+    _add_cache_flags(risk)
+    _add_config_flag(risk)
     risk.set_defaults(func=cmd_risk)
 
     def _add_cache_dir_flag(p) -> None:
@@ -3527,8 +5095,15 @@ def build_parser() -> argparse.ArgumentParser:
     c_warm.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
     c_warm.add_argument("--scanner", default="none", help="Universe scanner ('none' to skip)")
     c_warm.add_argument("--timeframe", default="1Day")
-    c_warm.add_argument("--start", type=_date, default=datetime.now() - timedelta(days=365))
-    c_warm.add_argument("--end", type=_date, default=datetime.now())
+    c_warm.add_argument("--start", type=_date, default=_now() - timedelta(days=365))
+    c_warm.add_argument("--end", type=_date, default=_now())
+    c_warm.add_argument(
+        "--scan-as-of",
+        dest="scan_as_of",
+        type=_date,
+        default=None,
+        help="Resolve the scanner at this date/datetime; defaults to --end",
+    )
 
     c_status = cache_sub.add_parser("status", help="Coverage summary and a drift check — no network")
     _add_cache_dir_flag(c_status)
@@ -3636,6 +5211,26 @@ def build_parser() -> argparse.ArgumentParser:
     # muscle memory and scripts keep working; the docs describe `list` only.
     t_query = trials_sub.add_parser("query", help="Alias for `trials list` (kept for compatibility)")
     add_list_args(t_query)
+
+    t_promote = trials_sub.add_parser(
+        "promote",
+        help="Write a portable config from a validated trial, without re-running it",
+    )
+    _add_db_flag(t_promote)
+    t_promote.add_argument("trial_id", help="The trial id (see `trials list`)")
+    t_promote.add_argument(
+        "--save-config",
+        dest="save_config",
+        required=True,
+        metavar="PATH",
+        help="Where to write the config",
+    )
+    t_promote.add_argument(
+        "--force",
+        action="store_true",
+        help="Promote a trial that did not clear its gates, recording that verdict in the config",
+    )
+    t_promote.set_defaults(func=cmd_trials)
 
     t_show = trials_sub.add_parser("show", help="Everything the store knows about one trial")
     _add_db_flag(t_show)
@@ -3773,11 +5368,18 @@ def main() -> None:
     from tradeflow.store.bars import CacheMiss
 
     setup_logging()
-    args = build_parser().parse_args()
+    args = parse_cli()
     try:
         args.func(args)
     except (SettingsError, CacheMiss) as exc:
         sys.exit(str(exc))
+    except KeyboardInterrupt:
+        # A traceback reads as a crash; Ctrl-C is a choice. What matters more than the
+        # tidiness is the second clause: a research command interrupted part-way has
+        # written no config and journaled no trial, and a half-finished validation that
+        # silently recorded one would corrupt the campaign's own trial count - the
+        # number every deflated Sharpe deflates against.
+        sys.exit("\nInterrupted - no config saved, no trial recorded.")
 
 
 if __name__ == "__main__":

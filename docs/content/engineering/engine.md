@@ -29,15 +29,24 @@ The simulation runs on **one clock against one capital pool** — every symbol o
 single merged timeline, positions competing for the same dollars as they would
 live. Each step:
 
+0. **Decide on the previous bar.** A signal at bar `i` comes from `calculate_scores`
+   at bar `i`, and scores are computed from that bar's *close*. So the signal a bar may
+   act on is always the one before it, executed at this bar's open. Through accounting
+   v3 the engine executed `signal[i]` at `open[i]` — a one-bar look-ahead on every entry
+   and every signal exit, applied to the whole history. A feed shift cannot detect it:
+   shifting moves signal and price together, so the relationship survives intact, which
+   is why the leakage probe passed over it for as long as it did.
 1. **Mark** open positions to market (and track excursion extremes).
 2. **Exit** — stop-loss, take-profit, then signal exit, in that order. Stop/take
    fill at their level; a signal exit fills at the next open. Exits run *before*
    entries, so capital freed this bar is reusable this bar.
 3. **Rank** entry candidates across the whole universe by the strategy's own
    conviction score, descending, ties broken by symbol so a run is reproducible.
-4. **Admit** in that order while `max_positions`, `max_total_risk` and free cash
-   allow. Sizing goes through `Strategy.calculate_position_size` as before, but
-   against *free cash*, which is what makes positions actually compete.
+4. **Admit** in that order while `max_positions`, `max_total_risk`,
+   `max_gross_exposure`, `max_net_exposure` and free cash allow. Sizing goes through
+   `Strategy.calculate_position_size` as before, but against *free cash*, which is
+   what makes positions actually compete. The two portfolio fractions are not the
+   same measurement — see [what `max_total_risk` caps](../usage/configuration.md#what-max_total_risk-caps).
 5. **Record** portfolio equity — cash plus marked-to-market positions.
 
 Anything still open at the end is force-closed (`END_OF_PERIOD`). P&L is
@@ -107,17 +116,40 @@ capital, dates, and the strategy config.
 4. `_on_bar` — feed each full streamed bar to `process_bar`; forward any
    actionable signal to the `LiveTrader`, which returns a `Decision` recording what
    it did and why.
-5. If the broker supports it, run the **trade-update stream concurrently**
-   (`asyncio.gather`) so fills/cancels/rejects are logged alongside trading.
+5. If the broker supports it, run the **trade-update stream concurrently** so
+   fills/cancels/rejects are logged alongside trading, and each fill re-reads its own
+   symbol from the broker — a reconciliation sweep landing between an entry's
+   submission and its fill would otherwise leave the book believing it is flat in a
+   symbol it holds, and a strategy that believes it is flat cannot emit an exit.
 
 Inside the loop, on a timer rather than per bar, the engine re-reads the position
 book and reconciles the ledger against the account. Both are bounded by
 construction — one `list_positions` call per sweep, never one per symbol — because
 this runs on the trade clock and must not scale with universe size.
 
-Both live streams (market data and trade updates) auto-reconnect with capped
-backoff via a shared `run_with_reconnect` helper, and shut down cleanly on
-cancellation.
+**The broker SDK is synchronous, so its calls run in a worker thread.** An entry makes
+several blocking round trips, and running those on the event loop stalls everything else
+it carries: other symbols that signalled on the same bar, the trade-update stream, and
+the reconciliation sweep. There is still exactly one loop and one order at a time —
+everything that reads the position book and then acts on it is serialized behind a
+single semaphore. That is a correctness requirement, not a speed-up: two entries
+checking the book at once can both pass an exposure limit only one of them fits inside.
+
+Both live streams (market data and trade updates) auto-reconnect with capped backoff via
+a shared `run_with_reconnect` helper. Shutdown is signal-driven — `SIGINT` and `SIGTERM`
+take the same path — and every bound in it is deliberately duplicated off the loop,
+because third-party code that blocks the loop takes every loop-scheduled timeout down
+with it, signal handlers included. See [stopping a
+session](../usage/live-trading.md#stopping-a-session).
+
+This matches the live path rather than being more conservative than it. Live has always
+been causal — a closed bar arrives, `process_bar` emits a signal, and a market order
+fills strictly afterwards — so through v3 the backtest was transacting at a price live
+could never get, and every validated number overstated what a deployment could achieve.
+
+That is the general hazard of the two-clock design: the same rule is implemented twice,
+in code that cannot reference itself, so a defect on one side is a defect on the other
+until someone checks. See [separation of concerns](separation-of-concerns.md).
 
 The engine never calls the broker directly — it delegates to
 [execution](broker-abstraction). That boundary is exactly why the same strategy

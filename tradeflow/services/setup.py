@@ -321,8 +321,86 @@ def run_checks(path: Optional[Any] = None, environ: Optional[Dict[str, str]] = N
         )
     )
     checks.append(_writable_check())
+    checks.extend(_state_checks())
     checks.extend(_extras_checks())
     return checks
+
+
+def _state_checks() -> List[Check]:
+    """Where this copy keeps its evidence, and whether anything is wrong with that.
+
+    A user who arrived through PyPI or over MCP may never learn there is a working
+    tree, a ``logs/`` directory or an ignore file. These rows are how the file model
+    gets explained to them once, in the one command that exists to explain the setup.
+    """
+    from tradeflow.execution.ledger import default_ledger_path
+    from tradeflow.settings import (
+        git_worktree_containing,
+        orphaned_checkout_state,
+        state_root,
+        trial_journal_path,
+    )
+
+    root = state_root()
+    checks = [
+        Check("state root", True, f"{root}{' (TRADEFLOW_HOME)' if os.environ.get('TRADEFLOW_HOME') else ''}"),
+        Check("research journal", True, str(trial_journal_path())),
+        Check("position ledger", True, str(default_ledger_path())),
+    ]
+
+    worktree = git_worktree_containing(root)
+    checks.append(
+        Check(
+            "state outside version control",
+            worktree is None,
+            "not inside a git working tree"
+            if worktree is None
+            else (
+                f"state root is inside the git working tree at {worktree} — everything "
+                "recorded here is one ignore-file edit from disclosure, and `git clean "
+                "-xd` would delete it, live position ledger included"
+            ),
+        )
+    )
+
+    orphaned = orphaned_checkout_state()
+    if orphaned is not None:
+        # Said out loud rather than resolved silently: a contributor whose evidence
+        # lived in their checkout would otherwise deflate the next campaign against
+        # none of it, with nothing erroring.
+        checks.append(
+            Check(
+                "earlier state found",
+                False,
+                f"{orphaned / 'logs'} holds trials from when a checkout was its own "
+                f"state root. It is no longer being read. To keep using it: "
+                f"TRADEFLOW_HOME={orphaned}",
+            )
+        )
+
+    packs = _installed_packs()
+    if packs:
+        checks.append(Check("private packs installed", True, ", ".join(packs)))
+    return checks
+
+
+def _installed_packs() -> List[str]:
+    """Strategy and scanner names contributed by installed packages, not built in.
+
+    Worth naming: it is the difference between "this is the example set" and "your own
+    work is running", and it decides whether the state-root warnings above matter.
+    """
+    try:
+        from tradeflow.services.registry import (
+            BUILTIN_SCANNERS,
+            BUILTIN_STRATEGIES,
+            SCANNERS,
+            STRATEGIES,
+        )
+    except Exception:  # noqa: BLE001 - a diagnostic must not fail over its own extras
+        return []
+    builtin = {*BUILTIN_STRATEGIES, *BUILTIN_SCANNERS}
+    return sorted({*STRATEGIES, *SCANNERS} - builtin)
 
 
 def _writable_check() -> Check:
@@ -349,7 +427,10 @@ def _writable_check() -> Check:
 _EXTRAS = (
     ("store", "pyarrow", "the bar cache (`--cache`/`--offline`) and the Parquet bar store"),
     ("viz", "matplotlib", "charts in `--chart` and in HTML reports"),
-    ("mcp", "mcp", "the MCP server (`python main.py mcp`)"),
+    # No command in the description: the way to start it differs by how this copy was
+    # reached, and a checkout-only invocation here is a dead end for every installed
+    # reader. The next-steps block names it correctly for the copy that is running.
+    ("mcp", "mcp", "the MCP server (`mcp`)"),
     ("optimize", "sklearn", "`optimize --method bayesian`"),
     ("portfolio", "ortools", "`allocate` (the constraint solver)"),
 )
@@ -379,9 +460,9 @@ def _extras_checks() -> List[Check]:
 
 def install_hint(extra: str) -> str:
     """The command that installs an optional extra here, checkout or not."""
-    from tradeflow.settings import _looks_like_checkout, state_root
+    from tradeflow.settings import running_from_checkout
 
-    if _looks_like_checkout(state_root()):
+    if running_from_checkout():
         return f"uv sync --extra {extra}"
     return f'uv tool install --force "tradeflow-engine[{extra}]"'
 

@@ -18,14 +18,14 @@ def _trader(broker, sizer=None):
     return LiveTrader(broker, VolumeSpikeStrategy.create_with_defaults(), sizer=sizer)
 
 
-def _open_position(symbol="AAA"):
+def _open_position(symbol="AAA", qty=10.0):
     return Position(
         symbol=symbol,
-        qty=10.0,
+        qty=qty,
         side="long",
         avg_entry_price=100.0,
         current_price=100.0,
-        market_value=1000.0,
+        market_value=qty * 100.0,
         unrealized_pl=0.0,
     )
 
@@ -325,3 +325,171 @@ def test_a_recorded_decision_carries_no_position_meaning(tmp_path):
     ledger.record_decision(_trader(FakeBroker()).handle_signal("BBB", signals.BUY, 100.0))
 
     assert ledger.expected_positions() == before
+
+
+# --- portfolio limits on the trade clock ------------------------------------
+#: $20k of notional per position at the default 1% stop, so one position risks $200
+#: and deploys $20k - numbers big enough for a book-level limit to bite.
+def _trader_with_limits(broker, **limits):
+    strategy = VolumeSpikeStrategy.create_with_defaults()
+    strategy.config["position_limits"] = {
+        **strategy.position_limits(),
+        "max_position_size": 20_000.0,
+        **limits,
+    }
+    trader = LiveTrader(broker, strategy)
+    trader.sync_strategy_book()  # the book the limits are counted from
+    return trader
+
+
+class _CountingBroker(FakeBroker):
+    """Counts book reads, so the loop fence can be asserted rather than assumed."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.list_calls = 0
+
+    def list_positions(self):
+        self.list_calls += 1
+        return super().list_positions()
+
+
+def _held(*symbols, qty=200.0):
+    return [_open_position(sym, qty=qty) for sym in symbols]
+
+
+def test_max_positions_is_enforced_against_the_whole_book():
+    """It is a portfolio limit live too, not merely a per-symbol one."""
+    broker = FakeBroker(positions=_held("BBB"))
+    trader = _trader(broker)  # the strategy's own default is one position
+    trader.sync_strategy_book()
+    decision = trader.handle_signal("AAA", signals.BUY, 100.0)
+
+    assert not decision.allowed
+    assert "book is full" in decision.reason
+    assert decisions.POSITION_LIMITS in decision.guards_consulted
+    assert broker.orders == []
+
+
+def test_the_risk_budget_is_shared_across_the_book_not_granted_per_position():
+    """The defect this guard exists for.
+
+    Sizing clamps one position against the *whole* max_total_risk budget, so every
+    entry can be individually within budget while the book is far past it. Five open
+    positions here have spent the entire $1,000 budget; the sixth is still a legal
+    size on its own, and must still be refused.
+    """
+    broker = FakeBroker(positions=_held("BBB", "CCC", "DDD", "EEE", "FFF"))
+    trader = _trader_with_limits(broker, max_positions=10, max_total_risk=0.01)
+
+    # 200 shares is what sizing asks for, and it is inside the per-position clamp:
+    # the budget alone would allow 1,000 shares.
+    assert trader._strategy.calculate_position_size(100_000.0, 100.0) == 200.0
+
+    decision = trader.handle_signal("AAA", signals.BUY, 100.0)
+    assert not decision.allowed
+    assert "risk budget exhausted" in decision.reason
+    assert broker.orders == []
+
+
+def test_gross_exposure_is_capped_live():
+    """$40k already deployed, a $20k entry, a $45k cap."""
+    broker = FakeBroker(positions=_held("BBB", "CCC"))
+    decision = _trader_with_limits(
+        broker, max_positions=10, max_total_risk=1.0, max_gross_exposure=0.45
+    ).handle_signal("AAA", signals.BUY, 100.0)
+
+    assert not decision.allowed
+    assert "gross exposure capped" in decision.reason
+    assert broker.orders == []
+
+
+def test_an_entry_that_fits_the_limits_still_goes_through():
+    """The guard must reject the breach, not the trade - it is consulted and passes."""
+    broker = FakeBroker(positions=_held("BBB", "CCC"))
+    decision = _trader_with_limits(
+        broker, max_positions=10, max_total_risk=1.0, max_gross_exposure=0.70
+    ).handle_signal("AAA", signals.BUY, 100.0)
+
+    assert decision.allowed
+    assert decisions.POSITION_LIMITS in decision.guards_consulted
+    assert len(broker.orders) == 1
+
+
+def test_an_entry_this_trader_opened_counts_against_the_next_one():
+    """Within a bar, positions compete - the same thing the engine does when it
+    admits candidates in conviction order against one shrinking book."""
+    broker = FakeBroker(positions=_held("BBB"))
+    trader = _trader_with_limits(broker, max_positions=3, max_total_risk=1.0, max_gross_exposure=0.55)
+
+    first = trader.handle_signal("AAA", signals.BUY, 100.0)  # $20k on top of $20k
+    second = trader.handle_signal("CCC", signals.BUY, 100.0)  # would make $60k
+
+    assert first.allowed
+    assert not second.allowed
+    assert "gross exposure capped" in second.reason
+
+
+def test_checking_the_limits_adds_no_broker_call_to_the_bar_loop():
+    """Several symbols can signal an entry on one bar; a book read per entry would
+    put a broker round trip on each of them."""
+    broker = _CountingBroker(positions=_held("BBB"))
+    trader = _trader_with_limits(broker, max_positions=10, max_total_risk=1.0)
+    assert broker.list_calls == 1  # the start-up sync, and only that
+
+    for symbol in ("AAA", "CCC", "DDD"):
+        trader.handle_signal(symbol, signals.BUY, 100.0)
+    assert broker.list_calls == 1
+
+
+# --- capital: what this run may deploy -----------------------------------------
+def _sized_at(capital, account_balance=100_000.0):
+    broker = FakeBroker(buying_power=account_balance)
+    strategy = VolumeSpikeStrategy.create_with_defaults()
+    strategy.config["position_limits"] = {
+        **strategy.position_limits(),
+        "max_positions": 5,
+        "max_position_size": 50_000.0,
+    }
+    LiveTrader(broker, strategy, capital=capital).handle_signal("AAA", signals.BUY, price=100.0)
+    return broker.orders[0]["qty"] if broker.orders else 0
+
+
+def test_sizing_uses_the_configured_capital_not_the_account_balance():
+    """A paper account arrives with whatever equity the venue handed out.
+
+    Sizing against that trades a different book from the one validated - which does not
+    merely flatter the result, it invalidates the execution telemetry the run exists to
+    gather, because fills, slippage and rounding are all properties of a book at a size.
+    """
+    assert _sized_at(8_000.0) * 100 == pytest.approx(8_000.0)
+    assert _sized_at(None) * 100 > 8_000.0  # the whole account, as before
+
+
+def test_capital_caps_and_never_inflates():
+    """A $8,000 config on a $3,000 account may deploy $3,000, never the number in the
+    file. It is a ceiling on what may be used, not a claim about what exists."""
+    assert _sized_at(8_000.0, account_balance=3_000.0) * 100 <= 3_000.0
+
+
+def test_no_capital_leaves_an_unconfigured_run_exactly_as_it_was():
+    assert _sized_at(None) == _sized_at(0)  # falsy capital is "the whole account"
+
+
+def test_portfolio_limits_are_fractions_of_the_capital_not_the_account():
+    """`max_total_risk` and `max_gross_exposure` are fractions *of equity*, and 5% of a
+    paper account's balance is not 5% of the capital a config was validated at."""
+    broker = FakeBroker(buying_power=100_000.0)
+    strategy = VolumeSpikeStrategy.create_with_defaults()
+    strategy.config["position_limits"] = {
+        **strategy.position_limits(),
+        "max_positions": 5,
+        "max_position_size": 50_000.0,
+        "max_gross_exposure": 0.5,  # half of *what*?
+    }
+    trader = LiveTrader(broker, strategy, capital=8_000.0)
+
+    trader.handle_signal("AAA", signals.BUY, price=100.0)
+    filled = sum(order["qty"] * 100 for order in broker.orders)
+
+    assert filled <= 8_000.0 * 0.5 + 1e-6  # half the capital, not half the account

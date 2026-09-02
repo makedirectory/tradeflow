@@ -24,7 +24,10 @@ GLOBAL_CAVEATS = [
 
 _DEFS: Dict[str, str] = {
     "total_return": "Final/initial capital - 1, in %. Period-dependent; use cagr to compare windows of different length.",
-    "buy_hold_return": "Average %% return of simply holding the traded symbols over the window (the baseline to beat).",
+    "buy_hold_return": "Average %% return of holding the *traded universe* over the window (the baseline to beat). "
+    "Not the benchmark - it does not change when --benchmark does; see benchmark_buy_hold_return.",
+    "benchmark_buy_hold_return": "%% return of holding the benchmark over the same steps the strategy was measured on. "
+    "0.0 when no benchmark was supplied.",
     "sharpe_ratio": "Annualized mean/std of returns (rf=0). The headline ratio. Inflated by short samples and fat tails - read probabilistic_sharpe_ratio alongside it.",
     "sortino_ratio": "Like Sharpe but only penalizes downside deviation.",
     "calmar_ratio": "CAGR / max drawdown. Reward per unit of worst peak-to-trough loss.",
@@ -62,7 +65,8 @@ _DEFS: Dict[str, str] = {
     "alpha": "Per-period OLS intercept of strategy vs benchmark returns (0 if no benchmark supplied).",
     "beta": "OLS slope vs benchmark - market sensitivity (0 if no benchmark).",
     "r_squared": "Fraction of strategy variance explained by the benchmark.",
-    "treynor_ratio": "Annualized excess return per unit of beta (needs a benchmark).",
+    "treynor_ratio": "Annualized excess return per unit of beta (needs a benchmark). 0.0 when |beta| is too near "
+    "zero to divide by - check treynor_available before reading it as a real zero.",
     "information_ratio": "Annualized active return / tracking error vs benchmark.",
     "skew": "Skewness of returns. Negative => occasional large losses.",
     "kurtosis": "Excess kurtosis. High => fat tails (more extreme moves than normal).",
@@ -76,6 +80,8 @@ _DEFS: Dict[str, str] = {
 
 _FLAG_DEFS: Dict[str, str] = {
     "benchmark_available": "Whether a benchmark series was supplied; if False, alpha/beta/treynor/information_ratio are 0.",
+    "treynor_available": "Whether beta was far enough from zero for Treynor to mean anything. Fails independently of "
+    "benchmark_available: a benchmark can be present and the ratio still meaningless for a market-neutral book.",
     "low_sample": "True when total_trades < 30 - treat all ratios with caution.",
 }
 
