@@ -18,6 +18,7 @@ from alpaca.data.live import StockDataStream
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 
+from tradeflow.brokers.alpaca.broker import classify_error
 from tradeflow.marketdata.base import BarEvent, BarHandler, MarketDataProvider
 from tradeflow.marketdata.timeframe import DAY, HOUR, MINUTE, WEEK, Timeframe
 from tradeflow.utils.streaming import close_stream, run_with_reconnect
@@ -75,9 +76,14 @@ class AlpacaMarketData(MarketDataProvider):
 
         try:
             combined = self._historical.get_stock_bars(request).df
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Failed to fetch bars for %s: %s", symbols, exc)
-            return {}
+        except Exception as exc:  # noqa: BLE001 - re-raised as a typed failure below
+            # Raised, not swallowed into an empty result. A fetch that could not happen
+            # and a window that genuinely held no bars are different facts, and
+            # returning {} for both made them the same one: an unreachable provider
+            # produced a backtest with no trades, which was journaled as an evaluated
+            # trial and then served from cache to the next identical run. Absent is not
+            # zero, and unreachable is not absent.
+            raise classify_error(exc) from exc
 
         if combined is None or combined.empty:
             return {}

@@ -79,3 +79,34 @@ def test_a_feed_nobody_supports_is_refused_rather_than_passed_through(monkeypatc
         data_feed()
 
     assert "iexx" in str(exit_info.value)
+
+
+# --- a fetch that could not happen ------------------------------------------------
+def test_a_failed_fetch_raises_instead_of_returning_no_bars():
+    """The bug: a sandboxed run with no DNS reached this call, the exception was logged
+    and swallowed into `{}`, and the empty result flowed all the way to a zero-trade
+    backtest — which was journaled as an evaluated trial and then served from cache to
+    the next identical run.
+
+    A fetch that could not happen and a window that genuinely held no bars are different
+    facts. Returning `{}` for both made them the same one: absent is not zero, and
+    unreachable is not absent.
+    """
+    from tradeflow.brokers.errors import BrokerError
+
+    provider, historical = _provider()
+    historical.get_stock_bars.side_effect = ConnectionError("Temporary failure in name resolution")
+
+    with pytest.raises(BrokerError):
+        provider.get_bars(["AAA"], Timeframe.parse("1Day"), datetime(2024, 1, 1), datetime(2024, 2, 1))
+
+
+def test_a_genuinely_empty_window_still_returns_no_bars():
+    """Both directions. The provider answered; it simply had nothing for this window,
+    and that is a legitimate result a walk-forward fold produces routinely."""
+    provider, historical = _provider()
+    historical.get_stock_bars.return_value = mock.Mock(df=None)
+
+    result = provider.get_bars(["AAA"], Timeframe.parse("1Day"), datetime(2024, 1, 1), datetime(2024, 2, 1))
+
+    assert result == {}

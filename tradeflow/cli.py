@@ -539,7 +539,7 @@ def cmd_backtest(args) -> None:
         legs=result.legs,
     )
     _print_universe_provenance(args, universe)
-    _print_net_cap_derivation(result)
+    _print_net_cap_derivation(result, strategy.position_limits())
     _print_verdicts_for_backtest(result)
     if getattr(args, "cost_stress", False):
         _print_cost_stress(data_client, strategy_name, universe, args, tuned)
@@ -1373,7 +1373,7 @@ def _print_fold_disagreement(result) -> None:
         )
 
 
-def _print_net_cap_derivation(result) -> None:
+def _print_net_cap_derivation(result, limits=None) -> None:
     """What directional tilt this book actually carried, and what a cap would do to it.
 
     Printed only for a book that traded both sides - a long-only strategy's net is its
@@ -1381,10 +1381,13 @@ def _print_net_cap_derivation(result) -> None:
     """
     from tradeflow.analytics.exposure import derive_net_cap, format_net_cap
 
+    limits = limits or {}
     legs = getattr(result, "legs", None) or {}
     if not all(legs.get(side, {}).get("trades") for side in ("long", "short")):
         return
-    derivation = derive_net_cap(getattr(result, "exposure", {}) or {})
+    derivation = derive_net_cap(
+        getattr(result, "exposure", {}) or {}, gross_cap=limits.get("max_gross_exposure")
+    )
     if not derivation.get("available"):
         return
     print("\n".join(format_net_cap(derivation)))

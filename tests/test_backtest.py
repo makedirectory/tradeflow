@@ -1071,3 +1071,27 @@ def test_a_balanced_book_reports_near_zero_net_against_real_gross():
     result = _mixed_book()
 
     assert result.exposure["net_abs"]["max"] < result.exposure["gross_max"]
+
+
+def test_an_empty_universe_is_still_a_valid_run():
+    """A window that genuinely holds no bars is a legitimate outcome — a fold can slice
+    one — and must not be confused with a fetch that could not happen. That distinction
+    is drawn at the provider, which raises; see tests/test_market_data_feed.py."""
+    engine = BacktestEngine(ScriptedStrategy(["HOLD"]), MarketDataClient(DictMarketData({})))
+
+    result = engine.run([], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000)
+
+    assert result.final_capital == 100_000
+
+
+def test_partial_coverage_still_runs():
+    """One symbol with data is a real backtest over one symbol, not a failure — a
+    universe always loses some names to delistings and halts."""
+    frames = {"AAA": _frame(_FLAT)}
+    engine = BacktestEngine(
+        ScriptedStrategy(["BUY", "HOLD", "CLOSE_BUY"]), MarketDataClient(DictMarketData(frames))
+    )
+
+    result = engine.run(["AAA", "MISSING"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000)
+
+    assert len(result.trades) == 1

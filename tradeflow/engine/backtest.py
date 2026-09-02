@@ -494,7 +494,13 @@ class BacktestEngine:
         return frame["close"]
 
     def _simulate(
-        self, symbol_bars, start, end, initial_capital: float, trade_from=None, benchmark_closes=None
+        self,
+        symbol_bars,
+        start,
+        end,
+        initial_capital: float,
+        trade_from=None,
+        benchmark_closes=None,
     ) -> BacktestResult:
         """Simulate the whole universe on one clock against one capital pool."""
         panels, market_data, master = self._prepare(symbol_bars)

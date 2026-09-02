@@ -109,6 +109,11 @@ and, for each cap worth considering, how often that cap would have bound:
   Smallest cap that leaves the validated book intact: 0.47
 ```
 
+A net cap at or above the gross cap can never bind: `|long − short| ≤ long + short`
+identically, so gross already holds net below it. The derivation says so when it
+happens, because a value the gross cap subsumes reads as a second limit when it is not
+one.
+
 The trade-off is the point, not the number. **Any cap below the observed maximum would
 have changed the book that was validated** — it either never binds, in which case it
 documents an intent rather than enforcing one, or it binds, in which case the thing

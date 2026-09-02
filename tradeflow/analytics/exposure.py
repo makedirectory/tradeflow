@@ -14,7 +14,7 @@ reports both halves and picks nothing.
 Research clock: reads a completed backtest, decides nothing about a live run.
 """
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 #: Caps worth showing, as multiples of the observed p95. Below 1.0 bites into normal
 #: operation; above ~1.5 is loose enough that it only catches an excursion.
@@ -57,7 +57,7 @@ def net_cap_candidates(exposure: Dict[str, Any]) -> List[Dict[str, Any]]:
     return list((exposure or {}).get("candidates") or [])
 
 
-def derive_net_cap(exposure: Dict[str, Any]) -> Dict[str, Any]:
+def derive_net_cap(exposure: Dict[str, Any], gross_cap: Optional[float] = None) -> Dict[str, Any]:
     """What the history says about a directional cap, and what it does not.
 
     ``recommended`` is the smallest candidate that would never have bound — the only
@@ -73,6 +73,10 @@ def derive_net_cap(exposure: Dict[str, Any]) -> Dict[str, Any]:
     never_binds = [c for c in candidates if c["binding_rate"] == 0.0]
     recommended = min(never_binds, key=lambda c: c["cap"]) if never_binds else None
     samples = exposure.get("samples", 0)
+    # |long - short| <= long + short identically, so a net cap at or above the gross cap
+    # can never bind. Worth saying out loud: a recommendation the gross cap already
+    # subsumes is documentation, and reads as a second limit when it is not one.
+    subsumed = gross_cap is not None and recommended is not None and recommended >= gross_cap
     return {
         "available": True,
         "samples": samples,
@@ -82,6 +86,8 @@ def derive_net_cap(exposure: Dict[str, Any]) -> Dict[str, Any]:
         "signed_mean": exposure.get("net_signed_mean"),
         "gross_max": exposure.get("gross_max"),
         "candidates": candidates,
+        "gross_cap": gross_cap,
+        "subsumed_by_gross": subsumed,
         # None when every candidate would have bound: the honest answer is then "no cap
         # derived from this history leaves it unchanged", not the least-bad number.
         "recommended": recommended["cap"] if recommended else None,
@@ -139,6 +145,12 @@ def format_net_cap(derivation: Dict[str, Any]) -> List[str]:
         lines.append(
             f"\n  Smallest cap that leaves the validated book intact: {derivation['recommended']:.2f}"
         )
+        if derivation.get("subsumed_by_gross"):
+            lines.append(
+                f"  But |net| never exceeds gross, so a gross cap of "
+                f"{derivation['gross_cap']:.2f} already holds net below that. This value\n"
+                f"  documents an intent; it cannot bind while that gross cap stands."
+            )
     else:
         lines.append(
             "\n  No candidate leaves the validated book intact. Any cap from this "
