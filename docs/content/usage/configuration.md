@@ -5,6 +5,14 @@ title: Configuration
 
 # Configuration
 
+:::note Two different things called "config"
+
+This page is the **strategy config dict** — one strategy's parameters and limits. The
+saved **run config** file, which `--config` reads and `--save-config` writes, is a
+separate artefact with its own page: [run configs](run-configs.md).
+
+:::
+
 :::tip No keys needed to explore
 Want to see TradeFlow work before signing up for anything? Run `make demo` — it
 runs the whole pipeline (backtest + walk-forward) on synthetic data, offline.

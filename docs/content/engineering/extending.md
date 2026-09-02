@@ -5,9 +5,19 @@ title: Extending
 
 # Extending
 
+:::note Looking for the on-ramp?
+
+This page is the interface reference — every method, every contract. If you are
+starting from "I have an idea", read [your own strategies](../usage/private-strategies.md)
+first; it covers installing a private package and the path from idea to evidence.
+
+:::
+
 Three common extension points. Each touches one layer. Strategies and scanners can
 live either in this repository or in a separate private Python package; the private
-package route is the intended shape for proprietary signal IP.
+package route is the intended shape for proprietary signal IP, and the three strategies
+and one scanner shipped here are **examples** — they demonstrate the interface and are
+not edges.
 
 ## Add a strategy
 

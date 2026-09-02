@@ -204,6 +204,10 @@ were not before: limits are not tunable params, so they went through no identity
 and two runs differing only in `max_gross_exposure` hashed alike — the second answered
 from the first.
 
+See [validation diagnostics](validation-diagnostics.md) for the full set — fill
+stress, directional tilt, cost stress, and the execution report a paper session
+produces.
+
 ## Where the P&L came from, and the assumption under it
 
 A headline return says nothing about where it came from. Every backtest now prints the

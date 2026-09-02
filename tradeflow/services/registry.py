@@ -74,17 +74,35 @@ def refresh_registries() -> None:
     SymbolScanner.SCANNERS = dict(SCANNERS)
 
 
-def list_strategies() -> List[Dict[str, str]]:
-    """Names + one-line descriptions for every registered strategy."""
+def list_strategies() -> List[Dict[str, Any]]:
+    """Names, one-line descriptions, and whether each is a shipped example.
+
+    ``example`` is carried rather than implied. The built-ins exist to demonstrate the
+    interface, not to be traded; without a label the reasonable read of a registry
+    holding three strategies is that the platform *is* those three, which is the
+    opposite of the point.
+    """
     return [
-        {"name": name, "description": _first_line(cls.__doc__), "timeframe": getattr(cls, "TIMEFRAME", "")}
+        {
+            "name": name,
+            "description": _first_line(cls.__doc__),
+            "timeframe": getattr(cls, "TIMEFRAME", ""),
+            "example": name in BUILTIN_STRATEGIES,
+        }
         for name, cls in STRATEGIES.items()
     ]
 
 
-def list_scanners() -> List[Dict[str, str]]:
-    """Names + one-line descriptions for every registered scanner."""
-    return [{"name": name, "description": _first_line(cls.__doc__)} for name, cls in SCANNERS.items()]
+def list_scanners() -> List[Dict[str, Any]]:
+    """Names, one-line descriptions, and whether each is a shipped example."""
+    return [
+        {
+            "name": name,
+            "description": _first_line(cls.__doc__),
+            "example": name in BUILTIN_SCANNERS,
+        }
+        for name, cls in SCANNERS.items()
+    ]
 
 
 def get_param_ranges(kind: str, name: str) -> Dict[str, Any]:

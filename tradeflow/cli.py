@@ -4119,7 +4119,16 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     def add_common(p, *, with_dates: bool) -> None:
-        p.add_argument("--strategy", choices=STRATEGIES, default="volume_spike")
+        # The default is an example, and says so. Someone reaching for this flag with
+        # nothing installed is choosing between demonstrations of the interface, not
+        # between candidate edges.
+        p.add_argument(
+            "--strategy",
+            choices=STRATEGIES,
+            default="volume_spike",
+            help="Which strategy to run. The three built-ins are examples that "
+            "demonstrate the interface; bring your own in an installed package",
+        )
         p.add_argument("--scanner", default="volume", help="Universe scanner ('none' to skip)")
         p.add_argument(
             "--symbols", type=_symbols, default=DEFAULT_UNIVERSE, help="Comma-separated candidate symbols"

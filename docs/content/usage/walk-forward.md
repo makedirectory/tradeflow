@@ -63,6 +63,14 @@ once, at the very end — it never reaches any optimizer call.
 The honest performance number is the **OOS aggregate**: metrics recomputed over
 the concatenation of every fold's OOS trades, not an average of per-fold numbers.
 
+:::tip The file it writes
+
+`--save-config` produces a [run config](run-configs.md) — the artefact backtest,
+walk-forward and live all read. That page covers what is in it and how the universe is
+replayed rather than re-scanned.
+
+:::
+
 ## Key options
 
 | Flag | Meaning |
