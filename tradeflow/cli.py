@@ -1028,6 +1028,209 @@ def cmd_optimize(args) -> None:
         print(f"Full results written to {args.output}")
 
 
+def _screen_range(text: str):
+    """``name=min:max:step`` — one narrowed axis, parsed and refused loudly.
+
+    A malformed narrowing that fell back to the declared range would screen a space
+    the user did not ask for and find nothing where they thought they had looked.
+    """
+    name, _, spec = text.partition("=")
+    parts = spec.split(":")
+    if not name or len(parts) != 3:
+        raise argparse.ArgumentTypeError(f"Expected NAME=min:max:step, got {text!r}")
+    try:
+        values = [float(part) for part in parts]
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"Non-numeric bound in {text!r}") from exc
+    return name, {"min": values[0], "max": values[1], "step": values[2]}
+
+
+def _screen_limits(args):
+    """The book a screen evaluates against: the config's, with --max-positions over it."""
+    limits = dict(getattr(args, "config_position_limits", None) or {})
+    if getattr(args, "max_positions", None):
+        limits["max_positions"] = args.max_positions
+    return limits or None
+
+
+def _print_screen(report) -> None:
+    """The distribution first, the null second, a leaderboard last and hedged.
+
+    Deliberate ordering. A screen reports the best of N points, and the best of N is
+    the maximum of N draws — a positive number even when nothing searched has any edge.
+    Leading with a winner is the selection bias the deflated Sharpe exists to prevent,
+    one layer up and with no deflation applied, so the winner does not appear until
+    after the number that says what winning was worth.
+    """
+    searched, dist = report["searched"], report["distribution"]
+    print(f"\n=== Screen: {report['strategy']} ({report['objective']}) ===")
+    print(f"  {'evaluated':22}{searched['evaluated']} of {searched['requested']} requested")
+    if searched["sampled_from_grid"]:
+        print(f"  {'':22}sampled from a grid of {searched['grid_size']:,} — not a sweep of it")
+    if searched["constraints"]:
+        excluded = searched["unconstrained_grid_size"] - searched["grid_size"]
+        print(f"  {'constraints':22}{', '.join(searched['constraints'])} ({excluded:,} points excluded)")
+    if dist["n_dropped"]:
+        print(f"  {'no result':22}{dist['n_dropped']} evaluation(s) produced nothing and are not counted")
+
+    if dist["n_finite"] == 0:
+        print("\n  Nothing evaluable. No distribution, and therefore no best point.")
+        print(f"\n  {report['note']}")
+        return
+
+    print("\n--- Distribution (this is the finding; the best point is not) ---")
+    print(f"  {'median':22}{dist['median']:+.3f}")
+    print(f"  {'quartiles':22}{dist['p25']:+.3f} to {dist['p75']:+.3f}")
+    print(f"  {'range':22}{dist['min']:+.3f} to {dist['max']:+.3f}")
+    spread = "n/a (one point)" if dist["std"] is None else f"{dist['std']:.3f}"
+    print(f"  {'spread (sd)':22}{spread}")
+    print(f"  {'positive':22}{dist['positive_rate']:.0%} of {dist['n_finite']} points")
+
+    baseline = report["noise_baseline"]
+    print("\n--- What the best of that many draws is worth ---")
+    if not baseline["applicable"]:
+        print(f"  {baseline['reason']}")
+    else:
+        observed, expected = baseline["observed_best"], baseline["expected_best_under_null"]
+        print(f"  {'best observed':22}{observed:+.3f}")
+        print(f"  {'expected under null':22}{expected:+.3f}  (best of {baseline['n_draws']} draws, no edge)")
+        verdict = (
+            "the best point does NOT clear what noise alone would produce"
+            if observed <= expected
+            else "the best point clears the noise maximum — necessary, not sufficient"
+        )
+        print(f"  {'':22}{verdict}")
+        print(
+            "  Assumes the points are independent. Neighbouring grid points share most\n"
+            "  of their parameters and most of their trades, so the effective number of\n"
+            "  trials is smaller than the count above and this bar is correspondingly high.\n"
+            "  The spread it uses is measured on these results, which may contain real\n"
+            "  structure — it is a reference for reading the table, not a test."
+        )
+
+    for name, gradient in (report.get("gradients") or {}).items():
+        print(f"\n--- {name}: how the result moves across the axis ---")
+        print(f"  {'value':>12}{'points':>8}{'positive':>10}{'median':>10}{'best':>9}")
+        for row in gradient:
+            print(
+                f"  {row['value']!s:>12}{row['n']:>8}{row['positive_rate']:>9.0%}"
+                f"{row['median']:>+10.3f}{row['max']:>+9.3f}"
+            )
+        print("  A rate that moves coherently across the axis is structure; the same")
+        print("  count of positive points scattered at random is not, and both produce a best.")
+
+    best = report.get("best_point") or {}
+    if best:
+        shown = {k: best[k] for k in searched["parameters"] if k in best}
+        print(f"\n  {'best point':22}{shown}")
+    print(f"\n  {report['note']}")
+    if report.get("results_csv"):
+        print(f"  {'every point':22}{report['results_csv']}")
+
+
+def cmd_screen(args) -> None:
+    import json
+
+    from tradeflow.services import analysis
+
+    _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
+    universe = resolve_universe(data_client, args.scanner, args.symbols, as_of=args.scan_as_of or args.end)
+    limits = _screen_limits(args)
+    try:
+        report = analysis.run_screen(
+            data_client,
+            args.strategy,
+            universe,
+            args.start,
+            args.end,
+            method=args.method,
+            objective=args.objective,
+            max_evals=args.max_evals,
+            seed=args.seed,
+            capital=args.capital,
+            gross=args.gross,
+            commission_bps=args.commission_bps,
+            impact_eta=args.impact_eta,
+            borrow_bps=args.borrow_bps,
+            position_limits=limits,
+            param_ranges=dict(args.range or []),
+            workers=args.workers,
+        )
+    except ValueError as exc:
+        sys.exit(f"Cannot screen: {exc}")
+
+    if args.json:
+        print(json.dumps(report, indent=2, default=str))
+    else:
+        _print_screen(report)
+        _print_universe_provenance(args, universe)
+
+    if args.confirm is None:
+        return
+
+    point = _screen_confirm_target(report, args.confirm)
+    if point is None:
+        sys.exit(f"Nothing to confirm: --confirm {args.confirm} names no evaluated point")
+    print("\n=== Confirming exactly one point as a journaled trial ===")
+    print(f"  {'params':22}{point}")
+    confirmed = analysis.confirm_screen_point(
+        data_client,
+        args.strategy,
+        universe,
+        args.start,
+        args.end,
+        point,
+        capital=args.capital,
+        gross=args.gross,
+        commission_bps=args.commission_bps,
+        impact_eta=args.impact_eta,
+        borrow_bps=args.borrow_bps,
+        position_limits=limits,
+        force=args.force,
+    )
+    if args.json:
+        print(json.dumps(confirmed, indent=2, default=str))
+        return
+    if confirmed.get("memoized"):
+        print(f"  {'already recorded':22}served from trial {confirmed.get('trial_id')} — not re-run")
+    print(f"  {'sharpe':22}{confirmed.get('metrics', {}).get('sharpe_ratio', float('nan')):+.3f}")
+    print("  One trial recorded. It counts toward this family's multiple-testing total.")
+
+
+def _screen_confirm_target(report, choice):
+    """The single point ``--confirm`` names, read back out of the screen's own rows.
+
+    Reading it from the report rather than accepting arbitrary parameters is what keeps
+    "exactly one selected point" true: there is no way to spell a set, and no way to
+    confirm something the screen did not actually evaluate.
+    """
+    import csv
+
+    best = report.get("best_point") or {}
+    names = report["searched"]["parameters"]
+    if choice == "best":
+        return {k: best[k] for k in names if k in best} or None
+    path = report.get("results_csv")
+    if not path:
+        return None
+    with open(path, newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    index = int(choice) - 1
+    if index < 0 or index >= len(rows):
+        return None
+    row = rows[index]
+    return {k: _coerce_number(row[k]) for k in names if k in row}
+
+
+def _coerce_number(text):
+    """A CSV cell back to the number it was written from, or itself if it was not one."""
+    try:
+        value = float(text)
+    except (TypeError, ValueError):
+        return text
+    return int(value) if value.is_integer() else value
+
+
 def cmd_walkforward(args) -> None:
     from tradeflow.analytics.reporting import format_cached_notice
     from tradeflow.engine.backtest import ACCOUNTING_VERSION
@@ -4737,6 +4940,61 @@ def build_parser() -> argparse.ArgumentParser:
     add_no_journal(opt)
     add_force(opt)
     opt.set_defaults(func=cmd_optimize)
+
+    screen = subparsers.add_parser(
+        "screen",
+        help="Sweep a parameter space cheaply — never journaled, reports the distribution",
+    )
+    add_common(screen, with_dates=True)
+    screen.add_argument("--method", choices=["grid", "random"], default="grid")
+    screen.add_argument("--objective", default="sharpe_ratio")
+    screen.add_argument(
+        "--max-evals",
+        dest="max_evals",
+        type=int,
+        default=50,
+        help="Points to evaluate. A grid larger than this is sampled, not truncated, and the report says so",
+    )
+    screen.add_argument(
+        "--seed", type=int, default=42, help="Seed for sampling; matches optimize/walkforward"
+    )
+    screen.add_argument(
+        "--range",
+        action="append",
+        type=_screen_range,
+        default=None,
+        metavar="NAME=min:max:step",
+        help="Narrow one parameter's declared range. Repeatable. Unknown names are "
+        "refused rather than ignored",
+    )
+    screen.add_argument(
+        "--max-positions",
+        dest="max_positions",
+        type=int,
+        default=None,
+        help="Screen against a book of this size. Without it (or a --config carrying "
+        "position_limits) every point is evaluated at whatever the strategy class "
+        "declares, which is not the book you would deploy",
+    )
+    screen.add_argument(
+        "--confirm",
+        default=None,
+        metavar="best|RANK",
+        help="After screening, re-run EXACTLY ONE point as a proper journaled trial. "
+        "One is the constraint: a confirm that took a set would be a screen that "
+        "journals, which is the budget problem a screen exists to avoid",
+    )
+    screen.add_argument(
+        "--force",
+        action="store_true",
+        help="With --confirm, re-run and record a new trial instead of serving the prior identical one",
+    )
+    screen.add_argument("--json", action="store_true", help="Emit the report as JSON")
+    _add_cost_flags(screen)
+    _add_cache_flags(screen)
+    add_workers_flag(screen)
+    _add_config_flag(screen)
+    screen.set_defaults(func=cmd_screen)
 
     wf = subparsers.add_parser(
         "walkforward",

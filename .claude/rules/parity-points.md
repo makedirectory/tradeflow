@@ -59,11 +59,23 @@ actually bit: `walkforward --benchmark` had no MCP equivalent and no service par
 so over MCP every fold reported `benchmark_available: False` and the benchmark-relative
 promotion prerequisites were never *evaluated* — a gate that cannot be configured on a
 surface is not stricter there, it simply does not run, and nothing says so.
+
+`screen` is guarded the stronger way: its CLI flags are enumerated *from the parser*
+and every one must have a counterpart in the MCP tool's signature, rather than a
+hand-written list of the flags somebody remembered. Two knobs are spelled differently
+because argparse cannot take a mapping (`--range` → `param_ranges`, `--max-positions` →
+`position_limits`); the rename table that permits this is itself the loophole, so a
+further test follows both all the way to the service argument. A rename may only record
+that two surfaces reach the same argument — never excuse a knob one surface lacks.
 *Guarded by* `tests/test_surface_parity.py`.
 
-**Config ↔ what actually got validated** — a config's `position_limits` is not a tunable
-param, so anything reconstructing a strategy from params alone drops it. A config asking
-for eight positions was walk-forward validated at one.
+**Config ↔ what actually got validated** — *converged*. A config's `position_limits` is
+not a tunable param, so anything reconstructing a strategy from params alone drops it. A
+config asking for eight positions was walk-forward validated at one. Every sweep over a
+parameter space needs the same three lines, and each one that wrote its own was a place
+the book could go missing again, so it is now
+`strategies.base.build_with_limits` — used by the walk-forward validator, the parameter
+optimizer, and the screen.
 *Guarded by* `tests/test_surface_parity.py`.
 
 **Scanner registry ↔ the driver's class attribute** — `services.registry.SCANNERS` and

@@ -62,6 +62,25 @@ Constraints are also enforced when a strategy is constructed, reading the same
 declaration, so there is one definition of the rule rather than a sampler's copy and a
 `initialize()` copy that can disagree.
 
+## Screening, before optimizing
+
+`services.analysis.run_screen` is a sweep that **journals nothing**. It builds a
+`ParameterSpace` (narrowed per parameter if asked), prefetches the window once into a
+`PrefetchedProvider`, and runs a `ParameterOptimizer` with `trial_store=None` — so no
+point is recorded and none is served from recorded evidence.
+
+Its report leads with the distribution and puts the best point last. The reason is
+structural rather than stylistic: the best of N is the maximum of N draws, which is
+positive under the null and grows with N, so a leaderboard without a null beside it
+reproduces the exact error the deflated Sharpe corrects, one level up.
+`analytics/screening.py` computes that null with the same `expected_max_sharpe` the
+Deflated Sharpe uses, from the dispersion of the screened results — and refuses to
+compute one at all for an objective whose null is not zero.
+
+`confirm_screen_point` promotes exactly one point to a journaled trial by delegating to
+`run_backtest`, so a confirmed point has the same dedup identity as the same backtest
+run any other way. See [screening a parameter space](../usage/screening).
+
 ## `ParameterOptimizer`
 
 Three methods, increasing in sophistication:

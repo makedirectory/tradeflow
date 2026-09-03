@@ -570,6 +570,219 @@ def run_optimization(
     }
 
 
+#: A screen never writes a trial. Stated on the payload rather than only in prose,
+#: because the whole point of the command is that asking a cheap question stays cheap:
+#: every journaled trial raises the deflated-Sharpe bar for its family permanently, and
+#: a researcher who cannot afford to ask will either stop asking or stop looking.
+SCREEN_JOURNALING_NOTE = (
+    "Reconnaissance, not evidence: nothing here was journaled, so none of it counts "
+    "toward the campaign's multiple-testing total and none of it is promotable. "
+    "Confirm a single point to turn it into a recorded trial."
+)
+
+
+def screen_ranges(strategy_class, overrides: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, Any]:
+    """A strategy's declared ranges with per-parameter narrowing applied.
+
+    An override supplies any of ``min``/``max``/``step`` and inherits the rest, so
+    narrowing one axis cannot silently change a parameter's type or drop its default.
+    Unknown names are refused rather than ignored: a typo that quietly screens the
+    full range looks exactly like a screen that found nothing where you looked.
+    """
+    ranges = {name: dict(spec) for name, spec in (strategy_class.PARAM_RANGES or {}).items()}
+    for name, override in (overrides or {}).items():
+        if name not in ranges:
+            raise ValueError(f"{strategy_class.__name__} declares no parameter {name!r} to narrow")
+        unknown = set(override) - {"min", "max", "step"}
+        if unknown:
+            raise ValueError(f"Cannot override {sorted(unknown)} for {name!r}; only min/max/step")
+        ranges[name] = {**ranges[name], **override}
+        if ranges[name]["min"] > ranges[name]["max"]:
+            raise ValueError(f"Narrowed range for {name!r} is empty: min {ranges[name]['min']} > max")
+    return ranges
+
+
+def run_screen(
+    data_client: MarketDataClient,
+    strategy: str,
+    symbols: List[str],
+    start: datetime,
+    end: datetime,
+    *,
+    method: str = "grid",
+    objective: str = "sharpe_ratio",
+    max_evals: int = 50,
+    seed: int = 42,
+    capital: float = 100_000.0,
+    gross: bool = False,
+    commission_bps: float = 1.0,
+    impact_eta: float = 0.3,
+    participation_cap: float = 0.10,
+    borrow_bps: float = 50.0,
+    position_limits: Optional[Dict[str, Any]] = None,
+    param_ranges: Optional[Dict[str, Dict[str, Any]]] = None,
+    workers: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Sweep a parameter space cheaply, and report the distribution rather than a winner.
+
+    **Nothing here is journaled.** A screen is reconnaissance: it answers "is there
+    anything in this family at all" without spending statistical budget, because every
+    journaled trial raises the deflated-Sharpe bar for its ``(strategy, universe,
+    accounting)`` family permanently. Use ``confirm_screen_point`` to turn exactly one
+    selected point into a recorded trial.
+
+    One process, one data fetch, N evaluations: the window is fetched once and every
+    candidate is scored against the same in-memory frames.
+
+    The result leads with the distribution - n, median, spread, positive rate - and any
+    best point is reported beside what the best of that many draws is worth under the
+    null. A leaderboard without that is the selection bias the deflated Sharpe exists
+    to prevent, one layer up. Per-parameter gradients are included for the same reason:
+    a positive rate that moves coherently with a parameter is different evidence from
+    the same count of positive points scattered at random, and it can point off the
+    edge of the searched space, which a best-point report never does.
+    """
+    from tradeflow.analytics import screening
+    from tradeflow.optimization.param_space import ParameterSpace
+    from tradeflow.optimization.walk_forward import PrefetchedProvider
+
+    run_id = new_run_id()
+    cls = resolve_strategy_class(strategy)
+    space = ParameterSpace(screen_ranges(cls, param_ranges), getattr(cls, "PARAM_CONSTRAINTS", ()) or ())
+    cost_model = _build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
+
+    # Fetched once, then served from memory to every evaluation. A screen that refetched
+    # per candidate would be the thing it exists to replace: a shell loop over N runs.
+    timeframe = cls.create_with_defaults().config.get("timeframe", "1Day")
+    frames = data_client.get_bars(list(symbols), Timeframe.parse(timeframe), start, end)
+    sliced = MarketDataClient(PrefetchedProvider(frames))
+
+    optimizer = ParameterOptimizer(
+        cls,
+        sliced,
+        initial_capital=capital,
+        seed=seed,
+        cost_model=cost_model,
+        # No trial store, deliberately: a screen neither records trials nor is served
+        # one. Memoizing against journaled evidence would make some points cheap and
+        # others not, and put a "reused" caveat on a sweep that is not evidence anyway.
+        trial_store=None,
+        workers=workers,
+        space=space,
+        position_limits=position_limits,
+    )
+
+    grid_total = space.grid_size()
+    if method == "random":
+        result = optimizer.random_search(list(symbols), start, end, objective, n_samples=max_evals)
+        requested = max_evals
+    else:
+        result = optimizer.grid_search(list(symbols), start, end, objective, max_evals=max_evals)
+        requested = min(max_evals, grid_total) if max_evals else grid_total
+
+    # Analytics run on the raw records, rendering on the JSON-safe copy. `_jsonable`
+    # turns a non-finite float into the *string* "-inf" so a payload can round-trip,
+    # and a failed evaluation reaching the distribution as text rather than as a
+    # dropped value is exactly the silent miscount the summary exists to prevent.
+    raw_rows = result.results.to_dict("records") if not result.results.empty else []
+    rows = [_jsonable(row) for row in raw_rows]
+    scores = [row[objective] for row in raw_rows if row.get(objective) is not None]
+
+    results_csv = None
+    if rows:
+        ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+        results_csv = str(ARTIFACT_DIR / f"screen_{run_id}.csv")
+        result.results.to_csv(results_csv, index=False)
+
+    distribution = screening.score_distribution(scores)
+    baseline = screening.noise_baseline(scores, objective)
+    best_raw = (
+        max(raw_rows, key=lambda r: r.get(objective, float("-inf")), default=None) if raw_rows else None
+    )
+    best_row = _jsonable(best_raw) if best_raw is not None else None
+
+    return {
+        "run_id": run_id,
+        "strategy": strategy,
+        "method": method,
+        "objective": objective,
+        "symbols": list(symbols),
+        "window": {"start": start.isoformat(), "end": end.isoformat()},
+        "journaled": False,
+        "note": SCREEN_JOURNALING_NOTE,
+        "searched": {
+            "parameters": list(space.searchable),
+            "constraints": list(space.constraints.describe()),
+            "grid_size": grid_total,
+            "unconstrained_grid_size": space.unconstrained_grid_size(),
+            "requested": requested,
+            "evaluated": len(rows),
+            # Never silent: a sweep that covered a fraction of its grid and said
+            # nothing reads as a sweep that covered all of it.
+            "sampled_from_grid": bool(method == "grid" and grid_total > requested),
+        },
+        "distribution": distribution,
+        "noise_baseline": baseline,
+        "best_point": best_row,
+        "gradients": screening.gradients(raw_rows, list(space.searchable), objective),
+        "position_limits": dict(position_limits) if position_limits else None,
+        "results_csv": results_csv,
+        "seed": seed,
+        "gross": gross,
+    }
+
+
+def confirm_screen_point(
+    data_client: MarketDataClient,
+    strategy: str,
+    symbols: List[str],
+    start: datetime,
+    end: datetime,
+    params: Dict[str, Any],
+    *,
+    capital: float = 100_000.0,
+    gross: bool = False,
+    commission_bps: float = 1.0,
+    impact_eta: float = 0.3,
+    participation_cap: float = 0.10,
+    borrow_bps: float = 50.0,
+    position_limits: Optional[Dict[str, Any]] = None,
+    force: bool = False,
+) -> Dict[str, Any]:
+    """Re-run **exactly one** screened point as a proper, journaled trial.
+
+    Exactly one is the constraint that matters. A confirm that could take a set would
+    be a screen that journals, which reintroduces through the back door the budget
+    problem the screen exists to solve - and it would journal the *best* of N, which is
+    the one selection a sweep cannot support.
+
+    Delegates to :func:`run_backtest`, so a confirmed point is indistinguishable from
+    the same backtest run directly: same dedup identity, same memoization, same journal
+    record. A separate journaling path here would be a second definition of what a
+    trial is.
+    """
+    config = dict(params)
+    if position_limits:
+        config["position_limits"] = dict(position_limits)
+    result = run_backtest(
+        data_client,
+        strategy,
+        symbols,
+        start,
+        end,
+        capital=capital,
+        config=config,
+        gross=gross,
+        commission_bps=commission_bps,
+        impact_eta=impact_eta,
+        participation_cap=participation_cap,
+        borrow_bps=borrow_bps,
+        force=force,
+        journal=True,
+    )
+    return {**result, "confirmed_params": _jsonable(params), "journaled": True}
+
+
 def run_walk_forward(
     data_client: MarketDataClient,
     strategy: str,
