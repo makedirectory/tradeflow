@@ -1,0 +1,8 @@
+# Your own pack is where the private things live. Keep them out of git the same way
+# the engine keeps its own state out — and note that TradeFlow itself never writes
+# here: its journal, trial store and ledger live under the state root (~/.tradeflow
+# by default), deliberately outside any working tree.
+.env
+__pycache__/
+*.egg-info/
+dist/

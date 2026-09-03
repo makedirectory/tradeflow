@@ -1625,6 +1625,9 @@ def cmd_init(args) -> None:
     """
     from tradeflow.services import setup
 
+    if getattr(args, "example_pack", None):
+        _scaffold_example_pack(args.example_pack)
+        return
     if getattr(args, "dev_local_state", False):
         _print_dev_local_state()
         return
@@ -1635,6 +1638,45 @@ def cmd_init(args) -> None:
         _init_non_interactive(args, setup)
         return
     _init_interactive(args, setup)
+
+
+def _scaffold_example_pack(destination) -> None:
+    """Copy the example pack to a directory the caller owns.
+
+    Copied rather than downloaded, and copied rather than read in place. A pack you can
+    edit on the first minute is a different thing from one you have to translate out of
+    a read-only sample, and requiring a network call to start would put a fetch between
+    someone and the one command meant to get them going.
+    """
+    import shutil
+
+    from tradeflow.services.setup import example_pack_source
+
+    source = example_pack_source()
+    if source is None:
+        sys.exit(
+            "The example pack is not part of this installation. It ships in the source "
+            "repository under examples/my-signals; clone it, or read the private-strategies "
+            "guide at https://tradeflow.mk-dir.com/docs/usage/private-strategies"
+        )
+    target = Path(destination).expanduser()
+    if target.exists() and any(target.iterdir()):
+        sys.exit(f"{target} already exists and is not empty. Name a directory that does not exist yet.")
+
+    shutil.copytree(
+        source, target, dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__", "*.egg-info")
+    )
+    print(f"\nA working private pack is now at {target}\n")
+    print("  Install it, and its strategy and scanner appear everywhere a built-in does:\n")
+    print(f"    uv pip install -e {target}")
+    print("    tradeflow init --check          # lists it under 'private packs installed'")
+    print(f"    tradeflow backtest --config {target / 'configs' / 'example_breakout.json'} \\")
+    print("        --start 2024-01-02 --end 2025-01-02\n")
+    print(
+        "  Nothing in it is imported by the engine. It registers through the two\n"
+        "  entry-point groups in its pyproject, which is the whole mechanism - rename\n"
+        "  the entries and the classes and it is your pack.\n"
+    )
 
 
 def _print_dev_local_state() -> None:
@@ -4809,6 +4851,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     init.add_argument(
         "--cache-dir", dest="cache_dir", default=None, help="Bar cache directory (default: cache/bars)"
+    )
+    init.add_argument(
+        "--example-pack",
+        dest="example_pack",
+        metavar="DIR",
+        default=None,
+        help="Copy a complete working private pack to DIR - strategy, scanner, config "
+        "and pyproject with the entry points already declared. A starting point you "
+        "own, not a sample you read",
     )
     init.add_argument(
         "--dev-local-state",

@@ -18,6 +18,23 @@ This page is the route from an idea to a strategy running privately against your
 data. For the interface reference — every method, every contract — see
 [extending the engine](../engineering/extending.md).
 
+## Start from a working pack
+
+There is a complete one in the repository, and `init` will copy it somewhere you own:
+
+```bash
+tradeflow init --example-pack ./my-signals
+cd my-signals && uv pip install -e .
+tradeflow init --check          # lists it under "private packs installed"
+```
+
+That gives you a strategy, a scanner, a saved config, a `.gitignore`, and a
+`pyproject.toml` with the entry points already declared — a starting point to edit
+rather than a sample to translate. Rename the entry points and the classes and it is
+your pack.
+
+The rest of this page explains what you just copied.
+
 ## Your code stays out of this repository
 
 A strategy lives in a separate installed package and registers itself through an
@@ -32,6 +49,10 @@ my_breakout = "yourfirm_signals.strategies:BreakoutStrategy"
 [project.entry-points."tradeflow.scanners"]
 my_liquidity = "yourfirm_signals.scanners:LiquidityScanner"
 ```
+
+The names on the left are what you type at `--strategy` and `--scanner`. They come from
+the entry points, not from the class names, and they only have to avoid colliding with a
+built-in — the engine refuses a pack rather than shadowing one if they do.
 
 Install it into the same environment and it appears everywhere a built-in does — in
 `--strategy`, in the walk-forward search, over MCP, in the research agent. Sizing,

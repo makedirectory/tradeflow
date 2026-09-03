@@ -187,11 +187,17 @@ def load_config(path) -> Dict[str, Any]:
 
     Warns when the recorded metrics predate the current accounting model: the
     params are still valid, but the ``oos_metrics`` beside them were measured a
-    different way and must not be compared against a fresh run.
+    different way and must not be compared against a fresh run. Silent when there are
+    no recorded metrics - a hand-written config has nothing that could be incomparable.
     """
     payload = json.loads(Path(path).read_text())
-    stored = (payload.get("provenance") or {}).get("accounting", 1)
-    if stored != ACCOUNTING_VERSION:
+    provenance = payload.get("provenance") or {}
+    stored = provenance.get("accounting", 1)
+    # Only when there are metrics to be incomparable. A hand-written config - which is
+    # what everyone's first one is - carries no oos_metrics, and warning that *its*
+    # metrics predate the model claims something untrue. A warning that fires on a file
+    # with nothing wrong with it is how people learn to skip reading them.
+    if stored != ACCOUNTING_VERSION and provenance.get("oos_metrics"):
         logger.warning(
             "%s carries accounting v%s metrics but the engine is v%s — its recorded "
             "oos_metrics are NOT comparable with a current run. Re-run the config to "

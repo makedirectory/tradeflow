@@ -384,6 +384,20 @@ def _state_checks() -> List[Check]:
     return checks
 
 
+def example_pack_source() -> Optional[Path]:
+    """The example pack's directory, or ``None`` when this copy does not carry it.
+
+    Present in a source checkout and in the sdist; absent from the wheel, which ships
+    only the package. That is deliberate - an installed copy has no use for a second
+    project's source tree, and the scaffold says so plainly rather than producing an
+    empty directory.
+    """
+    from tradeflow.settings import PROJECT_ROOT
+
+    candidate = PROJECT_ROOT / "examples" / "my-signals"
+    return candidate if (candidate / "pyproject.toml").exists() else None
+
+
 def _installed_packs() -> List[str]:
     """Strategy and scanner names contributed by installed packages, not built in.
 
