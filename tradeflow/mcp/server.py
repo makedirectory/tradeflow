@@ -88,6 +88,14 @@ NON_JOURNALING_NOTE = (
 #: flag as a neutral option - an agent reads a description as fact and acts on it.
 EVIDENCE_GATED = ("conditional", "policy", "posterior")
 
+#: Deliberately CLI-only, and not an oversight. Quarantining evidence and retiring an
+#: era are operator decisions about a campaign's record, not run configuration: one
+#: changes what every later leaderboard and memo reports, the other moves a user's files.
+#: Both are cheap to ask a human for and expensive to have done on your behalf by
+#: something that cannot be asked why afterwards. An agent that believes a trial is
+#: contaminated should say so and let a person act.
+OPERATOR_ONLY = ("trials archive", "trials mark-contaminated")
+
 #: Capabilities that must NEVER be exposed over MCP (the safety model).
 FORBIDDEN_TOOLS = frozenset(
     {

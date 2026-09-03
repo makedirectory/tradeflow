@@ -37,6 +37,7 @@ import hashlib
 import json
 import logging
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -96,7 +97,11 @@ def __getattr__(name: str) -> Any:
 #: Opt-in at the point of recording, not here: a long optimization campaign
 #: multiplying thousands of candidates by hundreds of trades each is exactly the
 #: storage nobody asked for, so only runs you intend to inspect journal one.
-SCHEMA_VERSION = 4
+#: v5 adds ``contaminated_at``/``contamination_reason``, set by replaying a
+#: ``trials:contaminated`` journal event rather than written at record time. Nothing
+#: about history is rewritten: the quarantine is itself an appended fact, and a rebuild
+#: reproduces it from the journal like every other column here.
+SCHEMA_VERSION = 5
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS trials (
@@ -122,7 +127,9 @@ CREATE TABLE IF NOT EXISTS trials (
   accounting          INTEGER NOT NULL,
   git_sha             TEXT,
   seed                INTEGER,
-  metrics_json        TEXT
+  metrics_json        TEXT,
+  contaminated_at     TEXT,
+  contamination_reason TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_trials_family ON trials(strategy, universe_hash, accounting);
 CREATE INDEX IF NOT EXISTS idx_trials_dedup  ON trials(params_hash, universe_hash, window_start, window_end);
@@ -173,6 +180,11 @@ _EXCLUDED_FROM_FAMILY_COUNT = ("alpha",)
 #: what this view is supposed to prevent. ``alpha`` rows are forecasts with no track
 #: record at all.
 IN_SAMPLE_KINDS = ("optimize", "alpha")
+#: The journal event that quarantines a suspect subset of trials. Append-only, like
+#: everything else the journal holds: the trials it names stay exactly as they were
+#: recorded, and this says what was later learned about them.
+CONTAMINATION_TOOL = "trials:contaminated"
+
 #: Kinds whose row carries an internal trial count to SUM rather than 1 to COUNT -
 #: a walk-forward validates many inner configs per row, as does a research round
 #: that let the optimizer search internally.
@@ -581,6 +593,44 @@ class TrialStore:
     # ------------------------------------------------------------------ #
     # Rebuild (the proof that the store is derived, not authoritative)
     # ------------------------------------------------------------------ #
+    def mark_contaminated(self, trial_ids: Iterable[str], *, reason: str, at: Optional[str] = None) -> int:
+        """Quarantine a suspect subset. Returns how many stored rows it reached.
+
+        The rows are *derived*, so setting a column on them rewrites nothing that
+        matters: the trials themselves stay exactly as the journal recorded them, and a
+        rebuild reproduces the quarantine by replaying the event that declared it. That
+        is the whole shape - never an UPDATE to history, always an appended fact about
+        it, with the reason on the record.
+
+        What quarantining does and does not do is a decision, not an implementation
+        detail. A contaminated trial is never served as a memo and never ranked, because
+        it must not stand in for evidence. It **keeps counting** toward its family's
+        multiple-testing total, because the search still happened: you did look at that
+        configuration, and dropping it from the count would lower the deflation bar - the
+        flattering direction, and the one thing this store must never do quietly.
+        """
+        ids = [str(i) for i in trial_ids if i]
+        if not ids:
+            return 0
+        stamp = at or datetime.now(timezone.utc).isoformat()
+        reached = 0
+        for chunk_start in range(0, len(ids), 500):
+            chunk = ids[chunk_start : chunk_start + 500]
+            placeholders = ", ".join("?" for _ in chunk)
+            cur = self._conn.execute(
+                f"UPDATE trials SET contaminated_at = ?, contamination_reason = ? "
+                f"WHERE id IN ({placeholders}) AND contaminated_at IS NULL",
+                [stamp, reason, *chunk],
+            )
+            reached += cur.rowcount
+        self._conn.commit()
+        return reached
+
+    def contaminated_count(self) -> int:
+        return int(
+            self._conn.execute("SELECT COUNT(*) FROM trials WHERE contaminated_at IS NOT NULL").fetchone()[0]
+        )
+
     def rebuild(self, journal_path: Optional[Any] = None) -> Dict[str, int]:
         """Truncate and replay the journal from scratch. Idempotent: rebuilding
         twice in a row produces identical rows (dedup is keyed on ``run_id``)."""
@@ -627,6 +677,14 @@ class TrialStore:
             returns_payload = record.get("returns")
             weights_payload = record.get("weights")
             trades_payload = record.get("trades")
+        elif tool == CONTAMINATION_TOOL:
+            inputs = record.get("inputs") or {}
+            self.mark_contaminated(
+                inputs.get("trial_ids") or [],
+                reason=str(inputs.get("reason") or "unspecified"),
+                at=record.get("timestamp"),
+            )
+            return False
         elif tool == "research:session_start":
             _update_session_context(record, session_ctx)
             return False
@@ -790,6 +848,10 @@ class TrialStore:
                 # real answer. Falling back to a fresh run is always safe; serving an
                 # empty one never is.
                 clauses.append("IFNULL(oos_trades, 0) > 0")
+            # A quarantined trial is never served as a memo. Whatever it recorded is
+            # under suspicion, and standing in for a fresh run is the one thing a
+            # suspect number must not be allowed to do - a fresh run is always safe.
+            clauses.append("contaminated_at IS NULL")
             cur = self._conn.execute(
                 f"SELECT * FROM trials WHERE {' AND '.join(clauses)} ORDER BY ts DESC LIMIT 1", args
             )
@@ -1037,7 +1099,12 @@ class TrialStore:
             kept = [r for r in candidates if r.get("kind") not in IN_SAMPLE_KINDS]
             excluded = len(candidates) - len(kept)
             candidates = kept
-        rows = candidates[:limit]
+        # Quarantined rows are never ranked, and the count is reported rather than
+        # dropped silently - a leaderboard that quietly omits rows is a leaderboard
+        # whose length is a claim about the campaign that nobody can check.
+        uncontaminated = [r for r in candidates if not r.get("contaminated_at")]
+        contaminated_excluded = len(candidates) - len(uncontaminated)
+        rows = uncontaminated[:limit]
         for row in rows:
             row["family_n_trials"] = (
                 self.family_count_by_hash(row["strategy"], row["universe_hash"], row["accounting"])
@@ -1051,6 +1118,7 @@ class TrialStore:
             "max_family_n_trials": max(counts) if counts else 0,
             "in_sample_included": include_in_sample,
             "in_sample_excluded": excluded,
+            "contaminated_excluded": contaminated_excluded,
             "caveat": _LEADERBOARD_CAVEAT[rank_by],
         }
 
@@ -1092,6 +1160,7 @@ class TrialStore:
             "journal_lines": n_total_lines,
             "journal_trial_lines": n_trial_lines,
             "orphaned_rows": n_orphaned,
+            "contaminated_rows": self.contaminated_count(),
             "schema_version": int(schema_version) if schema_version is not None else None,
             "drift": n_rows < n_trial_lines or n_orphaned > 0,
         }

@@ -19,6 +19,27 @@ running migration code — which is cheap precisely because the journal is the t
 Bump it when the schema changes shape. Never write anything into the store that is not
 recoverable from the journal, or the rebuild silently loses it and nothing errors.
 
+### Retiring and quarantining, without rewriting
+
+Two maintenance operations exist and neither edits a record.
+`services.maintenance.mark_contaminated` appends a `trials:contaminated` event naming the
+suspect trials; the derived index sets a column by replaying it, so a rebuild reproduces
+the quarantine from the journal like every other column. `services.maintenance.archive`
+moves the journal and its index **together** for a whole-era break, and writes a manifest
+plus a first line in the new journal saying what was retired and why.
+
+Together is the requirement. Moving one file alone leaves a store indexing a file that is
+not there, or an era's rows beside a fresh journal reporting a multiple-testing count for
+evidence that is gone — and nothing errors, because both files are individually valid.
+
+There is deliberately no `reset`. A record removed is a record gone, which is what this
+whole section forbids. Archive moves; the files are still on disk under a name that says
+when and why.
+
+A quarantined trial is never served as a memo and never ranked, and **still counts**
+toward its family's multiple-testing total. The search happened; dropping it would lower
+the deflation bar, and that is the one direction this store must never move on its own.
+
 ## Authoritative: every shape you ever wrote, forever
 
 **The research journal** and **the position ledger** are append-only and have nothing

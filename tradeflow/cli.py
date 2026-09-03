@@ -3008,12 +3008,99 @@ class _NullProvider(MarketDataProvider):
         return False
 
 
+def _trials_maintenance(args) -> None:
+    """`trials archive` / `mark-contaminated` / `archives`.
+
+    Two operations that must not be collapsed into one: quarantining a suspect subset
+    and retiring a whole era are different decisions with different reversibility. The
+    renderer keeps them visibly separate for the same reason.
+    """
+    import json
+
+    from tradeflow.services import maintenance
+
+    if args.trials_command == "archives":
+        entries = maintenance.list_archives()
+        if args.json:
+            print(json.dumps(entries, indent=2, default=str))
+            return
+        if not entries:
+            print("No archived eras.")
+            return
+        print(f"{'ARCHIVE':30}{'ROWS':>8}{'LINES':>8}  REASON")
+        for entry in entries:
+            if entry.get("manifest_error"):
+                print(f"{entry['name']:30}{'?':>8}{'?':>8}  manifest {entry['manifest_error']}")
+                continue
+            print(
+                f"{entry['name']:30}{entry.get('rows', 0):>8}{entry.get('journal_lines', 0):>8}  "
+                f"{entry.get('reason', '')}"
+            )
+        return
+
+    if args.trials_command == "mark-contaminated":
+        try:
+            report = maintenance.mark_contaminated(
+                reason=args.reason,
+                journal_path=getattr(args, "journal", None),
+                trial_ids=args.id,
+                strategy=args.strategy,
+                kind=args.kind,
+                accounting=args.accounting,
+                before=args.before,
+                dry_run=args.dry_run,
+            )
+        except ValueError as exc:
+            sys.exit(f"Cannot quarantine: {exc}")
+        if args.json:
+            print(json.dumps(report, indent=2, default=str))
+            return
+        print(f"Selected      : {report['selected']} trial(s)")
+        if report["already_contaminated"]:
+            print(f"Already marked: {report['already_contaminated']} (left alone)")
+        print(f"{'Would mark' if report['dry_run'] else 'Marked':14}: {report['to_mark']}")
+        print(f"Reason        : {report['reason']}")
+        print(f"\n  {report['note']}")
+        return
+
+    # archive
+    try:
+        report = maintenance.archive(
+            reason=args.reason,
+            journal_path=getattr(args, "journal", None),
+            label=args.label,
+            dry_run=args.dry_run,
+        )
+    except ValueError as exc:
+        sys.exit(f"Cannot archive: {exc}")
+    if args.json:
+        print(json.dumps(report, indent=2, default=str))
+        return
+    print(f"Journal       : {report['journal_path']} ({report.get('journal_lines', 0)} lines)")
+    print(f"Store         : {report['db_path']} ({report.get('rows', 0)} rows)")
+    print(f"Destination   : {report['destination']}")
+    print(f"Accounting    : v{report['accounting_version_at_archive']} at archive time")
+    print(f"{'Would move' if report['dry_run'] else 'Moved':14}: {', '.join(report['moved']) or 'nothing'}")
+    print(f"Reason        : {report['reason']}")
+    print(f"\n  {report['note']}")
+    if not report["dry_run"] and report["moved"]:
+        print("  Both files, together — a store left beside a fresh journal would keep")
+        print("  reporting an era's trial count for evidence that is no longer there.")
+
+
 def cmd_trials(args) -> None:
     """Inspect the trial store: the queryable index over the research
     journal that lets a campaign-level Deflated Sharpe count every config you've
     ever tried, not just the ones from this process.
     """
     from tradeflow.store.trials import DEFAULT_JOURNAL_PATH, TrialStore
+
+    # Maintenance runs before any store is opened. `archive` moves the database file
+    # out from under a live connection otherwise, which on some platforms succeeds and
+    # leaves the process writing to a file nobody can find again.
+    if args.trials_command in ("archive", "mark-contaminated", "archives"):
+        _trials_maintenance(args)
+        return
 
     # `query` has no --journal flag; status/rebuild do. Passing it here too means
     # a schema-mismatch rebuild (which can fire inside the constructor) replays
@@ -3028,6 +3115,11 @@ def cmd_trials(args) -> None:
             print(f"Journal : {info['journal_lines']} lines ({info['journal_trial_lines']} trials)")
             if info["orphaned_rows"]:
                 print(f"Orphaned: {info['orphaned_rows']} row(s) with no strategy (session_start missing)")
+            if info.get("contaminated_rows"):
+                print(
+                    f"Quarantined: {info['contaminated_rows']} row(s) — never served as a memo or "
+                    "ranked, and still counted toward the multiple-testing total"
+                )
             if info["drift"]:
                 print(
                     "\nDRIFT DETECTED — rows undercount journaled trials, or rows are orphaned. Run `trials rebuild`."
@@ -5527,6 +5619,61 @@ def build_parser() -> argparse.ArgumentParser:
     t_rebuild.add_argument(
         "--journal", default=None, help="Journal path (default: logs/research_journal.jsonl)"
     )
+
+    t_archive = trials_sub.add_parser(
+        "archive",
+        help="Retire a whole era: move the journal and its index aside together, and start fresh",
+    )
+    t_archive.add_argument(
+        "--reason",
+        required=True,
+        help="Why this era is being retired (an accounting bump, a data correction). "
+        "Required: a retired era with no explanation cannot be judged later",
+    )
+    t_archive.add_argument("--label", default=None, help="A name for the archive directory")
+    t_archive.add_argument(
+        "--journal", default=None, help="Journal path (default: logs/research_journal.jsonl)"
+    )
+    t_archive.add_argument(
+        "--dry-run", dest="dry_run", action="store_true", help="Show what would move; move nothing"
+    )
+    t_archive.add_argument("--json", action="store_true", help="Emit the report as JSON")
+
+    t_quarantine = trials_sub.add_parser(
+        "mark-contaminated",
+        help="Quarantine a suspect subset — append-only, history intact, reason on the record",
+    )
+    t_quarantine.add_argument(
+        "--reason",
+        required=True,
+        help="What was learned about these trials. Required: rows excluded from every "
+        "leaderboard with nothing saying why cannot be judged later",
+    )
+    t_quarantine.add_argument(
+        "--id",
+        action="append",
+        default=None,
+        metavar="TRIAL_ID",
+        help="Quarantine this trial. Repeatable. Wins over the filters below",
+    )
+    t_quarantine.add_argument("--strategy", default=None)
+    t_quarantine.add_argument("--kind", default=None)
+    t_quarantine.add_argument(
+        "--accounting", type=int, default=None, help="Only this accounting version (default: every one)"
+    )
+    t_quarantine.add_argument(
+        "--before", type=_date, default=None, help="Only trials recorded before this date"
+    )
+    t_quarantine.add_argument(
+        "--journal", default=None, help="Journal path (default: logs/research_journal.jsonl)"
+    )
+    t_quarantine.add_argument(
+        "--dry-run", dest="dry_run", action="store_true", help="Show what would be marked; write nothing"
+    )
+    t_quarantine.add_argument("--json", action="store_true", help="Emit the report as JSON")
+
+    t_archives = trials_sub.add_parser("archives", help="List retired eras and why each was retired")
+    t_archives.add_argument("--json", action="store_true", help="Emit the listing as JSON")
 
     def add_trial_filters(p) -> None:
         """The filters `list` and `best` share, so the two can never disagree about

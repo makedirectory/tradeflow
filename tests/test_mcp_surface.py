@@ -372,3 +372,20 @@ def test_the_mcp_log_and_the_journal_name_a_draft_the_same_way(built):
 
     assert payload["strategy"] == f"draft:GenStrat:{analysis.draft_code_hash(_VALID_CODE)}"
     assert payload["draft"]["code_hash"] == analysis.draft_code_hash(_VALID_CODE)
+
+
+def test_trial_store_maintenance_is_deliberately_not_an_mcp_tool():
+    """Not an oversight, and worth pinning so it does not become one. Quarantining
+    evidence and retiring an era are operator decisions about a campaign's *record*,
+    not run configuration: one changes what every later leaderboard and memo reports,
+    the other moves a user's files. An agent that believes a trial is contaminated
+    should say so and let a person act.
+
+    Distinct from the trading wall — these are not dangerous capabilities, they are
+    somebody else's decision.
+    """
+    from tradeflow.mcp import server as mcp_server
+
+    assert mcp_server.OPERATOR_ONLY
+    for name in ("archive", "mark_contaminated", "mark-contaminated"):
+        assert name not in mcp_server.EXPOSED_TOOLS
