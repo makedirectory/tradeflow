@@ -44,6 +44,14 @@ Every one of these shipped, passed the full suite, and was found by running the 
   the only way to test a deployable cap was to edit the config the test was about.
 - `max_net_exposure` was added to both gates in one change, deliberately, and the
   parity is what makes the derived cap mean anything.
+- The *equity those caps are fractions of* was sourced differently. Live reads a broker
+  account snapshot at the instant it decides, which is causal by construction; the
+  backtest marked the book to the bar's close and then admitted entries filling at that
+  bar's open, so a cap could bind on a price that did not exist yet. Nothing about the
+  cap logic differed — the two agreed about the rule and disagreed about the number they
+  applied it to, which is the harder kind to see. The backtest now marks at the open for
+  the decisions that transact there, which is the live semantics, and re-marks at the
+  close for the equity curve.
 
 ## How to satisfy it
 
