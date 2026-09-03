@@ -1670,7 +1670,7 @@ def _scaffold_example_pack(destination) -> None:
     print("  Install it, and its strategy and scanner appear everywhere a built-in does:\n")
     print(f"    uv pip install -e {target}")
     print("    tradeflow init --check          # lists it under 'private packs installed'")
-    print(f"    tradeflow backtest --config {target / 'configs' / 'example_breakout.json'} \\")
+    print(f"    tradeflow backtest --config {target / 'configs' / 'breakout.json'} \\")
     print("        --start 2024-01-02 --end 2025-01-02\n")
     print(
         "  Nothing in it is imported by the engine. It registers through the two\n"

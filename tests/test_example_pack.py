@@ -21,6 +21,7 @@ from tradeflow.marketdata.client import MarketDataClient
 from tradeflow.services.registry import BUILTIN_SCANNERS, BUILTIN_STRATEGIES, SCANNERS, STRATEGIES
 
 STRATEGY = "example_breakout"
+REVERSION = "example_reversion"
 SCANNER = "example_liquidity"
 
 pytestmark = pytest.mark.skipif(
@@ -54,9 +55,10 @@ def test_the_pack_is_not_mistaken_for_a_built_in():
 
 
 # --- the contract the engine relies on --------------------------------------------
-def test_the_strategy_satisfies_the_interface():
+@pytest.mark.parametrize("name", [STRATEGY, REVERSION])
+def test_every_strategy_satisfies_the_interface(name):
     """Construction, lookback, indicators, scores — the four things the engine calls."""
-    strategy = STRATEGIES[STRATEGY].create_with_defaults()
+    strategy = STRATEGIES[name].create_with_defaults()
     strategy.initialize()
 
     assert strategy.config["timeframe"]
@@ -161,8 +163,126 @@ def test_the_packs_config_loads_and_carries_a_full_book():
     if source is None:
         pytest.skip("example pack source not present in this copy (wheel install)")
 
-    config = load_config(source / "configs" / "example_breakout.json")
+    config = load_config(source / "configs" / "breakout.json")
 
     assert config["strategy"] == STRATEGY
     assert config["position_limits"]["max_gross_exposure"] == 0.9
     assert config["symbols"] and config["candidate_symbols"]
+
+
+# --- the long/short half of the pack ------------------------------------------------
+def test_the_pack_ships_a_book_that_trades_both_sides():
+    """A long-only pack leaves half the platform unexercised. Leg diagnostics, the
+    directional cap, the tilt derivation and the short-borrow side of the cost model
+    only mean anything for a book that shorts."""
+    assert STRATEGIES[REVERSION].LONG_ONLY is False
+
+
+def test_the_long_short_strategy_declares_a_directional_cap():
+    """Gross bounds long + short and cannot see direction, so a book inside a 1.6 gross
+    cap can be entirely long. The net cap is the one that keeps it neutral."""
+    limits = STRATEGIES[REVERSION].create_with_defaults().position_limits()
+
+    assert limits["max_gross_exposure"] == 1.60
+    assert limits["max_net_exposure"] == 0.30
+
+
+def test_the_long_short_strategy_actually_fills_both_legs():
+    """Declaring LONG_ONLY = False proves nothing on its own — a scoring bug that never
+    goes negative produces a long-only book from a strategy that claims otherwise."""
+    symbols = ["AAA", "BBB", "CCC", "DDD"]
+    client = MarketDataClient(FakeMarketData(symbols, n=500, freq="1D"))
+
+    result = BacktestEngine(STRATEGIES[REVERSION].create_with_defaults(), client).run(
+        symbols, datetime(2024, 1, 2), datetime(2025, 6, 1), 100_000
+    )
+
+    assert result.legs["long"]["trades"] > 0
+    assert result.legs["short"]["trades"] > 0
+
+
+def test_the_long_short_book_produces_a_tilt_distribution():
+    """Which is what the net-cap derivation reads. A book with no measurable tilt gives
+    it nothing to recommend from."""
+    symbols = ["AAA", "BBB", "CCC", "DDD"]
+    client = MarketDataClient(FakeMarketData(symbols, n=500, freq="1D"))
+
+    result = BacktestEngine(STRATEGIES[REVERSION].create_with_defaults(), client).run(
+        symbols, datetime(2024, 1, 2), datetime(2025, 6, 1), 100_000
+    )
+
+    assert result.exposure["net_abs"]["max"] > 0
+    assert result.exposure["samples"] > 0
+
+
+def test_a_reversion_target_outside_its_stop_is_refused():
+    """A reversion book exits into the mean, so a target beyond the stop means the
+    winners are cut further out than the losers — almost never the intent."""
+    # From the defaults, then overridden: the base class calls
+    # calculate_required_lookback during construction, so a partial config never
+    # reaches the check being tested.
+    strategy = STRATEGIES[REVERSION](
+        {**_defaults(STRATEGIES[REVERSION]), "stop_loss": 0.04, "take_profit": 0.10}
+    )
+
+    with pytest.raises(ValueError, match="inside the stop"):
+        strategy.initialize()
+
+
+def test_a_flat_series_does_not_produce_infinite_conviction():
+    """Zero dispersion over the whole window. Dividing by it turns a name that has not
+    moved into the highest-conviction trade in the book."""
+    import numpy as np
+    import pandas as pd
+
+    strategy = STRATEGIES[REVERSION].create_with_defaults()
+    flat = pd.DataFrame(
+        {
+            "open": [100.0] * 60,
+            "high": [100.0] * 60,
+            "low": [100.0] * 60,
+            "close": [100.0] * 60,
+            "volume": [1_000_000] * 60,
+        },
+        index=pd.date_range("2024-01-02", periods=60, freq="D"),
+    )
+
+    scores = strategy.calculate_scores(strategy.process_data(flat))
+
+    assert not np.isinf(scores.to_numpy()).any()
+    assert not scores.isna().any()
+
+
+# --- the config the pack ships ------------------------------------------------------
+def test_the_long_short_config_carries_what_a_long_only_one_does_not():
+    """The two configs exist to be compared. A long/short book needs a directional cap
+    and a borrow rate that actually applies."""
+    from tradeflow.optimization.config_store import load_config
+    from tradeflow.services.setup import example_pack_source
+
+    source = example_pack_source()
+    if source is None:
+        pytest.skip("example pack source not present in this copy (wheel install)")
+
+    config = load_config(source / "configs" / "reversion_longshort.json")
+
+    assert config["position_limits"]["max_net_exposure"] == 0.3
+    assert config["cost"]["borrow_bps"] > 0
+    assert config["scanner"] == SCANNER  # not a fixed list — the scanner picks the book
+
+
+def test_the_shipped_configs_are_in_version_control():
+    """They were not. The repository ignored `configs/` at any depth, so a fresh clone
+    got a pack missing the artefact its README tells you to run — and the scaffold would
+    have copied that hole out to a user."""
+    import subprocess
+
+    from tradeflow.services.setup import example_pack_source
+
+    source = example_pack_source()
+    if source is None:
+        pytest.skip("example pack source not present in this copy (wheel install)")
+
+    for config in sorted((source / "configs").glob("*.json")):
+        ignored = subprocess.run(["git", "check-ignore", str(config)], capture_output=True, text=True)
+        assert ignored.returncode != 0, f"{config.name} is gitignored and would not ship"

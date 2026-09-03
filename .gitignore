@@ -2,14 +2,17 @@
 optimization_results.csv
 walkforward_results.csv
 
-# Saved strategy configs (a human promotes these; never auto-applied)
-configs/
+# Saved strategy configs (a human promotes these; never auto-applied).
+# Anchored to the repo root: unanchored, this matched a `configs/` at *any* depth and
+# silently excluded the example pack's own config — so a fresh clone got a pack missing
+# the artefact its README tells you to run.
+/configs/
 
-# MCP audit log, research journal, and run artifacts (Spec 003/004)
-logs/
+# MCP audit log, research journal, and run artifacts. Anchored for the same reason.
+/logs/
 
-# Persistent bar cache (Spec 010) - derived from Alpaca, safe to delete
-cache/
+# Persistent bar cache - derived from Alpaca, safe to delete. Anchored for the same reason.
+/cache/
 
 # Docs site (Docusaurus)
 docs/node_modules/

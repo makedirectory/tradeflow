@@ -22,6 +22,10 @@ dependencies = ["pandas>=2.0"]
 # refuses the pack rather than shadowing one if they do.
 [project.entry-points."tradeflow.strategies"]
 example_breakout = "my_signals.strategies:BreakoutStrategy"
+# Long/short, so the leg diagnostics, the directional cap and the short-borrow side of
+# the cost model have something to act on. A pack of long-only strategies leaves half
+# the platform unexercised.
+example_reversion = "my_signals.strategies:PairsReversionStrategy"
 
 [project.entry-points."tradeflow.scanners"]
 example_liquidity = "my_signals.scanners:LiquidityScanner"
