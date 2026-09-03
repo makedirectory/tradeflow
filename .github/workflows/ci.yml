@@ -29,6 +29,13 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev
 
+      # The example pack registers through the same entry-point groups a user's own
+      # pack does. Installing it here is what makes CI exercise that path end to end -
+      # real packaging, real discovery, real contract compliance - rather than only the
+      # monkeypatched fakes the registry unit tests use.
+      - name: Install the example pack (exercises entry-point discovery)
+        run: uv pip install --no-deps -e examples/my-signals
+
       - name: Lint (ruff)
         run: uv run ruff check .
 

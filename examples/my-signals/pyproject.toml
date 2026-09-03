@@ -1,0 +1,38 @@
+# A complete, working example of a private TradeFlow pack.
+#
+# Nothing here is imported by the engine. It reaches TradeFlow the same way your own
+# work will: through the two entry-point groups below. Install it and its strategy and
+# scanner appear in `--strategy`, in the walk-forward search, over MCP, and in the
+# research agent — because they only ever depended on the base interface.
+#
+#     uv pip install -e examples/my-signals
+#     tradeflow init --check          # lists it under "private packs installed"
+[project]
+name = "my-signals"
+version = "0.1.0"
+description = "An example private TradeFlow pack: one strategy, one scanner, one config."
+requires-python = ">=3.11"
+# Deliberately no dependency on tradeflow-engine. A pack is installed *beside* the
+# engine, not on top of it, and pinning the engine from here would let a pack decide
+# which engine its owner runs.
+dependencies = ["pandas>=2.0"]
+
+# The two groups the engine discovers. The names on the left are what you type at
+# `--strategy` and `--scanner`; they must not collide with a built-in, and the engine
+# refuses the pack rather than shadowing one if they do.
+[project.entry-points."tradeflow.strategies"]
+example_breakout = "my_signals.strategies:BreakoutStrategy"
+# Long/short, so the leg diagnostics, the directional cap and the short-borrow side of
+# the cost model have something to act on. A pack of long-only strategies leaves half
+# the platform unexercised.
+example_reversion = "my_signals.strategies:PairsReversionStrategy"
+
+[project.entry-points."tradeflow.scanners"]
+example_liquidity = "my_signals.scanners:LiquidityScanner"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["my_signals"]
