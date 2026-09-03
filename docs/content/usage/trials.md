@@ -183,8 +183,82 @@ proposed book: the journal is the source of truth, and `trials rebuild`
 reconstructs the table from it alone. Very large tables are capped, and hitting
 the cap is recorded on the payload rather than silently truncating.
 
+## Maintenance: quarantine a subset, or retire an era
+
+Two commands, deliberately not one. They answer different questions and differ in how
+reversible they are, and collapsing them is a mistake in both directions — quarantining
+an era leaves thousands of rows carrying a caveat nobody can act on, archiving a subset
+throws away the evidence around it.
+
+### `trials mark-contaminated` — a suspect subset
+
+For when something is learned about *some* trials after they were recorded: a scanner
+that used a stale universe, a vendor's data correction, a config that turned out not to
+be the one you thought.
+
+```bash
+tradeflow trials mark-contaminated --reason "vendor split adjustment was wrong"     --strategy demo_trend --before 2026-08-01 --dry-run
+tradeflow trials mark-contaminated --reason "vendor split adjustment was wrong" --id abc123def456
+```
+
+`--reason` is required. Rows excluded from every leaderboard with nothing saying why
+cannot be judged later, which is worse than not excluding them.
+
+**Nothing is rewritten.** The quarantine is an appended event naming the affected
+trials; the trial records stay exactly as written. `trials rebuild` replays the event
+and reaches the same rows, so the quarantine survives the store being thrown away — which
+it is, routinely, at every schema bump.
+
+What it changes, and what it deliberately does not:
+
+| | Quarantined trial |
+|---|---|
+| Served as a memo for an identical run | **No** — a fresh run is always safe, a suspect number never is |
+| Ranked in `trials best` | **No**, and the excluded count is reported |
+| Counted toward the family's multiple-testing total | **Yes** |
+
+That last row is the one that could most easily have gone the flattering way. The search
+still happened — you did look at that configuration — so dropping it would *lower* the
+deflated-Sharpe bar for the family, and this store never moves that bar down on its own.
+
+### `trials archive` — a whole era
+
+For when everything recorded becomes incommensurable rather than suspect. An accounting
+bump changes what the engine computes, so every stored metric was measured with a
+different instrument; that is not a subset and no annotation fixes it.
+
+```bash
+tradeflow trials archive --reason "accounting v5 invalidated v4 metrics" --label pre-v5 --dry-run
+tradeflow trials archive --reason "accounting v5 invalidated v4 metrics" --label pre-v5
+tradeflow trials archives     # what has been retired, and why
+```
+
+**Both files move together, always.** The store is an index over the journal, so moving
+one alone leaves the other describing something that is not there — or an era's rows
+sitting beside a fresh journal, still reporting a multiple-testing count for evidence
+that is gone, with nothing erroring because both files are individually valid. That is
+the hand-rolled state this replaces.
+
+Each archive keeps a manifest (what, when, why, which accounting version and commit), and
+the **new** journal opens with a record of the archive, so its emptiness reads as "an era
+was retired here" rather than "nothing has ever been run".
+
+### There is no `reset`
+
+Deliberately. The destructive version of archive is what the append-only rule forbids:
+the journal has nothing behind it to rebuild from, so a record removed is a record gone.
+Archive moves the files; they are still on disk under a name that says when and why.
+
+### Both are CLI-only
+
+Neither is an MCP tool, and that is a decision rather than an omission. Quarantining
+evidence and retiring an era are operator decisions about a campaign's record, not run
+configuration: one changes what every later leaderboard and memo reports, the other moves
+your files. An agent that believes a trial is contaminated should say so and let you act.
+
 ## Not covered here
 
 Retention and pruning are deliberately out of scope — append-only history is the
-point. `trials status` and `trials rebuild` handle index health; see the
-[walk-forward](walk-forward) page for what the store's campaign count feeds.
+point. `trials status` and `trials rebuild` handle index health, and the maintenance
+commands above never delete; see the [walk-forward](walk-forward) page for what the
+store's campaign count feeds.
