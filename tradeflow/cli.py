@@ -1278,6 +1278,8 @@ def _print_cached_walkforward(row: Dict[str, Any]) -> None:
 
 
 def _print_walkforward(result, objective: str) -> None:
+    from tradeflow.optimization.walk_forward import format_gate_value
+
     print("\n=== Walk-Forward Validation ===")
     print(
         f"{'FOLD':>4} {'IS ' + objective:>16} {'OOS ' + objective:>16} {'OOS Sharpe':>12} "
@@ -1321,7 +1323,9 @@ def _print_walkforward(result, objective: str) -> None:
     print("\n--- Promotion gates ---")
     for name, check in report["checks"].items():
         mark = "PASS" if check["passed"] else "FAIL"
-        print(f"  [{mark}] {name}: {check['value']} (threshold {check['threshold']})")
+        value = format_gate_value(name, check["value"])
+        threshold = format_gate_value(name, check["threshold"])
+        print(f"  [{mark}] {name}: {value} (threshold {threshold})")
     verdict = "PROMOTABLE" if report["promotable"] else "NOT promotable"
     median_sharpe = result.median_oos("sharpe_ratio")
     print(
@@ -3658,7 +3662,7 @@ def cmd_demo(args) -> None:
     from tradeflow.marketdata.client import MarketDataClient
     from tradeflow.marketdata.synthetic import SyntheticMarketData
     from tradeflow.marketdata.timeframe import Timeframe
-    from tradeflow.optimization.walk_forward import WalkForwardValidator
+    from tradeflow.optimization.walk_forward import WalkForwardValidator, format_gate_value
 
     data_client = MarketDataClient(SyntheticMarketData(seed=args.seed))
     symbols = ["SYNW", "SYNX", "SYNY", "SYNZ"]
@@ -3726,12 +3730,13 @@ def cmd_demo(args) -> None:
     gate_width = max(len(g) for g in report["checks"]) + 1
     for gate_name, check in report["checks"].items():
         mark = "PASS" if check["passed"] else "FAIL"
-        # Rounded and aligned. Full float repr put a seventeen-digit Sharpe next to a
-        # one-digit threshold, which is the one comparison this block exists to make.
-        print(
-            f"     [{mark}] {gate_name + ':':{gate_width}}"
-            f"{check['value']:>10.2f}  (threshold {check['threshold']:.2f})"
-        )
+        # Rounded, aligned, and in each gate's own unit. Full float repr put a
+        # seventeen-digit Sharpe next to a one-digit threshold, which is the one
+        # comparison this block exists to make; a flat `.2f` then printed the trade
+        # *count* as `25.00`.
+        value = format_gate_value(gate_name, check["value"])
+        threshold = format_gate_value(gate_name, check["threshold"])
+        print(f"     [{mark}] {gate_name + ':':{gate_width}}{value:>10}  (threshold {threshold})")
     verdict = "PROMOTABLE" if report["promotable"] else "NOT promotable"
     print(f"\n   Verdict: {verdict}")
     # The next step differs by how they got here: an installed copy has no Makefile
@@ -3800,6 +3805,8 @@ def cmd_demo_agent(args) -> None:
 
     state = {"round": 0}
 
+    from tradeflow.optimization.walk_forward import format_gate_value
+
     def narrate(event: str, payload: dict) -> None:
         if event == "session_start":
             research = payload["research_window"]
@@ -3845,9 +3852,9 @@ def cmd_demo_agent(args) -> None:
             print("     Promotion gates:")
             for name, check in payload["gate_report"]["checks"].items():
                 mark = "PASS" if check["passed"] else "FAIL"
-                print(
-                    f"       [{mark}] {name:<24} {check['value']:>10.2f}   threshold {check['threshold']:.2f}"
-                )
+                value = format_gate_value(name, check["value"])
+                threshold = format_gate_value(name, check["threshold"])
+                print(f"       [{mark}] {name:<24} {value:>10}   threshold {threshold}")
             if payload["advanced"]:
                 print("     Verdict     PROMOTABLE — enters the shortlist")
             elif payload["promotable"]:

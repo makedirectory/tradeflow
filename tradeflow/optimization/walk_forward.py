@@ -276,6 +276,40 @@ def _check(value: float, op: str, threshold: float) -> Dict[str, Any]:
     return {"value": float(value), "threshold": float(threshold), "passed": bool(passed)}
 
 
+#: What each gate's numbers *are*, for anything that renders them. Declared here, beside
+#: the checks that produce them, so a new gate states its unit where it is defined
+#: rather than in whichever surface happens to print it. Unlisted gates are ratios.
+_GATE_VALUE_KINDS = {
+    "min_oos_trades": "count",
+    "leakage_probe": "flag",
+}
+
+
+def format_gate_value(gate_name: str, value: Any) -> str:
+    """One gate number as a string, in the unit that gate is actually measured in.
+
+    Every renderer used to apply one format to all of them. `:.2f` is right for a
+    Sharpe and wrong for a trade count, which printed as `25.00`; `leakage_probe`
+    carries a *boolean*, which rendered as `1.00`, and its value is `None` when the
+    probe recorded no verdict, which raised `TypeError` inside a demo block written
+    never to hard-crash.
+    """
+    if value is None:
+        return "n/a"
+    kind = _GATE_VALUE_KINDS.get(gate_name, "ratio")
+    if kind == "flag" or isinstance(value, bool):
+        return "yes" if value else "no"
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if not math.isfinite(number):
+        return "unbounded" if number > 0 else str(number)
+    if kind == "count":
+        return f"{int(round(number))}"
+    return f"{number:.2f}"
+
+
 # --------------------------------------------------------------------------- #
 # Prefetch+slice data provider
 # --------------------------------------------------------------------------- #

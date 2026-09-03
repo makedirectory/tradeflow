@@ -181,7 +181,7 @@ $ make demo
      [FAIL] oos_profit_factor:            0.74  (threshold 1.30)
      [FAIL] walk_forward_efficiency:     -0.17  (threshold 0.40)
      [PASS] oos_drawdown_vs_is:          10.59  (threshold 13.94)
-     [FAIL] min_oos_trades:              25.00  (threshold 100.00)
+     [FAIL] min_oos_trades:                 25  (threshold 100)
      [FAIL] deflated_sharpe:              0.00  (threshold 0.50)
 
    Verdict: NOT promotable
@@ -230,7 +230,7 @@ $ make demo-agent
        [PASS] oos_profit_factor              1.92   threshold 1.30
        [PASS] walk_forward_efficiency        0.76   threshold 0.40
        [FAIL] oos_drawdown_vs_is             0.18   threshold 0.09
-       [FAIL] min_oos_trades                 52.00  threshold 100.00
+       [FAIL] min_oos_trades                   52   threshold 100
        [PASS] deflated_sharpe                0.58   threshold 0.50
      Verdict     NOT promotable — discarded
 ```

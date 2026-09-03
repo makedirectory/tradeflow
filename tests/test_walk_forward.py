@@ -604,3 +604,53 @@ def test_a_leg_that_missed_a_fold_holds_its_place():
 
     assert by_fold["long"] == [0.4, 0.2, 0.1]
     assert by_fold["short"] == [-0.3, None, -0.5]  # the gap holds fold 1's place
+
+
+# --- gate values render in the unit they are measured in --------------------
+def test_gate_values_render_in_their_own_units():
+    """One `.2f` across every gate is wrong for two of them.
+
+    `min_oos_trades` is a count and printed as `25.00` — in the demo block the
+    README commits verbatim. `leakage_probe` carries a *boolean*, which the same
+    format rendered as `1.00`, a pass indistinguishable from a ratio.
+    """
+    from tradeflow.optimization.walk_forward import format_gate_value
+
+    assert format_gate_value("oos_sharpe", 1.2345) == "1.23"
+    assert format_gate_value("min_oos_trades", 25.0) == "25"
+    assert format_gate_value("min_oos_trades", 100) == "100"
+    assert format_gate_value("leakage_probe", True) == "yes"
+    assert format_gate_value("leakage_probe", False) == "no"
+
+
+def test_gate_values_survive_a_gate_that_recorded_no_verdict():
+    """`leakage_probe`'s value is `leakage.get("passed")`, so it can be `None`.
+
+    A flat `:.2f` raised `TypeError: unsupported format string passed to
+    NoneType.__format__` — inside a demo block whose sibling loop is explicitly
+    wrapped so the demo "should never hard-crash".
+    """
+    from tradeflow.optimization.walk_forward import format_gate_value
+
+    assert format_gate_value("leakage_probe", None) == "n/a"
+    # `oos_drawdown_vs_is` gets an infinite threshold when in-sample drawdown is 0.
+    assert format_gate_value("oos_drawdown_vs_is", float("inf")) == "unbounded"
+
+
+def test_every_gate_a_report_produces_can_be_rendered():
+    """The formatter and `gate_report` must not drift apart.
+
+    Asserting the formatter against a hand-written list of names proves nothing
+    about the gates that actually exist; this walks a real report.
+    """
+    from tradeflow.optimization.walk_forward import format_gate_value
+
+    result = _validator().run(
+        SYMBOLS, START, END, mode="anchored", n_folds=3, method="grid", objective="sharpe_ratio"
+    )
+    report = result.gate_report()
+    assert report["checks"], "a report with no checks would make this vacuous"
+    for name, check in report["checks"].items():
+        for key in ("value", "threshold"):
+            rendered = format_gate_value(name, check[key])
+            assert isinstance(rendered, str) and rendered
