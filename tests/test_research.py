@@ -530,14 +530,14 @@ def _shipped_strategies():
     from tradeflow.services import registry
 
     registry.refresh_registries()
-    return {n: c for n, c in registry.STRATEGIES.items() if getattr(c, "DEMO", False)}
+    return {n: c for n, c in registry.STRATEGIES.items() if registry.is_demo(c)}
 
 
 def _shipped_scanners():
     from tradeflow.services import registry
 
     registry.refresh_registries()
-    return {n: c for n, c in registry.SCANNERS.items() if getattr(c, "DEMO", False)}
+    return {n: c for n, c in registry.SCANNERS.items() if registry.is_demo(c)}
 
 
 def test_every_shipped_strategy_satisfies_the_draft_contract():

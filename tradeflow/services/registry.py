@@ -93,7 +93,7 @@ def list_strategies() -> List[Dict[str, Any]]:
             "name": name,
             "description": _first_line(cls.__doc__),
             "timeframe": getattr(cls, "TIMEFRAME", ""),
-            "demo": bool(getattr(cls, "DEMO", False)),
+            "demo": is_demo(cls),
         }
         for name, cls in STRATEGIES.items()
     ]
@@ -105,10 +105,23 @@ def list_scanners() -> List[Dict[str, Any]]:
         {
             "name": name,
             "description": _first_line(cls.__doc__),
-            "demo": bool(getattr(cls, "DEMO", False)),
+            "demo": is_demo(cls),
         }
         for name, cls in SCANNERS.items()
     ]
+
+
+def is_demo(cls: Type) -> bool:
+    """Whether ``cls`` is shipped demonstration scaffolding, rather than inheriting it.
+
+    Read from the class's own ``__dict__``, not through the MRO. ``docs/content/usage/
+    private-strategies.md`` invites a pack to start by subclassing ``DemoTrendStrategy``,
+    and an inherited flag reported that pack's real strategy to the CLI, the MCP server
+    and the research agent as shipped scaffolding - the same "the platform *is* whatever
+    is in it" misread the label exists to prevent, pointing the other way. A subclass
+    that genuinely is more scaffolding can say so by setting ``DEMO`` itself.
+    """
+    return bool(cls.__dict__.get("DEMO", False))
 
 
 def get_param_ranges(kind: str, name: str) -> Dict[str, Any]:

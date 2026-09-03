@@ -254,3 +254,71 @@ def test_a_reload_does_not_promote_an_installed_scanner_into_the_builtins():
     finally:
         metadata.entry_points = real
         _reload_registry_preserving_identity()
+
+
+# --- the class attribute and the registry are one answer --------------------
+def test_symbol_scanner_resolves_names_without_importing_the_registry_first():
+    """A bare `import symbol_scanner` has to be usable on its own.
+
+    Nothing is defined in that module any more, so its literal is empty and the class
+    attribute it seeds is too. Only `refresh_registries()` ever filled the attribute,
+    which made `SymbolScanner` work or not depending on whether some *other* module
+    had been imported first - with no signal either way, and
+    `docs/content/engineering/scanners.md` naming it as the driver to use.
+
+    Run in a subprocess, because every other test in this suite has already imported
+    the registry and would mask exactly the ordering this is about.
+    """
+    import subprocess
+    import sys
+
+    probe = (
+        "from tradeflow.scanners.symbol_scanner import SymbolScanner;"
+        "names = SymbolScanner.available();"
+        "assert 'demo_volume' in names, names;"
+        "print('ok')"
+    )
+    result = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stderr[-2000:]
+
+
+def test_the_scanner_class_attribute_agrees_with_the_service_registry():
+    """Two dicts holding one answer: compare them, rather than testing each alone."""
+    registry.refresh_registries()
+
+    assert SymbolScanner._registry() == registry.SCANNERS
+
+
+def test_the_scanner_registry_survives_discovery_failing_late(monkeypatch):
+    """The fallback the import-time guard exists for.
+
+    If `refresh_registries()` raises before its last line, the service registry keeps
+    its seeded reserved names - but the class attribute was left holding whatever it
+    had, which after this package's built-ins moved out is nothing. Every scan then
+    failed on a name `list_scanners()` still advertised.
+    """
+    monkeypatch.setattr(SymbolScanner, "SCANNERS", {})
+
+    def explode(*_args, **_kwargs):
+        raise RuntimeError("a broken distribution")
+
+    monkeypatch.setattr(registry, "_merged_registry", explode)
+    try:
+        registry.refresh_registries()
+    except RuntimeError:
+        pass
+
+    assert "demo_volume" in SymbolScanner.available()
+
+
+# --- the demo label describes the class, not its ancestry -------------------
+def test_a_pack_subclassing_the_demo_is_not_itself_reported_as_demo():
+    """`DEMO` read through the MRO labelled private work as shipped scaffolding.
+
+    The private-strategies doc invites a pack to start from `DemoTrendStrategy`, so
+    this is the documented path, not a corner. Reporting that pack's real strategy as
+    `demo: True` to the CLI, MCP and the agent is the label's own failure mode in
+    reverse.
+    """
+    assert registry.is_demo(DemoTrendStrategy)
+    assert not registry.is_demo(PrivateTrendStrategy)
