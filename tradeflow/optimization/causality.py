@@ -20,6 +20,17 @@ like, and whichever layer did it.
 Each probe reports ``passed=None`` when the run gave it nothing to test. That is not a
 pass: a probe that could not run and a probe that ran and found nothing are different
 facts, and only one of them is evidence.
+
+**What a pass here does not cover.** The perturbation is bounded by the bar's own
+high/low, because moving a close outside it would move the high or low with it, and a
+stop or take-profit legitimately reads those on the bar it fills on - a wider bar would
+report a leak that is not there. The cost is real: a dependency that only changes an
+outcome when the close moves *further* than the bar actually ranged is not reachable
+this way. The probes also examine a sample of decision instants, so a dependency that
+binds only at an instant outside the sample is not reached either. Both limits are
+reported in the result (``sampled``, ``instants_probed``) rather than left implicit,
+because the failure mode of any probe is being read as broader than it is - which is
+the whole reason this module exists.
 """
 
 import logging
