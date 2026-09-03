@@ -209,3 +209,41 @@ def test_demo_runs_against_an_empty_state_root(tmp_path):
     )
     assert result.returncode == 0, result.stderr[-2000:]
     assert "TradeFlow demo" in result.stdout
+
+
+# --- what the source distribution actually carries --------------------------
+def _sdist_paths() -> set:
+    """The sdist's real file list, from the build backend rather than the manifest.
+
+    Built rather than asserted about. The exclude list *read* correctly while it was
+    silently dropping half the example pack, because the patterns are gitignore-style
+    and a bare directory name matches at any depth.
+    """
+    hatchling_sdist = pytest.importorskip("hatchling.builders.sdist")
+
+    builder = hatchling_sdist.SdistBuilder(str(Path(__file__).resolve().parent.parent))
+    return {f.relative_path for f in builder.recurse_included_files()}
+
+
+def test_the_sdist_carries_the_example_pack_with_its_configs():
+    """The scaffolded pack minus its configs is worse than no pack.
+
+    `init --example-pack` copies whatever shipped, so a pack without `configs/`
+    scaffolds *successfully* and the next line the CLI prints is a
+    `backtest --config .../configs/breakout.json` that does not exist. Steps 1, 2 and
+    7 of the pack's own README are the same path. An unanchored `configs` exclude did
+    exactly this, and nothing in this file looked at an sdist.
+    """
+    paths = _sdist_paths()
+
+    assert "example/pyproject.toml" in paths, "the pack must be installable"
+    for config in ("example/configs/breakout.json", "example/configs/reversion_longshort.json"):
+        assert config in paths, f"{config} is a path the CLI and the pack README tell a user to run"
+
+
+def test_the_sdist_leaves_repo_local_state_behind():
+    """The other half of the anchoring: root state must still be excluded."""
+    paths = _sdist_paths()
+    roots = {p.split("/", 1)[0] for p in paths}
+
+    assert not roots & {"configs", "logs", "cache", "specs", "dist", ".claude", ".vscode", ".venv"}
