@@ -1,14 +1,15 @@
-# example-signals — a private pack you can copy
+# example — a private pack you can copy
 
 This is what your own work looks like from TradeFlow's side: a separate package with its
 own `pyproject.toml`, registering strategies and a scanner through two entry-point
 groups. The engine imports nothing from here and knows nothing about it beyond the base
 interface.
 
-**Every name in it is a placeholder.** The package inside is `my_signals`, because that
-is what a pack of your own would look like; the entry points are `example_breakout` and
-friends, because from the engine's side these are demonstrations. Renaming both is the
-first thing you do, and the next section says how.
+**Every name in it is a placeholder.** The package is `my_signals` because that is what
+a pack of your own would be — named for your work, not for this repository's
+documentation. The entry points are `example_breakout` and friends because from the
+engine's side these *are* demonstrations. Renaming both is the first thing you do, and
+the next section says how.
 
 ```bash
 tradeflow init --example-pack ./my-signals   # the destination is yours to name
@@ -18,11 +19,19 @@ tradeflow init --check                       # lists it under "private packs ins
 
 ## Make it yours
 
-Nothing here needs to keep its name. Rename the `my_signals/` directory and the matching
-`name` and `packages` entries in `pyproject.toml`, then reinstall. The entry-point names
-on the left-hand side (`example_breakout` and friends) are what you type at `--strategy`;
-rename those too, and the only rule is that they must not collide with a name the engine
-reserves.
+Three renames, none of them optional if you plan to keep this:
+
+1. **The package.** `my_signals/` → whatever your work is called, and the matching
+   `name` and `packages` entries in `pyproject.toml`. It becomes a top-level import in
+   whatever environment you install it into, so give it a name you would not mind
+   owning there.
+2. **The import paths** on the right-hand side of each entry point, to follow it.
+3. **The entry-point names** on the left — `example_breakout` and friends are what you
+   type at `--strategy` and `--scanner`. The only rule is that they must not collide
+   with a name the engine reserves, and it refuses the pack rather than shadowing one.
+
+Then `uv pip install -e .` again, and `tradeflow init --check` to confirm they are
+discovered.
 
 ## Layout
 

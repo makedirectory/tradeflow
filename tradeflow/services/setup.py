@@ -394,7 +394,7 @@ def example_pack_source() -> Optional[Path]:
     """
     from tradeflow.settings import PROJECT_ROOT
 
-    candidate = PROJECT_ROOT / "example-signals"
+    candidate = PROJECT_ROOT / "example"
     return candidate if (candidate / "pyproject.toml").exists() else None
 
 

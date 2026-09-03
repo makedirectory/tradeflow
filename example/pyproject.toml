@@ -5,7 +5,7 @@
 # scanner appear in `--strategy`, in the walk-forward search, over MCP, and in the
 # research agent — because they only ever depended on the base interface.
 #
-#     uv pip install -e example-signals
+#     uv pip install -e example
 #     tradeflow init --check          # lists it under "private packs installed"
 [project]
 name = "my-signals"

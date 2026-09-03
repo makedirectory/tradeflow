@@ -128,5 +128,5 @@ install rather than only by a test fixture.
 
 Deliberately minimal, and deliberately alone: a second shipped strategy would be a
 second idea nobody chose, and the [walk-forward](walk-forward) scorecard is there to
-discriminate between *your* candidates. `example-signals` is a real pack with a
+discriminate between *your* candidates. `example` is a real pack with a
 long-only and a long/short strategy to read; see [Extending](extending).
