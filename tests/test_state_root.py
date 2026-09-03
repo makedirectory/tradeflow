@@ -12,6 +12,7 @@ A user arriving through PyPI or over MCP may never learn there is a working tree
 to ask.
 """
 
+import os
 from pathlib import Path
 
 import pytest
@@ -178,3 +179,74 @@ def test_the_setup_check_fails_when_state_sits_in_a_repository(monkeypatch, tmp_
 
     assert check.passed is False
     assert "git clean" in check.detail  # names the destructive half, not only disclosure
+
+
+# --- reaching the state root is a use, never an import ----------------------------
+def _import_probe(body: str, home: Path):
+    """Run `body` in a fresh interpreter under a state root that does not exist yet.
+
+    A subprocess because every other test in this suite has already imported these
+    modules, and an import that already happened creates nothing the second time —
+    which would mask exactly the thing being asserted.
+    """
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, "-c", body],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env={**os.environ, "TRADEFLOW_HOME": str(home)},
+    )
+    assert result.returncode == 0, result.stderr[-2000:]
+    return result.stdout.strip()
+
+
+@pytest.mark.parametrize(
+    "module",
+    ["tradeflow.store.trials", "tradeflow.services.audit", "tradeflow.research.agent"],
+)
+def test_importing_a_journal_module_does_not_create_the_state_root(tmp_path, module):
+    """It did. The journal's location converged onto `settings.trial_journal_path()`,
+    which goes through `state_path()`, which does `mkdir(parents=True)` — so a
+    module-scope constant naming the journal made importing that module a filesystem
+    write. Every command imports it, so an unwritable or read-only state root began
+    failing at *import* rather than at first use: a broken environment bricking the
+    CLI, which is the case the registry code goes out of its way to protect against.
+
+    Before the two definitions converged this was pure path construction and the
+    constant was free. The convergence is worth keeping; paying for it at import is
+    not.
+    """
+    home = tmp_path / "unwritten"
+
+    out = _import_probe(f"import {module}; import os; print(os.path.isdir(r'{home}'))", home)
+
+    assert out == "False"
+
+
+def test_the_journal_constants_still_resolve_on_access(tmp_path):
+    """The other direction: lazy must not mean absent. Both constants still exist,
+    still name one file, and reaching either one creates the directory it needs."""
+    home = tmp_path / "on-demand"
+    probe = (
+        "from tradeflow.store.trials import DEFAULT_JOURNAL_PATH;"
+        "from tradeflow.services.audit import DEFAULT_TRIAL_JOURNAL;"
+        "import os;"
+        "assert DEFAULT_JOURNAL_PATH == DEFAULT_TRIAL_JOURNAL, (DEFAULT_JOURNAL_PATH, DEFAULT_TRIAL_JOURNAL);"
+        f"print(os.path.isdir(os.path.dirname(str(DEFAULT_JOURNAL_PATH))), str(DEFAULT_JOURNAL_PATH).startswith(r'{home}'))"
+    )
+
+    assert _import_probe(probe, home) == "True True"
+
+
+def test_an_unknown_attribute_still_raises_attribute_error():
+    """A module `__getattr__` that answers every name turns a typo into a silent
+    wrong value, which is worse than the import-time cost it replaced."""
+    from tradeflow.services import audit
+    from tradeflow.store import trials
+
+    for module in (trials, audit):
+        with pytest.raises(AttributeError):
+            module.NO_SUCH_CONSTANT

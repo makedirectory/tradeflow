@@ -46,10 +46,37 @@ logger = logging.getLogger(__name__)
 
 #: Default trial-store location (gitignored, alongside the journal it indexes).
 DEFAULT_DB_PATH = state_root() / "logs" / "trials.db"
+
+
 #: Default journal location. One definition in ``settings``, so this and
 #: ``services.audit.DEFAULT_TRIAL_JOURNAL`` cannot drift into indexing one file while
 #: writing another.
-DEFAULT_JOURNAL_PATH = trial_journal_path()
+#:
+#: Resolved on first *access*, not at import. ``trial_journal_path()`` goes through
+#: ``state_path()``, which creates the directory, so evaluating it here made importing
+#: this module a filesystem write - and every command imports it. An unwritable or
+#: read-only state root then raised at import rather than at first use, which is the
+#: "a broken environment must not brick the CLI" case the registry code goes out of
+#: its way to protect. Before the journal's location converged onto one definition
+#: this was pure path construction and the constant was free.
+def default_journal_path() -> Path:
+    """The journal this store indexes, honouring an override of the constant.
+
+    Callers inside this module go through here rather than reading the constant
+    directly: a module-level ``__getattr__`` is consulted only for attribute access
+    *on the module*, and a name bound into the module globals - which is what
+    overriding the constant does - shadows it. Reading through ``globals()`` is what
+    keeps both true at once, so redirecting the journal still redirects every writer.
+    """
+    override = globals().get("DEFAULT_JOURNAL_PATH")
+    return Path(override) if override is not None else trial_journal_path()
+
+
+def __getattr__(name: str) -> Any:
+    if name == "DEFAULT_JOURNAL_PATH":
+        return trial_journal_path()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 #: Bump when the schema changes shape. On mismatch the store rebuilds from the
 #: journal rather than running migration code - the journal is the source of truth,
@@ -239,7 +266,7 @@ class TrialStore:
         self.db_path = Path(db_path) if db_path else DEFAULT_DB_PATH
         #: The journal this store indexes - a schema-mismatch rebuild (below) must
         #: replay *this* store's own journal, not some other store's.
-        self.journal_path = Path(journal_path) if journal_path else DEFAULT_JOURNAL_PATH
+        self.journal_path = Path(journal_path) if journal_path else default_journal_path()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(self.db_path), timeout=5.0)
         self._conn.row_factory = sqlite3.Row
