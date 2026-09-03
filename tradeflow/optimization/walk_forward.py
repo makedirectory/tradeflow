@@ -656,7 +656,7 @@ class WalkForwardValidator:
         params: Dict[str, Any],
         *,
         mode: str = "anchored",
-        n_folds: Optional[int] = 4,
+        n_folds: Optional[int] = None,
         train_days: Optional[int] = None,
         test_days: Optional[int] = None,
         embargo_days: Optional[int] = None,

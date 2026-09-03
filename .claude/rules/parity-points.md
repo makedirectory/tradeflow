@@ -40,7 +40,17 @@ second was served the first's result — reporting a one-position validation as 
 eight-position book, which is the single thing a walk-forward exists to rule out. Now one
 definition in `services.analysis.walk_forward_recipe`; `cli._walkforward_recipe` is the
 namespace adapter over it, the shape `_dedup_params` already had.
-*Guarded by* `tests/test_surface_parity.py`.
+
+The *defaults* then turned out to be a second, quieter half of the same point:
+`--folds` defaulted to `None` on the CLI and `4` in the service. Both build four folds
+— `build_folds` falls back to `n_folds or 4` — so a default run over each surface
+validated identically and keyed differently, and a walk-forward recorded over one was
+never found again over the other. Converged on `None`: it is what the recorded history
+carries, and the honest value when `--train-days`/`--test-days` derive the fold count
+and this parameter has no effect at all. Identical construction is not parity if the
+two callers reach it with different arguments.
+*Guarded by* `tests/test_surface_parity.py`, which now compares a *default* run over
+each surface and reads every default from its own signature rather than restating it.
 
 **CLI flags ↔ MCP tool parameters** — anything a run can be configured with should be
 reachable from both, and an MCP argument the service does not accept fails only at call
