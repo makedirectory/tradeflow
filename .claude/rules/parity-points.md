@@ -141,6 +141,12 @@ that reads one ledger both ways rather than by a shared call.
 must bump it, or results from two different models compare as though they were one.
 *Guarded by* the trial store's accounting-scoped lookups.
 
+The bump has a second half that is easy to miss: those lookups are scoped to the current
+version, so on the day it changes a campaign's entire history stops matching the default
+listing. An empty table reads as "nothing was ever run here", which is the most alarming
+possible way to learn a bump happened. `trials list` now counts what the filter hid and
+says so, and `trials archive` is the command for actually retiring the era.
+
 **The journal's location** — *converged*. It was two constants holding one path, kept
 in step by a comment; had they diverged the store would have indexed a different file
 from the one being written and the multiple-testing correction would have deflated

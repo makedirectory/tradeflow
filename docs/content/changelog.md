@@ -28,6 +28,71 @@ index; they are tagged in the repository.
 
 ---
 
+## Unreleased
+
+Research affordances, and the second half of the causality defect.
+
+### The headline
+
+**The same look-ahead again, one layer down.** The book was marked to a bar's close
+before entries were considered, and the exposure caps are tested against `equity × cap` —
+so whether an entry filling at that bar's *open* was admitted could depend on where the
+bar finished, hours later. Same class as the v4 signal defect, in the admission gate
+rather than the signal, and just as invisible to a feed shift.
+
+It was found by the new causality probes rather than by a user, which is the point of
+building them. Positions are now marked at the open for the decisions that transact
+there and re-marked at the close for the equity curve. `ACCOUNTING_VERSION` is 5.
+
+Narrower in effect than v4 — it changes a result only where a cap was close to binding,
+and the default sizer is untouched because it sizes off cash, which is not marked. But
+"usually identical" is not comparable. The promotion gates are deliberately **not**
+recalibrated: unlike the mark-to-market change at v2, this moves no metric
+systematically, and rescaling a threshold with no measured shift behind it is
+gate-fitting.
+
+### Added
+
+- **`tradeflow screen`** — sweep a parameter space cheaply and journal nothing. One
+  process, one data fetch, N evaluations. It leads with the distribution rather than a
+  winner, because the best of N is the maximum of N draws: a positive number even when
+  nothing searched has any edge, growing with N. Beside any best point it reports what
+  the best of that many draws is worth under the null, refuses to compute one for an
+  objective whose null is not zero, and shows how the result moves across each parameter
+  — a coherent gradient being different evidence from scattered positive points.
+  `--confirm` re-runs exactly one point as a real trial.
+- **`backtest --causality`** — four probes asking whether each decision could have been
+  made when it was made: the execution clock, same-bar ranking, benchmark alignment, and
+  the scanner's as-of clock. A different class from the leakage probe, which tests for
+  future data and cannot see a one-bar look-ahead at all. Each probe reports pass, fail,
+  or *not exercised*, and the third is not the first.
+- **`PARAM_CONSTRAINTS`** — relationships between parameters, declared beside the ranges
+  so a sampler can read them. Enforced by construction: the grid never contains an
+  invalid point and the random sampler never draws one, because an evaluated invalid
+  combination is a journaled trial that raises the deflation bar for its whole family.
+- **`trials archive` and `trials mark-contaminated`** — retiring an era and quarantining
+  a suspect subset, deliberately not one command. Archive moves the journal and its index
+  together; quarantine appends an event and rewrites nothing. Neither deletes anything.
+- **`trials list`** now says how many rows the accounting filter is hiding. The day the
+  version is bumped, an empty table would otherwise read as "nothing was ever run here".
+
+### Fixed
+
+- The long/short decomposition never rendered: `log_backtest_report` accepted `legs` and
+  dropped it before the formatter, so the block was fully tested and dead at the surface.
+- Execution checks were all rendered as percentages, so `book_breadth` — a position count
+  — read as "a maximum of 1.00% positions", and its remedy line was hardcoded to say the
+  value was 1 whatever it was.
+- Importing the trial store created the state root, so an unwritable one made
+  `tradeflow --help` fail with a traceback before argparse ran.
+- A warm-up the data feed could not answer ended a live session with a raw broker
+  traceback instead of the refusal written for exactly that situation.
+- `--folds` defaulted differently on the CLI and in the service: same validation,
+  different memoization key, so a walk-forward run on one surface was never found on the
+  other.
+- `costs/base.py` claimed to be research-clock only long after the live path began
+  importing it.
+
 ## 2.2.0 — 2026-09-02
 
 Live-path validation against a real paper account, and the defect it eventually found.

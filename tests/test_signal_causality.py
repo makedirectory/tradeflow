@@ -161,3 +161,95 @@ def test_live_acts_on_a_closed_bar_at_that_bar_s_close():
 
     assert seen["price"] == pytest.approx(event.close)
     assert seen["price"] != event.open, "live would be transacting before its own signal"
+
+
+# --- the book's value at a decision is the book's value at that decision ----------
+def _cap_run(other_close, cap):
+    """Two names. AAA is already open on bar 4; BBB tries to enter at bar 4's open.
+    Only AAA's *close* on bar 4 differs between the two runs — information that does
+    not exist at the instant BBB's fill prices."""
+    index = pd.date_range("2024-01-02", periods=6, freq="D", tz=NEW_YORK)
+
+    def bar(open_, close):
+        return {
+            "open": open_,
+            "high": max(open_, close),
+            "low": min(open_, close),
+            "close": close,
+            "volume": 100_000,
+        }
+
+    held = [bar(200, 200)] * 6
+    held[4] = bar(200, other_close)
+    entering = [bar(100, 100)] * 3 + [bar(100, 200), bar(200, 200), bar(200, 200)]
+
+    strategy = _CloseDriven(
+        {
+            "timeframe": "1Day",
+            "stop_loss": 0.5,  # wide: no stop fires in either run
+            "take_profit": 9.0,
+            "risk_per_trade": 0.2,
+            "position_limits": {
+                "max_positions": 2,
+                "max_position_size": 1e9,
+                "max_total_risk": 1e9,
+                "max_gross_exposure": cap,
+            },
+        }
+    )
+    frames = {
+        "AAA": pd.DataFrame(held, index=index),
+        "BBB": pd.DataFrame(entering, index=index),
+    }
+    trades = (
+        BacktestEngine(strategy, MarketDataClient(DictMarketData(frames)))
+        .run(["AAA", "BBB"], datetime(2024, 1, 2), datetime(2024, 1, 20), 100_000)
+        .trades
+    )
+    at_bar_4 = trades[trades["entry_time"] == index[4]] if len(trades) else trades
+    return sorted(set(at_bar_4["symbol"])) if len(at_bar_4) else []
+
+
+@pytest.mark.parametrize("cap", [0.6, 0.65, 0.7])
+def test_an_entry_is_not_admitted_or_refused_by_the_close_of_the_bar_it_fills_at(cap):
+    """The same defect as the one above, one layer down, and equally invisible to a
+    feed shift: it was in the admission gate rather than the signal.
+
+    The book was marked to the bar's close before entries were considered, and the
+    exposure caps are tested against `equity * cap` — so whether an entry filling at
+    that bar's *open* was admitted could depend on where the bar finished hours later.
+    At these caps it flipped outright: a position that was admitted when another symbol
+    closed down was refused when it closed up.
+
+    Nothing about the two runs differs except one close on one bar, and no stop or
+    take-profit fires in either, so a difference in what was admitted can only have come
+    from the mark.
+    """
+    assert _cap_run(150, cap) == _cap_run(400, cap)
+
+
+def test_the_cap_still_binds_on_information_that_did_exist():
+    """Both directions. A cap that stopped binding altogether would pass the test above
+    trivially, and would be a worse bug than the one it replaced."""
+    assert _cap_run(200, 0.4) == []  # tight: the book cannot fund the second name
+    assert _cap_run(200, 0.9) == ["BBB"]  # loose: it can
+
+
+def test_the_equity_curve_is_still_marked_at_the_close():
+    """The decisions move to the open; the curve must not. An equity curve marked at
+    each bar's open would report a different volatility and drawdown for every result
+    ever recorded, which is a far larger change than the one being made."""
+    rows = [
+        {"open": 100, "high": 100, "low": 100, "close": 100, "volume": 1_000},
+        {"open": 100, "high": 300, "low": 100, "close": 300, "volume": 1_000},
+        {"open": 300, "high": 400, "low": 300, "close": 400, "volume": 1_000},
+        {"open": 400, "high": 400, "low": 400, "close": 400, "volume": 1_000},
+        {"open": 400, "high": 400, "low": 400, "close": 400, "volume": 1_000},
+    ]
+    result = _run(rows)
+
+    # 333 shares open at bar 2's open of 300, and bar 2 closes at 400: a close-marked
+    # step is worth 100,000 + 333 x 100. Marked at the open it would still read
+    # 100,000 — no gain at all on the step the position was taken.
+    assert result.equity_curve[0] == 100_000
+    assert result.equity_curve[3] == pytest.approx(133_300.0)

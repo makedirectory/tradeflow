@@ -16,6 +16,7 @@ from datetime import datetime
 
 import pytest
 
+from tradeflow.engine.backtest import ACCOUNTING_VERSION
 from tradeflow.services import audit, maintenance
 from tradeflow.store.trials import TrialStore, db_path_for_journal
 
@@ -185,12 +186,12 @@ def test_a_quarantined_trial_still_counts_toward_the_multiple_testing_total(jour
     its own."""
     _seed(journal, n=3)
     with _store(journal) as store:
-        before = store.family_count("demo_trend", _SYMBOLS, 4)
+        before = store.family_count("demo_trend", _SYMBOLS, ACCOUNTING_VERSION)
 
     maintenance.mark_contaminated(reason="suspect", journal_path=journal)
 
     with _store(journal) as store:
-        assert store.family_count("demo_trend", _SYMBOLS, 4) == before == 3
+        assert store.family_count("demo_trend", _SYMBOLS, ACCOUNTING_VERSION) == before == 3
 
 
 def test_a_quarantined_trial_is_not_ranked_and_the_exclusion_is_reported(journal):
@@ -270,7 +271,7 @@ def test_an_archived_era_leaves_no_trials_behind_it(journal):
 
     with _store(journal) as store:
         store.rebuild(journal)
-        assert store.family_count("demo_trend", _SYMBOLS, 4) == 0
+        assert store.family_count("demo_trend", _SYMBOLS, ACCOUNTING_VERSION) == 0
 
 
 def test_the_archived_era_is_still_readable_where_it_was_put(journal):
@@ -323,3 +324,68 @@ def test_an_archive_directory_with_no_manifest_is_reported_not_guessed(journal):
 
     assert entries["hand-made"]["manifest_error"] == "missing"
     assert "reason" not in entries["hand-made"]
+
+
+# --- an accounting bump must not look like a disappearance ------------------------
+def test_a_listing_says_how_much_history_the_accounting_filter_is_hiding(journal, capsys):
+    """The day the accounting version is bumped, every recorded trial stops matching the
+    default listing — and an empty table reads as "nothing was ever run here", which is
+    the most alarming possible way to learn that a bump happened. The rows are still in
+    the journal and still countable; saying so is the difference between a filter and a
+    disappearance."""
+    from types import SimpleNamespace
+
+    from tradeflow.cli import _print_trials_list
+
+    _seed(journal, n=2)
+    args = SimpleNamespace(
+        strategy=None,
+        kind=None,
+        symbols=None,
+        since=None,
+        until=None,
+        min_sharpe=None,
+        gates_passed=None,
+        accounting=ACCOUNTING_VERSION + 1,  # as if the engine had just been bumped
+        all_accounting=False,
+        sort="date",
+        limit=20,
+        offset=0,
+        json=False,
+    )
+
+    with _store(journal) as store:
+        _print_trials_list(store, args)
+
+    out = capsys.readouterr().out
+    assert "2 further row(s)" in out
+    assert "--all-accounting" in out
+
+
+def test_a_listing_that_hides_nothing_says_nothing(journal, capsys):
+    """Both directions: a notice on every listing is noise, and noise gets skipped."""
+    from types import SimpleNamespace
+
+    from tradeflow.cli import _print_trials_list
+
+    _seed(journal, n=2)
+    args = SimpleNamespace(
+        strategy=None,
+        kind=None,
+        symbols=None,
+        since=None,
+        until=None,
+        min_sharpe=None,
+        gates_passed=None,
+        accounting=None,
+        all_accounting=False,
+        sort="date",
+        limit=20,
+        offset=0,
+        json=False,
+    )
+
+    with _store(journal) as store:
+        _print_trials_list(store, args)
+
+    assert "further row(s)" not in capsys.readouterr().out
