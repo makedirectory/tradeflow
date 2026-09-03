@@ -39,6 +39,9 @@ coin flip.
            "stop_loss": {"type": "float", "min": 0.01, "max": 0.05, "step": 0.01, "default": 0.02},
            "take_profit": {"type": "float", "min": 0.02, "max": 0.10, "step": 0.02, "default": 0.04},
        }
+       # Relationships between parameters go here, where a sampler can read them —
+       # not in initialize(), where only a constructed instance can.
+       PARAM_CONSTRAINTS = (("stop_loss", "<", "take_profit"),)
 
        def calculate_required_lookback(self): return self.config["lookback"] + 1
        def initialize(self): ...

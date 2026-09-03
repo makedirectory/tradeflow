@@ -23,6 +23,45 @@ Turns a `PARAM_RANGES` declaration into the things a search needs:
 Only parameters that declare `min`/`max`/`step` are searched; the rest are held at
 their defaults, so every candidate is a complete, valid config.
 
+### Constraints between parameters
+
+Some combinations are not merely bad, they are invalid: a fast moving average slower
+than the slow one, an exit window longer than the entry window. A class declares those
+beside its ranges, as `(left, operator, right)` triples where each side is a parameter
+name or a literal:
+
+```python
+class DemoTrendStrategy(Strategy):
+    PARAM_RANGES = {...}
+    PARAM_CONSTRAINTS = (("fast_ema_period", "<", "slow_ema_period"),)
+```
+
+They are enforced **by construction, not by rejection**. `grid()` never contains an
+invalid point, and `random_samples()` draws parameter by parameter with each one
+restricted to the values still consistent with what it has already decided — so the
+invalid region is unreachable rather than reached and discarded.
+
+That distinction is the whole reason the feature exists. An invalid combination that
+gets *evaluated* is a journaled trial, and a journaled trial permanently raises the
+deflated-Sharpe bar for every future candidate in its family. Wasted trials are not
+just wasted compute; they make the next real result harder to promote.
+
+Two consequences worth knowing:
+
+- `grid_size()` reports the number of points you will actually get, not the size of the
+  unconstrained product — it is what a caller budgets `max_evals` against.
+- A constraint that cannot exclude anything in the declared ranges is detected and
+  skipped, so a declaration that changes nothing leaves a seeded search visiting
+  exactly the configs it visited before.
+
+The surrogate path (`from_unit_vector`) is the one place enforcement cannot be
+structural: a proposal in a continuous box can snap outside the feasible region. Check
+`is_valid()` and drop such a proposal before evaluating it — it still costs no trial.
+
+Constraints are also enforced when a strategy is constructed, reading the same
+declaration, so there is one definition of the rule rather than a sampler's copy and a
+`initialize()` copy that can disagree.
+
 ## `ParameterOptimizer`
 
 Three methods, increasing in sophistication:

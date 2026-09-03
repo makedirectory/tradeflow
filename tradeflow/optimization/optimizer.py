@@ -82,7 +82,7 @@ class ParameterOptimizer:
         #: Charged on every simulated fill. ``None`` searches gross returns, which
         #: reliably favors the highest-turnover config in the space.
         self.cost_model = cost_model
-        self.space = ParameterSpace(strategy_class.PARAM_RANGES)
+        self.space = ParameterSpace.for_class(strategy_class)
         self._rng = np.random.default_rng(seed)
         #: Optional per-candidate memoization: a
         #: search that re-evaluates a config already scored this campaign - a

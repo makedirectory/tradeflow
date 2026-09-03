@@ -113,6 +113,14 @@ The base class coerces and range-checks every supplied value at construction, so
 an out-of-range parameter fails fast. `step` also lets the
 [optimizer](optimization) search the space.
 
+A relationship *between* parameters — a fast period that must stay below the slow one —
+goes in `PARAM_CONSTRAINTS` beside the ranges, not in `initialize()`. The base class
+enforces it at construction either way, but only a declaration can be read by the
+sampler, and the sampler is the half that matters: a combination it draws gets
+evaluated, and an evaluated combination is a journaled trial that raises the deflation
+bar for every future candidate in the family. See
+[constraints between parameters](optimization#constraints-between-parameters).
+
 ## The bundled strategies
 
 One ships, built on the pure [indicators](indicators):
