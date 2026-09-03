@@ -26,7 +26,7 @@ SCANNER = "example_liquidity"
 
 pytestmark = pytest.mark.skipif(
     STRATEGY not in STRATEGIES,
-    reason="example pack not installed — `uv pip install -e examples/my-signals`",
+    reason="example pack not installed — `uv pip install -e example-signals`",
 )
 
 

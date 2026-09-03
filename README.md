@@ -300,7 +300,7 @@ clock's `BUY/SELL/HOLD` and the
 [continuous alpha](https://tradeflow.mk-dir.com/engineering/alphas) are both
 derived from it — one source of truth.
 
-`examples/my-signals` is a complete working pack to copy — `tradeflow init
+`example-signals` is a complete working pack to copy — `tradeflow init
 --example-pack ./my-signals` writes it out. See
 [Your own strategies](https://tradeflow.mk-dir.com/docs/usage/private-strategies)
 and [Extending](https://tradeflow.mk-dir.com/engineering/extending).

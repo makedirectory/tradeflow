@@ -1,15 +1,28 @@
-# my-signals — an example private pack
+# example-signals — a private pack you can copy
 
 This is what your own work looks like from TradeFlow's side: a separate package with its
 own `pyproject.toml`, registering strategies and a scanner through two entry-point
 groups. The engine imports nothing from here and knows nothing about it beyond the base
 interface.
 
+**Every name in it is a placeholder.** The package inside is `my_signals`, because that
+is what a pack of your own would look like; the entry points are `example_breakout` and
+friends, because from the engine's side these are demonstrations. Renaming both is the
+first thing you do, and the next section says how.
+
 ```bash
-tradeflow init --example-pack ./my-signals
+tradeflow init --example-pack ./my-signals   # the destination is yours to name
 cd my-signals && uv pip install -e .
-tradeflow init --check          # lists it under "private packs installed"
+tradeflow init --check                       # lists it under "private packs installed"
 ```
+
+## Make it yours
+
+Nothing here needs to keep its name. Rename the `my_signals/` directory and the matching
+`name` and `packages` entries in `pyproject.toml`, then reinstall. The entry-point names
+on the left-hand side (`example_breakout` and friends) are what you type at `--strategy`;
+rename those too, and the only rule is that they must not collide with a name the engine
+reserves.
 
 ## Layout
 

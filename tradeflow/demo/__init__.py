@@ -1,6 +1,6 @@
 """What `tradeflow demo` runs on, and what a bare install falls back to.
 
-Not examples to copy — that is ``examples/my-signals``, which
+Not examples to copy — that is ``example-signals``, which
 ``tradeflow init --example-pack`` hands you as a repository you own. These exist for
 three narrower jobs:
 

@@ -151,7 +151,7 @@ against half the evidence, with nothing erroring.
 `demo_trend` is the smallest complete strategy — long-only, one indicator, a score that
 is just a normalized EMA gap. Read it for the shape of the interface, not for the idea.
 
-For anything past that shape, read `examples/my-signals` instead — it is a real
+For anything past that shape, read `example-signals` instead — it is a real
 installable pack, and `tradeflow init --example-pack ./my-signals` writes you a copy.
 Its `example_reversion` is long/short, which is what the leg diagnostics and the
 directional cap exist for, and none of that is exercisable by a long-only book.

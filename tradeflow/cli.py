@@ -1656,7 +1656,7 @@ def _scaffold_example_pack(destination) -> None:
     if source is None:
         sys.exit(
             "The example pack is not part of this installation. It ships in the source "
-            "repository under examples/my-signals; clone it, or read the private-strategies "
+            "repository under example-signals; clone it, or read the private-strategies "
             "guide at https://tradeflow.mk-dir.com/docs/usage/private-strategies"
         )
     target = Path(destination).expanduser()
