@@ -14,9 +14,11 @@ import asyncio
 import logging
 import math
 import time
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import List, Optional
 
+from tradeflow.brokers.errors import BrokerError
 from tradeflow.engine.barcheck import BarQualityFilter
 from tradeflow.execution.ledger import CUMULATIVE, PositionLedger
 from tradeflow.execution.live_trader import LiveTrader
@@ -50,6 +52,22 @@ class BlindStartError(RuntimeError):
     A guard, not a repair: nothing here can invent the history, and starting anyway
     produces signals that look exactly like valid ones.
     """
+
+
+@dataclass(frozen=True)
+class WarmUpCoverage:
+    """What the warm-up actually achieved, and whether it was able to ask.
+
+    ``failure`` is the broker's reason when the history request itself did not
+    complete. It is deliberately separate from ``warmed == 0``: a feed that could not
+    be reached and a window that genuinely held no bars are different facts, and
+    collapsing them is what made an unreachable provider look like an empty market.
+    """
+
+    warmed: int
+    sufficient: int
+    asked: int
+    failure: Optional[str] = None
 
 
 class LiveEngine:
@@ -99,7 +117,26 @@ class LiveEngine:
         concurrently with the market-data stream so fills are logged.
         """
         self.strategy.initialize()
-        warmed, _ = self._warm_up(symbols)
+        coverage = self._warm_up(symbols)
+        if coverage.failure is not None and not self._allow_blind_start:
+            # A different refusal from the one below, and it has to say so. The
+            # request did not complete, so whether history exists is unknown - and
+            # "the feed is down" points somewhere entirely different from "your key
+            # is not entitled to this data", which is what the message below guesses.
+            raise BlindStartError(
+                f"Warm-up history could not be fetched: {coverage.failure}\n"
+                f"  The request failed, so this is not the same as a window that held "
+                f"no bars - nothing here knows whether the history exists.\n"
+                f"  Retry once the feed is reachable, or pass --allow-blind-start to "
+                f"trade without history anyway."
+            )
+        if coverage.failure is not None:
+            logger.warning(
+                "Starting blind: warm-up history could not be fetched (%s). Every "
+                "indicator begins with no history.",
+                coverage.failure,
+            )
+        warmed = coverage.warmed
         if not warmed and symbols and not self._allow_blind_start:
             # Every indicator would start from nothing. The stream still connects and
             # bars still arrive, so the run looks healthy while every signal it emits
@@ -281,32 +318,42 @@ class LiveEngine:
         except Exception:  # noqa: BLE001 - bookkeeping never breaks the order path
             logger.warning("Could not record adopted positions in the ledger", exc_info=True)
 
-    def warm_up_coverage(self, symbols: List[str]) -> tuple:
-        """Run the real warm-up and report ``(with history, fully warmed, asked)``.
+    def warm_up_coverage(self, symbols: List[str]) -> WarmUpCoverage:
+        """Run the real warm-up and report what it covered.
 
         Two counts, not one: a symbol can have bars and still have too few for the
         indicators to be valid. Reporting only presence would let a short warm-up read
-        as a pass, and "has history" is not the question a preflight is asked.
+        as a pass, and "has history" is not the question a preflight is asked. And a
+        third fact beside them: whether the request completed at all.
 
         Deliberately the same call the live path makes, not a lighter probe: a
         preflight that fetches differently from the run it precedes confirms nothing
         about that run. Placing no orders, it is safe to call and then exit.
         """
-        warmed, sufficient = self._warm_up(symbols)
-        return warmed, sufficient, len(symbols)
+        return self._warm_up(symbols)
 
-    def _warm_up(self, symbols: List[str]) -> tuple:
+    def _warm_up(self, symbols: List[str]) -> WarmUpCoverage:
         """Seed each symbol's rolling buffer so indicators are valid on bar one.
 
-        Returns ``(symbols with any history, symbols with the full lookback)``. The
-        caller refuses on the first and reports both.
+        Reports how many symbols have any history, how many have the full lookback,
+        and - separately - whether the fetch itself failed. The caller refuses on the
+        first and reports all three.
         """
         timeframe = Timeframe.parse(self.strategy.config["timeframe"])
         periods = self.strategy.config.get("required_lookback_periods", 50)
         start = self._lookback_start(timeframe, periods)
         end = datetime.now(NEW_YORK)
 
-        history = self.data_client.get_bars(symbols, timeframe, start, end)
+        try:
+            history = self.data_client.get_bars(symbols, timeframe, start, end)
+        except BrokerError as exc:
+            # Typed and returned rather than allowed to propagate. Historical fetches
+            # began raising instead of returning {} so that "unreachable" would stop
+            # reading as "empty", and this path had no handler - so a transient data
+            # failure during warm-up ended a live session with a raw traceback,
+            # replacing the refusal written for exactly this situation.
+            logger.error("Warm-up history request failed: %s (%s)", exc, type(exc).__name__)
+            return WarmUpCoverage(warmed=0, sufficient=0, asked=len(symbols), failure=str(exc))
         warmed = sufficient = 0
         for symbol in symbols:
             bars = history.get(symbol)
@@ -336,7 +383,7 @@ class LiveEngine:
             sufficient,
             periods,
         )
-        return warmed, sufficient
+        return WarmUpCoverage(warmed=warmed, sufficient=sufficient, asked=len(symbols))
 
     async def _on_bar(self, event: BarEvent) -> None:
         """Per-bar callback: validate, update the strategy, act on any signal.

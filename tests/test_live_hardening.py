@@ -385,6 +385,74 @@ def test_a_run_that_warmed_up_on_nothing_refuses_to_start():
     assert "--allow-blind-start" in str(exit_info.value)
 
 
+class _UnreachableWarmUp(ScriptedFeed):
+    """A feed whose historical half *fails* — a transient outage, not an empty window."""
+
+    def get_bars(self, symbols, timeframe, start, end):
+        from tradeflow.brokers.errors import BrokerUnavailableError
+
+        raise BrokerUnavailableError("historical data endpoint returned 503")
+
+
+def _unreachable_engine(**kwargs):
+    strategy = STRATEGIES["demo_trend"].create_with_defaults()
+    feed = _UnreachableWarmUp(["AAA"], events=[bar_event(minute=1)], n=10, freq="1D")
+    engine = LiveEngine(
+        strategy,
+        MarketDataClient(feed),
+        LiveTrader(RecordingBroker(), strategy, respect_market_hours=False),
+        **kwargs,
+    )
+    return engine, feed
+
+
+def test_a_warm_up_the_feed_could_not_answer_refuses_with_the_reason(caplog):
+    """The regression: historical fetches were changed to raise a typed broker error
+    instead of returning {}, so that "unreachable" would stop reading as "empty". The
+    warm-up had no handler, so a transient data failure ended the session with a raw
+    BrokerError traceback — replacing the refusal written for exactly this situation,
+    which sits a few lines away in the same function.
+
+    It refuses, because a book with no history is not one anybody asked to trade. What
+    it must not do is exit through a traceback, and it must not borrow the *other*
+    refusal's message: that one guesses at an entitlement problem and recommends
+    `--feed iex`, which is the wrong place to send someone whose feed is simply down.
+    """
+    engine, feed = _unreachable_engine()
+
+    with pytest.raises(BlindStartError) as exit_info:
+        asyncio.run(engine.start(["AAA"]))
+
+    message = str(exit_info.value)
+    assert feed.delivered == 0  # refused before the stream, not after
+    assert "503" in message  # the broker's own reason, not a guess
+    assert "--allow-blind-start" in message
+    assert "--feed iex" not in message
+
+
+def test_an_unreachable_feed_is_not_reported_as_an_empty_window():
+    """Absent is not zero, and unreachable is not absent. A preflight that folded the
+    failure into "0 of 1 symbols have history" would send a reader looking for a
+    delisted symbol when the feed was down."""
+    engine, _ = _unreachable_engine()
+
+    coverage = engine.warm_up_coverage(["AAA"])
+
+    assert coverage.warmed == 0
+    assert coverage.failure is not None and "503" in coverage.failure
+
+
+def test_an_unreachable_feed_still_starts_when_a_blind_start_is_asked_for(caplog):
+    """Both directions: the opt-in still means what it says, and says why it is blind."""
+    engine, feed = _unreachable_engine(allow_blind_start=True)
+
+    with caplog.at_level("WARNING"):
+        asyncio.run(engine.start(["AAA"]))
+
+    assert feed.delivered == 1
+    assert any("could not be fetched" in record.getMessage() for record in caplog.records)
+
+
 def test_a_blind_start_is_allowed_when_it_is_asked_for_explicitly():
     """Both directions. Previously the only behaviour, now opt-in."""
     engine, feed = _blind_engine(allow_blind_start=True)
@@ -809,7 +877,10 @@ def test_the_preflight_runs_the_same_warm_up_the_run_would():
         LiveTrader(RecordingBroker(), strategy, respect_market_hours=False),
     )
 
-    assert engine.warm_up_coverage(["AAA", "BBB"]) == (2, 2, 2)
+    coverage = engine.warm_up_coverage(["AAA", "BBB"])
+
+    assert (coverage.warmed, coverage.sufficient, coverage.asked) == (2, 2, 2)
+    assert coverage.failure is None
 
 
 def test_a_short_warm_up_is_counted_apart_from_a_full_one():
@@ -826,10 +897,10 @@ def test_a_short_warm_up_is_counted_apart_from_a_full_one():
         LiveTrader(RecordingBroker(), strategy, respect_market_hours=False),
     )
 
-    warmed, sufficient, asked = engine.warm_up_coverage(["AAA"])
+    coverage = engine.warm_up_coverage(["AAA"])
 
-    assert (warmed, asked) == (1, 1)  # it has history...
-    assert sufficient == 0  # ...and not enough of it
+    assert (coverage.warmed, coverage.asked) == (1, 1)  # it has history...
+    assert coverage.sufficient == 0  # ...and not enough of it
 
 
 def test_the_preflight_reports_a_blind_warm_up_without_raising():
@@ -837,7 +908,11 @@ def test_the_preflight_reports_a_blind_warm_up_without_raising():
     lose the rest of the contract it exists to print."""
     engine, _ = _blind_engine()
 
-    assert engine.warm_up_coverage(["AAA"]) == (0, 0, 1)
+    coverage = engine.warm_up_coverage(["AAA"])
+
+    assert (coverage.warmed, coverage.sufficient, coverage.asked) == (0, 0, 1)
+    # An empty window, not a failed request — the two must not read alike.
+    assert coverage.failure is None
 
 
 def test_a_stream_that_will_not_close_does_not_hold_the_process_open(monkeypatch):
