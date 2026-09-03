@@ -30,11 +30,15 @@ NVDA      SCANNER_BUY
 TSLA      SCANNER_SELL
 ```
 
-## The volume scanner
+## The demo scanner
 
-The bundled `volume` scanner flags a symbol when its latest bar shows **unusually
+The shipped `demo_volume` scanner flags a symbol when its latest bar shows **unusually
 high volume** (relative to its moving average) **and** a meaningful price move. It
 is pure pandas/numpy — see [Scanners](../engineering/scanners) for the internals.
+
+It is a demonstration, and it arrives the way your own scanner does: declared as an
+entry point by the engine's own package rather than hard-coded into a registry. On a
+bare install it is the only scanner there is.
 
 ## Is the universe stable?
 

@@ -10,7 +10,7 @@
 [project]
 name = "my-signals"
 version = "0.1.0"
-description = "An example private TradeFlow pack: one strategy, one scanner, one config."
+description = "An example private TradeFlow pack: two strategies, one scanner, two configs."
 requires-python = ">=3.11"
 # Deliberately no dependency on tradeflow-engine. A pack is installed *beside* the
 # engine, not on top of it, and pinning the engine from here would let a pack decide

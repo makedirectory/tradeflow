@@ -22,7 +22,7 @@ uv run python main.py backtest \
 | Option | Default | Meaning |
 |--------|---------|---------|
 | `--strategy` | `demo_trend` | Strategy to run |
-| `--scanner` | `volume` | Universe scanner (`none` to skip) |
+| `--scanner` | `demo_volume` | Universe scanner (`none` to skip) |
 | `--symbols` | a 10-name list | Comma-separated candidates |
 | `--start` / `--end` | last 30 days | Backtest window (`YYYY-MM-DD`) |
 | `--capital` | `100000` | Starting capital |
@@ -58,7 +58,7 @@ Every backtest says where its universe came from:
 ```
 === Universe provenance ===
   candidates      85 names from --symbols
-  scanner         volume as of 2026-08-22T00:00:00-04:00
+  scanner         demo_volume as of 2026-08-22T00:00:00-04:00
   resolved        61 of 85 names
   universe        resolved this run
   survivorship    a hand-supplied list is today's names applied to history; membership

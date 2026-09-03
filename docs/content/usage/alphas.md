@@ -39,7 +39,7 @@ residual return for the year. The ranking is what a mean-variance
 |------|---------|---------|
 | `--strategy` | `demo_trend` | Strategy whose score is the view (`--source strategy`/`signal`). |
 | `--source` | `strategy` | `strategy` = the strategy's continuous conviction; `signal` = its `BUY`/`SELL`/`HOLD` as +1/−1/0; `scanner` = the scanner's continuous strength. |
-| `--scanner` | `volume` | Scanner used as the metric when `--source scanner`. |
+| `--scanner` | `demo_volume` | Scanner used as the metric when `--source scanner`. |
 | `--symbols` | demo universe | Comma-separated candidates. |
 | `--as-of` | today | Rebalance date; only data up to this date is used. |
 | `--ic` | `0.03` | Assumed information coefficient (sets overall aggressiveness). |

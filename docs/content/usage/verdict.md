@@ -23,7 +23,7 @@ python main.py verdict \
   timeframe 1Day | benchmark SPY | cost 1.0bps commission, impact η=0.3, borrow 50.0bps
   provenance: git 4f2c1ab | campaign trials 14 | bar requests: 3 of 7 reached the data client, the rest shared within this run
 
-  Scan (volume): 5 of 8 candidates flagged
+  Scan (demo_volume): 5 of 8 candidates flagged
 
   Alphas (case1 scaling, assumed IC +0.0300): 5 names
     NVDA     alpha +0.0412
@@ -94,7 +94,7 @@ Two results are deliberately not a pass:
 |---|---|---|
 | `--strategy` | `demo_trend` | The signal to refine into alphas |
 | `--combine a,b,c` | — | Combine several strategies' signals into one alpha (measures + shrinks their ICs); with one or none, the single-signal path runs |
-| `--scanner` | `volume` | Universe scanner; `none` analyzes the candidates as given |
+| `--scanner` | `demo_volume` | Universe scanner; `none` analyzes the candidates as given |
 | `--symbols` | default universe | Candidate universe |
 | `--start` / `--end` | last 365 days | The one window every step uses |
 | `--source` | `strategy` | Alpha score origin (`strategy` / `signal` / `scanner`) |

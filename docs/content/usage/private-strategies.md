@@ -5,9 +5,9 @@ title: Your own strategies
 
 # Your own strategies
 
-**The strategies and scanners that ship with TradeFlow are examples.** Three strategies
+**The strategies and scanners that ship with TradeFlow are examples.** One strategy
 and one scanner, there to demonstrate what the interface expects and to give the demo
-something to run. They are not the product, and none of them is an edge.
+something to run. They are not the product, and neither is an edge.
 
 The product is everything around them — the walk-forward validation, the
 multiple-testing correction, the cost model, the trade clock, the execution telemetry.

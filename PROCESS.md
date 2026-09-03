@@ -239,7 +239,7 @@ module**, and **no vendor SDK lives above the broker layer**. Product policy
 | Market data | `marketdata/` (`client`, `synthetic`, `timeframe`) | Bar fetching and the keyless synthetic feed behind `make demo`. |
 | Indicators | `indicators/` | Pure pandas/numpy signal math. |
 | Strategies | `strategies/` (`base`, `signals`) + `demo/` | `bar → score` policy: each strategy defines one continuous score; the base class derives the discrete signal. One strategy per file. |
-| Scanners | `scanners/` (`base`, `volume`, `symbol`) | Universe selection. One scanner per file. |
+| Scanners | `scanners/` (`base`, `symbol`) + `demo/` | Universe selection. One scanner per file. |
 | Data | `data/` (`scan`, `panel`, `features`, `store`) | The cross-sectional substrate: the point-in-time `scan()` seam (the leakage guard), the `FeaturePanel` every research module reads/writes, and an opt-in Parquet/Arrow out-of-core `BarSource` (`store` extra) behind the same seam. |
 | Alphas | `alphas/` (`refine`, `base`, `scorers`, `combine`, `horizon`) | Continuous-alpha refinement (`α = σ·IC·z`); multi-signal combination (IC + correlation + shrinkage); alpha-decay / half-life and the lagged blend. Research-clock. |
 | Risk | `risk/` (`base`, `sample`, `exposures`, `factor`) | The covariance matrix Σ — Ledoit–Wolf shrinkage *or* a structural factor model (`XFXᵀ+Δ`, attributable into factor/specific) — plus tracking error / MCR. Research-clock; never in the order path. |

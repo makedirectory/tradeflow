@@ -28,22 +28,25 @@ Scan signals (`SCANNER_BUY` / `SCANNER_SELL` / `SCANNER_HOLD`) are deliberately
 
 ## `SymbolScanner` (`tradeflow/scanners/symbol_scanner.py`)
 
-The driver. It holds a registry of scanner strategies, fetches a lookback window
-sized to the scanner's `required_data_points()`, runs the scanner per symbol, and
-returns the flagged `(symbol, signal)` pairs.
+The driver. It fetches a lookback window sized to the scanner's
+`required_data_points()`, runs the scanner per symbol, and returns the flagged
+`(symbol, signal)` pairs.
 
-```python
-SCANNERS = {"volume": VolumeScannerStrategy}
-```
+It resolves names through [the discovery registry](extending), not through a literal
+of its own — `BUILTIN_SCANNERS` in that module is empty, and is now only the set of
+names this package reserves. `SymbolScanner.SCANNERS` is kept in step with
+`services.registry.SCANNERS`, so a scanner from an installed pack is resolvable by
+name exactly as the shipped one is.
 
 Only **TA-Lib-free** scanners are registered, consistent with the no-compiled-
 dependencies goal.
 
-## The volume scanner
+## The demo scanner
 
-`VolumeScannerStrategy` flags a symbol when its latest bar shows volume well above
-its moving-average baseline **and** a meaningful price move — a simple
-liquidity/attention filter. All pure pandas/numpy.
+`DemoVolumeScanner` (`tradeflow/demo/scanners.py`, registered as `demo_volume`) flags
+a symbol when its latest bar shows volume well above its moving-average baseline
+**and** a meaningful price move — a simple liquidity/attention filter. All pure
+pandas/numpy. It reaches the registry by entry point like any pack's would.
 
 ## Reusing metric primitives
 
