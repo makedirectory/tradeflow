@@ -101,10 +101,13 @@ def test_backtest_charges_borrow_on_shorts():
 
     cost_no_borrow, shorts = run(0.0)
     cost_borrow, _ = run(2000.0)  # an extreme 20%/yr to make the effect unmistakable
-    if shorts > 0:
-        assert cost_borrow > cost_no_borrow
-    else:  # no shorts taken on this fixture → borrow changes nothing
-        assert cost_borrow == pytest.approx(cost_no_borrow)
+    # Asserted, not branched on. The scripted strategy exists so this test does not
+    # depend on a demonstration staying two-sided; keeping the "no shorts → borrow
+    # changes nothing" branch put the same escape hatch back, one layer down. Should
+    # the fixture, the price range or the pivot band ever stop producing shorts, this
+    # has to fail rather than go green measuring nothing.
+    assert shorts > 0, "the fixture stopped taking shorts; this test measures nothing"
+    assert cost_borrow > cost_no_borrow
 
 
 def test_total_cost_reconciles_gross_and_net():
@@ -121,3 +124,20 @@ def test_engine_uses_trailing_adv_no_lookahead():
     bumped.iloc[60:] *= 100
     adv_bumped = bumped.rolling(BacktestEngine.ADV_WINDOW).mean()
     assert adv.iloc[:60].equals(adv_bumped.iloc[:60])  # past ADV unchanged by future volume
+
+
+def test_the_scripted_fixtures_do_not_write_into_the_callers_config():
+    """A fixture that edits the dict it was handed makes the *next* use of that dict
+    lie about what it asked for.
+
+    Both scripted strategies inject `position_limits` the caller never wrote, so a
+    test building one config and constructing two strategies from it got the
+    injection in the second - and an assertion about that dict afterwards was reading
+    this constructor's output rather than its own input.
+    """
+    from tests.fakes import LongShortScriptedStrategy, ScriptedStrategy
+
+    for cls in (ScriptedStrategy, LongShortScriptedStrategy):
+        config = {"lookback": 3}
+        cls(config)
+        assert config == {"lookback": 3}, f"{cls.__name__} wrote into the caller's dict"

@@ -373,6 +373,11 @@ class ScriptedStrategy(Strategy):
     }
 
     def __init__(self, config: Dict[str, Any]):
+        # Copied, because everything below writes into it. Mutating the caller's dict
+        # meant a test that built one config and constructed two strategies from it
+        # silently got the injected limits in the second, and an assertion about that
+        # dict afterwards was reading this constructor's output.
+        config = {**config}
         config["timeframe"] = self.TIMEFRAME
         config.setdefault(
             "position_limits",
@@ -432,6 +437,7 @@ class LongShortScriptedStrategy(ScriptedStrategy):
     }
 
     def __init__(self, config: Dict[str, Any]):
+        config = {**config}  # see ScriptedStrategy: never write into the caller's dict
         # Room for both sides at once. ScriptedStrategy caps the book at one position,
         # which is right for a test about a single trade's lifecycle and wrong here: a
         # one-position book inside a short out-of-sample fold can only ever hold one
