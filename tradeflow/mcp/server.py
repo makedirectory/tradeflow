@@ -31,6 +31,8 @@ EXPOSED_TOOLS = (
     "get_param_ranges",
     "run_scan",
     "run_backtest",
+    "run_screen",
+    "confirm_screen_point",
     "run_optimization",
     "run_walk_forward",
     "validate_draft_strategy_code",
@@ -58,7 +60,26 @@ EXPOSED_TOOLS = (
 #: burn a campaign's multiple-testing budget at machine speed, so every one of these
 #: says so in its description - asserted by a test, not left to good intentions.
 JOURNALING_TOOLS = frozenset(
-    {"run_backtest", "run_optimization", "run_walk_forward", "run_draft_walk_forward", "run_verdict"}
+    {
+        "run_backtest",
+        "confirm_screen_point",
+        "run_optimization",
+        "run_walk_forward",
+        "run_draft_walk_forward",
+        "run_verdict",
+    }
+)
+
+#: The inverse, and it has to be said just as explicitly. A tool that spends no
+#: statistical budget is useless to an agent that assumes every call costs a trial:
+#: it will ration the cheap question exactly as hard as the expensive one, which is
+#: the behaviour a screen exists to remove.
+NON_JOURNALING_NOTE = (
+    "Journals NOTHING. This is reconnaissance, not evidence: no trial is recorded, "
+    "the campaign's multiple-testing total is unchanged, and nothing here is "
+    "promotable or citable as validation. Ask freely — that is the point. To turn one "
+    "screened point into recorded evidence, call `confirm_screen_point` with exactly "
+    "that point's parameters."
 )
 
 #: Evidence-gated features that ship **off**. Where a tool exposes one, its
@@ -280,6 +301,141 @@ def build_server(data_client=None):
             inputs,
             analysis.run_scan(dc, scanner, symbols, config, as_of=_parse_date(as_of) if as_of else None),
         )
+
+    @tool("sharpe_ratio", "sortino_ratio", "profit_factor", notes=[NON_JOURNALING_NOTE])
+    def run_screen(
+        strategy: str,
+        symbols: List[str],
+        start: str,
+        end: str,
+        method: str = "grid",
+        objective: str = "sharpe_ratio",
+        max_evals: int = 50,
+        seed: int = 42,
+        capital: float = 100_000.0,
+        gross: bool = False,
+        commission_bps: float = 1.0,
+        impact_eta: float = 0.3,
+        borrow_bps: float = 50.0,
+        position_limits: Optional[Dict[str, Any]] = None,
+        param_ranges: Optional[Dict[str, Dict[str, Any]]] = None,
+        workers: int = 1,
+    ) -> Dict[str, Any]:
+        """Sweep a parameter space cheaply to ask whether a family holds anything at all.
+
+        The reconnaissance step *before* optimization. One process, one data fetch, N
+        evaluations, and nothing recorded — so "does any parameterisation of this idea
+        survive?" is a question you can afford to ask.
+
+        Read the `distribution` block, not `best_point`. The best of N points is the
+        maximum of N draws, which is a positive number even when nothing searched has
+        any edge, and it grows with N. `noise_baseline.expected_best_under_null` is
+        what the best of that many draws is worth if none of them had any edge: a
+        `best_point` below it is indistinguishable from noise no matter how good the
+        number looks. That baseline assumes the points are independent, which
+        neighbouring grid points are not, so it sits high; it is a reference for
+        reading the table, not a test. It is omitted, with a reason, for any objective
+        whose null is not zero.
+
+        `gradients` is the other half. A positive rate that moves coherently across a
+        parameter is different evidence from the same count of positive points
+        scattered at random — and it can point off the edge of the range you searched,
+        which a best-point report structurally cannot show.
+
+        `param_ranges` narrows the search per parameter, e.g.
+        {"lookback": {"min": 10, "max": 30, "step": 5}}; each supplies any of
+        min/max/step and inherits the rest. `position_limits` is the book each point is
+        evaluated against (e.g. {"max_positions": 8}); without it every point runs at
+        whatever the strategy class declares, which is not what would be deployed.
+        Parameter combinations a strategy declares invalid are never drawn.
+        """
+        inputs = {
+            "strategy": strategy,
+            "symbols": symbols,
+            "start": start,
+            "end": end,
+            "method": method,
+            "objective": objective,
+            "max_evals": max_evals,
+            "seed": seed,
+            "gross": gross,
+            "position_limits": position_limits,
+            "param_ranges": param_ranges,
+        }
+        result = analysis.run_screen(
+            dc,
+            strategy,
+            symbols,
+            _parse_date(start),
+            _parse_date(end),
+            method=method,
+            objective=objective,
+            max_evals=max_evals,
+            seed=seed,
+            capital=capital,
+            gross=gross,
+            commission_bps=commission_bps,
+            impact_eta=impact_eta,
+            borrow_bps=borrow_bps,
+            position_limits=position_limits,
+            param_ranges=param_ranges,
+            workers=workers,
+        )
+        return _logged("run_screen", inputs, result)
+
+    @tool("sharpe_ratio", "deflated_sharpe_ratio", notes=[_JOURNALING_NOTE])
+    def confirm_screen_point(
+        strategy: str,
+        symbols: List[str],
+        start: str,
+        end: str,
+        params: Dict[str, Any],
+        capital: float = 100_000.0,
+        gross: bool = False,
+        commission_bps: float = 1.0,
+        impact_eta: float = 0.3,
+        borrow_bps: float = 50.0,
+        position_limits: Optional[Dict[str, Any]] = None,
+        force: bool = False,
+    ) -> Dict[str, Any]:
+        """Re-run EXACTLY ONE screened point as a proper, journaled trial.
+
+        `params` is one parameter set — one point. This is the only way a screen's
+        finding becomes evidence, and it is deliberately singular: confirming a set
+        would make the screen itself journal, which is the statistical-budget problem
+        the screen exists to avoid. It would also record the best of N, which is the
+        one selection a sweep cannot support.
+
+        Identical to running `run_backtest` with those parameters — same dedup
+        identity, same memoization, same journal record — so a confirmed point is
+        indistinguishable from a backtest anyone else ran, and counts once.
+        """
+        inputs = {
+            "strategy": strategy,
+            "symbols": symbols,
+            "start": start,
+            "end": end,
+            "params": params,
+            "gross": gross,
+            "position_limits": position_limits,
+            "force": force,
+        }
+        result = analysis.confirm_screen_point(
+            dc,
+            strategy,
+            symbols,
+            _parse_date(start),
+            _parse_date(end),
+            params,
+            capital=capital,
+            gross=gross,
+            commission_bps=commission_bps,
+            impact_eta=impact_eta,
+            borrow_bps=borrow_bps,
+            position_limits=position_limits,
+            force=force,
+        )
+        return _logged("confirm_screen_point", inputs, result)
 
     @tool(
         "sharpe_ratio",

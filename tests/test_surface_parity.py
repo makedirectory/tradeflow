@@ -178,6 +178,98 @@ def test_every_mcp_backtest_argument_is_one_the_service_accepts():
     assert names - service - {"strategy", "symbols", "start", "end"} == set()
 
 
+#: Knobs whose *spelling* differs by transport but whose meaning is identical. argparse
+#: cannot take a mapping, so the CLI offers the two narrowings a sweep actually needs as
+#: flat flags; the tool takes the structures they parse into. A rename belongs here only
+#: when both surfaces reach the same service argument — it is not a place to excuse a
+#: knob one surface simply lacks.
+_SCREEN_RENAMED = {"range": "param_ranges", "max_positions": "position_limits"}
+
+
+@pytest.mark.parametrize("flag", ["range", "max_positions", "objective", "method", "max_evals", "seed"])
+def test_a_screen_knob_the_cli_has_is_reachable_over_mcp(flag):
+    """A screen configured differently on each surface is two screens. The direction
+    that has bitten this project is a CLI flag with no MCP equivalent: an agent cannot
+    notice the omission, it just screens the full range at the class's own book and
+    reports a distribution for a search nobody asked for."""
+    import inspect
+
+    from tradeflow.mcp import server as mcp_server
+
+    source = inspect.getsource(mcp_server)
+    start = source.index("def run_screen(")
+    signature = source[start : source.index(") -> Dict[str, Any]:", start)]
+
+    assert f"{_SCREEN_RENAMED.get(flag, flag)}:" in signature
+
+
+def test_every_screen_flag_the_cli_takes_has_an_mcp_counterpart():
+    """Enumerated from the parser rather than listed by hand, so a flag added to one
+    surface and not the other fails here instead of being written down."""
+    import inspect
+
+    from tradeflow.cli import build_parser
+    from tradeflow.mcp import server as mcp_server
+
+    screen = next(
+        parser
+        for action in build_parser()._subparsers._group_actions
+        for name, parser in action.choices.items()
+        if name == "screen"
+    )
+    cli_dests = {a.dest for a in screen._actions} - {
+        "help",
+        "func",
+        # Transport-shaped, not run-shaped: how the CLI got its bars, where it prints,
+        # and which recorded point it re-runs are not parameters of the screen itself.
+        "json",
+        "cache",
+        "offline",
+        "cache_dir",
+        "config",
+        "re_resolve_universe",
+        "scanner",
+        "scan_as_of",
+        "confirm",
+        "force",
+        # The service resolves a universe from symbols; the scanner runs before it.
+        "symbols",
+    }
+    source = inspect.getsource(mcp_server)
+    begin = source.index("def run_screen(")
+    signature = source[begin : source.index(") -> Dict[str, Any]:", begin)]
+    mcp_names = {line.split(":")[0].strip() for line in signature.splitlines()[1:] if ":" in line}
+
+    missing = {_SCREEN_RENAMED.get(dest, dest) for dest in cli_dests} - mcp_names
+    assert missing == set(), f"MCP run_screen is missing {sorted(missing)}"
+
+
+def test_a_renamed_screen_knob_actually_reaches_the_argument_it_is_renamed_to():
+    """The rename table is the loophole in the test above: an entry could excuse a flag
+    that reaches nothing. So follow the two that are renamed all the way to the service
+    argument and check they arrive."""
+    from tradeflow.cli import _screen_limits
+
+    args = parse_cli(["screen", "--max-positions", "8"])
+    args.config_position_limits = None
+
+    assert _screen_limits(args) == {"max_positions": 8}
+    assert dict(parse_cli(["screen", "--range", "fast_ema_period=5:9:1"]).range) == {
+        "fast_ema_period": {"min": 5.0, "max": 9.0, "step": 1.0}
+    }
+
+
+def test_a_configs_book_and_an_explicit_one_do_not_silently_disagree():
+    """Both sources exist, so the precedence has to be stated: the flag you typed wins
+    over the file, and the file's other limits survive."""
+    from tradeflow.cli import _screen_limits
+
+    args = parse_cli(["screen", "--max-positions", "8"])
+    args.config_position_limits = {"max_positions": 1, "max_gross_exposure": 0.9}
+
+    assert _screen_limits(args) == {"max_positions": 8, "max_gross_exposure": 0.9}
+
+
 def test_mcp_exposes_the_fill_assumption_knob():
     """It is a research diagnostic and MCP is the research surface; a strategy whose
     gain concentrates in target exits is exactly what an agent should be able to
@@ -313,7 +405,7 @@ def test_a_walk_forward_without_limits_keys_exactly_as_before_they_existed():
 
 
 # --- MCP is a transport over the same service -------------------------------------
-@pytest.mark.parametrize("tool", ["run_backtest", "run_walk_forward"])
+@pytest.mark.parametrize("tool", ["run_backtest", "run_screen", "run_walk_forward"])
 def test_every_mcp_argument_is_one_the_service_accepts(tool):
     """MCP is a transport: parse, call one service function, render. An argument it
     accepts that the service does not is a call that fails at runtime, and an agent

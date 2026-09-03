@@ -27,7 +27,7 @@ from tradeflow.costs.base import CostModel
 from tradeflow.engine.backtest import BacktestEngine
 from tradeflow.marketdata.client import MarketDataClient
 from tradeflow.optimization.param_space import ParameterSpace
-from tradeflow.strategies.base import Strategy
+from tradeflow.strategies.base import Strategy, build_with_limits
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +75,8 @@ class ParameterOptimizer:
         force: bool = False,
         workers: Optional[int] = None,
         data_spec: Optional[Any] = None,
+        space: Optional[ParameterSpace] = None,
+        position_limits: Optional[Dict[str, Any]] = None,
     ):
         self.strategy_class = strategy_class
         self.data_client = data_client
@@ -82,7 +84,14 @@ class ParameterOptimizer:
         #: Charged on every simulated fill. ``None`` searches gross returns, which
         #: reliably favors the highest-turnover config in the space.
         self.cost_model = cost_model
-        self.space = ParameterSpace.for_class(strategy_class)
+        #: Overridable so a caller can search a *narrowed* space - the same strategy,
+        #: fewer values per axis - without a second sampler. Defaults to everything the
+        #: class declares, constraints included.
+        self.space = space if space is not None else ParameterSpace.for_class(strategy_class)
+        #: The book each candidate is evaluated against. `position_limits` is not a
+        #: tunable param, so building a candidate from params alone drops it and
+        #: evaluates a different strategy from the one the config describes.
+        self.position_limits = position_limits
         self._rng = np.random.default_rng(seed)
         #: Optional per-candidate memoization: a
         #: search that re-evaluates a config already scored this campaign - a
@@ -309,7 +318,7 @@ class ParameterOptimizer:
         cached = self._find_cached(params, symbols, start, end, objective)
         if cached is not None:
             return cached
-        strategy = self.strategy_class(dict(params))
+        strategy = build_with_limits(self.strategy_class, params, self.position_limits)
         result = BacktestEngine(strategy, self.data_client, cost_model=self.cost_model).run(
             symbols, start, end, self.initial_capital
         )

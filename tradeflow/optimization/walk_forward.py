@@ -41,7 +41,7 @@ from tradeflow.marketdata.base import BarHandler, MarketDataProvider
 from tradeflow.marketdata.client import MarketDataClient
 from tradeflow.marketdata.timeframe import Timeframe
 from tradeflow.optimization.optimizer import ParameterOptimizer
-from tradeflow.strategies.base import Strategy
+from tradeflow.strategies.base import Strategy, build_with_limits
 
 logger = logging.getLogger(__name__)
 
@@ -313,8 +313,13 @@ def format_gate_value(gate_name: str, value: Any) -> str:
 # --------------------------------------------------------------------------- #
 # Prefetch+slice data provider
 # --------------------------------------------------------------------------- #
-class _PrefetchedProvider(MarketDataProvider):
-    """Serves slices of an in-memory ``{symbol: DataFrame}`` prefetched once."""
+class PrefetchedProvider(MarketDataProvider):
+    """Serves slices of an in-memory ``{symbol: DataFrame}`` prefetched once.
+
+    Public because it is the mechanism behind "one process, one data fetch, N
+    evaluations" — every sweep that evaluates many configs over one window wants it,
+    not just this module.
+    """
 
     def __init__(self, frames: Dict[str, pd.DataFrame]):
         self._frames = frames
@@ -515,14 +520,7 @@ class WalkForwardValidator:
         the CLI: it does not go through PARAM_RANGES validation, and a strategy built
         from defaults would otherwise keep the defaults the config exists to override.
         """
-        cls = strategy_class or self.strategy_class
-        strategy = cls(dict(params))
-        if self.position_limits:
-            strategy.config["position_limits"] = {
-                **strategy.position_limits(),
-                **self.position_limits,
-            }
-        return strategy
+        return build_with_limits(strategy_class or self.strategy_class, params, self.position_limits)
 
     def run(
         self,
@@ -561,7 +559,7 @@ class WalkForwardValidator:
         # Prefetch the whole window once (plus warmup) and slice per fold.
         fetch_start = start - timedelta(days=warmup_days)
         frames = self.data_client.get_bars(self._with_benchmark(symbols), self.timeframe, fetch_start, end)
-        sliced = MarketDataClient(_PrefetchedProvider(frames))
+        sliced = MarketDataClient(PrefetchedProvider(frames))
 
         all_trial_sharpes: List[float] = []
         fold_results: List[FoldResult] = []
@@ -688,7 +686,7 @@ class WalkForwardValidator:
         frames = self.data_client.get_bars(
             self._with_benchmark(symbols), self.timeframe, start - timedelta(days=warmup_days), end
         )
-        sliced = MarketDataClient(_PrefetchedProvider(frames))
+        sliced = MarketDataClient(PrefetchedProvider(frames))
 
         fold_results: List[FoldResult] = []
         oos_trade_frames: List[pd.DataFrame] = []
@@ -754,7 +752,7 @@ class WalkForwardValidator:
             window_start - timedelta(days=warmup_days),
             window_end,
         )
-        sliced = MarketDataClient(_PrefetchedProvider(frames))
+        sliced = MarketDataClient(PrefetchedProvider(frames))
         metrics, _, _ = self._oos_backtest(
             self._make(params, cls),
             sliced,
@@ -995,7 +993,7 @@ class WalkForwardValidator:
                 if col in df:
                     df[col] = df[col].shift(-5)
             df.dropna(inplace=True)
-        shifted_client = MarketDataClient(_PrefetchedProvider(shifted))
+        shifted_client = MarketDataClient(PrefetchedProvider(shifted))
         strategy2 = self._make(best_params)
         _, shifted_trades, _ = self._oos_backtest(
             strategy2, shifted_client, symbols, fold.oos_start, fold.oos_end, warmup_days, n_trials=1

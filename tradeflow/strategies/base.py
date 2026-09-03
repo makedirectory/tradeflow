@@ -93,6 +93,28 @@ DEFAULT_POSITION_LIMITS: Dict[str, Any] = {
 }
 
 
+def build_with_limits(
+    strategy_class: "type[Strategy]",
+    params: Dict[str, Any],
+    position_limits: Optional[Dict[str, Any]] = None,
+) -> "Strategy":
+    """Construct a candidate and give it the book the config asked for.
+
+    ``position_limits`` is not a tunable parameter, so anything reconstructing a
+    strategy from params alone drops it — and a config asking for eight positions then
+    gets evaluated at one, which is a different strategy wearing the same name. Applied
+    after construction because it does not go through ``PARAM_RANGES`` validation, and
+    merged over what the class declares so an unspecified limit keeps its default.
+
+    One definition, because every sweep over a parameter space needs it and each one
+    that wrote its own is a place the book can silently go missing.
+    """
+    strategy = strategy_class(dict(params))
+    if position_limits:
+        strategy.config["position_limits"] = {**strategy.position_limits(), **position_limits}
+    return strategy
+
+
 class Strategy(ABC):
     """Abstract base for all trading strategies."""
 
