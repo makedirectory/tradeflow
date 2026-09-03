@@ -14,11 +14,11 @@ import pytest
 from tests.fakes import FailingBroker, FakeBroker
 from tradeflow.brokers.base import Position
 from tradeflow.brokers.errors import BrokerUnavailableError
+from tradeflow.demo.strategies import DemoTrendStrategy
 from tradeflow.execution.flatten import flatten
 from tradeflow.execution.halt import ALL, HaltState
 from tradeflow.execution.live_trader import LiveTrader
 from tradeflow.strategies import signals
-from tradeflow.strategies.volume_spike import VolumeSpikeStrategy
 
 
 @pytest.fixture
@@ -59,13 +59,15 @@ def test_a_halt_records_who_and_why(halts):
 
 def test_a_global_halt_covers_every_scope(halts):
     halts.set("everything off", actor="cli", scope=ALL)
-    assert halts.is_halted("VolumeSpikeStrategy") is True
+    assert halts.is_halted("DemoTrendStrategy") is True
 
 
 def test_a_scoped_halt_leaves_other_strategies_alone(halts):
-    halts.set("just this one", actor="cli", scope="VolumeSpikeStrategy")
-    assert halts.is_halted("VolumeSpikeStrategy") is True
-    assert halts.is_halted("MeanReversionStrategy") is False
+    halts.set("just this one", actor="cli", scope="DemoTrendStrategy")
+    assert halts.is_halted("DemoTrendStrategy") is True
+    # Any other scope. A literal rather than a second shipped class: the engine now
+    # ships exactly one strategy, and the scoping rule is about the name, not the class.
+    assert halts.is_halted("SomeOtherStrategy") is False
 
 
 def test_lifting_a_halt_reports_whether_one_was_in_force(halts):
@@ -95,7 +97,7 @@ def test_a_malformed_record_is_skipped_without_losing_the_others(tmp_path):
 def _trader(broker, halts):
     return LiveTrader(
         broker,
-        VolumeSpikeStrategy.create_with_defaults(),
+        DemoTrendStrategy.create_with_defaults(),
         respect_market_hours=False,
         halt_state=halts,
     )
@@ -138,7 +140,7 @@ def test_lifting_the_halt_allows_entries_again(halts):
 
 def test_a_strategy_scoped_halt_stops_only_that_strategy(halts):
     broker = FakeBroker()
-    halts.set("this one misbehaves", actor="cli", scope="VolumeSpikeStrategy")
+    halts.set("this one misbehaves", actor="cli", scope="DemoTrendStrategy")
 
     _trader(broker, halts).handle_signal("AAA", signals.BUY, 100.0)
 

@@ -520,6 +520,26 @@ def _shipped_source(cls):
 _DRAFT_ONLY_RULE = "searchable params"
 
 
+def _shipped_strategies():
+    """What the engine's own wheel registers, read back through discovery.
+
+    Not ``BUILTIN_STRATEGIES``: that is the reserved-name set and is deliberately
+    empty, because the demo strategy arrives by entry point exactly as a pack's
+    would. Reading it here checked the contract against nothing at all.
+    """
+    from tradeflow.services import registry
+
+    registry.refresh_registries()
+    return {n: c for n, c in registry.STRATEGIES.items() if registry.is_demo(c)}
+
+
+def _shipped_scanners():
+    from tradeflow.services import registry
+
+    registry.refresh_registries()
+    return {n: c for n, c in registry.SCANNERS.items() if registry.is_demo(c)}
+
+
 def test_every_shipped_strategy_satisfies_the_draft_contract():
     """A fixture written to pass a validator proves nothing about the validator.
 
@@ -528,10 +548,8 @@ def test_every_shipped_strategy_satisfies_the_draft_contract():
     capability and was never what the list is for. The suite stayed green because
     every fixture had been hand-written to avoid the import.
     """
-    from tradeflow.services.registry import BUILTIN_STRATEGIES
-
     accepted = []
-    for name, cls in BUILTIN_STRATEGIES.items():
+    for name, cls in _shipped_strategies().items():
         try:
             sandbox.load_strategy_from_code(_shipped_source(cls), class_name=cls.__name__)
             accepted.append(name)
@@ -542,9 +560,7 @@ def test_every_shipped_strategy_satisfies_the_draft_contract():
 
 def test_every_shipped_scanner_satisfies_the_draft_contract():
     """Same rule for scanners, which is where the sample-size defect also lived."""
-    from tradeflow.services.registry import BUILTIN_SCANNERS
-
-    for name, cls in BUILTIN_SCANNERS.items():
+    for name, cls in _shipped_scanners().items():
         try:
             sandbox.load_scanner_from_code(_shipped_source(cls), class_name=cls.__name__)
         except sandbox.HygieneError as exc:
@@ -554,9 +570,7 @@ def test_every_shipped_scanner_satisfies_the_draft_contract():
 def test_the_scanner_sample_is_long_enough_for_the_scanner_it_validates():
     """It was a fixed five bars against a scanner needing eleven, so the frame the
     contract was checked on was entirely warm-up."""
-    from tradeflow.services.registry import BUILTIN_SCANNERS
-
-    cls = BUILTIN_SCANNERS["volume"]
+    cls = _shipped_scanners()["demo_volume"]
     instance = cls({p: s["default"] for p, s in cls.PARAM_RANGES.items()})
     instance.initialize()
 
@@ -568,9 +582,7 @@ def test_the_signal_vocabulary_check_sees_actionable_labels():
     """The check could not fail. On five bars a real scanner emits only HOLD, and
     `{HOLD}` is a subset of the vocabulary — so a scanner emitting a bogus label once
     its indicators warmed up would have passed."""
-    from tradeflow.services.registry import BUILTIN_SCANNERS
-
-    cls = BUILTIN_SCANNERS["volume"]
+    cls = _shipped_scanners()["demo_volume"]
     instance = cls({p: s["default"] for p, s in cls.PARAM_RANGES.items()})
     instance.initialize()
 

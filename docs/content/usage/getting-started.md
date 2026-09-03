@@ -7,9 +7,9 @@ title: Getting started
 
 :::note The shipped strategies are examples
 
-`volume_spike`, `ma_crossover` and `mean_reversion`, and the `volume` scanner, exist to
-demonstrate the interface and give the demo something to run. None of them is an edge.
-Your own work belongs in a private package — see
+`demo_trend` and the `demo_volume` scanner exist to demonstrate the interface and give
+`tradeflow demo` something to run. Neither is an edge, and a bare install ships nothing
+else. Your own work belongs in a private package — see
 [your own strategies](private-strategies.md).
 
 :::

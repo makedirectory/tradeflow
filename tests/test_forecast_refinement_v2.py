@@ -223,7 +223,7 @@ def test_compute_alphas_case1_default_is_unchanged_equivalence_guard():
     symbols = [f"S{i:02d}" for i in range(12)]
     client, data = _client(symbols)
     as_of = data["S00"].index[-1].to_pydatetime()
-    res = analysis.compute_alphas(client, "ma_crossover", symbols, as_of, benchmark="SPY")
+    res = analysis.compute_alphas(client, "demo_trend", symbols, as_of, benchmark="SPY")
     assert res["scaling"] == "case1"
     assert res["case"] is None  # no case test run on the default path
     # The scale step is Case 1, no ic_uncertainty step (assumed IC has none to shrink).
@@ -235,7 +235,7 @@ def test_compute_alphas_auto_scaling_reports_case_diagnostics():
     symbols = [f"S{i:02d}" for i in range(12)]
     client, data = _client(symbols)
     as_of = data["S00"].index[-1].to_pydatetime()
-    res = analysis.compute_alphas(client, "ma_crossover", symbols, as_of, benchmark="SPY", scaling="auto")
+    res = analysis.compute_alphas(client, "demo_trend", symbols, as_of, benchmark="SPY", scaling="auto")
     assert res["scaling"] in ("case1", "case2")
     assert res["case"] is not None
     assert "candidate_correlation" in res["case"]
@@ -247,7 +247,7 @@ def test_compute_information_emits_shrink_chain_and_bucket_diagnostic():
     client, data = _client(symbols, n=400)
     start = data["S00"].index[40].to_pydatetime()
     end = data["S00"].index[-1].to_pydatetime()
-    res = analysis.compute_information(client, "ma_crossover", symbols, start, end, benchmark="SPY")
+    res = analysis.compute_information(client, "demo_trend", symbols, start, end, benchmark="SPY")
     assert "level_shrink_factor" in res and "effective_t" in res
     chain = res["shrink_chain"]
     assert len([s for s in chain if s["step"] == "ic_uncertainty"]) == 1
@@ -265,7 +265,7 @@ def test_combined_path_owns_level_shrink_and_does_not_double_apply():
     client, data = _client(symbols, n=400)
     as_of = data["S00"].index[-1].to_pydatetime()
     res = analysis.compute_combined_alphas(
-        client, ["ma_crossover", "mean_reversion"], symbols, as_of, benchmark="SPY", horizon=5, n_points=10
+        client, ["demo_trend", "demo_trend"], symbols, as_of, benchmark="SPY", horizon=5, n_points=10
     )
     chain = res["shrink_chain"]
     ic_steps = [s for s in chain if s["step"] == "ic_uncertainty"]
@@ -278,7 +278,7 @@ def test_run_scaling_ab_compares_both_scalings():
     client, data = _client(symbols, n=400)
     start = data["S00"].index[40].to_pydatetime()
     end = data["S00"].index[-1].to_pydatetime()
-    res = analysis.run_scaling_ab(client, "ma_crossover", symbols, start, end, benchmark="SPY", n_points=12)
+    res = analysis.run_scaling_ab(client, "demo_trend", symbols, start, end, benchmark="SPY", n_points=12)
     assert "case1_realized_ir" in res and "case2_realized_ir" in res
     assert res["regression_pick"] in ("case1", "case2")
     assert res["ab_pick"] in ("case1", "case2")

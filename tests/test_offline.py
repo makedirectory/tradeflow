@@ -12,12 +12,12 @@ import pytest
 
 from tests.fakes import FakeMarketData, make_ohlcv
 from tradeflow.analytics import metrics
+from tradeflow.demo.strategies import DemoTrendStrategy
 from tradeflow.engine.backtest import BacktestEngine
 from tradeflow.indicators import indicators
 from tradeflow.marketdata.client import MarketDataClient
 from tradeflow.optimization.optimizer import ParameterOptimizer
 from tradeflow.scanners.symbol_scanner import SymbolScanner
-from tradeflow.strategies.volume_spike import VolumeSpikeStrategy
 
 SYMBOLS = ["AAA", "BBB", "CCC"]
 START, END = datetime(2024, 1, 2), datetime(2024, 2, 1)
@@ -44,7 +44,7 @@ def test_metric_primitives_handle_degenerate_input():
 # --- backtest engine --------------------------------------------------------
 def test_backtest_produces_metrics_and_consistent_capital():
     data_client = MarketDataClient(FakeMarketData(SYMBOLS))
-    strategy = VolumeSpikeStrategy.create_with_defaults()
+    strategy = DemoTrendStrategy.create_with_defaults()
 
     result = BacktestEngine(strategy, data_client).run(SYMBOLS, START, END, 100_000)
 
@@ -61,7 +61,7 @@ def test_backtest_metrics_complete_and_json_serializable():
     from tradeflow.analytics.performance import FLAG_KEYS, METRIC_KEYS
 
     data_client = MarketDataClient(FakeMarketData(SYMBOLS))
-    strategy = VolumeSpikeStrategy.create_with_defaults()
+    strategy = DemoTrendStrategy.create_with_defaults()
     result = BacktestEngine(strategy, data_client).run(SYMBOLS, START, END, 100_000)
 
     for key in (*METRIC_KEYS, *FLAG_KEYS):
@@ -82,7 +82,7 @@ def test_empty_metrics_has_all_keys():
 
 def test_mae_mfe_tracked_on_trades():
     data_client = MarketDataClient(FakeMarketData(SYMBOLS))
-    strategy = VolumeSpikeStrategy.create_with_defaults()
+    strategy = DemoTrendStrategy.create_with_defaults()
     result = BacktestEngine(strategy, data_client).run(SYMBOLS, START, END, 100_000)
     if not result.trades.empty:
         assert {"mae_pct", "mfe_pct"} <= set(result.trades.columns)
@@ -93,7 +93,7 @@ def test_mae_mfe_tracked_on_trades():
 # --- scanner ----------------------------------------------------------------
 def test_scanner_returns_actionable_signals():
     data_client = MarketDataClient(FakeMarketData(SYMBOLS, freq="1D"))
-    flagged = SymbolScanner(data_client, "volume").scan(SYMBOLS, timeframe="1Day")
+    flagged = SymbolScanner(data_client, "demo_volume").scan(SYMBOLS, timeframe="1Day")
     assert isinstance(flagged, list)
     for symbol, signal in flagged:
         assert symbol in SYMBOLS
@@ -103,10 +103,10 @@ def test_scanner_returns_actionable_signals():
 # --- optimizer --------------------------------------------------------------
 def test_grid_search_returns_best_params():
     data_client = MarketDataClient(FakeMarketData(SYMBOLS))
-    optimizer = ParameterOptimizer(VolumeSpikeStrategy, data_client, initial_capital=100_000)
+    optimizer = ParameterOptimizer(DemoTrendStrategy, data_client, initial_capital=100_000)
 
     result = optimizer.grid_search(SYMBOLS, START, END, objective="sharpe_ratio", max_evals=5)
 
     assert not result.results.empty
     assert result.objective == "sharpe_ratio"
-    assert set(result.best_params) <= set(VolumeSpikeStrategy.PARAM_RANGES)
+    assert set(result.best_params) <= set(DemoTrendStrategy.PARAM_RANGES)

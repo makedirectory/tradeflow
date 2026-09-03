@@ -1,8 +1,13 @@
-"""Volume scanner.
+"""The example scanner: volume and price-move confirmation.
 
-Flags symbols whose latest bar shows unusually high volume *and* a meaningful
-price move - a simple liquidity/attention filter for building a trading universe.
-Pure pandas/numpy; no TA-Lib.
+Flags symbols whose latest bar shows unusually high volume *and* a meaningful price
+move - a simple liquidity/attention filter for building a trading universe. Pure
+pandas/numpy; no TA-Lib.
+
+**A demonstration, not a screen to trade on.** It reaches the engine through the
+``tradeflow.scanners`` entry-point group in this project's ``pyproject.toml``, which is
+the same mechanism a private pack uses. Yours belongs in your own package -
+``tradeflow init --example-pack ./my-signals`` copies one you own.
 """
 
 from typing import Any, ClassVar, Dict
@@ -12,8 +17,12 @@ import pandas as pd
 from tradeflow.scanners.base import SCANNER_BUY, SCANNER_HOLD, SCANNER_SELL, ScannerStrategy
 
 
-class VolumeScannerStrategy(ScannerStrategy):
+class DemoVolumeScanner(ScannerStrategy):
     """Select symbols on a volume spike confirmed by price movement."""
+
+    #: A shipped demonstration, not a screen anyone should trade on. Carried on
+    #: the class so it survives being registered by entry point.
+    DEMO = True
 
     TIMEFRAME = "1Day"
 

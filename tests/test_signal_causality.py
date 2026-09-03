@@ -134,7 +134,7 @@ def test_live_acts_on_a_closed_bar_at_that_bar_s_close():
     from tradeflow.marketdata.base import BarEvent
     from tradeflow.services.registry import STRATEGIES
 
-    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy = STRATEGIES["demo_trend"].create_with_defaults()
     strategy.process_bar = lambda symbol, bar, ts: "BUY"
     trader = LiveTrader(RecordingBroker(), strategy, respect_market_hours=False)
     seen = {}

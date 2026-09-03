@@ -22,7 +22,7 @@ from tradeflow.services.registry import STRATEGIES
 
 SYMBOLS = ["AAA", "BBB"]
 START, END = datetime(2024, 1, 2), datetime(2024, 9, 1)
-STRATEGY = "ma_crossover"
+STRATEGY = "demo_trend"
 
 #: The keyless deterministic feed — reconstructible in any process, which is what
 #: makes a genuinely parallel test both offline and reproducible.

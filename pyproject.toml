@@ -66,7 +66,23 @@ dev = [
     # The MCP SDK is in dev so CI resolves it the same way a user does, rather than
     # only ever seeing whatever the lockfile happens to hold.
     "mcp>=1.0,<2",
+    # The build backend, in dev so a test can build the sdist's real file list rather
+    # than assert something about the exclude patterns. Asserting the config is what
+    # let an unanchored `configs` ship an example pack with no configs in it.
+    "hatchling>=1.21",
 ]
+
+# What `demo` runs on, and what `--strategy`/`--scanner` fall back to on a bare install.
+# Registered through the same two groups a private pack uses, so the discovery path the
+# whole private-strategy feature rests on is exercised by every install rather than only
+# by tests. The registry also holds these two directly - enumeration order across
+# distributions is undefined, and a reserved name is worth nothing if which class
+# answers to it is a coin flip - so this declaration is the path, not the source.
+[project.entry-points."tradeflow.strategies"]
+demo_trend = "tradeflow.demo.strategies:DemoTrendStrategy"
+
+[project.entry-points."tradeflow.scanners"]
+demo_volume = "tradeflow.demo.scanners:DemoVolumeScanner"
 
 [project.scripts]
 # The installed entry point. `python main.py` from a checkout reaches the same
@@ -91,24 +107,34 @@ path = "tradeflow/__init__.py"
 [tool.hatch.build.targets.wheel]
 # Only the package ships. `main.py` is a checkout convenience, and the tests, docs,
 # and scripts are not something an installed copy has any use for.
+# `tradeflow.demo` rides along as a subpackage; it holds what `demo` runs on and what a
+# bare install defaults to, so `tradeflow/strategies/` can hold only the framework.
 packages = ["tradeflow"]
 
 [tool.hatch.build.targets.sdist]
 # The sdist carries the repo (tests and CI are useful to a packager), minus local
 # state and editor/agent artifacts that have no business in a published archive.
+#
+# Every directory here is *root-anchored* with a leading slash, because these are
+# gitignore-style patterns and a bare name matches at any depth. Unanchored,
+# `configs` also matched `example/configs/`, so the sdist shipped the example pack
+# without the configs its own README tells you to run first — the scaffold succeeded
+# and the very next command printed a path that did not exist. Anchor anything
+# naming repo-root state; keep `*.csv` a glob, which is the one pattern that really
+# does mean "at any depth".
 exclude = [
-    ".claude",
-    ".vscode",
-    ".venv",
-    "logs",
-    "cache",
-    "configs",
-    "specs",
-    "docs/node_modules",
-    "docs/build",
-    "dist",
+    "/.claude",
+    "/.vscode",
+    "/.venv",
+    "/logs",
+    "/cache",
+    "/configs",
+    "/specs",
+    "/docs/node_modules",
+    "/docs/build",
+    "/dist",
     "*.csv",
-    ".env",
+    "/.env",
 ]
 
 [tool.pytest.ini_options]

@@ -23,9 +23,9 @@ from tradeflow.brokers.errors import (
     OrderRejectedError,
     RateLimitedError,
 )
+from tradeflow.demo.strategies import DemoTrendStrategy
 from tradeflow.execution.live_trader import LiveTrader
 from tradeflow.strategies import signals
-from tradeflow.strategies.volume_spike import VolumeSpikeStrategy
 
 
 class _APIErrorish(Exception):
@@ -98,7 +98,7 @@ def test_an_already_typed_error_passes_through_unchanged():
 
 # --- what the trader does with them -----------------------------------------
 def _trader(broker, **kwargs):
-    return LiveTrader(broker, VolumeSpikeStrategy.create_with_defaults(), **kwargs)
+    return LiveTrader(broker, DemoTrendStrategy.create_with_defaults(), **kwargs)
 
 
 def test_a_duplicate_order_is_not_treated_as_a_failed_submission():

@@ -56,8 +56,8 @@ def test_construct_portfolio_conditional_off_is_unchanged():
     client, data = _client(symbols)
     as_of = data["S0"].index[400].to_pydatetime()
 
-    baseline = analysis.construct_portfolio(client, "volume_spike", symbols, as_of)
-    off = analysis.construct_portfolio(client, "volume_spike", symbols, as_of, conditional=None)
+    baseline = analysis.construct_portfolio(client, "demo_trend", symbols, as_of)
+    off = analysis.construct_portfolio(client, "demo_trend", symbols, as_of, conditional=None)
     assert baseline["weights"] == off["weights"]
     assert "sigma_regime" not in off
 
@@ -67,7 +67,7 @@ def test_construct_portfolio_conditional_stays_feasible_and_reports_regime():
     client, data = _client(symbols)
     as_of = data["S0"].index[400].to_pydatetime()
 
-    r = analysis.construct_portfolio(client, "volume_spike", symbols, as_of, conditional="ewma")
+    r = analysis.construct_portfolio(client, "demo_trend", symbols, as_of, conditional="ewma")
     assert r["feasible"]
     assert r["conditional"] == "ewma"
     assert "sigma_regime" in r
@@ -82,7 +82,7 @@ def test_compute_attribution_conditional_adds_te_by_regime():
     end = data["S0"].index[800].to_pydatetime()
 
     r = analysis.compute_attribution(
-        client, "volume_spike", symbols, start, end, conditional="ewma", n_points=30
+        client, "demo_trend", symbols, start, end, conditional="ewma", n_points=30
     )
     assert r["periods"] >= 5
     assert r["conditional"] == "ewma"
@@ -106,7 +106,7 @@ def test_compute_attribution_without_conditional_has_empty_te_by_regime_when_no_
     start = data["S0"].index[100].to_pydatetime()
     end = data["S0"].index[800].to_pydatetime()
 
-    r = analysis.compute_attribution(client, "volume_spike", symbols, start, end, n_points=30)
+    r = analysis.compute_attribution(client, "demo_trend", symbols, start, end, n_points=30)
     assert "te_by_regime" in r
     assert r["conditional"] is None
 
@@ -145,7 +145,7 @@ def test_run_conditional_risk_ab_produces_both_variants():
     start = data["S0"].index[100].to_pydatetime()
     end = data["S0"].index[800].to_pydatetime()
 
-    r = analysis.run_conditional_risk_ab(client, "volume_spike", symbols, start, end, n_points=10, horizon=21)
+    r = analysis.run_conditional_risk_ab(client, "demo_trend", symbols, start, end, n_points=10, horizon=21)
     assert r["periods"] >= 2
     assert set(r["summaries"]) == {"unconditional", "conditional"}
     for name, s in r["summaries"].items():
@@ -162,6 +162,6 @@ def test_run_conditional_risk_ab_insufficient_window_reports_note():
     start = data["S0"].index[0].to_pydatetime()
     end = data["S0"].index[-1].to_pydatetime()
 
-    r = analysis.run_conditional_risk_ab(client, "volume_spike", symbols, start, end, horizon=21)
+    r = analysis.run_conditional_risk_ab(client, "demo_trend", symbols, start, end, horizon=21)
     assert r["periods"] == 0
     assert "note" in r

@@ -56,6 +56,34 @@ param, so anything reconstructing a strategy from params alone drops it. A confi
 for eight positions was walk-forward validated at one.
 *Guarded by* `tests/test_surface_parity.py`.
 
+**Scanner registry ↔ the driver's class attribute** — `services.registry.SCANNERS` and
+`SymbolScanner.SCANNERS` are two dicts holding one answer, kept in step by
+`refresh_registries()`. The class attribute used to be seeded from the scanner package's
+own literal; once the example scanner moved to `tradeflow.demo` that literal went empty,
+so the attribute was empty too and a bare `import symbol_scanner` gave
+`available() == []` — the class worked or not depending on whether some *other* module
+had been imported first. `SymbolScanner._registry()` now delegates (lazily, because
+`registry` imports it), which also means a discovery failure leaves the registry's
+seeded reserved names in play rather than failing every name the CLI still advertises.
+*Guarded by* `tests/test_extension_registry.py`, which compares the two and runs the
+bare import in a subprocess — every other test has already imported the registry and
+would mask the ordering entirely.
+
+**What the sdist ships ↔ what the instructions reference** — `init --example-pack` copies
+whatever the distribution carried, and the CLI's next printed line and the pack README's
+runbook both name `configs/breakout.json`. A `pyproject.toml` exclude is not a list of
+directories: the patterns are gitignore-style, so an unanchored `configs` also matched
+`example/configs/`. `example_pack_source()` keys on `example/pyproject.toml`, which still
+shipped — so the scaffold *succeeded* and printed a next step that did not exist.
+
+The environment is an unpacked sdist tree, not a pip install: the wheel omits the pack
+deliberately and `--example-pack` refuses there with a clear message. That is precisely
+the environment the sdist carries the pack *for*, and the one nothing was looking at.
+
+Anchor anything naming repo-root state, and test by building the file list rather than
+reading the manifest — reading it is exactly what missed this.
+*Guarded by* `tests/test_packaging.py`.
+
 **Installed copy ↔ checkout** — every instruction printed to a user. `make`, `python
 main.py`, `uv sync`, and `.env.example` do not exist for an installed reader. Use the
 `_invocation` helper rather than a literal.

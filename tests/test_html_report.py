@@ -33,7 +33,7 @@ def _verdict_result(**overrides):
         "run_id": "run-1",
         "memoized": False,
         "inputs": {
-            "strategy": "volume_spike",
+            "strategy": "demo_trend",
             "universe": ["AAA", "BBB"],
             "window": {"start": "2024-01-02T00:00:00", "end": "2024-12-31T00:00:00"},
             "timeframe": "1Day",
@@ -42,7 +42,7 @@ def _verdict_result(**overrides):
         },
         "provenance": {"git_sha": "abc1234", "generated_at": "2025-01-01T00:00:00", "n_trials": 17},
         "steps": {"scan": {"status": "ok"}, "alphas": {"status": "ok"}},
-        "scan": {"scanner": "volume", "candidates": ["AAA", "BBB"], "flagged_count": 2},
+        "scan": {"scanner": "demo_volume", "candidates": ["AAA", "BBB"], "flagged_count": 2},
         "alphas": {"alphas": [{"symbol": "AAA", "alpha": 0.04, "z": 1.2, "residual_vol": 0.3}]},
         "combination": None,
         "portfolio": {
@@ -90,7 +90,7 @@ def _verdict_result(**overrides):
 
 def _backtest_result():
     return {
-        "strategy": "volume_spike",
+        "strategy": "demo_trend",
         "symbols": ["AAA", "BBB"],
         "window": {"start": "2024-01-02T00:00:00", "end": "2024-12-31T00:00:00"},
         "initial_capital": 100_000.0,
@@ -105,7 +105,7 @@ def _backtest_result():
 
 def _walkforward_result(promotable=False):
     return {
-        "strategy": "volume_spike",
+        "strategy": "demo_trend",
         "symbols": ["AAA"],
         "window": {"start": "2024-01-02T00:00:00", "end": "2024-12-31T00:00:00"},
         "folds": [
@@ -133,7 +133,7 @@ def _walkforward_result(promotable=False):
 
 def _info_result():
     return {
-        "strategy": "volume_spike",
+        "strategy": "demo_trend",
         "window": {"start": "2024-01-02T00:00:00", "end": "2024-12-31T00:00:00"},
         "periods": 24,
         "mean_ic": 0.018,

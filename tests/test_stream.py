@@ -77,17 +77,17 @@ def test_supports_trade_updates_requires_credentials():
 def test_live_engine_runs_market_and_trade_update_streams():
     from tests.fakes import StreamingFakeMarketData, TradeUpdateFakeBroker
     from tradeflow.brokers.base import TradeUpdate
+    from tradeflow.demo.strategies import DemoTrendStrategy
     from tradeflow.engine.live import LiveEngine
     from tradeflow.execution.live_trader import LiveTrader
     from tradeflow.marketdata.client import MarketDataClient
-    from tradeflow.strategies.volume_spike import VolumeSpikeStrategy
 
     symbols = ["AAA"]
     market_data = StreamingFakeMarketData(symbols, bars_to_emit=1)
     broker = TradeUpdateFakeBroker(
         updates=[TradeUpdate("fill", "AAA", "o1", "filled", 5, 100.0)], market_open=True
     )
-    strategy = VolumeSpikeStrategy.create_with_defaults()
+    strategy = DemoTrendStrategy.create_with_defaults()
 
     engine = LiveEngine(strategy, MarketDataClient(market_data), LiveTrader(broker, strategy))
     received = []

@@ -347,9 +347,7 @@ def test_construct_portfolio_cost_aware_reports_the_cost_split():
     from tradeflow.services import analysis
 
     symbols, dc = _universe()
-    res = analysis.construct_portfolio(
-        dc, "ma_crossover", symbols, AS_OF, capital=1_000_000.0, cost_aware=True
-    )
+    res = analysis.construct_portfolio(dc, "demo_trend", symbols, AS_OF, capital=1_000_000.0, cost_aware=True)
     if not res["feasible"]:
         pytest.skip("fixture produced no feasible portfolio")
     d = res["diagnostics"]
@@ -370,7 +368,7 @@ def test_construct_portfolio_gross_objective_uses_ex_post_drag():
 
     symbols, dc = _universe()
     res = analysis.construct_portfolio(
-        dc, "ma_crossover", symbols, AS_OF, capital=1_000_000.0, cost_aware=False
+        dc, "demo_trend", symbols, AS_OF, capital=1_000_000.0, cost_aware=False
     )
     if not res["feasible"]:
         pytest.skip("fixture produced no feasible portfolio")

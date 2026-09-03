@@ -12,13 +12,13 @@ a control input.
 
 ```bash
 python main.py horizon \
-  --strategy volume_spike \
+  --strategy demo_trend \
   --symbols NVDA,AAPL,META,AMD,TSLA,GOOG,MSFT,AMZN \
   --start 2024-01-01 --end 2024-12-31
 ```
 
 ```
-Information horizon: 'volume_spike' 2024-01-01..2025-02-05
+Information horizon: 'demo_trend' 2024-01-01..2025-02-05
   IC by lag: 1:-0.084  2:+0.090  3:+0.012  4:-0.024  5:-0.029  6:+0.007  7:+0.027  8:+0.072  9:+0.113  10:+0.126
   decay δ 1.177  half-life ∞ (no decay detected)  fit R² 0.18
     CI (±1.96 SE on the fit): [4.8, ∞] periods — the multi-period trading policy
@@ -41,7 +41,7 @@ would lose net of cost is flagged, not recommended.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--strategy` | `volume_spike` | The strategy whose alpha decay is measured. |
+| `--strategy` | `demo_trend` | The strategy whose alpha decay is measured. |
 | `--source` | `strategy` | Alpha score origin (`strategy` / `signal` / `scanner`). |
 | `--symbols` | demo universe | The cross-section. |
 | `--start` / `--end` | last year | Measurement window. |

@@ -5,9 +5,9 @@ title: Your own strategies
 
 # Your own strategies
 
-**The strategies and scanners that ship with TradeFlow are examples.** Three strategies
+**The strategies and scanners that ship with TradeFlow are examples.** One strategy
 and one scanner, there to demonstrate what the interface expects and to give the demo
-something to run. They are not the product, and none of them is an edge.
+something to run. They are not the product, and neither is an edge.
 
 The product is everything around them — the walk-forward validation, the
 multiple-testing correction, the cost model, the trade clock, the execution telemetry.
@@ -146,11 +146,14 @@ One journal per root, deliberately. The multiple-testing correction counts every
 your campaign has run; split it across two roots and the deflated Sharpe is computed
 against half the evidence, with nothing erroring.
 
-## What the examples are still good for
+## What ships, and what it is good for
 
-Read them. `ma_crossover` is the smallest complete strategy — long-only, one indicator,
-a score that is just a normalized EMA gap. `volume_spike` shows a long/short book, which
-is what the leg diagnostics and the directional cap exist for. `mean_reversion` scores
-in the opposite direction from the other two, which is a useful thing to see once.
+`demo_trend` is the smallest complete strategy — long-only, one indicator, a score that
+is just a normalized EMA gap. Read it for the shape of the interface, not for the idea.
+
+For anything past that shape, read `example` instead — it is a real
+installable pack, and `tradeflow init --example-pack ./my-signals` writes you a copy.
+Its `example_reversion` is long/short, which is what the leg diagnostics and the
+directional cap exist for, and none of that is exercisable by a long-only book.
 
 Then point the machinery at something of your own.

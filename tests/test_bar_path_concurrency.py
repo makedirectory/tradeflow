@@ -24,7 +24,7 @@ from tradeflow.utils.timeutils import NEW_YORK
 
 
 def _engine(handle_signal):
-    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy = STRATEGIES["demo_trend"].create_with_defaults()
     strategy.process_bar = lambda symbol, bar, ts: signals.BUY
     trader = LiveTrader(RecordingBroker(), strategy, respect_market_hours=False)
     trader.handle_signal = handle_signal

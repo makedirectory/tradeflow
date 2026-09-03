@@ -21,7 +21,7 @@ def ledger(tmp_path):
 
 
 def _strategy(positions=None):
-    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy = STRATEGIES["demo_trend"].create_with_defaults()
     strategy.positions = positions or {}
     return strategy
 

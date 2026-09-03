@@ -1,43 +1,49 @@
-"""Tests for the Strategy base behavior via VolumeSpikeStrategy."""
+"""Tests for the Strategy base behavior via DemoTrendStrategy."""
 
 import pandas as pd
 import pytest
 
+from tradeflow.demo.strategies import DemoTrendStrategy
 from tradeflow.strategies import signals
-from tradeflow.strategies.volume_spike import VolumeSpikeStrategy
 
 
 def _strategy():
-    return VolumeSpikeStrategy.create_with_defaults()
+    return DemoTrendStrategy.create_with_defaults()
 
 
 def test_defaults_include_timeframe_and_lookback():
     s = _strategy()
-    assert s.config["timeframe"] == "5Min"
-    assert s.config["required_lookback_periods"] == max(
-        s.config["long_ema_period"] + 1, s.config["volume_ma_period"] + 1
-    )
+    assert s.config["timeframe"] == "1Day"
+    assert s.config["required_lookback_periods"] == s.config["slow_ema_period"] + 1
 
 
 def test_invalid_parameter_raises():
     with pytest.raises(ValueError):
-        VolumeSpikeStrategy(
+        DemoTrendStrategy(
             {
-                **{p: spec["default"] for p, spec in VolumeSpikeStrategy.PARAM_RANGES.items()},
-                "long_ema_period": 999,
+                **{p: spec["default"] for p, spec in DemoTrendStrategy.PARAM_RANGES.items()},
+                "slow_ema_period": 999,
             }
         )  # out of range
 
 
-def test_short_ema_must_be_below_long_ema():
-    config = {p: spec["default"] for p, spec in VolumeSpikeStrategy.PARAM_RANGES.items()}
-    config["short_ema_period"] = config["long_ema_period"]
+def test_fast_ema_must_be_below_slow_ema():
+    """A relationship between parameters, which PARAM_RANGES cannot express — both
+    values are inside their own bounds and the pair is still nonsense."""
+    config = {p: spec["default"] for p, spec in DemoTrendStrategy.PARAM_RANGES.items()}
+    config["fast_ema_period"] = config["slow_ema_period"]
     with pytest.raises(ValueError):
-        VolumeSpikeStrategy(config).initialize()
+        DemoTrendStrategy(config).initialize()
 
 
 def test_position_size_capped_by_notional_limit():
-    s = _strategy()  # position_limits.max_position_size == 100
+    """The cap is stated by the test rather than inherited from the strategy: this is
+    about the base class honouring a limit, and borrowing a demo strategy's declared
+    one made it pass or fail on a number that has nothing to do with the behaviour."""
+    config = {p: spec["default"] for p, spec in DemoTrendStrategy.PARAM_RANGES.items()}
+    config["position_limits"] = {"max_positions": 1, "max_position_size": 100.0, "max_total_risk": 0.05}
+    s = DemoTrendStrategy(config)
+
     # 100 notional / $100 price == 1 share, the binding constraint.
     assert s.calculate_position_size(capital=100_000, price=100.0) == pytest.approx(1.0)
 
@@ -65,7 +71,7 @@ def test_process_data_adds_indicator_columns():
     from tests.fakes import make_ohlcv
 
     processed = _strategy().process_data(make_ohlcv(n=200))
-    assert {"short_ema", "long_ema", "volume_ma"} <= set(processed.columns)
+    assert {"fast_ema", "slow_ema"} <= set(processed.columns)
 
 
 def test_calculate_scores_is_signed_and_aligned():

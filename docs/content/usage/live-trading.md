@@ -11,7 +11,7 @@ real-time bar stream, and routes signals to the broker as bracket orders.
 ```bash
 make live
 # or
-uv run python main.py live --strategy volume_spike --scanner volume --symbols NVDA,META,TSLA
+uv run python main.py live --strategy demo_trend --scanner demo_volume --symbols NVDA,META,TSLA
 ```
 
 :::warning
@@ -53,7 +53,7 @@ across the universe rather than sized per trade:
 ```bash
 make live-portfolio
 # or
-uv run python main.py live --scanner volume --symbols NVDA,META,TSLA \
+uv run python main.py live --scanner demo_volume --symbols NVDA,META,TSLA \
     --portfolio --max-positions 5 --max-weight 0.25
 ```
 
@@ -68,7 +68,7 @@ risk:
 ```bash
 make live-beta
 # or
-uv run python main.py live --scanner volume --symbols NVDA,META,TSLA --beta-sizing --benchmark SPY
+uv run python main.py live --scanner demo_volume --symbols NVDA,META,TSLA --beta-sizing --benchmark SPY
 ```
 
 ## Managing the account
@@ -176,7 +176,7 @@ mid-trend should hold the trend rather than sit flat until the next crossing.
 If you would rather wait for a fresh edge:
 
 ```bash
-tradeflow live --strategy ma_crossover --no-reaffirm-entries
+tradeflow live --strategy demo_trend --no-reaffirm-entries
 ```
 
 or set `reaffirm_entries: false` in a strategy config. **Exits are never gated by

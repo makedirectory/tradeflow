@@ -18,7 +18,7 @@ from tradeflow.strategies.base import DEFAULT_POSITION_LIMITS
 
 
 def _trader(limits, positions=None):
-    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy = STRATEGIES["demo_trend"].create_with_defaults()
     # max_positions is raised out of the way so each case exercises the cap it names;
     # the shipped default of 1 would otherwise reject every second entry first.
     strategy.config["position_limits"] = {**strategy.position_limits(), "max_positions": 10, **limits}

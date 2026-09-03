@@ -13,7 +13,7 @@ long as you remember it's not the same as "will this work?"
 make backtest
 # or
 uv run python main.py backtest \
-    --strategy volume_spike --scanner volume \
+    --strategy demo_trend --scanner demo_volume \
     --symbols NVDA,META,TSLA --start 2024-01-02 --end 2024-04-01 --capital 100000
 ```
 
@@ -21,8 +21,8 @@ uv run python main.py backtest \
 
 | Option | Default | Meaning |
 |--------|---------|---------|
-| `--strategy` | `volume_spike` | Strategy to run |
-| `--scanner` | `volume` | Universe scanner (`none` to skip) |
+| `--strategy` | `demo_trend` | Strategy to run |
+| `--scanner` | `demo_volume` | Universe scanner (`none` to skip) |
 | `--symbols` | a 10-name list | Comma-separated candidates |
 | `--start` / `--end` | last 30 days | Backtest window (`YYYY-MM-DD`) |
 | `--capital` | `100000` | Starting capital |
@@ -58,7 +58,7 @@ Every backtest says where its universe came from:
 ```
 === Universe provenance ===
   candidates      85 names from --symbols
-  scanner         volume as of 2026-08-22T00:00:00-04:00
+  scanner         demo_volume as of 2026-08-22T00:00:00-04:00
   resolved        61 of 85 names
   universe        resolved this run
   survivorship    a hand-supplied list is today's names applied to history; membership
@@ -144,7 +144,7 @@ A single cost assumption produces a single number, and no way to tell how much o
 result was the assumption. `--cost-stress` re-runs the same config under scaled costs:
 
 ```bash
-uv run python main.py backtest --strategy ma_crossover --symbols NVDA,META,TSLA \
+uv run python main.py backtest --strategy demo_trend --symbols NVDA,META,TSLA \
     --cost-stress
 ```
 

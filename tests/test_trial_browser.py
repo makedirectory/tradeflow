@@ -36,7 +36,7 @@ def _record(store, trial_id, **kwargs):
     defaults = {
         "id": trial_id,
         "kind": "backtest",
-        "strategy": "volume_spike",
+        "strategy": "demo_trend",
         "symbols": ["AAA", "BBB"],
         "params": {"fast": 5},
         "accounting": ACCOUNTING,
@@ -58,7 +58,7 @@ def _populate(store):
         store,
         "t4",
         ts="2025-04-01T00:00:00",
-        strategy="ma_crossover",
+        strategy="another_strategy",
         symbols=["CCC"],
         oos_sharpe=3.0,
         deflated_sharpe=0.05,
@@ -78,7 +78,7 @@ def _populate(store):
 def test_filters_narrow_to_what_they_say(store):
     _populate(store)
     assert {r["id"] for r in store.list_trials(accounting=ACCOUNTING)} == {"t1", "t2", "t3", "t4", "t5"}
-    assert {r["id"] for r in store.list_trials(strategy="ma_crossover", accounting=ACCOUNTING)} == {"t4"}
+    assert {r["id"] for r in store.list_trials(strategy="another_strategy", accounting=ACCOUNTING)} == {"t4"}
     assert {r["id"] for r in store.list_trials(kind="alpha", accounting=ACCOUNTING)} == {"t5"}
     assert {r["id"] for r in store.list_trials(min_sharpe=1.5, accounting=ACCOUNTING)} == {"t2", "t3", "t4"}
     assert {r["id"] for r in store.list_trials(promotable=True, accounting=ACCOUNTING)} == {"t2", "t3"}
@@ -208,9 +208,9 @@ def test_every_leaderboard_row_carries_its_family_trial_count(store):
     _populate(store)
     board = store.best(accounting=ACCOUNTING)
     assert all("family_n_trials" in row for row in board["rows"])
-    volume_spike = next(r for r in board["rows"] if r["strategy"] == "volume_spike")
+    demo = next(r for r in board["rows"] if r["strategy"] == "demo_trend")
     # t1/t2/t3 count; the alpha row never does (a forecast has no Sharpe to deflate).
-    assert volume_spike["family_n_trials"] == 3
+    assert demo["family_n_trials"] == 3
     assert board["caveat"]
 
 
@@ -253,7 +253,7 @@ def test_trades_round_trip_through_the_journal_alone(tmp_path):
     journal = tmp_path / "journal.jsonl"
     trial_id = audit.journal_trial(
         "backtest",
-        strategy="volume_spike",
+        strategy="demo_trend",
         symbols=["AAA"],
         start=datetime(2024, 1, 2),
         end=datetime(2024, 12, 31),
@@ -277,7 +277,7 @@ def test_without_the_flag_a_trial_stores_no_trade_table(tmp_path):
     journal = tmp_path / "journal.jsonl"
     trial_id = audit.journal_trial(
         "backtest",
-        strategy="volume_spike",
+        strategy="demo_trend",
         symbols=["AAA"],
         start=datetime(2024, 1, 2),
         end=datetime(2024, 12, 31),

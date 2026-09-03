@@ -102,7 +102,7 @@ additive story stops being a good local approximation).
 ## Example
 
 ```
-Performance attribution: 'volume_spike' 2024-01-01..2024-12-31
+Performance attribution: 'demo_trend' 2024-01-01..2024-12-31
   measured over 24 rebalances (horizon 5 bars)
   row                       mean/yr      IR       t  share ψ²
   active beta · expected          —       —       —  (not skill)

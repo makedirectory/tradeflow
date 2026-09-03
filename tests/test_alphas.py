@@ -21,10 +21,10 @@ from tradeflow.alphas import (
 )
 from tradeflow.alphas.base import DEFAULT_MIN_UNIVERSE, Alpha
 from tradeflow.data.panel import FeaturePanel
+from tradeflow.demo.strategies import DemoTrendStrategy
 from tradeflow.marketdata.client import MarketDataClient
 from tradeflow.services import analysis
 from tradeflow.strategies import signals
-from tradeflow.strategies.ma_crossover import MovingAverageCrossoverStrategy
 
 AS_OF = datetime(2024, 6, 1)
 
@@ -206,7 +206,7 @@ def test_strategy_scorer_matches_direction():
     frame = make_ohlcv(n=len(close), seed=3, freq="1D")
     frame["close"] = close
 
-    strat = MovingAverageCrossoverStrategy.create_with_defaults()
+    strat = DemoTrendStrategy.create_with_defaults()
     sig = pd.Series(strat.generate_signals(strat.process_data(frame)))
     buy_bars = sig.index[sig == signals.BUY]
     assert len(buy_bars) > 0, "fixture should produce at least one BUY"
@@ -217,7 +217,7 @@ def test_strategy_scorer_matches_direction():
 
 
 def test_signal_scorer_maps_each_signal():
-    class _FixedStrategy(MovingAverageCrossoverStrategy):
+    class _FixedStrategy(DemoTrendStrategy):
         SIGNAL = signals.HOLD
 
         def generate_signals(self, data):
@@ -245,10 +245,10 @@ def test_alphas_are_independent_of_post_as_of_bars():
     truncated = {s: f.loc[f.index <= cutoff] for s, f in full.items()}
 
     res_truncated = analysis.compute_alphas(
-        MarketDataClient(DictMarketData(truncated)), "ma_crossover", symbols, as_of, benchmark=bench
+        MarketDataClient(DictMarketData(truncated)), "demo_trend", symbols, as_of, benchmark=bench
     )
     res_full = analysis.compute_alphas(
-        MarketDataClient(DictMarketData(full)), "ma_crossover", symbols, as_of, benchmark=bench
+        MarketDataClient(DictMarketData(full)), "demo_trend", symbols, as_of, benchmark=bench
     )
     assert res_truncated["alphas"] == res_full["alphas"]
     assert res_truncated["low_confidence"] == res_full["low_confidence"]
@@ -261,10 +261,10 @@ def test_compute_alphas_factor_neutral_end_to_end():
     client = MarketDataClient(DictMarketData(data))
     as_of = data["S00"].index[-1].to_pydatetime()
 
-    plain = analysis.compute_alphas(client, "ma_crossover", symbols, as_of, benchmark="SPY")
+    plain = analysis.compute_alphas(client, "demo_trend", symbols, as_of, benchmark="SPY")
     neutral = analysis.compute_alphas(
         client,
-        "ma_crossover",
+        "demo_trend",
         symbols,
         as_of,
         benchmark="SPY",

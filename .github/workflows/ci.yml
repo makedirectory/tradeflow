@@ -34,7 +34,7 @@ jobs:
       # real packaging, real discovery, real contract compliance - rather than only the
       # monkeypatched fakes the registry unit tests use.
       - name: Install the example pack (exercises entry-point discovery)
-        run: uv pip install --no-deps -e examples/my-signals
+        run: uv pip install --no-deps -e example
 
       - name: Lint (ruff)
         run: uv run ruff check .

@@ -83,7 +83,7 @@ def _client(n=600):
 def test_compute_information_zero_skill_null():
     client, syms = _client()
     r = analysis.compute_information(
-        client, "volume_spike", syms, datetime(2023, 1, 1), datetime(2024, 12, 31), n_points=20, n_trials=10
+        client, "demo_trend", syms, datetime(2023, 1, 1), datetime(2024, 12, 31), n_points=20, n_trials=10
     )
     assert r["periods"] > 0
     assert abs(r["ic_tstat"]) < 2.0  # random walk → no distinguishable skill
@@ -106,7 +106,7 @@ def test_factor_split_closes():
 def test_compute_information_reports_attribution():
     client, syms = _client()
     r = analysis.compute_information(
-        client, "volume_spike", syms, datetime(2023, 1, 1), datetime(2024, 12, 31), n_points=16
+        client, "demo_trend", syms, datetime(2023, 1, 1), datetime(2024, 12, 31), n_points=16
     )
     assert "factor_return" in r and "specific_return" in r
     assert np.isfinite(r["factor_return"]) and np.isfinite(r["specific_return"])
@@ -121,9 +121,9 @@ def test_compute_information_independent_of_post_end_bars():
     truncated = {s: f.loc[f.index <= cutoff] for s, f in full.items()}
 
     a = analysis.compute_information(
-        MarketDataClient(DictMarketData(truncated)), "ma_crossover", syms, start, end
+        MarketDataClient(DictMarketData(truncated)), "demo_trend", syms, start, end
     )
-    b = analysis.compute_information(MarketDataClient(DictMarketData(full)), "ma_crossover", syms, start, end)
+    b = analysis.compute_information(MarketDataClient(DictMarketData(full)), "demo_trend", syms, start, end)
     assert a["mean_ic"] == b["mean_ic"]
     assert a["predicted_ir"] == b["predicted_ir"]
     assert a["realized_ir"] == b["realized_ir"]

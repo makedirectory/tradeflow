@@ -14,7 +14,6 @@ from tradeflow.data.scan import slice_to_as_of
 from tradeflow.marketdata.client import MarketDataClient
 from tradeflow.marketdata.timeframe import Timeframe
 from tradeflow.scanners.base import ScannerStrategy
-from tradeflow.scanners.volume_scanner import VolumeScannerStrategy
 from tradeflow.utils.timeutils import NEW_YORK
 
 logger = logging.getLogger(__name__)
@@ -23,15 +22,19 @@ logger = logging.getLogger(__name__)
 _LOOKBACK_DAY_BUFFER = 3
 
 
-#: The scanners that ship with this package - the literal to extend when adding a
-#: public example. Kept separate from :attr:`SymbolScanner.SCANNERS`, which discovery
-#: overwrites with built-ins *plus* whatever installed packages contribute: deriving
-#: the built-in set from that live attribute meant a module reload absorbed third-party
-#: scanners into it, and the reserved names an extension may not override then silently
-#: included names that came from an extension.
-BUILTIN_SCANNERS: Dict[str, Type[ScannerStrategy]] = {
-    "volume": VolumeScannerStrategy,
-}
+#: Scanner names this package reserves for classes it defines *in this module*.
+#: Empty, and deliberately so: the example scanner moved to ``tradeflow.demo`` and
+#: arrives by entry point like any other pack's, so the engine discovers its own
+#: demonstration the way it discovers yours. Adding a public scanner means shipping
+#: it from ``tradeflow.demo`` with an entry point in ``pyproject.toml``, not
+#: extending this literal - see ``docs/content/engineering/extending.md``.
+#:
+#: Kept as a distinct name from :attr:`SymbolScanner.SCANNERS`, which discovery
+#: overwrites with the reserved set *plus* whatever installed packages contribute:
+#: deriving the reserved set from that live attribute meant a module reload absorbed
+#: third-party scanners into it, and the names an extension may not override then
+#: silently included names that came from an extension.
+BUILTIN_SCANNERS: Dict[str, Type[ScannerStrategy]] = {}
 
 
 def resolve_scan_clock(as_of: Optional[datetime] = None) -> datetime:
@@ -53,19 +56,49 @@ def resolve_scan_clock(as_of: Optional[datetime] = None) -> datetime:
 class SymbolScanner:
     """Filters a candidate universe down to scanner-signaled symbols."""
 
-    #: Scanners resolvable by name. Built-ins until discovery runs, then built-ins
-    #: plus installed contributions - see :mod:`tradeflow.services.registry`.
+    #: Scanners resolvable by name, kept in step with
+    #: :data:`tradeflow.services.registry.SCANNERS` by ``refresh_registries()``.
+    #:
+    #: Empty until discovery has run, which is why every read goes through
+    #: :meth:`_registry` rather than touching this directly. Nothing is defined in
+    #: this module any more, so the seed that used to make a bare
+    #: ``import symbol_scanner`` usable is gone: without the lazy resolve, importing
+    #: this module alone gave ``available() == []`` and every name raised.
     SCANNERS: Dict[str, Type[ScannerStrategy]] = dict(BUILTIN_SCANNERS)
+
+    @classmethod
+    def _registry(cls) -> Dict[str, Type[ScannerStrategy]]:
+        """The resolvable scanners, running discovery first if nothing has yet.
+
+        Delegates to the service registry rather than keeping a second answer. The
+        import is deferred because ``registry`` imports *this* module; during that
+        import ``registry.SCANNERS`` is already seeded with the reserved names, so a
+        pack that scans while being discovered sees those rather than nothing.
+
+        This is also the fallback the guard around import-time discovery exists for:
+        if ``refresh_registries()`` raises before its final line, ``registry.SCANNERS``
+        still holds its seed and every scan path keeps working, where a stale empty
+        class attribute would have failed every name the CLI still advertised.
+        """
+        if not cls.SCANNERS:
+            from tradeflow.services import registry
+
+            cls.SCANNERS = dict(registry.SCANNERS)
+        return cls.SCANNERS
 
     def __init__(
         self,
         data_client: MarketDataClient,
-        strategy_name: str = "volume",
+        # Required. There is no built-in to fall back to - every scanner, the demo
+        # one included, arrives by entry point, so a default here could only name
+        # something that may not be installed and raise one frame further in.
+        strategy_name: str,
         config: Optional[dict] = None,
     ):
-        if strategy_name not in self.SCANNERS:
+        registry = self._registry()
+        if strategy_name not in registry:
             raise ValueError(f"Unknown scanner '{strategy_name}'. Available: {self.available()}")
-        scanner_cls = self.SCANNERS[strategy_name]
+        scanner_cls = registry[strategy_name]
         defaults = {p: spec["default"] for p, spec in scanner_cls.PARAM_RANGES.items()}
         defaults.update(config or {})
 
@@ -76,7 +109,7 @@ class SymbolScanner:
 
     @classmethod
     def available(cls) -> List[str]:
-        return list(cls.SCANNERS)
+        return list(cls._registry())
 
     def scan(
         self, symbols: List[str], timeframe: Optional[str] = None, as_of: Optional[datetime] = None

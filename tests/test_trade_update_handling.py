@@ -83,7 +83,7 @@ def test_the_cumulative_quantity_is_carried_as_a_number():
 
 # --- the engine handler -----------------------------------------------------------
 def _engine(tmp_path):
-    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy = STRATEGIES["demo_trend"].create_with_defaults()
     ledger = PositionLedger(tmp_path / "ledger.jsonl")
     engine = LiveEngine(
         strategy,
@@ -190,7 +190,7 @@ def test_bookkeeping_never_breaks_the_order_path(tmp_path):
 
 
 def test_no_ledger_is_not_an_error(tmp_path):
-    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy = STRATEGIES["demo_trend"].create_with_defaults()
     engine = LiveEngine(
         strategy,
         MarketDataClient(None),
@@ -311,7 +311,7 @@ def test_a_fill_with_no_side_still_refreshes_the_strategy_s_book(tmp_path):
 
 def test_a_fill_refreshes_the_book_even_with_no_ledger(tmp_path):
     """Same defect, one line earlier: the ledger is optional, the book is not."""
-    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy = STRATEGIES["demo_trend"].create_with_defaults()
     engine = LiveEngine(
         strategy,
         MarketDataClient(None),

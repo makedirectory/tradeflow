@@ -46,7 +46,7 @@ to `logs/mcp_audit.jsonl`. There is **no** order, live-trading, or
 ```bash
 uv sync --extra ai
 uv run python main.py research \
-  --strategy volume_spike --symbols NVDA,AAPL,MSFT \
+  --strategy demo_trend --symbols NVDA,AAPL,MSFT \
   --start 2024-01-01 --end 2025-12-31 \
   --goal "improve OOS Sharpe without raising max drawdown" \
   --holdout-days 60 --max-trials 10

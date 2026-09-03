@@ -58,7 +58,7 @@ def _isolated_state(tmp_path, monkeypatch):
 
 
 def _run(client=None, **kwargs):
-    return analysis.run_verdict(client or _client(), "volume_spike", SYMBOLS, START, END, **kwargs)
+    return analysis.run_verdict(client or _client(), "demo_trend", SYMBOLS, START, END, **kwargs)
 
 
 def _journal_rows(tmp_path):
@@ -115,7 +115,7 @@ def test_combination_step_runs_only_with_more_than_one_signal():
     assert single["combination"] is None
     assert single["steps"]["combination"]["status"] == "skipped"
 
-    combined = _run(signals=["volume_spike", "ma_crossover"])
+    combined = _run(signals=["demo_trend", "demo_trend"])
     assert combined["steps"]["combination"]["status"] == "ok"
     assert combined["combination"]["combined_ic"] is not None
 
@@ -296,7 +296,7 @@ def test_weights_are_journaled_and_rebuildable_from_the_journal_alone(_isolated_
 def test_a_journal_with_no_weights_rebuilds_with_an_empty_table(_isolated_state):
     """Every trial recorded before the book was persisted must still rebuild, with
     'not recorded' rather than an invented empty book."""
-    analysis.run_backtest(_client(), "volume_spike", SYMBOLS, START, END)
+    analysis.run_backtest(_client(), "demo_trend", SYMBOLS, START, END)
     journal = _isolated_state / "journal.jsonl"
     with TrialStore(db_path_for_journal(journal), journal_path=journal) as store:
         store.rebuild()

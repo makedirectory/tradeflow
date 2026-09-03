@@ -74,7 +74,7 @@ def test_unset_limits_key_exactly_as_before_they_existed():
 def test_a_real_strategy_s_limits_round_trip_through_both_surfaces():
     """Against an actual strategy's declared limits rather than a hand-built dict, so
     a change to the limit set cannot pass this while breaking the surfaces."""
-    limits = STRATEGIES["ma_crossover"].create_with_defaults().position_limits()
+    limits = STRATEGIES["demo_trend"].create_with_defaults().position_limits()
 
     assert _cli_key(["backtest"], limits) == _service_key(limits)
 
@@ -85,7 +85,7 @@ def test_a_typed_cli_limit_reaches_the_shared_key(flag, value):
     from tradeflow.cli import _apply_limit_overrides
 
     args = parse_cli(["backtest", flag, value])
-    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy = STRATEGIES["demo_trend"].create_with_defaults()
     _apply_limit_overrides(args, strategy)
 
     assert _dedup_params(_PARAMS, args, None, strategy.position_limits()) != _cli_key(["backtest"], None)
@@ -100,7 +100,7 @@ def test_a_walk_forward_fold_trades_the_book_its_config_asked_for():
     rule out."""
     from tradeflow.optimization.walk_forward import WalkForwardValidator
 
-    cls = STRATEGIES["ma_crossover"]
+    cls = STRATEGIES["demo_trend"]
     tuned = {k: cls.create_with_defaults().config[k] for k in cls.PARAM_RANGES}
     validator = WalkForwardValidator(
         cls, None, position_limits={"max_positions": 8, "max_gross_exposure": 0.9}
@@ -117,7 +117,7 @@ def test_a_walk_forward_without_config_limits_is_unchanged():
     every existing walk-forward silently re-bases."""
     from tradeflow.optimization.walk_forward import WalkForwardValidator
 
-    cls = STRATEGIES["ma_crossover"]
+    cls = STRATEGIES["demo_trend"]
     tuned = {k: cls.create_with_defaults().config[k] for k in cls.PARAM_RANGES}
 
     assert (
@@ -131,7 +131,7 @@ def test_config_limits_do_not_leak_between_candidates():
     candidate's overrides follow the next."""
     from tradeflow.optimization.walk_forward import WalkForwardValidator
 
-    cls = STRATEGIES["ma_crossover"]
+    cls = STRATEGIES["demo_trend"]
     tuned = {k: cls.create_with_defaults().config[k] for k in cls.PARAM_RANGES}
     validator = WalkForwardValidator(cls, None, position_limits={"max_positions": 8})
 

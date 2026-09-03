@@ -15,9 +15,16 @@ first; it covers installing a private package and the path from idea to evidence
 
 Three common extension points. Each touches one layer. Strategies and scanners can
 live either in this repository or in a separate private Python package; the private
-package route is the intended shape for proprietary signal IP, and the three strategies
-and one scanner shipped here are **examples** — they demonstrate the interface and are
-not edges.
+package route is the intended shape for proprietary signal IP, and the one strategy
+and one scanner shipped here (`demo_trend`, `demo_volume`) are **examples** — they
+demonstrate the interface and are not edges.
+
+They also arrive the same way yours does. Both live in `tradeflow/demo/` and are
+declared as entry points by the engine's own `pyproject.toml`, so every install
+exercises the discovery path this page describes rather than leaving it to CI. The
+registry seeds them directly as well, because enumeration order across distributions
+is undefined and a reserved name is worth nothing if which class answers to it is a
+coin flip.
 
 ## Add a strategy
 
@@ -44,14 +51,21 @@ not edges.
    the [alpha layer](alphas) scales the same score. Set `LONG_ONLY = False` to allow
    shorts, and override `signal_thresholds()` for asymmetric entry/exit bands.
 
-2. For public/example strategies, register it in `BUILTIN_STRATEGIES` in
-   `tradeflow/services/registry.py`. For proprietary strategies, expose it from a
-   separate installed package through the `tradeflow.strategies` entry-point group:
+2. Expose it through the `tradeflow.strategies` entry-point group. For proprietary
+   strategies that is a separate installed package:
 
    ```toml
    [project.entry-points."tradeflow.strategies"]
    private_trend = "yourfirm_signals.strategies:PrivateTrendStrategy"
    ```
+
+   A *public* strategy shipped with the engine takes the same route — put it in
+   `tradeflow/demo/strategies.py`, declare it in this repository's `pyproject.toml`,
+   and add it to `BUILTIN_STRATEGIES` in `tradeflow/services/registry.py` as well.
+   The entry point is the path a user's install actually takes; the registry entry
+   reserves the name and pins which class answers to it. Registry-only would ship a
+   strategy that never exercises discovery, which is the mechanism the whole feature
+   rests on.
 
    Once installed in the same environment, it works in `backtest`, `live`,
    `optimize`, the MCP server, and the research agent — sizing, fills, execution,
@@ -62,19 +76,22 @@ Use the pure [indicators](indicators); don't reach for a compiled TA library.
 
 ## Add a scanner
 
-1. Subclass `ScannerStrategy` in `tradeflow/scanners/` — implement `process_data` and
-   `generate_signals_df` (emit `SCANNER_BUY`/`SCANNER_SELL`/`SCANNER_HOLD` plus a
-   `signal_strength`).
-2. For public/example scanners, add it to the `BUILTIN_SCANNERS` literal in
-   `tradeflow/scanners/symbol_scanner.py` — not `SymbolScanner.SCANNERS`, which
-   discovery overwrites with the built-ins plus whatever installed packages
-   contribute. For proprietary scanners, expose it from a separate installed package
-   through the `tradeflow.scanners` entry-point group:
+1. Subclass `ScannerStrategy` — implement `process_data` and `generate_signals_df`
+   (emit `SCANNER_BUY`/`SCANNER_SELL`/`SCANNER_HOLD` plus a `signal_strength`).
+   `tradeflow/scanners/` holds the base class and the driver; a scanner itself goes
+   in your own package, or in `tradeflow/demo/scanners.py` if it ships here.
+2. Expose it through the `tradeflow.scanners` entry-point group:
 
    ```toml
    [project.entry-points."tradeflow.scanners"]
    private_volume = "yourfirm_signals.scanners:PrivateVolumeScanner"
    ```
+
+   As with strategies, a public scanner shipped here does the same and additionally
+   goes in `BUILTIN_SCANNERS` in `tradeflow/services/registry.py`. Not the
+   `BUILTIN_SCANNERS` literal in `tradeflow/scanners/symbol_scanner.py`, which is
+   empty and reserves names for classes defined in that module — there are none — and
+   not `SymbolScanner.SCANNERS`, which discovery overwrites.
 
    Keep it TA-Lib-free.
 
@@ -84,7 +101,7 @@ Keep the engine boring and open; keep the signal IP elsewhere. A private package
 can depend on `tradeflow-engine`, define strategies/scanners in its own modules,
 and expose them with entry points. TradeFlow loads entry points at startup, but
 built-in names are reserved, so a private package cannot silently replace
-`ma_crossover`, `mean_reversion`, or `volume`.
+`demo_trend` or `demo_volume`.
 
 A private package can also return several contributions from one entry point:
 

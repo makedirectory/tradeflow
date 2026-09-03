@@ -197,7 +197,7 @@ DEMO_PROPOSALS = [
             "before mean reversion claws it back - raising both trade frequency and the win rate."
         ),
         kind="tune",
-        strategy="ma_crossover",
+        strategy="demo_trend",
         params={
             "fast_ema_period": 5,
             "slow_ema_period": 21,

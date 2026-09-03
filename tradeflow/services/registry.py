@@ -10,13 +10,12 @@ from collections.abc import Mapping
 from importlib import metadata
 from typing import Any, Dict, List, Type
 
+from tradeflow.demo.scanners import DemoVolumeScanner
+from tradeflow.demo.strategies import DemoTrendStrategy
 from tradeflow.scanners.base import ScannerStrategy
 from tradeflow.scanners.symbol_scanner import BUILTIN_SCANNERS as _BUILTIN_SCANNERS
 from tradeflow.scanners.symbol_scanner import SymbolScanner
 from tradeflow.strategies.base import Strategy
-from tradeflow.strategies.ma_crossover import MovingAverageCrossoverStrategy
-from tradeflow.strategies.mean_reversion import MeanReversionStrategy
-from tradeflow.strategies.volume_spike import VolumeSpikeStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -25,19 +24,25 @@ SCANNER_ENTRY_POINT_GROUP = "tradeflow.scanners"
 
 _NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
 
-#: Built-in example strategies exposed everywhere (CLI, MCP, agent). Real IP can
-#: live in a private package and register through the entry-point groups above.
-BUILTIN_STRATEGIES: Dict[str, Type[Strategy]] = {
-    "volume_spike": VolumeSpikeStrategy,
-    "ma_crossover": MovingAverageCrossoverStrategy,
-    "mean_reversion": MeanReversionStrategy,
-}
+#: Names the engine itself owns, and the classes behind them. This is the reserved
+#: set: an installed pack cannot take one of these names.
+#:
+#: The demo pair is *also* declared as an entry point in the engine's own
+#: ``pyproject.toml``, so the shipped wheel exercises the same discovery path a
+#: pack's does rather than leaving it to CI fixtures. Seeded here as well because
+#: enumeration order across distributions is not defined: a pack registering
+#: ``demo_trend`` would otherwise win or lose by accident, and reserving a name is
+#: worth nothing if which class answers to it is a coin flip.
+BUILTIN_STRATEGIES: Dict[str, Type[Strategy]] = {"demo_trend": DemoTrendStrategy}
 
-#: Built-in example scanners. Taken from the scanner package's own literal rather
-#: than from ``SymbolScanner.SCANNERS``, which discovery overwrites with the merged
-#: set - re-deriving from that on a module reload quietly promoted installed
-#: contributions into the reserved built-in names.
-BUILTIN_SCANNERS: Dict[str, Type[ScannerStrategy]] = dict(_BUILTIN_SCANNERS)
+#: Built-in scanners. Taken from the scanner package's own literal rather than from
+#: ``SymbolScanner.SCANNERS``, which discovery overwrites with the merged set -
+#: re-deriving from that on a module reload quietly promoted installed contributions
+#: into the reserved built-in names.
+BUILTIN_SCANNERS: Dict[str, Type[ScannerStrategy]] = {
+    **_BUILTIN_SCANNERS,
+    "demo_volume": DemoVolumeScanner,
+}
 
 #: Trading strategies exposed everywhere (CLI, MCP, agent).
 #:
@@ -75,34 +80,48 @@ def refresh_registries() -> None:
 
 
 def list_strategies() -> List[Dict[str, Any]]:
-    """Names, one-line descriptions, and whether each is a shipped example.
+    """Names, one-line descriptions, and whether each is shipped demo scaffolding.
 
-    ``example`` is carried rather than implied. The built-ins exist to demonstrate the
-    interface, not to be traded; without a label the reasonable read of a registry
-    holding three strategies is that the platform *is* those three, which is the
-    opposite of the point.
+    ``demo`` is read from the class, not from registry membership. The shipped
+    example arrives by entry point exactly as a private pack's does, so *how* something
+    was discovered stopped being able to say what it is for. Carried rather than
+    implied, because without a label the reasonable read of a registry is that the
+    platform *is* whatever is in it.
     """
     return [
         {
             "name": name,
             "description": _first_line(cls.__doc__),
             "timeframe": getattr(cls, "TIMEFRAME", ""),
-            "example": name in BUILTIN_STRATEGIES,
+            "demo": is_demo(cls),
         }
         for name, cls in STRATEGIES.items()
     ]
 
 
 def list_scanners() -> List[Dict[str, Any]]:
-    """Names, one-line descriptions, and whether each is a shipped example."""
+    """Names, one-line descriptions, and whether each is shipped demo scaffolding."""
     return [
         {
             "name": name,
             "description": _first_line(cls.__doc__),
-            "example": name in BUILTIN_SCANNERS,
+            "demo": is_demo(cls),
         }
         for name, cls in SCANNERS.items()
     ]
+
+
+def is_demo(cls: Type) -> bool:
+    """Whether ``cls`` is shipped demonstration scaffolding, rather than inheriting it.
+
+    Read from the class's own ``__dict__``, not through the MRO. ``docs/content/usage/
+    private-strategies.md`` invites a pack to start by subclassing ``DemoTrendStrategy``,
+    and an inherited flag reported that pack's real strategy to the CLI, the MCP server
+    and the research agent as shipped scaffolding - the same "the platform *is* whatever
+    is in it" misread the label exists to prevent, pointing the other way. A subclass
+    that genuinely is more scaffolding can say so by setting ``DEMO`` itself.
+    """
+    return bool(cls.__dict__.get("DEMO", False))
 
 
 def get_param_ranges(kind: str, name: str) -> Dict[str, Any]:
@@ -130,6 +149,11 @@ def _merged_registry(builtins: Dict[str, Type], group: str, base_cls: Type) -> D
     registry = dict(builtins)
     for name, cls in _entry_point_classes(group, base_cls).items():
         if name in registry:
+            if registry[name] is cls:
+                # The engine's own demo, arriving by the entry point it declares.
+                # Same name, same class, nothing overridden - warning here would fire
+                # on every single run and train the reader to ignore the real one.
+                continue
             logger.warning("Ignoring %s entry point %r: built-in names cannot be overridden", group, name)
             continue
         registry[name] = cls

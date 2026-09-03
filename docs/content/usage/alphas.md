@@ -11,14 +11,14 @@ directly comparable. It is **read-only**: it produces no orders and saves no con
 
 ```bash
 python main.py alphas \
-  --strategy volume_spike \
+  --strategy demo_trend \
   --symbols NVDA,AAPL,META,AMD,TSLA \
   --as-of 2025-06-01 \
   --ic 0.03
 ```
 
 ```
-Alphas from 'volume_spike' score as of 2025-06-01 (IC=0.03, benchmark=SPY)
+Alphas from 'demo_trend' score as of 2025-06-01 (IC=0.03, benchmark=SPY)
 
 SYMBOL         SCORE        Z    BETA  RESID_VOL     ALPHA
 NVDA           0.043     1.41    1.34      38.2%     1.62%
@@ -37,9 +37,9 @@ residual return for the year. The ranking is what a mean-variance
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--strategy` | `volume_spike` | Strategy whose score is the view (`--source strategy`/`signal`). |
+| `--strategy` | `demo_trend` | Strategy whose score is the view (`--source strategy`/`signal`). |
 | `--source` | `strategy` | `strategy` = the strategy's continuous conviction; `signal` = its `BUY`/`SELL`/`HOLD` as +1/−1/0; `scanner` = the scanner's continuous strength. |
-| `--scanner` | `volume` | Scanner used as the metric when `--source scanner`. |
+| `--scanner` | `demo_volume` | Scanner used as the metric when `--source scanner`. |
 | `--symbols` | demo universe | Comma-separated candidates. |
 | `--as-of` | today | Rebalance date; only data up to this date is used. |
 | `--ic` | `0.03` | Assumed information coefficient (sets overall aggressiveness). |
@@ -58,7 +58,7 @@ price-derived signals the vol is already *inside* the signal (**Case 2**), and t
 `--scaling auto` runs a regression to decide and prints the verdict:
 
 ```bash
-python main.py alphas --strategy mean_reversion --symbols ... --as-of 2025-06-01 --scaling auto
+python main.py alphas --strategy demo_trend --symbols ... --as-of 2025-06-01 --scaling auto
 ```
 
 ```
@@ -74,7 +74,7 @@ Use `--source scanner` to rank by a scanner's continuous conviction instead of t
 strategy's score:
 
 ```bash
-python main.py alphas --source scanner --scanner volume --symbols NVDA,AAPL,META --as-of 2025-06-01
+python main.py alphas --source scanner --scanner demo_volume --symbols NVDA,AAPL,META --as-of 2025-06-01
 ```
 
 ## Factor-neutral alphas
@@ -84,13 +84,13 @@ python main.py alphas --source scanner --scanner volume --symbols NVDA,AAPL,META
 alphas can't hide an incidental market/volatility/size tilt:
 
 ```bash
-python main.py alphas --strategy volume_spike --symbols ... --neutralize-factors
+python main.py alphas --strategy demo_trend --symbols ... --neutralize-factors
 ```
 
 The report states what was **actually applied** — and warns when it couldn't be:
 
 ```
-Alphas from 'volume_spike' score as of 2025-06-01 (IC=0.03, benchmark=SPY)
+Alphas from 'demo_trend' score as of 2025-06-01 (IC=0.03, benchmark=SPY)
   neutralized against: market, volatility, size
 ```
 
@@ -112,19 +112,23 @@ the same alpha you deploy**. Note: the MCP tools don't expose this parameter yet
 their **measured** information coefficient and **correlation** so redundant signals
 don't double-count and uncertain ones are shrunk toward zero:
 
+It needs at least two strategies installed, and a bare engine ships one. The names
+below are `demo_trend` plus the two from the [example pack](private-strategies.md) —
+substitute your own:
+
 ```bash
-python main.py alphas --combine volume_spike,ma_crossover,mean_reversion \
+python main.py alphas --combine demo_trend,example_breakout,example_reversion \
   --symbols NVDA,AAPL,META,AMD,TSLA --as-of 2025-06-01
 ```
 
 ```
-Combined alpha from volume_spike, ma_crossover, mean_reversion as of 2025-06-01
+Combined alpha from demo_trend, example_breakout, example_reversion as of 2025-06-01
   measured over 12 rebalances  |  combined IC 0.0412
 
-SIGNAL                 IC   SHRUNK   WEIGHT
-volume_spike       0.0380   0.0310    0.180
-ma_crossover       0.0350   0.0280   -0.020   ← redundant with volume_spike, down-weighted
-mean_reversion     0.0290   0.0210    0.240   ← independent, earns its weight
+SIGNAL                     IC   SHRUNK   WEIGHT
+demo_trend             0.0380   0.0310    0.180
+example_breakout       0.0350   0.0280   -0.020   ← redundant with demo_trend, down-weighted
+example_reversion      0.0290   0.0210    0.240   ← independent, earns its weight
 ```
 
 The ICs and the signal correlation are estimated over a trailing window of realized

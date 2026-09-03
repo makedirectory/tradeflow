@@ -55,7 +55,7 @@ def test_every_accepted_form_carries_the_zone(value):
 def test_the_window_defaults_share_the_contract():
     """Defaults that stayed naive would reintroduce the mixed-awareness comparison the
     contract exists to remove — which is how the previous round of this broke."""
-    args = build_parser().parse_args(["backtest", "--strategy", "volume_spike"])
+    args = build_parser().parse_args(["backtest", "--strategy", "demo_trend"])
 
     assert args.start.tzinfo is not None
     assert args.end.tzinfo is not None
@@ -64,7 +64,7 @@ def test_the_window_defaults_share_the_contract():
 
 def test_a_typed_end_still_compares_against_a_defaulted_start():
     args = build_parser().parse_args(
-        ["backtest", "--strategy", "volume_spike", "--end", "2026-08-22T16:00:00Z"]
+        ["backtest", "--strategy", "demo_trend", "--end", "2026-08-22T16:00:00Z"]
     )
 
     assert isinstance(args.end - args.start, timedelta)
@@ -238,18 +238,17 @@ def test_the_cost_curve_defaults_on_where_a_promotion_is_decided():
     than in an optional follow-up."""
     parse = build_parser().parse_args
 
-    assert parse(["walkforward", "--strategy", "ma_crossover"]).cost_stress == "all"
-    assert parse(["backtest", "--strategy", "ma_crossover"]).cost_stress is None
+    assert parse(["walkforward", "--strategy", "demo_trend"]).cost_stress == "all"
+    assert parse(["backtest", "--strategy", "demo_trend"]).cost_stress is None
 
 
 def test_the_default_can_be_turned_off_without_argument_juggling():
     """A default that costs time needs a plain way out, not `--cost-stress none`."""
     parse = build_parser().parse_args
 
-    assert parse(["walkforward", "--strategy", "ma_crossover", "--no-cost-stress"]).cost_stress is None
+    assert parse(["walkforward", "--strategy", "demo_trend", "--no-cost-stress"]).cost_stress is None
     assert (
-        parse(["walkforward", "--strategy", "ma_crossover", "--cost-stress", "borrow"]).cost_stress
-        == "borrow"
+        parse(["walkforward", "--strategy", "demo_trend", "--cost-stress", "borrow"]).cost_stress == "borrow"
     )
 
 

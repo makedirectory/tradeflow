@@ -6,16 +6,16 @@ import pytest
 
 from tests.fakes import FakeBroker
 from tradeflow.brokers.base import AccountSnapshot, OrderSide, Position
+from tradeflow.demo.strategies import DemoTrendStrategy
 from tradeflow.execution import decision as decisions
 from tradeflow.execution.live_trader import LiveTrader
 from tradeflow.execution.order_id import client_order_id
 from tradeflow.execution.sizing import BetaSizer, PortfolioWeightSizer, RiskBasedSizer
 from tradeflow.strategies import signals
-from tradeflow.strategies.volume_spike import VolumeSpikeStrategy
 
 
 def _trader(broker, sizer=None):
-    return LiveTrader(broker, VolumeSpikeStrategy.create_with_defaults(), sizer=sizer)
+    return LiveTrader(broker, DemoTrendStrategy.create_with_defaults(), sizer=sizer)
 
 
 def _open_position(symbol="AAA", qty=10.0):
@@ -42,13 +42,13 @@ def test_portfolio_weight_sizer():
 
 
 def test_risk_based_sizer_delegates_to_strategy():
-    strategy = VolumeSpikeStrategy.create_with_defaults()
+    strategy = DemoTrendStrategy.create_with_defaults()
     sizer = RiskBasedSizer(strategy)
     assert sizer.size("AAA", 100.0, _account()) == strategy.calculate_position_size(100_000.0, 100.0)
 
 
 def test_beta_sizer_scales_inversely_with_beta():
-    strategy = VolumeSpikeStrategy.create_with_defaults()
+    strategy = DemoTrendStrategy.create_with_defaults()
     account = _account()
     # beta 1.0 is the neutral baseline; beta 2.0 should roughly halve the size.
     base = BetaSizer(strategy, {"AAA": 1.0}).size("AAA", 100.0, account)
@@ -57,7 +57,7 @@ def test_beta_sizer_scales_inversely_with_beta():
 
 
 def test_beta_sizer_uses_default_for_unknown_symbol():
-    strategy = VolumeSpikeStrategy.create_with_defaults()
+    strategy = DemoTrendStrategy.create_with_defaults()
     account = _account()
     unknown = BetaSizer(strategy, {}, default_beta=1.0).size("ZZZ", 100.0, account)
     neutral = BetaSizer(strategy, {"ZZZ": 1.0}).size("ZZZ", 100.0, account)
@@ -65,7 +65,7 @@ def test_beta_sizer_uses_default_for_unknown_symbol():
 
 
 def test_beta_sizer_clamps_extreme_beta():
-    strategy = VolumeSpikeStrategy.create_with_defaults()
+    strategy = DemoTrendStrategy.create_with_defaults()
     account = _account()
     # Beyond max_abs_beta, sizes should match the clamp (not keep shrinking).
     at_cap = BetaSizer(strategy, {"AAA": 4.0}, max_abs_beta=4.0).size("AAA", 100.0, account)
@@ -137,7 +137,7 @@ def test_closed_market_blocks_orders():
 
 def test_market_hours_can_be_disabled():
     broker = FakeBroker(buying_power=100_000, market_open=False)
-    LiveTrader(broker, VolumeSpikeStrategy.create_with_defaults(), respect_market_hours=False).handle_signal(
+    LiveTrader(broker, DemoTrendStrategy.create_with_defaults(), respect_market_hours=False).handle_signal(
         "AAA", signals.BUY, price=100.0
     )
     assert len(broker.orders) == 1
@@ -172,7 +172,7 @@ def _ts(minute=0):
 
 
 def test_the_same_decision_always_yields_the_same_order_id():
-    strategy = VolumeSpikeStrategy.create_with_defaults()
+    strategy = DemoTrendStrategy.create_with_defaults()
     first = client_order_id(strategy, "AAA", signals.BUY, _ts(1))
     again = client_order_id(strategy, "AAA", signals.BUY, _ts(1))
     assert first == again
@@ -184,7 +184,7 @@ def test_the_same_decision_always_yields_the_same_order_id():
 )
 def test_a_different_decision_yields_a_different_order_id(symbol, signal, ts):
     """Cover every axis: the same symbol on a later bar is a new order, not a replay."""
-    strategy = VolumeSpikeStrategy.create_with_defaults()
+    strategy = DemoTrendStrategy.create_with_defaults()
     baseline = client_order_id(strategy, "AAA", signals.BUY, _ts(1))
     assert client_order_id(strategy, symbol, signal, ts) != baseline
 
@@ -192,8 +192,8 @@ def test_a_different_decision_yields_a_different_order_id(symbol, signal, ts):
 def test_reconfiguring_a_strategy_changes_its_order_ids():
     """Two parameterizations can legitimately disagree about the same bar; one must
     not be deduplicated against the other."""
-    base = VolumeSpikeStrategy.create_with_defaults()
-    other = VolumeSpikeStrategy.create_with_defaults()
+    base = DemoTrendStrategy.create_with_defaults()
+    other = DemoTrendStrategy.create_with_defaults()
     other.config["risk_per_trade"] = base.config["risk_per_trade"] / 2
     assert client_order_id(base, "AAA", signals.BUY, _ts(1)) != client_order_id(
         other, "AAA", signals.BUY, _ts(1)
@@ -211,7 +211,7 @@ def test_a_replayed_bar_cannot_place_a_second_order():
     restarts, and the check-then-act guard against open orders no longer remembers
     anything. The broker refuses the duplicate id instead."""
     broker = FakeBroker()
-    strategy = VolumeSpikeStrategy.create_with_defaults()
+    strategy = DemoTrendStrategy.create_with_defaults()
     trader = LiveTrader(broker, strategy)
 
     first = trader.handle_signal("AAA", signals.BUY, 100.0, bar_timestamp=_ts(1))
@@ -230,7 +230,7 @@ def test_a_replayed_bar_cannot_place_a_second_order():
 def test_a_genuinely_new_bar_still_places_an_order_after_a_restart():
     """The other direction: identity must not become a reason to never trade again."""
     broker = FakeBroker()
-    strategy = VolumeSpikeStrategy.create_with_defaults()
+    strategy = DemoTrendStrategy.create_with_defaults()
     trader = LiveTrader(broker, strategy)
 
     trader.handle_signal("AAA", signals.BUY, 100.0, bar_timestamp=_ts(1))
@@ -280,7 +280,7 @@ def test_an_allowed_decision_carries_the_order():
 
 def test_a_market_hours_veto_is_recorded_as_such():
     broker = FakeBroker(market_open=False)
-    decision = LiveTrader(broker, VolumeSpikeStrategy.create_with_defaults()).handle_signal(
+    decision = LiveTrader(broker, DemoTrendStrategy.create_with_defaults()).handle_signal(
         "AAA", signals.BUY, 100.0
     )
 
@@ -292,7 +292,7 @@ def test_a_market_hours_veto_is_recorded_as_such():
 def test_a_skipped_market_hours_check_does_not_claim_to_have_run():
     """`respect_market_hours=False` means the guard did not run, which is not the
     same as running and passing."""
-    trader = LiveTrader(FakeBroker(), VolumeSpikeStrategy.create_with_defaults(), respect_market_hours=False)
+    trader = LiveTrader(FakeBroker(), DemoTrendStrategy.create_with_defaults(), respect_market_hours=False)
     decision = trader.handle_signal("AAA", signals.BUY, 100.0)
     assert decisions.MARKET_HOURS not in decision.guards_consulted
 
@@ -331,7 +331,7 @@ def test_a_recorded_decision_carries_no_position_meaning(tmp_path):
 #: $20k of notional per position at the default 1% stop, so one position risks $200
 #: and deploys $20k - numbers big enough for a book-level limit to bite.
 def _trader_with_limits(broker, **limits):
-    strategy = VolumeSpikeStrategy.create_with_defaults()
+    strategy = DemoTrendStrategy.create_with_defaults()
     strategy.config["position_limits"] = {
         **strategy.position_limits(),
         "max_position_size": 20_000.0,
@@ -445,11 +445,14 @@ def test_checking_the_limits_adds_no_broker_call_to_the_bar_loop():
 # --- capital: what this run may deploy -----------------------------------------
 def _sized_at(capital, account_balance=100_000.0):
     broker = FakeBroker(buying_power=account_balance)
-    strategy = VolumeSpikeStrategy.create_with_defaults()
+    strategy = DemoTrendStrategy.create_with_defaults()
     strategy.config["position_limits"] = {
         **strategy.position_limits(),
         "max_positions": 5,
-        "max_position_size": 50_000.0,
+        # High enough that the notional cap never binds: this test is about which
+        # capital figure the risk calculation reads, and a cap clipping either side
+        # would hide exactly the difference it exists to detect.
+        "max_position_size": 1_000_000.0,
     }
     LiveTrader(broker, strategy, capital=capital).handle_signal("AAA", signals.BUY, price=100.0)
     return broker.orders[0]["qty"] if broker.orders else 0
@@ -462,8 +465,10 @@ def test_sizing_uses_the_configured_capital_not_the_account_balance():
     merely flatter the result, it invalidates the execution telemetry the run exists to
     gather, because fills, slippage and rounding are all properties of a book at a size.
     """
-    assert _sized_at(8_000.0) * 100 == pytest.approx(8_000.0)
-    assert _sized_at(None) * 100 > 8_000.0  # the whole account, as before
+    # Risk 2% of the configured capital over a 3% stop, at $100: 15,000 * 0.02 / 3.
+    assert _sized_at(15_000.0) == 100
+    # The same arithmetic against the account balance instead - 100,000 * 0.02 / 3.
+    assert _sized_at(None) == 666
 
 
 def test_capital_caps_and_never_inflates():
@@ -480,7 +485,7 @@ def test_portfolio_limits_are_fractions_of_the_capital_not_the_account():
     """`max_total_risk` and `max_gross_exposure` are fractions *of equity*, and 5% of a
     paper account's balance is not 5% of the capital a config was validated at."""
     broker = FakeBroker(buying_power=100_000.0)
-    strategy = VolumeSpikeStrategy.create_with_defaults()
+    strategy = DemoTrendStrategy.create_with_defaults()
     strategy.config["position_limits"] = {
         **strategy.position_limits(),
         "max_positions": 5,

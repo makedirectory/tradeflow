@@ -294,7 +294,7 @@ def test_an_unwritable_ledger_never_breaks_the_caller(tmp_path):
 
 # --- the loop fence ---------------------------------------------------------
 def _engine(events, *, broker=None, bar_filter=None, ledger=None, raise_after=None):
-    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy = STRATEGIES["demo_trend"].create_with_defaults()
     feed = ScriptedFeed(["AAA", "BBB"], events=events, n=200, freq="1D", raise_after=raise_after)
     broker = broker or RecordingBroker()
     engine = LiveEngine(
@@ -356,7 +356,7 @@ class _EmptyWarmUp(ScriptedFeed):
 
 
 def _blind_engine(**kwargs):
-    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy = STRATEGIES["demo_trend"].create_with_defaults()
     feed = _EmptyWarmUp(["AAA"], events=[bar_event(minute=1)], n=10, freq="1D")
     engine = LiveEngine(
         strategy,
@@ -397,7 +397,7 @@ def test_a_blind_start_is_allowed_when_it_is_asked_for_explicitly():
 def test_partial_warm_up_is_not_treated_as_blind():
     """One symbol with history is not the failure this guards, and refusing it would
     make a single delisted name stop an otherwise valid book."""
-    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy = STRATEGIES["demo_trend"].create_with_defaults()
     feed = ScriptedFeed(["AAA", "BBB"], events=[bar_event(minute=1)], n=10, freq="1D")
     original = feed.get_bars
 
@@ -798,7 +798,7 @@ def test_the_preflight_runs_the_same_warm_up_the_run_would():
     have history — could not be confirmed from it. A lighter probe would not do: a
     preflight that fetches differently from the run it precedes confirms nothing.
     """
-    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy = STRATEGIES["demo_trend"].create_with_defaults()
     # Fewer bars needed than the feed supplies, so this asserts a genuinely full
     # warm-up rather than passing because both counts happen to be short.
     strategy.config["required_lookback_periods"] = 5
@@ -817,7 +817,7 @@ def test_a_short_warm_up_is_counted_apart_from_a_full_one():
     third of the bars its indicators need was reported identically to one warmed in
     full. Presence is not sufficiency, and a preflight that conflates them reads as a
     pass on a book that is not ready."""
-    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy = STRATEGIES["demo_trend"].create_with_defaults()
     strategy.config["required_lookback_periods"] = 8
     feed = ScriptedFeed(["AAA"], events=[bar_event(minute=1)], n=4, freq="1D")
     engine = LiveEngine(
@@ -859,7 +859,7 @@ def test_a_stream_that_will_not_close_does_not_hold_the_process_open(monkeypatch
             finally:
                 await asyncio.sleep(3600)
 
-    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy = STRATEGIES["demo_trend"].create_with_defaults()
     strategy.config["required_lookback_periods"] = 5
     feed = SlowToClose(["AAA"], events=[bar_event(minute=1)], n=10, freq="1D")
     engine = LiveEngine(
@@ -893,7 +893,7 @@ def test_a_stream_failure_still_propagates():
         async def stream_bars(self, symbols, handler):
             raise RuntimeError("feed died")
 
-    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy = STRATEGIES["demo_trend"].create_with_defaults()
     strategy.config["required_lookback_periods"] = 5
     feed = Failing(["AAA"], events=[bar_event(minute=1)], n=10, freq="1D")
     engine = LiveEngine(
@@ -910,7 +910,7 @@ def test_a_resumed_session_writes_its_adopted_book_to_the_ledger(tmp_path):
     """The bug: the engine adopted the broker's positions into its in-memory book and
     the durable ledger never heard of them, so `tradeflow reconcile` reported every
     resumed position as one nobody ordered."""
-    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy = STRATEGIES["demo_trend"].create_with_defaults()
     strategy.config["required_lookback_periods"] = 5
     broker = RecordingBroker(
         positions=[
@@ -934,7 +934,7 @@ def test_a_resumed_session_writes_its_adopted_book_to_the_ledger(tmp_path):
 
 def test_adoption_bookkeeping_never_breaks_the_start_path(tmp_path):
     """A ledger that cannot be written must not stop a session from starting."""
-    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy = STRATEGIES["demo_trend"].create_with_defaults()
     broker = RecordingBroker(positions=[Position("COP", 8, "long", 100, 100, 800, 0)])
     ledger = PositionLedger(tmp_path / "ledger.jsonl")
 
@@ -961,7 +961,7 @@ def test_a_fill_teaches_the_book_about_a_position_a_sweep_erased(tmp_path):
     The fill then updated the ledger and nothing else — so the strategy was flat in a
     symbol it held, and a strategy that believes it is flat cannot emit an exit.
     """
-    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy = STRATEGIES["demo_trend"].create_with_defaults()
     broker = RecordingBroker(positions=[Position("MSFT", 1, "long", 500.0, 500.0, 500.0, 0)])
     engine = LiveEngine(
         strategy,
@@ -992,7 +992,7 @@ def test_a_fill_teaches_the_book_about_a_position_a_sweep_erased(tmp_path):
 def test_a_fill_that_closes_a_position_removes_it_from_the_book(tmp_path):
     """Both directions: broker truth is what decides, so a symbol the broker no longer
     holds must leave the book rather than linger as a phantom the strategy would exit."""
-    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy = STRATEGIES["demo_trend"].create_with_defaults()
     broker = RecordingBroker(positions=[])  # flat now
     engine = LiveEngine(
         strategy,
@@ -1018,7 +1018,7 @@ def test_a_fill_that_closes_a_position_removes_it_from_the_book(tmp_path):
 def test_the_refresh_never_breaks_the_order_path(tmp_path):
     """A broker that will not answer must not turn a fill into a raised exception on
     the trade clock; the next sweep corrects the book anyway."""
-    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy = STRATEGIES["demo_trend"].create_with_defaults()
     broker = RecordingBroker()
 
     def explode(symbol):

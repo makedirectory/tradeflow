@@ -25,7 +25,7 @@ def _stress(margins=(0.0, 25.0)):
     client = MarketDataClient(FakeMarketData([*symbols, "SPY"], n=200, freq="1D"))
     return analysis.run_fill_stress(
         client,
-        "ma_crossover",
+        "demo_trend",
         symbols,
         datetime(2024, 1, 2),
         datetime(2024, 8, 1),
@@ -87,7 +87,7 @@ def test_a_missing_trade_count_renders_as_unknown_not_zero(capsys):
             impact_eta=0.3,
             borrow_bps=50.0,
         )
-        _print_fill_stress(None, "ma_crossover", [], args, None)
+        _print_fill_stress(None, "demo_trend", [], args, None)
 
     printed = capsys.readouterr().out
     assert "—" in printed and "touch only" in printed

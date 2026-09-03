@@ -30,7 +30,7 @@ def test_rebuild_from_cli_journal_is_idempotent(tmp_path):
     for p in (10, 20, 30):
         journal_trial(
             "backtest",
-            strategy="ma_crossover",
+            strategy="demo_trend",
             symbols=["aapl", "MSFT"],
             start=datetime(2024, 1, 1),
             end=datetime(2024, 6, 1),
@@ -42,13 +42,13 @@ def test_rebuild_from_cli_journal_is_idempotent(tmp_path):
     store = TrialStore(tmp_path / "isolated.db")  # distinct from the journal's own sibling db
     stats = store.rebuild(journal)
     assert stats == {"rows": 3, "journal_lines": 3}
-    rows = store.query(strategy="ma_crossover", limit=10)
+    rows = store.query(strategy="demo_trend", limit=10)
     ids_first = {r["id"] for r in rows}
     assert len(ids_first) == 3
 
     stats2 = store.rebuild(journal)
     assert stats2 == stats
-    rows2 = store.query(strategy="ma_crossover", limit=10)
+    rows2 = store.query(strategy="demo_trend", limit=10)
     assert {r["id"] for r in rows2} == ids_first
 
 

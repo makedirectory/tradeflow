@@ -6,14 +6,14 @@ distribution that exposes entry points.
 
 from importlib import metadata
 
+from tradeflow.demo.strategies import DemoTrendStrategy
 from tradeflow.scanners.base import ScannerStrategy
 from tradeflow.scanners.symbol_scanner import BUILTIN_SCANNERS as package_builtin_scanners
 from tradeflow.scanners.symbol_scanner import SymbolScanner
 from tradeflow.services import registry
-from tradeflow.strategies.ma_crossover import MovingAverageCrossoverStrategy
 
 
-class PrivateTrendStrategy(MovingAverageCrossoverStrategy):
+class PrivateTrendStrategy(DemoTrendStrategy):
     """Private trend strategy used by a separate package."""
 
 
@@ -100,13 +100,13 @@ def test_private_entry_points_cannot_override_builtins(monkeypatch):
         metadata,
         "entry_points",
         lambda: _FakeEntryPoints(
-            [_FakeEntryPoint("ma_crossover", registry.STRATEGY_ENTRY_POINT_GROUP, PrivateTrendStrategy)]
+            [_FakeEntryPoint("demo_trend", registry.STRATEGY_ENTRY_POINT_GROUP, PrivateTrendStrategy)]
         ),
     )
 
     registry.refresh_registries()
     try:
-        assert registry.STRATEGIES["ma_crossover"] is MovingAverageCrossoverStrategy
+        assert registry.STRATEGIES["demo_trend"] is DemoTrendStrategy
     finally:
         monkeypatch.setattr(metadata, "entry_points", real_entry_points)
         registry.refresh_registries()
@@ -166,11 +166,28 @@ def test_unreadable_installed_metadata_leaves_the_builtins_standing():
         registry.refresh_registries()
 
 
+def _reload_registry_preserving_identity():
+    """Reload the registry module, then hand its consumers back the dicts they hold.
+
+    Reloading rebinds ``STRATEGIES``/``SCANNERS`` to fresh objects, while every module
+    that did ``from ... import STRATEGIES`` - the CLI's argparse ``choices=`` among
+    them - keeps a live reference to the originals. Left that way a reload silently
+    freezes the CLI's menu for the rest of the session, and the test that trips over
+    it is some unrelated one much later.
+    """
+    import importlib
+
+    live_strategies, live_scanners = registry.STRATEGIES, registry.SCANNERS
+    reloaded = importlib.reload(registry)
+    reloaded.STRATEGIES = live_strategies
+    reloaded.SCANNERS = live_scanners
+    reloaded.refresh_registries()
+    return reloaded
+
+
 def test_importing_the_registry_survives_unreadable_metadata():
     """The failure that mattered: discovery runs at import, so an unguarded raise
     there is an ImportError on every command rather than a missing extension."""
-    import importlib
-
     real = metadata.entry_points
 
     def _corrupt():
@@ -178,11 +195,11 @@ def test_importing_the_registry_survives_unreadable_metadata():
 
     metadata.entry_points = _corrupt
     try:
-        reloaded = importlib.reload(registry)  # must not raise
+        reloaded = _reload_registry_preserving_identity()  # must not raise
         assert set(reloaded.BUILTIN_STRATEGIES) <= set(reloaded.STRATEGIES)
     finally:
         metadata.entry_points = real
-        importlib.reload(registry)
+        _reload_registry_preserving_identity()
 
 
 def test_a_pack_that_reads_the_registry_while_importing_sees_the_builtins():
@@ -220,8 +237,6 @@ def test_a_reload_does_not_promote_an_installed_scanner_into_the_builtins():
     that pack's own contribution as one that "cannot override a built-in name". The
     reservation the extension design rests on was poisoning itself.
     """
-    import importlib
-
     real = metadata.entry_points
     metadata.entry_points = lambda: _FakeEntryPoints(
         [_FakeEntryPoint("priv_scan", registry.SCANNER_ENTRY_POINT_GROUP, PrivateScanner)]
@@ -231,9 +246,79 @@ def test_a_reload_does_not_promote_an_installed_scanner_into_the_builtins():
         assert "priv_scan" in registry.SCANNERS  # discovered, and now on SymbolScanner too
         assert "priv_scan" in SymbolScanner.SCANNERS
 
-        reloaded = importlib.reload(registry)
+        reloaded = _reload_registry_preserving_identity()
         assert "priv_scan" not in reloaded.BUILTIN_SCANNERS
-        assert set(reloaded.BUILTIN_SCANNERS) == set(package_builtin_scanners)
+        # The scanner package's own literal plus the demo the engine itself owns,
+        # and nothing that arrived by discovery.
+        assert set(reloaded.BUILTIN_SCANNERS) == set(package_builtin_scanners) | {"demo_volume"}
     finally:
         metadata.entry_points = real
-        importlib.reload(registry)
+        _reload_registry_preserving_identity()
+
+
+# --- the class attribute and the registry are one answer --------------------
+def test_symbol_scanner_resolves_names_without_importing_the_registry_first():
+    """A bare `import symbol_scanner` has to be usable on its own.
+
+    Nothing is defined in that module any more, so its literal is empty and the class
+    attribute it seeds is too. Only `refresh_registries()` ever filled the attribute,
+    which made `SymbolScanner` work or not depending on whether some *other* module
+    had been imported first - with no signal either way, and
+    `docs/content/engineering/scanners.md` naming it as the driver to use.
+
+    Run in a subprocess, because every other test in this suite has already imported
+    the registry and would mask exactly the ordering this is about.
+    """
+    import subprocess
+    import sys
+
+    probe = (
+        "from tradeflow.scanners.symbol_scanner import SymbolScanner;"
+        "names = SymbolScanner.available();"
+        "assert 'demo_volume' in names, names;"
+        "print('ok')"
+    )
+    result = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stderr[-2000:]
+
+
+def test_the_scanner_class_attribute_agrees_with_the_service_registry():
+    """Two dicts holding one answer: compare them, rather than testing each alone."""
+    registry.refresh_registries()
+
+    assert SymbolScanner._registry() == registry.SCANNERS
+
+
+def test_the_scanner_registry_survives_discovery_failing_late(monkeypatch):
+    """The fallback the import-time guard exists for.
+
+    If `refresh_registries()` raises before its last line, the service registry keeps
+    its seeded reserved names - but the class attribute was left holding whatever it
+    had, which after this package's built-ins moved out is nothing. Every scan then
+    failed on a name `list_scanners()` still advertised.
+    """
+    monkeypatch.setattr(SymbolScanner, "SCANNERS", {})
+
+    def explode(*_args, **_kwargs):
+        raise RuntimeError("a broken distribution")
+
+    monkeypatch.setattr(registry, "_merged_registry", explode)
+    try:
+        registry.refresh_registries()
+    except RuntimeError:
+        pass
+
+    assert "demo_volume" in SymbolScanner.available()
+
+
+# --- the demo label describes the class, not its ancestry -------------------
+def test_a_pack_subclassing_the_demo_is_not_itself_reported_as_demo():
+    """`DEMO` read through the MRO labelled private work as shipped scaffolding.
+
+    The private-strategies doc invites a pack to start from `DemoTrendStrategy`, so
+    this is the documented path, not a corner. Reporting that pack's real strategy as
+    `demo: True` to the CLI, MCP and the agent is the label's own failure mode in
+    reverse.
+    """
+    assert registry.is_demo(DemoTrendStrategy)
+    assert not registry.is_demo(PrivateTrendStrategy)
