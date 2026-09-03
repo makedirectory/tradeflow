@@ -595,6 +595,8 @@ def cmd_backtest(args) -> None:
     _print_net_cap_derivation(result, strategy.position_limits())
     _print_verdicts_for_backtest(result)
     _print_exit_concentration(result)
+    if getattr(args, "causality", False):
+        _print_causality_for_backtest(args, data_client, universe)
     if getattr(args, "cost_stress", False):
         _print_cost_stress(data_client, strategy_name, universe, args, tuned)
     if getattr(args, "fill_stress", False):
@@ -1126,6 +1128,47 @@ def _print_screen(report) -> None:
     print(f"\n  {report['note']}")
     if report.get("results_csv"):
         print(f"  {'every point':22}{report['results_csv']}")
+
+
+def _print_causality(report) -> None:
+    """Every probe with its own verdict, and no single reassuring line.
+
+    The overall word is deliberately not a grade. "incomplete" is the honest answer
+    whenever a probe had nothing to look at, because a run that never traded has not
+    been cleared by a probe about trading — and three passes with one blank is not a
+    pass.
+    """
+    print("\n=== Causality probes ===")
+    mark = {True: "PASS", False: "FAIL", None: "n/a "}
+    for probe in report["probes"]:
+        print(f"  [{mark[probe['passed']]}] {probe['name']:22}({probe['probe_class']})")
+        print(f"         {probe['reason']}")
+    print(f"\n  {'verdict':22}{report['verdict'].upper()}")
+    if report["not_exercised"]:
+        print(f"  {'not exercised':22}{', '.join(report['not_exercised'])} — not the same as passing")
+    print(f"\n  {report['note']}")
+
+
+def _print_causality_for_backtest(args, data_client, universe) -> None:
+    from tradeflow.services import analysis
+
+    report = analysis.run_causality_probes(
+        data_client,
+        args.strategy,
+        universe,
+        args.start,
+        args.end,
+        capital=args.capital,
+        gross=args.gross,
+        commission_bps=args.commission_bps,
+        impact_eta=args.impact_eta,
+        borrow_bps=args.borrow_bps,
+        benchmark=getattr(args, "benchmark", None),
+        position_limits=getattr(args, "config_position_limits", None),
+        scanner=args.scanner,
+        scan_as_of=args.scan_as_of or args.end,
+    )
+    _print_causality(report)
 
 
 def cmd_screen(args) -> None:
@@ -4518,6 +4561,14 @@ def build_parser() -> argparse.ArgumentParser:
         "bar touches it, which models a resting limit always first in the queue - for a "
         "strategy whose gain is concentrated in target exits, that assumption is the "
         "result rather than a detail",
+    )
+    bt.add_argument(
+        "--causality",
+        action="store_true",
+        help="Probe whether each decision could have been made when it was made: the "
+        "execution clock, same-bar ranking, benchmark alignment and the scanner's "
+        "as-of clock. A different class of check from the leakage probe, which tests "
+        "for future data and cannot see a one-bar look-ahead at all. Journals nothing",
     )
     bt.add_argument(
         "--cost-stress",

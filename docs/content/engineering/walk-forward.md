@@ -57,6 +57,19 @@ optimizer call.
   **parameter sensitivity** (±10% perturbation), and a **leakage probe** (shift
   the feed forward; identical results ⇒ the strategy reads future data ⇒ fail).
 
+### What the leakage probe cannot tell you
+
+It tests for **future data**, and only that. It cannot test **intra-bar causality**, and
+a passing one says nothing about it: shifting the feed moves signal and price together,
+so a relationship like "signal from bar *i*'s close, filled at bar *i*'s open" survives
+the shift completely intact. This probe ran against a candidate and passed while the
+engine was executing every signal one bar before it could have known.
+
+They are different probe classes and neither substitutes for the other. The intra-bar
+question is asked by the
+[causality probes](../usage/validation-diagnostics#causality-probes), which perturb what
+a bar reveals *after* its open and require the decision at that instant not to move.
+
 ## Promotion gates
 
 `WalkForwardResult.gate_report()` turns the scorecard into a keep/reject decision

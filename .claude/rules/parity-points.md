@@ -114,7 +114,18 @@ main.py`, `uv sync`, and `.env.example` do not exist for an installed reader. Us
 **Strategy convention ↔ engine execution** — `generate_signals` keys a signal at the bar
 whose close produced it, and the engine must execute it on the bar after. Neither side
 can see the other's assumption.
-*Guarded by* `tests/test_signal_causality.py`.
+*Guarded by* `tests/test_signal_causality.py`, and now also by
+`tests/test_causality_probes.py`, which restores the one-bar look-ahead deliberately and
+requires the probes to say so. The two are different things: the first pins the property
+on this engine, the second pins the *detector* — a probe asserted only against correct
+code is exactly the probe that passed for three days.
+
+**Probe class ↔ what a probe actually tests** — the feed-shift leakage probe tests for
+future data; the causality probes test intra-bar causality and the as-of clock. Neither
+can see what the other looks for, and the shift probe cleared a candidate whose every
+signal executed a bar early. The hazard is not code drift but a reader conflating them,
+so the distinction is stated in the module docstring, the tool description, the CLI help,
+the usage guide and the walk-forward wiki — and a test asserts the report carries it.
 
 **Ledger write ↔ ledger replay** — what `record_fill` means by a quantity (`basis`) and
 what `_replay` does with it. A cumulative quantity summed as if incremental turned an

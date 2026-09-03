@@ -33,6 +33,7 @@ EXPOSED_TOOLS = (
     "run_backtest",
     "run_screen",
     "confirm_screen_point",
+    "run_causality_probes",
     "run_optimization",
     "run_walk_forward",
     "validate_draft_strategy_code",
@@ -301,6 +302,73 @@ def build_server(data_client=None):
             inputs,
             analysis.run_scan(dc, scanner, symbols, config, as_of=_parse_date(as_of) if as_of else None),
         )
+
+    @tool(notes=[NON_JOURNALING_NOTE])
+    def run_causality_probes(
+        strategy: str,
+        symbols: List[str],
+        start: str,
+        end: str,
+        capital: float = 100_000.0,
+        gross: bool = False,
+        commission_bps: float = 1.0,
+        impact_eta: float = 0.3,
+        borrow_bps: float = 50.0,
+        benchmark: Optional[str] = None,
+        position_limits: Optional[Dict[str, Any]] = None,
+        scanner: Optional[str] = None,
+        scan_as_of: Optional[str] = None,
+        sample: int = 3,
+    ) -> Dict[str, Any]:
+        """Check whether this strategy's decisions could have been made when they were.
+
+        Four probes, all by perturbation: withhold something that only becomes knowable
+        after a fill, re-run, and require the decision at that instant to be unchanged.
+        `execution_clock` (was every input available strictly before the fill priced),
+        `same_bar_ranking` (entry ordering must not consult the bar it transacts on),
+        `benchmark_alignment` (the benchmark must not be paired out of step with the
+        strategy), and `as_of_scanner` (universe selection must not read past its clock).
+
+        **This is NOT the leakage probe and does not replace it.** That one shifts the
+        feed forward to test for *future data*. It cannot detect a one-bar look-ahead at
+        all, because a shift moves signal and price together and leaves the relationship
+        intact — it cleared a candidate whose every signal was executed one bar early.
+        A passing leakage probe says nothing about anything checked here, and vice versa.
+
+        Read `verdict` carefully. `incomplete` means at least one probe had nothing to
+        examine — no trades, no contention for slots, no benchmark — and that is not a
+        pass: a run that never traded has not been cleared by a probe about trading.
+        `not_exercised` names which ones. Each probe's `passed` is true, false, or null
+        for the same reason.
+        """
+        inputs = {
+            "strategy": strategy,
+            "symbols": symbols,
+            "start": start,
+            "end": end,
+            "benchmark": benchmark,
+            "position_limits": position_limits,
+            "scanner": scanner,
+            "sample": sample,
+        }
+        result = analysis.run_causality_probes(
+            dc,
+            strategy,
+            symbols,
+            _parse_date(start),
+            _parse_date(end),
+            capital=capital,
+            gross=gross,
+            commission_bps=commission_bps,
+            impact_eta=impact_eta,
+            borrow_bps=borrow_bps,
+            benchmark=benchmark,
+            position_limits=position_limits,
+            scanner=scanner,
+            scan_as_of=_parse_date(scan_as_of) if scan_as_of else None,
+            sample=sample,
+        )
+        return _logged("run_causality_probes", inputs, result)
 
     @tool("sharpe_ratio", "sortino_ratio", "profit_factor", notes=[NON_JOURNALING_NOTE])
     def run_screen(
