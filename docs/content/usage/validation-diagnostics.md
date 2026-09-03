@@ -127,6 +127,62 @@ Re-runs under progressively worse cost assumptions. An edge that clears at 1bp a
 evaporates at 2bp is a different proposition from one that survives five times its
 assumed cost, and a single cost assumption reports both as a pass.
 
+## Causality probes
+
+```bash
+tradeflow backtest --config configs/breakout.json --start ... --end ... --causality
+# or
+make causality
+```
+
+Asks one question about the *mechanism* rather than about the strategy: **could each
+decision have been made when it was made?**
+
+Four probes, all by perturbation — withhold something that only becomes knowable after
+a fill, re-run, and require the decision at that instant to be unchanged:
+
+| Probe | What must hold |
+|-------|----------------|
+| `execution_clock` | Every input to a decision was available strictly before the price it transacted at |
+| `same_bar_ranking` | When candidates outnumber slots, the ordering does not consult the bar it transacts on |
+| `benchmark_alignment` | The benchmark series is not paired out of step with the strategy's |
+| `as_of_scanner` | Universe selection does not read past the clock it claims |
+
+### This is not the leakage probe
+
+The [walk-forward](walk-forward)'s leakage probe shifts the whole feed forward and
+checks the result changes. It tests for **future data** — a strategy reading bars it
+should not have.
+
+**It cannot test intra-bar causality, and a passing one says nothing about it.** A feed
+shift moves signal and price together, so the relationship "signal from bar *i*'s close,
+filled at bar *i*'s open" survives the shift completely intact. That probe ran against a
+candidate and passed while the engine was executing every signal one bar before it could
+have known.
+
+Treat them as different classes. Neither substitutes for the other.
+
+### Read `incomplete` as incomplete
+
+Each probe reports pass, fail, or **not exercised** — and the third is not the first. A
+run that never traded has not been cleared by a probe about trading; a book that never
+filled its last slot has not been cleared by a probe about ranking. When any probe could
+not be exercised the overall verdict is `incomplete`, and `not_exercised` names which.
+
+```
+  [PASS] execution_clock       (intra-bar causality)
+  [PASS] same_bar_ranking      (intra-bar causality)
+  [PASS] benchmark_alignment   (intra-bar causality)
+  [n/a ] as_of_scanner         (as-of clock)
+
+  verdict               INCOMPLETE
+  not exercised         as_of_scanner — not the same as passing
+```
+
+Probes sample: each examines the first few decision instants, because each one costs a
+re-run. The report says how many it looked at, so a pass is never read as coverage it
+did not have.
+
 ## Inspecting the trades
 
 ```bash
@@ -141,7 +197,7 @@ concentration block above gets turned into a specific question.
 
 ## None of this is journaled
 
-The stress runs record nothing. They are one candidate under stated assumptions, not new
+The stress runs and the causality probes record nothing. They are one candidate under stated assumptions, not new
 candidates, and journaling them would inflate the multiple-testing count that the
 deflated Sharpe deflates against.
 

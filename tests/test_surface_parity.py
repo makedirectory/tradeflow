@@ -405,7 +405,7 @@ def test_a_walk_forward_without_limits_keys_exactly_as_before_they_existed():
 
 
 # --- MCP is a transport over the same service -------------------------------------
-@pytest.mark.parametrize("tool", ["run_backtest", "run_screen", "run_walk_forward"])
+@pytest.mark.parametrize("tool", ["run_backtest", "run_screen", "run_walk_forward", "run_causality_probes"])
 def test_every_mcp_argument_is_one_the_service_accepts(tool):
     """MCP is a transport: parse, call one service function, render. An argument it
     accepts that the service does not is a call that fails at runtime, and an agent

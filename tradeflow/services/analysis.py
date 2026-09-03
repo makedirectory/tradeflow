@@ -39,11 +39,13 @@ from tradeflow.data import (
 from tradeflow.engine.backtest import ACCOUNTING_VERSION, BacktestEngine
 from tradeflow.marketdata.client import MarketDataClient
 from tradeflow.marketdata.timeframe import Timeframe
+from tradeflow.optimization import causality as causality_defaults
 from tradeflow.optimization.optimizer import ParameterOptimizer
 from tradeflow.optimization.walk_forward import WalkForwardValidator
 from tradeflow.services.audit import new_run_id
 from tradeflow.services.registry import resolve_strategy_class
 from tradeflow.settings import state_root
+from tradeflow.strategies.base import build_with_limits
 
 logger = logging.getLogger(__name__)
 
@@ -781,6 +783,94 @@ def confirm_screen_point(
         journal=True,
     )
     return {**result, "confirmed_params": _jsonable(params), "journaled": True}
+
+
+def run_causality_probes(
+    data_client: MarketDataClient,
+    strategy: str,
+    symbols: List[str],
+    start: datetime,
+    end: datetime,
+    *,
+    capital: float = 100_000.0,
+    config: Optional[Dict[str, Any]] = None,
+    gross: bool = False,
+    commission_bps: float = 1.0,
+    impact_eta: float = 0.3,
+    participation_cap: float = 0.10,
+    borrow_bps: float = 50.0,
+    benchmark: Optional[str] = None,
+    position_limits: Optional[Dict[str, Any]] = None,
+    scanner: Optional[str] = None,
+    scan_as_of: Optional[datetime] = None,
+    sample: int = causality_defaults.DEFAULT_SAMPLE,
+) -> Dict[str, Any]:
+    """Ask whether this strategy's decisions could have been made when they were made.
+
+    Runs against a plain backtest and journals nothing: it is a check on the *mechanism*,
+    not a result about the strategy, and recording it as a trial would spend statistical
+    budget on a question that has no bearing on whether an edge exists.
+
+    **Not the leakage probe, and not a substitute for it.** That one shifts the feed
+    forward and tests for *future data*; these test intra-bar causality and the as-of
+    clock. The distinction is not academic - the feed-shift probe cleared a candidate
+    while the engine was executing every signal one bar early, because shifting moves
+    signal and price together and leaves that relationship intact.
+
+    The overall verdict is ``incomplete`` whenever any probe had nothing to examine.
+    A run that never traded has not been cleared by a probe about trading.
+    """
+    from tradeflow.optimization.causality import run_causality_probes as _probe_suite
+
+    run_id = new_run_id()
+    strat_config = dict(config or {})
+    if position_limits:
+        strat_config["position_limits"] = {**(strat_config.get("position_limits") or {}), **position_limits}
+
+    cls = resolve_strategy_class(strategy)
+    timeframe = _strategy(strategy, config).config.get("timeframe", "1Day")
+    wanted = list(dict.fromkeys([*symbols, *([benchmark] if benchmark else [])]))
+    frames = data_client.get_bars(wanted, Timeframe.parse(timeframe), start, end)
+
+    def factory():
+        return build_with_limits(cls, _strategy(strategy, config).config, strat_config.get("position_limits"))
+
+    scan = None
+    if scanner and scanner != "none":
+        from tradeflow.optimization.walk_forward import PrefetchedProvider
+
+        def scan(available, when):  # noqa: F811 - deliberately defined only when used
+            """Re-run the real scanner against a given feed, so the probe compares the
+            selection a user would actually get rather than a reimplementation of it."""
+            return _scan_at(
+                MarketDataClient(PrefetchedProvider(available)),
+                scanner,
+                [s for s in symbols if s in available],
+                strat_config,
+                when,
+            )
+
+    report = _probe_suite(
+        factory,
+        frames,
+        list(symbols),
+        start,
+        end,
+        capital=capital,
+        cost_model=_build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps),
+        benchmark=benchmark,
+        sample=sample,
+        scan=scan,
+        scan_as_of=scan_as_of or end,
+    )
+    return {
+        "run_id": run_id,
+        "strategy": strategy,
+        "symbols": list(symbols),
+        "window": {"start": start.isoformat(), "end": end.isoformat()},
+        "journaled": False,
+        **report,
+    }
 
 
 def run_walk_forward(

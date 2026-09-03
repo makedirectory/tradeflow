@@ -272,6 +272,7 @@ promoted automatically — is what stays constant.
 | `reconcile` | Check the position ledger against the broker's actual account state. Reports divergence; never corrects it (read-only) |
 | `halt` / `resume` / `halts` | Stop opening new positions, and say so durably — a running engine sees it on the next bar. Blocks entries, never exits, so it can't trap the book |
 | `flatten` | Emergency: halt, cancel every order, close every position. Goes straight to the broker, so it works when the engine is wedged |
+| `backtest --causality` | Probe whether each decision could have been made when it was made: the execution clock, same-bar ranking, benchmark alignment, and the scanner's as-of clock. A **different class** from the leakage probe, which tests for future data and cannot see a one-bar look-ahead at all |
 | `screen` | Sweep a parameter space cheaply to ask whether a family holds anything at all — one process, one data fetch, N evaluations, and **nothing journaled**. Leads with the distribution and what the best of N draws is worth under the null, because the best of N is the maximum of N draws; `--confirm` records exactly one point as a real trial |
 | `optimize` | Search strategy parameters by backtest objective (grid / random / Bayesian); `--workers N` evaluates candidates in parallel — wall-clock only, same trials and same winner |
 | `allocate` | Weight a portfolio: scalar-score sizing (OR-Tools), or `--objective utility` for mean-variance construction from alpha + Σ |
