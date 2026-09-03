@@ -79,11 +79,11 @@ def test_measure_signals_structure():
     client, syms = _setup()
     bars = ClientBarSource(client).scan([*syms, "SPY"], "1Day", datetime(2024, 6, 1), 365)
     bench = bars.pop("SPY")
-    scorers = {n: strategy_scorer(_strategy(n, None)) for n in ("volume_spike", "ma_crossover")}
+    scorers = {n: strategy_scorer(_strategy(n, None)) for n in ("demo_trend", "demo_trend")}
     m = measure_signals(bars, scorers, bench, datetime(2024, 6, 1), horizon=5, n_points=10)
 
     assert m.n_periods > 0
-    assert set(m.ics) == {"volume_spike", "ma_crossover"}
+    assert set(m.ics) == {"demo_trend", "demo_trend"}
     assert all(np.isfinite(v) for v in m.ics.values())
     # Shrinkage never increases the magnitude of an IC.
     for s in m.signals:
@@ -101,7 +101,7 @@ def test_combined_alphas_independent_of_post_as_of_bars():
     as_of = cutoff.to_pydatetime()
     truncated = {s: f.loc[f.index <= cutoff] for s, f in full.items()}
 
-    signals = ["volume_spike", "ma_crossover"]
+    signals = ["demo_trend", "demo_trend"]
     a = analysis.compute_combined_alphas(MarketDataClient(DictMarketData(truncated)), signals, syms, as_of)
     b = analysis.compute_combined_alphas(MarketDataClient(DictMarketData(full)), signals, syms, as_of)
     assert a["alphas"] == b["alphas"]
@@ -115,7 +115,7 @@ def test_ics_differ_across_windows():
     bars_all = ClientBarSource(client).scan([*syms, "SPY"], "1Day", datetime(2025, 1, 1), 720)
     bench = bars_all["SPY"]
     universe = {s: bars_all[s] for s in syms}
-    scorers = {n: strategy_scorer(_strategy(n, None)) for n in ("volume_spike", "ma_crossover")}
+    scorers = {n: strategy_scorer(_strategy(n, None)) for n in ("demo_trend", "demo_trend")}
     early = measure_signals(universe, scorers, bench, datetime(2024, 1, 1), horizon=5, n_points=10)
     late = measure_signals(universe, scorers, bench, datetime(2025, 1, 1), horizon=5, n_points=10)
     assert early.ics != late.ics  # measured, not assumed

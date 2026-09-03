@@ -345,8 +345,8 @@ def test_construct_portfolio_policy_none_is_unchanged():
     client, data = _client(symbols)
     as_of = data["S0"].index[400].to_pydatetime()
 
-    baseline = analysis.construct_portfolio(client, "volume_spike", symbols, as_of)
-    off = analysis.construct_portfolio(client, "volume_spike", symbols, as_of, policy=None)
+    baseline = analysis.construct_portfolio(client, "demo_trend", symbols, as_of)
+    off = analysis.construct_portfolio(client, "demo_trend", symbols, as_of, policy=None)
     assert baseline["weights"] == off["weights"]
     assert "policy_report" not in off
 
@@ -356,9 +356,7 @@ def test_construct_portfolio_policy_aim_feasible_and_reports():
     client, data = _client(symbols)
     as_of = data["S0"].index[400].to_pydatetime()
 
-    r = analysis.construct_portfolio(
-        client, "volume_spike", symbols, as_of, capital=1_000_000.0, policy="aim"
-    )
+    r = analysis.construct_portfolio(client, "demo_trend", symbols, as_of, capital=1_000_000.0, policy="aim")
     assert r["feasible"]
     assert r["policy"] == "aim"
     assert abs(sum(r["weights"].values()) - 1.0) < 1e-6
@@ -377,7 +375,7 @@ def test_construct_portfolio_policy_aim_rejects_incompatible_books():
 
     try:
         analysis.construct_portfolio(
-            client, "volume_spike", symbols, as_of, policy="aim", book="market_neutral", gross_leverage=1.0
+            client, "demo_trend", symbols, as_of, policy="aim", book="market_neutral", gross_leverage=1.0
         )
         assert False, "expected ValueError"
     except ValueError:
@@ -389,7 +387,7 @@ def test_construct_portfolio_policy_invalid_value_raises():
     client, data = _client(symbols)
     as_of = data["S0"].index[300].to_pydatetime()
     try:
-        analysis.construct_portfolio(client, "volume_spike", symbols, as_of, policy="bogus")
+        analysis.construct_portfolio(client, "demo_trend", symbols, as_of, policy="bogus")
         assert False, "expected ValueError"
     except ValueError:
         pass
@@ -403,7 +401,7 @@ def test_run_policy_ab_produces_both_variants():
     end = data["S0"].index[800].to_pydatetime()
 
     r = analysis.run_policy_ab(
-        client, "volume_spike", symbols, start, end, n_points=10, horizon=21, capital=1_000_000.0
+        client, "demo_trend", symbols, start, end, n_points=10, horizon=21, capital=1_000_000.0
     )
     assert r["periods"] >= 2
     assert set(r["summaries"]) == {"myopic", "aim"}
@@ -422,7 +420,7 @@ def test_run_policy_ab_insufficient_window_reports_note():
     start = data["S0"].index[0].to_pydatetime()
     end = data["S0"].index[-1].to_pydatetime()
 
-    r = analysis.run_policy_ab(client, "volume_spike", symbols, start, end, horizon=21)
+    r = analysis.run_policy_ab(client, "demo_trend", symbols, start, end, horizon=21)
     assert r["periods"] == 0
     assert "note" in r
 
@@ -433,7 +431,7 @@ def test_compute_horizon_notes_the_aim_policy_supersedes_the_blend():
     data = {s: make_ohlcv(n=600, seed=i, freq="1D") for i, s in enumerate([*symbols, "SPY"])}
     client = MarketDataClient(DictMarketData(data))
     r = analysis.compute_horizon(
-        client, "volume_spike", symbols, datetime(2023, 1, 1), datetime(2024, 12, 31), max_lag=8
+        client, "demo_trend", symbols, datetime(2023, 1, 1), datetime(2024, 12, 31), max_lag=8
     )
     assert "aim-in-front" in r["blend_superseded_by"]
     assert "half_life_upper" in r

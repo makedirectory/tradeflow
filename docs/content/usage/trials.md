@@ -22,13 +22,13 @@ journal.)
 ## `trials list` — what have we tried?
 
 ```bash
-python main.py trials list --strategy volume_spike --min-sharpe 1.0 --sort dsr --limit 20
+python main.py trials list --strategy demo_trend --min-sharpe 1.0 --sort dsr --limit 20
 ```
 
 ```
 ID            KIND        STRATEGY           SHARPE     DSR  PROMO  ACCT  TS
-a1b2c3d4e5f6  walkforward volume_spike        1.512   0.903    yes     3  2025-03-01T09:14:22
-b2c3d4e5f6a1  backtest    volume_spike        2.104   0.201     no     3  2025-02-01T11:02:07
+a1b2c3d4e5f6  walkforward demo_trend        1.512   0.903    yes     3  2025-03-01T09:14:22
+b2c3d4e5f6a1  backtest    demo_trend        2.104   0.201     no     3  2025-02-01T11:02:07
 …
 
 Showing 20 of 4318 matching trials (use --limit/--offset for more).
@@ -100,7 +100,7 @@ tradeflow trials promote 50fd06209f49 --save-config configs/alpha.json
 
 ```
 Promoted trial 50fd06209f49 -> configs/alpha.json
-  strategy 'ma_crossover'  universe 61 symbols resolved from 85 candidates
+  strategy 'demo_trend'  universe 61 symbols resolved from 85 candidates
   Saving a config never trades it - a human promotes it to live.
 ```
 
@@ -123,13 +123,13 @@ and `--re-resolve-universe` will tell you it has no candidates to re-scan.
 ## `trials best` — the honest leaderboard
 
 ```bash
-python main.py trials best --strategy volume_spike
+python main.py trials best --strategy demo_trend
 ```
 
 ```
   Top 5 by deflated Sharpe:
     #  ID            STRATEGY             DSR   SHARPE    FAMILY n_trials
-    1  a1b2c3d4e5f6  volume_spike       0.903    1.512                 87
+    1  a1b2c3d4e5f6  demo_trend       0.903    1.512                 87
     …
 
   Ranked by DEFLATED Sharpe, which already discounts for how many configs the

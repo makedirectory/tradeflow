@@ -9,12 +9,11 @@ from datetime import datetime
 import pytest
 
 from tests.fakes import FakeMarketData, make_ohlcv
+from tradeflow.demo.strategies import DemoTrendStrategy
 from tradeflow.engine.backtest import BacktestEngine
 from tradeflow.marketdata.client import MarketDataClient
 from tradeflow.services.registry import STRATEGIES
 from tradeflow.strategies import signals
-from tradeflow.strategies.ma_crossover import MovingAverageCrossoverStrategy
-from tradeflow.strategies.mean_reversion import MeanReversionStrategy
 
 _VALID_SIGNALS = {signals.BUY, signals.SELL, signals.CLOSE_BUY, signals.CLOSE_SELL, signals.HOLD}
 
@@ -45,15 +44,8 @@ def test_backtest_runs_end_to_end(name):
     assert result.final_capital > 0
 
 
-def test_ma_crossover_requires_fast_below_slow():
-    config = {p: spec["default"] for p, spec in MovingAverageCrossoverStrategy.PARAM_RANGES.items()}
+def test_demo_trend_requires_fast_below_slow():
+    config = {p: spec["default"] for p, spec in DemoTrendStrategy.PARAM_RANGES.items()}
     config["fast_ema_period"] = config["slow_ema_period"]
     with pytest.raises(ValueError):
-        MovingAverageCrossoverStrategy(config).initialize()
-
-
-def test_mean_reversion_requires_oversold_below_overbought():
-    config = {p: spec["default"] for p, spec in MeanReversionStrategy.PARAM_RANGES.items()}
-    config["oversold"] = config["overbought"]
-    with pytest.raises(ValueError):
-        MeanReversionStrategy(config).initialize()
+        DemoTrendStrategy(config).initialize()

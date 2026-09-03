@@ -141,9 +141,9 @@ def test_construct_portfolio_independent_of_post_as_of_bars():
     truncated = {s: f.loc[f.index <= cutoff] for s, f in full.items()}
 
     a = analysis.construct_portfolio(
-        MarketDataClient(DictMarketData(truncated)), "ma_crossover", symbols, as_of
+        MarketDataClient(DictMarketData(truncated)), "demo_trend", symbols, as_of
     )
-    b = analysis.construct_portfolio(MarketDataClient(DictMarketData(full)), "ma_crossover", symbols, as_of)
+    b = analysis.construct_portfolio(MarketDataClient(DictMarketData(full)), "demo_trend", symbols, as_of)
     assert a["weights"] == b["weights"]
     assert a["diagnostics"] == b["diagnostics"]
 
@@ -269,7 +269,7 @@ def test_construct_portfolio_reduction_without_benchmark_holdings():
     as_of = bars["S0"].index[-1].to_pydatetime()
     client = MarketDataClient(DictMarketData(bars))
 
-    plain = analysis.construct_portfolio(client, "ma_crossover", symbols, as_of)
+    plain = analysis.construct_portfolio(client, "demo_trend", symbols, as_of)
     assert plain["benchmark_portfolio"] is None
     assert "has_benchmark" not in plain["diagnostics"]
 
@@ -281,7 +281,7 @@ def test_construct_portfolio_equal_benchmark_is_fully_covered():
     client = MarketDataClient(DictMarketData(bars))
 
     result = analysis.construct_portfolio(
-        client, "ma_crossover", symbols, as_of, benchmark_holdings="equal", benchmark_premium=0.05
+        client, "demo_trend", symbols, as_of, benchmark_holdings="equal", benchmark_premium=0.05
     )
     assert result["feasible"]
     bp = result["benchmark_portfolio"]
@@ -304,7 +304,7 @@ def test_construct_portfolio_file_benchmark_reports_partial_coverage(tmp_path):
     path = tmp_path / "bench.csv"
     path.write_text("symbol,weight\nS0,0.5\nS1,0.3\nNOT_IN_UNIVERSE,0.2\n")
     result = analysis.construct_portfolio(
-        client, "ma_crossover", symbols, as_of, benchmark_holdings=str(path), benchmark_premium=0.06
+        client, "demo_trend", symbols, as_of, benchmark_holdings=str(path), benchmark_premium=0.06
     )
     assert result["feasible"]
     bp = result["benchmark_portfolio"]
@@ -332,7 +332,7 @@ def test_cli_allocate_utility_with_benchmark_holdings(monkeypatch, tmp_path, cap
             "--objective",
             "utility",
             "--strategy",
-            "ma_crossover",
+            "demo_trend",
             "--symbols",
             ",".join(symbols),
             "--as-of",

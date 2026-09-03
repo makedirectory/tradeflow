@@ -185,16 +185,14 @@ def test_construct_portfolio_bl_requires_t_eff():
 
     symbols, dc = _universe()
     with pytest.raises(ValueError, match="posterior_t_eff"):
-        analysis.construct_portfolio(dc, "ma_crossover", symbols, AS_OF, posterior="bl")
+        analysis.construct_portfolio(dc, "demo_trend", symbols, AS_OF, posterior="bl")
 
 
 def test_construct_portfolio_bl_shrink_chain_applies_ic_uncertainty_once():
     from tradeflow.services import analysis
 
     symbols, dc = _universe()
-    res = analysis.construct_portfolio(
-        dc, "ma_crossover", symbols, AS_OF, posterior="bl", posterior_t_eff=60.0
-    )
+    res = analysis.construct_portfolio(dc, "demo_trend", symbols, AS_OF, posterior="bl", posterior_t_eff=60.0)
     if not res["feasible"]:
         pytest.skip("fixture produced no feasible portfolio")
     chain = res["shrink_chain"]
@@ -208,9 +206,7 @@ def test_construct_portfolio_bl_reports_posterior_section():
     from tradeflow.services import analysis
 
     symbols, dc = _universe()
-    res = analysis.construct_portfolio(
-        dc, "ma_crossover", symbols, AS_OF, posterior="bl", posterior_t_eff=60.0
-    )
+    res = analysis.construct_portfolio(dc, "demo_trend", symbols, AS_OF, posterior="bl", posterior_t_eff=60.0)
     if not res["feasible"]:
         pytest.skip("fixture produced no feasible portfolio")
     post = res["posterior"]
@@ -227,5 +223,5 @@ def test_construct_portfolio_without_posterior_omits_section():
     from tradeflow.services import analysis
 
     symbols, dc = _universe()
-    res = analysis.construct_portfolio(dc, "ma_crossover", symbols, AS_OF)
+    res = analysis.construct_portfolio(dc, "demo_trend", symbols, AS_OF)
     assert res["posterior"] is None

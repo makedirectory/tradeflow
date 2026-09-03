@@ -68,6 +68,18 @@ dev = [
     "mcp>=1.0,<2",
 ]
 
+# What `demo` runs on, and what `--strategy`/`--scanner` fall back to on a bare install.
+# Registered through the same two groups a private pack uses, so the discovery path the
+# whole private-strategy feature rests on is exercised by every install rather than only
+# by tests. The registry also holds these two directly - enumeration order across
+# distributions is undefined, and a reserved name is worth nothing if which class
+# answers to it is a coin flip - so this declaration is the path, not the source.
+[project.entry-points."tradeflow.strategies"]
+demo_trend = "tradeflow.demo.strategies:DemoTrendStrategy"
+
+[project.entry-points."tradeflow.scanners"]
+demo_volume = "tradeflow.demo.scanners:DemoVolumeScanner"
+
 [project.scripts]
 # The installed entry point. `python main.py` from a checkout reaches the same
 # `main`, so the two are one code path found two ways rather than two things that
@@ -91,6 +103,8 @@ path = "tradeflow/__init__.py"
 [tool.hatch.build.targets.wheel]
 # Only the package ships. `main.py` is a checkout convenience, and the tests, docs,
 # and scripts are not something an installed copy has any use for.
+# `tradeflow.demo` rides along as a subpackage; it holds what `demo` runs on and what a
+# bare install defaults to, so `tradeflow/strategies/` can hold only the framework.
 packages = ["tradeflow"]
 
 [tool.hatch.build.targets.sdist]

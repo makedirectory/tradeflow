@@ -322,7 +322,7 @@ def _client(n=600):
 def test_compute_attribution_reports_every_row():
     client, syms = _client()
     r = analysis.compute_attribution(
-        client, "volume_spike", syms, datetime(2023, 1, 1), datetime(2024, 12, 31), n_points=16
+        client, "demo_trend", syms, datetime(2023, 1, 1), datetime(2024, 12, 31), n_points=16
     )
     assert r["periods"] > 0
     expected_rows = {
@@ -334,7 +334,7 @@ def test_compute_attribution_reports_every_row():
         *r["signal_names"],
     }
     assert expected_rows <= set(r["rows"])
-    assert r["signal_names"] == ["alpha:volume_spike"]
+    assert r["signal_names"] == ["alpha:demo_trend"]
     assert np.isfinite(r["total_active_ir"])
     assert r["verdict"] in ("distinguishable from luck", "NOT distinguishable from luck")
 
@@ -342,7 +342,7 @@ def test_compute_attribution_reports_every_row():
 def test_compute_attribution_cumulation_identity_holds():
     client, syms = _client()
     r = analysis.compute_attribution(
-        client, "volume_spike", syms, datetime(2023, 1, 1), datetime(2024, 12, 31), n_points=16
+        client, "demo_trend", syms, datetime(2023, 1, 1), datetime(2024, 12, 31), n_points=16
     )
     linked_sum = sum(r["cumulation"]["linked_components"].values())
     assert abs(linked_sum - r["cumulation"]["naive_cumulative"]) < 1e-6
@@ -353,21 +353,21 @@ def test_compute_attribution_with_extra_signals():
     client, syms = _client()
     r = analysis.compute_attribution(
         client,
-        "volume_spike",
+        "demo_trend",
         syms,
         datetime(2023, 1, 1),
         datetime(2024, 12, 31),
         n_points=12,
-        signals=["ma_crossover"],
+        signals=["demo_trend"],
     )
-    assert "ma_crossover" in r["signal_names"]
-    assert "ma_crossover" in r["rows"]
+    assert "demo_trend" in r["signal_names"]
+    assert "demo_trend" in r["rows"]
 
 
 def test_compute_attribution_insufficient_data_returns_note():
     client, syms = _client(n=20)
     r = analysis.compute_attribution(
-        client, "volume_spike", syms, datetime(2023, 1, 1), datetime(2024, 12, 31), n_points=16
+        client, "demo_trend", syms, datetime(2023, 1, 1), datetime(2024, 12, 31), n_points=16
     )
     assert r["periods"] == 0 or "note" in r
 
@@ -381,10 +381,10 @@ def test_compute_attribution_independent_of_post_end_bars():
     truncated = {s: f.loc[f.index <= cutoff] for s, f in full.items()}
 
     a = analysis.compute_attribution(
-        MarketDataClient(DictMarketData(truncated)), "ma_crossover", syms, start, end, n_points=12
+        MarketDataClient(DictMarketData(truncated)), "demo_trend", syms, start, end, n_points=12
     )
     b = analysis.compute_attribution(
-        MarketDataClient(DictMarketData(full)), "ma_crossover", syms, start, end, n_points=12
+        MarketDataClient(DictMarketData(full)), "demo_trend", syms, start, end, n_points=12
     )
     assert a["periods"] == b["periods"]
     assert a["total_active_ir"] == b["total_active_ir"]
@@ -413,7 +413,7 @@ def test_reported_levels_are_unit_gross_while_ratios_are_unchanged():
     client = MarketDataClient(FakeMarketData([*symbols, "SPY"], n=600, freq="1D"))
 
     report = analysis.compute_attribution(
-        client, "ma_crossover", symbols, datetime(2024, 1, 2), datetime(2025, 6, 1), scanner="none"
+        client, "demo_trend", symbols, datetime(2024, 1, 2), datetime(2025, 6, 1), scanner="none"
     )
 
     rows = {name: row for name, row in report["rows"].items() if "ir" in row}

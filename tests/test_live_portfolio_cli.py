@@ -10,11 +10,11 @@ reporting it.
 import pytest
 
 from tradeflow.cli import _refuse_contradictory_portfolio_cardinality, build_parser, cmd_live
-from tradeflow.strategies.volume_spike import VolumeSpikeStrategy
+from tradeflow.demo.strategies import DemoTrendStrategy
 
 
 def _strategy(max_positions):
-    strategy = VolumeSpikeStrategy.create_with_defaults()
+    strategy = DemoTrendStrategy.create_with_defaults()
     strategy.config["position_limits"] = {**strategy.position_limits(), "max_positions": max_positions}
     return strategy
 
@@ -48,7 +48,7 @@ def test_a_book_larger_than_the_allocator_funds_is_allowed():
 
 def test_an_unset_limit_is_not_treated_as_zero():
     """Absent is not zero: no declared limit means nothing to contradict."""
-    strategy = VolumeSpikeStrategy.create_with_defaults()
+    strategy = DemoTrendStrategy.create_with_defaults()
     strategy.config["position_limits"] = {**strategy.position_limits(), "max_positions": None}
     _refuse_contradictory_portfolio_cardinality(strategy, 5)
 
@@ -67,7 +67,7 @@ def test_the_default_live_portfolio_invocation_is_refused_before_the_broker_is_r
         raise AssertionError("the broker was reached before the cardinality check")
 
     monkeypatch.setattr(cli, "build_data_and_broker", _fail)
-    args = build_parser().parse_args(["live", "--strategy", "volume_spike", "--portfolio"])
+    args = build_parser().parse_args(["live", "--strategy", "demo_trend", "--portfolio"])
 
     with pytest.raises(SystemExit) as exit_info:
         cmd_live(args)
@@ -83,7 +83,7 @@ def _preflight_output(capsys, monkeypatch, *, paper=True, capital=8_000.0, ledge
     from tradeflow.services.registry import STRATEGIES
 
     monkeypatch.setattr("tradeflow.settings.paper_trade_mode", lambda: paper)
-    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy = STRATEGIES["demo_trend"].create_with_defaults()
     strategy.config["position_limits"] = {**strategy.position_limits(), "max_positions": 8}
     args = build_parser().parse_args(["live", "--preflight", "--scanner", "none"])
     ledger = mock.Mock()
@@ -133,7 +133,7 @@ def test_a_disabled_ledger_says_so_rather_than_printing_nothing(capsys, monkeypa
     monkeypatch.setattr("tradeflow.settings.paper_trade_mode", lambda: True)
     args = build_parser().parse_args(["live", "--no-ledger", "--scanner", "none"])
     cli._print_live_preflight(
-        args, STRATEGIES["ma_crossover"].create_with_defaults(), FakeBroker(), ["AAA"], None, None
+        args, STRATEGIES["demo_trend"].create_with_defaults(), FakeBroker(), ["AAA"], None, None
     )
 
     assert "DISABLED" in capsys.readouterr().out
@@ -180,7 +180,7 @@ def _book(argv, declared=None):
     from tradeflow.services.registry import STRATEGIES
 
     args = parse_cli(argv)
-    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy = STRATEGIES["demo_trend"].create_with_defaults()
     if declared:
         strategy.config["position_limits"] = {**strategy.position_limits(), **declared}
     _apply_limit_overrides(args, strategy)
@@ -284,7 +284,7 @@ def test_preflight_shows_gross_exposure_in_dollars_not_only_as_a_fraction(capsys
 
     monkeypatch.setattr("tradeflow.settings.paper_trade_mode", lambda: True)
     args = parse_cli(["live", "--scanner", "none", "--capital", "8000", "--max-gross-exposure", "0.9"])
-    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy = STRATEGIES["demo_trend"].create_with_defaults()
     _apply_limit_overrides(args, strategy)
     ledger = mock.Mock()
     ledger.path = "/tmp/l.jsonl"
@@ -309,7 +309,7 @@ def test_typing_the_cardinality_makes_the_two_caps_agree_by_construction():
     from tradeflow.services.registry import STRATEGIES
 
     args = parse_cli(["live", "--portfolio", "--max-positions", "8"])
-    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy = STRATEGIES["demo_trend"].create_with_defaults()
     strategy.config["position_limits"] = {**strategy.position_limits(), "max_positions": 1}
     _apply_limit_overrides(args, strategy)
 
@@ -334,7 +334,7 @@ def test_preflight_states_the_feed_including_that_the_defaults_disagree(capsys, 
     def show(argv):
         cli._print_live_preflight(
             parse_cli(argv),
-            STRATEGIES["ma_crossover"].create_with_defaults(),
+            STRATEGIES["demo_trend"].create_with_defaults(),
             FakeBroker(buying_power=100_000.0),
             ["AAA"],
             8_000.0,
@@ -360,7 +360,7 @@ def test_preflight_shows_the_two_limits_that_were_enforced_but_never_printed(cap
 
     monkeypatch.setattr("tradeflow.settings.paper_trade_mode", lambda: True)
     args = parse_cli(["live", "--scanner", "none", "--max-total-risk", "0.05", "--min-notional", "50"])
-    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy = STRATEGIES["demo_trend"].create_with_defaults()
     _apply_limit_overrides(args, strategy)
     ledger = mock.Mock()
     ledger.path = "/tmp/l.jsonl"
@@ -384,7 +384,7 @@ def test_preflight_shows_the_directional_cap_gross_cannot_see(capsys, monkeypatc
 
     monkeypatch.setattr("tradeflow.settings.paper_trade_mode", lambda: True)
     args = parse_cli(["live", "--scanner", "none", "--max-net-exposure", "0.3"])
-    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy = STRATEGIES["demo_trend"].create_with_defaults()
     _apply_limit_overrides(args, strategy)
     ledger = mock.Mock()
     ledger.path = "/tmp/l.jsonl"
@@ -424,7 +424,7 @@ def test_a_preflight_run_reaches_the_end_without_touching_the_order_path(monkeyp
     printed = _run_cmd_live(
         monkeypatch,
         capsys,
-        ["live", "--strategy", "ma_crossover", "--scanner", "none", "--symbols", "AAA", "--preflight"],
+        ["live", "--strategy", "demo_trend", "--scanner", "none", "--symbols", "AAA", "--preflight"],
         tmp_path,
     )
 

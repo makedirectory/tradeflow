@@ -11,14 +11,14 @@ with the realized one. It is **read-only**: a diagnostic, never a control input.
 
 ```bash
 python main.py info \
-  --strategy volume_spike \
+  --strategy demo_trend \
   --symbols NVDA,AAPL,META,AMD,TSLA,GOOG,MSFT,AMZN \
   --start 2024-01-01 --end 2024-12-31 \
   --n-trials 10
 ```
 
 ```
-Information report: 'volume_spike' 2024-01-01..2024-12-31
+Information report: 'demo_trend' 2024-01-01..2024-12-31
   measured over 24 rebalances (horizon 5 bars)
   IC mean +0.018  t-stat +0.74  rank-IC +0.021
   breadth: 142 effective vs 504 naive (ρ̄ 0.41, 8 names)
@@ -39,7 +39,7 @@ how inflated a "significant" result is once you account for everything you tried
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--strategy` | `volume_spike` | The strategy whose alpha is measured. |
+| `--strategy` | `demo_trend` | The strategy whose alpha is measured. |
 | `--source` | `strategy` | Alpha score origin (`strategy` / `signal` / `scanner`). |
 | `--symbols` | demo universe | The cross-section. |
 | `--start` / `--end` | last year | Measurement window. |
@@ -85,12 +85,12 @@ a short-sample-honest t-stat.
 
 ```bash
 python main.py info --attribution \
-  --strategy volume_spike --symbols NVDA,AAPL,META,AMD,TSLA,GOOG,MSFT,AMZN \
+  --strategy demo_trend --symbols NVDA,AAPL,META,AMD,TSLA,GOOG,MSFT,AMZN \
   --start 2024-01-01 --end 2024-12-31
 ```
 
 ```
-Performance attribution: 'volume_spike' 2024-01-01..2024-12-31
+Performance attribution: 'demo_trend' 2024-01-01..2024-12-31
   measured over 24 rebalances (horizon 5 bars)
   row                       mean/yr      IR       t  share ψ²
   active beta · expected          —       —       —  (not skill)
@@ -105,7 +105,7 @@ Performance attribution: 'volume_spike' 2024-01-01..2024-12-31
 
 Read "specific" as genuine stock-picking skill and the factor rows as cheap
 tilts you could have gotten from an ETF. `--attribution-signals
-ma_crossover,mean_reversion` attributes other strategies' combined scores as
+example_breakout,example_reversion` attributes other strategies' combined scores as
 additional signal columns, so a [combined-alpha](alphas#combining-several-signals)
 weight can be checked against its realized counterpart. Add `--conditional
 ewma|har` for a predicted-vs-realized tracking-error table split by volatility
@@ -123,11 +123,11 @@ realized net IR — not TE-tracking alone.
 
 ```bash
 python main.py info --conditional-ab --conditional ewma \
-  --strategy volume_spike --symbols NVDA,AAPL,META,AMD,TSLA --start 2024-01-01 --end 2024-12-31
+  --strategy demo_trend --symbols NVDA,AAPL,META,AMD,TSLA --start 2024-01-01 --end 2024-12-31
 ```
 
 ```
-Conditional-risk net-of-cost A/B: 'volume_spike' 2024-01-01..2024-12-31
+Conditional-risk net-of-cost A/B: 'demo_trend' 2024-01-01..2024-12-31
   measured over 15 rebalances (horizon 21 bars, method ewma)
   variant       net IR  realized TE   pred TE  turnover
   unconditional  +1.25        12.5%     11.3%      6.7%
@@ -143,12 +143,12 @@ The equivalent net-of-cost decision for
 vs the aim (`--policy aim`) policy on the same alpha book.
 
 ```bash
-python main.py info --policy-ab --strategy volume_spike \
+python main.py info --policy-ab --strategy demo_trend \
   --symbols NVDA,AAPL,META,AMD,TSLA --start 2024-01-01 --end 2024-12-31
 ```
 
 ```
-Multi-period policy net-of-cost A/B: 'volume_spike' 2024-01-01..2024-12-31
+Multi-period policy net-of-cost A/B: 'demo_trend' 2024-01-01..2024-12-31
   measured over 12 rebalances (horizon 5 bars)
   variant      net IR  realized TE   pred TE  turnover
   myopic        -1.07         1.5%      1.2%      8.3%

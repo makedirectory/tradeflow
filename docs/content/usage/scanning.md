@@ -12,14 +12,14 @@ recent bars and keeps those that produce an actionable scan signal.
 ```bash
 make scan
 # or
-uv run python main.py scan --scanner volume --symbols NVDA,META,TSLA,AMD
+uv run python main.py scan --scanner demo_volume --symbols NVDA,META,TSLA,AMD
 ```
 
 Standalone scans default to wall-clock now. Pin them to a historical clock with
 `--as-of`:
 
 ```bash
-uv run python main.py scan --scanner volume --symbols NVDA,META,TSLA,AMD --as-of 2024-06-01
+uv run python main.py scan --scanner demo_volume --symbols NVDA,META,TSLA,AMD --as-of 2024-06-01
 ```
 
 Example output:
@@ -43,7 +43,7 @@ moves, the book a deployment gets is not the book that was validated — and no 
 gate would notice, because the gates never see the scan twice.
 
 ```bash
-uv run python main.py scan --scanner volume --drift --as-of 2026-08-22
+uv run python main.py scan --scanner demo_volume --drift --as-of 2026-08-22
 ```
 
 ```

@@ -13,7 +13,7 @@ until the very end.**
 
 ```bash
 uv run python main.py walkforward \
-  --strategy volume_spike --scanner volume --symbols NVDA,AAPL,MSFT \
+  --strategy demo_trend --scanner demo_volume --symbols NVDA,AAPL,MSFT \
   --start 2024-01-01 --end 2025-12-31 --capital 100000 \
   --mode anchored --folds 6 \
   --embargo-days 5 --holdout-days 60 \
@@ -227,7 +227,7 @@ tradeflow risk     --config configs/alpha.json
   ```
   universe=<replayed from config, 61 symbols>
   universe=<re-resolved from 85 saved candidates>
-  universe=<--scanner volume given; saved book re-scanned>
+  universe=<--scanner demo_volume given; saved book re-scanned>
   universe=<--symbols given; --re-resolve-universe has nothing to re-resolve>
   ```
 
@@ -256,7 +256,7 @@ journal — `logs/trials.db`. It's what makes campaign-wide counts answerable
 without reading the whole journal:
 
 ```bash
-python main.py trials query --strategy volume_spike --symbols NVDA,AAPL,META
+python main.py trials query --strategy demo_trend --symbols NVDA,AAPL,META
 python main.py trials status      # row/journal-line counts + a drift check
 python main.py trials rebuild     # rebuild from the journal — safe, it's derived
 ```

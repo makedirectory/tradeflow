@@ -40,19 +40,19 @@ def _artifacts_in_tmp(tmp_path, monkeypatch):
 
 # --- discovery --------------------------------------------------------------
 def test_discovery_lists_and_param_ranges():
-    assert any(s["name"] == "volume_spike" for s in registry.list_strategies())
-    assert any(s["name"] == "volume" for s in registry.list_scanners())
-    pr = registry.get_param_ranges("strategy", "volume_spike")
-    assert "short_ema_period" in pr["param_ranges"]
+    assert any(s["name"] == "demo_trend" for s in registry.list_strategies())
+    assert any(s["name"] == "demo_volume" for s in registry.list_scanners())
+    pr = registry.get_param_ranges("strategy", "demo_trend")
+    assert "fast_ema_period" in pr["param_ranges"]
     with pytest.raises(ValueError):
         registry.get_param_ranges("strategy", "nope")
     with pytest.raises(ValueError):
-        registry.get_param_ranges("bogus", "volume_spike")
+        registry.get_param_ranges("bogus", "demo_trend")
 
 
 # --- analysis services ------------------------------------------------------
 def test_run_backtest_is_json_and_does_not_inline_trades():
-    result = analysis.run_backtest(_client(), "volume_spike", SYMBOLS, START, END)
+    result = analysis.run_backtest(_client(), "demo_trend", SYMBOLS, START, END)
     assert json.loads(json.dumps(result))  # JSON round-trips
     assert "trades" not in result  # trades go to a CSV path, never inlined
     assert set(METRIC_KEYS) <= set(result["metrics"])
@@ -61,7 +61,7 @@ def test_run_backtest_is_json_and_does_not_inline_trades():
 
 def test_run_optimization_caps_top_n_and_writes_csv():
     result = analysis.run_optimization(
-        _client(), "volume_spike", SYMBOLS, START, END, method="random", max_evals=15, seed=1
+        _client(), "demo_trend", SYMBOLS, START, END, method="random", max_evals=15, seed=1
     )
     assert len(result["top"]) <= analysis.TOP_N
     assert result["n_trials"] == 15
@@ -73,7 +73,7 @@ def test_run_optimization_caps_top_n_and_writes_csv():
 def test_run_walk_forward_returns_gate_verdict():
     result = analysis.run_walk_forward(
         _client(),
-        "volume_spike",
+        "demo_trend",
         SYMBOLS,
         START,
         END,
@@ -110,7 +110,7 @@ def test_glossary_covers_every_metric():
 def test_audit_log_appends_one_record(tmp_path):
     path = tmp_path / "audit.jsonl"
     run_id = audit_log(
-        "run_backtest", {"strategy": "volume_spike"}, path=path, result_summary={"total_trades": 3}
+        "run_backtest", {"strategy": "demo_trend"}, path=path, result_summary={"total_trades": 3}
     )
     lines = path.read_text().splitlines()
     assert len(lines) == 1
@@ -127,7 +127,7 @@ def test_journal_trial_records_a_normalized_trial(tmp_path):
     path = tmp_path / "journal.jsonl"
     journal_trial(
         "backtest",
-        strategy="ma_crossover",
+        strategy="demo_trend",
         symbols=["msft", "AAPL", "aapl"],  # duplicate + mixed case
         start=datetime(2024, 1, 2),
         end=datetime(2024, 3, 1),
@@ -154,7 +154,7 @@ def test_journal_trial_records_the_objective_when_given(tmp_path):
     path = tmp_path / "journal.jsonl"
     journal_trial(
         "optimize",
-        strategy="ma_crossover",
+        strategy="demo_trend",
         symbols=["NVDA"],
         start=datetime(2024, 1, 2),
         end=datetime(2024, 3, 1),
@@ -224,7 +224,7 @@ def test_cli_backtest_journals_one_trial(monkeypatch, tmp_path):
         [
             "backtest",
             "--strategy",
-            "ma_crossover",
+            "demo_trend",
             "--scanner",
             "none",
             "--symbols",
@@ -251,7 +251,7 @@ def test_cli_optimize_journals_one_trial_per_config(monkeypatch, tmp_path):
         [
             "optimize",
             "--strategy",
-            "ma_crossover",
+            "demo_trend",
             "--scanner",
             "none",
             "--symbols",
@@ -285,7 +285,7 @@ def test_cli_no_journal_flag_records_nothing(monkeypatch, tmp_path):
         [
             "backtest",
             "--strategy",
-            "ma_crossover",
+            "demo_trend",
             "--scanner",
             "none",
             "--symbols",
@@ -309,7 +309,7 @@ def test_cli_walkforward_journals_one_validated_trial(monkeypatch, tmp_path):
         [
             "walkforward",
             "--strategy",
-            "ma_crossover",
+            "demo_trend",
             "--scanner",
             "none",
             "--symbols",
@@ -348,7 +348,7 @@ def test_cli_alphas_journals_a_readonly_trial(monkeypatch, tmp_path):
         [
             "alphas",
             "--strategy",
-            "ma_crossover",
+            "demo_trend",
             "--scanner",
             "none",
             "--symbols",
@@ -386,7 +386,7 @@ def test_cli_backtest_also_populates_the_trial_store(monkeypatch, tmp_path):
         [
             "backtest",
             "--strategy",
-            "ma_crossover",
+            "demo_trend",
             "--scanner",
             "none",
             "--symbols",
@@ -400,10 +400,10 @@ def test_cli_backtest_also_populates_the_trial_store(monkeypatch, tmp_path):
     args.func(args)
 
     store = TrialStore(db_path_for_journal(journal))
-    rows = store.query(strategy="ma_crossover", kind="backtest")
+    rows = store.query(strategy="demo_trend", kind="backtest")
     assert len(rows) == 1
     assert rows[0]["accounting"] == ACCOUNTING_VERSION
-    assert store.family_count("ma_crossover", ["AAA", "BBB"], ACCOUNTING_VERSION) == 1
+    assert store.family_count("demo_trend", ["AAA", "BBB"], ACCOUNTING_VERSION) == 1
     status = store.status(journal)
     assert status["drift"] is False
 
@@ -428,7 +428,7 @@ def test_walkforward_gate_report_is_unaffected_by_a_broken_trial_store(monkeypat
             [
                 "walkforward",
                 "--strategy",
-                "ma_crossover",
+                "demo_trend",
                 "--scanner",
                 "none",
                 "--symbols",
@@ -464,7 +464,7 @@ def test_walkforward_gate_report_is_unaffected_by_a_broken_trial_store(monkeypat
 _BT_ARGV = [
     "backtest",
     "--strategy",
-    "ma_crossover",
+    "demo_trend",
     "--scanner",
     "none",
     "--symbols",
@@ -710,7 +710,7 @@ def test_walkforward_memoizes_identical_recipe_without_rerunning(monkeypatch, tm
     wf_argv = [
         "walkforward",
         "--strategy",
-        "ma_crossover",
+        "demo_trend",
         "--scanner",
         "none",
         "--symbols",
@@ -761,7 +761,7 @@ def test_walkforward_save_config_then_backtest_config_round_trips(monkeypatch, t
         [
             "walkforward",
             "--strategy",
-            "ma_crossover",
+            "demo_trend",
             "--scanner",
             "none",
             "--symbols",
@@ -816,11 +816,11 @@ def test_backtest_config_out_of_range_param_fails_loudly(tmp_path):
     from tradeflow import cli as main
     from tradeflow.services.registry import resolve_strategy_class
 
-    cls = resolve_strategy_class("ma_crossover")
+    cls = resolve_strategy_class("demo_trend")
     params = {name: spec["default"] for name, spec in cls.PARAM_RANGES.items()}
     params["fast_ema_period"] = 9999  # out of PARAM_RANGES bounds
     config_path = tmp_path / "bad.json"
-    config_path.write_text(json.dumps({"strategy": "ma_crossover", "scanner": None, "params": params}))
+    config_path.write_text(json.dumps({"strategy": "demo_trend", "scanner": None, "params": params}))
 
     args = main.build_parser().parse_args(
         [
@@ -846,18 +846,18 @@ def test_analysis_run_backtest_journals_a_trial_and_memoizes_a_repeat():
     """Regression test for a gap found while wiring memoization: MCP's
     analysis.run_backtest never journaled a trial at all, so nothing an agent ran
     over MCP ever counted toward the campaign's multiple-testing total."""
-    result1 = analysis.run_backtest(_client(), "volume_spike", SYMBOLS, START, END)
+    result1 = analysis.run_backtest(_client(), "demo_trend", SYMBOLS, START, END)
     assert not result1.get("memoized")
     trials = _trials(audit.DEFAULT_TRIAL_JOURNAL)
     assert len(trials) == 1
     assert trials[0]["tool"] == "trial:backtest"
 
-    result2 = analysis.run_backtest(_client(), "volume_spike", SYMBOLS, START, END)
+    result2 = analysis.run_backtest(_client(), "demo_trend", SYMBOLS, START, END)
     assert result2["memoized"] is True
     assert result2["trial_id"] == trials[0]["run_id"]
     assert len(_trials(audit.DEFAULT_TRIAL_JOURNAL)) == 1  # not double-counted
 
-    result3 = analysis.run_backtest(_client(), "volume_spike", SYMBOLS, START, END, force=True)
+    result3 = analysis.run_backtest(_client(), "demo_trend", SYMBOLS, START, END, force=True)
     assert not result3.get("memoized")
     assert len(_trials(audit.DEFAULT_TRIAL_JOURNAL)) == 2
 
@@ -975,8 +975,8 @@ def test_the_stress_curve_separates_robust_from_barely_profitable():
     restores the sign flip would be fitting the fixture to synthetic noise; the
     contrast the test exists for survives without it.
     """
-    robust = _stress("ma_crossover", 4)
-    fragile = _stress("ma_crossover", 6)
+    robust = _stress("demo_trend", 4)
+    fragile = _stress("demo_trend", 6)
 
     # Both clear at their own assumed cost, and they are not the same proposition.
     assert robust["points"][0]["total_return"] > 0
@@ -988,7 +988,7 @@ def test_the_stress_curve_separates_robust_from_barely_profitable():
 
 def test_cost_rises_with_the_multiple():
     """The curve has to actually scale what it says it scales."""
-    report = _stress("ma_crossover", 6)
+    report = _stress("demo_trend", 6)
     costs = [point["total_cost"] for point in report["points"]]
 
     assert costs == sorted(costs)
@@ -999,8 +999,8 @@ def test_the_borrow_axis_isolates_borrow():
     """Worth asking separately because it is carry on inventory rather than a toll on
     turnover — so a long-only book, which borrows nothing, must be flat under it while
     the combined axis still bites."""
-    borrow_only = _stress("ma_crossover", 6, axis="borrow")
-    everything = _stress("ma_crossover", 6, axis="all")
+    borrow_only = _stress("demo_trend", 6, axis="borrow")
+    everything = _stress("demo_trend", 6, axis="all")
 
     assert len({point["total_cost"] for point in borrow_only["points"]}) == 1
     assert len({point["total_cost"] for point in everything["points"]}) > 1
@@ -1013,7 +1013,7 @@ def test_a_stress_curve_journals_nothing(tmp_path):
     deflates against — the campaign would punish a user for asking how robust their
     strategy was.
     """
-    _stress("ma_crossover", 6)
+    _stress("demo_trend", 6)
 
     assert _trials(tmp_path / "journal.jsonl") == []
 

@@ -13,7 +13,7 @@ long as you remember it's not the same as "will this work?"
 make backtest
 # or
 uv run python main.py backtest \
-    --strategy volume_spike --scanner volume \
+    --strategy demo_trend --scanner demo_volume \
     --symbols NVDA,META,TSLA --start 2024-01-02 --end 2024-04-01 --capital 100000
 ```
 
@@ -21,7 +21,7 @@ uv run python main.py backtest \
 
 | Option | Default | Meaning |
 |--------|---------|---------|
-| `--strategy` | `volume_spike` | Strategy to run |
+| `--strategy` | `demo_trend` | Strategy to run |
 | `--scanner` | `volume` | Universe scanner (`none` to skip) |
 | `--symbols` | a 10-name list | Comma-separated candidates |
 | `--start` / `--end` | last 30 days | Backtest window (`YYYY-MM-DD`) |
@@ -144,7 +144,7 @@ A single cost assumption produces a single number, and no way to tell how much o
 result was the assumption. `--cost-stress` re-runs the same config under scaled costs:
 
 ```bash
-uv run python main.py backtest --strategy ma_crossover --symbols NVDA,META,TSLA \
+uv run python main.py backtest --strategy demo_trend --symbols NVDA,META,TSLA \
     --cost-stress
 ```
 

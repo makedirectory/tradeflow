@@ -178,12 +178,33 @@ class WalkForwardResult:
         different proposition from one that is neutral throughout, and an aggregate
         cannot distinguish them - which is the same reason the benchmark prerequisite
         takes a median across folds rather than a figure over the stitched curve.
+
+        Lists are **fold-aligned**: entry ``i`` is fold ``i`` for every leg, and a fold
+        where a leg did not trade - or traded too little to regress - carries ``None``
+        rather than being skipped. Skipping shortened one list and not the other, so the
+        two stopped describing the same folds; the report prints them as aligned columns,
+        which then showed one fold's short beta under another fold's heading. A
+        per-fold diagnostic that cannot say which fold answers nothing.
         """
-        out: Dict[str, List[Optional[float]]] = {}
+        # A leg that traded in no fold at all is not a leg this book has: a long-only
+        # book still reports a zero-trade ``short`` entry, and carrying it through as a
+        # column of ``None`` invites the reader to wonder which folds went short.
+        names = sorted(
+            {
+                name
+                for fold in self.folds
+                for name, leg in (fold.oos_legs or {}).items()
+                if (leg or {}).get("trades")
+            }
+        )
+        out: Dict[str, List[Optional[float]]] = {name: [] for name in names}
         for fold_result in self.folds:
-            for name, leg in (fold_result.oos_legs or {}).items():
-                if leg.get("trades"):
-                    out.setdefault(name, []).append(leg.get("beta"))
+            legs = fold_result.oos_legs or {}
+            for name in names:
+                leg = legs.get(name) or {}
+                # Absent is not zero, and here it is not "omit" either: no trades and no
+                # computable beta are both genuinely unknown for that fold.
+                out[name].append(leg.get("beta") if leg.get("trades") else None)
         return out
 
     def median_efficiency(self) -> float:

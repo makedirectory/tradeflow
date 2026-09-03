@@ -6,31 +6,28 @@ import pandas as pd
 import pytest
 
 from tests.fakes import DictMarketData, FakeMarketData
+from tradeflow.demo.scanners import DemoVolumeScanner
 from tradeflow.marketdata.client import MarketDataClient
 from tradeflow.scanners.base import SCANNER_BUY, SCANNER_HOLD
 from tradeflow.scanners.symbol_scanner import SymbolScanner
-from tradeflow.scanners.volume_scanner import VolumeScannerStrategy
 from tradeflow.services import analysis
 from tradeflow.utils.timeutils import NEW_YORK
 
 
 def _scanner(**overrides):
-    config = {p: spec["default"] for p, spec in VolumeScannerStrategy.PARAM_RANGES.items()}
+    config = {p: spec["default"] for p, spec in DemoVolumeScanner.PARAM_RANGES.items()}
     config.update(overrides)
-    return VolumeScannerStrategy(config)
+    return DemoVolumeScanner(config)
 
 
 def test_validate_config_fills_defaults():
-    scanner = VolumeScannerStrategy({})
-    assert (
-        scanner.config["volume_threshold"]
-        == VolumeScannerStrategy.PARAM_RANGES["volume_threshold"]["default"]
-    )
+    scanner = DemoVolumeScanner({})
+    assert scanner.config["volume_threshold"] == DemoVolumeScanner.PARAM_RANGES["volume_threshold"]["default"]
 
 
 def test_validate_config_rejects_out_of_range():
     with pytest.raises(ValueError):
-        VolumeScannerStrategy({"volume_ma_period": 9999})
+        DemoVolumeScanner({"volume_ma_period": 9999})
 
 
 def test_process_data_adds_columns():
@@ -92,7 +89,7 @@ def test_evaluate_forward_returns_metric_keys():
 
 
 def test_symbol_scanner_can_scan_at_a_historical_as_of():
-    scanner = SymbolScanner(MarketDataClient(FakeMarketData(["AAA"], n=60, freq="1D")), "volume")
+    scanner = SymbolScanner(MarketDataClient(FakeMarketData(["AAA"], n=60, freq="1D")), "demo_volume")
     as_of = NEW_YORK.localize(datetime(2024, 6, 1, 16, 0))
 
     start, end = scanner._scan_window("1Day", as_of=as_of)
@@ -102,7 +99,7 @@ def test_symbol_scanner_can_scan_at_a_historical_as_of():
 
 
 def test_symbol_scanner_localizes_naive_historical_as_of():
-    scanner = SymbolScanner(MarketDataClient(FakeMarketData(["AAA"], n=60, freq="1D")), "volume")
+    scanner = SymbolScanner(MarketDataClient(FakeMarketData(["AAA"], n=60, freq="1D")), "demo_volume")
     as_of = datetime(2024, 6, 1, 16, 0)
 
     _, end = scanner._scan_window("1Day", as_of=as_of)
@@ -123,7 +120,7 @@ def test_symbol_scanner_ignores_bars_after_as_of():
         index=index,
     )
     as_of = index[-2].to_pydatetime()
-    scanner = SymbolScanner(MarketDataClient(DictMarketData({"AAA": frame})), "volume")
+    scanner = SymbolScanner(MarketDataClient(DictMarketData({"AAA": frame})), "demo_volume")
 
     flagged = scanner.scan(["AAA"], as_of=as_of)
 
@@ -143,7 +140,7 @@ def test_run_scan_reports_the_clock_it_resolved_at_not_the_one_requested():
     client = MarketDataClient(FakeMarketData(["AAA"], n=60, freq="1D"))
     as_of = datetime(2024, 6, 1)
 
-    result = analysis.run_scan(client, "volume", ["AAA"], as_of=as_of)
+    result = analysis.run_scan(client, "demo_volume", ["AAA"], as_of=as_of)
 
     assert result["as_of"] == resolve_scan_clock(as_of).isoformat()
     assert result["as_of"].endswith("-04:00")  # localized, not echoed back naive
@@ -154,7 +151,7 @@ def test_run_scan_names_its_clock_even_when_none_was_asked_for():
     universe the scan actually saw."""
     client = MarketDataClient(FakeMarketData(["AAA"], n=60, freq="1D"))
 
-    result = analysis.run_scan(client, "volume", ["AAA"])
+    result = analysis.run_scan(client, "demo_volume", ["AAA"])
 
     assert result["as_of"] is not None
 
@@ -206,7 +203,7 @@ def test_scanner_drift_reports_which_names_entered_and_left():
     client, index = _spiky_feed({"AAA": [40], "BBB": [41]})
 
     report = analysis.run_scanner_drift(
-        client, "volume", ["AAA", "BBB"], index[41].to_pydatetime(), offsets_days=(-1,)
+        client, "demo_volume", ["AAA", "BBB"], index[41].to_pydatetime(), offsets_days=(-1,)
     )
 
     assert report["baseline_size"] == 1  # only BBB spikes on the baseline day
@@ -221,7 +218,7 @@ def test_a_stable_scan_reports_no_drift():
     client, index = _spiky_feed({"AAA": [39, 40], "BBB": [39, 40]})
 
     report = analysis.run_scanner_drift(
-        client, "volume", ["AAA", "BBB"], index[40].to_pydatetime(), offsets_days=(-1,)
+        client, "demo_volume", ["AAA", "BBB"], index[40].to_pydatetime(), offsets_days=(-1,)
     )
 
     assert report["baseline_size"] == 2
@@ -235,7 +232,7 @@ def test_a_saved_universe_is_compared_against_todays_scan():
 
     report = analysis.run_scanner_drift(
         client,
-        "volume",
+        "demo_volume",
         ["AAA", "BBB"],
         index[41].to_pydatetime(),
         offsets_days=(),

@@ -175,7 +175,7 @@ def test_save_and_load_config_round_trip(tmp_path):
     path = config_store.save_config(
         tmp_path / "candidate.json",
         strategy="periodic",
-        scanner="volume",
+        scanner="demo_volume",
         params={"buy_every": 5},
         provenance=provenance,
     )
@@ -400,7 +400,7 @@ def test_the_benchmark_check_is_a_median_across_folds():
     client = MarketDataClient(FakeMarketData([*symbols, "SPY"], n=600, freq="1D"))
 
     scored = WalkForwardValidator(
-        STRATEGIES["ma_crossover"], client, initial_capital=100_000, benchmark="SPY"
+        STRATEGIES["demo_trend"], client, initial_capital=100_000, benchmark="SPY"
     ).run(symbols, datetime(2024, 1, 2), datetime(2025, 6, 1), n_folds=3, method="grid", max_evals=2)
 
     assert all(fold.oos_metrics["benchmark_available"] for fold in scored.folds)
@@ -422,7 +422,7 @@ def test_without_a_benchmark_the_folds_say_so_rather_than_scoring_zero():
     symbols = ["AAA", "BBB"]
     client = MarketDataClient(FakeMarketData([*symbols, "SPY"], n=600, freq="1D"))
 
-    plain = WalkForwardValidator(STRATEGIES["ma_crossover"], client, initial_capital=100_000).run(
+    plain = WalkForwardValidator(STRATEGIES["demo_trend"], client, initial_capital=100_000).run(
         symbols, datetime(2024, 1, 2), datetime(2025, 6, 1), n_folds=3, method="grid", max_evals=2
     )
 
@@ -452,20 +452,26 @@ def test_leg_betas_are_kept_per_fold():
     """
     from datetime import datetime
 
-    from tests.fakes import FakeMarketData
+    from tests.fakes import FakeMarketData, LongShortScriptedStrategy
     from tradeflow.marketdata.client import MarketDataClient
     from tradeflow.optimization.walk_forward import WalkForwardValidator
-    from tradeflow.services.registry import STRATEGIES
 
     symbols = [f"S{i}" for i in range(6)]
     client = MarketDataClient(FakeMarketData([*symbols, "SPY"], n=700, freq="1D"))
 
+    # The fixture, not a shipped strategy: this asserts something about the *short* leg,
+    # and borrowing a demonstration's directionality means the day it changes these
+    # assertions still pass while measuring nothing.
     result = WalkForwardValidator(
-        STRATEGIES["volume_spike"], client, initial_capital=100_000, benchmark="SPY"
+        LongShortScriptedStrategy, client, initial_capital=100_000, benchmark="SPY"
     ).run(symbols, datetime(2024, 1, 2), datetime(2025, 9, 1), n_folds=3, method="grid", max_evals=2)
 
     by_fold = result.leg_beta_by_fold()
-    assert set(by_fold) == {"long", "short"}  # volume_spike trades both sides
+    assert set(by_fold) == {"long", "short"}
+    # Fold-aligned: entry i is fold i for every leg. A leg that did not trade in a fold
+    # carries None rather than being skipped — skipping shortened one list and not the
+    # other, and the report prints them as aligned columns, so one fold's short beta
+    # appeared under another fold's heading.
     assert all(len(betas) == len(result.folds) for betas in by_fold.values())
     assert all(fold.oos_legs for fold in result.folds)
 
@@ -483,7 +489,7 @@ def test_a_long_only_walk_forward_reports_no_leg_split():
     client = MarketDataClient(FakeMarketData([*symbols, "SPY"], n=600, freq="1D"))
 
     result = WalkForwardValidator(
-        STRATEGIES["ma_crossover"], client, initial_capital=100_000, benchmark="SPY"
+        STRATEGIES["demo_trend"], client, initial_capital=100_000, benchmark="SPY"
     ).run(symbols, datetime(2024, 1, 2), datetime(2025, 6, 1), n_folds=3, method="grid", max_evals=2)
 
     assert "short" not in result.leg_beta_by_fold()
@@ -500,7 +506,7 @@ def _benchmarked_run(n_folds=3):
     symbols = ["AAA", "BBB"]
     client = MarketDataClient(FakeMarketData([*symbols, "SPY"], n=600, freq="1D"))
     return WalkForwardValidator(
-        STRATEGIES["ma_crossover"], client, initial_capital=100_000, benchmark="SPY"
+        STRATEGIES["demo_trend"], client, initial_capital=100_000, benchmark="SPY"
     ).run(symbols, datetime(2024, 1, 2), datetime(2025, 6, 1), n_folds=n_folds, method="grid", max_evals=2)
 
 
@@ -529,7 +535,7 @@ def test_without_a_benchmark_excess_is_unmeasured_rather_than_zero():
 
     symbols = ["AAA", "BBB"]
     client = MarketDataClient(FakeMarketData([*symbols, "SPY"], n=600, freq="1D"))
-    plain = WalkForwardValidator(STRATEGIES["ma_crossover"], client, initial_capital=100_000).run(
+    plain = WalkForwardValidator(STRATEGIES["demo_trend"], client, initial_capital=100_000).run(
         symbols, datetime(2024, 1, 2), datetime(2025, 6, 1), n_folds=3, method="grid", max_evals=2
     )
 
@@ -573,3 +579,28 @@ def test_disagreement_is_reported_not_gated():
     from tradeflow.analytics.performance import DEFAULT_PREREQUISITES
 
     assert not [name for name in DEFAULT_PREREQUISITES if "spread" in name or "disagree" in name]
+
+
+def test_a_leg_that_missed_a_fold_holds_its_place():
+    """The bug: a leg with no trades in a fold was skipped, so its list came back
+    shorter than the other's and the two stopped describing the same folds. The report
+    prints them as aligned columns, so one fold's short beta was rendered under another
+    fold's heading — a per-fold diagnostic that cannot say which fold.
+    """
+    from tradeflow.optimization.walk_forward import WalkForwardResult
+
+    class Fold:
+        def __init__(self, legs):
+            self.oos_legs = legs
+
+    result = WalkForwardResult.__new__(WalkForwardResult)
+    result.folds = [
+        Fold({"long": {"trades": 3, "beta": 0.4}, "short": {"trades": 2, "beta": -0.3}}),
+        Fold({"long": {"trades": 5, "beta": 0.2}, "short": {"trades": 0, "beta": None}}),
+        Fold({"long": {"trades": 4, "beta": 0.1}, "short": {"trades": 1, "beta": -0.5}}),
+    ]
+
+    by_fold = result.leg_beta_by_fold()
+
+    assert by_fold["long"] == [0.4, 0.2, 0.1]
+    assert by_fold["short"] == [-0.3, None, -0.5]  # the gap holds fold 1's place

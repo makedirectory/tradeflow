@@ -135,7 +135,7 @@ def test_run_scan_accepts_a_historical_as_of(built):
     payload = _call(
         built,
         "run_scan",
-        scanner="volume",
+        scanner="demo_volume",
         symbols=SYMBOLS,
         as_of="2024-06-01T16:00:00-04:00",
     )
@@ -182,7 +182,7 @@ def test_run_verdict_returns_what_the_service_returns(built):
     """Parity by construction: the tool is a passthrough, not a second pipeline."""
     direct = analysis.run_verdict(
         MarketDataClient(FakeMarketData([*SYMBOLS, "SPY"], n=600, freq="1D")),
-        "volume_spike",
+        "demo_trend",
         SYMBOLS,
         START,
         END,
@@ -190,7 +190,7 @@ def test_run_verdict_returns_what_the_service_returns(built):
     over_mcp = _call(
         built,
         "run_verdict",
-        strategy="volume_spike",
+        strategy="demo_trend",
         symbols=SYMBOLS,
         start=START.strftime("%Y-%m-%d"),
         end=END.strftime("%Y-%m-%d"),
@@ -205,7 +205,7 @@ def test_run_verdict_returns_what_the_service_returns(built):
 def test_render_report_returns_a_self_contained_document(built):
     result = analysis.run_verdict(
         MarketDataClient(FakeMarketData([*SYMBOLS, "SPY"], n=600, freq="1D")),
-        "volume_spike",
+        "demo_trend",
         SYMBOLS,
         START,
         END,
@@ -225,7 +225,7 @@ def test_render_report_shares_the_cli_renderer_rather_than_a_second_route(built)
 
     result = analysis.run_verdict(
         MarketDataClient(FakeMarketData([*SYMBOLS, "SPY"], n=600, freq="1D")),
-        "volume_spike",
+        "demo_trend",
         SYMBOLS,
         START,
         END,
@@ -244,7 +244,7 @@ def test_a_schema_mismatched_payload_fails_rather_than_half_rendering(built):
 def test_hostile_content_stays_inert_through_the_mcp_path(built):
     result = analysis.run_verdict(
         MarketDataClient(FakeMarketData([*SYMBOLS, "SPY"], n=600, freq="1D")),
-        "volume_spike",
+        "demo_trend",
         SYMBOLS,
         START,
         END,
@@ -262,7 +262,7 @@ def _seed_store(tmp_path):
             store.record(
                 id=f"t{i}",
                 kind="backtest",
-                strategy="volume_spike",
+                strategy="demo_trend",
                 symbols=SYMBOLS,
                 params={"fast": i},
                 accounting=3,
@@ -274,7 +274,7 @@ def _seed_store(tmp_path):
 
 def test_list_trials_returns_rows_and_the_full_match_count(built, _isolated_state):
     _seed_store(_isolated_state)
-    payload = _call(built, "list_trials", strategy="volume_spike", all_accounting=True)
+    payload = _call(built, "list_trials", strategy="demo_trend", all_accounting=True)
     assert payload["total"] == 3
     assert {r["id"] for r in payload["rows"]} == {"t1", "t2", "t3"}
 
@@ -295,14 +295,14 @@ def test_the_leaderboard_rules_survive_serialization(built, _isolated_state):
     """031's honesty requirements must live in the payload — an agent never sees the
     CLI's caveat line unless the data carries it."""
     _seed_store(_isolated_state)
-    board = _call(built, "best_trials", strategy="volume_spike", all_accounting=True)
+    board = _call(built, "best_trials", strategy="demo_trend", all_accounting=True)
 
     assert board["rank_by"] == "dsr"
     assert board["rows"][0]["id"] == "t3"  # deflated winner, not the raw winner
     assert all("family_n_trials" in row for row in board["rows"])
     assert "DEFLATED" in board["caveat"]
 
-    raw = _call(built, "best_trials", strategy="volume_spike", rank_by="sharpe", all_accounting=True)
+    raw = _call(built, "best_trials", strategy="demo_trend", rank_by="sharpe", all_accounting=True)
     assert raw["rows"][0]["id"] == "t2"
     assert "RAW Sharpe" in raw["caveat"]
 

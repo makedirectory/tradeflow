@@ -40,9 +40,9 @@ exit long    when score falls to/below exit_long      → CLOSE_BUY
 ```
 
 The bands come from `signal_thresholds()` (default: pure sign — long while score >
-0). A strategy with asymmetric entry/exit — e.g. `mean_reversion` enters when RSI is
-oversold but holds until it's overbought — overrides `signal_thresholds()` to set a
-wide hold band. Entries are edge-triggered (emitted on the crossing bar); while a
+0). A strategy with asymmetric entry/exit — one that enters when RSI is oversold but
+holds until it's overbought — overrides `signal_thresholds()` to set a wide hold
+band. Entries are edge-triggered (emitted on the crossing bar); while a
 direction is held the bar emits `HOLD`, and the engine dedupes against the open
 position.
 
@@ -115,16 +115,18 @@ an out-of-range parameter fails fast. `step` also lets the
 
 ## The bundled strategies
 
-Three ship today, all built on the pure [indicators](indicators) — chosen to
-*disagree*, so the [walk-forward](walk-forward) scorecard has something to
-discriminate between:
+One ships, built on the pure [indicators](indicators):
 
 | `--strategy` | Style | Score (the one decision) |
 |--------------|-------|--------------------------|
-| `volume_spike` | Trend + volume (5-minute, long/short) | Signed EMA-trend strength `× volume / volume_ma` — lean with the trend, conviction amplified by volume confirmation. |
-| `ma_crossover` | Trend (daily, long-only) | Normalized EMA gap `(fast − slow) / slow` — sign crossings are the golden / death cross. |
-| `mean_reversion` | Contrarian (daily, long-only) | Oversold-ness `50 − rsi`, with asymmetric bands: enter below `oversold`, exit above `overbought`. |
+| `demo_trend` | Trend (daily, long-only) | Normalized EMA gap `(fast − slow) / slow` — sign crossings are the golden / death cross. |
 
-`ma_crossover` and `mean_reversion` are deliberately minimal (a handful of
-parameters each) — honest baselines and clean worked examples. See
-[Extending](extending) to add your own; it's a one-file change.
+It lives in `tradeflow/demo/` rather than `tradeflow/strategies/`, and registers
+through the same entry-point group a private pack uses — so the engine discovers its
+own demonstration by the path yours will travel, and that path is exercised by every
+install rather than only by a test fixture.
+
+Deliberately minimal, and deliberately alone: a second shipped strategy would be a
+second idea nobody chose, and the [walk-forward](walk-forward) scorecard is there to
+discriminate between *your* candidates. `examples/my-signals` is a real pack with a
+long-only and a long/short strategy to read; see [Extending](extending).

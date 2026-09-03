@@ -1,4 +1,13 @@
-"""Moving-average crossover - the "hello world" of trend following.
+"""The example strategy: a moving-average crossover, the "hello world" of trend following.
+
+**This ships so the demo has something to run and so there is a smallest complete
+strategy to read. It is not an edge, and it is not where your work goes** — that belongs
+in your own package. ``tradeflow init --example-pack ./my-signals`` copies a complete one
+you own, with two strategies, a scanner and configs already wired up.
+
+It reaches the engine through the ``tradeflow.strategies`` entry-point group declared in
+this project's ``pyproject.toml`` — the same mechanism your pack will use, so the path
+is exercised by every install rather than only in tests.
 
 Long-only. Its conviction score is the **normalized EMA gap**
 ``(fast - slow) / slow``: positive (and rising) when the fast line leads, negative
@@ -18,8 +27,14 @@ from tradeflow.indicators import indicators
 from tradeflow.strategies.base import Strategy
 
 
-class MovingAverageCrossoverStrategy(Strategy):
+class DemoTrendStrategy(Strategy):
     """Long-only EMA trend follower: buy the golden cross, exit the death cross."""
+
+    #: Marks this as a shipped demonstration rather than something to trade. Carried on
+    #: the class rather than inferred from where it was registered, because how a
+    #: strategy was discovered says nothing about what it is for - and after this moved
+    #: to an entry point, registry membership stopped being able to tell.
+    DEMO = True
 
     #: Bars this strategy is designed to trade.
     TIMEFRAME = "1Day"

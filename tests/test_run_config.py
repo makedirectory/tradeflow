@@ -16,7 +16,7 @@ import pytest
 from tradeflow.cli import apply_run_config, build_parser, parse_cli
 from tradeflow.optimization import config_store
 
-_MA_RANGES = __import__("tradeflow.services.registry", fromlist=["x"]).STRATEGIES["ma_crossover"].PARAM_RANGES
+_MA_RANGES = __import__("tradeflow.services.registry", fromlist=["x"]).STRATEGIES["demo_trend"].PARAM_RANGES
 
 _PARAMS = {
     "fast_ema_period": 18,
@@ -33,8 +33,8 @@ def saved(tmp_path):
     path.write_text(
         json.dumps(
             {
-                "strategy": "ma_crossover",
-                "scanner": "volume",
+                "strategy": "demo_trend",
+                "scanner": "demo_volume",
                 "symbols": ["AAA", "BBB", "CCC"],
                 "capital": 250_000.0,
                 "cost": {"gross": False, "commission_bps": 2.5, "impact_eta": 0.4, "borrow_bps": 30.0},
@@ -51,7 +51,7 @@ def test_the_file_supplies_every_input_the_command_line_left_unsaid(saved):
 
     tuned = apply_run_config(args)
 
-    assert args.strategy == "ma_crossover"
+    assert args.strategy == "demo_trend"
     assert args.symbols == ["AAA", "BBB", "CCC"]
     # The scanner is read from the config and then pinned off, because the config's
     # universe is replayed rather than re-scanned - see the universe tests below.
@@ -108,16 +108,26 @@ def test_a_command_takes_only_the_fields_it_has(saved, capsys):
     assert "strategy=" not in printed
 
 
-def test_a_strategy_that_contradicts_the_config_is_refused(saved):
+def test_a_strategy_that_contradicts_the_config_is_refused(saved, monkeypatch):
     """The params in the file belong to the strategy in the file. Handing one
-    strategy's tuned params to another is not an outcome worth guessing at."""
-    args = parse_cli(["backtest", "--config", saved, "--strategy", "volume_spike"])
+    strategy's tuned params to another is not an outcome worth guessing at.
+
+    Registers a second strategy for the duration: the engine ships exactly one, so a
+    contradiction is not expressible against the built-in registry alone — and a test
+    naming the same strategy on both sides would pass while checking nothing.
+    """
+    from tests.fakes import ScriptedStrategy
+    from tradeflow.services.registry import STRATEGIES
+
+    monkeypatch.setitem(STRATEGIES, "other_strategy", ScriptedStrategy)
+    args = parse_cli(["backtest", "--config", saved, "--strategy", "other_strategy"])
 
     with pytest.raises(SystemExit) as exit_info:
         apply_run_config(args)
 
     message = str(exit_info.value)
-    assert "ma_crossover" in message and "volume_spike" in message
+    assert "demo_trend" in message  # the config's strategy, whose params these are
+    assert "other_strategy" in message  # and the one that was asked for
 
 
 def test_the_window_comes_from_the_run_and_says_so(saved, capsys):
@@ -132,10 +142,10 @@ def test_the_window_comes_from_the_run_and_says_so(saved, capsys):
 
 
 def test_no_config_is_a_no_op(saved):
-    args = parse_cli(["backtest", "--strategy", "volume_spike", "--symbols", "AAA"])
+    args = parse_cli(["backtest", "--strategy", "demo_trend", "--symbols", "AAA"])
 
     assert apply_run_config(args) == {}
-    assert args.strategy == "volume_spike"
+    assert args.strategy == "demo_trend"
 
 
 def test_the_tuned_params_reach_the_service_not_just_the_namespace(monkeypatch):
@@ -164,7 +174,7 @@ def test_the_tuned_params_reach_the_service_not_just_the_namespace(monkeypatch):
     client = MarketDataClient(FakeMarketData(["AAA", "BBB", "SPY"], n=300, freq="1D"))
 
     analysis.compute_alphas(
-        client, "ma_crossover", ["AAA", "BBB"], datetime(2024, 6, 1), config=_PARAMS, scanner="none"
+        client, "demo_trend", ["AAA", "BBB"], datetime(2024, 6, 1), config=_PARAMS, scanner="none"
     )
 
     assert _PARAMS in seen, f"the tuned params never reached the strategy: {seen}"
@@ -175,9 +185,9 @@ def test_walkforward_saves_the_run_inputs_not_only_the_params(tmp_path):
     resolved, the capital and the cost model are all part of what was validated."""
     path = config_store.save_config(
         tmp_path / "c.json",
-        strategy="ma_crossover",
+        strategy="demo_trend",
         params=_PARAMS,
-        scanner="volume",
+        scanner="demo_volume",
         symbols=["AAA", "BBB"],
         capital=50_000.0,
         cost={"gross": False, "commission_bps": 1.0},
@@ -193,7 +203,7 @@ def test_walkforward_saves_the_run_inputs_not_only_the_params(tmp_path):
 def test_a_config_saved_without_run_inputs_still_loads(tmp_path):
     """Files already sitting in someone's private repo predate these keys, and absent
     is not empty: they simply supply less."""
-    path = config_store.save_config(tmp_path / "old.json", strategy="ma_crossover", params=_PARAMS)
+    path = config_store.save_config(tmp_path / "old.json", strategy="demo_trend", params=_PARAMS)
 
     loaded = config_store.load_config(path)
 
@@ -271,11 +281,11 @@ def with_universe(tmp_path):
     path.write_text(
         json.dumps(
             {
-                "strategy": "ma_crossover",
-                "scanner": "volume",
+                "strategy": "demo_trend",
+                "scanner": "demo_volume",
                 "symbols": [f"R{i}" for i in range(61)],
                 "candidate_symbols": [f"C{i}" for i in range(85)],
-                "params": {n: s["default"] for n, s in STRATEGIES["ma_crossover"].PARAM_RANGES.items()},
+                "params": {n: s["default"] for n, s in STRATEGIES["demo_trend"].PARAM_RANGES.items()},
                 "provenance": {},
             }
         )
@@ -309,7 +319,7 @@ def test_re_resolving_uses_the_saved_candidates_not_the_resolved_book(with_unive
     apply_run_config(args)
 
     assert len(args.symbols) == 85  # the candidates, not the resolved book
-    assert args.scanner == "volume"
+    assert args.scanner == "demo_volume"
     assert "re-resolved from 85 saved candidates" in capsys.readouterr().out
 
 
@@ -323,10 +333,10 @@ def test_an_older_config_without_candidates_says_what_it_can_only_do(tmp_path, c
     path.write_text(
         json.dumps(
             {
-                "strategy": "ma_crossover",
-                "scanner": "volume",
+                "strategy": "demo_trend",
+                "scanner": "demo_volume",
                 "symbols": ["R0", "R1"],
-                "params": {n: s["default"] for n, s in STRATEGIES["ma_crossover"].PARAM_RANGES.items()},
+                "params": {n: s["default"] for n, s in STRATEGIES["demo_trend"].PARAM_RANGES.items()},
                 "provenance": {},
             }
         )
@@ -341,11 +351,11 @@ def test_an_older_config_without_candidates_says_what_it_can_only_do(tmp_path, c
 def test_an_explicit_scanner_beats_the_replay_and_says_so(with_universe, capsys):
     """Flags win, including over the replay default - but a typed scanner and a saved
     book are two instructions that disagree, so the report names which was honoured."""
-    args = parse_cli(["backtest", "--config", with_universe, "--scanner", "volume"])
+    args = parse_cli(["backtest", "--config", with_universe, "--scanner", "demo_volume"])
 
     apply_run_config(args)
 
-    assert args.scanner == "volume"  # not pinned off
+    assert args.scanner == "demo_volume"  # not pinned off
     assert "saved book re-scanned" in capsys.readouterr().out
 
 
@@ -366,11 +376,11 @@ def test_symbols_and_re_resolve_together_report_the_collision(with_universe, cap
 def test_without_a_config_nothing_about_scanning_changes(capsys):
     """Replay only applies to a universe that came from a config. An ordinary run must
     behave exactly as it did."""
-    args = parse_cli(["backtest", "--strategy", "volume_spike", "--scanner", "volume"])
+    args = parse_cli(["backtest", "--strategy", "demo_trend", "--scanner", "demo_volume"])
 
     apply_run_config(args)
 
-    assert args.scanner == "volume"
+    assert args.scanner == "demo_volume"
     assert capsys.readouterr().out == ""
 
 
@@ -384,7 +394,7 @@ def _journaled_trial(tmp_path, monkeypatch, promotable=True, candidates=None):
     monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", journal)
     audit.journal_trial(
         "walkforward",
-        strategy="ma_crossover",
+        strategy="demo_trend",
         symbols=["R0", "R1", "R2"],
         candidate_symbols=candidates,
         start=datetime(2024, 1, 2),
@@ -421,7 +431,7 @@ def test_a_validated_trial_promotes_without_being_re_run(tmp_path, monkeypatch, 
     _promote(store, trial_id, out)
 
     config = json.loads(out.read_text())
-    assert config["strategy"] == "ma_crossover"
+    assert config["strategy"] == "demo_trend"
     assert config["symbols"] == ["R0", "R1", "R2"]
     assert trial_id in config["provenance"]["notes"]
     assert "Promoted trial" in capsys.readouterr().out
@@ -583,11 +593,11 @@ def _frozen(tmp_path, limits):
     path.write_text(
         json.dumps(
             {
-                "strategy": "ma_crossover",
+                "strategy": "demo_trend",
                 "scanner": "none",
                 "symbols": ["A", "B", "C"],
                 "capital": 8000.0,
-                "params": {n: s["default"] for n, s in STRATEGIES["ma_crossover"].PARAM_RANGES.items()},
+                "params": {n: s["default"] for n, s in STRATEGIES["demo_trend"].PARAM_RANGES.items()},
                 "provenance": {},
                 **({"position_limits": limits} if limits else {}),
             }
@@ -652,11 +662,11 @@ def test_a_saved_config_records_its_limits_in_full(tmp_path):
 
     path = save_config(
         tmp_path / "c.json",
-        strategy="ma_crossover",
+        strategy="demo_trend",
         params={"a": 1},
         symbols=["A"],
         capital=8000.0,
-        position_limits=STRATEGIES["ma_crossover"].create_with_defaults().position_limits(),
+        position_limits=STRATEGIES["demo_trend"].create_with_defaults().position_limits(),
     )
 
     limits = load_config(path)["position_limits"]
@@ -676,8 +686,8 @@ def test_walkforward_accepts_a_saved_config(tmp_path):
     path.write_text(
         json.dumps(
             {
-                "strategy": "ma_crossover",
-                "scanner": "volume",
+                "strategy": "demo_trend",
+                "scanner": "demo_volume",
                 "symbols": ["AAA", "BBB"],
                 "capital": 8_000.0,
                 "cost": {"commission_bps": 7.5, "impact_eta": 0.9, "borrow_bps": 120.0},
@@ -691,7 +701,7 @@ def test_walkforward_accepts_a_saved_config(tmp_path):
     args = parse_cli(["walkforward", "--config", str(path)])
     apply_run_config(args)
 
-    assert args.strategy == "ma_crossover"
+    assert args.strategy == "demo_trend"
     assert args.symbols == ["AAA", "BBB"]
     assert args.capital == 8_000.0
     # The cost block reaches it too, so a re-validation prices fills the way the
@@ -710,8 +720,8 @@ def test_walkforward_replays_a_saved_universe_rather_than_re_scanning(tmp_path):
     path.write_text(
         json.dumps(
             {
-                "strategy": "ma_crossover",
-                "scanner": "volume",
+                "strategy": "demo_trend",
+                "scanner": "demo_volume",
                 "symbols": ["AAA"],
                 "params": {
                     "fast_ema_period": 10,
@@ -743,7 +753,7 @@ def test_a_trial_that_traded_nothing_is_not_served_to_a_backtest(tmp_path, monke
     monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
     store = TrialStore(tmp_path / "trials.db")
     identity = dict(
-        strategy="ma_crossover",
+        strategy="demo_trend",
         params={"fast_ema_period": 10},
         symbols=["AAA"],
         window_start="2024-01-01",
@@ -764,7 +774,7 @@ def test_a_trial_kind_that_never_trades_is_still_served(tmp_path, monkeypatch):
     monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
     store = TrialStore(tmp_path / "trials.db")
     identity = dict(
-        strategy="ma_crossover",
+        strategy="demo_trend",
         params={"fast_ema_period": 10},
         symbols=["AAA"],
         window_start="2024-01-01",
@@ -781,7 +791,7 @@ def _backtest_limits(argv, declared=None):
     from tradeflow.services.registry import STRATEGIES
 
     args = parse_cli(argv)
-    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy = STRATEGIES["demo_trend"].create_with_defaults()
     if declared:
         strategy.config["position_limits"] = {**strategy.position_limits(), **declared}
     _apply_limit_overrides(args, strategy)

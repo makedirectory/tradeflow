@@ -12,13 +12,13 @@ order.
 
 ```bash
 python main.py verdict \
-  --strategy volume_spike \
+  --strategy demo_trend \
   --symbols NVDA,AAPL,META,AMD,TSLA,GOOG,MSFT,AMZN \
   --start 2024-01-01 --end 2024-12-31
 ```
 
 ```
-=== Research verdict: 'volume_spike' 2024-01-01..2024-12-31 ===
+=== Research verdict: 'demo_trend' 2024-01-01..2024-12-31 ===
   universe: 8 names (NVDA, AAPL, META, AMD, TSLA, GOOG, MSFT, AMZN)
   timeframe 1Day | benchmark SPY | cost 1.0bps commission, impact η=0.3, borrow 50.0bps
   provenance: git 4f2c1ab | campaign trials 14 | bar requests: 3 of 7 reached the data client, the rest shared within this run
@@ -92,7 +92,7 @@ Two results are deliberately not a pass:
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--strategy` | `volume_spike` | The signal to refine into alphas |
+| `--strategy` | `demo_trend` | The signal to refine into alphas |
 | `--combine a,b,c` | — | Combine several strategies' signals into one alpha (measures + shrinks their ICs); with one or none, the single-signal path runs |
 | `--scanner` | `volume` | Universe scanner; `none` analyzes the candidates as given |
 | `--symbols` | default universe | Candidate universe |

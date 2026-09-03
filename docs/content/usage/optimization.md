@@ -19,7 +19,7 @@ believing a word of it.
 make optimize
 # or
 uv run python main.py optimize \
-    --strategy volume_spike --scanner none --symbols NVDA,META,TSLA \
+    --strategy demo_trend --scanner none --symbols NVDA,META,TSLA \
     --start 2024-01-02 --end 2024-04-01 --method grid --max-evals 50
 ```
 
@@ -84,7 +84,7 @@ backtest over the same read-only bars — so a search can use the cores the mach
 already has:
 
 ```bash
-python main.py optimize --strategy volume_spike --symbols NVDA,AAPL,META \
+python main.py optimize --strategy demo_trend --symbols NVDA,AAPL,META \
     --start 2024-01-01 --end 2024-12-31 --method grid --max-evals 200 --workers 4
 ```
 

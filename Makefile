@@ -49,53 +49,53 @@ install-portfolio:  ## Install with the optional OR-Tools portfolio extra
 
 # --- preconfigured trading combos ------------------------------------------
 verdict:  ## The whole pipeline in one command: scan -> alphas -> portfolio -> information
-	$(PY) verdict --strategy volume_spike --scanner volume --symbols $(SYMBOLS) --start $(START) --end $(END) --capital $(CAPITAL)
+	$(PY) verdict --strategy demo_trend --scanner demo_volume --symbols $(SYMBOLS) --start $(START) --end $(END) --capital $(CAPITAL)
 
-backtest:  ## Backtest: volume scanner -> volume_spike strategy
-	$(PY) backtest --strategy volume_spike --scanner volume --symbols $(SYMBOLS) --start $(START) --end $(END) --capital $(CAPITAL)
+backtest:  ## Backtest: demo scanner -> demo strategy
+	$(PY) backtest --strategy demo_trend --scanner demo_volume --symbols $(SYMBOLS) --start $(START) --end $(END) --capital $(CAPITAL)
 
 backtest-no-scan:  ## Backtest the fixed symbol list (skip the scanner)
-	$(PY) backtest --strategy volume_spike --scanner none --symbols $(SYMBOLS) --start $(START) --end $(END) --capital $(CAPITAL)
+	$(PY) backtest --strategy demo_trend --scanner none --symbols $(SYMBOLS) --start $(START) --end $(END) --capital $(CAPITAL)
 
 backtest-beta:  ## Backtest with beta-scaled position sizing
-	$(PY) backtest --strategy volume_spike --scanner volume --symbols $(SYMBOLS) --start $(START) --end $(END) --capital $(CAPITAL) --beta-sizing
+	$(PY) backtest --strategy demo_trend --scanner demo_volume --symbols $(SYMBOLS) --start $(START) --end $(END) --capital $(CAPITAL) --beta-sizing
 
 scan:  ## Run the universe scanner and print flagged symbols
-	$(PY) scan --scanner volume --symbols $(SYMBOLS)
+	$(PY) scan --scanner demo_volume --symbols $(SYMBOLS)
 
 allocate: install-portfolio  ## Weight a portfolio over scanned symbols (OR-Tools)
-	$(PY) allocate --scanner volume --symbols $(SYMBOLS) --capital $(CAPITAL)
+	$(PY) allocate --scanner demo_volume --symbols $(SYMBOLS) --capital $(CAPITAL)
 
 alphas:  ## Rank a universe by continuous alpha (residual-return forecast) — read-only
-	$(PY) alphas --strategy volume_spike --symbols $(SYMBOLS) --as-of $(END) --ic 0.03
+	$(PY) alphas --strategy demo_trend --symbols $(SYMBOLS) --as-of $(END) --ic 0.03
 
 risk:  ## Estimate the universe covariance Σ and summarize its risk structure — read-only
 	$(PY) risk --symbols $(SYMBOLS) --as-of $(END) --model shrinkage
 
 allocate-utility:  ## Mean-variance portfolio construction (alpha + Σ) — read-only proposal
-	$(PY) allocate --objective utility --strategy volume_spike --symbols $(SYMBOLS) --as-of $(END) --target-te 0.04
+	$(PY) allocate --objective utility --strategy demo_trend --symbols $(SYMBOLS) --as-of $(END) --target-te 0.04
 
 info:  ## Information report: IC, breadth, predicted-vs-realized IR — read-only
-	$(PY) info --strategy volume_spike --symbols $(SYMBOLS) --start $(START) --end $(END)
+	$(PY) info --strategy demo_trend --symbols $(SYMBOLS) --start $(START) --end $(END)
 
 horizon:  ## Alpha decay / half-life + rebalance cadence + lagged blend — read-only
-	$(PY) horizon --strategy volume_spike --symbols $(SYMBOLS) --start $(START) --end $(END)
+	$(PY) horizon --strategy demo_trend --symbols $(SYMBOLS) --start $(START) --end $(END)
 
-live:  ## Paper-trade: volume scanner -> volume_spike strategy
-	$(PY) live --strategy volume_spike --scanner volume --symbols $(SYMBOLS)
+live:  ## Paper-trade: demo scanner -> demo strategy
+	$(PY) live --strategy demo_trend --scanner demo_volume --symbols $(SYMBOLS)
 
 live-portfolio: install-portfolio  ## Paper-trade with OR-Tools portfolio-weighted sizing
-	$(PY) live --strategy volume_spike --scanner volume --symbols $(SYMBOLS) --portfolio
+	$(PY) live --strategy demo_trend --scanner demo_volume --symbols $(SYMBOLS) --portfolio
 
 live-beta:  ## Paper-trade with beta-scaled position sizing
-	$(PY) live --strategy volume_spike --scanner volume --symbols $(SYMBOLS) --beta-sizing
+	$(PY) live --strategy demo_trend --scanner demo_volume --symbols $(SYMBOLS) --beta-sizing
 
 # --- parameter modeling -----------------------------------------------------
 optimize:  ## Grid-search strategy params (objective: sharpe_ratio)
-	$(PY) optimize --strategy volume_spike --scanner none --symbols $(SYMBOLS) --start $(START) --end $(END) --method grid --max-evals 50
+	$(PY) optimize --strategy demo_trend --scanner none --symbols $(SYMBOLS) --start $(START) --end $(END) --method grid --max-evals 50
 
 optimize-bayesian: install-optimize  ## Train a GP surrogate to tune params
-	$(PY) optimize --strategy volume_spike --scanner none --symbols $(SYMBOLS) --start $(START) --end $(END) --method bayesian
+	$(PY) optimize --strategy demo_trend --scanner none --symbols $(SYMBOLS) --start $(START) --end $(END) --method bayesian
 
 # --- stopping ---------------------------------------------------------------
 halt:  ## Stop opening new positions (exits still allowed). REASON="why"

@@ -20,7 +20,7 @@ from tradeflow.services.data import build_data_client
 
 result = run_verdict(
     build_data_client(),
-    "volume_spike",
+    "demo_trend",
     ["NVDA", "AAPL", "META"],
     datetime(2024, 1, 1),
     datetime(2024, 12, 31),

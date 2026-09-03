@@ -3677,10 +3677,14 @@ def cmd_demo(args) -> None:
 
     print("\n1) In-sample backtest of every registered strategy")
     print("   In-sample, almost anything looks tradeable. That's the trap.\n")
-    print(f"   {'STRATEGY':18}{'RETURN':>10}{'SHARPE':>9}{'TRADES':>8}")
-    print(f"   {'-' * 43}")
+    # Sized to the names actually registered. A fixed 18 was wide enough for the
+    # engine's own, and an installed pack's longer name then pushed every number on
+    # its row out of the columns the header promised.
+    name_width = max(len("STRATEGY"), *(len(n) for n in STRATEGIES)) + 2
+    print(f"   {'STRATEGY':{name_width}}{'RETURN':>10}{'SHARPE':>9}{'TRADES':>8}")
+    print(f"   {'-' * (name_width + 27)}")
     chart_result = None  # the wf strategy's in-sample BacktestResult, for the chart
-    wf_strategy = "ma_crossover"
+    wf_strategy = "demo_trend"
     for name, cls in STRATEGIES.items():
         try:
             strategy = cls.create_with_defaults()
@@ -3690,11 +3694,11 @@ def cmd_demo(args) -> None:
                 chart_result = result
             m = result.metrics
             print(
-                f"   {name:18}{m.get('total_return', 0.0):>9.2f}%"
+                f"   {name:{name_width}}{m.get('total_return', 0.0):>9.2f}%"
                 f"{m.get('sharpe_ratio', 0.0):>9.2f}{int(m.get('total_trades', 0)):>8}"
             )
         except Exception as exc:  # noqa: BLE001 - demo should never hard-crash
-            print(f"   {name:18}{'(skipped: ' + str(exc)[:30] + ')':>30}")
+            print(f"   {name:{name_width}}{'(skipped: ' + str(exc)[:30] + ')':>30}")
 
     print(f"\n2) Walk-forward validation of '{wf_strategy}' (the honest scorecard)")
     print("   Optimize in-sample, score out-of-sample across folds, then gate it.\n")
@@ -3719,9 +3723,15 @@ def cmd_demo(args) -> None:
         f"OOS trades: {wf_result.total_oos_trades()}"
     )
     print("\n   Promotion gates:")
+    gate_width = max(len(g) for g in report["checks"]) + 1
     for gate_name, check in report["checks"].items():
         mark = "PASS" if check["passed"] else "FAIL"
-        print(f"     [{mark}] {gate_name}: {check['value']} (threshold {check['threshold']})")
+        # Rounded and aligned. Full float repr put a seventeen-digit Sharpe next to a
+        # one-digit threshold, which is the one comparison this block exists to make.
+        print(
+            f"     [{mark}] {gate_name + ':':{gate_width}}"
+            f"{check['value']:>10.2f}  (threshold {check['threshold']:.2f})"
+        )
     verdict = "PROMOTABLE" if report["promotable"] else "NOT promotable"
     print(f"\n   Verdict: {verdict}")
     # The next step differs by how they got here: an installed copy has no Makefile
@@ -4177,17 +4187,16 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     def add_common(p, *, with_dates: bool) -> None:
-        # The default is an example, and says so. Someone reaching for this flag with
-        # nothing installed is choosing between demonstrations of the interface, not
-        # between candidate edges.
+        # The default is a demonstration, and says so. Someone reaching for this flag
+        # with nothing installed is looking at the interface, not at a candidate edge.
         p.add_argument(
             "--strategy",
             choices=STRATEGIES,
-            default="volume_spike",
-            help="Which strategy to run. The three built-ins are examples that "
-            "demonstrate the interface; bring your own in an installed package",
+            default="demo_trend",
+            help="Which strategy to run. The engine ships one demonstration of the "
+            "interface; bring your own in an installed package",
         )
-        p.add_argument("--scanner", default="volume", help="Universe scanner ('none' to skip)")
+        p.add_argument("--scanner", default="demo_volume", help="Universe scanner ('none' to skip)")
         p.add_argument(
             "--symbols", type=_symbols, default=DEFAULT_UNIVERSE, help="Comma-separated candidate symbols"
         )
@@ -4504,7 +4513,7 @@ def build_parser() -> argparse.ArgumentParser:
     execution.set_defaults(func=cmd_execution_report)
 
     scan = subparsers.add_parser("scan", help="Run the universe scanner only")
-    scan.add_argument("--scanner", default="volume")
+    scan.add_argument("--scanner", default="demo_volume")
     scan.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
     scan.add_argument(
         "--drift",
@@ -4524,7 +4533,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan.set_defaults(func=cmd_scan)
 
     alloc = subparsers.add_parser("allocate", help="Weight a portfolio over scanned symbols")
-    alloc.add_argument("--scanner", default="volume")
+    alloc.add_argument("--scanner", default="demo_volume")
     alloc.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
     alloc.add_argument("--capital", type=float, default=100_000.0)
     alloc.add_argument("--max-positions", dest="max_positions", type=int, default=5)
@@ -4536,9 +4545,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="'weights' = trailing-return scalar sizing (OR-Tools); "
         "'utility' = mean-variance construction from alpha + Σ (a research proposal)",
     )
-    alloc.add_argument(
-        "--strategy", choices=STRATEGIES, default="volume_spike", help="Alpha source (utility)"
-    )
+    alloc.add_argument("--strategy", choices=STRATEGIES, default="demo_trend", help="Alpha source (utility)")
     alloc.add_argument(
         "--source",
         choices=["strategy", "signal", "scanner"],
@@ -4879,8 +4886,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="The whole pipeline in one command: scan → alphas → portfolio → information, "
         "one universe, one window, one consolidated verdict — read-only",
     )
-    verdict.add_argument("--strategy", choices=STRATEGIES, default="volume_spike")
-    verdict.add_argument("--scanner", default="volume", help="Universe scanner ('none' to skip)")
+    verdict.add_argument("--strategy", choices=STRATEGIES, default="demo_trend")
+    verdict.add_argument("--scanner", default="demo_volume", help="Universe scanner ('none' to skip)")
     verdict.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
     verdict.add_argument("--start", type=_date, default=_now() - timedelta(days=365))
     verdict.add_argument("--end", type=_date, default=_now())
@@ -4930,8 +4937,8 @@ def build_parser() -> argparse.ArgumentParser:
         "alphas",
         help="Rank a universe by continuous alpha (residual-return forecast) — read-only",
     )
-    alphas.add_argument("--strategy", choices=STRATEGIES, default="volume_spike")
-    alphas.add_argument("--scanner", default="volume", help="Scanner used as the --source score metric")
+    alphas.add_argument("--strategy", choices=STRATEGIES, default="demo_trend")
+    alphas.add_argument("--scanner", default="demo_volume", help="Scanner used as the --source score metric")
     alphas.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
     alphas.add_argument(
         "--as-of", dest="as_of", type=_date, default=_now(), help="Rebalance date (YYYY-MM-DD)"
@@ -4948,8 +4955,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--combine",
         type=lambda v: [s.strip() for s in v.split(",") if s.strip()],
         default=None,
-        help="Combine several strategies' signals into one alpha (comma-separated, "
-        "e.g. volume_spike,ma_crossover,mean_reversion). Measures + shrinks their ICs.",
+        help="Combine several strategies' signals into one alpha (comma-separated). "
+        "Measures + shrinks their ICs, so it needs at least two installed.",
     )
     alphas.add_argument("--benchmark", default="SPY", help="Benchmark for residual vol / beta")
     alphas.add_argument(
@@ -4975,11 +4982,11 @@ def build_parser() -> argparse.ArgumentParser:
         "info",
         help="Information report: measure IC, breadth, and predicted-vs-realized IR — read-only",
     )
-    info.add_argument("--strategy", choices=STRATEGIES, default="volume_spike")
+    info.add_argument("--strategy", choices=STRATEGIES, default="demo_trend")
     info.add_argument(
         "--source", choices=["strategy", "signal", "scanner"], default="strategy", help="Alpha score origin"
     )
-    info.add_argument("--scanner", default="volume", help="Scanner used when --source scanner")
+    info.add_argument("--scanner", default="demo_volume", help="Scanner used when --source scanner")
     info.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
     info.add_argument("--start", type=_date, default=_now() - timedelta(days=365))
     info.add_argument("--end", type=_date, default=_now())
@@ -5071,9 +5078,9 @@ def build_parser() -> argparse.ArgumentParser:
         "horizon",
         help="Measure alpha decay / half-life and recommend rebalance cadence + blend — read-only",
     )
-    hz.add_argument("--strategy", choices=STRATEGIES, default="volume_spike")
+    hz.add_argument("--strategy", choices=STRATEGIES, default="demo_trend")
     hz.add_argument("--source", choices=["strategy", "signal", "scanner"], default="strategy")
-    hz.add_argument("--scanner", default="volume")
+    hz.add_argument("--scanner", default="demo_volume")
     hz.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
     hz.add_argument("--start", type=_date, default=_now() - timedelta(days=365))
     hz.add_argument("--end", type=_date, default=_now())
@@ -5366,7 +5373,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Narrate an AI research session on live data: proposal -> sandbox -> walk-forward -> verdict",
     )
     dagent.add_argument("--symbols", type=_symbols, default=["NVDA", "AAPL", "META", "AMD", "MSFT"])
-    dagent.add_argument("--strategy", default="ma_crossover")
+    dagent.add_argument("--strategy", default="demo_trend")
     dagent.add_argument("--start", type=_date, default=None)
     dagent.add_argument("--end", type=_date, default=None)
     dagent.add_argument(

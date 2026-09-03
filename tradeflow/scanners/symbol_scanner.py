@@ -14,7 +14,6 @@ from tradeflow.data.scan import slice_to_as_of
 from tradeflow.marketdata.client import MarketDataClient
 from tradeflow.marketdata.timeframe import Timeframe
 from tradeflow.scanners.base import ScannerStrategy
-from tradeflow.scanners.volume_scanner import VolumeScannerStrategy
 from tradeflow.utils.timeutils import NEW_YORK
 
 logger = logging.getLogger(__name__)
@@ -29,9 +28,11 @@ _LOOKBACK_DAY_BUFFER = 3
 #: the built-in set from that live attribute meant a module reload absorbed third-party
 #: scanners into it, and the reserved names an extension may not override then silently
 #: included names that came from an extension.
-BUILTIN_SCANNERS: Dict[str, Type[ScannerStrategy]] = {
-    "volume": VolumeScannerStrategy,
-}
+#: Scanners the engine itself defines. Empty: the example scanner moved to
+#: ``tradeflow.demo`` and arrives by entry point like any other pack's, so the
+#: engine discovers its own demonstration the way it discovers yours. Kept as the
+#: reserved-name set - a name here cannot be shadowed by an installed pack.
+BUILTIN_SCANNERS: Dict[str, Type[ScannerStrategy]] = {}
 
 
 def resolve_scan_clock(as_of: Optional[datetime] = None) -> datetime:
@@ -60,7 +61,10 @@ class SymbolScanner:
     def __init__(
         self,
         data_client: MarketDataClient,
-        strategy_name: str = "volume",
+        # Required. There is no built-in to fall back to - every scanner, the demo
+        # one included, arrives by entry point, so a default here could only name
+        # something that may not be installed and raise one frame further in.
+        strategy_name: str,
         config: Optional[dict] = None,
     ):
         if strategy_name not in self.SCANNERS:

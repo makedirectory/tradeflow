@@ -78,10 +78,12 @@ auditable.
 `services/analysis.py::compute_combined_alphas` measures the signals, combines the
 current cross-section, refines it, and returns the ranked alphas plus the measured
 ICs, shrunk ICs, GLS weights, and correlation matrix. The CLI
-(`python main.py alphas --combine volume_spike,ma_crossover,mean_reversion`) and the
-read-only MCP tool `combine_alphas` route through it.
+(`python main.py alphas --combine demo_trend,example_breakout,example_reversion`) and
+the read-only MCP tool `combine_alphas` route through it. Combining needs at least two
+strategies installed; a bare engine ships one, so the names above include the
+[example pack's](../usage/private-strategies.md).
 
-On the bundled synthetic data this is its own honesty check: the two trend
-strategies measure as highly correlated (`ρ ≈ 0.9`) while mean-reversion is the
-contrarian foil (`ρ < 0`), and the shrinkage drives the (genuinely skill-less)
-random-walk ICs toward zero — so the combined alpha is near-flat, as it should be.
+On the bundled synthetic data this is its own honesty check: two trend signals measure
+as highly correlated (`ρ ≈ 0.9`) while a mean-reversion signal is the contrarian foil
+(`ρ < 0`), and the shrinkage drives the (genuinely skill-less) random-walk ICs toward
+zero — so the combined alpha is near-flat, as it should be.

@@ -84,7 +84,7 @@ Keep the engine boring and open; keep the signal IP elsewhere. A private package
 can depend on `tradeflow-engine`, define strategies/scanners in its own modules,
 and expose them with entry points. TradeFlow loads entry points at startup, but
 built-in names are reserved, so a private package cannot silently replace
-`ma_crossover`, `mean_reversion`, or `volume`.
+`demo_trend` or `demo_volume`.
 
 A private package can also return several contributions from one entry point:
 

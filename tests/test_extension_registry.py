@@ -6,14 +6,14 @@ distribution that exposes entry points.
 
 from importlib import metadata
 
+from tradeflow.demo.strategies import DemoTrendStrategy
 from tradeflow.scanners.base import ScannerStrategy
 from tradeflow.scanners.symbol_scanner import BUILTIN_SCANNERS as package_builtin_scanners
 from tradeflow.scanners.symbol_scanner import SymbolScanner
 from tradeflow.services import registry
-from tradeflow.strategies.ma_crossover import MovingAverageCrossoverStrategy
 
 
-class PrivateTrendStrategy(MovingAverageCrossoverStrategy):
+class PrivateTrendStrategy(DemoTrendStrategy):
     """Private trend strategy used by a separate package."""
 
 
@@ -100,13 +100,13 @@ def test_private_entry_points_cannot_override_builtins(monkeypatch):
         metadata,
         "entry_points",
         lambda: _FakeEntryPoints(
-            [_FakeEntryPoint("ma_crossover", registry.STRATEGY_ENTRY_POINT_GROUP, PrivateTrendStrategy)]
+            [_FakeEntryPoint("demo_trend", registry.STRATEGY_ENTRY_POINT_GROUP, PrivateTrendStrategy)]
         ),
     )
 
     registry.refresh_registries()
     try:
-        assert registry.STRATEGIES["ma_crossover"] is MovingAverageCrossoverStrategy
+        assert registry.STRATEGIES["demo_trend"] is DemoTrendStrategy
     finally:
         monkeypatch.setattr(metadata, "entry_points", real_entry_points)
         registry.refresh_registries()
@@ -166,11 +166,28 @@ def test_unreadable_installed_metadata_leaves_the_builtins_standing():
         registry.refresh_registries()
 
 
+def _reload_registry_preserving_identity():
+    """Reload the registry module, then hand its consumers back the dicts they hold.
+
+    Reloading rebinds ``STRATEGIES``/``SCANNERS`` to fresh objects, while every module
+    that did ``from ... import STRATEGIES`` - the CLI's argparse ``choices=`` among
+    them - keeps a live reference to the originals. Left that way a reload silently
+    freezes the CLI's menu for the rest of the session, and the test that trips over
+    it is some unrelated one much later.
+    """
+    import importlib
+
+    live_strategies, live_scanners = registry.STRATEGIES, registry.SCANNERS
+    reloaded = importlib.reload(registry)
+    reloaded.STRATEGIES = live_strategies
+    reloaded.SCANNERS = live_scanners
+    reloaded.refresh_registries()
+    return reloaded
+
+
 def test_importing_the_registry_survives_unreadable_metadata():
     """The failure that mattered: discovery runs at import, so an unguarded raise
     there is an ImportError on every command rather than a missing extension."""
-    import importlib
-
     real = metadata.entry_points
 
     def _corrupt():
@@ -178,11 +195,11 @@ def test_importing_the_registry_survives_unreadable_metadata():
 
     metadata.entry_points = _corrupt
     try:
-        reloaded = importlib.reload(registry)  # must not raise
+        reloaded = _reload_registry_preserving_identity()  # must not raise
         assert set(reloaded.BUILTIN_STRATEGIES) <= set(reloaded.STRATEGIES)
     finally:
         metadata.entry_points = real
-        importlib.reload(registry)
+        _reload_registry_preserving_identity()
 
 
 def test_a_pack_that_reads_the_registry_while_importing_sees_the_builtins():
@@ -220,8 +237,6 @@ def test_a_reload_does_not_promote_an_installed_scanner_into_the_builtins():
     that pack's own contribution as one that "cannot override a built-in name". The
     reservation the extension design rests on was poisoning itself.
     """
-    import importlib
-
     real = metadata.entry_points
     metadata.entry_points = lambda: _FakeEntryPoints(
         [_FakeEntryPoint("priv_scan", registry.SCANNER_ENTRY_POINT_GROUP, PrivateScanner)]
@@ -231,9 +246,11 @@ def test_a_reload_does_not_promote_an_installed_scanner_into_the_builtins():
         assert "priv_scan" in registry.SCANNERS  # discovered, and now on SymbolScanner too
         assert "priv_scan" in SymbolScanner.SCANNERS
 
-        reloaded = importlib.reload(registry)
+        reloaded = _reload_registry_preserving_identity()
         assert "priv_scan" not in reloaded.BUILTIN_SCANNERS
-        assert set(reloaded.BUILTIN_SCANNERS) == set(package_builtin_scanners)
+        # The scanner package's own literal plus the demo the engine itself owns,
+        # and nothing that arrived by discovery.
+        assert set(reloaded.BUILTIN_SCANNERS) == set(package_builtin_scanners) | {"demo_volume"}
     finally:
         metadata.entry_points = real
-        importlib.reload(registry)
+        _reload_registry_preserving_identity()

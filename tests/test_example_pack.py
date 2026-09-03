@@ -43,15 +43,15 @@ def test_the_pack_registers_through_entry_points():
 
 
 def test_the_pack_is_not_mistaken_for_a_built_in():
-    """The example flag exists so a registry of shipped demonstrations cannot read as
-    the product. A pack arriving by entry point is third-party, whatever it is called."""
+    """The demo flag exists so a registry of shipped demonstrations cannot read as the
+    product. A pack arriving by entry point is third-party, whatever it is called."""
     assert STRATEGY not in BUILTIN_STRATEGIES
     assert SCANNER not in BUILTIN_SCANNERS
 
     from tradeflow.services.registry import list_strategies
 
     row = next(r for r in list_strategies() if r["name"] == STRATEGY)
-    assert row["example"] is False
+    assert row["demo"] is False
 
 
 # --- the contract the engine relies on --------------------------------------------

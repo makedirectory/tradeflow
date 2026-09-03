@@ -91,7 +91,7 @@ def _client():
 def test_compute_horizon_structure_and_leakage():
     client, syms = _client()
     r = analysis.compute_horizon(
-        client, "volume_spike", syms, datetime(2023, 1, 1), datetime(2024, 12, 31), max_lag=8
+        client, "demo_trend", syms, datetime(2023, 1, 1), datetime(2024, 12, 31), max_lag=8
     )
     assert r["ic_by_lag"]
     assert set(r["ic_by_lag"]) <= {str(n) for n in range(1, 9)}  # JSON-stringified keys
@@ -113,10 +113,8 @@ def test_compute_horizon_independent_of_post_end_bars():
     start = full["S0"].index[120].to_pydatetime()
     truncated = {s: f.loc[f.index <= cutoff] for s, f in full.items()}
 
-    a = analysis.compute_horizon(
-        MarketDataClient(DictMarketData(truncated)), "ma_crossover", syms, start, end
-    )
-    b = analysis.compute_horizon(MarketDataClient(DictMarketData(full)), "ma_crossover", syms, start, end)
+    a = analysis.compute_horizon(MarketDataClient(DictMarketData(truncated)), "demo_trend", syms, start, end)
+    b = analysis.compute_horizon(MarketDataClient(DictMarketData(full)), "demo_trend", syms, start, end)
     assert a["ic_by_lag"] == b["ic_by_lag"]
     assert a["half_life"] == b["half_life"] or (
         a["half_life"] != a["half_life"] and b["half_life"] != b["half_life"]

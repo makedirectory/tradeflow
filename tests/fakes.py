@@ -396,6 +396,54 @@ class ScriptedStrategy(Strategy):
         return data["close"].astype(float) - self.config["pivot"]
 
 
+class LongShortScriptedStrategy(ScriptedStrategy):
+    """A scripted strategy that takes both sides.
+
+    Tests that assert something about the *short* leg — per-leg betas, borrow cost,
+    directional exposure — need a book that shorts. They used to borrow a shipped
+    strategy for that, which made those tests depend on a demonstration's
+    directionality: the day it changed, the assertions would still pass while
+    measuring nothing, because a long-only book simply has no short leg to disagree
+    about.
+
+    Owning the fixture keeps the dependency where it belongs. Same scoring as
+    :class:`ScriptedStrategy` — ``close - pivot`` — but a negative score now means
+    short rather than flat.
+    """
+
+    LONG_ONLY = False
+
+    #: Narrowed from :class:`ScriptedStrategy`, for two reasons.
+    #:
+    #: ``pivot`` there spans 1..1e6 in steps of 1 - fine for a hand-built backtest and
+    #: catastrophic for a grid search, which enumerates the space before capping
+    #: evaluations, so the inherited range hangs rather than fails.
+    #:
+    #: And every value here sits *inside* :class:`FakeMarketData`'s price range, so the
+    #: score crosses zero whichever candidate a search picks. A pivot below the range is
+    #: permanently long and one above it permanently short: either way the book has one
+    #: leg, and a test asserting both would pass or fail on which candidate won rather
+    #: than on the behaviour it means to check.
+    PARAM_RANGES: ClassVar[Dict[str, Dict[str, Any]]] = {
+        "pivot": {"type": "float", "min": 98.0, "max": 99.0, "step": 1.0, "default": 98.0},
+        "risk_per_trade": {"type": "float", "min": 0.01, "max": 0.03, "step": 0.01, "default": 0.02},
+        "stop_loss": {"type": "float", "min": 0.02, "max": 0.04, "step": 0.01, "default": 0.03},
+        "take_profit": {"type": "float", "min": 0.05, "max": 0.07, "step": 0.01, "default": 0.06},
+    }
+
+    def __init__(self, config: Dict[str, Any]):
+        # Room for both sides at once. ScriptedStrategy caps the book at one position,
+        # which is right for a test about a single trade's lifecycle and wrong here: a
+        # one-position book inside a short out-of-sample fold can only ever hold one
+        # leg, so a per-leg assertion fails on the book size rather than on the
+        # behaviour it is checking.
+        config.setdefault(
+            "position_limits",
+            {"max_positions": 6, "max_position_size": 100_000.0, "max_total_risk": 0.20},
+        )
+        super().__init__(config)
+
+
 class FailingBroker(FakeBroker):
     """A broker that fails a named method with a chosen error.
 

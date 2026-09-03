@@ -5,10 +5,10 @@ from datetime import datetime
 import pytest
 
 from tests.fakes import FakeMarketData
+from tradeflow.demo.strategies import DemoTrendStrategy
 from tradeflow.marketdata.client import MarketDataClient
 from tradeflow.optimization.optimizer import ParameterOptimizer
 from tradeflow.services.registry import STRATEGIES
-from tradeflow.strategies.volume_spike import VolumeSpikeStrategy
 
 SYMBOLS = ["AAA", "BBB"]
 START, END = datetime(2024, 1, 2), datetime(2024, 2, 1)
@@ -16,7 +16,7 @@ START, END = datetime(2024, 1, 2), datetime(2024, 2, 1)
 
 def _optimizer():
     return ParameterOptimizer(
-        VolumeSpikeStrategy, MarketDataClient(FakeMarketData(SYMBOLS)), initial_capital=100_000
+        DemoTrendStrategy, MarketDataClient(FakeMarketData(SYMBOLS)), initial_capital=100_000
     )
 
 
@@ -26,7 +26,7 @@ def test_random_search_returns_ranked_results():
     assert "sharpe_ratio" in result.results.columns
     # Results are sorted best-first.
     assert result.results["sharpe_ratio"].iloc[0] == result.results["sharpe_ratio"].max()
-    assert set(result.best_params) <= set(VolumeSpikeStrategy.PARAM_RANGES)
+    assert set(result.best_params) <= set(DemoTrendStrategy.PARAM_RANGES)
 
 
 def test_grid_search_capped_by_max_evals():
@@ -68,7 +68,7 @@ def test_best_params_are_plain_python_scalars():
     NumPy 2 reprs as `np.int64(50)`. The CLI printed that back as the chosen config,
     and every other consumer had to re-normalize it."""
     client = MarketDataClient(FakeMarketData(["AAA", "BBB"], n=400, freq="1D"))
-    optimizer = ParameterOptimizer(STRATEGIES["ma_crossover"], client, initial_capital=100_000)
+    optimizer = ParameterOptimizer(STRATEGIES["demo_trend"], client, initial_capital=100_000)
 
     result = optimizer.random_search(
         ["AAA", "BBB"], datetime(2024, 1, 2), datetime(2025, 1, 2), "sharpe_ratio", n_samples=3
@@ -91,7 +91,7 @@ def test_the_seed_selects_which_candidates_a_random_search_draws():
     client = MarketDataClient(FakeMarketData(["AAA", "BBB"], n=400, freq="1D"))
 
     def draw(seed):
-        optimizer = ParameterOptimizer(STRATEGIES["ma_crossover"], client, initial_capital=100_000, seed=seed)
+        optimizer = ParameterOptimizer(STRATEGIES["demo_trend"], client, initial_capital=100_000, seed=seed)
         result = optimizer.random_search(
             ["AAA", "BBB"], datetime(2024, 1, 2), datetime(2025, 1, 2), "sharpe_ratio", n_samples=4
         )
@@ -105,6 +105,6 @@ def test_optimize_exposes_the_seed_walkforward_already_had():
     from tradeflow.cli import build_parser
 
     args = build_parser().parse_args(
-        ["optimize", "--strategy", "ma_crossover", "--method", "random", "--seed", "27"]
+        ["optimize", "--strategy", "demo_trend", "--method", "random", "--seed", "27"]
     )
     assert args.seed == 27

@@ -116,7 +116,7 @@ make init                             # writes .env, checks the keys, says what'
 
 # 5. Try it (preconfigured combos)
 make scan                             # which symbols are flagged right now?
-make backtest                         # scan -> volume_spike strategy -> report
+make backtest                         # scan -> demo strategy -> report
 make live                             # paper-trade the scanned universe
 ```
 
@@ -146,7 +146,7 @@ make backtest SYMBOLS=AAPL,MSFT,NVDA START=2024-06-01 END=2024-09-01 CAPITAL=500
 Or call the CLI directly:
 
 ```bash
-uv run python main.py backtest --strategy volume_spike --scanner volume \
+uv run python main.py backtest --strategy demo_trend --scanner demo_volume \
     --symbols NVDA,META,TSLA --start 2024-01-02 --end 2024-04-01
 ```
 
@@ -167,37 +167,37 @@ $ make demo
 1) In-sample backtest of every registered strategy
    In-sample, almost anything looks tradeable. That's the trap.
 
-   STRATEGY              RETURN   SHARPE  TRADES
-   -------------------------------------------
-   volume_spike           0.00%     0.00       0
-   ma_crossover          16.80%     0.48      52
-   mean_reversion       -15.77%    -0.52      52
+   STRATEGY        RETURN   SHARPE  TRADES
+   ---------------------------------------
+   demo_trend      14.74%     0.48      45
 
-2) Walk-forward validation of 'ma_crossover' (the honest scorecard)
+2) Walk-forward validation of 'demo_trend' (the honest scorecard)
    Optimize in-sample, score out-of-sample across folds, then gate it.
 
-   ... (per-fold parameter search elided) ...
-   Best sharpe_ratio = 1.1499 with {fast_ema_period: 13, slow_ema_period: 60, ...}
-
-   OOS Sharpe (median): -0.42   efficiency (OOS/IS): -0.37   OOS trades: 29
+   OOS Sharpe (median): -0.26   efficiency (OOS/IS): -0.17   OOS trades: 25
 
    Promotion gates:
-     [FAIL] oos_sharpe:              -0.42  (threshold 1.0)
-     [FAIL] oos_profit_factor:        0.71  (threshold 1.3)
-     [FAIL] walk_forward_efficiency: -0.37  (threshold 0.4)
-     [FAIL] oos_drawdown_vs_is:      23.57  (threshold 15.43)
-     [FAIL] min_oos_trades:          29     (threshold 100)
-     [FAIL] deflated_sharpe:          0.00  (threshold 0.5)
+     [FAIL] oos_sharpe:                  -0.26  (threshold 1.20)
+     [FAIL] oos_profit_factor:            0.74  (threshold 1.30)
+     [FAIL] walk_forward_efficiency:     -0.17  (threshold 0.40)
+     [PASS] oos_drawdown_vs_is:          10.59  (threshold 13.94)
+     [FAIL] min_oos_trades:              25.00  (threshold 100.00)
+     [FAIL] deflated_sharpe:              0.00  (threshold 0.50)
 
    Verdict: NOT promotable
 
-   No edge in a random walk -> the gates refuse to promote it. That refusal
-   is the product. Point TradeFlow at real data with `make backtest`.
+   No edge in a random walk → the gates refuse to promote it. That refusal
+   is the product. Point TradeFlow at real data:
+     tradeflow init       add your free Alpaca paper keys
+     tradeflow verdict    then run the whole pipeline on real market data
 ```
 
-Notice the arc: `ma_crossover` looks great in-sample (+16.8%, Sharpe 0.48), but
+That is one strategy because a bare install ships one. Anything you install
+alongside it appears in the same table, scored the same way.
+
+Notice the arc: `demo_trend` looks tradeable in-sample (+14.7%, Sharpe 0.48), but
 once it's optimized in-sample and scored **out-of-sample** the edge evaporates
-(median OOS Sharpe −0.42) and every promotion gate fails. That's
+(median OOS Sharpe −0.26) and all but one promotion gate fails. That's
 [walk-forward validation](https://tradeflow.mk-dir.com/engineering/walk-forward)
 doing its job.
 
@@ -283,20 +283,27 @@ promoted automatically — is what stays constant.
 | `trials` | Browse the campaign's memory: `list` (filters, sorting, paging), `show` (one trial in full), `best` (a DSR-ranked leaderboard that always shows the family's `n_trials`) — read-only |
 | `mcp` | Serve TradeFlow over MCP so an agent (Claude Code / Desktop) can drive verdict/scan/backtest/optimize/walk-forward/alphas/risk/portfolio/info — read-only, no live trading |
 
-Three strategies ship today — pick one with `--strategy`. Each defines a single
-continuous **score** (its conviction); the trade clock's `BUY/SELL/HOLD` and the
+One strategy ships, and it is a demonstration rather than a candidate:
+
+- **`demo_trend`** — long-only EMA trend follower: the normalized fast−slow gap,
+  whose sign crossings are the golden / death cross (daily). Paired with the
+  `demo_volume` scanner.
+
+It exists so `tradeflow demo` has something to run and so the interface has a
+worked example, not because it is an edge — the demo above spends its whole output
+showing that it is not. **The strategies you would actually trade go in your own
+package**, installed beside the engine and discovered by entry point, which keeps
+them out of this repository entirely.
+
+Each strategy defines a single continuous **score** (its conviction); the trade
+clock's `BUY/SELL/HOLD` and the
 [continuous alpha](https://tradeflow.mk-dir.com/engineering/alphas) are both
 derived from it — one source of truth.
 
-- **`volume_spike`** — long/short EMA-trend strength scaled by volume confirmation
-  (intraday, 5-minute bars).
-- **`ma_crossover`** — long-only EMA trend follower: the normalized fast−slow gap,
-  whose sign crossings are the golden / death cross (daily).
-- **`mean_reversion`** — long-only RSI mean reversion: score is oversold-ness, enter
-  the dip and exit on the rebound (daily).
-
-Adding a fourth is a one-file change — see
-[Extending](https://tradeflow.mk-dir.com/engineering/extending).
+`examples/my-signals` is a complete working pack to copy — `tradeflow init
+--example-pack ./my-signals` writes it out. See
+[Your own strategies](https://tradeflow.mk-dir.com/docs/usage/private-strategies)
+and [Extending](https://tradeflow.mk-dir.com/engineering/extending).
 
 ### Using it from your own code
 
@@ -308,7 +315,7 @@ construction:
 from tradeflow.services.analysis import run_verdict
 from tradeflow.services.data import build_data_client
 
-result = run_verdict(build_data_client(), "volume_spike", ["NVDA", "AAPL"], start, end)
+result = run_verdict(build_data_client(), "demo_trend", ["NVDA", "AAPL"], start, end)
 print(result["verdict"]["summary"])
 ```
 
@@ -444,8 +451,9 @@ The layers themselves:
 brokers/        Broker interface + domain types  ── alpaca/ (AlpacaBroker, AlpacaMarketData)
 marketdata/     MarketDataProvider interface, Timeframe, MarketDataClient
 indicators/     Pure pandas/numpy technical indicators
-strategies/     Strategy base + signals + volume_spike (signals, sizing, risk)
-scanners/       ScannerStrategy base + volume scanner + SymbolScanner (universe)
+strategies/     Strategy base + signals (score -> BUY/SELL/HOLD, sizing, risk)
+scanners/       ScannerStrategy base + SymbolScanner (universe resolution)
+demo/           The one strategy + scanner a bare install ships, for `tradeflow demo`
 execution/      LiveTrader (signals -> broker orders)
 analytics/      Performance metrics + reporting
 engine/         BacktestEngine + LiveEngine (orchestration only)

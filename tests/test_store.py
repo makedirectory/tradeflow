@@ -109,8 +109,8 @@ def test_missing_symbol_is_skipped(tmp_path):
 def test_streaming_backtest_matches_batch(tmp_path):
     # Streaming one symbol at a time from the store is equivalent to the in-memory
     # batch backtest on the same data — bounded memory, identical result.
+    from tradeflow.demo.strategies import DemoTrendStrategy
     from tradeflow.engine.backtest import BacktestEngine
-    from tradeflow.strategies.ma_crossover import MovingAverageCrossoverStrategy
 
     syms = ["AAA", "BBB", "CCC"]
     bars = {s: make_ohlcv(n=400, seed=i, freq="1D") for i, s in enumerate(syms)}
@@ -121,9 +121,9 @@ def test_streaming_backtest_matches_batch(tmp_path):
     store.write(bars, timeframe="1Day")
 
     batch = BacktestEngine(
-        MovingAverageCrossoverStrategy.create_with_defaults(), MarketDataClient(DictMarketData(bars))
+        DemoTrendStrategy.create_with_defaults(), MarketDataClient(DictMarketData(bars))
     ).run(syms, start, end, 100_000.0)
-    streamed = BacktestEngine(MovingAverageCrossoverStrategy.create_with_defaults(), None).run_streaming(
+    streamed = BacktestEngine(DemoTrendStrategy.create_with_defaults(), None).run_streaming(
         store, syms, start, end, 100_000.0
     )
     assert streamed.final_capital == pytest.approx(batch.final_capital)

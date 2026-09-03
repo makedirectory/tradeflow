@@ -6,11 +6,11 @@ from datetime import datetime
 import pandas as pd
 import pytest
 
-from tests.fakes import FakeMarketData
+from tests.fakes import FakeMarketData, LongShortScriptedStrategy
 from tradeflow.costs import ParametricCostModel, Trade
+from tradeflow.demo.strategies import DemoTrendStrategy
 from tradeflow.engine.backtest import BacktestEngine
 from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.strategies.volume_spike import VolumeSpikeStrategy
 
 
 def _model():
@@ -61,7 +61,7 @@ def test_annual_haircut_round_trips_and_amortizes():
 # --- backtest integration ----------------------------------------------------
 def _run(cost_model):
     dc = MarketDataClient(FakeMarketData(["AAA", "BBB"], n=400, freq="5min"))
-    return BacktestEngine(VolumeSpikeStrategy.create_with_defaults(), dc, cost_model=cost_model).run(
+    return BacktestEngine(DemoTrendStrategy.create_with_defaults(), dc, cost_model=cost_model).run(
         ["AAA", "BBB"], datetime(2024, 1, 1), datetime(2024, 3, 1), 100_000.0
     )
 
@@ -86,12 +86,14 @@ def test_carry_cost_charges_shorts_only():
 
 
 def test_backtest_charges_borrow_on_shorts():
-    # volume_spike is long/short, so a high borrow rate raises total cost via its shorts.
+    # A long/short fixture, because this measures borrow — which only exists on the
+    # short leg. Using a shipped strategy would make the test depend on a
+    # demonstration staying two-sided, and it would pass silently if it stopped.
     dc = MarketDataClient(FakeMarketData(["AAA", "BBB"], n=400, freq="5min"))
 
     def run(borrow_bps):
         model = ParametricCostModel(annual_borrow_bps=borrow_bps)
-        res = BacktestEngine(VolumeSpikeStrategy.create_with_defaults(), dc, cost_model=model).run(
+        res = BacktestEngine(LongShortScriptedStrategy.create_with_defaults(), dc, cost_model=model).run(
             ["AAA", "BBB"], datetime(2024, 1, 1), datetime(2024, 3, 1), 100_000.0
         )
         shorts = int((res.trades["side"] == "SELL").sum()) if not res.trades.empty else 0

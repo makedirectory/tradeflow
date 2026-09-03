@@ -484,7 +484,7 @@ def _bench_run(benchmark):
     from tradeflow.services.registry import STRATEGIES
 
     client = MarketDataClient(FakeMarketData(["AAA", "BBB", "SPY"], n=400, freq="1D"))
-    engine = BacktestEngine(STRATEGIES["ma_crossover"].create_with_defaults(), client)
+    engine = BacktestEngine(STRATEGIES["demo_trend"].create_with_defaults(), client)
     return engine.run(
         ["AAA", "BBB"], datetime(2024, 1, 2), datetime(2025, 1, 2), 100_000, benchmark=benchmark
     )
@@ -574,7 +574,7 @@ def test_the_two_buy_and_holds_differ_and_only_one_tracks_the_benchmark():
     from tradeflow.services.registry import STRATEGIES
 
     client = MarketDataClient(FakeMarketData(["AAA", "BBB", "SPY", "QQQ"], n=400, freq="1D"))
-    engine = BacktestEngine(STRATEGIES["ma_crossover"].create_with_defaults(), client)
+    engine = BacktestEngine(STRATEGIES["demo_trend"].create_with_defaults(), client)
 
     spy = engine.run(["AAA", "BBB"], datetime(2024, 1, 2), datetime(2025, 1, 2), 100_000, benchmark="SPY")
     qqq = engine.run(["AAA", "BBB"], datetime(2024, 1, 2), datetime(2025, 1, 2), 100_000, benchmark="QQQ")
@@ -631,7 +631,7 @@ def _small_account_run(capital, min_notional=None):
 
     symbols = [f"S{i}" for i in range(8)]
     client = MarketDataClient(FakeMarketData(symbols, n=300, freq="1D"))
-    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy = STRATEGIES["demo_trend"].create_with_defaults()
     strategy.config["position_limits"] = {
         **strategy.position_limits(),
         "max_positions": 8,
@@ -751,7 +751,7 @@ def test_cost_is_judged_against_gross_profit_not_capital():
     client = MarketDataClient(FakeMarketData(symbols, n=300, freq="1D"))
 
     def share(bps):
-        strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+        strategy = STRATEGIES["demo_trend"].create_with_defaults()
         strategy.config["position_limits"] = {
             **strategy.position_limits(),
             "max_positions": 8,
@@ -787,7 +787,7 @@ def _breadth_run(max_positions, n_symbols=20):
 
     symbols = [f"S{i}" for i in range(n_symbols)]
     client = MarketDataClient(FakeMarketData(symbols, n=400, freq="1D"))
-    strategy = STRATEGIES["ma_crossover"].create_with_defaults()
+    strategy = STRATEGIES["demo_trend"].create_with_defaults()
     strategy.config["position_limits"] = {
         **strategy.position_limits(),
         "max_positions": max_positions,
