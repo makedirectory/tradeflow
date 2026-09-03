@@ -342,3 +342,114 @@ def test_an_offline_scan_says_its_universe_is_only_as_current_as_the_cache():
 
     assert "offline" in notice.lower()
     assert "cache" in notice.lower()
+
+
+# --- the leg decomposition has to survive the path a user actually takes -----------
+def _both_legs():
+    """A legs payload with both sides trading — the only case `_leg_lines` renders."""
+    side = {
+        "return_pct": 4.0,
+        "volatility_pct": 1.5,
+        "max_drawdown_pct": -3.0,
+        "beta": 0.5,
+        "benchmark_correlation": 0.4,
+        "trades": 10,
+        "cost": 120.0,
+    }
+    return {"long": dict(side), "short": dict(side, beta=-0.6, trades=8)}
+
+
+def test_the_leg_decomposition_reaches_the_log_and_not_only_the_formatter(caplog):
+    """It did not. `log_backtest_report` accepted `legs` and dropped it on the way to
+    `format_backtest_report`, whose `_leg_lines` block is the only thing that prints it
+    — so the decomposition was fully covered by tests calling the formatter directly
+    and rendered nothing at all from `backtest`, the one surface that passes it.
+
+    Rendering *through* the logging wrapper is the whole point of this test; asserting
+    against `format_backtest_report` is what let the defect ship.
+    """
+    import logging
+
+    from tradeflow.analytics.reporting import log_backtest_report
+
+    with caplog.at_level(logging.INFO, logger="tradeflow.analytics.reporting"):
+        log_backtest_report({"sharpe_ratio": 1.0}, 100_000.0, 110_000.0, legs=_both_legs())
+
+    assert "Legs (diagnostic" in caplog.text
+    assert "short" in caplog.text
+
+
+def test_a_long_only_book_still_logs_no_leg_block(caplog):
+    """The other direction: forwarding `legs` must not start printing an empty table for
+    a book with nothing to decompose."""
+    import logging
+
+    from tradeflow.analytics.reporting import log_backtest_report
+
+    with caplog.at_level(logging.INFO, logger="tradeflow.analytics.reporting"):
+        log_backtest_report({"sharpe_ratio": 1.0}, 100_000.0, 110_000.0, legs={"long": {"trades": 12}})
+
+    assert "Legs (diagnostic" not in caplog.text
+
+
+# --- an execution check renders in its own unit, not the formatter's assumption ----
+def test_every_execution_check_a_real_run_produces_declares_its_unit():
+    """Walks a *real* verdict rather than a hand-written list of names: that is what
+    stops the checks and the formatter drifting apart. A check reaching a surface
+    without an entry here renders under the formatter's default assumption, which is
+    how a position count printed as "1.00%"."""
+    from tradeflow.analytics.performance import EXECUTION_VALUE_KINDS, execution_verdict
+
+    verdict = execution_verdict(
+        {
+            "positions_filled": 4,
+            "positions_rounded_to_zero": 1,
+            "positions_below_min_notional": 0,
+            "rounding_drag_pct": 2.0,
+            "unfillable_pct": 20.0,
+            "max_positions": 1,
+            "universe_size": 40,
+            "gross_profit": 1000.0,
+            "total_cost": 100.0,
+        }
+    )
+
+    assert set(verdict["checks"]) <= set(EXECUTION_VALUE_KINDS)
+    assert set(verdict["checks"]) >= {
+        "rounding_drag",
+        "unfillable_entries",
+        "book_breadth",
+        "cost_share_of_gross",
+    }
+
+
+def test_a_position_count_is_not_rendered_as_a_percentage():
+    """`book_breadth`'s value is a count of positions. Every check was formatted as
+    `{value}% vs {threshold}%`, so it read as "a maximum of 1.00% positions"."""
+    from tradeflow.analytics.performance import format_execution_value
+
+    assert format_execution_value("book_breadth", 1.0) == "1"
+    assert format_execution_value("book_breadth", 5) == "5"
+    assert format_execution_value("rounding_drag", 2.5) == "2.50%"
+    assert format_execution_value("an_unknown_future_check", 2.5) == "2.50%"
+
+
+def test_the_breadth_remedy_is_not_printed_at_a_book_that_already_has_breadth():
+    """The note hardcoded "max_positions is 1, the shipped default" whatever the value
+    was, so a five-position run passed the check and still told the reader to go and
+    change a config that was already right."""
+    from tradeflow.analytics.performance import execution_verdict
+
+    def note(max_positions):
+        return execution_verdict(
+            {
+                "positions_filled": 4,
+                "max_positions": max_positions,
+                "universe_size": 40,
+            }
+        )["checks"]["book_breadth"]["note"]
+
+    assert "shipped default" in note(1)
+    assert "at most 1 of 40" in note(1)
+    assert "shipped default" not in note(5)
+    assert "at most 5 of 40" in note(5)

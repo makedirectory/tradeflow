@@ -111,7 +111,12 @@ def _execution_lines(execution: Optional[Dict[str, Any]]) -> List[str]:
     ]
     for name, check in verdict["checks"].items():
         flag = "PASS" if check["passed"] else "FAIL"
-        lines.append(f"  [{flag}] {name:22}{check['value']:.2f}% vs {check['threshold']:.2f}%")
+        # Unit per check, from the module that declares the check - not one format
+        # applied to all of them. `book_breadth` carries a position count and rendered
+        # as "1.00%", which is a different claim from the one the check makes.
+        value = performance.format_execution_value(name, check["value"])
+        threshold = performance.format_execution_value(name, check["threshold"])
+        lines.append(f"  [{flag}] {name:22}{value} vs {threshold}")
     lost = execution.get("positions_rounded_to_zero", 0) + execution.get("positions_below_min_notional", 0)
     if lost:
         lines.append(
@@ -286,8 +291,18 @@ def log_backtest_report(
     execution: Optional[Dict[str, Any]] = None,
     legs: Optional[Dict[str, Any]] = None,
 ) -> None:
-    """Log the rendered report at INFO."""
-    logger.info("\n%s", format_backtest_report(metrics, initial_capital, final_capital, execution=execution))
+    """Log the rendered report at INFO.
+
+    ``legs`` is forwarded. It was accepted here and dropped on the way to the
+    formatter, so the long/short decomposition - the block that distinguishes "no
+    exposure" from "two exposures cancelling" - was unreachable from ``backtest``
+    while being fully covered by tests that called the formatter directly. A test
+    that renders *through* this function is what catches that.
+    """
+    logger.info(
+        "\n%s",
+        format_backtest_report(metrics, initial_capital, final_capital, execution=execution, legs=legs),
+    )
 
 
 def _age_str(ts: Optional[str]) -> str:
