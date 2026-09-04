@@ -56,7 +56,7 @@ logger = logging.getLogger(__name__)
 #:   rate. Identical to 2 for a universe whose symbols share a grid; corrects inflated
 #:   Sharpe/volatility and understated carry when they don't.
 #:
-#: * **4** — the current model. A signal is executed one bar after the bar that produced
+#: * **4** — a signal is executed one bar after the bar that produced
 #:   it. Through v3 a signal derived from bar i's close was filled at bar i's *open*,
 #:   for entries and signal exits alike - a one-bar look-ahead applied to every trade in
 #:   every recorded result. It survived the leakage probe because a feed shift moves
@@ -65,8 +65,25 @@ logger = logging.getLogger(__name__)
 #:   it. Every number recorded under 1-3 overstates what a deployment could achieve; a
 #:   v4 result is not comparable with them and the store keeps the two apart.
 #:
+#: * **5** — the current model. The book is marked at a bar's *open* for the decisions
+#:   that transact at it, and at its close for the equity curve. Through v4 positions
+#:   were marked to the bar's close before entries were considered, and the exposure
+#:   caps (`max_total_risk`, `max_gross_exposure`, `max_net_exposure`) are tested
+#:   against `equity * cap` - so whether an entry filling at the open was admitted
+#:   could depend on where that same bar finished, hours later. The same class of
+#:   defect as v4 and equally invisible to a feed shift, in the admission gate rather
+#:   than the signal.
+#:
+#:   Narrower in effect than v4: it changes a result only where a cap was close to
+#:   binding, and the default sizer is untouched (it sizes off cash, which is not
+#:   marked). But "usually identical" is not comparable, and a stored number nobody can
+#:   tell apart from a changed one is exactly what this version exists to prevent.
+#:   The promotion gates are deliberately **not** recalibrated: v4->v5 moves no metric
+#:   systematically, unlike the mark-to-market change at v2, and rescaling a threshold
+#:   without a measured shift to justify it is gate-fitting.
+#:
 #: Records written before this field existed carry no version; absence means 1.
-ACCOUNTING_VERSION = 4
+ACCOUNTING_VERSION = 5
 
 
 class BacktestError(RuntimeError):
@@ -741,7 +758,18 @@ class BacktestEngine:
         order = sorted(panels)
 
         for k in range(n_steps):
-            # 1. Mark open positions to market and track excursion extremes.
+            # 1. Mark open positions at this bar's OPEN, and track excursion extremes.
+            #
+            # The open, not the close, and the distinction is a causality one. Every
+            # decision below transacts at this bar's open, and the exposure caps in
+            # `_open_position` are tested against `equity * cap` - so marking the book
+            # at the close first meant whether an entry was admitted could depend on
+            # where the bar finished, hours after the price it filled at. The book's
+            # value at the moment of the fill is what the open gives you.
+            #
+            # The excursion extremes are the exception and stay full-bar: they are
+            # reported, never consulted by a decision, and the whole point of MAE/MFE
+            # is the worst and best the position actually saw while it was held.
             for symbol in order:
                 pos = book.positions.get(symbol)
                 if pos is None:
@@ -750,7 +778,7 @@ class BacktestEngine:
                 if i < 0:  # no bar for this name right now
                     continue
                 panel = panels[symbol]
-                pos["last_price"] = panel.closes[i]
+                pos["last_price"] = panel.opens[i]
                 pos["lowest"] = min(pos["lowest"], panel.lows[i])
                 pos["highest"] = max(pos["highest"], panel.highs[i])
 
@@ -831,6 +859,16 @@ class BacktestEngine:
                     book.positions[symbol] = pos
 
             if trading:
+                # Now the close: everything that transacts on this bar has happened, so
+                # the curve is an end-of-bar mark-to-market again. Only the decisions
+                # above are held to the open, and only because they priced there.
+                for symbol in order:
+                    pos = book.positions.get(symbol)
+                    if pos is None:
+                        continue
+                    i = panels[symbol].rows[k]
+                    if i >= 0:
+                        pos["last_price"] = panels[symbol].closes[i]
                 equity_now_marked = book.equity()
                 equity_curve.append(equity_now_marked)
                 equity_times.append(master[k])

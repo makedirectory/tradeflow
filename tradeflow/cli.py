@@ -3180,6 +3180,7 @@ def _print_trials_list(store, args) -> None:
         print(json.dumps({"rows": rows, "total": total}, indent=2, default=str))
         return
     print(format_trials_table(rows, total=total))
+    _print_other_accounting_notice(store, filters, total)
     if args.strategy and args.symbols:
         from tradeflow.engine.backtest import ACCOUNTING_VERSION
 
@@ -3189,6 +3190,34 @@ def _print_trials_list(store, args) -> None:
             f"\nCampaign n_trials for '{args.strategy}' over {', '.join(args.symbols)} "
             f"(accounting v{accounting}): {n}"
         )
+
+
+def _print_other_accounting_notice(store, filters, shown_total: int) -> None:
+    """Say how much history the accounting filter is hiding, when it hides any.
+
+    A listing defaults to the current engine's accounting version, because pooling rows
+    from different ones invites comparing numbers that were measured with different
+    instruments. But the day that version is bumped, a campaign's entire history stops
+    appearing — and an empty table reads as "nothing was ever run here", which is the
+    single most alarming way to learn that a bump happened.
+
+    The rows are still there, still in the journal, and still countable. Saying so is
+    the difference between a filter and a disappearance.
+    """
+    if filters.get("all_accounting"):
+        return
+    everything = store.count_trials(**{**filters, "accounting": None, "all_accounting": True})
+    hidden = everything - shown_total
+    if hidden <= 0:
+        return
+    from tradeflow.engine.backtest import ACCOUNTING_VERSION
+
+    version = filters.get("accounting") or ACCOUNTING_VERSION
+    print(
+        f"\n{hidden} further row(s) match these filters under a different accounting "
+        f"version and are not shown — this listing is v{version} only, because metrics "
+        f"from two versions were measured differently. Pass --all-accounting to see them."
+    )
 
 
 def _promote_trial(store, args) -> None:

@@ -36,7 +36,14 @@ live. Each step:
    and every signal exit, applied to the whole history. A feed shift cannot detect it:
    shifting moves signal and price together, so the relationship survives intact, which
    is why the leakage probe passed over it for as long as it did.
-1. **Mark** open positions to market (and track excursion extremes).
+1. **Mark** open positions at *this bar's open*, and track excursion extremes over the
+   whole bar. The open, because every decision below transacts at it: the exposure caps
+   in step 4 are tested against `equity × cap`, so marking at the close first meant
+   whether an entry was admitted could depend on where the bar finished, hours after the
+   price it filled at. That was accounting v4's remaining intra-bar look-ahead — the same
+   class as the signal one above, in the admission gate rather than the signal, and just
+   as invisible to a feed shift. The excursion extremes stay full-bar: they are reported,
+   never consulted by a decision, and the worst and best a position saw is the point.
 2. **Exit** — stop-loss, take-profit, then signal exit, in that order. Stop/take
    fill at their level; a signal exit fills at the next open. Exits run *before*
    entries, so capital freed this bar is reusable this bar.
@@ -47,7 +54,10 @@ live. Each step:
    `Strategy.calculate_position_size` as before, but against *free cash*, which is
    what makes positions actually compete. The two portfolio fractions are not the
    same measurement — see [what `max_total_risk` caps](../usage/configuration.md#what-max_total_risk-caps).
-5. **Record** portfolio equity — cash plus marked-to-market positions.
+5. **Record** portfolio equity — cash plus positions re-marked to *this bar's close*.
+   Everything that transacts on the bar has happened by now, so the curve is an
+   end-of-bar mark-to-market as it has always been. Only the decisions are held to the
+   open, and only because they priced there.
 
 Anything still open at the end is force-closed (`END_OF_PERIOD`). P&L is
 `(exit − entry) × size × direction`, less costs on both legs.
