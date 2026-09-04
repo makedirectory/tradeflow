@@ -9,8 +9,21 @@ it caps the transfer coefficient in ``IR ≈ TC·IC·√BR``.
 This module owns the shared types: :class:`Trade` (what is being traded, plus the
 liquidity context), :class:`TradeCost` (the commission / spread / impact breakdown),
 and the :class:`CostModel` interface. The concrete model lives in
-:mod:`tradeflow.costs.parametric`. Research-clock only: the *live* path gets real fills
-from the broker; this models cost for *simulation*.
+:mod:`tradeflow.costs.parametric`.
+
+**A pure pricing helper, and both clocks may use it.** It said "research-clock only:
+the live path gets real fills from the broker" long after that stopped being true -
+``execution.live_trader._cost_estimate`` imports it and calls ``cost()`` on the order
+path, deliberately, so the modelled number in a live report is comparable with the one
+the backtest was judged on. Nothing is broken by that: ``costs/`` is not one of the
+packages the trade-clock rule names, and what lives here is arithmetic over its
+arguments - no model, no optimizer, no database, no network. But a stale boundary
+comment is how the next person justifies a real violation, so the claim is corrected
+rather than left to be discovered.
+
+What must stay true is the reason the boundary was drawn: what this computes is a
+*prediction*, and a broker fee is an *observation*. The live path records them
+separately and must never merge them.
 """
 
 from abc import ABC, abstractmethod

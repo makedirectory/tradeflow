@@ -38,16 +38,24 @@ from tradeflow.optimization import config_store
 from tradeflow.optimization.walk_forward import WalkForwardValidator
 from tradeflow.research.proposer import Proposal, ProposalContext, Proposer
 from tradeflow.research.sandbox import load_strategy_from_code, validate_hygiene
-from tradeflow.services.audit import DEFAULT_TRIAL_JOURNAL, audit_log, new_run_id
+from tradeflow.services import audit
+from tradeflow.services.audit import audit_log, new_run_id
 from tradeflow.services.registry import resolve_strategy_class
 from tradeflow.store.trials import TrialStore, db_path_for_journal
 from tradeflow.strategies.base import Strategy
 
 logger = logging.getLogger(__name__)
 
+
 #: Default research-journal location (append-only JSONL). The same file CLI
 #: ``backtest``/``optimize`` trials append to, so a trial store indexes one journal.
-DEFAULT_JOURNAL = str(DEFAULT_TRIAL_JOURNAL)
+#: Lazy for the same reason the constant it names is: resolving the path creates the
+#: directory, and doing that at import time makes a read-only state root fail before
+#: any command has run.
+def __getattr__(name: str) -> Any:
+    if name == "DEFAULT_JOURNAL":
+        return str(audit.default_trial_journal())
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 @dataclass
@@ -131,7 +139,9 @@ class ResearchAgent:
         config: ResearchConfig,
         *,
         seed: int = 42,
-        journal_path: str = DEFAULT_JOURNAL,
+        # ``None``, not the constant: a default argument is evaluated when the class
+        # body runs, which is import time, and resolving this path creates a directory.
+        journal_path: Optional[str] = None,
         observer: Optional[Callable[[str, Dict[str, Any]], None]] = None,
         trial_store: Optional[TrialStore] = None,
     ):
@@ -140,6 +150,7 @@ class ResearchAgent:
         self.proposer = proposer
         self.config = config
         self.seed = seed
+        journal_path = journal_path or str(audit.default_trial_journal())
         self.journal_path = journal_path
         #: Optional live callback, invoked with every journaled ``(event, payload)``.
         #: Purely observational - it cannot influence the loop or its decisions.

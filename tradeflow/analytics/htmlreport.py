@@ -380,6 +380,7 @@ def _age(ts: Optional[str]) -> str:
 # --------------------------------------------------------------------------- #
 def _verdict_sections(result: Dict[str, Any], extras: Dict[str, Any]) -> List[str]:
     from tradeflow.analytics import charts
+    from tradeflow.optimization.walk_forward import format_gate_value
 
     verdict = result.get("verdict") or {}
     checks = verdict.get("checks") or {}
@@ -402,8 +403,8 @@ def _verdict_sections(result: Dict[str, Any], extras: Dict[str, Any]) -> List[st
                     [
                         _pill(c.get("passed")),
                         esc(name),
-                        esc(_num(c.get("value"))),
-                        esc(_num(c.get("threshold"))),
+                        esc(format_gate_value(name, c.get("value"))),
+                        esc(format_gate_value(name, c.get("threshold"))),
                         esc(c.get("note", "")),
                     ]
                     for name, c in sorted(checks.items())
@@ -607,6 +608,7 @@ def _backtest_sections(result: Dict[str, Any], extras: Dict[str, Any]) -> List[s
 
 def _walkforward_sections(result: Dict[str, Any], extras: Dict[str, Any]) -> List[str]:
     from tradeflow.analytics import charts
+    from tradeflow.optimization.walk_forward import format_gate_value
 
     gate_report = result.get("gate_report") or {}
     checks = gate_report.get("checks") or {}
@@ -618,7 +620,12 @@ def _walkforward_sections(result: Dict[str, Any], extras: Dict[str, Any]) -> Lis
             + _table(
                 ["", "Gate", "Value", "Threshold"],
                 [
-                    [_pill(c.get("passed")), esc(n), esc(_num(c.get("value"))), esc(_num(c.get("threshold")))]
+                    [
+                        _pill(c.get("passed")),
+                        esc(n),
+                        esc(format_gate_value(n, c.get("value"))),
+                        esc(format_gate_value(n, c.get("threshold"))),
+                    ]
                     for n, c in sorted(checks.items())
                 ],
                 raw=True,

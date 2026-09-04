@@ -3196,8 +3196,17 @@ def cmd_live(args) -> None:
     )
 
     if getattr(args, "preflight", False):
-        warmed, sufficient, asked = engine.warm_up_coverage(universe)
+        coverage = engine.warm_up_coverage(universe)
+        warmed, sufficient, asked = coverage.warmed, coverage.sufficient, coverage.asked
         needed = strategy.config.get("required_lookback_periods", 50)
+        if coverage.failure is not None:
+            # Reported, never folded into the coverage line below. "The feed did not
+            # answer" and "the feed answered with nothing" send a reader to different
+            # places, and a preflight exists to tell them apart before a session does.
+            print(f"\n  {'warm-up':22}request FAILED — {coverage.failure}")
+            print(f"  {'':22}this is not an empty window; whether history exists is unknown")
+            print("\n--preflight: nothing was started and no order path ran.")
+            return
         print(f"\n  {'warm-up coverage':22}{warmed} of {asked} symbols have history")
         # Presence is not sufficiency. A symbol can warm up with too few bars for its
         # indicators to be valid, and the run would only warn about it at start - so a

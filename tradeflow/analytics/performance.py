@@ -106,6 +106,36 @@ DEFAULT_EXECUTION_LIMITS: Dict[str, float] = {
     "max_cost_share_of_gross_pct": 40.0,  # transaction cost as a share of gross profit
 }
 
+#: What each execution check's numbers *are*, declared beside the checks that produce
+#: them rather than in whichever surface renders them. The renderer assumed percent for
+#: all of them, so ``book_breadth`` - a position *count* - printed as "a maximum of
+#: 1.00% positions". Same defect, same fix as ``walk_forward.format_gate_value``: the
+#: unit belongs to the check, not to the formatter. Every check must appear here;
+#: ``test_diagnostic_surfaces`` walks a real verdict and fails on any that does not,
+#: so a new check cannot reach a surface without saying what its number means.
+EXECUTION_VALUE_KINDS: Dict[str, str] = {
+    "rounding_drag": "percent",
+    "unfillable_entries": "percent",
+    "book_breadth": "count",
+    "cost_share_of_gross": "percent",
+}
+
+
+def format_execution_value(check_name: str, value: Any) -> str:
+    """One execution-check number as a string, in the unit that check is measured in."""
+    if value is None:
+        return "n/a"
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    kind = EXECUTION_VALUE_KINDS.get(check_name, "percent")
+    if kind == "count":
+        return f"{int(round(number))}"
+    return f"{number:.2f}%"
+
 
 def execution_verdict(
     execution: Optional[Dict[str, Any]], limits: Optional[Dict[str, float]] = None
@@ -161,8 +191,12 @@ def execution_verdict(
             "threshold": 2.0,
             "passed": float(max_positions) > 1,
             "note": (
-                f"the book holds at most {max_positions} of {universe_size} candidates - "
-                "max_positions is 1, the shipped default; set it to the book you intend"
+                f"the book holds at most {max_positions:g} of {universe_size} candidates"
+                + (
+                    " - 1 is the shipped default; set it to the book you intend"
+                    if float(max_positions) <= 1
+                    else ""
+                )
             ),
         }
 

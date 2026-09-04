@@ -21,6 +21,20 @@ from tradeflow.services.registry import STRATEGIES
 _PARAMS = {"fast_ema_period": 10, "slow_ema_period": 30}
 
 
+def _service_default(name):
+    """A service function's own default, read from its signature rather than restated.
+
+    A test that hardcodes the value it expects agrees with itself: it kept passing
+    while the two surfaces disagreed, because both halves of the comparison were
+    written by hand.
+    """
+    import inspect
+
+    from tradeflow.services import analysis
+
+    return inspect.signature(analysis.run_walk_forward).parameters[name].default
+
+
 def _cli_key(argv, limits):
     return _dedup_params(_PARAMS, parse_cli(argv), None, limits)
 
@@ -214,7 +228,7 @@ def _wf_service_key(limits=None, **overrides):
 
     kwargs = dict(
         mode="anchored",
-        n_folds=4,
+        n_folds=_service_default("n_folds"),
         train_days=None,
         test_days=None,
         embargo_days=None,
@@ -238,10 +252,38 @@ def _wf_cli_key(argv, limits=None):
 
 
 def test_the_two_surfaces_agree_on_the_same_walk_forward():
-    """Like for like: `--folds` defaults to None on the CLI and 4 in the service, so
-    the two surfaces' *defaults* differ. That is a defaults question, not a
-    key-construction one — this asserts the construction."""
-    assert _wf_cli_key(["walkforward", "--folds", "4"]) == _wf_service_key()
+    """Like for like: the construction, with both surfaces given the same folds."""
+    assert _wf_cli_key(["walkforward", "--folds", "4"]) == _wf_service_key(n_folds=4)
+
+
+def test_the_two_surfaces_agree_on_a_default_walk_forward():
+    """The stronger claim, which used not to hold: `--folds` defaulted to None on the
+    CLI and 4 in the service. Both build four folds — `build_folds` falls back to
+    `n_folds or 4` — so a default run over each surface validated *identically* and
+    keyed *differently*, and a walk-forward recorded over one was never found again
+    over the other. A miss is not free: it journals a fresh trial and permanently
+    raises the deflation bar for that family."""
+    assert _wf_cli_key(["walkforward"]) == _wf_service_key()
+
+
+def test_the_default_fold_count_is_one_value_across_every_surface():
+    """Read from the signatures rather than restated here, so a surface that changes
+    its default fails this instead of quietly disagreeing again."""
+    import inspect
+
+    from tradeflow.mcp import server as mcp_server
+    from tradeflow.services import analysis
+
+    cli_default = parse_cli(["walkforward"]).folds
+    assert cli_default == _service_default("n_folds")
+    assert cli_default == inspect.signature(analysis.run_draft_walk_forward).parameters["n_folds"].default
+
+    source = inspect.getsource(mcp_server)
+    for tool in ("run_walk_forward", "run_draft_walk_forward"):
+        start = source.index(f"def {tool}(")
+        signature = source[start : source.index(") -> Dict[str, Any]:", start)]
+        line = next(ln for ln in signature.splitlines() if ln.strip().startswith("n_folds"))
+        assert line.strip().rstrip(",").endswith("= None"), f"{tool} disagrees: {line.strip()}"
 
 
 def test_the_two_surfaces_agree_on_the_book_a_walk_forward_validated():
@@ -251,7 +293,7 @@ def test_the_two_surfaces_agree_on_the_book_a_walk_forward_validated():
     one-position validation as an eight-position book."""
     limits = {"max_positions": 8, "max_gross_exposure": 0.9}
 
-    assert _wf_cli_key(["walkforward", "--folds", "4"], limits) == _wf_service_key(limits)
+    assert _wf_cli_key(["walkforward", "--folds", "4"], limits) == _wf_service_key(limits, n_folds=4)
 
 
 def test_the_book_actually_changes_a_walk_forward_s_identity():

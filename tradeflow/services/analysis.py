@@ -577,7 +577,16 @@ def run_walk_forward(
     start: datetime,
     end: datetime,
     mode: str = "anchored",
-    n_folds: Optional[int] = 4,
+    # ``None``, not 4, and the same default the CLI has always had. Both resolve to
+    # four folds - ``build_folds`` falls back to ``n_folds or 4`` - so this is a
+    # *keying* question, not a validation one: the recipe recorded ``None`` from one
+    # surface and ``4`` from the other for the identical validation, so a walk-forward
+    # run over the CLI was not found again over MCP. ``None`` is also the honest value
+    # when ``train_days``/``test_days`` are given, where the fold count is derived and
+    # this parameter has no effect at all. Aligning on ``None`` rather than ``4`` keeps
+    # every walk-forward already in the store findable: a memoization miss is not free,
+    # it journals a fresh trial and permanently raises the deflation bar for the family.
+    n_folds: Optional[int] = None,
     train_days: Optional[int] = None,
     test_days: Optional[int] = None,
     embargo_days: Optional[int] = None,
@@ -1122,7 +1131,7 @@ def run_draft_walk_forward(
     *,
     class_name: Optional[str] = None,
     mode: str = "anchored",
-    n_folds: Optional[int] = 4,
+    n_folds: Optional[int] = None,  # see run_walk_forward: one default per surface
     train_days: Optional[int] = None,
     test_days: Optional[int] = None,
     embargo_days: Optional[int] = None,

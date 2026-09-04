@@ -23,11 +23,32 @@ logger = logging.getLogger(__name__)
 #: Default audit log location (append-only JSONL).
 DEFAULT_AUDIT_PATH = state_root() / "logs" / "mcp_audit.jsonl"
 
+
 #: The shared research/trial journal: the append-only source of truth a trial store
 #: indexes so multiple-testing counts can span a campaign, not one run.
 #: The research agent and CLI ``backtest``/``optimize`` all append here, so they must
-#: name the *same* file — see :data:`src.research.agent.DEFAULT_JOURNAL`.
-DEFAULT_TRIAL_JOURNAL = trial_journal_path()
+#: name the *same* file.
+#:
+#: Resolved on first *access*, not at import — see ``store.trials`` for why: reaching
+#: the path creates the directory, and a constant that does so at import time turns a
+#: read-only state root into a failure every command inherits before it runs.
+def default_trial_journal() -> Path:
+    """The journal every writer here appends to, honouring an override of the constant.
+
+    See ``store.trials.default_journal_path`` for why this is a function: a module
+    ``__getattr__`` fires only for attribute access on the module, and an override
+    binds a name into the globals, which shadows it. Both paths have to keep working -
+    the constant is lazy *and* still redirectable.
+    """
+    override = globals().get("DEFAULT_TRIAL_JOURNAL")
+    return Path(override) if override is not None else trial_journal_path()
+
+
+def __getattr__(name: str) -> Any:
+    if name == "DEFAULT_TRIAL_JOURNAL":
+        return trial_journal_path()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 #: Metrics denormalized onto a trial record — enough for the gates and the Deflated
 #: Sharpe without dumping the full metric block per config.
@@ -163,7 +184,7 @@ def journal_trial(
     if objective:
         inputs["objective"] = objective
     result_summary = {k: metrics[k] for k in _TRIAL_METRICS if k in metrics}
-    journal_path = path or DEFAULT_TRIAL_JOURNAL
+    journal_path = path or default_trial_journal()
     extra_dict = dict(extra or {})
     if dedup_params is not None:
         extra_dict["dedup_params"] = dedup_params
@@ -289,7 +310,7 @@ def universe_for_trial(trial_id: str, path: Optional[Path] = None) -> Optional[D
     a trial whose journal line has no ``candidate_symbols``, and callers must keep the
     two apart.
     """
-    journal = Path(path or DEFAULT_TRIAL_JOURNAL)
+    journal = Path(path or default_trial_journal())
     if not journal.exists():
         return None
     for line in journal.read_text().splitlines():
