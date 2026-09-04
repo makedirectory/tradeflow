@@ -59,11 +59,23 @@ actually bit: `walkforward --benchmark` had no MCP equivalent and no service par
 so over MCP every fold reported `benchmark_available: False` and the benchmark-relative
 promotion prerequisites were never *evaluated* — a gate that cannot be configured on a
 surface is not stricter there, it simply does not run, and nothing says so.
+
+`screen` is guarded the stronger way: its CLI flags are enumerated *from the parser*
+and every one must have a counterpart in the MCP tool's signature, rather than a
+hand-written list of the flags somebody remembered. Two knobs are spelled differently
+because argparse cannot take a mapping (`--range` → `param_ranges`, `--max-positions` →
+`position_limits`); the rename table that permits this is itself the loophole, so a
+further test follows both all the way to the service argument. A rename may only record
+that two surfaces reach the same argument — never excuse a knob one surface lacks.
 *Guarded by* `tests/test_surface_parity.py`.
 
-**Config ↔ what actually got validated** — a config's `position_limits` is not a tunable
-param, so anything reconstructing a strategy from params alone drops it. A config asking
-for eight positions was walk-forward validated at one.
+**Config ↔ what actually got validated** — *converged*. A config's `position_limits` is
+not a tunable param, so anything reconstructing a strategy from params alone drops it. A
+config asking for eight positions was walk-forward validated at one. Every sweep over a
+parameter space needs the same three lines, and each one that wrote its own was a place
+the book could go missing again, so it is now
+`strategies.base.build_with_limits` — used by the walk-forward validator, the parameter
+optimizer, and the screen.
 *Guarded by* `tests/test_surface_parity.py`.
 
 **Scanner registry ↔ the driver's class attribute** — `services.registry.SCANNERS` and
@@ -102,7 +114,18 @@ main.py`, `uv sync`, and `.env.example` do not exist for an installed reader. Us
 **Strategy convention ↔ engine execution** — `generate_signals` keys a signal at the bar
 whose close produced it, and the engine must execute it on the bar after. Neither side
 can see the other's assumption.
-*Guarded by* `tests/test_signal_causality.py`.
+*Guarded by* `tests/test_signal_causality.py`, and now also by
+`tests/test_causality_probes.py`, which restores the one-bar look-ahead deliberately and
+requires the probes to say so. The two are different things: the first pins the property
+on this engine, the second pins the *detector* — a probe asserted only against correct
+code is exactly the probe that passed for three days.
+
+**Probe class ↔ what a probe actually tests** — the feed-shift leakage probe tests for
+future data; the causality probes test intra-bar causality and the as-of clock. Neither
+can see what the other looks for, and the shift probe cleared a candidate whose every
+signal executed a bar early. The hazard is not code drift but a reader conflating them,
+so the distinction is stated in the module docstring, the tool description, the CLI help,
+the usage guide and the walk-forward wiki — and a test asserts the report carries it.
 
 **Ledger write ↔ ledger replay** — what `record_fill` means by a quantity (`basis`) and
 what `_replay` does with it. A cumulative quantity summed as if incremental turned an

@@ -27,7 +27,7 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import pandas as pd
 
@@ -93,11 +93,44 @@ DEFAULT_POSITION_LIMITS: Dict[str, Any] = {
 }
 
 
+def build_with_limits(
+    strategy_class: "type[Strategy]",
+    params: Dict[str, Any],
+    position_limits: Optional[Dict[str, Any]] = None,
+) -> "Strategy":
+    """Construct a candidate and give it the book the config asked for.
+
+    ``position_limits`` is not a tunable parameter, so anything reconstructing a
+    strategy from params alone drops it — and a config asking for eight positions then
+    gets evaluated at one, which is a different strategy wearing the same name. Applied
+    after construction because it does not go through ``PARAM_RANGES`` validation, and
+    merged over what the class declares so an unspecified limit keeps its default.
+
+    One definition, because every sweep over a parameter space needs it and each one
+    that wrote its own is a place the book can silently go missing.
+    """
+    strategy = strategy_class(dict(params))
+    if position_limits:
+        strategy.config["position_limits"] = {**strategy.position_limits(), **position_limits}
+    return strategy
+
+
 class Strategy(ABC):
     """Abstract base for all trading strategies."""
 
     #: Subclasses declare tunable parameters here for validation/optimization.
     PARAM_RANGES: Dict[str, Dict[str, Any]] = {}
+
+    #: Relationships between those parameters that any valid config must satisfy,
+    #: as ``(left, op, right)`` triples where each side is a parameter name or a
+    #: literal — e.g. ``(("fast_ema_period", "<", "slow_ema_period"),)``.
+    #:
+    #: Declared rather than checked in ``validate_config`` because a sampler has to be
+    #: able to *read* them: a combination that gets evaluated is a journaled trial, and
+    #: a journaled trial permanently raises the deflation bar for every future
+    #: candidate in its family. Rejecting invalid points after drawing them would still
+    #: spend that budget; the search space simply must not contain them.
+    PARAM_CONSTRAINTS: Tuple[Tuple[str, str, Any], ...] = ()
 
     #: Whether the strategy may hold short positions. Long-only strategies never
     #: emit SELL entries; a negative score simply means "flat" (exit any long).
@@ -169,6 +202,25 @@ class Strategy(ABC):
                 raise ValueError(
                     f"Parameter '{param}' value {value} is outside valid range [{spec['min']}, {spec['max']}]"
                 )
+
+        self._validate_param_constraints()
+
+    def _validate_param_constraints(self) -> None:
+        """Enforce ``PARAM_CONSTRAINTS`` on the assembled config.
+
+        Here rather than in each strategy's ``initialize``, and reading the same
+        declaration a sampler reads, so the rule has one definition. A strategy that
+        restates the comparison in code gives the sampler nothing to introspect - and
+        the sampler is the half that matters, because a combination it draws gets
+        *evaluated*, and an evaluated combination is a journaled trial.
+        """
+        if not self.PARAM_CONSTRAINTS:
+            return
+        from tradeflow.optimization.param_space import ParameterConstraints
+
+        broken = ParameterConstraints(self.PARAM_CONSTRAINTS, list(self.PARAM_RANGES)).violations(self.config)
+        if broken:
+            raise ValueError(f"{type(self).__name__} parameter constraints violated: {'; '.join(broken)}")
 
     # ------------------------------------------------------------------ #
     # Abstract hooks implemented by concrete strategies

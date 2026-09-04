@@ -10,7 +10,7 @@ CAPITAL ?= 100000
 PY       = uv run python main.py
 
 .PHONY: help demo demo-agent demo-agent-live init install install-optimize verdict backtest backtest-no-scan scan live \
-        allocate allocate-utility alphas risk info horizon optimize optimize-bayesian cancel-orders close-positions \
+        allocate allocate-utility alphas risk info horizon screen causality trials-status optimize optimize-bayesian cancel-orders close-positions \
         check test secret-scan check-links docs docs-build docker-build docker-run up down compose-run compose-smoke \
         build release-check clean
 
@@ -91,6 +91,15 @@ live-beta:  ## Paper-trade with beta-scaled position sizing
 	$(PY) live --strategy demo_trend --scanner demo_volume --symbols $(SYMBOLS) --beta-sizing
 
 # --- parameter modeling -----------------------------------------------------
+trials-status:  ## Trial-store health: rows vs journal lines, orphans, quarantined rows
+	$(PY) trials status
+
+causality:  ## Probe whether each decision could have been made when it was made
+	$(PY) backtest --strategy demo_trend --scanner none --symbols $(SYMBOLS) --start $(START) --end $(END) --no-journal --causality
+
+screen:  ## Sweep params cheaply — journals nothing, reports the distribution
+	$(PY) screen --strategy demo_trend --scanner none --symbols $(SYMBOLS) --start $(START) --end $(END) --method random --max-evals 25
+
 optimize:  ## Grid-search strategy params (objective: sharpe_ratio)
 	$(PY) optimize --strategy demo_trend --scanner none --symbols $(SYMBOLS) --start $(START) --end $(END) --method grid --max-evals 50
 

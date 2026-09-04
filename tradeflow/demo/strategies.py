@@ -19,7 +19,7 @@ baseline - and a clean example of how little it takes to add a strategy (one fil
 a score, the indicators you already have, register the name).
 """
 
-from typing import Any, ClassVar, Dict
+from typing import Any, ClassVar, Dict, Tuple
 
 import pandas as pd
 
@@ -82,6 +82,15 @@ class DemoTrendStrategy(Strategy):
         },
     }
 
+    #: The fast line has to be faster than the slow one. Declared rather than checked
+    #: in ``initialize`` so a sampler can read it: today's ranges (5-20 against 21-60)
+    #: cannot produce a violation, but narrowed ranges can, and a combination that
+    #: gets evaluated is a journaled trial that raises the deflation bar for every
+    #: future candidate in this family.
+    PARAM_CONSTRAINTS: ClassVar[Tuple[Tuple[str, str, Any], ...]] = (
+        ("fast_ema_period", "<", "slow_ema_period"),
+    )
+
     def __init__(self, config: Dict[str, Any]):
         config["timeframe"] = self.TIMEFRAME
         config.setdefault(
@@ -94,11 +103,10 @@ class DemoTrendStrategy(Strategy):
         return self.config["slow_ema_period"] + 1
 
     def initialize(self) -> None:
-        if self.config["fast_ema_period"] >= self.config["slow_ema_period"]:
-            raise ValueError(
-                f"fast_ema_period ({self.config['fast_ema_period']}) must be < "
-                f"slow_ema_period ({self.config['slow_ema_period']})"
-            )
+        # The fast/slow ordering is declared in PARAM_CONSTRAINTS and enforced at
+        # construction, so there is nothing left to restate here: a second copy of the
+        # comparison would be the half a sampler cannot read.
+        pass
 
     def process_data(self, data: pd.DataFrame) -> pd.DataFrame:
         if data.empty:

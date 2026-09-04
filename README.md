@@ -272,6 +272,8 @@ promoted automatically — is what stays constant.
 | `reconcile` | Check the position ledger against the broker's actual account state. Reports divergence; never corrects it (read-only) |
 | `halt` / `resume` / `halts` | Stop opening new positions, and say so durably — a running engine sees it on the next bar. Blocks entries, never exits, so it can't trap the book |
 | `flatten` | Emergency: halt, cancel every order, close every position. Goes straight to the broker, so it works when the engine is wedged |
+| `backtest --causality` | Probe whether each decision could have been made when it was made: the execution clock, same-bar ranking, benchmark alignment, and the scanner's as-of clock. A **different class** from the leakage probe, which tests for future data and cannot see a one-bar look-ahead at all |
+| `screen` | Sweep a parameter space cheaply to ask whether a family holds anything at all — one process, one data fetch, N evaluations, and **nothing journaled**. Leads with the distribution and what the best of N draws is worth under the null, because the best of N is the maximum of N draws; `--confirm` records exactly one point as a real trial |
 | `optimize` | Search strategy parameters by backtest objective (grid / random / Bayesian); `--workers N` evaluates candidates in parallel — wall-clock only, same trials and same winner |
 | `allocate` | Weight a portfolio: scalar-score sizing (OR-Tools), or `--objective utility` for mean-variance construction from alpha + Σ |
 | `alphas` | Rank a universe by continuous alpha — a comparable, annualized residual-return forecast per name; `--combine` blends several signals, `--neutralize-factors` regresses out the risk model's factor exposures (read-only) |
@@ -280,7 +282,7 @@ promoted automatically — is what stays constant.
 | `--html PATH` | On `verdict`/`backtest`/`walkforward`/`info`: write a self-contained HTML report of the run — inline charts, zero external requests, provenance and honesty warnings first-class |
 | `horizon` | Measure alpha decay / half-life; recommend rebalance cadence + current/lagged blend (read-only) |
 | `walkforward` | Out-of-sample validation: optimize in-sample, score out-of-sample across folds, with a sacred holdout and promotion gates |
-| `trials` | Browse the campaign's memory: `list` (filters, sorting, paging), `show` (one trial in full), `best` (a DSR-ranked leaderboard that always shows the family's `n_trials`) — read-only |
+| `trials` | Browse the campaign's memory: `list` (filters, sorting, paging), `show` (one trial in full), `best` (a DSR-ranked leaderboard that always shows the family's `n_trials`) — read-only; `archive` retires a whole era by moving the journal and its index aside **together** (a store left beside a fresh journal keeps reporting a trial count for evidence that is gone); `mark-contaminated` quarantines a suspect subset with an appended event — history intact, reason on the record |
 | `mcp` | Serve TradeFlow over MCP so an agent (Claude Code / Desktop) can drive verdict/scan/backtest/optimize/walk-forward/alphas/risk/portfolio/info — read-only, no live trading |
 
 One strategy ships, and it is a demonstration rather than a candidate:

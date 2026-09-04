@@ -178,7 +178,14 @@ def _validate_common_contract(cls: Type, base_name: str) -> None:
                 f"{cls.__name__} parameter {param!r} must be a spec mapping with "
                 f"min/max/step/default, not a bare {type(spec).__name__}"
             )
-    space = ParameterSpace(cls.PARAM_RANGES)
+    try:
+        space = ParameterSpace.for_class(cls)
+    except ValueError as exc:
+        # Same contract as the malformed-spec rejection above: a validator whose whole
+        # job is to answer "is this valid?" must answer it, not raise something else.
+        # A draft can declare constraints, and a constraint naming a parameter that
+        # does not exist is exactly the kind of thing generated code writes.
+        raise HygieneError(f"{cls.__name__} declares an unusable PARAM_CONSTRAINTS: {exc}") from exc
     if len(space.searchable) > MAX_TUNABLE_PARAMS:
         # Deliberately stricter than the curated strategies this package ships: a
         # draft is an unreviewed proposal, and knobs are overfit surface. Two shipped

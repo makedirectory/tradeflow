@@ -392,6 +392,11 @@ class BacktestResult:
     #: instead of deriving a second one - two alignments of the same series is how the
     #: two quietly stop matching.
     benchmark_returns: Optional[Any] = None
+    #: The instant each ``equity_curve`` step was marked at. Exposed so a diagnostic
+    #: can say *when* a step happened rather than reconstructing the merged timeline
+    #: and risking a second, disagreeing definition of it. Nothing in the metrics
+    #: reads it.
+    equity_times: Optional[List[Any]] = None
 
 
 class BacktestEngine:
@@ -582,6 +587,7 @@ class BacktestEngine:
             gross_final_capital=final_capital + total_cost,
             execution=execution,
             benchmark_returns=aligned_benchmark,
+            equity_times=list(equity_times),
             legs=legs,
             exposure=_exposure_report(exposure),
         )
