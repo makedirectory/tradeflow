@@ -162,6 +162,80 @@ These rules live in the **payload**, not only in the terminal formatting: `--jso
 carries the family counts and the caveat too, so an agent reading this over MCP
 sees the same context a human reads on screen.
 
+## `trials campaign` — what validated this?
+
+```bash
+tradeflow trials campaign a1b2c3d4e5f6
+```
+
+A walk-forward is not one row. It is a **validation recipe** — the folds, the embargo,
+the objective, the search method, and the cost model and book limits folded into its
+identity — plus a chosen parameter set plus the universe that was actually resolved.
+Promoting the winning row captures the middle one, so the config could not say what
+validated it.
+
+All of it was already recorded. The recipe is in the journal, written as the trial's
+dedup identity; the resolved universe is there too, in full, because the store keeps
+only its hash. This reads them back — nothing is re-run.
+
+```
+=== What validated a1b2c3d4e5f6 (walkforward) ===
+
+  RECIPE — how it was validated. Survives an accounting bump.
+    window          2024-01-01 → 2024-06-29
+    train_days      252
+    test_days       63
+    embargo_days    5
+    method          grid
+    objective       sharpe_ratio
+    _limits         {'max_positions': 8}   (folded into its identity)
+
+  EVIDENCE — what was measured, under accounting v5. Valid only there.
+    sharpe_ratio    1.12
+    total_trades    88
+    promotable      yes
+    family n_trials 50
+
+  METADATA — about the record, not about the strategy.
+    recorded        2026-03-01T09:14:22
+    return series   tradeflow trials compare a1b2c3d4e5f6 <other-trial-id>
+    trade table     — not recorded
+```
+
+*(Illustrative figures.)*
+
+**The three labels are the feature.** They age differently, and a reader who cannot
+tell them apart will carry a stale number forward beside a recipe that is still
+perfectly good:
+
+| Section | What it is | What an accounting bump does to it |
+| --- | --- | --- |
+| `recipe` | How it was validated | Nothing — it stays true |
+| `evidence` | What was measured | Invalidates all of it |
+| `metadata` | About the record | Nothing |
+
+A section that could not be assembled says so with a reason. Most trial kinds have no
+separate recipe — a backtest's identity *is* its parameters — and the recipe section
+says that rather than coming back empty, which would read as "validated with no
+settings".
+
+### It lands in the config, not beside it
+
+`trials promote` writes this block into the config's own `provenance.campaign`. There
+is deliberately **no separate campaign export format**: `save_config` is the
+portability format, campaign material is a field of it, and configs written before this
+existed load unchanged and read as *not materialised from a campaign*.
+
+Promotion also warns at promotion time, rather than only when the file is later loaded:
+
+```
+  WARNING: this trial was measured under accounting v3 and this engine is v5. The recipe still
+  applies; the recorded metrics do not, and must not be compared with a fresh run.
+```
+
+Over MCP, `get_campaign_material` returns the same block for an agent to pass through
+to `save_config` verbatim — one schema on both surfaces.
+
 ## `trials analyze` — what did those trades actually do?
 
 ```bash

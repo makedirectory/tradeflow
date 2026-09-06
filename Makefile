@@ -94,6 +94,9 @@ live-beta:  ## Paper-trade with beta-scaled position sizing
 trials-status:  ## Trial-store health: rows vs journal lines, orphans, quarantined rows
 	$(PY) trials status
 
+trials-campaign:  ## What validated a trial: recipe, evidence, what is recoverable. TRIAL=<id>
+	$(PY) trials campaign $(TRIAL)
+
 trials-analyze:  ## Exit-reason P&L, win/loss, holding period, excursion. TRIAL=<id>
 	$(PY) trials analyze $(TRIAL)
 

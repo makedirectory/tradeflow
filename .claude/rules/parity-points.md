@@ -107,8 +107,9 @@ reading the manifest — reading it is exactly what missed this.
 *Guarded by* `tests/test_packaging.py`.
 
 **Installed copy ↔ checkout** — every instruction printed to a user. `make`, `python
-main.py`, `uv sync`, and `.env.example` do not exist for an installed reader. Use the
-`_invocation` helper rather than a literal.
+main.py`, `uv sync`, and `.env.example` do not exist for an installed reader. Use
+`services.setup.invocation` (the CLI's `_invocation` delegates to it) rather than a
+literal — services print instructions too.
 *Guarded by* `tests/test_setup.py`, `tests/test_surface_parity.py`.
 
 **Strategy convention ↔ engine execution** — `generate_signals` keys a signal at the bar
@@ -197,6 +198,25 @@ and must have a counterpart in the MCP signature, and both *defaults* are compar
 and refused on the other is the same trial answering one question two ways depending on
 who asked, which is what a shared default exists to prevent.
 *Guarded by* `tests/test_surface_parity.py`.
+
+**One provenance format, wherever a config is written** — `save_config` is the
+portability format and campaign material is a *field* of it (`provenance.campaign`),
+never a second artifact beside it. A campaign export living somewhere else would be a
+second provenance schema, which is the hazard this list exists for: two files claiming
+to say how a config was produced, drifting, with neither one wrong enough to notice.
+The MCP `save_config` tool builds its `Provenance` from the same dataclass, so a block
+the dataclass does not accept fails there while `trials promote` succeeds — two schemas
+by accident rather than by decision.
+*Guarded by* `tests/test_campaign_material.py`, which writes a config over each surface
+and reads the same block back, and checks a pre-campaign config still loads.
+
+**How to invoke this copy** — *converged*. `cli._invocation` was the helper the
+installed-copy-vs-checkout entry names, and it lived in the CLI, so a *service* that
+needed to print an instruction — a config's campaign block naming the command that
+reads its stored trades — had nowhere to get the answer but a second copy. Now
+`services.setup.invocation`, with the CLI delegating.
+*Guarded by* `tests/test_setup.py`, `tests/test_surface_parity.py`,
+`tests/test_campaign_material.py`.
 
 **Opening the trial store** — *converged*. It was three copies, not the two listed here:
 `cli._open_trial_store`, `services.analysis._open_trial_store` and

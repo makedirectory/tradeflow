@@ -329,18 +329,18 @@ def _safe(value: Any) -> Any:
     return str(value)
 
 
-def universe_for_trial(trial_id: str, path: Optional[Path] = None) -> Optional[Dict[str, Any]]:
-    """The universe a journaled trial ran on, read from the journal itself.
+def journal_record_for_trial(trial_id: str, path: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+    """The whole journal line a trial was written as, or ``None`` if there is none.
 
-    The trial store records a ``universe_hash``, not the symbols, so the store alone
-    cannot say what a trial traded. Read through to the journal rather than adding a
-    column: the store is passive and derived by contract, the journal is the source of
-    truth, and a trial written before candidates were recorded then reads as *less
-    complete* instead of being backfilled into looking more authoritative than it is.
+    The store is derived and deliberately keeps only what its queries need — a
+    universe *hash* rather than symbols, a params *hash* rather than the recipe that
+    was hashed. Everything else a trial recorded is still in the journal, which is the
+    source of truth, so reading through to it beats adding columns: a trial written
+    before some field existed then reads as *less complete* rather than being
+    backfilled into looking more authoritative than it is.
 
-    Returns ``None`` when no journaled trial carries this id - which is different from
-    a trial whose journal line has no ``candidate_symbols``, and callers must keep the
-    two apart.
+    One scanner, because "which line is this trial's" is one question. A second copy
+    of this loop would be free to disagree about what counts as a trial record.
     """
     journal = Path(path or default_trial_journal())
     if not journal.exists():
@@ -350,13 +350,25 @@ def universe_for_trial(trial_id: str, path: Optional[Path] = None) -> Optional[D
             record = json.loads(line)
         except ValueError:  # a torn final line loses one record, never the file
             continue
-        if record.get("run_id") != trial_id or not str(record.get("tool", "")).startswith("trial:"):
-            continue
-        inputs = record.get("inputs") or {}
-        return {
-            "symbols": list(inputs.get("symbols") or []),
-            "candidate_symbols": list(inputs.get("candidate_symbols") or []) or None,
-            "strategy": inputs.get("strategy"),
-            "window": inputs.get("window") or {},
-        }
+        if record.get("run_id") == trial_id and str(record.get("tool", "")).startswith("trial:"):
+            return record
     return None
+
+
+def universe_for_trial(trial_id: str, path: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+    """The universe a journaled trial ran on, read from the journal itself.
+
+    Returns ``None`` when no journaled trial carries this id - which is different from
+    a trial whose journal line has no ``candidate_symbols``, and callers must keep the
+    two apart.
+    """
+    record = journal_record_for_trial(trial_id, path)
+    if record is None:
+        return None
+    inputs = record.get("inputs") or {}
+    return {
+        "symbols": list(inputs.get("symbols") or []),
+        "candidate_symbols": list(inputs.get("candidate_symbols") or []) or None,
+        "strategy": inputs.get("strategy"),
+        "window": inputs.get("window") or {},
+    }

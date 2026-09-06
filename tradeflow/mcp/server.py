@@ -18,7 +18,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from tradeflow.analytics.series_comparison import MIN_OVERLAP as SERIES_MIN_OVERLAP
-from tradeflow.services import analysis, configs, glossary, registry
+from tradeflow.services import analysis, campaign, configs, glossary, registry
 from tradeflow.services.audit import audit_log, new_run_id
 
 logger = logging.getLogger(__name__)
@@ -52,6 +52,7 @@ EXPOSED_TOOLS = (
     "get_trial",
     "analyze_trial",
     "compare_trials",
+    "get_campaign_material",
     "best_trials",
     "get_metrics_glossary",
     "summarize_bars",
@@ -1369,6 +1370,38 @@ def build_server(data_client=None):
                 ),
             )
 
+    @tool()
+    def get_campaign_material(trial_id: str) -> Dict[str, Any]:
+        """What validated a trial: its recipe, its evidence, and what is recoverable.
+
+        Read this before proposing a config from a trial, and pass it through as
+        `provenance.campaign` when you call `save_config` — that is the same block
+        `trials promote` writes, and a second shape invented here would be a second
+        provenance format, which is the thing this project has been bitten by more
+        than once.
+
+        Three sections, labelled because they age differently. `recipe` is how it was
+        validated — the folds, the embargo, the objective, the search method, and the
+        cost model and book limits folded into its identity. It stays true. `evidence`
+        is what was measured under one accounting version and is worthless outside it;
+        check `comparable_with_current_engine` before quoting a single number from it.
+        `metadata` is about the record: when, which git sha, and which stored artifacts
+        still exist.
+
+        A section that could not be assembled says so with a reason rather than coming
+        back empty. Most trial kinds have no separate recipe — a backtest's identity
+        *is* its parameters — and the recipe section says that instead of implying the
+        run was validated with no settings. Journals nothing; read-only.
+        """
+        with _trial_store() as store:
+            if store is None:
+                return _logged("get_campaign_material", {"trial_id": trial_id}, {"error": _NO_STORE})
+            return _logged(
+                "get_campaign_material",
+                {"trial_id": trial_id},
+                campaign.campaign_material(store, trial_id),
+            )
+
     @tool("deflated_sharpe_ratio", "sharpe_ratio")
     def best_trials(
         strategy: Optional[str] = None,
@@ -1458,6 +1491,12 @@ def build_server(data_client=None):
         Include the evidence in `provenance` (the walk-forward or verdict run behind
         the proposal, its trial id, its window and universe), because a config with
         no recorded reason for existing is a config nobody can safely promote.
+
+        For a config proposed from a recorded trial, put `get_campaign_material`'s
+        block in `provenance.campaign` verbatim rather than summarising it. It carries
+        the validation recipe the parameters alone cannot express, and which accounting
+        era its numbers belong to. One format, so a config written here and one written
+        by `trials promote` read identically.
         """
         inputs = {"name": name, "strategy": strategy, "params": params, "scanner": scanner}
         result = configs.save_config(

@@ -992,6 +992,70 @@ def format_series_comparison(report: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def format_campaign_material(material: Dict[str, Any]) -> str:
+    """What validated a trial, with each section labelled by what kind of thing it is.
+
+    The labels are the point. A recipe survives an accounting bump and a measurement
+    does not, and a reader who cannot tell them apart will carry a stale number forward
+    beside a recipe that is still perfectly good.
+    """
+    if not material.get("available"):
+        return f"\n=== Campaign ===\n  {NOT_RECORDED} {material.get('reason')}\n"
+
+    recipe = material.get("recipe") or {}
+    evidence = material.get("evidence") or {}
+    metadata = material.get("metadata") or {}
+    lines = [
+        "",
+        f"=== What validated {material.get('trial_id')} ({material.get('kind')}) ===",
+        "",
+        "  RECIPE — how it was validated. Survives an accounting bump.",
+    ]
+    window = recipe.get("window") or {}
+    lines.append(f"    window          {str(window.get('start'))[:10]} → {str(window.get('end'))[:10]}")
+    if recipe.get("available"):
+        for key, value in sorted((recipe.get("validation") or {}).items()):
+            lines.append(f"    {key:<16}{NOT_RECORDED if value is None else value}")
+        for key, value in sorted((recipe.get("folded_into_identity") or {}).items()):
+            lines.append(f"    {key:<16}{value}   (folded into its identity)")
+    else:
+        lines.append(f"    {NOT_RECORDED} {recipe.get('reason')}")
+
+    lines.append("")
+    lines.append(
+        f"  EVIDENCE — what was measured, under accounting v{evidence.get('accounting')}. Valid only there."
+    )
+    metrics = evidence.get("metrics")
+    if metrics:
+        # Through the shared unit table, not a flat float format. A trade count
+        # rendered as `88.000` is the defect this project has now found in three
+        # separate renderers, and a fourth private formatter here would be the fourth.
+        from tradeflow.optimization.walk_forward import format_gate_value
+
+        for key, value in sorted(metrics.items()):
+            lines.append(f"    {key:<16}{format_gate_value(key, value)}")
+    else:
+        lines.append(f"    {NOT_RECORDED} no metrics recorded")
+    promo = evidence.get("promotable")
+    lines.append(f"    {'promotable':<16}{NOT_RECORDED if promo is None else ('yes' if promo else 'no')}")
+    lines.append(f"    {'family n_trials':<16}{_cell(evidence.get('family_n_trials'), '{:.0f}')}")
+    lines.append(f"    {'trial ids':<16}{', '.join(evidence.get('trial_ids') or []) or NOT_RECORDED}")
+    if evidence.get("staleness"):
+        lines.append(f"    (!) {evidence['staleness']}")
+    if evidence.get("quarantined"):
+        lines.append(f"    (!) QUARANTINED — {evidence.get('quarantine_reason')}")
+
+    lines.append("")
+    lines.append("  METADATA — about the record, not about the strategy.")
+    lines.append(f"    {'recorded':<16}{str(metadata.get('recorded_at'))[:19]}")
+    lines.append(f"    {'git':<16}{metadata.get('git_sha') or NOT_RECORDED}")
+    for artifact in metadata.get("artifacts") or []:
+        state = artifact["read_with"] if artifact["recorded"] else f"{NOT_RECORDED} not recorded"
+        lines.append(f"    {artifact['artifact']:<16}{state}")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def format_leaderboard(board: Dict[str, Any]) -> str:
     """The leaderboard, and the multiple-testing context that makes it honest.
 

@@ -3163,6 +3163,10 @@ def cmd_trials(args) -> None:
             _print_trial_comparison(store, args)
             return
 
+        if args.trials_command == "campaign":
+            _print_campaign(store, args)
+            return
+
         if args.trials_command == "best":
             _print_leaderboard(store, args)
             return
@@ -3255,6 +3259,7 @@ def _promote_trial(store, args) -> None:
     """
     from tradeflow.optimization.config_store import Provenance, save_config
     from tradeflow.services.audit import universe_for_trial
+    from tradeflow.services.campaign import campaign_material
 
     trial = store.get_trial(args.trial_id)
     if trial is None:
@@ -3284,6 +3289,13 @@ def _promote_trial(store, args) -> None:
     cost = recorded.pop("_cost", None)
     params = {name: value for name, value in recorded.items() if not name.startswith("_")}
 
+    # What validated it, not just what it validated to. A promoted row carries the
+    # chosen parameters; on its own it cannot say what recipe produced them, so the
+    # config could not answer "what was this checked against". Materialised from the
+    # journal, which already recorded all of it — nothing is re-run.
+    material = campaign_material(store, args.trial_id, journal_path=getattr(args, "journal", None))
+    recipe = material.get("recipe") or {}
+
     path = save_config(
         args.save_config,
         strategy=trial.get("strategy"),
@@ -3293,7 +3305,8 @@ def _promote_trial(store, args) -> None:
         symbols=symbols,
         candidate_symbols=universe.get("candidate_symbols"),
         provenance=Provenance(
-            objective="",
+            objective=(recipe.get("objective") or ""),
+            method=str((recipe.get("validation") or {}).get("method") or ""),
             windows={"start": trial.get("window_start"), "end": trial.get("window_end")},
             oos_metrics=trial.get("metrics") or {},
             n_trials=int(trial.get("n_trials_in_session") or 1),
@@ -3301,11 +3314,13 @@ def _promote_trial(store, args) -> None:
             git_sha=trial.get("git_sha"),
             timestamp=trial.get("ts"),
             accounting=int(trial.get("accounting") or 1),
+            campaign=material,
             notes=f"promoted from trial {args.trial_id}"
             + ("" if promotable else " (NOT promotable at the time of promotion)"),
         ),
     )
     print(f"Promoted trial {args.trial_id} -> {path}")
+    _print_promotion_campaign(material)
     print(f"  strategy {trial.get('strategy')!r}  universe {len(symbols)} symbols", end="")
     if universe.get("candidate_symbols"):
         print(f" resolved from {len(universe['candidate_symbols'])} candidates")
@@ -3316,6 +3331,41 @@ def _promote_trial(store, args) -> None:
     if not promotable:
         print("  WARNING: this trial did not clear its gates; the config records that verdict.")
     print("  Saving a config never trades it - a human promotes it to live.")
+
+
+def _print_promotion_campaign(material: Dict[str, Any]) -> None:
+    """What went into the config's campaign block, and what could not.
+
+    Including the accounting warning at *promotion* time. It was only raised on load,
+    so a trial from a retired era could be promoted in silence and the mismatch
+    surfaced later, to whoever opened the file rather than to whoever made the choice.
+    """
+    if not material.get("available"):
+        print(f"  campaign : — ({material.get('reason')})")
+        return
+    recipe, evidence = material.get("recipe") or {}, material.get("evidence") or {}
+    if recipe.get("available"):
+        settings = recipe.get("validation") or {}
+        print(f"  recipe   : {', '.join(f'{k}={v}' for k, v in sorted(settings.items())) or '—'}")
+    else:
+        print(f"  recipe   : — ({recipe.get('reason')})")
+    family = evidence.get("family_n_trials")
+    print(
+        f"  evidence : accounting v{evidence.get('accounting')}, "
+        f"{len(evidence.get('trial_ids') or [])} trial id(s)"
+        + (f", family has tried {family}" if family else "")
+    )
+    if not evidence.get("comparable_with_current_engine"):
+        print(
+            f"  WARNING: this trial was measured under accounting v{evidence.get('accounting')} "
+            f"and this engine is v{evidence.get('current_accounting')}. The recipe still\n"
+            "  applies; the recorded metrics do not, and must not be compared with a fresh run."
+        )
+    if evidence.get("quarantined"):
+        print(
+            f"  WARNING: this trial is quarantined — {evidence.get('quarantine_reason')}. "
+            "It is being\n  promoted anyway, and the config records that."
+        )
 
 
 def _print_trial_detail(store, args) -> None:
@@ -3332,6 +3382,27 @@ def _print_trial_detail(store, args) -> None:
     print(format_trial_detail(trial))
     if trial.get("trades"):
         print(format_trial_trades(trial["trades"], limit=args.trades_limit))
+
+
+def _print_campaign(store, args) -> None:
+    """What validated a trial, without writing a config from it.
+
+    The same block `promote` embeds. Readable on its own because deciding whether to
+    promote something means reading what validated it *first*, and the only way to see
+    that used to be to promote it and open the file.
+    """
+    import json
+
+    from tradeflow.analytics.reporting import format_campaign_material
+    from tradeflow.services.campaign import campaign_material
+
+    material = campaign_material(store, args.trial_id, journal_path=getattr(args, "journal", None))
+    if args.json:
+        print(json.dumps(material, indent=2, default=str))
+        return
+    print(format_campaign_material(material))
+    if not material.get("available"):
+        raise SystemExit(1)
 
 
 def _print_trial_analysis(store, args) -> None:
@@ -3459,16 +3530,12 @@ def _missing_extra_message(extra: str, what: str) -> str:
 def _invocation(command: str, *, make_target: Optional[str] = None) -> str:
     """How to run ``command`` on the copy that is actually running.
 
-    An installed copy has no ``main.py`` and no Makefile, so "python main.py verdict"
-    and "make demo" send the reader looking for files that were never there. The extras
-    rows already phrase themselves this way; these did not, and they are the lines a
-    first run ends on.
+    Delegates: services print instructions too, and two copies of this decision is how
+    one surface starts telling a reader to run a file the other knows is not there.
     """
-    from tradeflow.settings import running_from_checkout
+    from tradeflow.services.setup import invocation
 
-    if not running_from_checkout():
-        return f"tradeflow {command}"
-    return f"make {make_target}" if make_target else f"python main.py {command}"
+    return invocation(command, make_target=make_target)
 
 
 # The book limits a live run may override from the command line, and the
@@ -5917,6 +5984,17 @@ def build_parser() -> argparse.ArgumentParser:
         "incomparable when you opt in",
     )
     t_compare.add_argument("--json", action="store_true", help="Emit the report as JSON")
+
+    t_campaign = trials_sub.add_parser(
+        "campaign",
+        help="What validated a trial: its recipe, its evidence, and what is still recoverable",
+    )
+    _add_db_flag(t_campaign)
+    t_campaign.add_argument("trial_id", help="The trial id (see `trials list`)")
+    t_campaign.add_argument(
+        "--journal", default=None, help="Journal path (default: logs/research_journal.jsonl)"
+    )
+    t_campaign.add_argument("--json", action="store_true", help="Emit the block as JSON")
 
     t_best = trials_sub.add_parser(
         "best", help="The honest leaderboard: DSR-ranked, family n_trials always shown"
