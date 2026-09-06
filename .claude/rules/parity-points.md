@@ -107,8 +107,9 @@ reading the manifest — reading it is exactly what missed this.
 *Guarded by* `tests/test_packaging.py`.
 
 **Installed copy ↔ checkout** — every instruction printed to a user. `make`, `python
-main.py`, `uv sync`, and `.env.example` do not exist for an installed reader. Use the
-`_invocation` helper rather than a literal.
+main.py`, `uv sync`, and `.env.example` do not exist for an installed reader. Use
+`services.setup.invocation` (the CLI's `_invocation` delegates to it) rather than a
+literal — services print instructions too.
 *Guarded by* `tests/test_setup.py`, `tests/test_surface_parity.py`.
 
 **Strategy convention ↔ engine execution** — `generate_signals` keys a signal at the bar
@@ -155,9 +156,81 @@ against half its evidence, with nothing erroring. Now one definition in
 *Guarded by* `tests/test_surface_parity.py` — kept, because the constants still exist
 and could be re-pointed.
 
+**The declared schema ↔ the tables actually on disk** — `store/trials._SCHEMA` says what
+the index is; the SQLite file says what it *is*, and the two are separate objects that
+were kept in step by a version stamp that could not see either one. `CREATE TABLE IF NOT
+EXISTS` is a no-op on a table that already exists with the wrong columns, and `rebuild()`
+emptied the tables rather than recreating them, so a schema change reached every fresh
+database and no existing one — while stamping the new version onto the old shape. A store
+written before the quarantine columns therefore reported the current version and raised
+`no such column: contaminated_at` the moment anyone quarantined anything — which is to say
+`trials mark-contaminated` was dead on every store that already existed, and it was
+shipped that way. `best()` was worse: it filters quarantine in Python, so it silently
+ranked rows somebody had quarantined.
+
+Now every open compares the file's real shape against a database built from `_SCHEMA`
+itself — never a hand-written list of columns, which would be a third statement of the
+same thing to forget — and a mismatch drops the derived tables, recreates them and
+replays. The version stamp is one of three triggers, not the trigger. Dropping is safe
+for exactly one reason, and it is the precondition to check before ever extending this:
+**every column of every table here is reconstructable from the journal**, quarantine
+flags included. A rebuild refuses rather than replacing real rows with an empty index
+when the journal cannot be read.
+*Guarded by* `tests/test_trial_store.py`, which builds a store from the *shipped* v4 DDL
+rather than from today's schema minus a column, and covers the case a version comparison
+cannot see: a current stamp on a stale table.
+
+**The exit-reason split over a live result ↔ over a recorded one** — *converged*. The
+backtest's "Where the P&L came from" block grouped a pandas frame in the CLI; asking the
+same question of a *recorded* trial reads a stored `{columns, rows}` table. Two
+implementations of one idea, one printed under every backtest and one reached from the
+trial browser, differing in the thing that matters most about them — whether the rows
+they were given are all of the run's trades. `analytics.trade_analytics` is the one
+definition and the CLI block is a renderer over it, reaching it through
+`trades_payload(frame, max_rows=None)` so the live path declares itself complete rather
+than being assumed so.
+*Guarded by* `tests/test_trade_analytics.py`.
+
+**Trial-analytics knobs across CLI and MCP** — `trials analyze` / `analyze_trial` and
+`trials compare` / `compare_trials`. Both surfaces enumerate their flags from the parser
+and must have a counterpart in the MCP signature, and both *defaults* are compared too:
+`allow_partial` and `min_overlap`. A capped trade table summed silently on one surface
+and refused on the other is the same trial answering one question two ways depending on
+who asked, which is what a shared default exists to prevent.
+*Guarded by* `tests/test_surface_parity.py`.
+
+**One provenance format, wherever a config is written** — `save_config` is the
+portability format and campaign material is a *field* of it (`provenance.campaign`),
+never a second artifact beside it. A campaign export living somewhere else would be a
+second provenance schema, which is the hazard this list exists for: two files claiming
+to say how a config was produced, drifting, with neither one wrong enough to notice.
+The MCP `save_config` tool builds its `Provenance` from the same dataclass, so a block
+the dataclass does not accept fails there while `trials promote` succeeds — two schemas
+by accident rather than by decision.
+*Guarded by* `tests/test_campaign_material.py`, which writes a config over each surface
+and reads the same block back, and checks a pre-campaign config still loads.
+
+**How to invoke this copy** — *converged*. `cli._invocation` was the helper the
+installed-copy-vs-checkout entry names, and it lived in the CLI, so a *service* that
+needed to print an instruction — a config's campaign block naming the command that
+reads its stored trades — had nowhere to get the answer but a second copy. Now
+`services.setup.invocation`, with the CLI delegating.
+*Guarded by* `tests/test_setup.py`, `tests/test_surface_parity.py`,
+`tests/test_campaign_material.py`.
+
+**Opening the trial store** — *converged*. It was three copies, not the two listed here:
+`cli._open_trial_store`, `services.analysis._open_trial_store` and
+`mcp.server._trial_store`, each deciding for itself which journal to index — the one
+decision they must never disagree about, since the multiple-testing correction rests on
+there being one journal. One definition in `services.audit.open_trial_store`, which is
+where it has to live: the default must be `audit.default_trial_journal()` rather than
+`store.trials.default_journal_path()`, because those two resolve alike in production and
+differ under a redirected journal, which is every test in the suite.
+*Guarded by* `tests/test_surface_parity.py`, which opens all three under a redirect and
+compares the paths they reach, rather than three tests that each pass.
+
 Still parallel and **unguarded**: `cli._find_cached_trial` / `services._find_cached_trial`,
-`cli._open_trial_store` / `services._open_trial_store`, `cli._worker_data_spec` /
-`services._worker_data_spec`, `parallel._build_cost_model` /
+`cli._worker_data_spec` / `services._worker_data_spec`, `parallel._build_cost_model` /
 `services._build_cost_model`. Each is a candidate for delegation.
 
 ## Finding a new one

@@ -32,6 +32,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from tradeflow.analytics.series_comparison import MIN_OVERLAP as SERIES_MIN_OVERLAP
 from tradeflow.marketdata.base import MarketDataProvider
 from tradeflow.services.registry import STRATEGIES
 from tradeflow.settings import DATA_FEEDS
@@ -198,28 +199,16 @@ def _vintage_stamp(data_client, universe: List[str], timeframe: str, start: Any,
 
 @contextlib.contextmanager
 def _open_trial_store(journal_path: Optional[Any] = None):
-    """A trial store against ``journal_path`` (default: the current
-    ``audit.DEFAULT_TRIAL_JOURNAL``), or ``None`` on any failure to open one.
+    """A trial store against ``journal_path``, or ``None`` if one cannot be opened.
 
-    v1 of the trial store is passive and derived (see ``tradeflow.store.trials``): a
-    broken store must never break the command it's attached to, memoization
-    included - every caller here treats ``None`` as "skip memoization, run
-    normally," never as an error to propagate.
+    Delegates: the CLI, the analysis service and the MCP server each had their own
+    copy of this, opening the same file the same way and free to drift on which
+    journal they reached for.
     """
-    from tradeflow.services import audit
-    from tradeflow.store.trials import TrialStore, db_path_for_journal
+    from tradeflow.services.audit import open_trial_store
 
-    path = journal_path or audit.DEFAULT_TRIAL_JOURNAL
-    try:
-        store = TrialStore(db_path_for_journal(path), journal_path=path)
-    except Exception:  # noqa: BLE001
-        logger.warning("Trial store unavailable; memoization disabled for this run", exc_info=True)
-        yield None
-        return
-    try:
+    with open_trial_store(journal_path) as store:
         yield store
-    finally:
-        store.close()
 
 
 def _find_cached_trial(
@@ -595,6 +584,10 @@ def cmd_backtest(args) -> None:
     _print_net_cap_derivation(result, strategy.position_limits())
     _print_verdicts_for_backtest(result)
     _print_exit_concentration(result)
+    if getattr(args, "excursion", False):
+        from tradeflow.analytics.excursion import excursion_lines
+
+        print("\n".join(excursion_lines(getattr(result, "excursion", {}) or {})))
     if getattr(args, "causality", False):
         _print_causality_for_backtest(args, data_client, universe)
     if getattr(args, "cost_stress", False):
@@ -2701,26 +2694,29 @@ def _print_exit_concentration(result) -> None:
     A headline return says nothing about where it came from. A book whose entire edge
     is one exit path is a bet on that path's fill assumption, and nothing in the
     summary metrics distinguishes it from one whose edge is spread across exits.
+
+    The split itself is computed in `analytics.trade_analytics`, which is also what
+    answers this question about a *recorded* trial. Two implementations of one idea -
+    one over a live frame, one over a stored table - would drift while both looked
+    right, and this one is printed under every backtest.
     """
+    from tradeflow.analytics.reporting import format_exit_concentration
+    from tradeflow.analytics.trade_analytics import trade_analytics
+    from tradeflow.services.analysis import trades_payload
+
     trades = getattr(result, "trades", None)
     if trades is None or len(trades) == 0 or "exit_reason" not in trades:
+        # Short-circuited before any conversion. Without the column there is no block to
+        # print, and building the whole table to discover that is work for nothing.
         return
-    grouped = trades.groupby("exit_reason")["pnl"].agg(["count", "sum"])
-    total_abs = grouped["sum"].abs().sum()
-    if total_abs <= 0:
-        return
-    print("\n=== Where the P&L came from ===")
-    print(f"  {'exit':16}{'trades':>8}{'share':>8}{'net P&L':>14}")
-    for reason, row in grouped.sort_values("sum", ascending=False).iterrows():
-        share = row["count"] / len(trades)
-        print(f"  {str(reason):16}{int(row['count']):>8}{share:>7.1%}${row['sum']:>13,.0f}")
-    winners = grouped[grouped["sum"] > 0]["sum"]
-    if len(winners) and winners.max() / winners.sum() > 0.9:
-        top = winners.idxmax()
-        print(
-            f"  Nearly all of the gain comes from {top}. The result is a bet on that "
-            f"exit's\n  fill assumption - stress it before believing the headline."
-        )
+    # An in-memory result is the whole frame by definition, so no ceiling: the totals
+    # below are the run's, not a prefix of it. `jsonable=False` because nothing here is
+    # being serialized - that coercion is a storage concern and it is ~85% of the cost
+    # of converting a large frame.
+    report = trade_analytics(trades_payload(trades, max_rows=None, jsonable=False))
+    lines = format_exit_concentration(report)
+    if lines:
+        print(lines)
 
 
 def _print_fill_stress(data_client, strategy_name: str, universe, args, tuned) -> None:
@@ -3113,6 +3109,11 @@ def cmd_trials(args) -> None:
             print(f"Schema  : v{info['schema_version']}")
             print(f"Rows    : {info['rows']}")
             print(f"Journal : {info['journal_lines']} lines ({info['journal_trial_lines']} trials)")
+            if not info.get("journal_readable"):
+                print(
+                    "Journal : UNREADABLE — the record these rows were built from is not "
+                    "there. They cannot be rebuilt; restore it before running anything else"
+                )
             if info["orphaned_rows"]:
                 print(f"Orphaned: {info['orphaned_rows']} row(s) with no strategy (session_start missing)")
             if info.get("contaminated_rows"):
@@ -3120,17 +3121,31 @@ def cmd_trials(args) -> None:
                     f"Quarantined: {info['contaminated_rows']} row(s) — never served as a memo or "
                     "ranked, and still counted toward the multiple-testing total"
                 )
+            elif info.get("contaminated_rows") is None:
+                print("Quarantined: unknown — this index has no quarantine column (see below)")
+            for problem in info.get("schema_drift") or []:
+                print(f"Schema  : {problem}")
             if info["drift"]:
                 print(
-                    "\nDRIFT DETECTED — rows undercount journaled trials, or rows are orphaned. Run `trials rebuild`."
+                    "\nDRIFT DETECTED — rows undercount journaled trials, rows are orphaned, the "
+                    "index does not match the schema this build declares, or its journal is "
+                    "unreadable. Run `trials rebuild` (which refuses the last case rather than "
+                    "emptying the index)."
                 )
             else:
                 print("\nOK — no drift detected.")
             return
 
         if args.trials_command == "rebuild":
+            from tradeflow.store.trials import TrialStoreRebuildRefused
+
             journal = args.journal or DEFAULT_JOURNAL_PATH
-            stats = store.rebuild(args.journal)
+            try:
+                stats = store.rebuild(args.journal)
+            except TrialStoreRebuildRefused as exc:
+                # The reason is written for a reader; a traceback here would replace
+                # it with a stack and lose the remedy it names.
+                sys.exit(str(exc))
             print(
                 f"Rebuilt {stats['rows']} trial rows from {stats['journal_lines']} journal lines ({journal})."
             )
@@ -3142,6 +3157,18 @@ def cmd_trials(args) -> None:
 
         if args.trials_command == "show":
             _print_trial_detail(store, args)
+            return
+
+        if args.trials_command == "analyze":
+            _print_trial_analysis(store, args)
+            return
+
+        if args.trials_command == "compare":
+            _print_trial_comparison(store, args)
+            return
+
+        if args.trials_command == "campaign":
+            _print_campaign(store, args)
             return
 
         if args.trials_command == "best":
@@ -3236,6 +3263,7 @@ def _promote_trial(store, args) -> None:
     """
     from tradeflow.optimization.config_store import Provenance, save_config
     from tradeflow.services.audit import universe_for_trial
+    from tradeflow.services.campaign import campaign_material
 
     trial = store.get_trial(args.trial_id)
     if trial is None:
@@ -3249,7 +3277,12 @@ def _promote_trial(store, args) -> None:
             "Re-run `trials show` to see why, or pass --force to save it with that verdict recorded."
         )
 
-    universe = universe_for_trial(args.trial_id) or {}
+    # Through the same journal the campaign block is read from. Both the resolved
+    # universe and the validation recipe live in the journal rather than the index, so
+    # a `--db` pointed at an archived store needs `--journal` with it — and without
+    # that this call did not merely degrade, it exited saying the trial had no universe.
+    journal_path = getattr(args, "journal", None)
+    universe = universe_for_trial(args.trial_id, journal_path) or {}
     symbols = universe.get("symbols")
     if not symbols:
         sys.exit(
@@ -3265,6 +3298,13 @@ def _promote_trial(store, args) -> None:
     cost = recorded.pop("_cost", None)
     params = {name: value for name, value in recorded.items() if not name.startswith("_")}
 
+    # What validated it, not just what it validated to. A promoted row carries the
+    # chosen parameters; on its own it cannot say what recipe produced them, so the
+    # config could not answer "what was this checked against". Materialised from the
+    # journal, which already recorded all of it — nothing is re-run.
+    material = campaign_material(store, args.trial_id, journal_path=journal_path)
+    recipe = material.get("recipe") or {}
+
     path = save_config(
         args.save_config,
         strategy=trial.get("strategy"),
@@ -3274,7 +3314,8 @@ def _promote_trial(store, args) -> None:
         symbols=symbols,
         candidate_symbols=universe.get("candidate_symbols"),
         provenance=Provenance(
-            objective="",
+            objective=(recipe.get("objective") or ""),
+            method=str((recipe.get("validation") or {}).get("method") or ""),
             windows={"start": trial.get("window_start"), "end": trial.get("window_end")},
             oos_metrics=trial.get("metrics") or {},
             n_trials=int(trial.get("n_trials_in_session") or 1),
@@ -3282,11 +3323,13 @@ def _promote_trial(store, args) -> None:
             git_sha=trial.get("git_sha"),
             timestamp=trial.get("ts"),
             accounting=int(trial.get("accounting") or 1),
+            campaign=material,
             notes=f"promoted from trial {args.trial_id}"
             + ("" if promotable else " (NOT promotable at the time of promotion)"),
         ),
     )
     print(f"Promoted trial {args.trial_id} -> {path}")
+    _print_promotion_campaign(material)
     print(f"  strategy {trial.get('strategy')!r}  universe {len(symbols)} symbols", end="")
     if universe.get("candidate_symbols"):
         print(f" resolved from {len(universe['candidate_symbols'])} candidates")
@@ -3297,6 +3340,41 @@ def _promote_trial(store, args) -> None:
     if not promotable:
         print("  WARNING: this trial did not clear its gates; the config records that verdict.")
     print("  Saving a config never trades it - a human promotes it to live.")
+
+
+def _print_promotion_campaign(material: Dict[str, Any]) -> None:
+    """What went into the config's campaign block, and what could not.
+
+    Including the accounting warning at *promotion* time. It was only raised on load,
+    so a trial from a retired era could be promoted in silence and the mismatch
+    surfaced later, to whoever opened the file rather than to whoever made the choice.
+    """
+    if not material.get("available"):
+        print(f"  campaign : — ({material.get('reason')})")
+        return
+    recipe, evidence = material.get("recipe") or {}, material.get("evidence") or {}
+    if recipe.get("available"):
+        settings = recipe.get("validation") or {}
+        print(f"  recipe   : {', '.join(f'{k}={v}' for k, v in sorted(settings.items())) or '—'}")
+    else:
+        print(f"  recipe   : — ({recipe.get('reason')})")
+    family = evidence.get("family_n_trials")
+    print(
+        f"  evidence : accounting v{evidence.get('accounting')}, "
+        f"{len(evidence.get('trial_ids') or [])} trial id(s)"
+        + (f", family has tried {family}" if family else "")
+    )
+    if not evidence.get("comparable_with_current_engine"):
+        print(
+            f"  WARNING: this trial was measured under accounting v{evidence.get('accounting')} "
+            f"and this engine is v{evidence.get('current_accounting')}. The recipe still\n"
+            "  applies; the recorded metrics do not, and must not be compared with a fresh run."
+        )
+    if evidence.get("quarantined"):
+        print(
+            f"  WARNING: this trial is quarantined — {evidence.get('quarantine_reason')}. "
+            "It is being\n  promoted anyway, and the config records that."
+        )
 
 
 def _print_trial_detail(store, args) -> None:
@@ -3315,6 +3393,70 @@ def _print_trial_detail(store, args) -> None:
         print(format_trial_trades(trial["trades"], limit=args.trades_limit))
 
 
+def _print_campaign(store, args) -> None:
+    """What validated a trial, without writing a config from it.
+
+    The same block `promote` embeds. Readable on its own because deciding whether to
+    promote something means reading what validated it *first*, and the only way to see
+    that used to be to promote it and open the file.
+    """
+    import json
+
+    from tradeflow.analytics.reporting import format_campaign_material
+    from tradeflow.services.campaign import campaign_material
+
+    material = campaign_material(store, args.trial_id, journal_path=getattr(args, "journal", None))
+    if args.json:
+        print(json.dumps(material, indent=2, default=str))
+    else:
+        print(format_campaign_material(material))
+    if not material.get("available"):
+        raise SystemExit(1)
+
+
+def _print_trial_analysis(store, args) -> None:
+    """What a recorded run's trades actually did, without opening SQLite."""
+    import json
+
+    from tradeflow.analytics.reporting import format_trial_analysis
+    from tradeflow.services.analysis import analyze_trial
+
+    report = analyze_trial(store, args.trial_id, allow_partial=args.allow_partial)
+    if report.get("error"):
+        sys.exit(report["error"])
+    if args.json:
+        print(json.dumps(report, indent=2, default=str))
+    else:
+        print(format_trial_analysis(report))
+    # Exit non-zero when nothing could be totalled, so a script that pipes this does
+    # not read an empty report as a run with nothing in it. Checked after rendering
+    # rather than inside the text branch: --json is the form a script actually reads,
+    # so an exit code that only the human-readable path sets is set for nobody.
+    if report.get("status") == "unavailable":
+        raise SystemExit(1)
+
+
+def _print_trial_comparison(store, args) -> None:
+    """Whether two recorded results are in fact the same result."""
+    import json
+
+    from tradeflow.analytics.reporting import format_series_comparison
+    from tradeflow.services.analysis import compare_trials
+
+    report = compare_trials(
+        store,
+        args.trial_ids,
+        min_overlap=args.min_overlap,
+        across_accounting=args.across_accounting,
+    )
+    if args.json:
+        print(json.dumps(report, indent=2, default=str))
+    else:
+        print(format_series_comparison(report))
+    if report["n_compared"] == 0:
+        raise SystemExit(1)
+
+
 def _limit_trial_trades(trial: Dict[str, Any], limit: Optional[int]) -> Dict[str, Any]:
     """Apply ``--trades-limit`` to the JSON form too, and say when it truncated.
 
@@ -3323,6 +3465,11 @@ def _limit_trial_trades(trial: Dict[str, Any], limit: Optional[int]) -> Dict[str
 
     A truncated payload that does not say so is worse than an untruncated one: it looks
     like the whole table. The count of what was dropped travels with it.
+
+    Under its own key. ``truncated`` on a stored table is the *store's* fact - whether
+    the run's trades were capped on the way in, which no flag can undo - and writing
+    this view's row limit over it would replace a permanent one with a cosmetic one
+    under the same name.
     """
     trades = trial.get("trades")
     rows = (trades or {}).get("rows")
@@ -3333,7 +3480,7 @@ def _limit_trial_trades(trial: Dict[str, Any], limit: Optional[int]) -> Dict[str
         "trades": {
             **trades,
             "rows": rows[:limit],
-            "truncated": {"shown": limit, "total": len(rows), "flag": "--trades-limit"},
+            "display_truncated": {"shown": limit, "of_stored": len(rows), "flag": "--trades-limit"},
         },
     }
 
@@ -3394,16 +3541,12 @@ def _missing_extra_message(extra: str, what: str) -> str:
 def _invocation(command: str, *, make_target: Optional[str] = None) -> str:
     """How to run ``command`` on the copy that is actually running.
 
-    An installed copy has no ``main.py`` and no Makefile, so "python main.py verdict"
-    and "make demo" send the reader looking for files that were never there. The extras
-    rows already phrase themselves this way; these did not, and they are the lines a
-    first run ends on.
+    Delegates: services print instructions too, and two copies of this decision is how
+    one surface starts telling a reader to run a file the other knows is not there.
     """
-    from tradeflow.settings import running_from_checkout
+    from tradeflow.services.setup import invocation
 
-    if not running_from_checkout():
-        return f"tradeflow {command}"
-    return f"make {make_target}" if make_target else f"python main.py {command}"
+    return invocation(command, make_target=make_target)
 
 
 # The book limits a live run may override from the command line, and the
@@ -4674,6 +4817,15 @@ def build_parser() -> argparse.ArgumentParser:
     _add_cost_flags(bt)
     _add_limit_flags(bt)
     bt.add_argument(
+        "--excursion",
+        action="store_true",
+        help="How bad the book ever looked *inside* a bar, against how bad its closing "
+        "marks ever showed. The equity curve is marked at each bar's close, so a shallow "
+        "drawdown can sit over a period the book spent in more trouble - and per-trade MAE "
+        "cannot answer that, because a position deep underwater may be a small part of the "
+        "book. Reports both bounds; grades neither",
+    )
+    bt.add_argument(
         "--fill-stress",
         dest="fill_stress",
         action="store_true",
@@ -5778,6 +5930,13 @@ def build_parser() -> argparse.ArgumentParser:
     _add_db_flag(t_promote)
     t_promote.add_argument("trial_id", help="The trial id (see `trials list`)")
     t_promote.add_argument(
+        "--journal",
+        default=None,
+        help="Journal path (default: logs/research_journal.jsonl). The validation recipe "
+        "lives in the journal, not the index, so a --db pointing at an archived store "
+        "needs this too or the promoted config records no recipe",
+    )
+    t_promote.add_argument(
         "--save-config",
         dest="save_config",
         required=True,
@@ -5802,6 +5961,58 @@ def build_parser() -> argparse.ArgumentParser:
         default=25,
         help="How many stored trades to print (the rest are reported as not shown)",
     )
+
+    t_analyze = trials_sub.add_parser(
+        "analyze",
+        help="Exit-reason P&L, win/loss, holding period and excursion for one recorded trial",
+    )
+    _add_db_flag(t_analyze)
+    t_analyze.add_argument("trial_id", help="The trial id (see `trials list`)")
+    t_analyze.add_argument("--json", action="store_true", help="Emit the report as JSON")
+    t_analyze.add_argument(
+        "--allow-partial",
+        dest="allow_partial",
+        action="store_true",
+        help="Total a trade table that was capped at the storage ceiling. Every number "
+        "is then a partial and says so — and no concentration verdict is drawn, because "
+        "which exit carried a run is a claim about all of its trades",
+    )
+
+    t_compare = trials_sub.add_parser(
+        "compare",
+        help="Correlate the recorded return series of two or more trials — are they one result?",
+    )
+    _add_db_flag(t_compare)
+    t_compare.add_argument("trial_ids", nargs="+", help="Two or more trial ids (see `trials list`)")
+    t_compare.add_argument(
+        "--min-overlap",
+        dest="min_overlap",
+        type=int,
+        default=SERIES_MIN_OVERLAP,
+        help=f"Shared dates a pair needs before it is correlated at all (default "
+        f"{SERIES_MIN_OVERLAP}). Below it the pair is refused, not caveated: a correlation "
+        "over a handful of dates is an error bar wearing two decimals",
+    )
+    t_compare.add_argument(
+        "--across-accounting",
+        dest="across_accounting",
+        action="store_true",
+        help="Correlate series recorded under different accounting versions. Off by "
+        "default because the two engines compute different things; the pair is labelled "
+        "incomparable when you opt in",
+    )
+    t_compare.add_argument("--json", action="store_true", help="Emit the report as JSON")
+
+    t_campaign = trials_sub.add_parser(
+        "campaign",
+        help="What validated a trial: its recipe, its evidence, and what is still recoverable",
+    )
+    _add_db_flag(t_campaign)
+    t_campaign.add_argument("trial_id", help="The trial id (see `trials list`)")
+    t_campaign.add_argument(
+        "--journal", default=None, help="Journal path (default: logs/research_journal.jsonl)"
+    )
+    t_campaign.add_argument("--json", action="store_true", help="Emit the block as JSON")
 
     t_best = trials_sub.add_parser(
         "best", help="The honest leaderboard: DSR-ranked, family n_trials always shown"

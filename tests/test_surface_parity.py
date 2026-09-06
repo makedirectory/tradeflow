@@ -445,3 +445,253 @@ def test_a_walk_forward_knob_the_cli_has_is_reachable_over_mcp(flag):
     start = source.index("def run_walk_forward(")
     body = source[start : source.index("return _logged(", start)]
     assert f"{flag}={flag}" in body, f"MCP accepts no {flag}, or accepts it and drops it"
+
+
+# --- trial analytics reach both surfaces the same way -------------------------------
+def _mcp_signature(name: str) -> str:
+    """One MCP tool's parameter list, read out of the server's own source.
+
+    The `def name(` prefix is stripped rather than skipped by line, because a tool
+    whose parameters fit on one line has no second line and would read as taking no
+    parameters at all — a parity check that passes by seeing nothing.
+    """
+    import inspect
+
+    from tradeflow.mcp import server as mcp_server
+
+    source = inspect.getsource(mcp_server)
+    start = source.index(f"def {name}(") + len(f"def {name}(")
+    return source[start : source.index(") -> Dict[str, Any]:", start)]
+
+
+def _parameter_names(signature: str) -> set:
+    """Parameter names out of a signature's source text.
+
+    Split on commas at bracket depth zero rather than by line: a tool whose parameters
+    fit on one line is one line, and `List[str]` and `Optional[Dict[str, Any]]` carry
+    commas of their own.
+    """
+    names, depth, current = set(), 0, ""
+    for char in signature:
+        if char in "[({":
+            depth += 1
+        elif char in "])}":
+            depth -= 1
+        if char == "," and depth == 0:
+            if ":" in current:
+                names.add(current.split(":")[0].strip())
+            current = ""
+        else:
+            current += char
+    if ":" in current:
+        names.add(current.split(":")[0].strip())
+    return names
+
+
+def _cli_subcommand(name: str):
+    from tradeflow.cli import build_parser
+
+    trials = next(
+        parser
+        for action in build_parser()._subparsers._group_actions
+        for cmd, parser in action.choices.items()
+        if cmd == "trials"
+    )
+    return next(
+        parser
+        for action in trials._subparsers._group_actions
+        for cmd, parser in action.choices.items()
+        if cmd == name
+    )
+
+
+@pytest.mark.parametrize(("command", "tool"), [("analyze", "analyze_trial"), ("compare", "compare_trials")])
+def test_every_trial_analytics_flag_the_cli_takes_has_an_mcp_counterpart(command, tool):
+    """Enumerated from the parser rather than listed by hand. A knob added to one
+    surface and not the other fails here instead of being noticed by an agent that
+    cannot notice anything — it just runs the default and reports the result."""
+    cli_dests = {a.dest for a in _cli_subcommand(command)._actions} - {
+        "help",
+        "func",
+        # Transport-shaped, not run-shaped: where the CLI prints and which database
+        # file it opens are not parameters of the analysis.
+        "json",
+        "db",
+    }
+    signature = _mcp_signature(tool)
+    mcp_names = _parameter_names(signature)
+
+    assert cli_dests - mcp_names == set(), f"MCP {tool} is missing {sorted(cli_dests - mcp_names)}"
+
+
+def test_the_minimum_overlap_default_is_one_value_across_every_surface():
+    """Identical construction is not parity if the two callers reach it with different
+    arguments. A comparison refusing below 60 on one surface and below some other
+    number on the other is two different commands wearing one name — and the last time
+    a default differed between surfaces, a walk-forward recorded over one was never
+    found again over the other."""
+    import inspect
+
+    from tradeflow.analytics.series_comparison import MIN_OVERLAP
+    from tradeflow.services.analysis import compare_trials
+
+    cli_default = {a.dest: a.default for a in _cli_subcommand("compare")._actions}["min_overlap"]
+    service_default = inspect.signature(compare_trials).parameters["min_overlap"].default
+
+    assert cli_default == service_default == MIN_OVERLAP
+    # Read from the MCP source rather than the imported symbol, so a literal typed in
+    # place of the constant is caught rather than silently agreeing today.
+    assert "min_overlap: int = SERIES_MIN_OVERLAP" in _mcp_signature("compare_trials")
+
+
+def test_both_surfaces_refuse_a_partial_trade_table_by_default():
+    """`allow_partial` has to default the same way on both. A capped table summed
+    silently on one surface and refused on the other means the same trial answers the
+    same question two different ways depending on who asked."""
+    import inspect
+
+    from tradeflow.services.analysis import analyze_trial
+
+    cli_default = {a.dest: a.default for a in _cli_subcommand("analyze")._actions}["allow_partial"]
+    service_default = inspect.signature(analyze_trial).parameters["allow_partial"].default
+
+    assert cli_default is False and service_default is False
+    assert "allow_partial: bool = False" in _mcp_signature("analyze_trial")
+
+
+def test_the_trial_store_is_opened_one_way():
+    """It was opened three ways: the CLI's, the analysis service's and the MCP
+    server's, each free to differ on *which* journal it indexed — the one decision
+    they must never disagree about, because the multiple-testing correction rests on
+    there being one journal."""
+    import inspect
+
+    from tradeflow.cli import _open_trial_store as cli_opener
+    from tradeflow.mcp.server import _trial_store as mcp_opener
+    from tradeflow.services.analysis import _open_trial_store as service_opener
+
+    for opener in (cli_opener, service_opener, mcp_opener):
+        assert "open_trial_store" in inspect.getsource(opener), (
+            f"{opener.__qualname__} does not delegate to the shared opener"
+        )
+
+
+def test_all_three_openers_reach_the_same_journal(tmp_path, monkeypatch):
+    """And the test that actually compares them, rather than three that each pass.
+
+    The redirect is the case that matters: `store.trials.default_journal_path()` and
+    `services.audit.DEFAULT_TRIAL_JOURNAL` resolve alike in production and differ the
+    moment a journal is redirected, which is every test in this suite.
+    """
+    from tradeflow.cli import _open_trial_store as cli_opener
+    from tradeflow.mcp.server import _trial_store as mcp_opener
+    from tradeflow.services import audit
+    from tradeflow.services.analysis import _open_trial_store as service_opener
+
+    journal = tmp_path / "redirected.jsonl"
+    journal.write_text("")
+    monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", journal, raising=False)
+
+    paths = []
+    for opener in (cli_opener, service_opener, mcp_opener):
+        with opener() as store:
+            paths.append((store.journal_path, store.db_path))
+
+    assert len(set(paths)) == 1, f"the three openers reached different journals: {paths}"
+    assert paths[0][0] == journal
+
+
+# --- review findings ----------------------------------------------------------------
+def test_the_audit_record_names_the_knob_that_changed_the_answer():
+    """Review finding. `compare_trials` logged `trial_ids` and `min_overlap` but not
+    `across_accounting` — the one parameter deciding whether cross-era pairs were
+    computed or refused. An audit trail that cannot tell a default comparison from one
+    that deliberately crossed an accounting boundary is not an audit trail of that
+    decision. `analyze_trial` logs its `allow_partial`; this now matches."""
+    import inspect
+
+    from tradeflow.mcp import server as mcp_server
+
+    source = inspect.getsource(mcp_server)
+    body = source[source.index("def compare_trials(") : source.index("def best_trials(")]
+    inputs = body[body.index("inputs = {") : body.index("with _trial_store()")]
+
+    for knob in ("trial_ids", "min_overlap", "across_accounting"):
+        assert knob in inputs, f"compare_trials does not journal {knob}"
+
+
+def test_promote_and_campaign_read_the_same_journal():
+    """Review finding. `trials campaign` took `--journal` and `trials promote`, which
+    embeds the very same block, did not — so `_promote_trial` always read the default
+    journal however `--db` was pointed. Aimed at an archived store, `campaign` showed
+    the recipe while `promote` wrote `recipe.available: false` into the config: one
+    block, produced two ways, disagreeing."""
+    for command in ("promote", "campaign"):
+        dests = {a.dest for a in _cli_subcommand(command)._actions}
+        assert "journal" in dests, f"trials {command} cannot be pointed at a journal"
+        assert "db" in dests
+
+
+def test_a_promoted_config_finds_the_recipe_in_a_redirected_journal(tmp_path, monkeypatch):
+    """And the test that proves the flag is wired rather than merely accepted: promote
+    against a journal that is not the default, and the recipe has to arrive."""
+    import json
+    from datetime import datetime
+
+    import pandas as pd
+
+    from tradeflow.cli import build_parser
+    from tradeflow.services.analysis import walk_forward_recipe
+    from tradeflow.services.audit import journal_trial
+    from tradeflow.store.trials import db_path_for_journal
+
+    journal = tmp_path / "elsewhere.jsonl"
+    trial_id = journal_trial(
+        "walkforward",
+        strategy="demo_trend",
+        symbols=["AAA"],
+        start=datetime(2024, 1, 1),
+        end=datetime(2024, 4, 30),
+        params={"fast_ema_period": 9},
+        metrics={"sharpe_ratio": 1.0},
+        extra={"promotable": True},
+        returns=pd.Series([0.001] * 90, index=pd.date_range("2024-01-02", periods=90)),
+        dedup_params=walk_forward_recipe(
+            mode="anchored",
+            n_folds=None,
+            train_days=252,
+            test_days=63,
+            embargo_days=5,
+            holdout_days=60,
+            method="grid",
+            objective="sharpe_ratio",
+            max_evals=50,
+            seed=42,
+            cost_key={},
+            limits=None,
+        ),
+        path=journal,
+    )
+    # The default journal is somewhere else entirely, which is the whole point.
+    monkeypatch.setattr(
+        "tradeflow.services.audit.DEFAULT_TRIAL_JOURNAL", tmp_path / "default.jsonl", raising=False
+    )
+    out = tmp_path / "promoted.json"
+    args = build_parser().parse_args(
+        [
+            "trials",
+            "promote",
+            trial_id,
+            "--save-config",
+            str(out),
+            "--db",
+            str(db_path_for_journal(journal)),
+            "--journal",
+            str(journal),
+        ]
+    )
+    args.func(args)
+
+    recipe = json.loads(out.read_text())["provenance"]["campaign"]["recipe"]
+    assert recipe["available"] is True
+    assert recipe["validation"]["train_days"] == 252

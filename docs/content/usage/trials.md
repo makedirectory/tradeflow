@@ -162,6 +162,177 @@ These rules live in the **payload**, not only in the terminal formatting: `--jso
 carries the family counts and the caveat too, so an agent reading this over MCP
 sees the same context a human reads on screen.
 
+## `trials campaign` — what validated this?
+
+```bash
+tradeflow trials campaign a1b2c3d4e5f6
+```
+
+A walk-forward is not one row. It is a **validation recipe** — the folds, the embargo,
+the objective, the search method, and the cost model and book limits folded into its
+identity — plus a chosen parameter set plus the universe that was actually resolved.
+Promoting the winning row captures the middle one, so the config could not say what
+validated it.
+
+All of it was already recorded. The recipe is in the journal, written as the trial's
+dedup identity; the resolved universe is there too, in full, because the store keeps
+only its hash. This reads them back — nothing is re-run.
+
+```
+=== What validated a1b2c3d4e5f6 (walkforward) ===
+
+  RECIPE — how it was validated. Survives an accounting bump.
+    window          2024-01-01 → 2024-06-29
+    train_days      252
+    test_days       63
+    embargo_days    5
+    method          grid
+    objective       sharpe_ratio
+    _limits         {'max_positions': 8}   (folded into its identity)
+
+  EVIDENCE — what was measured, under accounting v5. Valid only there.
+    sharpe_ratio    1.12
+    total_trades    88
+    promotable      yes
+    family n_trials 50
+
+  METADATA — about the record, not about the strategy.
+    recorded        2026-03-01T09:14:22
+    return series   tradeflow trials compare a1b2c3d4e5f6 <other-trial-id>
+    trade table     — not recorded
+```
+
+*(Illustrative figures.)*
+
+**The three labels are the feature.** They age differently, and a reader who cannot
+tell them apart will carry a stale number forward beside a recipe that is still
+perfectly good:
+
+| Section | What it is | What an accounting bump does to it |
+| --- | --- | --- |
+| `recipe` | How it was validated | Nothing — it stays true |
+| `evidence` | What was measured | Invalidates all of it |
+| `metadata` | About the record | Nothing |
+
+A section that could not be assembled says so with a reason. Most trial kinds have no
+separate recipe — a backtest's identity *is* its parameters — and the recipe section
+says that rather than coming back empty, which would read as "validated with no
+settings".
+
+### It lands in the config, not beside it
+
+`trials promote` writes this block into the config's own `provenance.campaign`. There
+is deliberately **no separate campaign export format**: `save_config` is the
+portability format, campaign material is a field of it, and configs written before this
+existed load unchanged and read as *not materialised from a campaign*.
+
+Promotion also warns at promotion time, rather than only when the file is later loaded:
+
+```
+  WARNING: this trial was measured under accounting v3 and this engine is v5. The recipe still
+  applies; the recorded metrics do not, and must not be compared with a fresh run.
+```
+
+Over MCP, `get_campaign_material` returns the same block for an agent to pass through
+to `save_config` verbatim — one schema on both surfaces.
+
+## `trials analyze` — what did those trades actually do?
+
+```bash
+tradeflow trials analyze a1b2c3d4e5f6
+tradeflow trials analyze a1b2c3d4e5f6 --json
+```
+
+Exit-reason P&L, win and loss by reason, holding period, and per-trade excursion for
+one recorded run — the questions that otherwise mean opening SQLite.
+
+```
+=== Trades of a1b2c3d4e5f6 (backtest) ===
+  strategy demo_trend | accounting v5 | recorded 2026-03-01T09:14:22
+  table    : 40 trades
+
+  Overall:
+    Trades          40
+    Wins / losses   28 / 12
+    Win rate        70.0%
+    Net P&L         $8,483
+    Average win     $409
+    Average loss    -$247
+    Expectancy      $212
+    Profit factor   3.86
+
+  By exit reason:
+    exit              trades   share       net P&L  win rate     avg win    avg loss
+    TAKE_PROFIT           26   65.0%        $4,528     65.4%        $431       -$312
+    STOP_LOSS             14   35.0%        $3,955     78.6%        $374        -$54
+
+  Held     : median 6.5 days, p25 5.8, p75 7.2, max 8.0 (40 measured, 0 not)
+  Excursion: per-trade excursion — not the book's aggregate open drawdown
+    adverse     median 2.84%, p90 3.85%, max 5.23% (40 measured, 0 not)
+    favourable  median 4.88%, p90 7.06%, max 9.04% (40 measured, 0 not)
+```
+
+*(Illustrative figures.)* It grades nothing — the register is the one
+[`execution-report`](validation-diagnostics) sets: report the number, say what it does
+not cover, leave the judgement alone.
+
+Three things it will not do:
+
+- **Sum a capped table.** If the run's trades were truncated at the storage ceiling,
+  there are no totals and the command exits non-zero saying why. `--allow-partial`
+  computes them anyway, labels every number as covering the stored rows only, and
+  still draws no concentration verdict — which exit carried a run is a claim about all
+  of its trades.
+- **Report a missing column as a zero distribution.** A table with no `entry_time`
+  says the holding period is not computable from it, rather than reporting that trades
+  lasted no time.
+- **Confuse per-trade excursion with the book's.** A position deep underwater that is
+  a small fraction of the book did not put the book that far underwater. The label is
+  on every excursion figure because that conflation is what makes people rewrite a
+  result they had measured correctly.
+
+## `trials compare` — are these two results one result?
+
+```bash
+tradeflow trials compare a1b2c3d4e5f6 b2c3d4e5f6a1
+```
+
+```
+=== Return-series comparison ===
+  a1b2c3d4e5f6     300 periods, 2024-01-02 → 2024-10-27  (v5, demo_trend)
+  b2c3d4e5f6a1     300 periods, 2024-01-02 → 2024-10-27  (v5, demo_trend)
+
+  a1b2c3d4e5f6 vs b2c3d4e5f6a1  overlap 300 periods, 2024-01-02..2024-10-27
+      correlation +0.98 [+0.98, +0.99]
+
+  1 of 1 pair(s) compared; 0 refused. Minimum overlap 60 periods.
+  Highest: a1b2c3d4e5f6 vs b2c3d4e5f6a1 at +0.98.
+  At that level they are one bet held twice, however differently they were
+  parameterised — promoting both counts a single result as two.
+```
+
+*(Illustrative figures.)* Two candidates that correlate near 1.0 are one candidate. A
+campaign that promotes both believes it has two findings and has one.
+
+**Pairs get refused, not caveated.** A correlation is a claim about a relationship and
+there is no partial version of one:
+
+| Refusal | Why |
+| --- | --- |
+| Fewer than `--min-overlap` shared dates (default 60) | A correlation over a handful of dates is an error bar wearing two decimals |
+| Different accounting versions | The two series came from engines that compute different things. `--across-accounting` computes it anyway and marks the pair incomparable |
+| Either series not recorded | Not every trial kind persists one |
+| Either series flat over the overlap | Nothing to correlate |
+
+Every correlation carries a 95% interval, so one resting on a thin overlap arrives
+visibly wide rather than merely short of decimals. In `--json`, read `pairs` alongside
+`matrix`: the matrix holds `null` where nothing was computed, because a zero there is
+the strong claim that two results move independently — exactly what a refusal cannot
+say.
+
+Both commands are also MCP tools (`analyze_trial`, `compare_trials`), and both journal
+nothing.
+
 ## Keeping trade tables (`--record-trades`)
 
 `backtest` and `walkforward` accept `--record-trades`, which journals the run's
@@ -180,8 +351,29 @@ as *not recorded* — never as zero trades.
 
 Persistence follows the same journal-first pattern as the return series and the
 proposed book: the journal is the source of truth, and `trials rebuild`
-reconstructs the table from it alone. Very large tables are capped, and hitting
-the cap is recorded on the payload rather than silently truncating.
+reconstructs the table from it alone.
+
+### A stored table says whether it is all of them
+
+Very large tables are capped at a storage ceiling, and the cap travels with the rows.
+A trade table has four states and they never render alike:
+
+| What `trials show` prints | What it means |
+| --- | --- |
+| `— (not recorded — pass --record-trades on the run)` | The run did not opt in. Nothing is known about its trades |
+| `0 trades` | It opted in and made none |
+| `1,204 trades` | All of them |
+| `5,000 of 18,432 trades — TRUNCATED at the storage cap…` | A prefix. Any total over these rows is short by the rest |
+
+A fifth reads as *whether that was all of them was not recorded*: a table stored
+before the count was kept. It did not prove completeness, so it is never rendered as
+though it had.
+
+The distinction is not cosmetic — everything that aggregates a stored table (exit-reason
+P&L, win rates, duration) sums exactly these rows, and a capped table that looks complete
+turns a partial sum into a confident wrong number. `--trades-limit` truncates the *view*
+and reports itself separately (`display_truncated` in the JSON); that one is undone by
+raising the flag, and the storage cap is not undone by anything.
 
 ## Maintenance: quarantine a subset, or retire an era
 
@@ -255,6 +447,33 @@ Neither is an MCP tool, and that is a decision rather than an omission. Quaranti
 evidence and retiring an era are operator decisions about a campaign's record, not run
 configuration: one changes what every later leaderboard and memo reports, the other moves
 your files. An agent that believes a trial is contaminated should say so and let you act.
+
+## Index health, and how it repairs itself
+
+The database is **derived**. The journal is the record; the index is a cache over it, and
+deleting the file loses nothing that `trials rebuild` cannot put back.
+
+That is what makes the repair safe. Every time the store is opened it compares the tables
+actually in the file against the schema this build declares, and rebuilds from the journal
+if they differ — so a store written by an older version gets the columns a newer one
+needs, rather than reporting the new version over the old shape. A version stamp alone
+could not catch that: the stamp is written by the rebuild, and the old rebuild emptied the
+tables instead of recreating them.
+
+One case it will not repair, on purpose:
+
+```
+$ tradeflow trials rebuild
+418 recorded trial(s) are indexed here but the journal they came from
+(~/.tradeflow/logs/research_journal.jsonl) cannot be read. Rebuilding would replace
+them with an empty index and the journal is the only other copy. Restore the journal,
+or point --journal at the one this store indexes.
+```
+
+Replaying an absent journal produces an empty index, and an empty index reads as a
+campaign that tried nothing — which would quietly lower the deflation bar every one of
+those trials paid for. `trials status` reports any schema mismatch it could not fix, and
+reports a quarantine count it cannot read as unknown rather than as zero.
 
 ## Not covered here
 

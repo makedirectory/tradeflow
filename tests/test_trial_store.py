@@ -6,10 +6,22 @@ broken today (``n_trials`` resets every session).
 
 import json
 from datetime import datetime
+from pathlib import Path
+
+import pytest
 
 from tradeflow.engine.backtest import ACCOUNTING_VERSION
 from tradeflow.services.audit import audit_log, journal_trial
-from tradeflow.store.trials import TrialStore, db_path_for_journal, params_hash, universe_hash
+from tradeflow.store.trials import (
+    _REBUILD_SENTINEL,
+    SCHEMA_VERSION,
+    TrialStore,
+    TrialStoreRebuildRefused,
+    db_path_for_journal,
+    params_hash,
+    schema_drift,
+    universe_hash,
+)
 
 
 # --- hashing / normalization -------------------------------------------------
@@ -463,3 +475,207 @@ def test_rebuild_parses_research_session_context(tmp_path):
     assert r1["universe_hash"] == universe_hash(["aaa", "bbb"])
     assert r1["window_start"] == "2024-01-01T00:00:00"
     assert store.family_count("periodic", ["aaa", "bbb"], ACCOUNTING_VERSION) == 1 + 8
+
+
+# --- the declared schema vs the tables actually on disk -----------------------
+def _v4_shaped_store(path, *, version="5"):
+    """A database with the pre-quarantine ``trials`` table, stamped however the
+    caller asks.
+
+    Built from the DDL the shipped v4 store used, not from today's ``_SCHEMA`` minus
+    a column: a fixture that agrees with the code it is testing proves nothing.
+    """
+    import sqlite3
+
+    path = Path(path)
+    for suffix in ("", "-wal", "-shm"):
+        leftover = path.with_name(path.name + suffix)
+        if leftover.exists():
+            leftover.unlink()
+    conn = sqlite3.connect(str(path))
+    conn.executescript(
+        """
+        CREATE TABLE trials (
+          id TEXT PRIMARY KEY, session_id TEXT, ts TEXT, kind TEXT NOT NULL,
+          strategy TEXT, universe_hash TEXT NOT NULL, window_start TEXT, window_end TEXT,
+          params_hash TEXT NOT NULL, params_json TEXT NOT NULL, is_sharpe REAL,
+          oos_sharpe REAL, oos_profit_factor REAL, oos_max_dd REAL, deflated_sharpe REAL,
+          efficiency REAL, oos_trades INTEGER, promotable INTEGER,
+          n_trials_in_session INTEGER, accounting INTEGER NOT NULL, git_sha TEXT,
+          seed INTEGER, metrics_json TEXT
+        );
+        CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+        """
+    )
+    conn.execute("INSERT INTO meta VALUES ('schema_version', ?)", (version,))
+    conn.commit()
+    conn.close()
+
+
+def _one_journalled_trial(journal, fast=5):
+    """One journalled trial, returning the run id the journal gave it."""
+    return journal_trial(
+        "backtest",
+        strategy="demo_trend",
+        symbols=["AAA"],
+        start=datetime(2024, 1, 1),
+        end=datetime(2024, 6, 1),
+        params={"fast_ema_period": fast},
+        metrics={"sharpe_ratio": 1.0, "total_trades": 5},
+        path=journal,
+    )
+
+
+def test_a_store_whose_tables_predate_a_column_is_reshaped_not_just_refilled(tmp_path):
+    """The failure this exists to stop: ``mark-contaminated`` raised ``no such column:
+    contaminated_at`` on every store written before the column existed.
+
+    Bumping ``SCHEMA_VERSION`` triggered a rebuild, but the rebuild emptied the tables
+    instead of recreating them, so the file kept its old columns and was stamped with
+    the new version - a store that reported v5 and had a v4 ``trials`` table.
+    """
+    journal = tmp_path / "journal.jsonl"
+    trial_id = _one_journalled_trial(journal)
+    db = tmp_path / "trials.db"
+    _v4_shaped_store(db, version="4")
+
+    with TrialStore(db, journal_path=journal) as store:
+        # The symptom first, so a regression names the defect rather than the check:
+        # this raised sqlite3.OperationalError: no such column: contaminated_at.
+        assert store.mark_contaminated([trial_id], reason="an accounting bump") == 1
+        assert store.contaminated_count() == 1
+        assert schema_drift(store._conn) == []
+        # Replayed from the journal, not lost with the old table.
+        assert len(store.query(strategy="demo_trend", limit=10)) == 1
+
+
+def test_a_current_version_stamp_does_not_excuse_a_stale_table(tmp_path):
+    """The nastier half, and the reason the check cannot be ``version != version``.
+
+    A store already reshaped once by the *old* repair path carries a current stamp on
+    old columns. Trusting the stamp is what left it broken; the shape has to be looked
+    at every open.
+    """
+    journal = tmp_path / "journal.jsonl"
+    trial_id = _one_journalled_trial(journal)
+    db = tmp_path / "trials.db"
+    _v4_shaped_store(db, version=str(SCHEMA_VERSION))  # stamp agrees, table does not
+
+    with TrialStore(db, journal_path=journal) as store:
+        assert store.mark_contaminated([trial_id], reason="an accounting bump") == 1
+        assert schema_drift(store._conn) == []
+
+
+def test_a_conforming_store_is_left_alone(tmp_path):
+    """The other direction. A check that rebuilds a healthy store would replay the
+    whole journal on every open, and a guard that rejects everything is
+    indistinguishable from one that works."""
+    journal = tmp_path / "journal.jsonl"
+    trial_id = _one_journalled_trial(journal)
+    db = tmp_path / "trials.db"
+    with TrialStore(db, journal_path=journal) as store:
+        store.rebuild(journal)
+        assert store._get_meta("last_rebuild_journal_lines") == "1"
+        # Rows written straight to the index, recoverable from nothing. They survive
+        # only if opening the store does not rebuild it.
+        store.record_returns(trial_id, ["2024-01-02"], [0.01])
+
+    with TrialStore(db, journal_path=journal) as reopened:
+        assert schema_drift(reopened._conn) == []
+        assert reopened._returns_summary(trial_id) is not None
+
+
+def test_a_rebuild_refuses_to_replace_real_rows_with_an_empty_index(tmp_path):
+    """A store is derived, but derived from a file that has to be there. With the
+    journal gone, replaying it would report a campaign of zero trials - and the
+    deflation bar that count feeds would drop to nothing with no error anywhere."""
+    journal = tmp_path / "journal.jsonl"
+    _one_journalled_trial(journal)
+    db = tmp_path / "trials.db"
+    with TrialStore(db, journal_path=journal) as store:
+        store.rebuild(journal)
+        assert len(store.query(strategy="demo_trend", limit=10)) == 1
+
+    journal.unlink()
+    with TrialStore(db, journal_path=journal) as store:
+        with pytest.raises(TrialStoreRebuildRefused):
+            store.rebuild(journal)
+        assert len(store.query(strategy="demo_trend", limit=10)) == 1
+
+
+def test_a_missing_journal_still_rebuilds_an_index_with_nothing_to_lose(tmp_path):
+    """The boundary the refusal must not swallow: an empty index and no journal is a
+    fresh store, not a destroyed campaign."""
+    store = TrialStore(tmp_path / "trials.db", journal_path=tmp_path / "absent.jsonl")
+    assert store.rebuild() == {"rows": 0, "journal_lines": 0}
+    store.close()
+
+
+def test_a_mis_shaped_store_whose_journal_is_gone_says_so_instead_of_emptying_itself(tmp_path):
+    """Repair-on-open must inherit the refusal, not route around it — and the store
+    that could not be repaired has to say which columns it is missing, because every
+    later `no such column` traceback traces back to here."""
+    import sqlite3
+
+    db = tmp_path / "trials.db"
+    journal = tmp_path / "absent.jsonl"  # never written
+    _v4_shaped_store(db, version="4")
+    conn = sqlite3.connect(str(db))
+    conn.execute(
+        "INSERT INTO trials (id, kind, strategy, universe_hash, params_hash, params_json, accounting) "
+        "VALUES ('t1', 'backtest', 'demo_trend', 'uh', 'ph', '{}', ?)",
+        (ACCOUNTING_VERSION,),
+    )
+    conn.commit()
+    conn.close()
+
+    with TrialStore(db, journal_path=journal) as store:
+        assert len(store.query(strategy="demo_trend", limit=10)) == 1
+        info = store.status(journal)
+        assert info["schema_drift"], "a store left mis-shaped must say so"
+        assert info["drift"] is True
+        assert info["contaminated_rows"] is None  # unknown, never zero
+
+
+def test_an_interrupted_rebuild_is_repaired_on_the_next_open(tmp_path):
+    """A replay that dies partway leaves a short index under a fresh version stamp,
+    which reads as a complete campaign that happens to be small."""
+    journal = tmp_path / "journal.jsonl"
+    _one_journalled_trial(journal, fast=5)
+    second = _one_journalled_trial(journal, fast=9)
+    db = tmp_path / "trials.db"
+    with TrialStore(db, journal_path=journal) as store:
+        store.rebuild(journal)
+        store._conn.execute("DELETE FROM trials WHERE id = ?", (second,))
+        store._set_meta(_REBUILD_SENTINEL, "1")
+        store._conn.commit()
+
+    with TrialStore(db, journal_path=journal) as store:
+        assert len(store.query(strategy="demo_trend", limit=10)) == 2
+        assert store._get_meta(_REBUILD_SENTINEL) is None
+
+
+def test_a_store_whose_journal_has_gone_missing_does_not_report_itself_healthy(tmp_path):
+    """`drift` compared rows against journal *lines*, and a journal that is not there
+    has none — so `3 rows < 0 lines` was False and the check said OK about the one
+    state it most needed to name. These rows cannot be rebuilt from anything."""
+    journal = tmp_path / "journal.jsonl"
+    _one_journalled_trial(journal)
+    db = tmp_path / "trials.db"
+    with TrialStore(db, journal_path=journal) as store:
+        store.rebuild(journal)
+        assert store.status(journal)["drift"] is False  # the boundary: healthy is healthy
+        assert store.status(journal)["journal_readable"] is True
+
+    journal.unlink()
+    with TrialStore(db, journal_path=journal) as store:
+        info = store.status(journal)
+        assert info["journal_readable"] is False
+        assert info["drift"] is True
+
+
+def test_an_empty_index_with_no_journal_is_a_fresh_store_not_a_broken_one(tmp_path):
+    """The other direction again: nothing indexed and nothing journalled is where
+    everyone starts, and flagging it would make the check noise."""
+    with TrialStore(tmp_path / "trials.db", journal_path=tmp_path / "absent.jsonl") as store:
+        assert store.status()["drift"] is False

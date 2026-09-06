@@ -19,7 +19,8 @@ from tradeflow.analytics.reporting import (
     format_trials_table,
 )
 from tradeflow.engine.backtest import ACCOUNTING_VERSION
-from tradeflow.store.trials import TrialStore
+from tradeflow.services.audit import journal_trial
+from tradeflow.store.trials import TrialStore, db_path_for_journal
 
 # Read from the engine, never copied: a hardcoded number here is a fixture that agrees
 # with a *past* accounting version, and it goes quietly stale the moment one is bumped.
@@ -302,8 +303,107 @@ def test_a_truncated_trade_table_says_so(tmp_path):
     assert payload["total_rows"] == 10
 
     assert trades_payload(None) is None
+
+    # A complete table says so rather than leaving the key out. Absence has to keep
+    # meaning "written before this was recorded"; a payload that simply omits the flag
+    # when all is well makes that unreadable one layer down.
     full = trades_payload(frame)
-    assert "truncated" not in full and full["total_rows"] == 10
+    assert full["truncated"] is False and full["total_rows"] == 10
+
+    # No ceiling at all, for an in-memory result that is the whole frame by definition.
+    uncapped = trades_payload(frame, max_rows=None)
+    assert uncapped["truncated"] is False and len(uncapped["rows"]) == 10
+
+
+def test_a_truncated_trade_table_is_still_truncated_after_the_store_writes_it(tmp_path):
+    """The payload said so and the store dropped it on the floor.
+
+    ``trades_payload`` has always recorded ``total_rows``/``truncated``; the
+    ``trial_trades`` table stored only the columns and rows, so a table capped at the
+    storage ceiling read back indistinguishable from a complete one — and every total
+    taken over it was short by whatever was cut, with nothing saying so.
+    """
+    import pandas as pd
+
+    from tradeflow.services.analysis import trades_payload
+    from tradeflow.store.trials import TrialStore
+
+    frame = pd.DataFrame({"symbol": ["AAA"] * 10, "pnl": range(10)})
+    with TrialStore(tmp_path / "trials.db", journal_path=tmp_path / "j.jsonl") as store:
+        store.record_trades("capped", trades_payload(frame, max_rows=4))
+        store.record_trades("whole", trades_payload(frame))
+
+        capped = store.trades_for("capped")
+        assert capped["truncated"] is True
+        assert capped["total_rows"] == 10 and len(capped["rows"]) == 4
+
+        # Both directions: a complete table must not be labelled as capped.
+        whole = store.trades_for("whole")
+        assert whole["truncated"] is False
+        assert whole["total_rows"] == 10 and len(whole["rows"]) == 10
+
+
+def test_a_trade_table_stored_before_the_count_existed_is_unknown_not_complete(tmp_path):
+    """A row written before the store kept a total did not *prove* it held every
+    trade, and rendering it as complete would put a confident claim on the one thing
+    the record cannot support. Absent is not false."""
+    from tradeflow.store.trials import TrialStore
+
+    with TrialStore(tmp_path / "trials.db", journal_path=tmp_path / "j.jsonl") as store:
+        store.record_trades("old", {"columns": ["symbol", "pnl"], "rows": [["AAA", 1.0]]})
+        stored = store.trades_for("old")
+
+    assert stored["truncated"] is None
+    assert stored["total_rows"] is None
+
+
+def test_the_completeness_of_a_stored_table_survives_a_rebuild(tmp_path):
+    """The journal carries the whole payload, so nothing here may be a fact only the
+    index holds — that is the rule a derived store lives by."""
+    import pandas as pd
+
+    from tradeflow.services.analysis import trades_payload
+    from tradeflow.services.audit import journal_trial
+    from tradeflow.store.trials import TrialStore, db_path_for_journal
+
+    journal = tmp_path / "journal.jsonl"
+    frame = pd.DataFrame({"symbol": ["AAA"] * 10, "pnl": range(10)})
+    trial_id = journal_trial(
+        "backtest",
+        strategy="demo_trend",
+        symbols=["AAA"],
+        start=datetime(2024, 1, 1),
+        end=datetime(2024, 6, 1),
+        params={"fast": 5},
+        metrics={"sharpe_ratio": 1.0},
+        trades=trades_payload(frame, max_rows=4),
+        path=journal,
+    )
+    with TrialStore(db_path_for_journal(journal), journal_path=journal) as store:
+        store.rebuild(journal)
+        rebuilt = store.trades_for(trial_id)
+
+    assert rebuilt["truncated"] is True
+    assert rebuilt["total_rows"] == 10
+
+
+def test_a_capped_table_is_described_as_capped_wherever_it_is_described(tmp_path):
+    """The user-facing half. `trials show` printed "4 trades" for a run that made ten."""
+    from tradeflow.analytics.reporting import describe_trade_table
+
+    capped = {"columns": [], "rows": [[]] * 4, "total_rows": 10, "truncated": True}
+    whole = {"columns": [], "rows": [[]] * 4, "total_rows": 4, "truncated": False}
+    unknown = {"columns": [], "rows": [[]] * 4, "total_rows": None, "truncated": None}
+
+    assert "TRUNCATED" in describe_trade_table(capped)
+    assert "4 of 10" in describe_trade_table(capped)
+    assert describe_trade_table(whole) == "4 trades"
+    assert "not recorded" in describe_trade_table(unknown)
+    # Absent, zero, and capped are three different sentences.
+    assert "not recorded" in describe_trade_table(None)
+    assert describe_trade_table({"columns": [], "rows": [], "total_rows": 0, "truncated": False}) == (
+        "0 trades"
+    )
 
 
 # --- the CLI surface --------------------------------------------------------
@@ -416,3 +516,79 @@ def test_the_rendered_leaderboard_names_each_row_s_kind(store):
     rendered = format_leaderboard(store.best(accounting=ACCOUNTING))
     assert "KIND" in rendered
     assert "walkforward" in rendered
+
+
+# --- review findings: the exit code must not depend on the output format ------------
+@pytest.mark.parametrize(
+    ("argv", "why"),
+    [
+        (("analyze", "no-such-trial-id"), "a trial with no recorded trade table"),
+        (("compare", "no-such-a", "no-such-b"), "two trials with nothing to correlate"),
+        (("campaign", "no-such-trial-id"), "a trial that is not indexed"),
+    ],
+)
+def test_json_output_still_exits_non_zero_when_there_is_no_answer(monkeypatch, tmp_path, capsys, argv, why):
+    """Review finding. All three commands returned from the `--json` branch *before*
+    the exit-code check, so `tradeflow trials analyze $ID --json || alert` saw success
+    on a trial that was never recorded with --record-trades. `--json` is the form a
+    script reads, so an exit code only the human-readable path sets is set for nobody.
+    """
+    import json as json_mod
+
+    from tradeflow import cli as main
+
+    journal = tmp_path / "journal.jsonl"
+    journal.write_text("")
+    monkeypatch.setattr("tradeflow.services.audit.DEFAULT_TRIAL_JOURNAL", journal, raising=False)
+
+    args = main.build_parser().parse_args(["trials", *argv, "--json", "--db", str(tmp_path / "trials.db")])
+    if argv[0] == "analyze":
+        # An unknown id exits with a message on this one; use a real trial with no
+        # trade table so the path under test is "nothing to total", not "no such id".
+        trial_id = journal_trial(
+            "backtest",
+            strategy="s",
+            symbols=["AAA"],
+            start=datetime(2024, 1, 1),
+            end=datetime(2024, 6, 1),
+            params={"fast": 5},
+            metrics={"sharpe_ratio": 1.0},
+            path=journal,
+        )
+        args.trial_id = trial_id
+
+    with pytest.raises(SystemExit) as exc:
+        args.func(args)
+    assert exc.value.code == 1, why
+
+    # And it is still valid JSON, so the caller can read why.
+    printed = capsys.readouterr().out
+    assert json_mod.loads(printed)
+
+
+def test_json_output_exits_zero_when_there_is_an_answer(monkeypatch, tmp_path, capsys):
+    """Both directions: the exit code must not fire on a successful report."""
+    import pandas as pd
+
+    from tradeflow import cli as main
+    from tradeflow.services.analysis import trades_payload
+
+    journal = tmp_path / "journal.jsonl"
+    trial_id = journal_trial(
+        "backtest",
+        strategy="s",
+        symbols=["AAA"],
+        start=datetime(2024, 1, 1),
+        end=datetime(2024, 6, 1),
+        params={"fast": 5},
+        metrics={"sharpe_ratio": 1.0},
+        trades=trades_payload(pd.DataFrame({"pnl": [1.0, -2.0], "exit_reason": ["TP", "SL"]})),
+        path=journal,
+    )
+    monkeypatch.setattr("tradeflow.services.audit.DEFAULT_TRIAL_JOURNAL", journal, raising=False)
+
+    args = main.build_parser().parse_args(
+        ["trials", "analyze", trial_id, "--json", "--db", str(db_path_for_journal(journal))]
+    )
+    args.func(args)  # no SystemExit
+    assert json.loads(capsys.readouterr().out)["status"] == "complete"

@@ -45,6 +45,18 @@ class Provenance:
     #: which is exactly what it is. :func:`build_provenance` always stamps the
     #: current version.
     accounting: int = 1
+    #: What validated this config, when it was materialised from a recorded trial:
+    #: the validation recipe, the evidence measured under one accounting era, and
+    #: metadata about the record. Assembled by
+    #: :func:`tradeflow.services.campaign.campaign_material`.
+    #:
+    #: A *field of this format*, deliberately, rather than a second artifact beside
+    #: it. Two provenance formats is the parity hazard this project has been bitten
+    #: by more than once, and a campaign export living somewhere else would be one
+    #: — the thing you carry forward has to be one file. Empty by default, so a
+    #: config written before this existed loads unchanged and reads as *not
+    #: materialised from a campaign*, which is what it is.
+    campaign: Dict[str, Any] = field(default_factory=dict)
 
 
 def current_git_sha() -> Optional[str]:

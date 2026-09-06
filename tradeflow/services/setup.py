@@ -37,6 +37,25 @@ CREDENTIAL_KEYS = ("APCA_API_KEY_ID", "APCA_API_SECRET_KEY")
 DEFAULT_WARM_UNIVERSE = ("SPY", "AAPL", "MSFT", "NVDA", "AMZN")
 
 
+def invocation(command: str, *, make_target: Optional[str] = None) -> str:
+    """How to run ``command`` on the copy that is actually running.
+
+    An installed copy has no ``main.py`` and no Makefile, so "python main.py verdict"
+    and "make demo" send the reader looking for files that were never there.
+
+    Lives here rather than in the CLI because it is not a CLI concern: a service that
+    tells a reader how to fetch something — a config's campaign block naming the
+    command that reads its stored trades, say — needs the same answer, and a second
+    copy of this decision is how one surface starts printing instructions the other
+    knows are wrong.
+    """
+    from tradeflow.settings import running_from_checkout
+
+    if not running_from_checkout():
+        return f"tradeflow {command}"
+    return f"make {make_target}" if make_target else f"python main.py {command}"
+
+
 def is_placeholder(value: Optional[str]) -> bool:
     """Whether a value means "not actually filled in".
 

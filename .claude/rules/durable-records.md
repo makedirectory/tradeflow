@@ -19,6 +19,24 @@ running migration code — which is cheap precisely because the journal is the t
 Bump it when the schema changes shape. Never write anything into the store that is not
 recoverable from the journal, or the rebuild silently loses it and nothing errors.
 
+**The bump is not the check.** For a while it was, and a store written under the old
+schema opened, got rebuilt, stamped itself with the new version, and kept its old
+columns — because the rebuild emptied the tables instead of recreating them and
+`CREATE TABLE IF NOT EXISTS` does nothing to a table that is already there. Every open
+now compares the file's real shape against a database built from `_SCHEMA` itself, and
+the version stamp is one of three triggers rather than the trigger.
+
+**Dropping is only safe while everything here is replayable**, so check that before
+adding a column, not after. And a rebuild refuses rather than emptying a populated
+index when the journal cannot be read: the store is derived, but derived from a file
+that has to be there.
+
+**The journal carries more than the index does, which is its own hazard.** A trade
+table's `total_rows`/`truncated` were written to the journal and dropped by the table
+that indexed it, so a table capped at the storage ceiling read back as a complete one
+and every total over it was short with nothing saying so. Recoverable-from-the-journal
+is the floor; actually reading back what the journal holds is the requirement.
+
 ### Retiring and quarantining, without rewriting
 
 Two maintenance operations exist and neither edits a record.
