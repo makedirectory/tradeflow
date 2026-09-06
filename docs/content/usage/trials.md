@@ -256,6 +256,33 @@ evidence and retiring an era are operator decisions about a campaign's record, n
 configuration: one changes what every later leaderboard and memo reports, the other moves
 your files. An agent that believes a trial is contaminated should say so and let you act.
 
+## Index health, and how it repairs itself
+
+The database is **derived**. The journal is the record; the index is a cache over it, and
+deleting the file loses nothing that `trials rebuild` cannot put back.
+
+That is what makes the repair safe. Every time the store is opened it compares the tables
+actually in the file against the schema this build declares, and rebuilds from the journal
+if they differ — so a store written by an older version gets the columns a newer one
+needs, rather than reporting the new version over the old shape. A version stamp alone
+could not catch that: the stamp is written by the rebuild, and the old rebuild emptied the
+tables instead of recreating them.
+
+One case it will not repair, on purpose:
+
+```
+$ tradeflow trials rebuild
+418 recorded trial(s) are indexed here but the journal they came from
+(~/.tradeflow/logs/research_journal.jsonl) cannot be read. Rebuilding would replace
+them with an empty index and the journal is the only other copy. Restore the journal,
+or point --journal at the one this store indexes.
+```
+
+Replaying an absent journal produces an empty index, and an empty index reads as a
+campaign that tried nothing — which would quietly lower the deflation bar every one of
+those trials paid for. `trials status` reports any schema mismatch it could not fix, and
+reports a quarantine count it cannot read as unknown rather than as zero.
+
 ## Not covered here
 
 Retention and pruning are deliberately out of scope — append-only history is the

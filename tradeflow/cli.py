@@ -3113,6 +3113,11 @@ def cmd_trials(args) -> None:
             print(f"Schema  : v{info['schema_version']}")
             print(f"Rows    : {info['rows']}")
             print(f"Journal : {info['journal_lines']} lines ({info['journal_trial_lines']} trials)")
+            if not info.get("journal_readable"):
+                print(
+                    "Journal : UNREADABLE — the record these rows were built from is not "
+                    "there. They cannot be rebuilt; restore it before running anything else"
+                )
             if info["orphaned_rows"]:
                 print(f"Orphaned: {info['orphaned_rows']} row(s) with no strategy (session_start missing)")
             if info.get("contaminated_rows"):
@@ -3120,17 +3125,31 @@ def cmd_trials(args) -> None:
                     f"Quarantined: {info['contaminated_rows']} row(s) — never served as a memo or "
                     "ranked, and still counted toward the multiple-testing total"
                 )
+            elif info.get("contaminated_rows") is None:
+                print("Quarantined: unknown — this index has no quarantine column (see below)")
+            for problem in info.get("schema_drift") or []:
+                print(f"Schema  : {problem}")
             if info["drift"]:
                 print(
-                    "\nDRIFT DETECTED — rows undercount journaled trials, or rows are orphaned. Run `trials rebuild`."
+                    "\nDRIFT DETECTED — rows undercount journaled trials, rows are orphaned, the "
+                    "index does not match the schema this build declares, or its journal is "
+                    "unreadable. Run `trials rebuild` (which refuses the last case rather than "
+                    "emptying the index)."
                 )
             else:
                 print("\nOK — no drift detected.")
             return
 
         if args.trials_command == "rebuild":
+            from tradeflow.store.trials import TrialStoreRebuildRefused
+
             journal = args.journal or DEFAULT_JOURNAL_PATH
-            stats = store.rebuild(args.journal)
+            try:
+                stats = store.rebuild(args.journal)
+            except TrialStoreRebuildRefused as exc:
+                # The reason is written for a reader; a traceback here would replace
+                # it with a stack and lose the remedy it names.
+                sys.exit(str(exc))
             print(
                 f"Rebuilt {stats['rows']} trial rows from {stats['journal_lines']} journal lines ({journal})."
             )

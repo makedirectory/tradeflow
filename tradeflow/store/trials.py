@@ -153,6 +153,13 @@ CREATE TABLE IF NOT EXISTS trial_trades (
 );
 """
 
+#: Set while a rebuild is in flight and cleared when it finishes. A replay that dies
+#: partway leaves a half-filled index, and without this the next open would find a
+#: conforming schema with a current version stamp and no reason to look further - a
+#: silently short campaign, which is the one failure this store must never present as
+#: a complete one.
+_REBUILD_SENTINEL = "rebuild_in_progress"
+
 #: Printed beside a leaderboard, in the payload as well as the terminal. Ranking a
 #: campaign's trials and showing the winner is selection bias by construction; the
 #: only honest version says so next to the number, every time.
@@ -271,6 +278,80 @@ def _is_trial_tool(tool: str) -> bool:
     return tool.startswith("trial:") or tool == "research:trial"
 
 
+#: Memoized: the declared shape never changes within a process, and every store open
+#: asks for it.
+_DECLARED_SHAPE: Optional[Dict[str, tuple]] = None
+
+
+def _shape_of(conn: sqlite3.Connection) -> Dict[str, tuple]:
+    """Every table in a database and the columns it actually has."""
+    names = [
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        )
+    ]
+    return {name: tuple(r[1] for r in conn.execute(f"PRAGMA table_info({name})")) for name in names}
+
+
+def declared_shape() -> Dict[str, tuple]:
+    """The shape ``_SCHEMA`` declares, read back from a database built *from it*.
+
+    Deliberately not a hand-written list of tables and columns beside the DDL. A
+    second statement of the same thing is a second thing to forget to update, and the
+    whole point of the conformance check below is to catch a schema that says one
+    thing and a file that says another - a checker with its own idea of the shape
+    could disagree with both.
+    """
+    global _DECLARED_SHAPE
+    if _DECLARED_SHAPE is None:
+        probe = sqlite3.connect(":memory:")
+        try:
+            probe.executescript(_SCHEMA)
+            _DECLARED_SHAPE = _shape_of(probe)
+        finally:
+            probe.close()
+    return _DECLARED_SHAPE
+
+
+def schema_drift(conn: sqlite3.Connection) -> List[str]:
+    """Where the database on disk disagrees with ``_SCHEMA``, in plain words.
+
+    ``CREATE TABLE IF NOT EXISTS`` adds a *table* that is missing and does nothing at
+    all to one that already exists with the wrong columns - so a schema change that
+    adds a column reaches a fresh database and no existing one. The version stamp does
+    not catch it either: the stamp is written by the rebuild, which used to ``DELETE``
+    the rows rather than reshape the tables, leaving a file that declares the current
+    version and does not have its columns.
+
+    An *extra* column counts as drift too. It means the file was written by a newer
+    schema than this code declares, and an older reader over a newer index is exactly
+    as wrong as the reverse - it just fails more quietly.
+    """
+    declared, actual = declared_shape(), _shape_of(conn)
+    problems: List[str] = []
+    for table, columns in sorted(declared.items()):
+        if table not in actual:
+            problems.append(f"table {table!r} is missing")
+            continue
+        missing = [c for c in columns if c not in actual[table]]
+        extra = [c for c in actual[table] if c not in columns]
+        if missing:
+            problems.append(f"{table} is missing column(s) {', '.join(missing)}")
+        if extra:
+            problems.append(f"{table} has unexpected column(s) {', '.join(extra)}")
+    return problems
+
+
+class TrialStoreRebuildRefused(RuntimeError):
+    """A rebuild would have replaced real rows with an empty index.
+
+    Raised only when the journal this store indexes cannot be read *and* the store
+    holds rows. Dropping them then would destroy the only surviving copy of a campaign
+    - the store is derived, but derived from a file that has to be there.
+    """
+
+
 class TrialStore:
     """A SQLite index over the research journal. Derived; safe to delete."""
 
@@ -299,16 +380,45 @@ class TrialStore:
     # Schema
     # ------------------------------------------------------------------ #
     def _ensure_schema(self) -> None:
+        """Create what is absent, then check that what exists is the right shape.
+
+        The version stamp alone is not enough, and believing it was is what shipped a
+        store that reported v5 while its ``trials`` table was still v4 - so
+        ``mark-contaminated`` raised ``no such column`` on every store that predated
+        the column. Three separate things say the index needs rebuilding, and any one
+        of them is sufficient: the stamp disagrees with the code, the file's actual
+        columns disagree with ``_SCHEMA``, or a previous rebuild never finished.
+        """
         self._conn.executescript(_SCHEMA)
-        row = self._conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
-        if row is None:
-            self._set_meta("schema_version", str(SCHEMA_VERSION))
-            self._conn.commit()
-        elif int(row[0]) != SCHEMA_VERSION:
-            logger.warning(
-                "Trial store schema v%s != code v%s; rebuilding from the journal", row[0], SCHEMA_VERSION
-            )
+        reasons: List[str] = []
+
+        if self._get_meta(_REBUILD_SENTINEL):
+            reasons.append("a previous rebuild did not finish")
+
+        stamped = self._get_meta("schema_version")
+        if stamped is not None:
+            try:
+                if int(stamped) != SCHEMA_VERSION:
+                    reasons.append(f"schema v{stamped} != code v{SCHEMA_VERSION}")
+            except (TypeError, ValueError):
+                reasons.append(f"schema version {stamped!r} is unreadable")
+
+        reasons.extend(schema_drift(self._conn))
+
+        if not reasons:
+            if stamped is None:
+                self._set_meta("schema_version", str(SCHEMA_VERSION))
+                self._conn.commit()
+            return
+
+        logger.warning("Trial store needs rebuilding (%s); replaying the journal", "; ".join(reasons))
+        try:
             self.rebuild()
+        except TrialStoreRebuildRefused as exc:
+            # A store must never brick the command it is attached to, and this one is
+            # still readable for everything that does not touch the changed columns.
+            # Saying so beats both a traceback and silence.
+            logger.error("Trial store left as it is: %s", exc)
 
     def _set_meta(self, key: str, value: str) -> None:
         self._conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, value))
@@ -626,19 +736,62 @@ class TrialStore:
         self._conn.commit()
         return reached
 
-    def contaminated_count(self) -> int:
-        return int(
-            self._conn.execute("SELECT COUNT(*) FROM trials WHERE contaminated_at IS NOT NULL").fetchone()[0]
-        )
+    def contaminated_count(self) -> Optional[int]:
+        """How many rows are quarantined, or ``None`` when the file cannot say.
+
+        ``None`` on a store whose repair was refused: the column is genuinely not
+        there, so the honest answer is "unknown", never zero. Zero would read as "we
+        checked and nothing is quarantined" on a file that has never been asked.
+        """
+        try:
+            return int(
+                self._conn.execute(
+                    "SELECT COUNT(*) FROM trials WHERE contaminated_at IS NOT NULL"
+                ).fetchone()[0]
+            )
+        except sqlite3.OperationalError:
+            return None
 
     def rebuild(self, journal_path: Optional[Any] = None) -> Dict[str, int]:
-        """Truncate and replay the journal from scratch. Idempotent: rebuilding
-        twice in a row produces identical rows (dedup is keyed on ``run_id``)."""
+        """Drop the derived tables, recreate them from ``_SCHEMA``, and replay the
+        journal from scratch. Idempotent: rebuilding twice in a row produces identical
+        rows (dedup is keyed on ``run_id``).
+
+        **Drop, not ``DELETE``.** Emptying the tables replays the rows into whatever
+        shape the file already had, so a schema change reached a fresh database and no
+        existing one. Recreating them is what makes ``SCHEMA_VERSION`` mean something,
+        and it is safe for exactly one reason: every column of every table here is
+        reconstructed from the journal, the quarantine flags included - they are
+        replayed from a ``trials:contaminated`` event like any other fact. Nothing may
+        be written into this database that the journal cannot produce again, and
+        checking that is the precondition for dropping anything.
+
+        ``meta`` goes too. It holds only the version stamp and the last replay's line
+        count, and keeping it across a rebuild is precisely how the stamp came to
+        describe a file it did not match.
+
+        Refuses, rather than emptying a populated index, when the journal it indexes
+        cannot be read: the store is derived, but derived from a file that has to be
+        there.
+        """
         journal_path = Path(journal_path) if journal_path else self.journal_path
-        self._conn.execute("DELETE FROM trials")
-        self._conn.execute("DELETE FROM trial_returns")
-        self._conn.execute("DELETE FROM trial_weights")
-        self._conn.execute("DELETE FROM trial_trades")
+        if not self._journal_readable(journal_path):
+            rows = int(self._conn.execute("SELECT COUNT(*) FROM trials").fetchone()[0])
+            if rows:
+                raise TrialStoreRebuildRefused(
+                    f"{rows} recorded trial(s) are indexed here but the journal they came from "
+                    f"({journal_path}) cannot be read. Rebuilding would replace them with an "
+                    "empty index and the journal is the only other copy. Restore the journal, "
+                    "or point --journal at the one this store indexes."
+                )
+
+        for table in sorted(declared_shape()):
+            self._conn.execute(f"DROP TABLE IF EXISTS {table}")
+        self._conn.executescript(_SCHEMA)
+        # Written before the replay and cleared after it, so a rebuild interrupted
+        # halfway is detected on the next open instead of passing as a complete index
+        # under a freshly written version stamp.
+        self._set_meta(_REBUILD_SENTINEL, "1")
         self._conn.commit()
 
         n_lines = 0
@@ -661,9 +814,25 @@ class TrialStore:
 
         self._set_meta("schema_version", str(SCHEMA_VERSION))
         self._set_meta("last_rebuild_journal_lines", str(n_lines))
+        self._conn.execute("DELETE FROM meta WHERE key = ?", (_REBUILD_SENTINEL,))
         self._conn.commit()
         logger.info("Rebuilt trial store: %d rows from %d journal lines", n_rows, n_lines)
         return {"rows": n_rows, "journal_lines": n_lines}
+
+    @staticmethod
+    def _journal_readable(journal_path: Path) -> bool:
+        """Whether the journal can actually be opened and read, not merely named.
+
+        ``exists()`` is not the question. A path that is a directory, or unreadable,
+        or on a mount that has gone away answers True to it and then produces zero
+        lines - which replays as an empty campaign.
+        """
+        try:
+            with journal_path.open() as fh:
+                fh.read(1)
+            return True
+        except OSError:
+            return False
 
     def _ingest_journal_record(self, record: Dict[str, Any], session_ctx: Dict[str, Dict[str, Any]]) -> bool:
         """Parse one journal line; insert a row if it represents a trial. Returns
@@ -1153,16 +1322,32 @@ class TrialStore:
         # exists), so it needs its own check.
         n_orphaned = self._conn.execute("SELECT COUNT(*) FROM trials WHERE strategy IS NULL").fetchone()[0]
         schema_version = self._get_meta("schema_version")
+        # Normally self-healing: opening the store repairs a mis-shaped file. It
+        # survives to here only when the repair was *refused* because the journal
+        # could not be read, which is exactly the state worth naming out loud.
+        shape_problems = schema_drift(self._conn)
+        # The row-vs-line comparison cannot see this one: with no journal there are no
+        # lines, and `rows < 0 lines` is False, so an index whose source has gone
+        # missing reported itself healthy. It is the opposite of healthy - the record
+        # behind these rows is the thing that is gone, and they cannot be rebuilt.
+        journal_readable = self._journal_readable(journal_path)
         return {
             "db_path": str(self.db_path),
             "journal_path": str(journal_path),
+            "journal_readable": journal_readable,
             "rows": n_rows,
             "journal_lines": n_total_lines,
             "journal_trial_lines": n_trial_lines,
             "orphaned_rows": n_orphaned,
             "contaminated_rows": self.contaminated_count(),
             "schema_version": int(schema_version) if schema_version is not None else None,
-            "drift": n_rows < n_trial_lines or n_orphaned > 0,
+            "schema_drift": shape_problems,
+            "drift": (
+                n_rows < n_trial_lines
+                or n_orphaned > 0
+                or bool(shape_problems)
+                or (n_rows > 0 and not journal_readable)
+            ),
         }
 
 

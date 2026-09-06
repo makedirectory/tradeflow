@@ -155,8 +155,35 @@ against half its evidence, with nothing erroring. Now one definition in
 *Guarded by* `tests/test_surface_parity.py` — kept, because the constants still exist
 and could be re-pointed.
 
+**The declared schema ↔ the tables actually on disk** — `store/trials._SCHEMA` says what
+the index is; the SQLite file says what it *is*, and the two are separate objects that
+were kept in step by a version stamp that could not see either one. `CREATE TABLE IF NOT
+EXISTS` is a no-op on a table that already exists with the wrong columns, and `rebuild()`
+emptied the tables rather than recreating them, so a schema change reached every fresh
+database and no existing one — while stamping the new version onto the old shape. A store
+written before the quarantine columns therefore reported the current version and raised
+`no such column: contaminated_at` the moment anyone quarantined anything — which is to say
+`trials mark-contaminated` was dead on every store that already existed, and it was
+shipped that way. `best()` was worse: it filters quarantine in Python, so it silently
+ranked rows somebody had quarantined.
+
+Now every open compares the file's real shape against a database built from `_SCHEMA`
+itself — never a hand-written list of columns, which would be a third statement of the
+same thing to forget — and a mismatch drops the derived tables, recreates them and
+replays. The version stamp is one of three triggers, not the trigger. Dropping is safe
+for exactly one reason, and it is the precondition to check before ever extending this:
+**every column of every table here is reconstructable from the journal**, quarantine
+flags included. A rebuild refuses rather than replacing real rows with an empty index
+when the journal cannot be read.
+*Guarded by* `tests/test_trial_store.py`, which builds a store from the *shipped* v4 DDL
+rather than from today's schema minus a column, and covers the case a version comparison
+cannot see: a current stamp on a stale table.
+
 Still parallel and **unguarded**: `cli._find_cached_trial` / `services._find_cached_trial`,
-`cli._open_trial_store` / `services._open_trial_store`, `cli._worker_data_spec` /
+`cli._open_trial_store` / `services._open_trial_store` / `mcp.server._trial_store` (three
+copies, not two — the MCP one opens the default journal and takes no override, so a
+`--journal` a user passed on the CLI is not a thing the same question asked over MCP can
+reach), `cli._worker_data_spec` /
 `services._worker_data_spec`, `parallel._build_cost_model` /
 `services._build_cost_model`. Each is a candidate for delegation.
 
