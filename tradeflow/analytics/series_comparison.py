@@ -198,6 +198,25 @@ def _pair(
     return out
 
 
+def _deduplicate(entries: Sequence[Dict[str, Any]]) -> "tuple[List[Dict[str, Any]], List[str]]":
+    """Entries with repeated trial ids collapsed to their first occurrence.
+
+    A trial correlated against itself is 1.0 by construction and says nothing, and the
+    matrix below is keyed by trial id - so a repeat silently overwrote one cell and
+    left another unwritten. Reported rather than dropped quietly: asking about three
+    ids and being answered about two is worth a line.
+    """
+    seen: Dict[str, Dict[str, Any]] = {}
+    duplicates: List[str] = []
+    for entry in entries:
+        trial_id = entry.get("trial_id")
+        if trial_id in seen:
+            duplicates.append(trial_id)
+            continue
+        seen[trial_id] = entry
+    return list(seen.values()), duplicates
+
+
 def compare_series(
     entries: Sequence[Dict[str, Any]],
     *,
@@ -211,6 +230,12 @@ def compare_series(
     in that order deliberately, because the matrix is the part that reads as an answer
     and the refusals are the part that says how much of one it is.
     """
+    # Deduplicated first, and the duplicates counted. The same id given twice used to
+    # collapse in the matrix index below, so a pair that *was* compared got written to
+    # one cell and the other was left holding None - which this module defines as a
+    # refusal. A paste slip was enough to make the matrix say two results are
+    # incomparable when they had just been compared.
+    entries, duplicates = _deduplicate(entries)
     summaries = [series_summary(entry) for entry in entries]
     ids = [entry.get("trial_id") for entry in entries]
 
@@ -241,6 +266,7 @@ def compare_series(
 
     compared = [p for p in pairs if p["status"] == COMPARED]
     return {
+        "duplicate_trial_ids": duplicates,
         "min_overlap": min_overlap,
         "across_accounting": across_accounting,
         "series": summaries,

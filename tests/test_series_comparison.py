@@ -296,3 +296,29 @@ def test_an_ordinary_correlation_carries_an_interval_and_no_note():
 
     assert pair["interval"] is not None
     assert pair["interval_note"] == ""
+
+
+def test_the_same_trial_id_twice_does_not_blank_a_pair_that_was_compared(_dupes=None):
+    """Review finding. The matrix was keyed by trial id, so a repeated id collapsed to
+    one position: a pair that *was* compared wrote to one cell and left the other
+    holding None — which this module defines as a refusal. `trials compare a a b` is a
+    paste slip away, and it reported two results as incomparable moments after
+    comparing them."""
+    a, _, c = _twins()
+    report = compare_series([_entry("a", a), _entry("a", a), _entry("c", c)])
+
+    assert report["duplicate_trial_ids"] == ["a"]
+    assert report["matrix"]["trial_ids"] == ["a", "c"]
+    # Every off-diagonal cell now reflects a real verdict rather than a lost write.
+    assert report["matrix"]["values"][0][1] is not None
+    assert report["matrix"]["values"][0][1] == report["matrix"]["values"][1][0]
+    assert report["n_pairs"] == 1  # a-vs-a is not a comparison
+
+
+def test_distinct_ids_are_untouched_by_the_deduplication():
+    """Both directions: dedup must not eat a legitimate three-way comparison."""
+    a, b, c = _twins()
+    report = compare_series([_entry("a", a), _entry("b", b), _entry("c", c)])
+
+    assert report["duplicate_trial_ids"] == []
+    assert report["n_pairs"] == 3

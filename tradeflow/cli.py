@@ -2705,11 +2705,15 @@ def _print_exit_concentration(result) -> None:
     from tradeflow.services.analysis import trades_payload
 
     trades = getattr(result, "trades", None)
-    if trades is None or len(trades) == 0:
+    if trades is None or len(trades) == 0 or "exit_reason" not in trades:
+        # Short-circuited before any conversion. Without the column there is no block to
+        # print, and building the whole table to discover that is work for nothing.
         return
     # An in-memory result is the whole frame by definition, so no ceiling: the totals
-    # below are the run's, not a prefix of it.
-    report = trade_analytics(trades_payload(trades, max_rows=None))
+    # below are the run's, not a prefix of it. `jsonable=False` because nothing here is
+    # being serialized - that coercion is a storage concern and it is ~85% of the cost
+    # of converting a large frame.
+    report = trade_analytics(trades_payload(trades, max_rows=None, jsonable=False))
     lines = format_exit_concentration(report)
     if lines:
         print(lines)
@@ -3273,7 +3277,12 @@ def _promote_trial(store, args) -> None:
             "Re-run `trials show` to see why, or pass --force to save it with that verdict recorded."
         )
 
-    universe = universe_for_trial(args.trial_id) or {}
+    # Through the same journal the campaign block is read from. Both the resolved
+    # universe and the validation recipe live in the journal rather than the index, so
+    # a `--db` pointed at an archived store needs `--journal` with it — and without
+    # that this call did not merely degrade, it exited saying the trial had no universe.
+    journal_path = getattr(args, "journal", None)
+    universe = universe_for_trial(args.trial_id, journal_path) or {}
     symbols = universe.get("symbols")
     if not symbols:
         sys.exit(
@@ -3293,7 +3302,7 @@ def _promote_trial(store, args) -> None:
     # chosen parameters; on its own it cannot say what recipe produced them, so the
     # config could not answer "what was this checked against". Materialised from the
     # journal, which already recorded all of it — nothing is re-run.
-    material = campaign_material(store, args.trial_id, journal_path=getattr(args, "journal", None))
+    material = campaign_material(store, args.trial_id, journal_path=journal_path)
     recipe = material.get("recipe") or {}
 
     path = save_config(
@@ -3399,8 +3408,8 @@ def _print_campaign(store, args) -> None:
     material = campaign_material(store, args.trial_id, journal_path=getattr(args, "journal", None))
     if args.json:
         print(json.dumps(material, indent=2, default=str))
-        return
-    print(format_campaign_material(material))
+    else:
+        print(format_campaign_material(material))
     if not material.get("available"):
         raise SystemExit(1)
 
@@ -3417,10 +3426,12 @@ def _print_trial_analysis(store, args) -> None:
         sys.exit(report["error"])
     if args.json:
         print(json.dumps(report, indent=2, default=str))
-        return
-    print(format_trial_analysis(report))
+    else:
+        print(format_trial_analysis(report))
     # Exit non-zero when nothing could be totalled, so a script that pipes this does
-    # not read an empty report as a run with nothing in it.
+    # not read an empty report as a run with nothing in it. Checked after rendering
+    # rather than inside the text branch: --json is the form a script actually reads,
+    # so an exit code that only the human-readable path sets is set for nobody.
     if report.get("status") == "unavailable":
         raise SystemExit(1)
 
@@ -3440,8 +3451,8 @@ def _print_trial_comparison(store, args) -> None:
     )
     if args.json:
         print(json.dumps(report, indent=2, default=str))
-        return
-    print(format_series_comparison(report))
+    else:
+        print(format_series_comparison(report))
     if report["n_compared"] == 0:
         raise SystemExit(1)
 
@@ -5918,6 +5929,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_db_flag(t_promote)
     t_promote.add_argument("trial_id", help="The trial id (see `trials list`)")
+    t_promote.add_argument(
+        "--journal",
+        default=None,
+        help="Journal path (default: logs/research_journal.jsonl). The validation recipe "
+        "lives in the journal, not the index, so a --db pointing at an archived store "
+        "needs this too or the promoted config records no recipe",
+    )
     t_promote.add_argument(
         "--save-config",
         dest="save_config",

@@ -672,12 +672,15 @@ def format_exit_concentration(report: Dict[str, Any]) -> str:
         win_rate = row.get("win_rate")
         net = row.get("net_pnl")
         share_cell = NOT_RECORDED if share is None else format(share, ".1%")
-        # The sign goes outside the currency symbol; "$-780" reads as a price.
-        net_cell = NOT_RECORDED if net is None else f"{'-' if net < 0 else ''}${abs(net):,.0f}"
+        net_cell = _money(net)
         rate_cell = NOT_RECORDED if win_rate is None else format(win_rate, ".1%")
         lines.append(
             f"  {str(row['exit_reason']):16}{row['trades']:>8}{share_cell:>8}{net_cell:>14}{rate_cell:>10}"
         )
+        if row.get("unmeasured"):
+            # Otherwise the trades column silently fails to sum to the total while the
+            # share column sums to 100%, and nothing on screen says why.
+            lines.append(f"  {'':32}(+{row['unmeasured']} with no P&L recorded, counted in the share)")
     concentration = section.get("concentration") or {}
     share_of_gain = concentration.get("share_of_gain")
     if report.get("status") == "truncated":
@@ -819,13 +822,16 @@ def format_trial_analysis(report: Dict[str, Any]) -> str:
     source = report.get("source") or {}
     lines.append(f"  table    : {describe_trade_table_source(source)}")
 
-    if report.get("status") != "complete":
+    if report.get("status") == "unavailable":
+        # Only here. A truncated report *does* have totals — partial ones, labelled by
+        # the line below — and printing "No totals:" directly above a table of them
+        # contradicts both the table and its own reason string.
         lines.append("")
         lines.append(f"  No totals: {report.get('reason', '')}")
-        if report.get("status") == "unavailable":
-            return "\n".join(lines + [""])
+        return "\n".join(lines + [""])
     if report.get("status") == "truncated":
-        lines.append("  SHOWN ROWS ONLY — every number below is a partial.")
+        lines.append("")
+        lines.append(f"  SHOWN ROWS ONLY — {report.get('reason', '')}")
 
     overall = report.get("overall") or {}
     if overall.get("available") is False:
@@ -864,6 +870,8 @@ def format_trial_analysis(report: Dict[str, Any]) -> str:
                 f"{_money(row.get('net_pnl')):>14}{_cell(row.get('win_rate'), '{:.1%}'):>10}"
                 f"{_money(row.get('avg_win')):>12}{_money(row.get('avg_loss')):>12}"
             )
+            if row.get("unmeasured"):
+                lines.append(f"    {'':24}(+{row['unmeasured']} with no P&L recorded, counted in the share)")
     elif exits:
         lines.append(f"  by exit  : {exits.get('note')}")
 

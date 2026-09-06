@@ -231,3 +231,126 @@ def test_a_partial_table_prints_its_numbers_under_a_label_and_no_verdict():
 def test_a_run_with_no_trades_gets_no_block_rather_than_a_table_of_zeros():
     assert format_exit_concentration(trade_analytics(_table([]))) == ""
     assert format_exit_concentration(trade_analytics(None)) == ""
+
+
+# --- review findings ----------------------------------------------------------------
+def test_a_partial_report_does_not_claim_to_have_no_totals(monkeypatch):
+    """Review finding. The "No totals:" guard fired on any status that was not
+    `complete`, so a truncated report printed it directly above a full table of
+    (partial) totals — contradicting both the table and its own reason string."""
+    from tradeflow.analytics.reporting import format_trial_analysis
+
+    report = trade_analytics(_table(WINNERS_AND_LOSERS, total_rows=1200, truncated=True), allow_partial=True)
+    report.update(trial_id="x", kind="backtest", strategy="s", accounting=5)
+
+    printed = format_trial_analysis(report)
+
+    assert "No totals" not in printed
+    assert "SHOWN ROWS ONLY" in printed
+    assert "Net P&L" in printed  # the totals it does have are still shown
+
+
+def test_an_unavailable_report_still_says_it_has_no_totals():
+    """Both directions: the label has to survive where it is true."""
+    from tradeflow.analytics.reporting import format_trial_analysis
+
+    report = trade_analytics(None)
+    report.update(trial_id="x", kind="backtest", strategy="s", accounting=5)
+
+    printed = format_trial_analysis(report)
+
+    assert "No totals" in printed
+    assert "Net P&L" not in printed
+
+
+def test_the_trades_column_and_the_share_column_agree_about_their_denominator():
+    """Review finding. `trades` counted only rows with a measurable P&L while `share`
+    counted every row with that reason, so on a table with any unreadable P&L the
+    trades column did not sum to the total while the shares summed to 100% — with
+    nothing on screen explaining the gap."""
+    from tradeflow.analytics.reporting import format_exit_concentration
+
+    rows = [_row(100.0, "TP"), _row(None, "TP"), _row(-50.0, "SL")]
+    report = trade_analytics(_table(rows))
+    by_reason = {r["exit_reason"]: r for r in report["exit_reasons"]["rows"]}
+
+    assert by_reason["TP"]["rows"] == 2  # both exited this way
+    assert by_reason["TP"]["trades"] == 1  # one had a measurable P&L
+    assert by_reason["TP"]["unmeasured"] == 1
+    assert sum(r["rows"] for r in report["exit_reasons"]["rows"]) == report["n_trades"]
+    assert sum(r["share_of_trades"] for r in report["exit_reasons"]["rows"]) == pytest.approx(1.0)
+
+    # And the gap is explained on screen rather than left as two columns disagreeing.
+    assert "no P&L recorded" in format_exit_concentration(report)
+
+
+def test_a_table_with_every_p_and_l_measured_prints_no_gap_line():
+    """Both directions: the explanation must not appear where there is nothing to
+    explain."""
+    from tradeflow.analytics.reporting import format_exit_concentration
+
+    assert "no P&L recorded" not in format_exit_concentration(trade_analytics(_table(WINNERS_AND_LOSERS)))
+
+
+def test_the_live_block_does_not_pay_to_serialize_a_frame_it_only_prints(monkeypatch):
+    """Review finding. `_print_exit_concentration` routed a live frame through the
+    storage payload, whose per-cell JSON coercion is most of the cost of converting a
+    large table — paid on every backtest to print five rows, and paid even when there
+    was no exit_reason column to group by."""
+    import pandas as pd
+
+    from tradeflow.services.analysis import trades_payload
+
+    frame = pd.DataFrame(
+        {
+            "exit_reason": ["TP"] * 4,
+            "pnl": [1.0, 2.0, 3.0, -1.0],
+            "entry_time": pd.date_range("2024-01-01", periods=4),
+            "exit_time": pd.date_range("2024-01-08", periods=4),
+        }
+    )
+    seen = {}
+    real = trades_payload
+
+    def spy(f, **kwargs):
+        seen.update(kwargs)
+        return real(f, **kwargs)
+
+    monkeypatch.setattr("tradeflow.services.analysis.trades_payload", spy)
+    from tradeflow.cli import _print_exit_concentration
+
+    class Result:
+        trades = frame
+
+    _print_exit_concentration(Result())
+
+    assert seen == {"max_rows": None, "jsonable": False}
+    # The un-coerced rows carry pandas Timestamps and numpy scalars rather than the
+    # strings and floats the stored form has. The analytics has to read both, or the
+    # cheap path would quietly measure less than the storage path does.
+    cheap = trade_analytics(real(frame, max_rows=None, jsonable=False))
+    stored = trade_analytics(real(frame, max_rows=None))
+    assert cheap["duration"]["median"] == stored["duration"]["median"] == pytest.approx(7.0)
+    assert cheap["overall"]["net_pnl"] == stored["overall"]["net_pnl"] == pytest.approx(5.0)
+
+
+def test_a_result_with_no_exit_reason_column_converts_nothing():
+    """The short-circuit the old groupby had and the converged path lost."""
+    import pandas as pd
+
+    from tradeflow.cli import _print_exit_concentration
+
+    class Result:
+        trades = pd.DataFrame({"pnl": [1.0, 2.0]})
+
+    called = []
+    import tradeflow.services.analysis as analysis_mod
+
+    original = analysis_mod.trades_payload
+    analysis_mod.trades_payload = lambda *a, **k: called.append(1) or original(*a, **k)
+    try:
+        _print_exit_concentration(Result())
+    finally:
+        analysis_mod.trades_payload = original
+
+    assert called == []

@@ -19,7 +19,8 @@ from tradeflow.analytics.reporting import (
     format_trials_table,
 )
 from tradeflow.engine.backtest import ACCOUNTING_VERSION
-from tradeflow.store.trials import TrialStore
+from tradeflow.services.audit import journal_trial
+from tradeflow.store.trials import TrialStore, db_path_for_journal
 
 # Read from the engine, never copied: a hardcoded number here is a fixture that agrees
 # with a *past* accounting version, and it goes quietly stale the moment one is bumped.
@@ -515,3 +516,79 @@ def test_the_rendered_leaderboard_names_each_row_s_kind(store):
     rendered = format_leaderboard(store.best(accounting=ACCOUNTING))
     assert "KIND" in rendered
     assert "walkforward" in rendered
+
+
+# --- review findings: the exit code must not depend on the output format ------------
+@pytest.mark.parametrize(
+    ("argv", "why"),
+    [
+        (("analyze", "no-such-trial-id"), "a trial with no recorded trade table"),
+        (("compare", "no-such-a", "no-such-b"), "two trials with nothing to correlate"),
+        (("campaign", "no-such-trial-id"), "a trial that is not indexed"),
+    ],
+)
+def test_json_output_still_exits_non_zero_when_there_is_no_answer(monkeypatch, tmp_path, capsys, argv, why):
+    """Review finding. All three commands returned from the `--json` branch *before*
+    the exit-code check, so `tradeflow trials analyze $ID --json || alert` saw success
+    on a trial that was never recorded with --record-trades. `--json` is the form a
+    script reads, so an exit code only the human-readable path sets is set for nobody.
+    """
+    import json as json_mod
+
+    from tradeflow import cli as main
+
+    journal = tmp_path / "journal.jsonl"
+    journal.write_text("")
+    monkeypatch.setattr("tradeflow.services.audit.DEFAULT_TRIAL_JOURNAL", journal, raising=False)
+
+    args = main.build_parser().parse_args(["trials", *argv, "--json", "--db", str(tmp_path / "trials.db")])
+    if argv[0] == "analyze":
+        # An unknown id exits with a message on this one; use a real trial with no
+        # trade table so the path under test is "nothing to total", not "no such id".
+        trial_id = journal_trial(
+            "backtest",
+            strategy="s",
+            symbols=["AAA"],
+            start=datetime(2024, 1, 1),
+            end=datetime(2024, 6, 1),
+            params={"fast": 5},
+            metrics={"sharpe_ratio": 1.0},
+            path=journal,
+        )
+        args.trial_id = trial_id
+
+    with pytest.raises(SystemExit) as exc:
+        args.func(args)
+    assert exc.value.code == 1, why
+
+    # And it is still valid JSON, so the caller can read why.
+    printed = capsys.readouterr().out
+    assert json_mod.loads(printed)
+
+
+def test_json_output_exits_zero_when_there_is_an_answer(monkeypatch, tmp_path, capsys):
+    """Both directions: the exit code must not fire on a successful report."""
+    import pandas as pd
+
+    from tradeflow import cli as main
+    from tradeflow.services.analysis import trades_payload
+
+    journal = tmp_path / "journal.jsonl"
+    trial_id = journal_trial(
+        "backtest",
+        strategy="s",
+        symbols=["AAA"],
+        start=datetime(2024, 1, 1),
+        end=datetime(2024, 6, 1),
+        params={"fast": 5},
+        metrics={"sharpe_ratio": 1.0},
+        trades=trades_payload(pd.DataFrame({"pnl": [1.0, -2.0], "exit_reason": ["TP", "SL"]})),
+        path=journal,
+    )
+    monkeypatch.setattr("tradeflow.services.audit.DEFAULT_TRIAL_JOURNAL", journal, raising=False)
+
+    args = main.build_parser().parse_args(
+        ["trials", "analyze", trial_id, "--json", "--db", str(db_path_for_journal(journal))]
+    )
+    args.func(args)  # no SystemExit
+    assert json.loads(capsys.readouterr().out)["status"] == "complete"

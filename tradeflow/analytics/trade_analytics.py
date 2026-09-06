@@ -212,7 +212,14 @@ def exit_reason_breakdown(columns: Dict[str, List[Any]]) -> Dict[str, Any]:
         mask = np.array([r == reason for r in reasons], dtype=bool)
         summary = _win_loss_over(pnl[mask])
         summary["exit_reason"] = reason or "(unlabelled)"
-        summary["share_of_trades"] = (int(mask.sum()) / n_total) if n_total else None
+        # Two counts, because they answer different questions and sharing one name made
+        # them disagree: `rows` is every trade that exited this way, `trades` only those
+        # whose P&L could be measured. The share is of `rows` — a trade with an
+        # unreadable P&L still exited somehow — so the shares sum to one while the
+        # `trades` column may not sum to the total. `unmeasured` is what explains the
+        # gap, and a renderer that drops it leaves the two columns contradicting.
+        summary["rows"] = int(mask.sum())
+        summary["share_of_trades"] = (summary["rows"] / n_total) if n_total else None
         rows.append(summary)
     rows.sort(key=lambda r: (r["net_pnl"] is None, -(r["net_pnl"] or 0.0)))
 

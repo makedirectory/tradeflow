@@ -414,7 +414,9 @@ def compare_trials(
     return report
 
 
-def trades_payload(frame, *, max_rows: Optional[int] = 5000) -> Optional[Dict[str, Any]]:
+def trades_payload(
+    frame, *, max_rows: Optional[int] = 5000, jsonable: bool = True
+) -> Optional[Dict[str, Any]]:
     """A trade DataFrame as the ``{columns, rows, total_rows, truncated}`` payload the
     trial store keeps.
 
@@ -426,15 +428,22 @@ def trades_payload(frame, *, max_rows: Optional[int] = 5000) -> Optional[Dict[st
     table that looks complete is worse than no table. ``None`` means no ceiling, which
     is what an in-memory result wants - it is the whole frame, and saying so is what
     lets anything aggregating it know the totals are real.
+
+    ``jsonable=False`` skips the per-cell coercion. It is only needed on the way to
+    disk or a wire, and it is the great majority of the cost of converting a large
+    frame - so a caller that just wants the shape in order to aggregate it in memory
+    should not pay for it. One function either way, because the *shape* and the
+    truncation rule are the things that must not come to differ.
     """
     if frame is None:
         return None
     total = int(len(frame))
     capped = max_rows is not None and total > max_rows
     kept = frame.head(max_rows) if capped else frame
+    rows = kept.values.tolist()
     return {
         "columns": [str(c) for c in kept.columns],
-        "rows": _jsonable(kept.values.tolist()),
+        "rows": _jsonable(rows) if jsonable else rows,
         "total_rows": total,
         "truncated": capped,
     }

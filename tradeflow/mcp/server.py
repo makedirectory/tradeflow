@@ -1355,7 +1355,14 @@ def build_server(data_client=None):
         short overlap is wide and a bare coefficient hides that. Journals nothing;
         read-only.
         """
-        inputs = {"trial_ids": trial_ids, "min_overlap": min_overlap}
+        # `across_accounting` decides whether cross-era pairs were computed or refused,
+        # so an audit trail without it cannot tell a default comparison from one that
+        # deliberately crossed an accounting boundary.
+        inputs = {
+            "trial_ids": trial_ids,
+            "min_overlap": min_overlap,
+            "across_accounting": across_accounting,
+        }
         with _trial_store() as store:
             if store is None:
                 return _logged("compare_trials", inputs, {"error": _NO_STORE})

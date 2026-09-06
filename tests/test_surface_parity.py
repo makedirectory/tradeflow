@@ -599,3 +599,99 @@ def test_all_three_openers_reach_the_same_journal(tmp_path, monkeypatch):
 
     assert len(set(paths)) == 1, f"the three openers reached different journals: {paths}"
     assert paths[0][0] == journal
+
+
+# --- review findings ----------------------------------------------------------------
+def test_the_audit_record_names_the_knob_that_changed_the_answer():
+    """Review finding. `compare_trials` logged `trial_ids` and `min_overlap` but not
+    `across_accounting` — the one parameter deciding whether cross-era pairs were
+    computed or refused. An audit trail that cannot tell a default comparison from one
+    that deliberately crossed an accounting boundary is not an audit trail of that
+    decision. `analyze_trial` logs its `allow_partial`; this now matches."""
+    import inspect
+
+    from tradeflow.mcp import server as mcp_server
+
+    source = inspect.getsource(mcp_server)
+    body = source[source.index("def compare_trials(") : source.index("def best_trials(")]
+    inputs = body[body.index("inputs = {") : body.index("with _trial_store()")]
+
+    for knob in ("trial_ids", "min_overlap", "across_accounting"):
+        assert knob in inputs, f"compare_trials does not journal {knob}"
+
+
+def test_promote_and_campaign_read_the_same_journal():
+    """Review finding. `trials campaign` took `--journal` and `trials promote`, which
+    embeds the very same block, did not — so `_promote_trial` always read the default
+    journal however `--db` was pointed. Aimed at an archived store, `campaign` showed
+    the recipe while `promote` wrote `recipe.available: false` into the config: one
+    block, produced two ways, disagreeing."""
+    for command in ("promote", "campaign"):
+        dests = {a.dest for a in _cli_subcommand(command)._actions}
+        assert "journal" in dests, f"trials {command} cannot be pointed at a journal"
+        assert "db" in dests
+
+
+def test_a_promoted_config_finds_the_recipe_in_a_redirected_journal(tmp_path, monkeypatch):
+    """And the test that proves the flag is wired rather than merely accepted: promote
+    against a journal that is not the default, and the recipe has to arrive."""
+    import json
+    from datetime import datetime
+
+    import pandas as pd
+
+    from tradeflow.cli import build_parser
+    from tradeflow.services.analysis import walk_forward_recipe
+    from tradeflow.services.audit import journal_trial
+    from tradeflow.store.trials import db_path_for_journal
+
+    journal = tmp_path / "elsewhere.jsonl"
+    trial_id = journal_trial(
+        "walkforward",
+        strategy="demo_trend",
+        symbols=["AAA"],
+        start=datetime(2024, 1, 1),
+        end=datetime(2024, 4, 30),
+        params={"fast_ema_period": 9},
+        metrics={"sharpe_ratio": 1.0},
+        extra={"promotable": True},
+        returns=pd.Series([0.001] * 90, index=pd.date_range("2024-01-02", periods=90)),
+        dedup_params=walk_forward_recipe(
+            mode="anchored",
+            n_folds=None,
+            train_days=252,
+            test_days=63,
+            embargo_days=5,
+            holdout_days=60,
+            method="grid",
+            objective="sharpe_ratio",
+            max_evals=50,
+            seed=42,
+            cost_key={},
+            limits=None,
+        ),
+        path=journal,
+    )
+    # The default journal is somewhere else entirely, which is the whole point.
+    monkeypatch.setattr(
+        "tradeflow.services.audit.DEFAULT_TRIAL_JOURNAL", tmp_path / "default.jsonl", raising=False
+    )
+    out = tmp_path / "promoted.json"
+    args = build_parser().parse_args(
+        [
+            "trials",
+            "promote",
+            trial_id,
+            "--save-config",
+            str(out),
+            "--db",
+            str(db_path_for_journal(journal)),
+            "--journal",
+            str(journal),
+        ]
+    )
+    args.func(args)
+
+    recipe = json.loads(out.read_text())["provenance"]["campaign"]["recipe"]
+    assert recipe["available"] is True
+    assert recipe["validation"]["train_days"] == 252
