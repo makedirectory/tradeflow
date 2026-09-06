@@ -195,13 +195,27 @@ def test_every_call_site_that_writes_a_runnable_config_states_its_book():
     --save-config` wrote the *class* defaults instead of the run's book (so
     round-tripping a config shrank it), the research agent wrote none, and the MCP
     service had no parameter to put one in.
+
+    The MCP server is scanned as well as the service it calls, because those are two
+    hops and either can drop the book: a service that accepts `position_limits` and a
+    transport that never passes it records nothing, and the agent that supplied it has
+    no way to tell.
     """
     import tradeflow.cli
+    import tradeflow.mcp.server
     import tradeflow.research.agent
     import tradeflow.services.configs
 
     missing = []
-    for module in (tradeflow.cli, tradeflow.research.agent, tradeflow.services.configs):
+    for module in (
+        tradeflow.cli,
+        tradeflow.research.agent,
+        tradeflow.services.configs,
+        # The MCP server too: it forwards to the service, and a parameter the service
+        # accepts but the transport never passes is a book an agent supplied and the
+        # file never recorded.
+        tradeflow.mcp.server,
+    ):
         source = ast.parse(open(module.__file__).read())
         for node in ast.walk(source):
             if not isinstance(node, ast.Call):
@@ -233,3 +247,23 @@ def test_the_walk_forward_saver_writes_the_book_it_validated_not_the_class_defau
 
     assert "create_with_defaults" not in saver
     assert "config_position_limits" in saver
+
+
+def test_the_mcp_tool_accepts_nothing_the_config_service_cannot_take():
+    """MCP is a transport: parse, call one service function, render. A parameter it
+    takes that the service does not is a call that fails at runtime, and an agent cannot
+    notice a stale signature — it acts on one."""
+    import inspect
+
+    from tradeflow.mcp import server as mcp_server
+    from tradeflow.services import configs
+
+    source = inspect.getsource(mcp_server)
+    start = source.index("def save_config(") + len("def save_config(")
+    signature = source[start : source.index(") -> Dict[str, Any]:", start)]
+    names = {line.split(":")[0].strip() for line in signature.splitlines() if ":" in line}
+    service = set(inspect.signature(configs.save_config).parameters)
+
+    assert names - service == set(), f"MCP save_config takes {sorted(names - service)}"
+    # And the runnable half is reachable at all, which is the point of the change.
+    assert {"position_limits", "symbols", "capital"} <= names
