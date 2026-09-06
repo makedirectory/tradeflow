@@ -32,6 +32,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from tradeflow.analytics.series_comparison import MIN_OVERLAP as SERIES_MIN_OVERLAP
 from tradeflow.marketdata.base import MarketDataProvider
 from tradeflow.services.registry import STRATEGIES
 from tradeflow.settings import DATA_FEEDS
@@ -198,28 +199,16 @@ def _vintage_stamp(data_client, universe: List[str], timeframe: str, start: Any,
 
 @contextlib.contextmanager
 def _open_trial_store(journal_path: Optional[Any] = None):
-    """A trial store against ``journal_path`` (default: the current
-    ``audit.DEFAULT_TRIAL_JOURNAL``), or ``None`` on any failure to open one.
+    """A trial store against ``journal_path``, or ``None`` if one cannot be opened.
 
-    v1 of the trial store is passive and derived (see ``tradeflow.store.trials``): a
-    broken store must never break the command it's attached to, memoization
-    included - every caller here treats ``None`` as "skip memoization, run
-    normally," never as an error to propagate.
+    Delegates: the CLI, the analysis service and the MCP server each had their own
+    copy of this, opening the same file the same way and free to drift on which
+    journal they reached for.
     """
-    from tradeflow.services import audit
-    from tradeflow.store.trials import TrialStore, db_path_for_journal
+    from tradeflow.services.audit import open_trial_store
 
-    path = journal_path or audit.DEFAULT_TRIAL_JOURNAL
-    try:
-        store = TrialStore(db_path_for_journal(path), journal_path=path)
-    except Exception:  # noqa: BLE001
-        logger.warning("Trial store unavailable; memoization disabled for this run", exc_info=True)
-        yield None
-        return
-    try:
+    with open_trial_store(journal_path) as store:
         yield store
-    finally:
-        store.close()
 
 
 def _find_cached_trial(
@@ -3162,6 +3151,14 @@ def cmd_trials(args) -> None:
             _print_trial_detail(store, args)
             return
 
+        if args.trials_command == "analyze":
+            _print_trial_analysis(store, args)
+            return
+
+        if args.trials_command == "compare":
+            _print_trial_comparison(store, args)
+            return
+
         if args.trials_command == "best":
             _print_leaderboard(store, args)
             return
@@ -3331,6 +3328,47 @@ def _print_trial_detail(store, args) -> None:
     print(format_trial_detail(trial))
     if trial.get("trades"):
         print(format_trial_trades(trial["trades"], limit=args.trades_limit))
+
+
+def _print_trial_analysis(store, args) -> None:
+    """What a recorded run's trades actually did, without opening SQLite."""
+    import json
+
+    from tradeflow.analytics.reporting import format_trial_analysis
+    from tradeflow.services.analysis import analyze_trial
+
+    report = analyze_trial(store, args.trial_id, allow_partial=args.allow_partial)
+    if report.get("error"):
+        sys.exit(report["error"])
+    if args.json:
+        print(json.dumps(report, indent=2, default=str))
+        return
+    print(format_trial_analysis(report))
+    # Exit non-zero when nothing could be totalled, so a script that pipes this does
+    # not read an empty report as a run with nothing in it.
+    if report.get("status") == "unavailable":
+        raise SystemExit(1)
+
+
+def _print_trial_comparison(store, args) -> None:
+    """Whether two recorded results are in fact the same result."""
+    import json
+
+    from tradeflow.analytics.reporting import format_series_comparison
+    from tradeflow.services.analysis import compare_trials
+
+    report = compare_trials(
+        store,
+        args.trial_ids,
+        min_overlap=args.min_overlap,
+        across_accounting=args.across_accounting,
+    )
+    if args.json:
+        print(json.dumps(report, indent=2, default=str))
+        return
+    print(format_series_comparison(report))
+    if report["n_compared"] == 0:
+        raise SystemExit(1)
 
 
 def _limit_trial_trades(trial: Dict[str, Any], limit: Optional[int]) -> Dict[str, Any]:
@@ -5825,6 +5863,47 @@ def build_parser() -> argparse.ArgumentParser:
         default=25,
         help="How many stored trades to print (the rest are reported as not shown)",
     )
+
+    t_analyze = trials_sub.add_parser(
+        "analyze",
+        help="Exit-reason P&L, win/loss, holding period and excursion for one recorded trial",
+    )
+    _add_db_flag(t_analyze)
+    t_analyze.add_argument("trial_id", help="The trial id (see `trials list`)")
+    t_analyze.add_argument("--json", action="store_true", help="Emit the report as JSON")
+    t_analyze.add_argument(
+        "--allow-partial",
+        dest="allow_partial",
+        action="store_true",
+        help="Total a trade table that was capped at the storage ceiling. Every number "
+        "is then a partial and says so — and no concentration verdict is drawn, because "
+        "which exit carried a run is a claim about all of its trades",
+    )
+
+    t_compare = trials_sub.add_parser(
+        "compare",
+        help="Correlate the recorded return series of two or more trials — are they one result?",
+    )
+    _add_db_flag(t_compare)
+    t_compare.add_argument("trial_ids", nargs="+", help="Two or more trial ids (see `trials list`)")
+    t_compare.add_argument(
+        "--min-overlap",
+        dest="min_overlap",
+        type=int,
+        default=SERIES_MIN_OVERLAP,
+        help=f"Shared dates a pair needs before it is correlated at all (default "
+        f"{SERIES_MIN_OVERLAP}). Below it the pair is refused, not caveated: a correlation "
+        "over a handful of dates is an error bar wearing two decimals",
+    )
+    t_compare.add_argument(
+        "--across-accounting",
+        dest="across_accounting",
+        action="store_true",
+        help="Correlate series recorded under different accounting versions. Off by "
+        "default because the two engines compute different things; the pair is labelled "
+        "incomparable when you opt in",
+    )
+    t_compare.add_argument("--json", action="store_true", help="Emit the report as JSON")
 
     t_best = trials_sub.add_parser(
         "best", help="The honest leaderboard: DSR-ranked, family n_trials always shown"

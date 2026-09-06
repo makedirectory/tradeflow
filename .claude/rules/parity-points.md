@@ -190,12 +190,27 @@ definition and the CLI block is a renderer over it, reaching it through
 than being assumed so.
 *Guarded by* `tests/test_trade_analytics.py`.
 
+**Trial-analytics knobs across CLI and MCP** — `trials analyze` / `analyze_trial` and
+`trials compare` / `compare_trials`. Both surfaces enumerate their flags from the parser
+and must have a counterpart in the MCP signature, and both *defaults* are compared too:
+`allow_partial` and `min_overlap`. A capped trade table summed silently on one surface
+and refused on the other is the same trial answering one question two ways depending on
+who asked, which is what a shared default exists to prevent.
+*Guarded by* `tests/test_surface_parity.py`.
+
+**Opening the trial store** — *converged*. It was three copies, not the two listed here:
+`cli._open_trial_store`, `services.analysis._open_trial_store` and
+`mcp.server._trial_store`, each deciding for itself which journal to index — the one
+decision they must never disagree about, since the multiple-testing correction rests on
+there being one journal. One definition in `services.audit.open_trial_store`, which is
+where it has to live: the default must be `audit.default_trial_journal()` rather than
+`store.trials.default_journal_path()`, because those two resolve alike in production and
+differ under a redirected journal, which is every test in the suite.
+*Guarded by* `tests/test_surface_parity.py`, which opens all three under a redirect and
+compares the paths they reach, rather than three tests that each pass.
+
 Still parallel and **unguarded**: `cli._find_cached_trial` / `services._find_cached_trial`,
-`cli._open_trial_store` / `services._open_trial_store` / `mcp.server._trial_store` (three
-copies, not two — the MCP one opens the default journal and takes no override, so a
-`--journal` a user passed on the CLI is not a thing the same question asked over MCP can
-reach), `cli._worker_data_spec` /
-`services._worker_data_spec`, `parallel._build_cost_model` /
+`cli._worker_data_spec` / `services._worker_data_spec`, `parallel._build_cost_model` /
 `services._build_cost_model`. Each is a candidate for delegation.
 
 ## Finding a new one

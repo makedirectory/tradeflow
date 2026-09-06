@@ -665,6 +665,37 @@ class TrialStore:
         except json.JSONDecodeError:
             return None
 
+    def returns_for(self, trial_id: str) -> Optional[Dict[str, Any]]:
+        """One trial's stored return series as ``{dates, values}``, or ``None``.
+
+        ``None`` means *not recorded* - the trial kind persists no series, or it
+        predates the companion table. It is not an empty series, and the difference
+        matters to everything downstream: a trial with nothing stored cannot be
+        compared against anything, while one storing an empty series would be a claim
+        that it earned no returns over no days.
+
+        :meth:`returns_panel` is the family-wide read for the Reality Check, which
+        inner-joins onto a common calendar. This is the per-trial one, for asking
+        whether two named results are the same result.
+        """
+        row = self._conn.execute(
+            "SELECT dates_json, returns_json FROM trial_returns WHERE trial_id = ?", (trial_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            dates = json.loads(row["dates_json"])
+            values = json.loads(row["returns_json"])
+        except json.JSONDecodeError:
+            return None
+        if len(dates) != len(values):
+            # A shape the writer refuses to produce, so its presence means the row was
+            # written by something else. Refusing beats silently truncating to the
+            # shorter of the two and calling the result a return series.
+            logger.warning("Trial %s has a return series whose dates and values disagree", trial_id)
+            return None
+        return {"dates": [str(d) for d in dates], "values": [float(v) for v in values]}
+
     def returns_panel(
         self, strategy: str, symbols: Iterable[Any], accounting: int, *, min_overlap: int = 60
     ) -> Dict[str, Any]:
@@ -1225,6 +1256,17 @@ class TrialStore:
         trial["trades"] = self.trades_for(trial_id)
         trial["reused_by"] = self.reused_by(trial)
         return trial
+
+    def row_for(self, trial_id: str) -> Optional[Dict[str, Any]]:
+        """The trial's own row, without its companion records.
+
+        :meth:`get_trial` assembles the book, the trade table and the reuse chain, which
+        is what a detail view wants and is wasteful for a caller that needs only the
+        provenance — a comparison across several trials would load every one of their
+        trade tables to read an accounting version off each.
+        """
+        row = self._conn.execute("SELECT * FROM trials WHERE id = ?", (trial_id,)).fetchone()
+        return dict(row) if row is not None else None
 
     def _returns_summary(self, trial_id: str) -> Optional[Dict[str, Any]]:
         """Length and date span of a trial's stored return series, without loading

@@ -28,7 +28,7 @@ from tradeflow.alphas import (
     strategy_scorer,
 )
 from tradeflow.analytics import metrics as m
-from tradeflow.analytics import performance
+from tradeflow.analytics import performance, series_comparison
 from tradeflow.data import (
     ClientBarSource,
     FeaturePanel,
@@ -176,24 +176,14 @@ def _tunable_params(strategy) -> Dict[str, Any]:
 
 @contextlib.contextmanager
 def _open_trial_store():
-    """A trial store against the current journal, or ``None`` on any failure to
-    open one - same fail-safe contract as the CLI's ``main._open_trial_store``.
-    v1 of the trial store is passive and derived: a broken store must never
-    break the command it's attached to, memoization included."""
-    from tradeflow.services import audit
-    from tradeflow.store.trials import TrialStore, db_path_for_journal
+    """A trial store against the current journal, or ``None`` if one cannot be opened.
 
-    journal_path = audit.DEFAULT_TRIAL_JOURNAL
-    try:
-        store = TrialStore(db_path_for_journal(journal_path), journal_path=journal_path)
-    except Exception:  # noqa: BLE001
-        logger.warning("Trial store unavailable; memoization disabled for this run", exc_info=True)
-        yield None
-        return
-    try:
+    Delegates to the one definition; see :func:`tradeflow.services.audit.open_trial_store`.
+    """
+    from tradeflow.services.audit import open_trial_store
+
+    with open_trial_store() as store:
         yield store
-    finally:
-        store.close()
 
 
 def _find_cached_trial(
@@ -351,6 +341,77 @@ def run_backtest(
         benchmark=benchmark,
         trades_csv=trades_csv,
     )
+
+
+def analyze_trial(store, trial_id: str, *, allow_partial: bool = False) -> Dict[str, Any]:
+    """Everything the trade table of one recorded trial can be asked, in one call.
+
+    Takes an open store rather than opening one, so the CLI's ``--db``/``--journal``
+    and the MCP server's default both reach this through the handle they already have
+    — a fourth way of opening the trial store is the last thing this codebase needs.
+    """
+    from tradeflow.analytics.trade_analytics import trade_analytics
+
+    row = store.row_for(trial_id)
+    if row is None:
+        return {
+            "error": f"No trial with id {trial_id!r}. Use list_trials to see what is recorded.",
+            "trial_id": trial_id,
+        }
+    report = trade_analytics(store.trades_for(trial_id), allow_partial=allow_partial)
+    report.update(
+        {
+            "trial_id": trial_id,
+            "kind": row.get("kind"),
+            "strategy": row.get("strategy"),
+            "accounting": row.get("accounting"),
+            "recorded_at": row.get("ts"),
+            # A quarantined trial is still readable — the quarantine is about whether it
+            # counts as evidence, not about whether it happened — but anything reading
+            # its numbers should know.
+            "contaminated_at": row.get("contaminated_at"),
+            "contamination_reason": row.get("contamination_reason"),
+        }
+    )
+    return report
+
+
+def compare_trials(
+    store,
+    trial_ids: Sequence[str],
+    *,
+    min_overlap: int = series_comparison.MIN_OVERLAP,
+    across_accounting: bool = False,
+) -> Dict[str, Any]:
+    """Correlate the recorded return series of two or more trials, or say why not.
+
+    Unknown ids are reported in the payload rather than raised: asking about four
+    trials and getting an error about one is how a comparison of the other three gets
+    abandoned for no reason.
+    """
+    entries: List[Dict[str, Any]] = []
+    unknown: List[str] = []
+    for trial_id in trial_ids:
+        row = store.row_for(trial_id)
+        if row is None:
+            unknown.append(trial_id)
+            continue
+        series = store.returns_for(trial_id) or {}
+        entries.append(
+            {
+                "trial_id": trial_id,
+                "dates": series.get("dates"),
+                "values": series.get("values"),
+                "accounting": row.get("accounting"),
+                "strategy": row.get("strategy"),
+                "kind": row.get("kind"),
+            }
+        )
+    report = series_comparison.compare_series(
+        entries, min_overlap=min_overlap, across_accounting=across_accounting
+    )
+    report["unknown_trial_ids"] = unknown
+    return report
 
 
 def trades_payload(frame, *, max_rows: Optional[int] = 5000) -> Optional[Dict[str, Any]]:

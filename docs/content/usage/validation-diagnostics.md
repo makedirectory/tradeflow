@@ -195,6 +195,13 @@ of candidates would otherwise store storage nobody asked for. When present, this
 where exit reasons, durations and per-trade excursions live, and it is how the
 concentration block above gets turned into a specific question.
 
+`trials analyze <trial-id>` answers that question directly — the same exit-reason split
+printed above, plus win and loss by reason, holding period and excursion distributions,
+over a run recorded weeks ago. It is the same computation: the block above and the
+command below go through one function, so a live result and a recorded one cannot come
+to disagree about where a run's P&L came from. See [the trial store](trials) for both
+commands.
+
 ## None of this is journaled
 
 The stress runs and the causality probes record nothing. They are one candidate under stated assumptions, not new

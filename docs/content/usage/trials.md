@@ -162,6 +162,103 @@ These rules live in the **payload**, not only in the terminal formatting: `--jso
 carries the family counts and the caveat too, so an agent reading this over MCP
 sees the same context a human reads on screen.
 
+## `trials analyze` — what did those trades actually do?
+
+```bash
+tradeflow trials analyze a1b2c3d4e5f6
+tradeflow trials analyze a1b2c3d4e5f6 --json
+```
+
+Exit-reason P&L, win and loss by reason, holding period, and per-trade excursion for
+one recorded run — the questions that otherwise mean opening SQLite.
+
+```
+=== Trades of a1b2c3d4e5f6 (backtest) ===
+  strategy demo_trend | accounting v5 | recorded 2026-03-01T09:14:22
+  table    : 40 trades
+
+  Overall:
+    Trades          40
+    Wins / losses   28 / 12
+    Win rate        70.0%
+    Net P&L         $8,483
+    Average win     $409
+    Average loss    -$247
+    Expectancy      $212
+    Profit factor   3.86
+
+  By exit reason:
+    exit              trades   share       net P&L  win rate     avg win    avg loss
+    TAKE_PROFIT           26   65.0%        $4,528     65.4%        $431       -$312
+    STOP_LOSS             14   35.0%        $3,955     78.6%        $374        -$54
+
+  Held     : median 6.5 days, p25 5.8, p75 7.2, max 8.0 (40 measured, 0 not)
+  Excursion: per-trade excursion — not the book's aggregate open drawdown
+    adverse     median 2.84%, p90 3.85%, max 5.23% (40 measured, 0 not)
+    favourable  median 4.88%, p90 7.06%, max 9.04% (40 measured, 0 not)
+```
+
+*(Illustrative figures.)* It grades nothing — the register is the one
+[`execution-report`](validation-diagnostics) sets: report the number, say what it does
+not cover, leave the judgement alone.
+
+Three things it will not do:
+
+- **Sum a capped table.** If the run's trades were truncated at the storage ceiling,
+  there are no totals and the command exits non-zero saying why. `--allow-partial`
+  computes them anyway, labels every number as covering the stored rows only, and
+  still draws no concentration verdict — which exit carried a run is a claim about all
+  of its trades.
+- **Report a missing column as a zero distribution.** A table with no `entry_time`
+  says the holding period is not computable from it, rather than reporting that trades
+  lasted no time.
+- **Confuse per-trade excursion with the book's.** A position deep underwater that is
+  a small fraction of the book did not put the book that far underwater. The label is
+  on every excursion figure because that conflation is what makes people rewrite a
+  result they had measured correctly.
+
+## `trials compare` — are these two results one result?
+
+```bash
+tradeflow trials compare a1b2c3d4e5f6 b2c3d4e5f6a1
+```
+
+```
+=== Return-series comparison ===
+  a1b2c3d4e5f6     300 periods, 2024-01-02 → 2024-10-27  (v5, demo_trend)
+  b2c3d4e5f6a1     300 periods, 2024-01-02 → 2024-10-27  (v5, demo_trend)
+
+  a1b2c3d4e5f6 vs b2c3d4e5f6a1  overlap 300 periods, 2024-01-02..2024-10-27
+      correlation +0.98 [+0.98, +0.99]
+
+  1 of 1 pair(s) compared; 0 refused. Minimum overlap 60 periods.
+  Highest: a1b2c3d4e5f6 vs b2c3d4e5f6a1 at +0.98.
+  At that level they are one bet held twice, however differently they were
+  parameterised — promoting both counts a single result as two.
+```
+
+*(Illustrative figures.)* Two candidates that correlate near 1.0 are one candidate. A
+campaign that promotes both believes it has two findings and has one.
+
+**Pairs get refused, not caveated.** A correlation is a claim about a relationship and
+there is no partial version of one:
+
+| Refusal | Why |
+| --- | --- |
+| Fewer than `--min-overlap` shared dates (default 60) | A correlation over a handful of dates is an error bar wearing two decimals |
+| Different accounting versions | The two series came from engines that compute different things. `--across-accounting` computes it anyway and marks the pair incomparable |
+| Either series not recorded | Not every trial kind persists one |
+| Either series flat over the overlap | Nothing to correlate |
+
+Every correlation carries a 95% interval, so one resting on a thin overlap arrives
+visibly wide rather than merely short of decimals. In `--json`, read `pairs` alongside
+`matrix`: the matrix holds `null` where nothing was computed, because a zero there is
+the strong claim that two results move independently — exactly what a refusal cannot
+say.
+
+Both commands are also MCP tools (`analyze_trial`, `compare_trials`), and both journal
+nothing.
+
 ## Keeping trade tables (`--record-trades`)
 
 `backtest` and `walkforward` accept `--record-trades`, which journals the run's

@@ -94,6 +94,12 @@ live-beta:  ## Paper-trade with beta-scaled position sizing
 trials-status:  ## Trial-store health: rows vs journal lines, orphans, quarantined rows
 	$(PY) trials status
 
+trials-analyze:  ## Exit-reason P&L, win/loss, holding period, excursion. TRIAL=<id>
+	$(PY) trials analyze $(TRIAL)
+
+trials-compare:  ## Are two recorded results one result? TRIALS="<id> <id>"
+	$(PY) trials compare $(TRIALS)
+
 causality:  ## Probe whether each decision could have been made when it was made
 	$(PY) backtest --strategy demo_trend --scanner none --symbols $(SYMBOLS) --start $(START) --end $(END) --no-journal --causality
 

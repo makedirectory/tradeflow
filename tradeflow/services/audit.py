@@ -5,6 +5,7 @@ a ``run_id``, the git SHA, and a server-side timestamp - so any decision an agen
 makes is replayable by a human later. Timestamps come from here, never the agent.
 """
 
+import contextlib
 import json
 import logging
 import os
@@ -48,6 +49,37 @@ def __getattr__(name: str) -> Any:
     if name == "DEFAULT_TRIAL_JOURNAL":
         return trial_journal_path()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+@contextlib.contextmanager
+def open_trial_store(journal_path: Optional[Any] = None):
+    """A trial store against ``journal_path`` (default: this module's journal), or
+    ``None`` on any failure to open one.
+
+    One definition, because there were three: the CLI's, the analysis service's, and
+    the MCP server's, each opening the same file the same way and each free to drift
+    on the thing that matters — *which* journal. The default has to be
+    :func:`default_trial_journal`, not ``store.trials.default_journal_path``: those
+    two resolve alike in production and differ under a redirected journal, which is
+    every test in the suite and any run passing an explicit path.
+
+    The store is derived and passive, so a failure to open one is never the caller's
+    problem: every caller treats ``None`` as "skip the store, run normally", never as
+    an error to propagate. A broken index must not brick the command attached to it.
+    """
+    from tradeflow.store.trials import TrialStore, db_path_for_journal
+
+    path = journal_path or default_trial_journal()
+    try:
+        store = TrialStore(db_path_for_journal(path), journal_path=path)
+    except Exception:  # noqa: BLE001 - a passive store never breaks its caller
+        logger.warning("Trial store unavailable; continuing without it", exc_info=True)
+        yield None
+        return
+    try:
+        yield store
+    finally:
+        store.close()
 
 
 #: Metrics denormalized onto a trial record — enough for the gates and the Deflated

@@ -703,19 +703,14 @@ def describe_trade_table(trades: Optional[Dict[str, Any]]) -> str:
     on: never recorded, recorded and complete, recorded and *capped* at the storage
     ceiling, and recorded before the store kept the count — which is not evidence of
     either completeness or truncation and must not be rendered as though it were.
+
+    Goes through ``trade_analytics.describe_source`` rather than reading the payload's
+    keys again, so what counts as "capped" has one definition and this cannot come to
+    disagree with the module that refuses to aggregate one.
     """
-    if trades is None:
-        return f"{NOT_RECORDED} (not recorded — pass --record-trades on the run)"
-    kept = len(trades.get("rows") or [])
-    total, truncated = trades.get("total_rows"), trades.get("truncated")
-    if truncated:
-        return (
-            f"{kept:,} of {total:,} trades — TRUNCATED at the storage cap, so any "
-            "total over these rows is short by the rest"
-        )
-    if truncated is None:
-        return f"{_plural(kept, 'trade')} stored; whether that was all of them was not recorded"
-    return _plural(kept, "trade")
+    from tradeflow.analytics.trade_analytics import describe_source
+
+    return describe_trade_table_source(describe_source(trades))
 
 
 def format_trial_detail(trial: Dict[str, Any]) -> str:
@@ -806,6 +801,194 @@ def format_trial_trades(trades: Optional[Dict[str, Any]], limit: int = 25) -> st
         lines.append("    " + "  ".join(f"{str(v)[:12]:>12}" for v in row))
     if len(rows) > limit:
         lines.append(f"    … {len(rows) - limit} more stored trade(s) not shown (--trades-limit to raise).")
+    return "\n".join(lines)
+
+
+def format_trial_analysis(report: Dict[str, Any]) -> str:
+    """The trade-table report for one recorded trial. Grades nothing."""
+    lines = ["", f"=== Trades of {report.get('trial_id')} ({report.get('kind')}) ==="]
+    lines.append(
+        f"  strategy {report.get('strategy') or NOT_RECORDED} | accounting "
+        f"v{report.get('accounting')} | recorded {(report.get('recorded_at') or '')[:19]}"
+    )
+    if report.get("contaminated_at"):
+        lines.append(
+            f"  QUARANTINED {str(report['contaminated_at'])[:19]} — "
+            f"{report.get('contamination_reason') or 'no reason recorded'}"
+        )
+    source = report.get("source") or {}
+    lines.append(f"  table    : {describe_trade_table_source(source)}")
+
+    if report.get("status") != "complete":
+        lines.append("")
+        lines.append(f"  No totals: {report.get('reason', '')}")
+        if report.get("status") == "unavailable":
+            return "\n".join(lines + [""])
+    if report.get("status") == "truncated":
+        lines.append("  SHOWN ROWS ONLY — every number below is a partial.")
+
+    overall = report.get("overall") or {}
+    if overall.get("available") is False:
+        lines.append(f"  overall  : {overall.get('note')}")
+    else:
+        lines.append("")
+        lines.append("  Overall:")
+        lines.append(f"    {'Trades':<16}{overall.get('trades'):,}")
+        lines.append(f"    {'Wins / losses':<16}{overall.get('wins')} / {overall.get('losses')}")
+        lines.append(f"    {'Win rate':<16}{_cell(overall.get('win_rate'), '{:.1%}')}")
+        # Money goes through one formatter so the sign sits outside the symbol
+        # everywhere in the report, rather than in whichever block was written first.
+        for label, key in (
+            ("Net P&L", "net_pnl"),
+            ("Average win", "avg_win"),
+            ("Average loss", "avg_loss"),
+            ("Expectancy", "expectancy"),
+        ):
+            lines.append(f"    {label:<16}{_money(overall.get(key))}")
+        lines.append(f"    {'Profit factor':<16}{_cell(overall.get('profit_factor'), '{:.2f}')}")
+        if overall.get("unmeasured"):
+            lines.append(f"    {'Unmeasured':<16}{overall['unmeasured']} row(s) carried no P&L")
+
+    exits = report.get("exit_reasons") or {}
+    if exits.get("available"):
+        lines.append("")
+        lines.append("  By exit reason:")
+        lines.append(
+            f"    {'exit':16}{'trades':>8}{'share':>8}{'net P&L':>14}{'win rate':>10}"
+            f"{'avg win':>12}{'avg loss':>12}"
+        )
+        for row in exits["rows"]:
+            lines.append(
+                f"    {str(row['exit_reason']):16}{row['trades']:>8}"
+                f"{_cell(row.get('share_of_trades'), '{:.1%}'):>8}"
+                f"{_money(row.get('net_pnl')):>14}{_cell(row.get('win_rate'), '{:.1%}'):>10}"
+                f"{_money(row.get('avg_win')):>12}{_money(row.get('avg_loss')):>12}"
+            )
+    elif exits:
+        lines.append(f"  by exit  : {exits.get('note')}")
+
+    duration = report.get("duration") or {}
+    lines.append("")
+    if duration.get("available"):
+        lines.append(
+            f"  Held     : median {_cell(duration.get('median'), '{:.1f}')} days, "
+            f"p25 {_cell(duration.get('p25'), '{:.1f}')}, p75 {_cell(duration.get('p75'), '{:.1f}')}, "
+            f"max {_cell(duration.get('max'), '{:.1f}')} "
+            f"({duration.get('n_measured')} measured, {duration.get('n_unmeasured')} not)"
+        )
+    else:
+        lines.append(f"  Held     : {duration.get('note')}")
+
+    excursion = report.get("excursion") or {}
+    if excursion.get("available"):
+        lines.append(f"  Excursion: {excursion.get('note')}")
+        for name, label in (("mae_pct", "adverse"), ("mfe_pct", "favourable")):
+            block = excursion.get(name) or {}
+            if block.get("available") is False:
+                lines.append(f"    {label:<12}{block.get('note')}")
+                continue
+            lines.append(
+                f"    {label:<12}median {_cell(block.get('median'), '{:.2f}')}%, "
+                f"p90 {_cell(block.get('p90'), '{:.2f}')}%, max {_cell(block.get('max'), '{:.2f}')}% "
+                f"({block.get('n_measured')} measured, {block.get('n_unmeasured')} not)"
+            )
+    else:
+        lines.append(f"  Excursion: {excursion.get('note')}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def describe_trade_table_source(source: Dict[str, Any]) -> str:
+    """The stored table described from a trade-analytics ``source`` block.
+
+    The one place any surface turns a table's completeness into words.
+    """
+    completeness = source.get("completeness")
+    stored, total = source.get("rows_stored"), source.get("total_rows")
+    if not source.get("recorded"):
+        return f"{NOT_RECORDED} (not recorded — pass --record-trades on the run)"
+    if completeness == "capped":
+        return (
+            f"{stored:,} of {total:,} trades — TRUNCATED at the storage cap, so any "
+            "total over these rows is short by the rest"
+        )
+    if completeness == "unknown":
+        return f"{_plural(stored or 0, 'trade')} stored; whether that was all of them was not recorded"
+    return _plural(stored or 0, "trade")
+
+
+def _money(value: Any) -> str:
+    """Currency with the sign outside the symbol; ``$-780`` reads as a price."""
+    if value is None:
+        return NOT_RECORDED
+    return f"{'-' if value < 0 else ''}${abs(value):,.0f}"
+
+
+#: The correlation at or above which two recorded results stop being independent
+#: evidence for each other. Deliberately high: the claim it licenses is that a campaign
+#: has one finding where it believed it had two, which is worth being sure of.
+NEAR_DUPLICATE = 0.80
+
+
+def format_series_comparison(report: Dict[str, Any]) -> str:
+    """Pairwise correlation of recorded return series, refusals included.
+
+    The refusals are printed with the correlations rather than under them. A listing
+    that shows three coefficients and quietly drops the fourth pair reads as a complete
+    comparison of everything that was asked about.
+    """
+    lines = ["", "=== Return-series comparison ==="]
+    for summary in report.get("series") or []:
+        if summary.get("available"):
+            lines.append(
+                f"  {str(summary['trial_id'])[:14]:14} {summary['periods']:>5} periods, "
+                f"{str(summary['start'])[:10]} → {str(summary['end'])[:10]}  "
+                f"(v{summary.get('accounting')}, {summary.get('strategy') or NOT_RECORDED})"
+            )
+        else:
+            lines.append(f"  {str(summary['trial_id'])[:14]:14} {NOT_RECORDED} {summary['reason']}")
+
+    for trial_id in report.get("unknown_trial_ids") or []:
+        lines.append(f"  {str(trial_id)[:14]:14} {NOT_RECORDED} no trial with this id is recorded")
+
+    lines.append("")
+    for pair in report.get("pairs") or []:
+        head = f"  {str(pair['a'])[:12]:12} vs {str(pair['b'])[:12]:12}"
+        span = (
+            f"overlap {pair['overlap']} periods, {str(pair['start'])[:10]}..{str(pair['end'])[:10]}"
+            if pair["overlap"]
+            else "overlap 0 periods"
+        )
+        if pair["status"] != "compared":
+            lines.append(f"{head}  {span}\n      REFUSED — {pair['reason']}")
+            continue
+        interval = pair.get("interval")
+        band = (
+            f" [{interval['low']:+.2f}, {interval['high']:+.2f}]"
+            if interval
+            else " (interval unavailable at this overlap)"
+        )
+        lines.append(f"{head}  {span}\n      correlation {pair['correlation']:+.2f}{band}")
+        if pair.get("comparable") is False:
+            lines.append(f"      {pair['reason']}")
+
+    lines.append("")
+    lines.append(
+        f"  {report.get('n_compared', 0)} of {report.get('n_pairs', 0)} pair(s) compared; "
+        f"{report.get('n_refused', 0)} refused. Minimum overlap {report.get('min_overlap')} periods."
+    )
+    highest = report.get("highest")
+    if highest:
+        lines.append(f"  Highest: {highest['a']} vs {highest['b']} at {highest['correlation']:+.2f}.")
+        # The number is always reported; the sentence about what it means is not. A
+        # coefficient near zero says these results are independent, and printing "one
+        # bet held twice" beside it would be a verdict the number contradicts.
+        if highest["correlation"] >= NEAR_DUPLICATE:
+            lines.append(
+                "  At that level they are one bet held twice, however differently they were\n"
+                "  parameterised — promoting both counts a single result as two."
+            )
+    lines.append("")
     return "\n".join(lines)
 
 
