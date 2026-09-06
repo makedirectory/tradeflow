@@ -353,28 +353,30 @@ def run_backtest(
     )
 
 
-def trades_payload(frame, *, max_rows: int = 5000) -> Optional[Dict[str, Any]]:
-    """A trade DataFrame as the ``{columns, rows}`` payload the trial store keeps.
+def trades_payload(frame, *, max_rows: Optional[int] = 5000) -> Optional[Dict[str, Any]]:
+    """A trade DataFrame as the ``{columns, rows, total_rows, truncated}`` payload the
+    trial store keeps.
 
     ``None`` when there is no frame at all - distinct from a run that genuinely
     made no trades, which is an empty ``rows`` list.
 
     ``max_rows`` is a deliberate ceiling on what one trial may store, and hitting
     it is *recorded* (``truncated``/``total_rows``), never silent: a truncated
-    table that looks complete is worse than no table.
+    table that looks complete is worse than no table. ``None`` means no ceiling, which
+    is what an in-memory result wants - it is the whole frame, and saying so is what
+    lets anything aggregating it know the totals are real.
     """
     if frame is None:
         return None
     total = int(len(frame))
-    kept = frame.head(max_rows) if total > max_rows else frame
-    payload = {
+    capped = max_rows is not None and total > max_rows
+    kept = frame.head(max_rows) if capped else frame
+    return {
         "columns": [str(c) for c in kept.columns],
         "rows": _jsonable(kept.values.tolist()),
         "total_rows": total,
+        "truncated": capped,
     }
-    if total > max_rows:
-        payload["truncated"] = True
-    return payload
 
 
 def backtest_payload(

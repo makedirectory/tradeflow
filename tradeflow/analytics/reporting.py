@@ -647,6 +647,55 @@ def format_trials_table(rows: List[Dict[str, Any]], *, total: Optional[int] = No
     return "\n".join(lines)
 
 
+def format_exit_concentration(report: Dict[str, Any]) -> str:
+    """The "Where the P&L came from" block, over a trade-analytics result.
+
+    Returns ``""`` when there is nothing to say — no table, no exit-reason column, or
+    a split that carries no P&L either way. A run that produced no trades gets no
+    block rather than a table of zeros.
+    """
+    section = report.get("exit_reasons") or {}
+    rows = section.get("rows") or []
+    if not section.get("available") or not rows:
+        return ""
+    if not any(r.get("net_pnl") for r in rows):
+        return ""
+
+    lines = ["", "=== Where the P&L came from ==="]
+    if report.get("status") == "truncated":
+        # Partial totals are printed only under a label saying so. The alternative is
+        # a table of sums that reads exactly like a complete one.
+        lines.append(f"  SHOWN ROWS ONLY — {report.get('reason', '')}")
+    lines.append(f"  {'exit':16}{'trades':>8}{'share':>8}{'net P&L':>14}{'win rate':>10}")
+    for row in rows:
+        share = row.get("share_of_trades")
+        win_rate = row.get("win_rate")
+        net = row.get("net_pnl")
+        share_cell = NOT_RECORDED if share is None else format(share, ".1%")
+        # The sign goes outside the currency symbol; "$-780" reads as a price.
+        net_cell = NOT_RECORDED if net is None else f"{'-' if net < 0 else ''}${abs(net):,.0f}"
+        rate_cell = NOT_RECORDED if win_rate is None else format(win_rate, ".1%")
+        lines.append(
+            f"  {str(row['exit_reason']):16}{row['trades']:>8}{share_cell:>8}{net_cell:>14}{rate_cell:>10}"
+        )
+    concentration = section.get("concentration") or {}
+    share_of_gain = concentration.get("share_of_gain")
+    if report.get("status") == "truncated":
+        # The numbers above are labelled as partial and can be read as such. This line
+        # is not a number, it is a claim about the run — and a prefix of the trades
+        # cannot support it. A partial gets no verdict.
+        lines.append(
+            "  No concentration verdict from a partial table: which exit carried the gain "
+            "is\n  a statement about all of the trades, and these are some of them."
+        )
+    elif share_of_gain is not None and share_of_gain > 0.9:
+        lines.append(
+            f"  Nearly all of the gain comes from {concentration['exit_reason']}. The result "
+            f"is a bet on that\n  exit's fill assumption - stress it before believing the headline."
+        )
+    return "\n".join(lines)
+
+
 def describe_trade_table(trades: Optional[Dict[str, Any]]) -> str:
     """One phrase for what a stored trade table is, used everywhere one is described.
 

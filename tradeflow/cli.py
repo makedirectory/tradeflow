@@ -2701,26 +2701,25 @@ def _print_exit_concentration(result) -> None:
     A headline return says nothing about where it came from. A book whose entire edge
     is one exit path is a bet on that path's fill assumption, and nothing in the
     summary metrics distinguishes it from one whose edge is spread across exits.
+
+    The split itself is computed in `analytics.trade_analytics`, which is also what
+    answers this question about a *recorded* trial. Two implementations of one idea -
+    one over a live frame, one over a stored table - would drift while both looked
+    right, and this one is printed under every backtest.
     """
+    from tradeflow.analytics.reporting import format_exit_concentration
+    from tradeflow.analytics.trade_analytics import trade_analytics
+    from tradeflow.services.analysis import trades_payload
+
     trades = getattr(result, "trades", None)
-    if trades is None or len(trades) == 0 or "exit_reason" not in trades:
+    if trades is None or len(trades) == 0:
         return
-    grouped = trades.groupby("exit_reason")["pnl"].agg(["count", "sum"])
-    total_abs = grouped["sum"].abs().sum()
-    if total_abs <= 0:
-        return
-    print("\n=== Where the P&L came from ===")
-    print(f"  {'exit':16}{'trades':>8}{'share':>8}{'net P&L':>14}")
-    for reason, row in grouped.sort_values("sum", ascending=False).iterrows():
-        share = row["count"] / len(trades)
-        print(f"  {str(reason):16}{int(row['count']):>8}{share:>7.1%}${row['sum']:>13,.0f}")
-    winners = grouped[grouped["sum"] > 0]["sum"]
-    if len(winners) and winners.max() / winners.sum() > 0.9:
-        top = winners.idxmax()
-        print(
-            f"  Nearly all of the gain comes from {top}. The result is a bet on that "
-            f"exit's\n  fill assumption - stress it before believing the headline."
-        )
+    # An in-memory result is the whole frame by definition, so no ceiling: the totals
+    # below are the run's, not a prefix of it.
+    report = trade_analytics(trades_payload(trades, max_rows=None))
+    lines = format_exit_concentration(report)
+    if lines:
+        print(lines)
 
 
 def _print_fill_stress(data_client, strategy_name: str, universe, args, tuned) -> None:

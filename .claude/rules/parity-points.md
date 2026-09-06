@@ -179,6 +179,17 @@ when the journal cannot be read.
 rather than from today's schema minus a column, and covers the case a version comparison
 cannot see: a current stamp on a stale table.
 
+**The exit-reason split over a live result ↔ over a recorded one** — *converged*. The
+backtest's "Where the P&L came from" block grouped a pandas frame in the CLI; asking the
+same question of a *recorded* trial reads a stored `{columns, rows}` table. Two
+implementations of one idea, one printed under every backtest and one reached from the
+trial browser, differing in the thing that matters most about them — whether the rows
+they were given are all of the run's trades. `analytics.trade_analytics` is the one
+definition and the CLI block is a renderer over it, reaching it through
+`trades_payload(frame, max_rows=None)` so the live path declares itself complete rather
+than being assumed so.
+*Guarded by* `tests/test_trade_analytics.py`.
+
 Still parallel and **unguarded**: `cli._find_cached_trial` / `services._find_cached_trial`,
 `cli._open_trial_store` / `services._open_trial_store` / `mcp.server._trial_store` (three
 copies, not two — the MCP one opens the default journal and takes no override, so a

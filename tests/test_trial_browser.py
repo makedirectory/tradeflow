@@ -302,8 +302,16 @@ def test_a_truncated_trade_table_says_so(tmp_path):
     assert payload["total_rows"] == 10
 
     assert trades_payload(None) is None
+
+    # A complete table says so rather than leaving the key out. Absence has to keep
+    # meaning "written before this was recorded"; a payload that simply omits the flag
+    # when all is well makes that unreadable one layer down.
     full = trades_payload(frame)
-    assert "truncated" not in full and full["total_rows"] == 10
+    assert full["truncated"] is False and full["total_rows"] == 10
+
+    # No ceiling at all, for an in-memory result that is the whole frame by definition.
+    uncapped = trades_payload(frame, max_rows=None)
+    assert uncapped["truncated"] is False and len(uncapped["rows"]) == 10
 
 
 def test_a_truncated_trade_table_is_still_truncated_after_the_store_writes_it(tmp_path):
