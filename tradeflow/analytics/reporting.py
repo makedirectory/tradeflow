@@ -647,6 +647,28 @@ def format_trials_table(rows: List[Dict[str, Any]], *, total: Optional[int] = No
     return "\n".join(lines)
 
 
+def describe_trade_table(trades: Optional[Dict[str, Any]]) -> str:
+    """One phrase for what a stored trade table is, used everywhere one is described.
+
+    Four distinct states, and collapsing any two of them is a lie somebody will act
+    on: never recorded, recorded and complete, recorded and *capped* at the storage
+    ceiling, and recorded before the store kept the count — which is not evidence of
+    either completeness or truncation and must not be rendered as though it were.
+    """
+    if trades is None:
+        return f"{NOT_RECORDED} (not recorded — pass --record-trades on the run)"
+    kept = len(trades.get("rows") or [])
+    total, truncated = trades.get("total_rows"), trades.get("truncated")
+    if truncated:
+        return (
+            f"{kept:,} of {total:,} trades — TRUNCATED at the storage cap, so any "
+            "total over these rows is short by the rest"
+        )
+    if truncated is None:
+        return f"{_plural(kept, 'trade')} stored; whether that was all of them was not recorded"
+    return _plural(kept, "trade")
+
+
 def format_trial_detail(trial: Dict[str, Any]) -> str:
     """Everything the store knows about one trial.
 
@@ -703,12 +725,7 @@ def format_trial_detail(trial: Dict[str, Any]) -> str:
         + (", with factor exposures" if weights.get("exposures") else "")
         + (", with active weights" if weights.get("active_weights") else "")
     )
-    trades = trial.get("trades")
-    lines.append(
-        f"    trade table   : {NOT_RECORDED} (not recorded — pass --record-trades on the run)"
-        if trades is None
-        else f"    trade table   : {_plural(len(trades.get('rows') or []), 'trade')}"
-    )
+    lines.append(f"    trade table   : {describe_trade_table(trial.get('trades'))}")
 
     reused = trial.get("reused_by") or []
     lines.append("")
@@ -723,16 +740,23 @@ def format_trial_detail(trial: Dict[str, Any]) -> str:
 
 
 def format_trial_trades(trades: Optional[Dict[str, Any]], limit: int = 25) -> str:
-    """The stored trade table, truncated loudly rather than quietly."""
+    """The stored trade table, truncated loudly rather than quietly.
+
+    Two different truncations meet here and are named separately: this view showing
+    the first ``limit`` of what is stored, and the *store* holding only the first N of
+    what the run produced. The first is undone by a flag; the second is not undoable
+    at all, and reading one as the other is how a partial table gets totalled.
+    """
     if not trades:
         return f"  trade table: {NOT_RECORDED} (not recorded)"
     columns = trades.get("columns") or []
     rows = trades.get("rows") or []
-    lines = ["", "  Trades:", "    " + "  ".join(f"{str(c)[:12]:>12}" for c in columns)]
+    lines = ["", f"  Trades — {describe_trade_table(trades)}:"]
+    lines.append("    " + "  ".join(f"{str(c)[:12]:>12}" for c in columns))
     for row in rows[:limit]:
         lines.append("    " + "  ".join(f"{str(v)[:12]:>12}" for v in row))
     if len(rows) > limit:
-        lines.append(f"    … {len(rows) - limit} more trade(s) not shown (--trades-limit to raise).")
+        lines.append(f"    … {len(rows) - limit} more stored trade(s) not shown (--trades-limit to raise).")
     return "\n".join(lines)
 
 

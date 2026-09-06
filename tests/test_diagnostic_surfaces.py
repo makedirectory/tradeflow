@@ -153,9 +153,25 @@ def test_a_truncated_payload_says_what_it_dropped():
     """A truncated payload that does not say so looks like the whole table."""
     from tradeflow.cli import _limit_trial_trades
 
-    marker = _limit_trial_trades(_trial(1952), 3)["trades"]["truncated"]
+    marker = _limit_trial_trades(_trial(1952), 3)["trades"]["display_truncated"]
 
-    assert marker == {"shown": 3, "total": 1952, "flag": "--trades-limit"}
+    assert marker == {"shown": 3, "of_stored": 1952, "flag": "--trades-limit"}
+
+
+def test_the_view_limit_does_not_overwrite_the_store_s_own_completeness_flag():
+    """Two truncations, one word. This view's row limit is undone by a flag; whether
+    the *store* capped the run's trades on the way in is not undoable at all, and
+    writing the first over the second under one name loses the permanent fact."""
+    from tradeflow.cli import _limit_trial_trades
+
+    capped = _trial(1952)
+    capped["trades"].update(total_rows=9000, truncated=True)
+
+    limited = _limit_trial_trades(capped, 3)
+
+    assert limited["trades"]["truncated"] is True
+    assert limited["trades"]["total_rows"] == 9000
+    assert limited["trades"]["display_truncated"]["shown"] == 3
 
 
 def test_a_payload_under_the_limit_is_untouched():
@@ -165,7 +181,7 @@ def test_a_payload_under_the_limit_is_untouched():
     whole = _limit_trial_trades(_trial(2), 25)
 
     assert len(whole["trades"]["rows"]) == 2
-    assert "truncated" not in whole["trades"]
+    assert "display_truncated" not in whole["trades"]
 
 
 def test_a_trial_with_no_trades_survives_the_limit():

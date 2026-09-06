@@ -3342,6 +3342,11 @@ def _limit_trial_trades(trial: Dict[str, Any], limit: Optional[int]) -> Dict[str
 
     A truncated payload that does not say so is worse than an untruncated one: it looks
     like the whole table. The count of what was dropped travels with it.
+
+    Under its own key. ``truncated`` on a stored table is the *store's* fact - whether
+    the run's trades were capped on the way in, which no flag can undo - and writing
+    this view's row limit over it would replace a permanent one with a cosmetic one
+    under the same name.
     """
     trades = trial.get("trades")
     rows = (trades or {}).get("rows")
@@ -3352,7 +3357,7 @@ def _limit_trial_trades(trial: Dict[str, Any], limit: Optional[int]) -> Dict[str
         "trades": {
             **trades,
             "rows": rows[:limit],
-            "truncated": {"shown": limit, "total": len(rows), "flag": "--trades-limit"},
+            "display_truncated": {"shown": limit, "of_stored": len(rows), "flag": "--trades-limit"},
         },
     }
 

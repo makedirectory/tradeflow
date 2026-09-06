@@ -101,7 +101,13 @@ def __getattr__(name: str) -> Any:
 #: ``trials:contaminated`` journal event rather than written at record time. Nothing
 #: about history is rewritten: the quarantine is itself an appended fact, and a rebuild
 #: reproduces it from the journal like every other column here.
-SCHEMA_VERSION = 5
+#: v6 adds ``total_rows``/``truncated`` to ``trial_trades``. The payload the journal
+#: carries has always said when a trade table hit the storage cap; this table dropped
+#: both fields, so a capped table read back as a complete one and any total taken over
+#: it was wrong while looking right. ``truncated`` is three-valued - 1, 0, and NULL for
+#: a row stored before this column existed, which did not *prove* completeness and must
+#: not be read as having done so.
+SCHEMA_VERSION = 6
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS trials (
@@ -149,7 +155,9 @@ CREATE TABLE IF NOT EXISTS trial_weights (
 CREATE TABLE IF NOT EXISTS trial_trades (
   trial_id     TEXT PRIMARY KEY,
   columns_json TEXT NOT NULL,
-  rows_json    TEXT NOT NULL
+  rows_json    TEXT NOT NULL,
+  total_rows   INTEGER,
+  truncated    INTEGER
 );
 """
 
@@ -561,11 +569,22 @@ class TrialStore:
         self._conn.commit()
 
     def record_trades(self, trial_id: str, payload: Optional[Dict[str, Any]]) -> None:
-        """Persist one trial's trade table: ``{columns: [...], rows: [[...], ...]}``.
+        """Persist one trial's trade table:
+        ``{columns, rows, total_rows?, truncated?}``.
 
         Opt-in at the caller, and stored as a companion for the same reason the
         return series and the book are: it is the largest thing a trial can carry
         and the hot queries never want it.
+
+        ``total_rows`` and ``truncated`` travel with the rows because a table capped
+        at the storage ceiling and a table that is all of a run's trades are the same
+        object once the count is gone - and every total anybody takes over the second
+        is a fact, while the same total over the first is wrong by however much was
+        dropped. The writer has always recorded the cap; this is where it stopped.
+
+        A payload that does not carry ``total_rows`` stores NULL for both, not
+        ``truncated = 0``. It did not tell us it was complete, and inventing that
+        answer is the failure this column exists to end, one layer up.
         """
         if not payload:
             return
@@ -577,9 +596,16 @@ class TrialStore:
             rows_json = json.dumps(_jsonable(rows))
         except (TypeError, ValueError):
             return
+        total_rows = payload.get("total_rows")
+        try:
+            total_rows = None if total_rows is None else int(total_rows)
+        except (TypeError, ValueError):
+            total_rows = None
+        truncated = None if total_rows is None else int(bool(payload.get("truncated")))
         self._conn.execute(
-            "INSERT OR REPLACE INTO trial_trades (trial_id, columns_json, rows_json) VALUES (?, ?, ?)",
-            (trial_id, columns_json, rows_json),
+            "INSERT OR REPLACE INTO trial_trades "
+            "(trial_id, columns_json, rows_json, total_rows, truncated) VALUES (?, ?, ?, ?, ?)",
+            (trial_id, columns_json, rows_json, total_rows, truncated),
         )
         self._conn.commit()
 
@@ -588,16 +614,30 @@ class TrialStore:
 
         ``None`` means *not recorded* - the run did not opt in, or predates this
         table. It never means "this run made no trades"; that is an empty ``rows``.
+
+        ``truncated`` is three-valued and every reader has to treat it that way:
+        ``True`` (the rows are a prefix of the run's trades), ``False`` (they are all
+        of them), and ``None`` for a row written before the count was kept, which
+        proves nothing either way. Anything summing these rows says which of the three
+        it was working from.
         """
         row = self._conn.execute(
-            "SELECT columns_json, rows_json FROM trial_trades WHERE trial_id = ?", (trial_id,)
+            "SELECT columns_json, rows_json, total_rows, truncated FROM trial_trades WHERE trial_id = ?",
+            (trial_id,),
         ).fetchone()
         if row is None:
             return None
         try:
-            return {"columns": json.loads(row["columns_json"]), "rows": json.loads(row["rows_json"])}
+            columns = json.loads(row["columns_json"])
+            rows = json.loads(row["rows_json"])
         except json.JSONDecodeError:
             return None
+        return {
+            "columns": columns,
+            "rows": rows,
+            "total_rows": row["total_rows"],
+            "truncated": None if row["truncated"] is None else bool(row["truncated"]),
+        }
 
     def weights_for(self, trial_id: str) -> Optional[Dict[str, Any]]:
         """One trial's stored book, or ``None`` when it has none.

@@ -180,8 +180,29 @@ as *not recorded* — never as zero trades.
 
 Persistence follows the same journal-first pattern as the return series and the
 proposed book: the journal is the source of truth, and `trials rebuild`
-reconstructs the table from it alone. Very large tables are capped, and hitting
-the cap is recorded on the payload rather than silently truncating.
+reconstructs the table from it alone.
+
+### A stored table says whether it is all of them
+
+Very large tables are capped at a storage ceiling, and the cap travels with the rows.
+A trade table has four states and they never render alike:
+
+| What `trials show` prints | What it means |
+| --- | --- |
+| `— (not recorded — pass --record-trades on the run)` | The run did not opt in. Nothing is known about its trades |
+| `0 trades` | It opted in and made none |
+| `1,204 trades` | All of them |
+| `5,000 of 18,432 trades — TRUNCATED at the storage cap…` | A prefix. Any total over these rows is short by the rest |
+
+A fifth reads as *whether that was all of them was not recorded*: a table stored
+before the count was kept. It did not prove completeness, so it is never rendered as
+though it had.
+
+The distinction is not cosmetic — everything that aggregates a stored table (exit-reason
+P&L, win rates, duration) sums exactly these rows, and a capped table that looks complete
+turns a partial sum into a confident wrong number. `--trades-limit` truncates the *view*
+and reports itself separately (`display_truncated` in the JSON); that one is undone by
+raising the flag, and the storage cap is not undone by anything.
 
 ## Maintenance: quarantine a subset, or retire an era
 
