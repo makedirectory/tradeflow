@@ -966,7 +966,7 @@ def format_series_comparison(report: Dict[str, Any]) -> str:
         band = (
             f" [{interval['low']:+.2f}, {interval['high']:+.2f}]"
             if interval
-            else " (interval unavailable at this overlap)"
+            else f"  {pair.get('interval_note') or 'no interval available'}"
         )
         lines.append(f"{head}  {span}\n      correlation {pair['correlation']:+.2f}{band}")
         if pair.get("comparable") is False:

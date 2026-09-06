@@ -102,6 +102,9 @@ def _correlation_interval(r: float, n: int) -> Optional[Dict[str, float]]:
     no standard error to work with at all.
     """
     if n < 4 or not -1.0 < r < 1.0:
+        # No interval exists at |r| = 1: the transform is undefined there, and it is
+        # undefined because the answer is not uncertain. Callers say which of the two
+        # reasons applies rather than reporting a missing interval as thin evidence.
         return None
     z = math.atanh(r)
     se = 1.0 / math.sqrt(n - 3)
@@ -173,6 +176,17 @@ def _pair(
             "status": COMPARED,
             "correlation": r,
             "interval": _correlation_interval(r, int(x.size)),
+            # Why there is no interval, when there is none. "Undefined at |r| = 1" and
+            # "too few observations to estimate one" are opposite statements about how
+            # much is known, and a bare missing interval reads as the second.
+            "interval_note": (
+                "no interval: the two series are perfectly correlated over the shared "
+                "dates, which is a stronger statement than any interval, not a weaker one"
+                if abs(r) >= 1.0
+                else "no interval: fewer than four shared observations"
+                if x.size < 4
+                else ""
+            ),
             "comparable": acc_left == acc_right,
         }
     )

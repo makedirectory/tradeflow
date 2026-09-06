@@ -267,3 +267,32 @@ def test_a_series_whose_dates_and_values_disagree_is_refused_rather_than_truncat
         store._conn.commit()
 
         assert store.returns_for("bad") is None
+
+
+def test_a_perfect_correlation_says_why_it_has_no_interval():
+    """Found by running the installed wheel against two series that happened to be
+    identical in shape. The Fisher-z transform is undefined at |r| = 1, and the renderer
+    blamed the overlap for the missing interval — reporting the strongest possible
+    result as though it rested on thin evidence."""
+    values = [0.01 * ((i % 11) - 5) for i in range(120)]
+    identical = compare_series([_entry("a", values), _entry("b", [v + 0.002 for v in values])])
+    pair = identical["pairs"][0]
+
+    assert pair["status"] == COMPARED
+    assert pair["correlation"] == pytest.approx(1.0)
+    assert pair["interval"] is None
+    assert "perfectly correlated" in pair["interval_note"]
+
+    printed = format_series_comparison(identical)
+    assert "perfectly correlated" in printed
+    assert "overlap" in printed  # the overlap is still reported, just not blamed
+
+
+def test_an_ordinary_correlation_carries_an_interval_and_no_note():
+    """Both directions: the note must not appear where an interval exists."""
+    a, b, _ = _twins()
+
+    pair = compare_series([_entry("a", a), _entry("b", b)])["pairs"][0]
+
+    assert pair["interval"] is not None
+    assert pair["interval_note"] == ""
