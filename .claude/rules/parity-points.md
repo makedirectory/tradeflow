@@ -199,6 +199,26 @@ and refused on the other is the same trial answering one question two ways depen
 who asked, which is what a shared default exists to prevent.
 *Guarded by* `tests/test_surface_parity.py`.
 
+**A saved config's runnable contract ↔ the identity it was validated under** — a
+config's `position_limits` and the `_limits` folded into the trial's dedup identity are
+the same book written twice, and they were not checked against each other. Omitting the
+first does not leave the book unspecified: it resolves at load to the strategy class's
+default of one position, so a config whose own provenance recorded eight silently traded
+one — the file disagreeing with itself, in the direction that costs money.
+
+Four writers, each losing it a different way: `trials promote` discarded it with the
+reserved `_` keys; `walkforward --save-config` wrote `create_with_defaults()` — the
+*class* book rather than the run's — so round-tripping a config through it shrank the
+book every time; the research agent wrote none; and the MCP service had no parameter to
+put one in, so an agent holding campaign material could not write a runnable config at
+all. `services.analysis.recorded_book` is the one resolver, and it takes several sources
+because the book is not in the same place for every kind: a walk-forward keeps it in its
+recipe, a backtest in its params, since a backtest's dedup identity *is* its params.
+
+*Guarded by* `tests/test_saved_config_book.py`, which enumerates the `save_config` call
+sites from the AST rather than from a list somebody remembered, and promotes a trial then
+reloads the file and builds the strategy to check the number that arrives at the far end.
+
 **One provenance format, wherever a config is written** — `save_config` is the
 portability format and campaign material is a *field* of it (`provenance.campaign`),
 never a second artifact beside it. A campaign export living somewhere else would be a

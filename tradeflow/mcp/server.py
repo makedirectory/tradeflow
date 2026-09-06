@@ -1486,6 +1486,9 @@ def build_server(data_client=None):
         strategy: str,
         params: Dict[str, Any],
         scanner: Optional[str] = None,
+        symbols: Optional[List[str]] = None,
+        capital: Optional[float] = None,
+        position_limits: Optional[Dict[str, Any]] = None,
         provenance: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Propose a candidate config by writing configs/<name>.json, with provenance.
@@ -1504,10 +1507,29 @@ def build_server(data_client=None):
         the validation recipe the parameters alone cannot express, and which accounting
         era its numbers belong to. One format, so a config written here and one written
         by `trials promote` read identically.
+
+        **Pass `position_limits`, and pass the book that was actually validated** —
+        `recipe.folded_into_identity._limits` in that same block. Omitting it does not
+        leave the book unspecified: a run from the config inherits the strategy class's
+        default of one position, so a config whose provenance says eight were validated
+        silently trades one. `symbols` and `capital` the same way, when you know them.
         """
-        inputs = {"name": name, "strategy": strategy, "params": params, "scanner": scanner}
+        inputs = {
+            "name": name,
+            "strategy": strategy,
+            "params": params,
+            "scanner": scanner,
+            "position_limits": position_limits,
+        }
         result = configs.save_config(
-            name, strategy=strategy, params=params, scanner=scanner, provenance=provenance
+            name,
+            strategy=strategy,
+            params=params,
+            scanner=scanner,
+            symbols=symbols,
+            capital=capital,
+            position_limits=position_limits,
+            provenance=provenance,
         )
         return _logged("save_config", inputs, result)
 

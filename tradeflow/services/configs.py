@@ -17,16 +17,35 @@ def save_config(
     strategy: str,
     params: Dict[str, Any],
     scanner: Optional[str] = None,
+    symbols: Optional[Any] = None,
+    capital: Optional[float] = None,
+    position_limits: Optional[Dict[str, Any]] = None,
     provenance: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Persist a candidate config to ``configs/<name>.json``; return the path.
 
     Does not affect any running process - a human promotes a config to live.
+
+    ``position_limits``, ``symbols`` and ``capital`` are here because without them this
+    surface could not write a *runnable* config at all: the file omits the book, and a
+    run from it inherits the strategy class's default of one position rather than the
+    book that was validated. An agent holding campaign material knows that book -
+    ``recorded_book`` reads it out - and had no parameter to put it in.
+
+    Omitted values stay omitted rather than being defaulted, so a config that never knew
+    its book is distinguishable from one saved at the class default.
     """
     filename = name if name.endswith(".json") else f"{name}.json"
     prov = config_store.Provenance(**provenance) if isinstance(provenance, dict) else provenance
     path = config_store.save_config(
-        filename, strategy=strategy, params=params, scanner=scanner, provenance=prov
+        filename,
+        strategy=strategy,
+        params=params,
+        scanner=scanner,
+        symbols=symbols,
+        capital=capital,
+        position_limits=position_limits,
+        provenance=prov,
     )
     return {"path": str(path), "name": name}
 
