@@ -101,7 +101,13 @@ def __getattr__(name: str) -> Any:
 #: ``trials:contaminated`` journal event rather than written at record time. Nothing
 #: about history is rewritten: the quarantine is itself an appended fact, and a rebuild
 #: reproduces it from the journal like every other column here.
-SCHEMA_VERSION = 5
+#: v6 adds ``total_rows``/``truncated`` to ``trial_trades``. The payload the journal
+#: carries has always said when a trade table hit the storage cap; this table dropped
+#: both fields, so a capped table read back as a complete one and any total taken over
+#: it was wrong while looking right. ``truncated`` is three-valued - 1, 0, and NULL for
+#: a row stored before this column existed, which did not *prove* completeness and must
+#: not be read as having done so.
+SCHEMA_VERSION = 6
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS trials (
@@ -149,9 +155,18 @@ CREATE TABLE IF NOT EXISTS trial_weights (
 CREATE TABLE IF NOT EXISTS trial_trades (
   trial_id     TEXT PRIMARY KEY,
   columns_json TEXT NOT NULL,
-  rows_json    TEXT NOT NULL
+  rows_json    TEXT NOT NULL,
+  total_rows   INTEGER,
+  truncated    INTEGER
 );
 """
+
+#: Set while a rebuild is in flight and cleared when it finishes. A replay that dies
+#: partway leaves a half-filled index, and without this the next open would find a
+#: conforming schema with a current version stamp and no reason to look further - a
+#: silently short campaign, which is the one failure this store must never present as
+#: a complete one.
+_REBUILD_SENTINEL = "rebuild_in_progress"
 
 #: Printed beside a leaderboard, in the payload as well as the terminal. Ranking a
 #: campaign's trials and showing the winner is selection bias by construction; the
@@ -271,6 +286,80 @@ def _is_trial_tool(tool: str) -> bool:
     return tool.startswith("trial:") or tool == "research:trial"
 
 
+#: Memoized: the declared shape never changes within a process, and every store open
+#: asks for it.
+_DECLARED_SHAPE: Optional[Dict[str, tuple]] = None
+
+
+def _shape_of(conn: sqlite3.Connection) -> Dict[str, tuple]:
+    """Every table in a database and the columns it actually has."""
+    names = [
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        )
+    ]
+    return {name: tuple(r[1] for r in conn.execute(f"PRAGMA table_info({name})")) for name in names}
+
+
+def declared_shape() -> Dict[str, tuple]:
+    """The shape ``_SCHEMA`` declares, read back from a database built *from it*.
+
+    Deliberately not a hand-written list of tables and columns beside the DDL. A
+    second statement of the same thing is a second thing to forget to update, and the
+    whole point of the conformance check below is to catch a schema that says one
+    thing and a file that says another - a checker with its own idea of the shape
+    could disagree with both.
+    """
+    global _DECLARED_SHAPE
+    if _DECLARED_SHAPE is None:
+        probe = sqlite3.connect(":memory:")
+        try:
+            probe.executescript(_SCHEMA)
+            _DECLARED_SHAPE = _shape_of(probe)
+        finally:
+            probe.close()
+    return _DECLARED_SHAPE
+
+
+def schema_drift(conn: sqlite3.Connection) -> List[str]:
+    """Where the database on disk disagrees with ``_SCHEMA``, in plain words.
+
+    ``CREATE TABLE IF NOT EXISTS`` adds a *table* that is missing and does nothing at
+    all to one that already exists with the wrong columns - so a schema change that
+    adds a column reaches a fresh database and no existing one. The version stamp does
+    not catch it either: the stamp is written by the rebuild, which used to ``DELETE``
+    the rows rather than reshape the tables, leaving a file that declares the current
+    version and does not have its columns.
+
+    An *extra* column counts as drift too. It means the file was written by a newer
+    schema than this code declares, and an older reader over a newer index is exactly
+    as wrong as the reverse - it just fails more quietly.
+    """
+    declared, actual = declared_shape(), _shape_of(conn)
+    problems: List[str] = []
+    for table, columns in sorted(declared.items()):
+        if table not in actual:
+            problems.append(f"table {table!r} is missing")
+            continue
+        missing = [c for c in columns if c not in actual[table]]
+        extra = [c for c in actual[table] if c not in columns]
+        if missing:
+            problems.append(f"{table} is missing column(s) {', '.join(missing)}")
+        if extra:
+            problems.append(f"{table} has unexpected column(s) {', '.join(extra)}")
+    return problems
+
+
+class TrialStoreRebuildRefused(RuntimeError):
+    """A rebuild would have replaced real rows with an empty index.
+
+    Raised only when the journal this store indexes cannot be read *and* the store
+    holds rows. Dropping them then would destroy the only surviving copy of a campaign
+    - the store is derived, but derived from a file that has to be there.
+    """
+
+
 class TrialStore:
     """A SQLite index over the research journal. Derived; safe to delete."""
 
@@ -299,16 +388,45 @@ class TrialStore:
     # Schema
     # ------------------------------------------------------------------ #
     def _ensure_schema(self) -> None:
+        """Create what is absent, then check that what exists is the right shape.
+
+        The version stamp alone is not enough, and believing it was is what shipped a
+        store that reported v5 while its ``trials`` table was still v4 - so
+        ``mark-contaminated`` raised ``no such column`` on every store that predated
+        the column. Three separate things say the index needs rebuilding, and any one
+        of them is sufficient: the stamp disagrees with the code, the file's actual
+        columns disagree with ``_SCHEMA``, or a previous rebuild never finished.
+        """
         self._conn.executescript(_SCHEMA)
-        row = self._conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
-        if row is None:
-            self._set_meta("schema_version", str(SCHEMA_VERSION))
-            self._conn.commit()
-        elif int(row[0]) != SCHEMA_VERSION:
-            logger.warning(
-                "Trial store schema v%s != code v%s; rebuilding from the journal", row[0], SCHEMA_VERSION
-            )
+        reasons: List[str] = []
+
+        if self._get_meta(_REBUILD_SENTINEL):
+            reasons.append("a previous rebuild did not finish")
+
+        stamped = self._get_meta("schema_version")
+        if stamped is not None:
+            try:
+                if int(stamped) != SCHEMA_VERSION:
+                    reasons.append(f"schema v{stamped} != code v{SCHEMA_VERSION}")
+            except (TypeError, ValueError):
+                reasons.append(f"schema version {stamped!r} is unreadable")
+
+        reasons.extend(schema_drift(self._conn))
+
+        if not reasons:
+            if stamped is None:
+                self._set_meta("schema_version", str(SCHEMA_VERSION))
+                self._conn.commit()
+            return
+
+        logger.warning("Trial store needs rebuilding (%s); replaying the journal", "; ".join(reasons))
+        try:
             self.rebuild()
+        except TrialStoreRebuildRefused as exc:
+            # A store must never brick the command it is attached to, and this one is
+            # still readable for everything that does not touch the changed columns.
+            # Saying so beats both a traceback and silence.
+            logger.error("Trial store left as it is: %s", exc)
 
     def _set_meta(self, key: str, value: str) -> None:
         self._conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, value))
@@ -451,11 +569,22 @@ class TrialStore:
         self._conn.commit()
 
     def record_trades(self, trial_id: str, payload: Optional[Dict[str, Any]]) -> None:
-        """Persist one trial's trade table: ``{columns: [...], rows: [[...], ...]}``.
+        """Persist one trial's trade table:
+        ``{columns, rows, total_rows?, truncated?}``.
 
         Opt-in at the caller, and stored as a companion for the same reason the
         return series and the book are: it is the largest thing a trial can carry
         and the hot queries never want it.
+
+        ``total_rows`` and ``truncated`` travel with the rows because a table capped
+        at the storage ceiling and a table that is all of a run's trades are the same
+        object once the count is gone - and every total anybody takes over the second
+        is a fact, while the same total over the first is wrong by however much was
+        dropped. The writer has always recorded the cap; this is where it stopped.
+
+        A payload that does not carry ``total_rows`` stores NULL for both, not
+        ``truncated = 0``. It did not tell us it was complete, and inventing that
+        answer is the failure this column exists to end, one layer up.
         """
         if not payload:
             return
@@ -467,9 +596,16 @@ class TrialStore:
             rows_json = json.dumps(_jsonable(rows))
         except (TypeError, ValueError):
             return
+        total_rows = payload.get("total_rows")
+        try:
+            total_rows = None if total_rows is None else int(total_rows)
+        except (TypeError, ValueError):
+            total_rows = None
+        truncated = None if total_rows is None else int(bool(payload.get("truncated")))
         self._conn.execute(
-            "INSERT OR REPLACE INTO trial_trades (trial_id, columns_json, rows_json) VALUES (?, ?, ?)",
-            (trial_id, columns_json, rows_json),
+            "INSERT OR REPLACE INTO trial_trades "
+            "(trial_id, columns_json, rows_json, total_rows, truncated) VALUES (?, ?, ?, ?, ?)",
+            (trial_id, columns_json, rows_json, total_rows, truncated),
         )
         self._conn.commit()
 
@@ -478,16 +614,30 @@ class TrialStore:
 
         ``None`` means *not recorded* - the run did not opt in, or predates this
         table. It never means "this run made no trades"; that is an empty ``rows``.
+
+        ``truncated`` is three-valued and every reader has to treat it that way:
+        ``True`` (the rows are a prefix of the run's trades), ``False`` (they are all
+        of them), and ``None`` for a row written before the count was kept, which
+        proves nothing either way. Anything summing these rows says which of the three
+        it was working from.
         """
         row = self._conn.execute(
-            "SELECT columns_json, rows_json FROM trial_trades WHERE trial_id = ?", (trial_id,)
+            "SELECT columns_json, rows_json, total_rows, truncated FROM trial_trades WHERE trial_id = ?",
+            (trial_id,),
         ).fetchone()
         if row is None:
             return None
         try:
-            return {"columns": json.loads(row["columns_json"]), "rows": json.loads(row["rows_json"])}
+            columns = json.loads(row["columns_json"])
+            rows = json.loads(row["rows_json"])
         except json.JSONDecodeError:
             return None
+        return {
+            "columns": columns,
+            "rows": rows,
+            "total_rows": row["total_rows"],
+            "truncated": None if row["truncated"] is None else bool(row["truncated"]),
+        }
 
     def weights_for(self, trial_id: str) -> Optional[Dict[str, Any]]:
         """One trial's stored book, or ``None`` when it has none.
@@ -514,6 +664,37 @@ class TrialStore:
             }
         except json.JSONDecodeError:
             return None
+
+    def returns_for(self, trial_id: str) -> Optional[Dict[str, Any]]:
+        """One trial's stored return series as ``{dates, values}``, or ``None``.
+
+        ``None`` means *not recorded* - the trial kind persists no series, or it
+        predates the companion table. It is not an empty series, and the difference
+        matters to everything downstream: a trial with nothing stored cannot be
+        compared against anything, while one storing an empty series would be a claim
+        that it earned no returns over no days.
+
+        :meth:`returns_panel` is the family-wide read for the Reality Check, which
+        inner-joins onto a common calendar. This is the per-trial one, for asking
+        whether two named results are the same result.
+        """
+        row = self._conn.execute(
+            "SELECT dates_json, returns_json FROM trial_returns WHERE trial_id = ?", (trial_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            dates = json.loads(row["dates_json"])
+            values = json.loads(row["returns_json"])
+        except json.JSONDecodeError:
+            return None
+        if len(dates) != len(values):
+            # A shape the writer refuses to produce, so its presence means the row was
+            # written by something else. Refusing beats silently truncating to the
+            # shorter of the two and calling the result a return series.
+            logger.warning("Trial %s has a return series whose dates and values disagree", trial_id)
+            return None
+        return {"dates": [str(d) for d in dates], "values": [float(v) for v in values]}
 
     def returns_panel(
         self, strategy: str, symbols: Iterable[Any], accounting: int, *, min_overlap: int = 60
@@ -626,19 +807,62 @@ class TrialStore:
         self._conn.commit()
         return reached
 
-    def contaminated_count(self) -> int:
-        return int(
-            self._conn.execute("SELECT COUNT(*) FROM trials WHERE contaminated_at IS NOT NULL").fetchone()[0]
-        )
+    def contaminated_count(self) -> Optional[int]:
+        """How many rows are quarantined, or ``None`` when the file cannot say.
+
+        ``None`` on a store whose repair was refused: the column is genuinely not
+        there, so the honest answer is "unknown", never zero. Zero would read as "we
+        checked and nothing is quarantined" on a file that has never been asked.
+        """
+        try:
+            return int(
+                self._conn.execute(
+                    "SELECT COUNT(*) FROM trials WHERE contaminated_at IS NOT NULL"
+                ).fetchone()[0]
+            )
+        except sqlite3.OperationalError:
+            return None
 
     def rebuild(self, journal_path: Optional[Any] = None) -> Dict[str, int]:
-        """Truncate and replay the journal from scratch. Idempotent: rebuilding
-        twice in a row produces identical rows (dedup is keyed on ``run_id``)."""
+        """Drop the derived tables, recreate them from ``_SCHEMA``, and replay the
+        journal from scratch. Idempotent: rebuilding twice in a row produces identical
+        rows (dedup is keyed on ``run_id``).
+
+        **Drop, not ``DELETE``.** Emptying the tables replays the rows into whatever
+        shape the file already had, so a schema change reached a fresh database and no
+        existing one. Recreating them is what makes ``SCHEMA_VERSION`` mean something,
+        and it is safe for exactly one reason: every column of every table here is
+        reconstructed from the journal, the quarantine flags included - they are
+        replayed from a ``trials:contaminated`` event like any other fact. Nothing may
+        be written into this database that the journal cannot produce again, and
+        checking that is the precondition for dropping anything.
+
+        ``meta`` goes too. It holds only the version stamp and the last replay's line
+        count, and keeping it across a rebuild is precisely how the stamp came to
+        describe a file it did not match.
+
+        Refuses, rather than emptying a populated index, when the journal it indexes
+        cannot be read: the store is derived, but derived from a file that has to be
+        there.
+        """
         journal_path = Path(journal_path) if journal_path else self.journal_path
-        self._conn.execute("DELETE FROM trials")
-        self._conn.execute("DELETE FROM trial_returns")
-        self._conn.execute("DELETE FROM trial_weights")
-        self._conn.execute("DELETE FROM trial_trades")
+        if not self._journal_readable(journal_path):
+            rows = int(self._conn.execute("SELECT COUNT(*) FROM trials").fetchone()[0])
+            if rows:
+                raise TrialStoreRebuildRefused(
+                    f"{rows} recorded trial(s) are indexed here but the journal they came from "
+                    f"({journal_path}) cannot be read. Rebuilding would replace them with an "
+                    "empty index and the journal is the only other copy. Restore the journal, "
+                    "or point --journal at the one this store indexes."
+                )
+
+        for table in sorted(declared_shape()):
+            self._conn.execute(f"DROP TABLE IF EXISTS {table}")
+        self._conn.executescript(_SCHEMA)
+        # Written before the replay and cleared after it, so a rebuild interrupted
+        # halfway is detected on the next open instead of passing as a complete index
+        # under a freshly written version stamp.
+        self._set_meta(_REBUILD_SENTINEL, "1")
         self._conn.commit()
 
         n_lines = 0
@@ -661,9 +885,25 @@ class TrialStore:
 
         self._set_meta("schema_version", str(SCHEMA_VERSION))
         self._set_meta("last_rebuild_journal_lines", str(n_lines))
+        self._conn.execute("DELETE FROM meta WHERE key = ?", (_REBUILD_SENTINEL,))
         self._conn.commit()
         logger.info("Rebuilt trial store: %d rows from %d journal lines", n_rows, n_lines)
         return {"rows": n_rows, "journal_lines": n_lines}
+
+    @staticmethod
+    def _journal_readable(journal_path: Path) -> bool:
+        """Whether the journal can actually be opened and read, not merely named.
+
+        ``exists()`` is not the question. A path that is a directory, or unreadable,
+        or on a mount that has gone away answers True to it and then produces zero
+        lines - which replays as an empty campaign.
+        """
+        try:
+            with journal_path.open() as fh:
+                fh.read(1)
+            return True
+        except OSError:
+            return False
 
     def _ingest_journal_record(self, record: Dict[str, Any], session_ctx: Dict[str, Dict[str, Any]]) -> bool:
         """Parse one journal line; insert a row if it represents a trial. Returns
@@ -1017,6 +1257,17 @@ class TrialStore:
         trial["reused_by"] = self.reused_by(trial)
         return trial
 
+    def row_for(self, trial_id: str) -> Optional[Dict[str, Any]]:
+        """The trial's own row, without its companion records.
+
+        :meth:`get_trial` assembles the book, the trade table and the reuse chain, which
+        is what a detail view wants and is wasteful for a caller that needs only the
+        provenance — a comparison across several trials would load every one of their
+        trade tables to read an accounting version off each.
+        """
+        row = self._conn.execute("SELECT * FROM trials WHERE id = ?", (trial_id,)).fetchone()
+        return dict(row) if row is not None else None
+
     def _returns_summary(self, trial_id: str) -> Optional[Dict[str, Any]]:
         """Length and date span of a trial's stored return series, without loading
         the values - `show` reports that one exists, not what is in it."""
@@ -1153,16 +1404,32 @@ class TrialStore:
         # exists), so it needs its own check.
         n_orphaned = self._conn.execute("SELECT COUNT(*) FROM trials WHERE strategy IS NULL").fetchone()[0]
         schema_version = self._get_meta("schema_version")
+        # Normally self-healing: opening the store repairs a mis-shaped file. It
+        # survives to here only when the repair was *refused* because the journal
+        # could not be read, which is exactly the state worth naming out loud.
+        shape_problems = schema_drift(self._conn)
+        # The row-vs-line comparison cannot see this one: with no journal there are no
+        # lines, and `rows < 0 lines` is False, so an index whose source has gone
+        # missing reported itself healthy. It is the opposite of healthy - the record
+        # behind these rows is the thing that is gone, and they cannot be rebuilt.
+        journal_readable = self._journal_readable(journal_path)
         return {
             "db_path": str(self.db_path),
             "journal_path": str(journal_path),
+            "journal_readable": journal_readable,
             "rows": n_rows,
             "journal_lines": n_total_lines,
             "journal_trial_lines": n_trial_lines,
             "orphaned_rows": n_orphaned,
             "contaminated_rows": self.contaminated_count(),
             "schema_version": int(schema_version) if schema_version is not None else None,
-            "drift": n_rows < n_trial_lines or n_orphaned > 0,
+            "schema_drift": shape_problems,
+            "drift": (
+                n_rows < n_trial_lines
+                or n_orphaned > 0
+                or bool(shape_problems)
+                or (n_rows > 0 and not journal_readable)
+            ),
         }
 
 

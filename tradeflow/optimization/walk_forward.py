@@ -279,20 +279,41 @@ def _check(value: float, op: str, threshold: float) -> Dict[str, Any]:
 #: What each gate's numbers *are*, for anything that renders them. Declared here, beside
 #: the checks that produce them, so a new gate states its unit where it is defined
 #: rather than in whichever surface happens to print it. Unlisted gates are ratios.
+#: The unit each named value is measured in, declared beside the things that produce
+#: them rather than in whichever surface happens to render one. Gate names and metric
+#: names share the table because they share the defect: a renderer that applies one
+#: format to every number prints a trade count as ``25.00`` and a boolean as ``1.00``.
+#:
+#: Anything absent is a ratio, which is the safe default — being wrong about a ratio
+#: costs two decimal places, and being wrong about a count costs credibility.
 _GATE_VALUE_KINDS = {
     "min_oos_trades": "count",
     "leakage_probe": "flag",
+    "total_trades": "count",
+    "oos_trades": "count",
+    "n_trials": "count",
+    "universe_size": "count",
+    "symbols_traded": "count",
+    "max_positions": "count",
+    "low_sample": "flag",
+    "benchmark_available": "flag",
+    "treynor_available": "flag",
+    "promotable": "flag",
 }
 
 
 def format_gate_value(gate_name: str, value: Any) -> str:
-    """One gate number as a string, in the unit that gate is actually measured in.
+    """One number as a string, in the unit that name is actually measured in.
 
     Every renderer used to apply one format to all of them. `:.2f` is right for a
     Sharpe and wrong for a trade count, which printed as `25.00`; `leakage_probe`
     carries a *boolean*, which rendered as `1.00`, and its value is `None` when the
     probe recorded no verdict, which raised `TypeError` inside a demo block written
     never to hard-crash.
+
+    Named for gates because that is where the defect was first found; it takes any
+    name in :data:`_GATE_VALUE_KINDS`, and a second formatter for metrics would be the
+    same defect with a different spelling.
     """
     if value is None:
         return "n/a"

@@ -28,7 +28,7 @@ from tradeflow.alphas import (
     strategy_scorer,
 )
 from tradeflow.analytics import metrics as m
-from tradeflow.analytics import performance
+from tradeflow.analytics import performance, series_comparison
 from tradeflow.data import (
     ClientBarSource,
     FeaturePanel,
@@ -176,24 +176,14 @@ def _tunable_params(strategy) -> Dict[str, Any]:
 
 @contextlib.contextmanager
 def _open_trial_store():
-    """A trial store against the current journal, or ``None`` on any failure to
-    open one - same fail-safe contract as the CLI's ``main._open_trial_store``.
-    v1 of the trial store is passive and derived: a broken store must never
-    break the command it's attached to, memoization included."""
-    from tradeflow.services import audit
-    from tradeflow.store.trials import TrialStore, db_path_for_journal
+    """A trial store against the current journal, or ``None`` if one cannot be opened.
 
-    journal_path = audit.DEFAULT_TRIAL_JOURNAL
-    try:
-        store = TrialStore(db_path_for_journal(journal_path), journal_path=journal_path)
-    except Exception:  # noqa: BLE001
-        logger.warning("Trial store unavailable; memoization disabled for this run", exc_info=True)
-        yield None
-        return
-    try:
+    Delegates to the one definition; see :func:`tradeflow.services.audit.open_trial_store`.
+    """
+    from tradeflow.services.audit import open_trial_store
+
+    with open_trial_store() as store:
         yield store
-    finally:
-        store.close()
 
 
 def _find_cached_trial(
@@ -353,28 +343,110 @@ def run_backtest(
     )
 
 
-def trades_payload(frame, *, max_rows: int = 5000) -> Optional[Dict[str, Any]]:
-    """A trade DataFrame as the ``{columns, rows}`` payload the trial store keeps.
+def analyze_trial(store, trial_id: str, *, allow_partial: bool = False) -> Dict[str, Any]:
+    """Everything the trade table of one recorded trial can be asked, in one call.
+
+    Takes an open store rather than opening one, so the CLI's ``--db``/``--journal``
+    and the MCP server's default both reach this through the handle they already have
+    — a fourth way of opening the trial store is the last thing this codebase needs.
+    """
+    from tradeflow.analytics.trade_analytics import trade_analytics
+
+    row = store.row_for(trial_id)
+    if row is None:
+        return {
+            "error": f"No trial with id {trial_id!r}. Use list_trials to see what is recorded.",
+            "trial_id": trial_id,
+        }
+    report = trade_analytics(store.trades_for(trial_id), allow_partial=allow_partial)
+    report.update(
+        {
+            "trial_id": trial_id,
+            "kind": row.get("kind"),
+            "strategy": row.get("strategy"),
+            "accounting": row.get("accounting"),
+            "recorded_at": row.get("ts"),
+            # A quarantined trial is still readable — the quarantine is about whether it
+            # counts as evidence, not about whether it happened — but anything reading
+            # its numbers should know.
+            "contaminated_at": row.get("contaminated_at"),
+            "contamination_reason": row.get("contamination_reason"),
+        }
+    )
+    return report
+
+
+def compare_trials(
+    store,
+    trial_ids: Sequence[str],
+    *,
+    min_overlap: int = series_comparison.MIN_OVERLAP,
+    across_accounting: bool = False,
+) -> Dict[str, Any]:
+    """Correlate the recorded return series of two or more trials, or say why not.
+
+    Unknown ids are reported in the payload rather than raised: asking about four
+    trials and getting an error about one is how a comparison of the other three gets
+    abandoned for no reason.
+    """
+    entries: List[Dict[str, Any]] = []
+    unknown: List[str] = []
+    for trial_id in trial_ids:
+        row = store.row_for(trial_id)
+        if row is None:
+            unknown.append(trial_id)
+            continue
+        series = store.returns_for(trial_id) or {}
+        entries.append(
+            {
+                "trial_id": trial_id,
+                "dates": series.get("dates"),
+                "values": series.get("values"),
+                "accounting": row.get("accounting"),
+                "strategy": row.get("strategy"),
+                "kind": row.get("kind"),
+            }
+        )
+    report = series_comparison.compare_series(
+        entries, min_overlap=min_overlap, across_accounting=across_accounting
+    )
+    report["unknown_trial_ids"] = unknown
+    return report
+
+
+def trades_payload(
+    frame, *, max_rows: Optional[int] = 5000, jsonable: bool = True
+) -> Optional[Dict[str, Any]]:
+    """A trade DataFrame as the ``{columns, rows, total_rows, truncated}`` payload the
+    trial store keeps.
 
     ``None`` when there is no frame at all - distinct from a run that genuinely
     made no trades, which is an empty ``rows`` list.
 
     ``max_rows`` is a deliberate ceiling on what one trial may store, and hitting
     it is *recorded* (``truncated``/``total_rows``), never silent: a truncated
-    table that looks complete is worse than no table.
+    table that looks complete is worse than no table. ``None`` means no ceiling, which
+    is what an in-memory result wants - it is the whole frame, and saying so is what
+    lets anything aggregating it know the totals are real.
+
+    ``jsonable=False`` skips the per-cell coercion. It is only needed on the way to
+    disk or a wire, and it is the great majority of the cost of converting a large
+    frame - so a caller that just wants the shape in order to aggregate it in memory
+    should not pay for it. One function either way, because the *shape* and the
+    truncation rule are the things that must not come to differ.
     """
     if frame is None:
         return None
     total = int(len(frame))
-    kept = frame.head(max_rows) if total > max_rows else frame
-    payload = {
+    capped = max_rows is not None and total > max_rows
+    kept = frame.head(max_rows) if capped else frame
+    rows = kept.values.tolist()
+    return {
         "columns": [str(c) for c in kept.columns],
-        "rows": _jsonable(kept.values.tolist()),
+        "rows": _jsonable(rows) if jsonable else rows,
         "total_rows": total,
+        "truncated": capped,
     }
-    if total > max_rows:
-        payload["truncated"] = True
-    return payload
 
 
 def backtest_payload(
@@ -417,6 +489,10 @@ def backtest_payload(
         # it - separate from `metrics` because it judges executability at this capital,
         # not whether the edge was real.
         "execution": _jsonable(getattr(result, "execution", {}) or {}),
+        # The book's aggregate adverse/favourable excursion. Always in the payload
+        # rather than behind the CLI's flag: an agent cannot pass a flag it was not
+        # told about, and the pair of bounds is the part a reader has to see.
+        "excursion": _jsonable(getattr(result, "excursion", {}) or {}),
         "executability": _jsonable(performance.execution_verdict(getattr(result, "execution", None))),
         "total_trades": int(len(result.trades)),
         "trades_csv": trades_csv,

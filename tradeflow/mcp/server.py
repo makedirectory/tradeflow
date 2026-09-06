@@ -17,7 +17,8 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from tradeflow.services import analysis, configs, glossary, registry
+from tradeflow.analytics.series_comparison import MIN_OVERLAP as SERIES_MIN_OVERLAP
+from tradeflow.services import analysis, campaign, configs, glossary, registry
 from tradeflow.services.audit import audit_log, new_run_id
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,9 @@ EXPOSED_TOOLS = (
     "render_report",
     "list_trials",
     "get_trial",
+    "analyze_trial",
+    "compare_trials",
+    "get_campaign_material",
     "best_trials",
     "get_metrics_glossary",
     "summarize_bars",
@@ -152,21 +156,16 @@ _NO_STORE = "The trial store could not be opened; no campaign history is availab
 
 @contextlib.contextmanager
 def _trial_store():
-    """A read-only handle on the trial store, or ``None`` if it cannot be opened."""
-    from tradeflow.services import audit
-    from tradeflow.store.trials import TrialStore, db_path_for_journal
+    """A read-only handle on the trial store, or ``None`` if it cannot be opened.
 
-    journal_path = audit.DEFAULT_TRIAL_JOURNAL
-    try:
-        store = TrialStore(db_path_for_journal(journal_path), journal_path=journal_path)
-    except Exception:  # noqa: BLE001 - a passive store never breaks its caller
-        logger.warning("Trial store unavailable for this MCP call", exc_info=True)
-        yield None
-        return
-    try:
+    Delegates. This was a third copy of the CLI's and the service's opener - three
+    places deciding which journal to index, which is the one decision they must never
+    disagree about.
+    """
+    from tradeflow.services.audit import open_trial_store
+
+    with open_trial_store() as store:
         yield store
-    finally:
-        store.close()
 
 
 #: Appended where a tool accepts `workers`. Parallelism is a throughput choice, and
@@ -546,6 +545,16 @@ def build_server(data_client=None):
         moment a bar touches it, which models a resting limit always first in the queue.
         For a strategy whose gain concentrates in target exits that assumption is the
         result rather than a detail, so raising it is how you find out which you have.
+
+        The result carries `excursion`: how bad the book got *inside* a bar against how
+        bad its closing marks ever showed. The equity curve is marked at each bar's
+        close, so a shallow `max_drawdown` can sit over a period the book spent in more
+        trouble — and per-trade MAE cannot tell you, because a position deep underwater
+        may be a small part of the book. Read both bounds and quote the pair: the
+        closing mark is a lower bound on the pain, and the intra-bar figure marks every
+        position at its own worst tick and so assumes they all got there at once, which
+        makes it an upper bound and never a measurement. The realized worst lies
+        between them. Nothing is gated on either.
 
         Journals this as a trial (the same research journal and trial store the
         `backtest` command uses) so it counts toward the campaign's multiple-testing
@@ -1287,6 +1296,119 @@ def build_server(data_client=None):
                 )
             return _logged("get_trial", {"trial_id": trial_id}, trial)
 
+    @tool()
+    def analyze_trial(trial_id: str, allow_partial: bool = False) -> Dict[str, Any]:
+        """What one recorded run's trades actually did: exit-reason P&L, win and loss
+        by reason, holding period, and per-trade excursion.
+
+        Read `status` before any number. `complete` means the figures cover every trade
+        the run made. `unavailable` means there are none and `reason` says why — most
+        often that the run did not pass `--record-trades`, which is NOT the same as a
+        run that made no trades. `truncated` appears only with `allow_partial=true`,
+        and then every count and total is a partial and must be reported as one.
+
+        A trade table capped at the storage ceiling is refused by default rather than
+        summed: a total over a prefix of a run's trades is not a smaller number than
+        the truth, it is a wrong one. So is a table whose completeness was never
+        recorded.
+
+        The excursion figures are **per trade** — how far one position went against its
+        own entry — and are not the book's aggregate open drawdown. A position deep
+        underwater that is a small fraction of the book did not put the book that far
+        underwater. Journals nothing; read-only.
+        """
+        inputs = {"trial_id": trial_id, "allow_partial": allow_partial}
+        with _trial_store() as store:
+            if store is None:
+                return _logged("analyze_trial", inputs, {"error": _NO_STORE})
+            return _logged(
+                "analyze_trial",
+                inputs,
+                analysis.analyze_trial(store, trial_id, allow_partial=allow_partial),
+            )
+
+    @tool()
+    def compare_trials(
+        trial_ids: List[str],
+        min_overlap: int = SERIES_MIN_OVERLAP,
+        across_accounting: bool = False,
+    ) -> Dict[str, Any]:
+        """Correlate the recorded return series of two or more trials — are they in
+        fact one result?
+
+        Ask this before reporting two candidates as separate evidence. Results
+        correlating near 1.0 are one bet held twice however differently they were
+        parameterised, and counting both inflates what a campaign appears to have
+        found.
+
+        Pairs are **refused**, not caveated, when they share fewer than `min_overlap`
+        dates or were recorded under different accounting versions — a correlation over
+        a handful of dates is an error bar, and two engines that compute different
+        things produce series whose correlation is partly about the engines.
+        `across_accounting=true` computes those anyway and marks them
+        `comparable: false`.
+
+        Read `pairs` alongside `matrix`. The matrix holds `null` where nothing was
+        computed, because in a correlation matrix a zero is the strong claim that two
+        results move independently — exactly what a refusal cannot say. Every
+        correlation carries a Fisher-z `interval`; quote it, since one resting on a
+        short overlap is wide and a bare coefficient hides that. Journals nothing;
+        read-only.
+        """
+        # `across_accounting` decides whether cross-era pairs were computed or refused,
+        # so an audit trail without it cannot tell a default comparison from one that
+        # deliberately crossed an accounting boundary.
+        inputs = {
+            "trial_ids": trial_ids,
+            "min_overlap": min_overlap,
+            "across_accounting": across_accounting,
+        }
+        with _trial_store() as store:
+            if store is None:
+                return _logged("compare_trials", inputs, {"error": _NO_STORE})
+            return _logged(
+                "compare_trials",
+                inputs,
+                analysis.compare_trials(
+                    store,
+                    trial_ids,
+                    min_overlap=min_overlap,
+                    across_accounting=across_accounting,
+                ),
+            )
+
+    @tool()
+    def get_campaign_material(trial_id: str) -> Dict[str, Any]:
+        """What validated a trial: its recipe, its evidence, and what is recoverable.
+
+        Read this before proposing a config from a trial, and pass it through as
+        `provenance.campaign` when you call `save_config` — that is the same block
+        `trials promote` writes, and a second shape invented here would be a second
+        provenance format, which is the thing this project has been bitten by more
+        than once.
+
+        Three sections, labelled because they age differently. `recipe` is how it was
+        validated — the folds, the embargo, the objective, the search method, and the
+        cost model and book limits folded into its identity. It stays true. `evidence`
+        is what was measured under one accounting version and is worthless outside it;
+        check `comparable_with_current_engine` before quoting a single number from it.
+        `metadata` is about the record: when, which git sha, and which stored artifacts
+        still exist.
+
+        A section that could not be assembled says so with a reason rather than coming
+        back empty. Most trial kinds have no separate recipe — a backtest's identity
+        *is* its parameters — and the recipe section says that instead of implying the
+        run was validated with no settings. Journals nothing; read-only.
+        """
+        with _trial_store() as store:
+            if store is None:
+                return _logged("get_campaign_material", {"trial_id": trial_id}, {"error": _NO_STORE})
+            return _logged(
+                "get_campaign_material",
+                {"trial_id": trial_id},
+                campaign.campaign_material(store, trial_id),
+            )
+
     @tool("deflated_sharpe_ratio", "sharpe_ratio")
     def best_trials(
         strategy: Optional[str] = None,
@@ -1376,6 +1498,12 @@ def build_server(data_client=None):
         Include the evidence in `provenance` (the walk-forward or verdict run behind
         the proposal, its trial id, its window and universe), because a config with
         no recorded reason for existing is a config nobody can safely promote.
+
+        For a config proposed from a recorded trial, put `get_campaign_material`'s
+        block in `provenance.campaign` verbatim rather than summarising it. It carries
+        the validation recipe the parameters alone cannot express, and which accounting
+        era its numbers belong to. One format, so a config written here and one written
+        by `trials promote` read identically.
         """
         inputs = {"name": name, "strategy": strategy, "params": params, "scanner": scanner}
         result = configs.save_config(
