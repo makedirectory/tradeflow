@@ -127,6 +127,56 @@ Re-runs under progressively worse cost assumptions. An edge that clears at 1bp a
 evaporates at 2bp is a different proposition from one that survives five times its
 assumed cost, and a single cost assumption reports both as a pass.
 
+## Portfolio excursion
+
+```bash
+tradeflow backtest --config configs/breakout.json --start ... --end ... --excursion
+```
+
+The equity curve is marked at each bar's **close**. Everything inside the bar — the
+tick where three positions were simultaneously at their worst — is invisible to it, so
+a shallow drawdown can sit over a period the book actually spent in more trouble.
+
+Per-trade MAE cannot settle it. A position 40% underwater that was a twentieth of the
+book did not put the book 40% underwater, and the per-trade figure looks identical
+either way. This is the book-level version.
+
+```
+=== Portfolio excursion ===
+  Worst the book ever looked : -21.12% from its peak
+    at 2024-01-03 00:00:00 — 2 open, gross 96.0%, net 96.0% of equity
+    the equity curve showed -0.96% at that same instant
+  Deepest closing drawdown   : -6.47% at 2024-01-05 00:00:00
+  Best the book ever looked  : +2.88% above its peak
+  The curve did NOT sample the same pain: 14.65pp deeper intra-bar than the
+  closing marks ever showed.
+  Basis: every open position marked at its own worst (and best) tick within
+  the same bar, which assumes they all got there at once — an upper bound on
+  the pain, never a measurement of it.
+  The realized worst lies between the two: the closing mark is a lower bound and
+  the simultaneous-extremes figure an upper one. Neither is the answer alone.
+```
+
+*(Illustrative figures.)*
+
+**Read it as a pair, not as a number.** The two lines bracket the truth from opposite
+sides:
+
+| | What it is | Which way it errs |
+| --- | --- | --- |
+| Deepest closing drawdown | Prices the book actually printed at | Too shallow — it never sees inside a bar |
+| Worst the book ever looked | Every open position at its own worst tick in the same bar | Too deep — they did not all get there at once |
+
+Quoting only the second is the pessimistic reading the per-trade figures already
+invite; quoting only the first is the complacent one the equity curve already gives.
+The gap between them is the finding, and where it is small the diagnostic says so —
+that answer is as useful as the alarming one and rather more common.
+
+Both excursions are measured against the running peak of the **closing** curve, since a
+peak the book only touched intra-bar would inflate the drawdown with the same noise
+this exists to separate out. Nothing is gated on any of it, and the figures are in the
+`excursion` block of the JSON payload and over MCP whether or not the flag was passed.
+
 ## Causality probes
 
 ```bash

@@ -480,6 +480,10 @@ def backtest_payload(
         # it - separate from `metrics` because it judges executability at this capital,
         # not whether the edge was real.
         "execution": _jsonable(getattr(result, "execution", {}) or {}),
+        # The book's aggregate adverse/favourable excursion. Always in the payload
+        # rather than behind the CLI's flag: an agent cannot pass a flag it was not
+        # told about, and the pair of bounds is the part a reader has to see.
+        "excursion": _jsonable(getattr(result, "excursion", {}) or {}),
         "executability": _jsonable(performance.execution_verdict(getattr(result, "execution", None))),
         "total_trades": int(len(result.trades)),
         "trades_csv": trades_csv,

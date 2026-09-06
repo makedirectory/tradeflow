@@ -27,6 +27,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+from tradeflow.analytics import excursion as excursion_module
 from tradeflow.analytics import metrics as m
 from tradeflow.analytics import performance
 from tradeflow.brokers.base import AccountSnapshot
@@ -222,16 +223,35 @@ class _Book:
             for p in self.positions.values()
         )
 
+    def market_value_at(self, prices: Optional[Dict[str, float]] = None) -> float:
+        """Reserved notional plus unrealized gross P&L, marked at the given prices.
+
+        ``prices`` overrides the mark per symbol and falls back to each position's last
+        seen price. It exists so a diagnostic can ask what the book would have been
+        worth at some *other* price — the worst tick inside a bar, say — without either
+        moving the marks the engine decides on or writing a second copy of this sum.
+        Two implementations of "what is this book worth" is precisely the divergence
+        that is invisible until the two disagree.
+        """
+        prices = prices or {}
+        total = 0.0
+        for symbol, p in self.positions.items():
+            direction = 1 if p["side"] == signals.BUY else -1
+            price = prices.get(symbol, p["last_price"])
+            total += p["notional"] + (price - p["entry_price"]) * p["size"] * direction
+        return total
+
     def market_value(self) -> float:
         """Reserved notional plus unrealized gross P&L, marked at last seen price."""
-        total = 0.0
-        for p in self.positions.values():
-            direction = 1 if p["side"] == signals.BUY else -1
-            total += p["notional"] + (p["last_price"] - p["entry_price"]) * p["size"] * direction
-        return total
+        return self.market_value_at()
 
     def equity(self) -> float:
         return self.cash + self.market_value()
+
+    def equity_at(self, prices: Optional[Dict[str, float]] = None) -> float:
+        """What the book would be worth marked at ``prices``. Never consulted by a
+        decision - see :meth:`market_value_at`."""
+        return self.cash + self.market_value_at(prices)
 
 
 def _leg_report(leg_curves, trades, initial_capital: float) -> Dict[str, Any]:
@@ -400,6 +420,11 @@ class BacktestResult:
     execution: Dict[str, Any] = field(default_factory=dict)
     #: What the book actually carried, step by step - see :func:`_exposure_report`.
     exposure: Dict[str, Any] = field(default_factory=dict)
+    #: The book's aggregate adverse/favourable excursion - how bad it ever looked
+    #: *inside* a bar, against how bad the closing marks ever showed. Diagnostic;
+    #: nothing in the metrics reads it. See
+    #: :func:`tradeflow.analytics.excursion.portfolio_excursion`.
+    excursion: Dict[str, Any] = field(default_factory=dict)
     #: Per-side realized performance for a long/short book - see :func:`_leg_report`.
     #: Empty for a long-only run, which has nothing to decompose.
     legs: Dict[str, Any] = field(default_factory=dict)
@@ -552,7 +577,7 @@ class BacktestEngine:
         # A merged-timeline step is the unit for *both* carry accrual and the equity
         # curve, so both have to annualize on the merged timeline's own rate.
         self._step_periods_per_year = self._step_rate(panels, master)
-        all_trades, equity_curve, equity_times, execution, legs, exposure = self._replay(
+        all_trades, equity_curve, equity_times, execution, legs, exposure, excursion = self._replay(
             panels, master, initial_capital, trade_from
         )
 
@@ -607,6 +632,7 @@ class BacktestEngine:
             equity_times=list(equity_times),
             legs=legs,
             exposure=_exposure_report(exposure),
+            excursion=excursion_module.portfolio_excursion(excursion),
         )
 
     # ------------------------------------------------------------------ #
@@ -737,6 +763,7 @@ class BacktestEngine:
         realized_by_side: Dict[str, float] = {signals.BUY: 0.0, signals.SELL: 0.0}
         leg_curves: Dict[str, List[float]] = {signals.BUY: [0.0], signals.SELL: [0.0]}
         exposure_curve: List[Dict[str, float]] = []
+        excursion_curve: List[Dict[str, Any]] = []
         if not panels:
             return (
                 trades,
@@ -745,6 +772,7 @@ class BacktestEngine:
                 book.execution.as_dict(),
                 _leg_report(leg_curves, trades, initial_capital),
                 exposure_curve,
+                excursion_curve,
             )
 
         cutoff = _align_tz(trade_from, master) if trade_from is not None else None
@@ -883,6 +911,31 @@ class BacktestEngine:
                         "equity": equity_now_marked,
                     }
                 )
+                # What the book would have been worth at the worst, and the best, tick
+                # inside this bar. Reported, never consulted: no decision above reads
+                # any of it, which is the only reason a full-bar extreme is allowed
+                # here at all while the decisions are held to the open.
+                adverse_prices: Dict[str, float] = {}
+                favourable_prices: Dict[str, float] = {}
+                for symbol, pos in book.positions.items():
+                    i = panels[symbol].rows[k]
+                    if i < 0:
+                        continue
+                    low, high = panels[symbol].lows[i], panels[symbol].highs[i]
+                    long_side = pos["side"] == signals.BUY
+                    adverse_prices[symbol] = low if long_side else high
+                    favourable_prices[symbol] = high if long_side else low
+                excursion_curve.append(
+                    {
+                        "time": master[k],
+                        "equity_close": equity_now_marked,
+                        "equity_adverse": book.equity_at(adverse_prices),
+                        "equity_favourable": book.equity_at(favourable_prices),
+                        "gross": book.gross_exposure(),
+                        "net": book.net_exposure(),
+                        "open_positions": len(book.positions),
+                    }
+                )
                 unrealized = {signals.BUY: 0.0, signals.SELL: 0.0}
                 for pos in book.positions.values():
                     direction = 1 if pos["side"] == signals.BUY else -1
@@ -916,6 +969,7 @@ class BacktestEngine:
             book.execution.as_dict(),
             _leg_report(leg_curves, trades, initial_capital),
             exposure_curve,
+            excursion_curve,
         )
 
     def _trade_cost(self, symbol, shares, price, adv, vol, i) -> float:

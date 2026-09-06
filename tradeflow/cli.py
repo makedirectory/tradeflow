@@ -584,6 +584,10 @@ def cmd_backtest(args) -> None:
     _print_net_cap_derivation(result, strategy.position_limits())
     _print_verdicts_for_backtest(result)
     _print_exit_concentration(result)
+    if getattr(args, "excursion", False):
+        from tradeflow.analytics.excursion import excursion_lines
+
+        print("\n".join(excursion_lines(getattr(result, "excursion", {}) or {})))
     if getattr(args, "causality", False):
         _print_causality_for_backtest(args, data_client, universe)
     if getattr(args, "cost_stress", False):
@@ -4734,6 +4738,15 @@ def build_parser() -> argparse.ArgumentParser:
     bt.add_argument("--benchmark", default="SPY", help="Benchmark symbol for beta")
     _add_cost_flags(bt)
     _add_limit_flags(bt)
+    bt.add_argument(
+        "--excursion",
+        action="store_true",
+        help="How bad the book ever looked *inside* a bar, against how bad its closing "
+        "marks ever showed. The equity curve is marked at each bar's close, so a shallow "
+        "drawdown can sit over a period the book spent in more trouble - and per-trade MAE "
+        "cannot answer that, because a position deep underwater may be a small part of the "
+        "book. Reports both bounds; grades neither",
+    )
     bt.add_argument(
         "--fill-stress",
         dest="fill_stress",

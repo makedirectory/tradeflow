@@ -545,6 +545,16 @@ def build_server(data_client=None):
         For a strategy whose gain concentrates in target exits that assumption is the
         result rather than a detail, so raising it is how you find out which you have.
 
+        The result carries `excursion`: how bad the book got *inside* a bar against how
+        bad its closing marks ever showed. The equity curve is marked at each bar's
+        close, so a shallow `max_drawdown` can sit over a period the book spent in more
+        trouble — and per-trade MAE cannot tell you, because a position deep underwater
+        may be a small part of the book. Read both bounds and quote the pair: the
+        closing mark is a lower bound on the pain, and the intra-bar figure marks every
+        position at its own worst tick and so assumes they all got there at once, which
+        makes it an upper bound and never a measurement. The realized worst lies
+        between them. Nothing is gated on either.
+
         Journals this as a trial (the same research journal and trial store the
         `backtest` command uses) so it counts toward the campaign's multiple-testing
         total. An exact prior trial is served instead (result has `memoized: true`)
