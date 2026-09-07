@@ -709,3 +709,27 @@ def test_the_configs_own_universe_is_not_flagged(wired, tmp_path, capsys):
     printed = capsys.readouterr().out
     assert "replayed from the config" in printed
     assert "evidence does not carry over" not in printed
+
+
+def test_a_ledger_the_run_would_refuse_is_refused_before_the_preflight_shows_it(wired, tmp_path, capsys):
+    """A preflight's whole job is to show what this run will do, so it must not advertise
+    a configuration the run rejects. It was printing the live ledger as this session's
+    destination and exiting cleanly under `--preflight`, for a run that would have
+    refused to start."""
+    from tradeflow.execution.ledger import default_ledger_path
+
+    with pytest.raises(SystemExit, match="points at the live ledger"):
+        _run(
+            [
+                "small-real",
+                "--config",
+                str(_config(tmp_path)),
+                "--scale",
+                "0.05",
+                "--ledger",
+                str(default_ledger_path()),
+                "--preflight",
+            ]
+        )
+
+    assert "SMALL-REAL PREFLIGHT" not in capsys.readouterr().out

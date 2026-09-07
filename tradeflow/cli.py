@@ -3999,7 +3999,7 @@ def cmd_small_real(args) -> None:
     """
     from tradeflow.costs.parametric import ParametricCostModel
     from tradeflow.engine.live import SHUTDOWN_TIMEOUT, BlindStartError, LiveEngine
-    from tradeflow.execution.ledger import PositionLedger, small_real_ledger_path
+    from tradeflow.execution.ledger import PositionLedger
     from tradeflow.execution.live_trader import LiveTrader
     from tradeflow.services import smallreal
     from tradeflow.services.registry import resolve_strategy_class
@@ -4059,6 +4059,7 @@ def cmd_small_real(args) -> None:
     strategy.config["position_limits"] = contract["book"]
 
     _refuse_ambiguous_small_real_posture(args)
+    ledger_path = _small_real_ledger_path(args)
 
     broker, data_client = build_data_and_broker(feed=_live_feed(args))
     universe = resolve_universe(data_client, args.scanner, args.symbols)
@@ -4080,7 +4081,7 @@ def cmd_small_real(args) -> None:
     except Exception as exc:  # noqa: BLE001
         print(f"  (open positions unreadable: {exc})")
 
-    _print_small_real_preflight(args, contract, broker, universe, account, held)
+    _print_small_real_preflight(args, contract, broker, universe, account, held, ledger_path)
 
     shortfall = smallreal.account_shortfall(account, capital)
     if shortfall is not None:
@@ -4098,24 +4099,6 @@ def cmd_small_real(args) -> None:
 
     # Not optional, and there is no flag to disable it: a run whose whole purpose is to
     # record what execution did has nothing left if it does not record.
-    #
-    # `--ledger` may point anywhere except the live ledger. The two files are separate so
-    # that a full-size book's fills and this book's fills are never averaged together,
-    # and every roll-up over a ledger is an average — so pointing this at that one throws
-    # away the finding the mode exists to produce, silently, in a file nobody re-reads.
-    from tradeflow.execution.ledger import default_ledger_path
-
-    ledger_path = Path(args.ledger) if args.ledger else small_real_ledger_path()
-    # Resolved, not compared as text: `..`, a relative spelling and a symlink all name
-    # the live ledger without matching it character for character, and a guard that can
-    # be walked around by spelling the path differently is not a guard.
-    if _same_file(ledger_path, default_ledger_path()):
-        sys.exit(
-            f"--ledger points at the live ledger ({ledger_path}). Small-real keeps its "
-            "telemetry apart because every roll-up over a ledger is an average, and "
-            "averaging a full-size book's fills with this run's describes neither.\n"
-            "  Drop --ledger to use the small-real ledger, or name a different file."
-        )
     ledger = PositionLedger(ledger_path)
     ledger.record_session(
         "small_real",
@@ -4174,6 +4157,32 @@ def cmd_small_real(args) -> None:
         _print_closing_inventory(ledger, strategy)
     finally:
         print(f"\n  Telemetry from this session: {_invocation(f'execution-report --ledger {ledger.path}')}")
+
+
+def _small_real_ledger_path(args) -> Path:
+    """Where this run's telemetry goes, decided and validated before anything is shown.
+
+    `--ledger` may point anywhere except the live ledger. The two files are separate so
+    that a full-size book's fills and this book's fills are never averaged together, and
+    every roll-up over a ledger is an average — so pointing this at that one throws away
+    the finding the mode exists to produce, silently, in a file nobody re-reads.
+
+    Resolved before the preflight rather than at the moment of writing, because the
+    preflight's whole job is to show what this run will do: it was printing the live
+    ledger as this session's destination and exiting cleanly under `--preflight`, for a
+    configuration the real run refuses.
+    """
+    from tradeflow.execution.ledger import default_ledger_path, small_real_ledger_path
+
+    path = Path(args.ledger) if args.ledger else small_real_ledger_path()
+    if _same_file(path, default_ledger_path()):
+        sys.exit(
+            f"--ledger points at the live ledger ({path}). Small-real keeps its "
+            "telemetry apart because every roll-up over a ledger is an average, and "
+            "averaging a full-size book's fills with this run's describes neither.\n"
+            "  Drop --ledger to use the small-real ledger, or name a different file."
+        )
+    return path
 
 
 def _same_file(left: Path, right: Path) -> bool:
@@ -4241,7 +4250,7 @@ def _require_real_money_confirmation(args) -> None:
     )
 
 
-def _print_small_real_preflight(args, contract, broker, universe, account, held=()) -> None:
+def _print_small_real_preflight(args, contract, broker, universe, account, held=(), ledger_path=None) -> None:
     """The scaled contract, before any order logic. Mandatory, and there is no flag off.
 
     Shows the validated number beside the scaled one for every limit, because the claim
@@ -4318,7 +4327,7 @@ def _print_small_real_preflight(args, contract, broker, universe, account, held=
     print(f"  {'data feed':24}{feed or 'SDK default'}")
     print(f"  {'bar guards':24}{'off' if args.no_bar_checks else 'on'}")
     print(f"  {'reconcile every':24}{args.reconcile_every:g}s")
-    print(f"  {'telemetry ledger':24}{args.ledger or small_real_ledger_path()}")
+    print(f"  {'telemetry ledger':24}{ledger_path or small_real_ledger_path()}")
     print(f"  {'halt state':24}{HaltState().path}")
     # Said outright rather than left to be inferred from the absence of a trial id.
     print(f"  {'research journal':24}untouched — this run records no trial and no search")
