@@ -1,7 +1,8 @@
 # Working on TradeFlow
 
-Topic rules live in `.claude/rules/`; the authoritative process document is
-[PROCESS.md](PROCESS.md). This file is only what is true in every session.
+Topic rules live in `.claude/rules/`; the cycle a change goes through, and the gate it
+has to pass, are in [how a change gets built here](.claude/rules/build-process.md).
+This file is only what is true in every session.
 
 ## The one invariant
 
@@ -37,7 +38,7 @@ make release-check                                    # build + install into a c
 
 ## Definition of done
 
-Per PROCESS.md §2, none of it optional: right layer · offline deterministic tests via
+Per [build-process](.claude/rules/build-process.md), none of it optional: right layer · offline deterministic tests via
 `tests/fakes.py` · every applicable surface wired (CLI, MCP tool, Makefile) · docs
 updated · all four commands above clean.
 
