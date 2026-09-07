@@ -490,6 +490,14 @@ class ResearchAgent:
                 f"research_{self.session_id}_{candidate.id}.json",
                 strategy=candidate.strategy,
                 params=candidate.params,
+                symbols=symbols,
+                # The agent searches parameters and never the book, so what it validated
+                # is the class's declared limits - stated rather than inherited, because
+                # a config that omits them is not unspecified, it silently resolves to
+                # the same defaults at load and nothing records that anyone chose them.
+                position_limits=(candidate.strategy_cls or resolve_strategy_class(candidate.strategy))(
+                    dict(candidate.params)
+                ).position_limits(),
                 provenance=provenance,
             )
             candidate.saved_path = str(path)

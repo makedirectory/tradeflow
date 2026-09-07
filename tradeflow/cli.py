@@ -1452,6 +1452,8 @@ def cmd_walkforward(args) -> None:
         print(f"\nPer-fold results written to {args.results_csv}")
 
     if args.save_config and result.folds:
+        from tradeflow.strategies.base import build_with_limits
+
         chosen = result.holdout_params or result.folds[-1].is_best_params
         provenance = build_provenance(
             method=args.method,
@@ -1482,8 +1484,13 @@ def cmd_walkforward(args) -> None:
             candidate_symbols=args.symbols,
             capital=args.capital,
             # Written out in full so a frozen config states what it risks rather than
-            # inheriting it. The strategy's own defaults are a decision nobody made.
-            position_limits=STRATEGIES[args.strategy].create_with_defaults().position_limits(),
+            # inheriting it. The strategy's own defaults are a decision nobody made -
+            # and reading them *here* was the same defect: a walk-forward run against a
+            # config asking for eight positions validated eight and saved one, so
+            # round-tripping a config through --save-config quietly shrank its book.
+            position_limits=build_with_limits(
+                STRATEGIES[args.strategy], chosen, getattr(args, "config_position_limits", None)
+            ).position_limits(),
             # _cost_key(args) without the vintage: that stamp fingerprints the *data*
             # a run read, and pinning a reusable config to one data snapshot is the
             # opposite of what it is for.
@@ -3262,6 +3269,7 @@ def _promote_trial(store, args) -> None:
     most that a saved config means what it says.
     """
     from tradeflow.optimization.config_store import Provenance, save_config
+    from tradeflow.services.analysis import recorded_book
     from tradeflow.services.audit import universe_for_trial
     from tradeflow.services.campaign import campaign_material
 
@@ -3304,6 +3312,14 @@ def _promote_trial(store, args) -> None:
     # journal, which already recorded all of it — nothing is re-run.
     material = campaign_material(store, args.trial_id, journal_path=journal_path)
     recipe = material.get("recipe") or {}
+    # The book the trial validated, which is folded into its identity and was being
+    # thrown away with the rest of the reserved keys. Without it a promoted config
+    # inherits the strategy class's default of one position, while its own provenance
+    # records the book that was actually validated - one file disagreeing with itself,
+    # and a live run obeying the half nothing ever validated. Read from the recipe
+    # first, because that is where a walk-forward keeps it; a backtest keeps it in the
+    # params, since its dedup identity *is* its params.
+    book = recorded_book(recipe.get("folded_into_identity"), recorded)
 
     path = save_config(
         args.save_config,
@@ -3313,6 +3329,7 @@ def _promote_trial(store, args) -> None:
         cost=cost,
         symbols=symbols,
         candidate_symbols=universe.get("candidate_symbols"),
+        position_limits=book,
         provenance=Provenance(
             objective=(recipe.get("objective") or ""),
             method=str((recipe.get("validation") or {}).get("method") or ""),

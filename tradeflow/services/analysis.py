@@ -109,6 +109,34 @@ def limits_key(limits: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     return {"_limits": declared} if declared else {}
 
 
+def recorded_book(*sources: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """The book a recorded trial actually validated, read back out of its identity.
+
+    :func:`limits_key` folds the *resolved* limits under ``_limits`` — resolved meaning
+    the strategy class's defaults already merged with whatever the run overrode. Every
+    trial kind records them, but not in the same place, which is why this takes several
+    sources and returns the first that has them: a backtest journals its dedup params
+    *as* its params, so ``_limits`` is right there; a walk-forward journals the chosen
+    parameters as its params and the recipe separately, so its book is in the recipe.
+    A caller that looked in one place would work for one kind and silently return
+    nothing for the other.
+
+    It matters because a config promoted without it does not inherit *nothing*, it
+    inherits the class default of one position — while its own provenance records that
+    eight were validated. One file, two answers, and the one a live run obeys is the
+    one that was never validated.
+
+    ``None`` when no source recorded limits, which is different from an empty book: it
+    means the run keyed exactly as it did before limits entered the identity, and a
+    promoted config should say nothing rather than invent one.
+    """
+    for source in sources:
+        declared = (source or {}).get("_limits")
+        if declared:
+            return dict(declared)
+    return None
+
+
 def walk_forward_recipe(
     *,
     mode: str,

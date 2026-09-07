@@ -219,6 +219,16 @@ separate recipe — a backtest's identity *is* its parameters — and the recipe
 says that rather than coming back empty, which would read as "validated with no
 settings".
 
+### The promoted config trades the book that was validated
+
+`position_limits` is written into the config from the book the trial recorded, because
+omitting it does not leave the book unspecified — it resolves at load to the strategy
+class's default of one position. A config whose provenance says eight positions were
+validated would otherwise trade one, and nothing would say so.
+
+A trial that recorded no limits at all — one from before they entered the dedup identity
+— writes no `position_limits`, rather than a book it never had.
+
 ### It lands in the config, not beside it
 
 `trials promote` writes this block into the config's own `provenance.campaign`. There
