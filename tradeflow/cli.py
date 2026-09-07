@@ -3661,6 +3661,20 @@ def _refuse_inert_flags(args) -> None:
     the operator reads the ones they asked for and concludes the two agree.
     """
     given = getattr(args, "flags_given", set())
+    if "json" in given and not getattr(args, "dry_run", False):
+        sys.exit(
+            "--json only applies to --dry-run: a live session streams for as long as it "
+            "runs and has no single report to serialize. Add --dry-run, or drop --json."
+        )
+    if getattr(args, "dry_run", False) and "live_money" in given:
+        # Refused rather than ignored. Someone who typed --live-money believes this run
+        # can trade; silently honouring --dry-run would leave them right about the
+        # intent and wrong about the run, which is the most expensive kind of agreement.
+        sys.exit(
+            "--dry-run and --live-money contradict each other: a dry run has no broker "
+            "that can trade, so --live-money cannot be honoured and ignoring it would "
+            "leave you believing this run might place an order. Drop one of them."
+        )
     if "max_weight" in given and not args.portfolio:
         equivalent = ""
         capital = _live_capital(args)
@@ -3683,6 +3697,92 @@ def _refuse_inert_flags(args) -> None:
         )
 
 
+def _run_dry(args, strategy) -> None:
+    """What this contract would do right now, against a stated account.
+
+    Builds only a read-only data client and a :class:`DryRunBroker`. Nothing on this
+    path can reach a venue, and that is structural rather than conditional: the broker
+    factory is never called.
+    """
+    import json
+
+    from tradeflow.analytics.reporting import format_dry_run
+    from tradeflow.brokers.dryrun import DryRunBroker
+    from tradeflow.execution.live_trader import LiveTrader
+    from tradeflow.services.data import build_data_client
+    from tradeflow.services.dryrun import dry_run_report, resolve_capital
+
+    try:
+        capital, capital_source = resolve_capital(
+            config_capital=getattr(args, "config_capital", None),
+            explicit=args.capital if "capital" in getattr(args, "flags_given", set()) else None,
+        )
+    except ValueError as exc:
+        sys.exit(str(exc))
+
+    data_client = build_data_client(feed=_live_feed(args))
+    universe = resolve_universe(data_client, args.scanner, args.symbols)
+    broker = DryRunBroker(capital=capital)
+    trader = LiveTrader(broker, strategy, respect_market_hours=False)
+
+    seen, unevaluable = [], []
+    for symbol in universe:
+        signal, price, why = _latest_signal(data_client, strategy, symbol)
+        if why is not None:
+            # Not a skip. A skip is an outcome the strategy reached; this is the absence
+            # of one, and dropping it would report a universe as fully evaluated when
+            # part of it was never asked.
+            unevaluable.append({"symbol": symbol, "reason": why})
+            continue
+        seen.append(trader.handle_signal(symbol, signal, price))
+
+    report = dry_run_report(
+        seen,
+        capital=capital,
+        capital_source=capital_source,
+        positions_source=broker.positions_source,
+        universe=universe,
+        unable_to_evaluate=unevaluable,
+    )
+    if getattr(args, "json", False):
+        print(json.dumps(report, indent=2, default=str))
+    else:
+        print(format_dry_run(report))
+
+
+def _latest_signal(data_client, strategy, symbol: str):
+    """``(signal, price, None)``, or ``(None, None, why)`` when no decision was possible.
+
+    A third value rather than a sentinel price, because "the strategy held" and "the
+    strategy was never asked" are different facts about a symbol, and a dry run that
+    silently drops the second reports a universe as fully evaluated when part of it was
+    not. The reason carries the numbers — how many bars were needed, how many arrived —
+    since a reader deciding whether to widen the window needs the shortfall, not the
+    verdict.
+    """
+    needed = int(strategy.config.get("required_lookback_periods") or 0)
+    try:
+        bars = data_client.get_bars([symbol], _lookback_start(strategy), datetime.now(NEW_YORK)).get(symbol)
+    except Exception as exc:  # noqa: BLE001 - one unreadable symbol must not end the run
+        return None, None, f"bars unavailable: {exc}"
+    have = 0 if bars is None else len(bars)
+    if have == 0:
+        return None, None, "no bars returned for this symbol"
+    if needed and have < needed:
+        return None, None, f"insufficient history: needs {needed} bars, has {have}"
+    prepared = strategy.process_data(bars)
+    generated = strategy.generate_signals(prepared)
+    from tradeflow.strategies import signals as sig
+
+    return generated.get(prepared.index[-1], sig.HOLD), float(prepared["close"].iloc[-1]), None
+
+
+def _lookback_start(strategy):
+    """Enough history for the strategy's own declared lookback, plus slack."""
+    periods = int(strategy.config.get("required_lookback_periods") or 50)
+    return datetime.now(NEW_YORK) - timedelta(days=max(periods * 2, 30))
+
+
 def cmd_live(args) -> None:
     from tradeflow.costs.parametric import ParametricCostModel
     from tradeflow.engine.live import SHUTDOWN_TIMEOUT, BlindStartError, LiveEngine
@@ -3702,6 +3802,15 @@ def cmd_live(args) -> None:
 
     if args.portfolio:
         _refuse_contradictory_portfolio_cardinality(strategy, args.max_positions)
+
+    if getattr(args, "dry_run", False):
+        # Returns before `build_data_and_broker` is reached, so no broker is constructed
+        # at all — not built-then-unused. The mode's guarantee is that nothing here can
+        # trade, and a factory that produced a real broker would make that a promise
+        # about restraint rather than about capability. `build_data_client` is the
+        # read-only path the MCP wall already uses: it constructs no trading client.
+        _run_dry(args, strategy)
+        return
 
     broker, data_client = build_data_and_broker(feed=_live_feed(args))
     universe = resolve_universe(data_client, args.scanner, args.symbols)
@@ -4958,6 +5067,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--preflight",
         action="store_true",
         help="Print the run contract and exit without starting the order path",
+    )
+    live.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the dry-run report as JSON (dry run only; a live session streams)",
+    )
+    live.add_argument(
+        "--dry-run",
+        dest="dry_run",
+        action="store_true",
+        help="Report what this contract WOULD do — the orders it would send, the caps "
+        "that would bind, the signals it would skip — against a stated capital, with no "
+        "account and no broker able to trade. Journals nothing, and observes no fills, "
+        "slippage or fees: that is what a small-real session is for",
     )
     live.add_argument(
         "--live-money",

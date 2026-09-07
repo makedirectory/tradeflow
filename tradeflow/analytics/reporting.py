@@ -1018,6 +1018,64 @@ def _recorded_cell(fact: Optional[Dict[str, Any]]) -> str:
     return str(value)
 
 
+def format_dry_run(report: Dict[str, Any]) -> str:
+    """A dry run's decision path, in language that cannot be read as execution.
+
+    Every heading is conditional — *would* submit, *would* bind, *would* skip — and the
+    banner leads, because the single worst outcome for this mode is a reader taking an
+    intention for a fill. The capital carries its source: a reader judging whether these
+    caps are the right ones needs to know whether the number came from the validated
+    config or was typed at the prompt.
+    """
+    counts = report.get("counts") or {}
+    lines = [
+        "",
+        f"=== {report.get('banner')} ===",
+        "",
+        f"  {'capital':<20}${report.get('capital', 0):,.2f} ({report.get('capital_source')})",
+        f"  {'starting book':<20}{report.get('starting_positions')}",
+        f"  {'universe':<20}{len(report.get('universe') or [])} symbol(s)",
+        # Both numbers, always. "12 symbols, 12 evaluated" and "12 symbols, 7 evaluated"
+        # look identical if only the first is printed, and the second is a different run.
+        f"  {'evaluated':<20}{report.get('n_evaluated', 0)}"
+        + (
+            f"  ({report.get('n_unable_to_evaluate')} could not be evaluated)"
+            if report.get("n_unable_to_evaluate")
+            else ""
+        ),
+        "",
+    ]
+
+    for bucket, heading in (
+        ("would_submit", "WOULD SUBMIT — orders this contract would have sent"),
+        ("would_bind", "WOULD BIND — a configured cap refusing an order"),
+        ("would_skip", "WOULD SKIP — no order, for a reason other than a cap"),
+        ("unable_to_evaluate", "UNABLE TO EVALUATE — no decision was possible"),
+    ):
+        rows = report.get(bucket) or []
+        # Printed even when empty: "no cap bound" and "the caps were never reached" are
+        # different findings, and an omitted section renders them identically.
+        lines.append(f"  {heading}: {counts.get(bucket, 0)}")
+        for row in rows:
+            plan = row.get("plan") or {}
+            detail = (
+                f"{plan.get('side')} {plan.get('qty'):g} @ {plan.get('reference_price'):,.2f}"
+                f" (stop {plan.get('stop_loss'):,.2f} / target {plan.get('take_profit'):,.2f})"
+                if plan
+                else row.get("reason")
+            )
+            lines.append(f"    {str(row.get('symbol')):<10}{detail}")
+        lines.append("")
+
+    lines.append(f"  not covered         {report.get('not_covered')}")
+    lines.append(
+        "  Nothing here was journaled: a dry run measures nothing, so recording it would\n"
+        "  spend the family's statistical budget on a rehearsal."
+    )
+    lines.append("")
+    return "\n".join(lines)
+
+
 def format_campaign_material(material: Dict[str, Any]) -> str:
     """What validated a trial, with each section labelled by what kind of thing it is.
 

@@ -81,6 +81,9 @@ info:  ## Information report: IC, breadth, predicted-vs-realized IR — read-onl
 horizon:  ## Alpha decay / half-life + rebalance cadence + lagged blend — read-only
 	$(PY) horizon --strategy demo_trend --symbols $(SYMBOLS) --start $(START) --end $(END)
 
+dry-run:  ## What would this trade right now? No broker, no orders, no journal
+	$(PY) live --strategy demo_trend --scanner none --symbols $(SYMBOLS) --capital 100000 --dry-run
+
 live:  ## Paper-trade: demo scanner -> demo strategy
 	$(PY) live --strategy demo_trend --scanner demo_volume --symbols $(SYMBOLS)
 

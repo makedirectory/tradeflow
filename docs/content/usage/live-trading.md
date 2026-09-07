@@ -210,6 +210,95 @@ that never ran, which is how a check silently stops being applied and nobody
 notices. Declined decisions are recorded precisely because they leave no other
 trace.
 
+## Dry run: what would this trade?
+
+```bash
+tradeflow live --config configs/breakout.json --dry-run
+tradeflow live --config configs/breakout.json --dry-run --json
+```
+
+> **Dry-run answers: what would this contract try to do right now?**
+> **Small-real answers: what happens when the broker tries to do it?**
+
+Keeping those apart is the whole point. Observing execution used to mean running a paper
+session, and a paper session needs fills to observe — so the book's caps got shrunk until
+fills happened. A position ceiling small enough to guarantee fills biases the book toward
+low-priced names and turns every high-price signal into an invisible non-trade, so the
+sample you collect is not the strategy you validated. Measuring execution required trading
+a book nobody wanted to trade.
+
+A dry run drives the **real** decision path — the same `LiveTrader`, the same guards, the
+same sizing — against a stated capital with the caps exactly as configured, and reports
+what would have happened.
+
+```
+=== DRY RUN — broker has no trading capability; no orders can be submitted ===
+
+  capital             $8,000.00 (from config)
+  starting book       flat
+  universe            4 symbol(s)
+  evaluated           3  (1 could not be evaluated)
+
+  WOULD SUBMIT — orders this contract would have sent: 1
+    AAA       buy 25 @ 100.00 (stop 97.00 / target 106.00)
+
+  WOULD BIND — a configured cap refusing an order: 1
+    BBB       book is full: 4 of 4
+
+  WOULD SKIP — no order, for a reason other than a cap: 1
+    CCC       no signal
+
+  UNABLE TO EVALUATE — no decision was possible: 1
+    XYZ       insufficient history: needs 102 bars, has 57
+```
+
+*(Illustrative figures.)*
+
+### The four buckets
+
+They are the report's public contract, and they are distinct on purpose:
+
+| Bucket | Meaning |
+| --- | --- |
+| `WOULD SUBMIT` | The order path was reached. The plan shown is what would have been sent |
+| `WOULD BIND` | A configured cap refused it — the book is full, or gross/net exposure or the risk budget is exhausted |
+| `WOULD SKIP` | Evaluated, and no order for some other reason: no signal, market closed, a position already open |
+| `UNABLE TO EVALUATE` | No decision was possible at all — usually too little history. **Not a skip**: a skip is an outcome the strategy reached |
+
+That last distinction is why the summary line reports `evaluated 3 (1 could not be
+evaluated)`. A symbol that vanished from the report is a symbol nobody notices was never
+asked.
+
+### It cannot trade, structurally
+
+The broker used here has no order methods that work — `submit_bracket_order`,
+`close_position` and the rest all refuse. That is deliberately not a flag consulted on the
+order path: a flag can be forgotten on one branch or inverted in a refactor, and an absent
+capability cannot. It is the same guarantee the [MCP server](../engineering/mcp-server)
+gets from building only a data client.
+
+The broker factory is never called at all, so a dry run needs **no broker credentials** —
+which is the point, since the mode is most useful before an account exists.
+
+### Capital must be stated
+
+From the config being run, or `--capital`. There is no default and no fallback to a
+broker's equity, and a dry run with neither refuses. The caps it reports are only
+meaningful against the capital they bound, so inventing one answers a question about a
+book nobody chose. The report names the source, so a reader can tell a validated capital
+from one typed at the prompt.
+
+### What it does not cover
+
+Fills, slippage, broker fees, queueing, and paper/live account effects. A dry run submits
+nothing, so it observes none of them — that is what a small-real session is for. Nothing
+is journaled either: a dry run measures nothing, so recording it would spend the family's
+multiple-testing budget on a rehearsal.
+
+`--dry-run` refuses `--live-money` rather than ignoring it, and `--json` is refused
+outside a dry run: a live session streams for as long as it runs and has no single report
+to serialize.
+
 ## Preflight: the contract before the order path
 
 Every live run prints what it is about to do, before any order logic runs:
