@@ -261,8 +261,8 @@ They are the report's public contract, and they are distinct on purpose:
 | Bucket | Meaning |
 | --- | --- |
 | `WOULD SUBMIT` | The order path was reached. The plan shown is what would have been sent |
-| `WOULD BIND` | A configured cap refused it — the book is full, or gross/net exposure or the risk budget is exhausted |
-| `WOULD SKIP` | Evaluated, and no order for some other reason: no signal, market closed, a position already open |
+| `WOULD BIND` | A configured cap refused it — the book is full, gross/net exposure or the risk budget is exhausted, or the order falls under the declared `min_notional` floor |
+| `WOULD SKIP` | Evaluated, and no order for some other reason: no signal, market closed, a position already open, or the size rounded to zero because the book cannot afford a whole share |
 | `UNABLE TO EVALUATE` | No decision was possible at all — usually too little history. **Not a skip**: a skip is an outcome the strategy reached |
 
 That last distinction is why the summary line reports `evaluated 3 (1 could not be

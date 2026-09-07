@@ -29,6 +29,7 @@ EXISTING_POSITION = "existing_position"
 PENDING_ORDER = "pending_order"
 ACCOUNT = "account"
 SIZING = "sizing"
+MIN_NOTIONAL = "min_notional"
 BUYING_POWER = "buying_power"
 POSITION_LIMITS = "position_limits"
 BROKER = "broker"
@@ -43,6 +44,14 @@ GROSS_EXPOSURE = "gross_exposure_capped"
 NET_EXPOSURE = "net_exposure_capped"
 RISK_BUDGET = "risk_budget_exhausted"
 EQUITY_UNREADABLE = "equity_unreadable"
+#: The two ways a book can be too small to express a position in a name at all. Coded
+#: rather than left as bare text because they are the signature of a book traded below
+#: the size it was validated at, and counting them is the only way that shows up as a
+#: number instead of as a strategy that mysteriously stopped trading the expensive
+#: names. The messages carry the amounts, so grouping by message would scatter one
+#: cause across as many rows as there were symbols.
+BELOW_MIN_NOTIONAL = "below_min_notional"
+ROUNDS_TO_ZERO = "size_rounds_to_zero"
 
 #: Message prefixes written before decisions carried a code, mapped to the family they
 #: belong to. A read-path concern only: rows written from here on carry a code and never

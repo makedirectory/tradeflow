@@ -36,6 +36,15 @@ _BINDING_CODES = frozenset(
         decisions.GROSS_EXPOSURE,
         decisions.NET_EXPOSURE,
         decisions.RISK_BUDGET,
+        # A declared floor is a configured limit refusing an order, which is what this
+        # bucket means. It reads as one only once the live path actually applies it —
+        # before that the floor was printed by the preflight and enforced by nothing.
+        #
+        # Its sibling, a size rounding to zero, deliberately stays a skip: that is share
+        # granularity rather than a limit anybody configured. Both carry a reason code
+        # so either can be counted, which is what makes a book being traded below the
+        # size it was validated at visible as a number.
+        decisions.BELOW_MIN_NOTIONAL,
     }
 )
 
