@@ -317,6 +317,7 @@ def test_the_journal_has_one_location():
 def _wf_service_key(limits=None, **overrides):
     """Built exactly as `run_walk_forward` builds it."""
     from tradeflow.services.analysis import walk_forward_recipe
+    from tradeflow.services.registry import STRATEGIES
 
     kwargs = dict(
         mode="anchored",
@@ -330,7 +331,8 @@ def _wf_service_key(limits=None, **overrides):
         max_evals=50,
         seed=42,
         cost_key=service_cost_key(False, 1.0, 0.3, 50.0),
-        limits=limits,
+        strategy_class=STRATEGIES["demo_trend"],
+        limit_overrides=limits,
     )
     return walk_forward_recipe(**{**kwargs, **overrides})
 
@@ -339,6 +341,7 @@ def _wf_cli_key(argv, limits=None):
     from tradeflow.cli import _walkforward_recipe
 
     args = parse_cli(argv)
+    args.strategy = "demo_trend"
     args.config_position_limits = limits
     return _walkforward_recipe(args, None)
 
@@ -399,9 +402,25 @@ def test_the_book_actually_changes_a_walk_forward_s_identity():
     assert params_hash(one) != params_hash(eight)
 
 
-def test_a_walk_forward_without_limits_keys_exactly_as_before_they_existed():
-    """Every validation already in the store must still find itself."""
-    assert "_limits" not in _wf_service_key(None)
+def test_a_walk_forward_with_no_override_still_records_the_book_it_ran_at():
+    """This reverses a decision, deliberately, and the old assertion was that
+    `_limits` stays absent when nothing overrode it — so every validation already in
+    the store kept finding itself.
+
+    It also meant a run with no override recorded no book while still having one. A
+    class default moving from one position to eight changes the experiment without
+    touching params, universe or window, so two such runs hashed alike and the second
+    was answered from the first: a one-position result served to an eight-position
+    question, which is the exact failure `_limits` was folded into the key to prevent.
+
+    The cost is real and accepted: every walk-forward recorded before this keys
+    differently now and misses its memo once. Recomputing is cheaper than reusing a
+    result from a different book."""
+    recipe = _wf_service_key(None)
+
+    assert recipe["_limits"]["max_positions"] == 1
+    # Unset limits stay out, so the key carries the book rather than a row of nulls.
+    assert all(value is not None for value in recipe["_limits"].values())
 
 
 # --- MCP is a transport over the same service -------------------------------------
@@ -643,6 +662,7 @@ def test_a_promoted_config_finds_the_recipe_in_a_redirected_journal(tmp_path, mo
     from tradeflow.cli import build_parser
     from tradeflow.services.analysis import walk_forward_recipe
     from tradeflow.services.audit import journal_trial
+    from tradeflow.services.registry import STRATEGIES
     from tradeflow.store.trials import db_path_for_journal
 
     journal = tmp_path / "elsewhere.jsonl"
@@ -668,7 +688,8 @@ def test_a_promoted_config_finds_the_recipe_in_a_redirected_journal(tmp_path, mo
             max_evals=50,
             seed=42,
             cost_key={},
-            limits=None,
+            strategy_class=STRATEGIES["demo_trend"],
+            limit_overrides=None,
         ),
         path=journal,
     )

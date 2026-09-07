@@ -272,6 +272,25 @@ oversight). See
 See the engineering wiki's **Walk-forward validation** page for the design,
 fold geometry, and the leakage-safety guarantees.
 
+### What makes a run a repeat
+
+A walk-forward is memoized by its **validation recipe** rather than by its parameters —
+the window, the folds, the embargo, the objective, the search method and seed, the cost
+assumptions, and **the book it validated at**. Ask the same recipe twice and the second
+is answered from the first.
+
+The book that goes into that identity is the *resolved* one: the strategy's own limits
+with any config override merged over them. It used to be only the override, which meant
+a run that overrode nothing recorded no book at all — while still having one. A class
+default moving from one position to eight changed the experiment without touching the
+params, the universe or the window, so two such runs looked identical to the memo and
+the second was served the first's answer.
+
+**Runs recorded before this change key differently and will recompute once.** That is
+deliberate. Recomputing is cheaper than reusing a one-position result to answer an
+eight-position question, and `trials rebuild` is unaffected — it reads each journal
+line's own recorded recipe, so historical rows keep the identity they were written with.
+
 ## Running folds faster (`--workers N`)
 
 `--workers` parallelizes each fold's in-sample candidate search across worker

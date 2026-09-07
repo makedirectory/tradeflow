@@ -93,6 +93,24 @@ DEFAULT_POSITION_LIMITS: Dict[str, Any] = {
 }
 
 
+def resolve_book(
+    strategy_class: "type[Strategy]", overrides: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """The book a run will actually trade: class defaults with ``overrides`` merged in.
+
+    Deliberately independent of the tunable parameters. A search's identity is fixed
+    before its winner is known, so the recipe that identifies it cannot resolve a book
+    from params that do not exist yet — and if the recipe and the config saved
+    afterwards resolved differently, the two would disagree about the book for the same
+    run, which is the whole defect this resolution exists to close.
+
+    :func:`build_with_limits` is the sibling for the case where params *are* known and
+    an instance is wanted; this is the one for asking what the book is.
+    """
+    strategy = strategy_class.create_with_defaults()
+    return {**strategy.position_limits(), **(overrides or {})}
+
+
 def build_with_limits(
     strategy_class: "type[Strategy]",
     params: Dict[str, Any],

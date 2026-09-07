@@ -21,6 +21,7 @@ from tradeflow.cli import build_parser
 from tradeflow.optimization.config_store import DEFAULT_CONFIG_DIR, load_config
 from tradeflow.services.analysis import recorded_book, walk_forward_recipe
 from tradeflow.services.audit import journal_trial
+from tradeflow.services.registry import STRATEGIES
 from tradeflow.store.trials import db_path_for_journal
 
 BOOK = {"max_positions": 8, "max_total_risk": 0.2}
@@ -61,7 +62,8 @@ def _journal_walkforward(journal, limits=None):
             max_evals=50,
             seed=42,
             cost_key={},
-            limits=BOOK if limits is None else limits,
+            strategy_class=STRATEGIES["demo_trend"],
+            limit_overrides=BOOK if limits is None else limits,
         ),
         path=journal,
     )
@@ -101,6 +103,10 @@ def test_a_promoted_config_trades_the_book_its_provenance_says_was_validated(tmp
     validated = config["provenance"]["campaign"]["recipe"]["folded_into_identity"]["_limits"]
     assert config["position_limits"] == validated
     assert config["position_limits"]["max_positions"] == 8
+    # The resolved book, so a key the override never mentioned still arrives rather
+    # than being inherited from whatever the class default happens to be at load.
+    assert config["position_limits"]["max_total_risk"] == pytest.approx(0.2)
+    assert config["position_limits"]["max_position_size"] == pytest.approx(100_000.0)
 
 
 def test_the_promoted_book_survives_a_reload_and_reaches_a_constructed_strategy(tmp_path, monkeypatch):
@@ -122,6 +128,7 @@ def test_the_promoted_book_survives_a_reload_and_reaches_a_constructed_strategy(
 
     assert strategy.position_limits()["max_positions"] == 8
     assert strategy.position_limits()["max_total_risk"] == pytest.approx(0.2)
+    assert strategy.position_limits()["max_position_size"] == pytest.approx(100_000.0)
 
 
 def test_a_backtest_trial_promotes_its_book_too(tmp_path, monkeypatch):

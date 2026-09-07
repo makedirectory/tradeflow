@@ -150,7 +150,8 @@ def walk_forward_recipe(
     max_evals: int,
     seed: int,
     cost_key: Dict[str, Any],
-    limits: Optional[Dict[str, Any]] = None,
+    strategy_class: Any,
+    limit_overrides: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """A walk-forward's memoization key: the *validation recipe*, not the params.
 
@@ -163,7 +164,22 @@ def walk_forward_recipe(
     answered from the first - reporting a one-position validation as an eight-position
     book. That is the failure a walk-forward exists to rule out, so the fold belongs
     here rather than at each call site where it can be forgotten again.
+
+    **The book folded in is the *resolved* one, not the override.** Taking a strategy
+    class and resolving here rather than accepting a book is deliberate: a caller
+    handed a raw ``position_limits`` override could pass it straight through, and a run
+    with no override would record no book at all - which is what happened. It still had
+    a book, and a class default moving from one position to eight changes the
+    experiment without touching params or universe, so two such runs hashed alike and
+    the second was answered from the first.
+
+    This changes the identity of every walk-forward that previously omitted ``_limits``,
+    so their memos miss once. That is intended: recomputing is cheaper than serving a
+    one-position result to an eight-position question.
     """
+    from tradeflow.strategies.base import resolve_book
+
+    limits = resolve_book(strategy_class, limit_overrides)
     return {
         "mode": mode,
         "n_folds": n_folds,
@@ -1076,7 +1092,8 @@ def run_walk_forward(
         max_evals=max_evals,
         seed=seed,
         cost_key=cost_key,
-        limits=position_limits,
+        strategy_class=cls,
+        limit_overrides=position_limits,
     )
 
     with _open_trial_store() as trial_store:
@@ -1606,6 +1623,11 @@ def run_draft_walk_forward(
             max_evals=max_evals,
             seed=seed,
             cost_key=cost_key,
+            strategy_class=cls,
+            # The draft path takes no book override, so the resolved book is the
+            # drafted class's own — which is exactly what it validates at, and now
+            # what its identity records.
+            limit_overrides=None,
         ),
     }
 

@@ -174,7 +174,8 @@ def _walkforward_recipe(args, vintage: Optional[str] = None) -> Dict[str, Any]:
         max_evals=args.max_evals,
         seed=args.seed,
         cost_key=_cost_key(args, vintage),
-        limits=getattr(args, "config_position_limits", None),
+        strategy_class=STRATEGIES[args.strategy],
+        limit_overrides=getattr(args, "config_position_limits", None),
     )
 
 
@@ -1452,7 +1453,7 @@ def cmd_walkforward(args) -> None:
         print(f"\nPer-fold results written to {args.results_csv}")
 
     if args.save_config and result.folds:
-        from tradeflow.strategies.base import build_with_limits
+        from tradeflow.strategies.base import resolve_book
 
         chosen = result.holdout_params or result.folds[-1].is_best_params
         provenance = build_provenance(
@@ -1488,9 +1489,9 @@ def cmd_walkforward(args) -> None:
             # and reading them *here* was the same defect: a walk-forward run against a
             # config asking for eight positions validated eight and saved one, so
             # round-tripping a config through --save-config quietly shrank its book.
-            position_limits=build_with_limits(
-                STRATEGIES[args.strategy], chosen, getattr(args, "config_position_limits", None)
-            ).position_limits(),
+            position_limits=resolve_book(
+                STRATEGIES[args.strategy], getattr(args, "config_position_limits", None)
+            ),
             # _cost_key(args) without the vintage: that stamp fingerprints the *data*
             # a run read, and pinning a reusable config to one data snapshot is the
             # opposite of what it is for.
