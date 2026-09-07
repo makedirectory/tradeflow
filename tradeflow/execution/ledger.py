@@ -53,10 +53,16 @@ logger = logging.getLogger(__name__)
 #:   have been summed as if incremental when they were cumulative; sides were defaulted
 #:   to buy, so shorts were recorded long. Reported at reconciliation, never
 #:   reinterpreted, because those numbers cannot be recovered.
-#: * **1** - the current shape. Fills carry ``basis``, ``fill_price``, ``filled_at`` and
-#:   ``broker_fee``; intents carry ``decision_id`` and the order plan; decisions carry
-#:   ``reason_code``; adoptions are their own event.
-LEDGER_VERSION = 1
+#: * **1** - fills carry ``basis``, ``fill_price``, ``filled_at`` and ``broker_fee``;
+#:   intents carry ``decision_id`` and the order plan; decisions carry ``reason_code``;
+#:   adoptions are their own event. No record says what run wrote it.
+#: * **2** - the current shape. Adds the ``session`` event: a header written once at the
+#:   start of a run, saying under what contract the records after it were produced. A
+#:   file with no session record is one written before runs identified themselves, and
+#:   reads as exactly that - the records are still readable, and what they were traded
+#:   at is simply not recoverable. Never inferred from whatever run happens to be
+#:   asking now, which would put a contract nobody used onto somebody else's fills.
+LEDGER_VERSION = 2
 
 #: What a recorded fill quantity measures. ``CUMULATIVE`` is the order's running
 #: total (what Alpaca reports); ``INCREMENTAL`` is this event's own shares.
@@ -125,6 +131,24 @@ def default_ledger_path() -> Path:
     from tradeflow.settings import state_path
 
     return state_path("logs", "position_ledger.jsonl")
+
+
+def small_real_ledger_path() -> Path:
+    """Telemetry from a deliberately shrunken run, kept in its own file.
+
+    A separate path rather than a field on the shared one, because every roll-up over a
+    ledger — slippage, fill ratio, fees — is an average, and averaging fills from a
+    book at full size with fills from the same book at a twentieth of it produces a
+    number describing neither. The whole reason the small run exists is that its
+    execution is *different*, so mixing the two discards the finding.
+
+    Not a trial journal, and deliberately nowhere near one: a run that measures its own
+    execution has searched nothing, so it must never reach the multiple-testing total
+    that the deflated Sharpe deflates against.
+    """
+    from tradeflow.settings import state_path
+
+    return state_path("logs", "small_real_ledger.jsonl")
 
 
 @dataclass
@@ -253,6 +277,39 @@ class PositionLedger:
                 "broker_fee": broker_fee,
             }
         )
+
+    def record_session(self, mode: str, context: Optional[Dict[str, Any]] = None) -> None:
+        """What contract the records after this one were produced under.
+
+        Every other event says what happened to one symbol; this says what run it
+        happened in. Without it a fill is a number with no denominator — a ledger can
+        say an order filled 40 basis points wide and not what capital, what book or
+        what account that was measured against, and those are exactly the facts that
+        decide whether the number means anything.
+
+        ``context`` is passed through uninterpreted. The trade clock has no business
+        knowing what a mode chooses to record about itself, and a schema here would be
+        one more place to keep in step with the surfaces that write it.
+
+        It is a header, not a position event. :meth:`_replay` and :meth:`lifecycles`
+        both dispatch on the event *name* — an event neither of them names moves
+        nothing, whatever fields it happens to carry — so a mode free to record what it
+        likes here cannot make a session start change the book by choosing an unlucky
+        key. That is the property worth pinning, and it is stronger than omitting a
+        symbol: omission would only hold until someone recorded a per-symbol fact about
+        the run.
+        """
+        self._append({"event": "session", "mode": mode, **(context or {})})
+
+    def sessions(self) -> List[Dict[str, Any]]:
+        """Every session header in this file, oldest first.
+
+        A list rather than "the current one": an append-only file accumulates runs, and
+        a reader summarising it needs to know when it is looking at more than one. A
+        file with none is one written before runs identified themselves — reported as
+        unknown, never backfilled from whoever is asking now.
+        """
+        return [record for record in self._read() if record.get("event") == "session"]
 
     def record_adoption(self, symbol: str, side: str, qty: float, source: str = "broker") -> None:
         """A position found already open and taken over, at start-up or a resync.
