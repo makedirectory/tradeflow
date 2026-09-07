@@ -11,6 +11,7 @@ PY       = uv run python main.py
 
 .PHONY: help demo demo-agent demo-agent-live init install install-optimize verdict backtest backtest-no-scan scan live \
         allocate allocate-utility alphas risk info horizon screen causality trials-status optimize optimize-bayesian cancel-orders close-positions \
+        small-real small-real-preflight small-real-report \
         check test secret-scan check-links docs docs-build docker-build docker-run up down compose-run compose-smoke \
         build release-check clean
 
@@ -92,6 +93,19 @@ live-portfolio: install-portfolio  ## Paper-trade with OR-Tools portfolio-weight
 
 live-beta:  ## Paper-trade with beta-scaled position sizing
 	$(PY) live --strategy demo_trend --scanner demo_volume --symbols $(SYMBOLS) --beta-sizing
+
+# Needs a validated config: the mode trades that contract at reduced capital, and there
+# is deliberately no way to run it without one. CONFIG= and SCALE= are required rather
+# than defaulted, because a run that can place orders must not deploy an amount nobody
+# chose. --preflight first; it prints the scaled contract and starts nothing.
+small-real-preflight:  ## Show the scaled contract for CONFIG= at SCALE=, and start nothing
+	$(PY) small-real --config $(CONFIG) --scale $(SCALE) --preflight
+
+small-real:  ## PLACES ORDERS. Trade CONFIG= at SCALE= to measure real fills, slippage and fees
+	$(PY) small-real --config $(CONFIG) --scale $(SCALE)
+
+small-real-report:  ## Read the small-real telemetry ledger — read-only
+	$(PY) execution-report --small-real
 
 # --- parameter modeling -----------------------------------------------------
 trials-status:  ## Trial-store health: rows vs journal lines, orphans, quarantined rows

@@ -3983,6 +3983,327 @@ def cmd_live(args) -> None:
                 )
 
 
+def cmd_small_real(args) -> None:
+    """Trade the validated contract at reduced capital, and record what execution did.
+
+    The one mode here that can lose money. Everything else in this file either reads or
+    rehearses; this places real orders against a real venue, because broker fills,
+    slippage and fees cannot be observed any other way.
+
+    Its safety is therefore operational rather than structural. A dry run is safe
+    because trading is a capability its broker does not have, and none of that transfers
+    to a mode whose entire purpose is to reach a broker that really can trade. What
+    stands in its place: the size of the run has to be stated, the contract is scaled by
+    one rule rather than adjusted by hand, no flag here can move a cap, real money has
+    to be said twice, and the preflight is unconditional.
+    """
+    from tradeflow.costs.parametric import ParametricCostModel
+    from tradeflow.engine.live import SHUTDOWN_TIMEOUT, BlindStartError, LiveEngine
+    from tradeflow.execution.ledger import PositionLedger, small_real_ledger_path
+    from tradeflow.execution.live_trader import LiveTrader
+    from tradeflow.services import smallreal
+    from tradeflow.services.registry import resolve_strategy_class
+    from tradeflow.utils.streaming import run_until_stopped
+
+    if not getattr(args, "config", None):
+        sys.exit(
+            "small-real needs --config: it trades a *validated* contract at reduced "
+            "capital, and without the file there is no contract to scale.\n"
+            "  Promote one from a recorded trial: "
+            f"{_invocation('trials promote <trial_id> --save-config configs/candidate.json')}"
+        )
+
+    # Read before the config is layered on, which is the only moment these mean what
+    # was typed. `apply_run_config` writes the file's capital into `args.capital` when
+    # no flag won, so afterwards a `--scale` run is indistinguishable from one that
+    # passed both — and this command refuses both. Reading the namespace later, rather
+    # than here, made `--scale` alone fail as "two sources for one number".
+    typed_scale, typed_capital = args.scale, args.capital
+
+    tuned = apply_run_config(args)
+    strategy = _strategy_from(args, tuned)
+
+    try:
+        validated_capital, validated_book = smallreal.validated_contract(
+            config_capital=getattr(args, "config_capital", None),
+            config_limits=getattr(args, "config_position_limits", None),
+            strategy_class=resolve_strategy_class(args.strategy),
+        )
+        capital, scale, capital_source = smallreal.resolve_scale(
+            validated_capital=validated_capital,
+            scale=typed_scale,
+            capital=typed_capital,
+        )
+        unscalable = smallreal.unscalable_ceilings(validated_book, scale)
+        if unscalable:
+            raise smallreal.ContractError(
+                f"this config records no capital, so there is no ratio to restate "
+                f"{', '.join(unscalable)} by. Left at the validated value it would sit "
+                f"above this whole run and bind nothing, so the contract would be "
+                f"missing a limit it was validated with.\n"
+                "  Use a config that records the capital it was validated at."
+            )
+    except smallreal.ContractError as exc:
+        sys.exit(str(exc))
+
+    contract = smallreal.contract(
+        validated_capital=validated_capital,
+        validated_book=validated_book,
+        scale=scale,
+        capital=capital,
+        capital_source=capital_source,
+    )
+    # The scaled book is what the run trades. Applied to the strategy the ordinary way,
+    # so the trade clock enforces it exactly as it enforces any other book and learns
+    # nothing about this mode.
+    strategy.config["position_limits"] = contract["book"]
+
+    _refuse_ambiguous_small_real_posture(args)
+
+    broker, data_client = build_data_and_broker(feed=_live_feed(args))
+    universe = resolve_universe(data_client, args.scanner, args.symbols)
+
+    account, held = None, []
+    try:
+        account = broker.get_account()
+        # One call, and the answer matters: the engine adopts whatever is already open,
+        # so a book carried over from a full-size session lands in this run's telemetry.
+        held = broker.list_positions() or []
+    except Exception as exc:  # noqa: BLE001 - a preflight reports; it does not fail the run
+        print(f"  (account unreadable: {exc})")
+
+    _print_small_real_preflight(args, contract, broker, universe, account, held)
+
+    shortfall = smallreal.account_shortfall(
+        equity=account.equity if account is not None else None, capital=capital
+    )
+    if shortfall is not None:
+        sys.exit(f"Refusing to start: {shortfall}")
+
+    if getattr(args, "preflight", False):
+        print("\n--preflight: nothing was started and no order path ran.")
+        return
+
+    # After the preflight, deliberately. The contradictory-posture refusals above run
+    # before a broker is even built, but this one is a human being asked to agree to
+    # something — and agreeing to a contract you have not been shown is a formality
+    # rather than a check.
+    _require_real_money_confirmation(args)
+
+    # Not optional, and there is no flag to disable it: a run whose whole purpose is to
+    # record what execution did has nothing left if it does not record.
+    ledger = PositionLedger(args.ledger or small_real_ledger_path())
+    ledger.record_session(
+        "small_real",
+        {
+            **{k: v for k, v in contract.items() if k not in ("mode",)},
+            "strategy": args.strategy,
+            "config": str(args.config),
+            "broker_mode": "paper" if _paper_mode() else "live",
+            "universe": list(universe),
+            "account_equity": account.equity if account is not None else None,
+            # So a reader of the telemetry can tell this session's own fills from the
+            # exits of positions it inherited at another size.
+            "adopted_positions": len(held),
+            "adopted_symbols": sorted(position.symbol for position in held),
+        },
+    )
+
+    bar_filter = None
+    if not args.no_bar_checks:
+        from tradeflow.engine.barcheck import BarChecks, BarQualityFilter
+        from tradeflow.marketdata.timeframe import Timeframe
+
+        timeframe = Timeframe.parse(strategy.config["timeframe"])
+        bar_filter = BarQualityFilter(
+            checks=BarChecks(max_return=args.max_bar_return), interval=timeframe.duration()
+        )
+
+    engine = LiveEngine(
+        strategy,
+        data_client,
+        LiveTrader(
+            broker,
+            strategy,
+            capital=capital,
+            cost_model=ParametricCostModel(
+                commission_bps=getattr(args, "commission_bps", 1.0),
+                impact_eta=getattr(args, "impact_eta", 0.3),
+                annual_borrow_bps=getattr(args, "borrow_bps", 50.0),
+            ),
+        ),
+        bar_filter=bar_filter,
+        ledger=ledger,
+        reconcile_every=args.reconcile_every,
+        allow_blind_start=args.allow_blind_start,
+    )
+
+    try:
+        run_until_stopped(engine.start(universe), teardown_timeout=SHUTDOWN_TIMEOUT + 1.0)
+    except BlindStartError as exc:
+        sys.exit(f"Refusing to start: {exc}")
+    except KeyboardInterrupt:
+        print("\nInterrupted - small-real stopped. No orders were sent while shutting down.")
+        _print_closing_inventory(ledger, strategy)
+    finally:
+        print(f"\n  Telemetry from this session: {_invocation(f'execution-report --ledger {ledger.path}')}")
+
+
+def _refuse_ambiguous_small_real_posture(args) -> None:
+    """Refuse any run whose paper/live posture is not stated the same way twice.
+
+    The existing live guard covers one direction: real money needs `--live-money` as
+    well as the environment, because a default nobody set is indistinguishable from a
+    decision somebody made. This adds the other, which that guard leaves silent —
+    `--live-money` on a paper environment is currently ignored, so an operator who
+    typed it is right about their intent and wrong about the run. For the one mode that
+    can lose money, "you asked for real money and quietly got paper" is not a state to
+    enter.
+
+    Both refusals here run before a broker is built, because both mean the command line
+    and the environment disagree and that is answerable without reaching a venue.
+    Agreeing to the contract is a separate step — see
+    :func:`_require_real_money_confirmation`, which runs after the preflight has shown
+    the operator what they would be agreeing to.
+    """
+    paper = _paper_mode()
+    asked_for_real = getattr(args, "live_money", False)
+
+    if paper and asked_for_real:
+        raise SystemExit(
+            "--live-money says this run should use real capital, but PAPER_TRADE is "
+            "true, so it would go to the paper account. Ignoring the flag would leave "
+            "you right about the intent and wrong about the run.\n"
+            "  Drop --live-money to trade paper, or set PAPER_TRADE=false to mean it."
+        )
+    if not paper and not asked_for_real:
+        raise SystemExit(
+            "PAPER_TRADE is false, so this would place orders with real money. Refusing "
+            "to start on an environment variable alone: pass --live-money to say so on "
+            "the command line, or set PAPER_TRADE=true to trade the paper account."
+        )
+
+
+def _require_real_money_confirmation(args) -> None:
+    """A run that will spend real capital needs one more word, after the contract is shown.
+
+    Deliberately *not* required for paper. A gate on the run that cannot lose anything
+    is friction that teaches the reflex, and the reflex is exactly what makes the gate
+    that matters stop working — a confirmation everybody types without reading is not a
+    confirmation of anything.
+    """
+    if _paper_mode() or getattr(args, "confirm", False):
+        return
+    raise SystemExit(
+        "This run will place orders with real capital. Re-run with --confirm once you "
+        "have read the preflight above and are sure.\n"
+        "  --preflight prints the contract and starts nothing."
+    )
+
+
+def _print_small_real_preflight(args, contract, broker, universe, account, held=()) -> None:
+    """The scaled contract, before any order logic. Mandatory, and there is no flag off.
+
+    Shows the validated number beside the scaled one for every limit, because the claim
+    this mode makes is that the proportions survived, and a column of scaled figures
+    cannot be checked against a claim nobody printed.
+    """
+    from tradeflow.execution.halt import HaltState
+    from tradeflow.execution.ledger import small_real_ledger_path
+    from tradeflow.settings import paper_trade_mode
+
+    print("\n=== SMALL-REAL PREFLIGHT — this run can place orders ===")
+    mode = "PAPER" if paper_trade_mode() else "LIVE - REAL MONEY"
+    print(f"  {'broker mode':24}{mode}")
+    if account is not None:
+        print(f"  {'account':24}equity ${account.equity:,.2f}  cash ${account.cash:,.2f}")
+
+    validated = contract["validated_capital"]
+    print(
+        f"  {'validated capital':24}"
+        + (f"${validated:,.2f} (from config)" if validated is not None else "not recorded")
+    )
+    scale = contract["scale"]
+    # Both numbers, always — the operator typed one of them, and an order-of-magnitude
+    # slip in either is visible only against the other.
+    derived = f"  (scale {scale:g})" if scale is not None else "  (scale unknown: no validated capital)"
+    print(f"  {'this run deploys':24}${contract['capital']:,.2f}{derived}")
+    print(f"  {'stated by':24}{contract['capital_source']}")
+
+    print(f"\n  {contract['rule']}")
+    book, was = contract["book"], contract["validated_book"]
+    print(f"  {'limit':24}{'validated':>14}{'this run':>14}   treatment")
+    for key in sorted(book):
+        print(
+            f"  {key:24}{_contract_value(key, was.get(key)):>14}"
+            f"{_contract_value(key, book.get(key)):>14}   {contract['limit_treatment'][key]}"
+        )
+
+    budget = contract["per_position_budget"]
+    if budget is not None:
+        print(f"\n  {'a position gets about':24}${budget:,.2f}")
+        # The bias this mode cannot design away, stated as the number that decides it.
+        print(
+            f"  {'':24}so a name priced above about ${budget:,.2f} cannot be traded here\n"
+            f"  {'':24}at all. Those refusals are counted, not silent."
+        )
+    envelope = contract["max_loss_envelope"]
+    if envelope is not None:
+        print(f"  {'max loss envelope':24}${envelope:,.2f}")
+        print(
+            f"  {'':24}if every open position stops out *at its stop price*.\n"
+            f"  {'':24}A gap through a stop fills below it, so this is a floor on the\n"
+            f"  {'':24}loss and not a ceiling on it."
+        )
+    else:
+        print(f"  {'max loss envelope':24}not computable (no max_total_risk declared)")
+
+    print(
+        f"\n  {'universe':24}{len(universe)} symbols "
+        f"({'replayed' if args.scanner == 'none' else args.scanner})"
+    )
+    feed = _live_feed(args)
+    print(f"  {'data feed':24}{feed or 'SDK default'}")
+    print(f"  {'bar guards':24}{'off' if args.no_bar_checks else 'on'}")
+    print(f"  {'reconcile every':24}{args.reconcile_every:g}s")
+    print(f"  {'telemetry ledger':24}{args.ledger or small_real_ledger_path()}")
+    print(f"  {'halt state':24}{HaltState().path}")
+    # Said outright rather than left to be inferred from the absence of a trial id.
+    print(f"  {'research journal':24}untouched — this run records no trial and no search")
+    from tradeflow.services import smallreal
+
+    adopted = smallreal.adopted_book_note(len(held), contract["book"])
+    if adopted:
+        print(f"\n  ADOPTED BOOK: {adopted}")
+
+    print("\n  This can place orders. Nothing below is a rehearsal.")
+
+
+def _contract_value(key: str, value) -> str:
+    """One limit, rendered in its own unit.
+
+    A fraction, a count and a dollar amount look alike as bare numbers, and a book
+    printed with one assumed unit is how "a maximum of 1.00% positions" got shipped.
+    Absent is not zero and never reads as one.
+    """
+    from tradeflow.services import smallreal
+
+    if value is None:
+        return "unset"
+    if key in smallreal.FRACTIONS or key in smallreal.COUNTS:
+        return f"{value:g}"
+    return f"${value:,.2f}"
+
+
+def _paper_mode() -> bool:
+    """Whether orders would reach the paper account. Delegates rather than re-deciding:
+    a second reading of the same setting is a second answer to the only question that
+    separates a rehearsal from real money."""
+    from tradeflow.settings import paper_trade_mode
+
+    return paper_trade_mode()
+
+
 def _print_closing_inventory(ledger, strategy) -> None:
     """What was held when the session stopped.
 
@@ -4279,12 +4600,72 @@ def cmd_execution_report(args) -> None:
     from tradeflow.analytics.execution_quality import execution_report
     from tradeflow.execution.ledger import PositionLedger
 
-    ledger = PositionLedger(args.ledger)
+    ledger = PositionLedger(_execution_ledger_path(args))
     report = execution_report(ledger.lifecycles(), ledger.declines())
+    _print_ledger_sessions(ledger, args.json)
     if args.json:
         print(json.dumps(report, indent=2, default=str))
         return
     _print_execution_report(report, show_orders=args.orders)
+
+
+def _execution_ledger_path(args):
+    """Which ledger to summarise. Explicit path, the small-real one, or the live one.
+
+    A flag rather than a path the reader has to know, because telemetry nobody can find
+    is telemetry nobody checks — and the two files exist precisely so their contents are
+    never averaged together.
+    """
+    from tradeflow.execution.ledger import small_real_ledger_path
+
+    if args.ledger:
+        return args.ledger
+    return small_real_ledger_path() if getattr(args, "small_real", False) else None
+
+
+def _print_ledger_sessions(ledger, as_json: bool) -> None:
+    """What contract produced these fills, before any number derived from them.
+
+    A slippage figure is a number with no denominator until something says what capital
+    and what book it was measured against. Two sessions in one file is a fact the reader
+    has to have *before* reading an average over both, so it leads rather than follows.
+
+    A file with no session header was written before runs identified themselves, and
+    says so — the contract is not recoverable and is never guessed from whichever run
+    happens to be reading now.
+    """
+    if as_json:
+        return
+    try:
+        sessions = ledger.sessions()
+    except Exception:  # noqa: BLE001 - a summary must not raise over the report
+        return
+    if not sessions:
+        # Only worth saying about a file that actually holds something. An empty ledger
+        # has no unrecorded history, and telling a first-time reader their contract is
+        # unrecoverable would be a claim about records that do not exist.
+        if any(True for _ in ledger._read()):
+            print(
+                "\n  (no session header in this ledger: it was written before runs "
+                "recorded their contract, so what these fills were traded at is not "
+                "recoverable)"
+            )
+        return
+    if len(sessions) > 1:
+        print(
+            f"\n  WARNING: {len(sessions)} sessions in this ledger. Everything below "
+            f"averages across all of them,\n  and they did not necessarily trade the "
+            f"same book at the same size."
+        )
+    for session in sessions:
+        capital = session.get("capital")
+        scale = session.get("scale")
+        print(
+            f"\n  session  {session.get('mode', 'unknown')}"
+            + (f"  ${capital:,.2f}" if capital is not None else "  capital not recorded")
+            + (f" (scale {scale:g} of ${session['validated_capital']:,.2f})" if scale else "")
+            + f"  {session.get('broker_mode', 'broker mode not recorded')}"
+        )
 
 
 def _fmt(value, spec: str = ",.2f", missing: str = "not measured") -> str:
@@ -5241,6 +5622,104 @@ def build_parser() -> argparse.ArgumentParser:
     _add_cost_flags(live)
     live.set_defaults(func=cmd_live)
 
+    # A separate command rather than a flag on `live`, and the separation is the safety
+    # property. Small-real semantics must not be reachable by composing ordinary live
+    # flags, because the composition that reaches them is exactly the one that caused
+    # the problem: `live --capital small --max-position-size smaller`, caps adjusted by
+    # hand until fills happened. So this parser carries *no* cap override at all —
+    # argparse refuses `--max-position-size` here, which is a stronger guarantee than any
+    # check inside the command, and it cannot be forgotten on one branch.
+    small = subparsers.add_parser(
+        "small-real",
+        help="Trade a validated contract at reduced capital to observe real fills, "
+        "slippage and fees. PLACES REAL ORDERS",
+    )
+    small.add_argument(
+        "--config",
+        required=True,
+        help="The validated contract to trade, at reduced size. Required: without it "
+        "there is no contract to scale, and scaling the strategy class's defaults would "
+        "preserve proportions nobody validated",
+    )
+    small.add_argument(
+        "--scale",
+        type=float,
+        default=None,
+        help="Fraction of the validated capital to deploy (0.05 = a twentieth). Needs a "
+        "config that records the capital it was validated at. Exactly one of --scale and "
+        "--capital; there is no default, because this places real orders",
+    )
+    small.add_argument(
+        "--capital",
+        type=float,
+        default=None,
+        help="Amount to deploy, stated outright. Use this when the config records no "
+        "validated capital for --scale to be a fraction of",
+    )
+    small.add_argument(
+        "--live-money",
+        dest="live_money",
+        action="store_true",
+        help="Acknowledge on the command line that PAPER_TRADE=false means real capital",
+    )
+    small.add_argument(
+        "--confirm",
+        action="store_true",
+        help="Required with --live-money. Not required for paper: a gate on the run that "
+        "cannot lose anything teaches the reflex that makes the real gate stop working",
+    )
+    small.add_argument(
+        "--preflight",
+        action="store_true",
+        help="Print the scaled contract and exit without starting the order path",
+    )
+    small.add_argument("--scanner", default="none", help="Universe scanner ('none' replays the config's)")
+    small.add_argument("--symbols", type=_symbols, default=None, help="Explicit universe")
+    small.add_argument(
+        "--feed",
+        choices=DATA_FEEDS,
+        default=None,
+        help="Pin the Alpaca market-data feed for both warm-up and the live stream",
+    )
+    small.add_argument(
+        "--ledger",
+        default=None,
+        help="Where to record execution telemetry (default: a small-real ledger of its "
+        "own, kept apart from the live one so the two are never averaged together)",
+    )
+    small.add_argument(
+        "--reconcile-every",
+        dest="reconcile_every",
+        type=float,
+        default=300.0,
+        help="Seconds between position-reconciliation sweeps (0 disables). Reports "
+        "divergence from the broker; never corrects it",
+    )
+    small.add_argument(
+        "--no-bar-checks",
+        dest="no_bar_checks",
+        action="store_true",
+        help="Disable bar-quality guards. Guards reject a bad bar; they never repair one",
+    )
+    small.add_argument(
+        "--max-bar-return",
+        dest="max_bar_return",
+        type=float,
+        default=0.35,
+        help="Reject a single-bar move larger than this fraction (default 0.35)",
+    )
+    small.add_argument(
+        "--allow-blind-start",
+        dest="allow_blind_start",
+        action="store_true",
+        help="Start even when no symbol warmed up. Indicators then begin from no history",
+    )
+    _add_cost_flags(small)
+    # No `--strategy`: the contract names it, and a flag that could disagree with the
+    # file is a way to trade one strategy's params under another's name. The attribute
+    # still has to exist for the config loader to fill it in.
+    small.set_defaults(func=cmd_small_real, strategy=None)
+
     halt = subparsers.add_parser(
         "halt", help="Stop opening new positions (exits still allowed) — durable until resumed"
     )
@@ -5277,6 +5756,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Summarise how well the live path executed, from the ledger — read-only",
     )
     execution.add_argument("--ledger", default=None, help="Ledger path (default: logs/position_ledger.jsonl)")
+    execution.add_argument(
+        "--small-real",
+        dest="small_real",
+        action="store_true",
+        help="Read the small-real telemetry ledger instead of the live one. They are "
+        "separate files on purpose: averaging a full-size book's fills with the same "
+        "book's fills at a fraction of the size describes neither",
+    )
     execution.add_argument("--json", action="store_true", help="Emit the report as JSON")
     execution.add_argument(
         "--orders", action="store_true", help="List every order's lifecycle, not just the summary"

@@ -294,6 +294,37 @@ def contract(
     }
 
 
+def adopted_book_note(held: int, book: Dict[str, Any]) -> Optional[str]:
+    """What positions already on the account mean for this run, or ``None``.
+
+    The engine adopts whatever the broker holds at start-up, which is right — a process
+    that believes it is flat cannot exit a position it owns. But a book carried over
+    from a full-size session is not this contract's book, and it lands in this run's
+    telemetry: exits of those positions are fills at the *old* size, recorded in a
+    ledger that exists precisely so two sizes are never averaged together.
+
+    Reported rather than refused. On a restart the adopted positions *are* this run's
+    own, and nothing here can tell the two cases apart; refusing would block the
+    legitimate one. What must not happen is the operator not being told — most sharply
+    when the adopted count already fills the book, because then no entry can be admitted
+    and the session measures nothing while looking like it is running.
+    """
+    if not held:
+        return None
+    limit = book.get("max_positions")
+    note = (
+        f"this account already holds {held} position(s) that this run did not open. The "
+        "engine will adopt them, so their exits will be recorded in this session's "
+        "telemetry at whatever size they were opened at — not at this run's."
+    )
+    if limit and held >= int(limit):
+        note += (
+            f"\n  They already fill the scaled book ({held} of {limit}), so no new entry "
+            "can be admitted and this session would measure no entry execution at all."
+        )
+    return note
+
+
 def account_shortfall(equity: Optional[float], capital: float) -> Optional[str]:
     """Why this account cannot fund the scaled contract, or ``None`` if it can.
 

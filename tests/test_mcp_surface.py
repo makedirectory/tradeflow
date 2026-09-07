@@ -389,3 +389,24 @@ def test_trial_store_maintenance_is_deliberately_not_an_mcp_tool():
     assert mcp_server.OPERATOR_ONLY
     for name in ("archive", "mark_contaminated", "mark-contaminated"):
         assert name not in mcp_server.EXPOSED_TOOLS
+
+
+def test_the_mode_that_can_place_real_orders_is_unreachable_over_mcp(built):
+    """Small-real reaches a broker that really can trade. The wall is structural — the
+    server builds only a data client — and this pins the decision as well as the
+    mechanism, in every spelling, because a list of forbidden capabilities that omits
+    the newest one reads as a list somebody checked.
+
+    Deciding to spend real money is not a research step an agent takes on somebody's
+    behalf. An agent that thinks execution telemetry is worth gathering should say so
+    and let a person start the run.
+    """
+    from tradeflow.mcp import server as mcp_server
+
+    registered = set(_tools(built))
+    for name in ("small_real", "run_small_real", "start_small_real"):
+        assert name in mcp_server.FORBIDDEN_TOOLS
+        assert name not in registered
+    assert "small-real" in mcp_server.OPERATOR_ONLY
+    # And nothing registered merely mentions it under another name.
+    assert not [name for name in registered if "small" in name and "real" in name]

@@ -98,7 +98,13 @@ EVIDENCE_GATED = ("conditional", "policy", "posterior")
 #: Both are cheap to ask a human for and expensive to have done on your behalf by
 #: something that cannot be asked why afterwards. An agent that believes a trial is
 #: contaminated should say so and let a person act.
-OPERATOR_ONLY = ("trials archive", "trials mark-contaminated")
+#: ``small-real`` is here for a different and stronger reason than the other two, and
+#: it is also covered by ``FORBIDDEN_TOOLS`` below: it is the one mode that places real
+#: orders. The read-only wall means an agent physically cannot reach it, and this entry
+#: records that the absence is a decision. Deciding to spend real money on a book is not
+#: a research step an agent takes on somebody's behalf; an agent that thinks execution
+#: telemetry is worth gathering should say so and let a person start the run.
+OPERATOR_ONLY = ("trials archive", "trials mark-contaminated", "small-real")
 
 #: Capabilities that must NEVER be exposed over MCP (the safety model).
 FORBIDDEN_TOOLS = frozenset(
@@ -109,6 +115,12 @@ FORBIDDEN_TOOLS = frozenset(
         "submit_bracket_order",
         "start_live",
         "run_live",
+        # Every spelling of the mode that can place real orders. Named rather than left
+        # to the general wall, because a list of forbidden capabilities that omits the
+        # newest one reads as a list somebody checked.
+        "small_real",
+        "run_small_real",
+        "start_small_real",
         "cancel_order",
         "cancel_all_orders",
         "close_position",

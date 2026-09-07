@@ -309,3 +309,41 @@ def test_an_unreadable_account_is_not_treated_as_an_empty_one():
     """Refusing on an absent number would turn a broker hiccup into a claim about the
     balance. The preflight already reports that it could not be read."""
     assert smallreal.account_shortfall(equity=None, capital=10_000.0) is None
+
+
+# --- a book the run did not open --------------------------------------------------
+def test_an_empty_account_gets_no_adoption_note():
+    """Both directions: the note must not fire on the ordinary case."""
+    assert smallreal.adopted_book_note(0, VALIDATED_BOOK) is None
+
+
+def test_adopted_positions_are_reported_as_telemetry_from_another_size():
+    """The engine adopts whatever is open, which is right — a process that believes it
+    is flat cannot exit a position it owns. But their exits are fills at the size they
+    were opened at, landing in a ledger that exists so two sizes are never averaged."""
+    note = smallreal.adopted_book_note(3, VALIDATED_BOOK)
+
+    assert note is not None
+    assert "3 position(s) that this run did not open" in note
+    assert "not at this run's" in note
+    # Three of eight leaves room, so the sharper warning must not fire.
+    assert "no new entry can be admitted" not in note
+
+
+def test_an_adopted_book_that_already_fills_the_contract_says_so_sharply():
+    """The case found by running it against a real paper account holding twelve
+    positions under a scaled book of eight: every entry is refused as "book is full", so
+    the session measures no entry execution while looking like it is running."""
+    note = smallreal.adopted_book_note(12, VALIDATED_BOOK)
+
+    assert "12 of 8" in note
+    assert "no new entry can be admitted" in note
+    assert "measure no entry execution at all" in note
+
+
+def test_an_unbounded_book_cannot_be_filled_by_an_adoption():
+    """Absent is not zero: a book with no position cap has no count for an adoption to
+    reach, so the sharper warning has nothing to assert."""
+    note = smallreal.adopted_book_note(12, {**VALIDATED_BOOK, "max_positions": None})
+
+    assert note is not None and "no new entry can be admitted" not in note
