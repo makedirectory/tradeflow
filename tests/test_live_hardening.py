@@ -721,7 +721,7 @@ def test_the_warm_up_window_actually_spans_enough_sessions(spec, periods):
     from tradeflow.marketdata.timeframe import Timeframe
 
     timeframe = Timeframe.parse(spec)
-    start = LiveEngine._lookback_start(timeframe, periods)
+    start = LiveEngine.lookback_start(timeframe, periods)
 
     calendar_days = (datetime.now(NEW_YORK) - start).total_seconds() / 86400
     sessions = calendar_days * 5 / 7
@@ -732,7 +732,7 @@ def test_an_intraday_warm_up_reaches_past_the_previous_session():
     """The specific failure: a window that never leaves the current morning."""
     from tradeflow.marketdata.timeframe import Timeframe
 
-    start = LiveEngine._lookback_start(Timeframe.parse("1Min"), 50)
+    start = LiveEngine.lookback_start(Timeframe.parse("1Min"), 50)
     assert (datetime.now(NEW_YORK) - start) > timedelta(days=1)
 
 

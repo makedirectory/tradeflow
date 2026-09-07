@@ -3735,9 +3735,11 @@ def _run_dry(args, strategy) -> None:
     broker = DryRunBroker(capital=capital)
     trader = LiveTrader(broker, strategy, respect_market_hours=False)
 
+    history, fetch_failure = _dry_run_history(data_client, strategy, universe)
+
     seen, unevaluable = [], []
     for symbol in universe:
-        signal, price, why = _latest_signal(data_client, strategy, symbol)
+        signal, price, why = _latest_signal(strategy, history.get(symbol), fetch_failure)
         if why is not None:
             # Not a skip. A skip is an outcome the strategy reached; this is the absence
             # of one, and dropping it would report a universe as fully evaluated when
@@ -3760,7 +3762,39 @@ def _run_dry(args, strategy) -> None:
         print(format_dry_run(report))
 
 
-def _latest_signal(data_client, strategy, symbol: str):
+def _dry_run_history(data_client, strategy, universe):
+    """``({symbol: bars}, failure)`` for the whole universe, in one request.
+
+    One fetch for N evaluations, which is how the live warm-up asks and therefore the
+    only way a rehearsal can claim to be reading what the run would read. Fetching per
+    symbol also put every call inside a per-symbol handler, and a handler that turns
+    *any* exception into "bars unavailable for this symbol" cannot tell a feed outage
+    from a call this code got wrong — which is how a request missing an argument
+    entirely came to report itself as a data problem, once per symbol, while the mode
+    evaluated nothing at all.
+
+    So only :class:`BrokerError` is caught, which is what the data layer raises when a
+    request genuinely fails. It is returned rather than raised because a feed that could
+    not answer is a fact about every symbol, and the report has a bucket that says
+    exactly that. Anything else propagates.
+    """
+    from tradeflow.brokers.errors import BrokerError
+    from tradeflow.engine.live import LiveEngine
+    from tradeflow.marketdata.timeframe import Timeframe
+
+    timeframe = Timeframe.parse(strategy.config["timeframe"])
+    periods = int(strategy.config.get("required_lookback_periods") or 50)
+    # The engine's own conversion, not a second one. Bars are not calendar days: the
+    # arithmetic has to go through sessions or a weekend silently eats most of the
+    # window, and the live path already carries that reasoning.
+    start = LiveEngine.lookback_start(timeframe, periods)
+    try:
+        return data_client.get_bars(list(universe), timeframe, start, datetime.now(NEW_YORK)), None
+    except BrokerError as exc:
+        return {}, f"the history request failed: {exc}"
+
+
+def _latest_signal(strategy, bars, fetch_failure=None):
     """``(signal, price, None)``, or ``(None, None, why)`` when no decision was possible.
 
     A third value rather than a sentinel price, because "the strategy held" and "the
@@ -3769,12 +3803,15 @@ def _latest_signal(data_client, strategy, symbol: str):
     not. The reason carries the numbers — how many bars were needed, how many arrived —
     since a reader deciding whether to widen the window needs the shortfall, not the
     verdict.
+
+    The signal is the one keyed at the *last* bar, not the last signal the frame
+    emitted. ``Strategy._latest_signal`` answers the second question and is right for
+    its callers; here they differ, and only the first is what this contract would act on
+    right now — a crossing from three sessions ago is not a decision this bar makes.
     """
+    if fetch_failure is not None:
+        return None, None, fetch_failure
     needed = int(strategy.config.get("required_lookback_periods") or 0)
-    try:
-        bars = data_client.get_bars([symbol], _lookback_start(strategy), datetime.now(NEW_YORK)).get(symbol)
-    except Exception as exc:  # noqa: BLE001 - one unreadable symbol must not end the run
-        return None, None, f"bars unavailable: {exc}"
     have = 0 if bars is None else len(bars)
     if have == 0:
         return None, None, "no bars returned for this symbol"
@@ -3785,12 +3822,6 @@ def _latest_signal(data_client, strategy, symbol: str):
     from tradeflow.strategies import signals as sig
 
     return generated.get(prepared.index[-1], sig.HOLD), float(prepared["close"].iloc[-1]), None
-
-
-def _lookback_start(strategy):
-    """Enough history for the strategy's own declared lookback, plus slack."""
-    periods = int(strategy.config.get("required_lookback_periods") or 50)
-    return datetime.now(NEW_YORK) - timedelta(days=max(periods * 2, 30))
 
 
 def cmd_live(args) -> None:
