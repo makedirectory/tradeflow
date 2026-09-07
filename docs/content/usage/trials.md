@@ -219,6 +219,30 @@ separate recipe — a backtest's identity *is* its parameters — and the recipe
 says that rather than coming back empty, which would read as "validated with no
 settings".
 
+### What the run was set up with
+
+Beside the recipe, a trial records the context it ran under — the capital, the scanner
+and as-of clock its universe was resolved through, the cache policy its bars came under,
+the probes that ran and what they said, and any note left on the run.
+
+None of it is part of the trial's identity. Two runs differing only in capital are still
+one trial to the memo, exactly as before; recording these facts changed no dedup key and
+invalidated nothing.
+
+Every fact reports whether it was **recorded**, not just its value:
+
+```
+  capital     recorded, 250,000
+  scanner     — not recorded
+  cache       — not recorded
+```
+
+A trial written before this existed reads as *not recorded* for all of them, which is
+what it is. Nothing is defaulted: a config that never recorded its capital is not a
+config that ran at zero, and filling one in would put a number in the record that nobody
+chose. `trials promote` carries the capital into the saved config when it was recorded,
+and writes no `capital` key when it was not.
+
 ### The promoted config trades the book that was validated
 
 `position_limits` is written into the config from the book the trial recorded, because

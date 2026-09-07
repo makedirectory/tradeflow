@@ -150,7 +150,8 @@ def walk_forward_recipe(
     max_evals: int,
     seed: int,
     cost_key: Dict[str, Any],
-    limits: Optional[Dict[str, Any]] = None,
+    strategy_class: Any,
+    limit_overrides: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """A walk-forward's memoization key: the *validation recipe*, not the params.
 
@@ -163,7 +164,22 @@ def walk_forward_recipe(
     answered from the first - reporting a one-position validation as an eight-position
     book. That is the failure a walk-forward exists to rule out, so the fold belongs
     here rather than at each call site where it can be forgotten again.
+
+    **The book folded in is the *resolved* one, not the override.** Taking a strategy
+    class and resolving here rather than accepting a book is deliberate: a caller
+    handed a raw ``position_limits`` override could pass it straight through, and a run
+    with no override would record no book at all - which is what happened. It still had
+    a book, and a class default moving from one position to eight changes the
+    experiment without touching params or universe, so two such runs hashed alike and
+    the second was answered from the first.
+
+    This changes the identity of every walk-forward that previously omitted ``_limits``,
+    so their memos miss once. That is intended: recomputing is cheaper than serving a
+    one-position result to an eight-position question.
     """
+    from tradeflow.strategies.base import resolve_book
+
+    limits = resolve_book(strategy_class, limit_overrides)
     return {
         "mode": mode,
         "n_folds": n_folds,
@@ -339,7 +355,7 @@ def run_backtest(
     # Sharpe deflates against. It must never be the default: a run that quietly does
     # not count is how a campaign loses track of what it tried.
     if journal:
-        from tradeflow.services.audit import journal_trial
+        from tradeflow.services.audit import journal_trial, run_context
 
         journal_trial(
             "backtest",
@@ -349,6 +365,9 @@ def run_backtest(
             end=end,
             params=dedup_params,
             metrics=result.metrics,
+            # Same builder the CLI adapter calls, so a trial recorded over MCP and one
+            # recorded over the CLI describe their context in one vocabulary.
+            context=run_context(capital=capital),
         )
 
     trades_csv = None
@@ -634,8 +653,18 @@ def run_optimization(
         result.results.to_csv(results_csv, index=False)
         top = [_jsonable(row) for row in result.results.head(TOP_N).to_dict("records")]
 
+        from tradeflow.services.audit import cache_policy, run_context
+
         searchable = opt.space.searchable
         defaults = opt.space.defaults
+        # Built once: it is the same for every row of one optimization, and rebuilding
+        # it per candidate would be N identical dicts.
+        optimize_context = run_context(
+            capital=capital,
+            cache=cache_policy(
+                cache=cache_dir is not None, offline=offline, cache_dir=cache_dir, workers=workers
+            ),
+        )
         for row in result.results.to_dict("records"):
             if "_memoized_from" in row:
                 # Already exists as its own trial; re-journaling it would double-count
@@ -653,6 +682,9 @@ def run_optimization(
                 params={**defaults, **searched, "_cost": cost_key},
                 metrics=metrics,
                 objective=objective,
+                # The service path journalled none of this, so an optimization run over
+                # MCP recorded no capital while the same run over the CLI did.
+                context=optimize_context,
             )
 
     return {
@@ -1076,7 +1108,8 @@ def run_walk_forward(
         max_evals=max_evals,
         seed=seed,
         cost_key=cost_key,
-        limits=position_limits,
+        strategy_class=cls,
+        limit_overrides=position_limits,
     )
 
     with _open_trial_store() as trial_store:
@@ -1147,6 +1180,8 @@ def run_walk_forward(
         )
 
     if result.folds:
+        from tradeflow.services.audit import probe_verdicts, run_context
+
         chosen = result.holdout_params or result.folds[-1].is_best_params
         gate_report = result.gate_report(gates)
         journal_trial(
@@ -1165,6 +1200,9 @@ def run_walk_forward(
             },
             returns=result.oos_returns,
             dedup_params=recipe,
+            # The draft path takes no cache arguments, so it records none - absent
+            # rather than a policy it cannot know.
+            context=run_context(capital=capital, probes=probe_verdicts(gate_report)),
         )
 
     return walk_forward_payload(
@@ -1606,6 +1644,11 @@ def run_draft_walk_forward(
             max_evals=max_evals,
             seed=seed,
             cost_key=cost_key,
+            strategy_class=cls,
+            # The draft path takes no book override, so the resolved book is the
+            # drafted class's own — which is exactly what it validates at, and now
+            # what its identity records.
+            limit_overrides=None,
         ),
     }
 
@@ -1680,6 +1723,8 @@ def run_draft_walk_forward(
     # an unrecorded one. Same placement as run_walk_forward, for the same reason.
     journaled = bool(journal and result.folds)
     if journaled:
+        from tradeflow.services.audit import probe_verdicts, run_context
+
         chosen = result.holdout_params or result.folds[-1].is_best_params
         gate_report = result.gate_report(gates)
         journal_trial(
@@ -1698,6 +1743,12 @@ def run_draft_walk_forward(
             },
             returns=result.oos_returns,
             dedup_params=recipe,
+            # The draft path journalled no context at all, so a drafted validation
+            # recorded neither its capital nor its probe verdicts while every other
+            # walk-forward did.
+            # The draft path takes no cache arguments, so it records none — absent
+            # rather than a policy it cannot know.
+            context=run_context(capital=capital, probes=probe_verdicts(gate_report)),
         )
 
     payload = walk_forward_payload(
@@ -2652,7 +2703,9 @@ def run_verdict(
     result["provenance"] = _verdict_provenance(inputs, cache, n_trials)
 
     if journal:
-        _journal_verdict(result, strategy, universe, start, end, dedup_params)
+        from tradeflow.services.audit import run_context
+
+        _journal_verdict(result, strategy, universe, start, end, dedup_params, run_context(capital=capital))
     return result
 
 
@@ -2880,6 +2933,7 @@ def _journal_verdict(
     start: datetime,
     end: datetime,
     dedup_params: Dict[str, Any],
+    context: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Record the composite as exactly one trial, and keep its full object beside it.
 
@@ -2909,6 +2963,9 @@ def _journal_verdict(
             metrics={k: v for k, v in metrics.items() if v is not None},
             extra={"verdict": verdict.get("verdict"), "promotable": verdict.get("promotable")},
             weights=_verdict_weights_payload(result),
+            # Passed in by the caller, which is the only place that knows the run's
+            # capital; this helper is handed a finished result.
+            context=context or {},
         )
     except Exception:  # noqa: BLE001 - journaling is bookkeeping, not the answer
         logger.warning("Verdict trial journaling failed", exc_info=True)

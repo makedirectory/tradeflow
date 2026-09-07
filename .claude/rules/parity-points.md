@@ -199,6 +199,28 @@ and refused on the other is the same trial answering one question two ways depen
 who asked, which is what a shared default exists to prevent.
 *Guarded by* `tests/test_surface_parity.py`.
 
+**The book a run validated at ↔ the book its identity records** — a walk-forward folded
+the limits it was *overridden* with into its dedup key, not the book it actually ran at.
+A run with no `--config` therefore recorded no `_limits` while still having a book, so a
+class default moving from one position to eight changed the experiment without touching
+params, universe or window — two such runs hashed alike and the second was answered from
+the first, which is exactly the failure `limits_key` was created to prevent, surviving in
+the one case it did not cover.
+
+`walk_forward_recipe` now takes the strategy class and resolves the book itself through
+`strategies.base.resolve_book`, rather than accepting one: a caller handed a raw override
+can pass it straight through, and that is how this got missed. The same resolver writes
+the saved config, so the recipe and the config cannot disagree about the book for one run.
+Resolution is deliberately params-independent — a search's identity is fixed before its
+winner is known.
+
+**This changed the identity of every walk-forward that previously omitted `_limits`**, so
+their memos miss once. Accepted: recomputing is cheaper than serving a one-position result
+to an eight-position question. Replay is unaffected — a rebuild reads each journal line's
+own recorded recipe, so historical rows keep their original hashes.
+*Guarded by* `tests/test_surface_parity.py`, whose old assertion that an un-overridden run
+keys as it did before limits existed is now reversed on purpose, with the reason recorded.
+
 **A saved config's runnable contract ↔ the identity it was validated under** — a
 config's `position_limits` and the `_limits` folded into the trial's dedup identity are
 the same book written twice, and they were not checked against each other. Omitting the

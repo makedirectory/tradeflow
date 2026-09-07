@@ -150,6 +150,40 @@ def _dedup_params(
     return {**params, "_cost": _cost_key(args, vintage), **limits_key(limits)}
 
 
+def _run_context(args, *, probes: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """The run context from an argparse namespace.
+
+    The adapter shape this file already uses for the dedup recipe, for the same reason:
+    a namespace is not a function signature, but there must still be one definition of
+    what a run's context *is*, or the CLI and the service record two vocabularies for
+    one fact.
+    """
+    from tradeflow.services.audit import cache_policy, run_context
+
+    scanner = getattr(args, "scanner", None)
+    # The clock the scanner was *actually* resolved at. `resolve_universe` is called
+    # with `args.scan_as_of or args.end`, so recording only the flag left a defaulted
+    # run with no clock at all - and the clock is the thing that decides whether the
+    # universe could have seen the future. `scan_as_of_explicit` keeps the default
+    # distinguishable from a value somebody chose.
+    explicit = getattr(args, "scan_as_of", None)
+    effective = explicit or (getattr(args, "end", None) if scanner else None)
+    return run_context(
+        capital=getattr(args, "capital", None),
+        scanner=scanner,
+        scan_as_of=effective,
+        scan_as_of_explicit=None if effective is None else explicit is not None,
+        cache=cache_policy(
+            cache=getattr(args, "cache", None),
+            offline=getattr(args, "offline", None),
+            cache_dir=getattr(args, "cache_dir", None),
+            workers=getattr(args, "workers", None),
+        ),
+        probes=probes,
+        notes=getattr(args, "note", None),
+    )
+
+
 def _walkforward_recipe(args, vintage: Optional[str] = None) -> Dict[str, Any]:
     """The validation recipe this run is memoized under, from an argparse namespace.
 
@@ -174,7 +208,8 @@ def _walkforward_recipe(args, vintage: Optional[str] = None) -> Dict[str, Any]:
         max_evals=args.max_evals,
         seed=args.seed,
         cost_key=_cost_key(args, vintage),
-        limits=getattr(args, "config_position_limits", None),
+        strategy_class=STRATEGIES[args.strategy],
+        limit_overrides=getattr(args, "config_position_limits", None),
     )
 
 
@@ -571,6 +606,7 @@ def cmd_backtest(args) -> None:
             # Opt-in: a campaign's worth of trade tables is storage nobody asked
             # for, so only a run you intend to inspect keeps one.
             trades=trades_payload(result.trades) if args.record_trades else None,
+            context=_run_context(args),
         )
 
     log_backtest_report(
@@ -1012,6 +1048,7 @@ def cmd_optimize(args) -> None:
                 params={**defaults, **searched, "_cost": _cost_key(args, vintage)},
                 metrics=metrics,
                 objective=args.objective,
+                context=_run_context(args),
             )
 
     if n_memoized:
@@ -1380,7 +1417,7 @@ def cmd_walkforward(args) -> None:
 
     if not args.no_journal and result.folds:
         from tradeflow.services.analysis import trades_payload
-        from tradeflow.services.audit import journal_trial
+        from tradeflow.services.audit import journal_trial, probe_verdicts
 
         # One walk-forward is one *validated* config — the OOS aggregate is the
         # headline. The many IS-optimization configs it evaluated internally are
@@ -1406,6 +1443,10 @@ def cmd_walkforward(args) -> None:
             returns=result.oos_returns,
             trades=trades_payload(result.oos_trade_table) if args.record_trades else None,
             dedup_params=recipe,
+            # The gate report carries each probe's verdict, so what was checked - and
+            # what it said - is recorded beside the numbers rather than living only in
+            # the terminal output of the run that produced them.
+            context=_run_context(args, probes=probe_verdicts(report)),
         )
 
     bootstrap_report = None
@@ -1452,7 +1493,7 @@ def cmd_walkforward(args) -> None:
         print(f"\nPer-fold results written to {args.results_csv}")
 
     if args.save_config and result.folds:
-        from tradeflow.strategies.base import build_with_limits
+        from tradeflow.strategies.base import resolve_book
 
         chosen = result.holdout_params or result.folds[-1].is_best_params
         provenance = build_provenance(
@@ -1488,9 +1529,9 @@ def cmd_walkforward(args) -> None:
             # and reading them *here* was the same defect: a walk-forward run against a
             # config asking for eight positions validated eight and saved one, so
             # round-tripping a config through --save-config quietly shrank its book.
-            position_limits=build_with_limits(
-                STRATEGIES[args.strategy], chosen, getattr(args, "config_position_limits", None)
-            ).position_limits(),
+            position_limits=resolve_book(
+                STRATEGIES[args.strategy], getattr(args, "config_position_limits", None)
+            ),
             # _cost_key(args) without the vintage: that stamp fingerprints the *data*
             # a run read, and pinning a reusable config to one data snapshot is the
             # opposite of what it is for.
@@ -1862,6 +1903,7 @@ def _journal_alpha(args, strategy_label: str, source: str, result: dict) -> None
             "benchmark_available": result.get("benchmark_available"),
             "low_confidence": result.get("low_confidence"),
         },
+        context=_run_context(args),
     )
 
 
@@ -3330,6 +3372,11 @@ def _promote_trial(store, args) -> None:
         symbols=symbols,
         candidate_symbols=universe.get("candidate_symbols"),
         position_limits=book,
+        # Recoverable at last: the journal never held a run's capital, so a promoted
+        # config could not state what it was validated at and inherited whatever the
+        # next run passed. Absent for every trial recorded before it was journaled,
+        # which is written as nothing rather than as a capital nobody chose.
+        capital=(recipe.get("context") or {}).get("capital", {}).get("value"),
         provenance=Provenance(
             objective=(recipe.get("objective") or ""),
             method=str((recipe.get("validation") or {}).get("method") or ""),

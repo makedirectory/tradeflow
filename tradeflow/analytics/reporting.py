@@ -1000,6 +1000,24 @@ def format_series_comparison(report: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _recorded_cell(fact: Optional[Dict[str, Any]]) -> str:
+    """One context fact, rendering *not recorded* distinctly from a recorded value.
+
+    The reason each fact carries ``recorded`` at all is that "this run used no scanner"
+    and "nobody wrote down whether it did" are different facts. A renderer printing the
+    value alone collapses them back into one blank — which is what this one did, while
+    the docs showed an example of output it never produced.
+    """
+    if not fact or not fact.get("recorded"):
+        return f"{NOT_RECORDED} not recorded"
+    value = fact.get("value")
+    if isinstance(value, dict):
+        return ", ".join(f"{k}={v}" for k, v in sorted(value.items())) or "recorded, empty"
+    if isinstance(value, float):
+        return f"{value:,.2f}"
+    return str(value)
+
+
 def format_campaign_material(material: Dict[str, Any]) -> str:
     """What validated a trial, with each section labelled by what kind of thing it is.
 
@@ -1030,6 +1048,11 @@ def format_campaign_material(material: Dict[str, Any]) -> str:
         lines.append(f"    {NOT_RECORDED} {recipe.get('reason')}")
 
     lines.append("")
+    lines.append("  SET UP WITH — how the run was configured. Not part of its identity.")
+    for fact, value in (recipe.get("context") or {}).items():
+        lines.append(f"    {fact:<16}{_recorded_cell(value)}")
+
+    lines.append("")
     lines.append(
         f"  EVIDENCE — what was measured, under accounting v{evidence.get('accounting')}. Valid only there."
     )
@@ -1048,6 +1071,7 @@ def format_campaign_material(material: Dict[str, Any]) -> str:
     lines.append(f"    {'promotable':<16}{NOT_RECORDED if promo is None else ('yes' if promo else 'no')}")
     lines.append(f"    {'family n_trials':<16}{_cell(evidence.get('family_n_trials'), '{:.0f}')}")
     lines.append(f"    {'trial ids':<16}{', '.join(evidence.get('trial_ids') or []) or NOT_RECORDED}")
+    lines.append(f"    {'probes':<16}{_recorded_cell(evidence.get('probes'))}")
     if evidence.get("staleness"):
         lines.append(f"    (!) {evidence['staleness']}")
     if evidence.get("quarantined"):
@@ -1057,6 +1081,7 @@ def format_campaign_material(material: Dict[str, Any]) -> str:
     lines.append("  METADATA — about the record, not about the strategy.")
     lines.append(f"    {'recorded':<16}{str(metadata.get('recorded_at'))[:19]}")
     lines.append(f"    {'git':<16}{metadata.get('git_sha') or NOT_RECORDED}")
+    lines.append(f"    {'notes':<16}{_recorded_cell(metadata.get('notes'))}")
     for artifact in metadata.get("artifacts") or []:
         state = artifact["read_with"] if artifact["recorded"] else f"{NOT_RECORDED} not recorded"
         lines.append(f"    {artifact['artifact']:<16}{state}")

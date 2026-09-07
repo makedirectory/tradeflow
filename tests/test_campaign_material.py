@@ -22,6 +22,7 @@ from tradeflow.engine.backtest import ACCOUNTING_VERSION
 from tradeflow.services.analysis import walk_forward_recipe
 from tradeflow.services.audit import journal_trial
 from tradeflow.services.campaign import EVIDENCE, METADATA, RECIPE, campaign_material
+from tradeflow.services.registry import STRATEGIES
 from tradeflow.store.trials import TrialStore, db_path_for_journal
 
 RECIPE_ARGS = dict(
@@ -36,7 +37,8 @@ RECIPE_ARGS = dict(
     max_evals=50,
     seed=42,
     cost_key={"commission_bps": 1.0},
-    limits={"max_positions": 8},
+    strategy_class=STRATEGIES["demo_trend"],
+    limit_overrides={"max_positions": 8},
 )
 
 
@@ -105,7 +107,12 @@ def test_the_cost_model_and_book_are_named_not_dropped(tmp_path):
     with _store(journal) as store:
         recipe = campaign_material(store, trial_id, journal_path=journal)[RECIPE]
 
-    assert recipe["folded_into_identity"]["_limits"] == {"max_positions": 8}
+    book = recipe["folded_into_identity"]["_limits"]
+    # The *resolved* book: the override won where it spoke, and the class defaults came
+    # through where it did not. Recording only the override left a run that overrode
+    # nothing recording no book at all, while still having one.
+    assert book["max_positions"] == 8
+    assert book["max_total_risk"] == pytest.approx(0.05)
     assert recipe["folded_into_identity"]["_cost"] == {"commission_bps": 1.0}
     assert "_limits" not in recipe["validation"]
 

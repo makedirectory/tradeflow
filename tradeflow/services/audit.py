@@ -137,6 +137,118 @@ def audit_log(
     return run_id
 
 
+#: Keys of the run-context block, in the order a reader wants them. Declared so the
+#: writer and every reader agree on the vocabulary rather than each inventing one.
+RUN_CONTEXT_KEYS = (
+    "capital",
+    "scanner",
+    "scan_as_of",
+    "scan_as_of_explicit",
+    "cache",
+    "probes",
+    "notes",
+)
+
+
+def run_context(
+    *,
+    capital: Optional[float] = None,
+    scanner: Optional[str] = None,
+    scan_as_of: Optional[Any] = None,
+    scan_as_of_explicit: Optional[bool] = None,
+    cache: Optional[Dict[str, Any]] = None,
+    probes: Optional[Dict[str, Any]] = None,
+    notes: Optional[str] = None,
+) -> Dict[str, Any]:
+    """How a run was set up, for the parts that are not its identity.
+
+    The capital it ran at, the scanner and as-of clock its universe was resolved
+    through, the cache policy its bars came under, the probes that were run and what
+    they said, and whatever note a human attached. None of it is hashed - identity is
+    ``(params, universe, window, accounting)`` - so adding a field here changes no
+    trial's dedup key and invalidates no memo.
+
+    **Only what was actually known is written.** A key absent from the returned dict
+    means the run did not record that fact, which every reader must render as *not
+    recorded* rather than filling in a default. Capital in particular: a config with no
+    recorded capital is not a config that ran at zero, and the day one defaults it to
+    100,000 is the day a promoted config quietly claims a capital nobody chose.
+
+    One builder, because the vocabulary has to be identical across surfaces: a CLI trial
+    saying ``scan_as_of`` and an MCP one saying ``as_of`` would be two schemas for one
+    fact, and the campaign material reading them would have to know both.
+    """
+    context: Dict[str, Any] = {
+        "capital": None if capital is None else float(capital),
+        "scanner": scanner or None,
+        "scan_as_of": _iso(scan_as_of),
+        "scan_as_of_explicit": scan_as_of_explicit,
+        "cache": dict(cache) if cache else None,
+        "probes": dict(probes) if probes else None,
+        "notes": notes or None,
+    }
+    return {key: value for key, value in context.items() if value is not None}
+
+
+def cache_policy(
+    *,
+    cache: Optional[bool] = None,
+    offline: Optional[bool] = None,
+    cache_dir: Optional[Any] = None,
+    workers: Optional[int] = None,
+) -> Dict[str, Any]:
+    """The bar-cache policy a run actually read under, as a recorded fact.
+
+    Whether a result came from a live fetch or a cache, and whether the run was allowed
+    to reach the network at all, is part of what produced it - an offline replay against
+    a stale cache and a fresh fetch are different runs with the same parameters.
+
+    **The effective policy, not the flag.** Parallel execution is cache-backed by
+    construction: a live client cannot cross a process boundary, so asking for workers
+    implies the cache whether or not ``--cache`` was passed (see
+    ``services.analysis._worker_data_spec``). Recording the flag alone had a
+    ``--workers 4`` run write ``cache: false`` while every bar it read came through the
+    cache - a record less true than the run it describes. ``cache_implied_by`` names
+    what turned it on when the caller did not.
+    """
+    from tradeflow.optimization.parallel import resolve_workers
+
+    parallel = workers is not None and resolve_workers(workers) > 1
+    effective = True if parallel else (None if cache is None else bool(cache))
+    policy: Dict[str, Any] = {
+        "cache": effective,
+        "cache_implied_by": "workers" if parallel and not cache else None,
+        "offline": None if offline is None else bool(offline),
+        "cache_dir": str(cache_dir) if cache_dir else None,
+        "workers": int(workers) if workers else None,
+    }
+    return {key: value for key, value in policy.items() if value is not None}
+
+
+def probe_verdicts(report: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Which probes a gate report ran, and what each said.
+
+    Three-valued on purpose. A probe that did not run has no entry at all, which is not
+    the same as one that ran and passed - a gate report that never exercised the leakage
+    probe and one that exercised it and cleared look identical everywhere else, and only
+    this keeps "not exercised" from reading as a pass.
+
+    Lives here rather than in the CLI because the service journals the same fact, and a
+    second extractor is a second answer to "did the probe run".
+    """
+    checks = (report or {}).get("checks") or {}
+    verdicts: Dict[str, Any] = {}
+    for name, check in checks.items():
+        if not str(name).endswith("_probe"):
+            continue
+        verdicts[str(name)] = {
+            "value": check.get("value"),
+            "passed": check.get("passed"),
+            "ran": check.get("value") is not None,
+        }
+    return verdicts
+
+
 def journal_trial(
     kind: str,
     *,
@@ -154,6 +266,7 @@ def journal_trial(
     trades: Optional[Dict[str, Any]] = None,
     path: Optional[Path] = None,
     dedup_params: Optional[Dict[str, Any]] = None,
+    context: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Record one *evaluated configuration* as a trial in the research journal.
 
@@ -215,6 +328,11 @@ def journal_trial(
         inputs["candidate_symbols"] = sorted({str(s).upper() for s in candidate_symbols})
     if objective:
         inputs["objective"] = objective
+    if context:
+        # Under `inputs`, and deliberately not under `params`: nothing here is hashed,
+        # so a trial recorded before these fields existed keeps its identity and a run
+        # that records them keys exactly as it would have without them.
+        inputs["context"] = {k: v for k, v in context.items() if v is not None}
     result_summary = {k: metrics[k] for k in _TRIAL_METRICS if k in metrics}
     journal_path = path or default_trial_journal()
     extra_dict = dict(extra or {})
