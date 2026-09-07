@@ -4092,7 +4092,22 @@ def cmd_small_real(args) -> None:
 
     # Not optional, and there is no flag to disable it: a run whose whole purpose is to
     # record what execution did has nothing left if it does not record.
-    ledger = PositionLedger(args.ledger or small_real_ledger_path())
+    #
+    # `--ledger` may point anywhere except the live ledger. The two files are separate so
+    # that a full-size book's fills and this book's fills are never averaged together,
+    # and every roll-up over a ledger is an average — so pointing this at that one throws
+    # away the finding the mode exists to produce, silently, in a file nobody re-reads.
+    from tradeflow.execution.ledger import default_ledger_path
+
+    ledger_path = Path(args.ledger) if args.ledger else small_real_ledger_path()
+    if ledger_path == default_ledger_path():
+        sys.exit(
+            f"--ledger points at the live ledger ({ledger_path}). Small-real keeps its "
+            "telemetry apart because every roll-up over a ledger is an average, and "
+            "averaging a full-size book's fills with this run's describes neither.\n"
+            "  Drop --ledger to use the small-real ledger, or name a different file."
+        )
+    ledger = PositionLedger(ledger_path)
     ledger.record_session(
         "small_real",
         {
@@ -5636,7 +5651,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     small.add_argument(
         "--config",
-        required=True,
+        # Not `required=True`, deliberately. Argparse would answer "the following
+        # arguments are required: --config", which is true and useless — the operator's
+        # next question is where a validated contract comes from, and the command's own
+        # refusal names the command that writes one. Making argparse enforce it would
+        # leave that message unreachable, which is how a feature comes to be present,
+        # tested and dead at the surface.
+        default=None,
         help="The validated contract to trade, at reduced size. Required: without it "
         "there is no contract to scale, and scaling the strategy class's defaults would "
         "preserve proportions nobody validated",

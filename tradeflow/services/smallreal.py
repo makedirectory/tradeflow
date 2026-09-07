@@ -96,6 +96,14 @@ def validated_contract(
     """
     from tradeflow.strategies.base import resolve_book
 
+    if config_capital is not None and float(config_capital) <= 0:
+        raise ContractError(
+            f"this config records a validated capital of {config_capital}, which is not "
+            "an amount anything can have been validated at. A fraction of it is not a "
+            "smaller book, it is a meaningless one — and the run would size every "
+            "position to nothing while looking like it was trading.\n"
+            "  Fix the capital in the config, or pass --capital to state this run's own."
+        )
     if not config_limits:
         raise ContractError(
             "this config records no position_limits, so there is no validated book to "

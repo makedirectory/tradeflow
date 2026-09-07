@@ -130,11 +130,21 @@ def test_the_telemetry_cannot_be_switched_off():
     assert "--no-ledger" in {o for a in live._actions for o in a.option_strings}
 
 
-def test_a_config_is_required_by_the_parser():
+def test_a_run_with_no_config_is_refused_and_told_where_one_comes_from():
     """Without the file there is no validated contract to scale, and scaling class
-    defaults preserves proportions nobody validated."""
-    with pytest.raises(SystemExit):
-        cli.build_parser().parse_args(["small-real", "--scale", "0.05"])
+    defaults preserves proportions nobody validated.
+
+    Asserted on the message, because that is what made it worth writing. The flag was
+    `required=True` at first, so argparse answered "the following arguments are
+    required: --config" and the command's own refusal — the one that names the command
+    which *writes* a validated config — could never run. Present, tested, and dead at
+    the surface.
+    """
+    args = cli.build_parser().parse_args(["small-real", "--scale", "0.05"])
+    args.flags_given = set()
+
+    with pytest.raises(SystemExit, match="trials promote"):
+        cli.cmd_small_real(args)
 
 
 # --- what it refuses to start ------------------------------------------------------
@@ -542,3 +552,43 @@ def test_the_documented_preflight_sample_is_one_the_code_actually_prints(wired, 
         if not line.strip() or line.strip().startswith(skip):
             continue
         assert line in printed, f"the guide shows a line the preflight does not print:\n  {line!r}"
+
+
+def test_the_telemetry_cannot_be_written_into_the_live_ledger(wired, tmp_path):
+    """`--ledger` exists for flexibility and must not be a way around the separation.
+    Every roll-up over a ledger is an average, so pointing this at the live one throws
+    away the finding the mode exists to produce — silently, in a file nobody re-reads."""
+    from tradeflow.execution.ledger import default_ledger_path
+
+    with pytest.raises(SystemExit, match="points at the live ledger"):
+        _run(
+            [
+                "small-real",
+                "--config",
+                str(_config(tmp_path)),
+                "--scale",
+                "0.05",
+                "--ledger",
+                str(default_ledger_path()),
+            ]
+        )
+
+
+def test_another_ledger_path_is_still_allowed(wired, tmp_path):
+    """Both directions: the guard names one file, not every file."""
+    elsewhere = tmp_path / "session.jsonl"
+
+    with pytest.raises(RuntimeError, match="does not support streaming"):
+        _run(
+            [
+                "small-real",
+                "--config",
+                str(_config(tmp_path)),
+                "--scale",
+                "0.05",
+                "--ledger",
+                str(elsewhere),
+            ]
+        )
+
+    assert elsewhere.exists()

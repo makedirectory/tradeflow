@@ -347,3 +347,28 @@ def test_an_unbounded_book_cannot_be_filled_by_an_adoption():
     note = smallreal.adopted_book_note(12, {**VALIDATED_BOOK, "max_positions": None})
 
     assert note is not None and "no new entry can be admitted" not in note
+
+
+@pytest.mark.parametrize("bad", [0.0, -100.0])
+def test_a_config_recording_a_non_positive_validated_capital_is_refused(bad):
+    """A fraction of zero is not a smaller book; a fraction of a negative one is not a
+    book at all. Both were accepted, producing a contract that sized every position to
+    nothing while the preflight rendered it as a normal run."""
+    with pytest.raises(smallreal.ContractError, match="not an amount anything can have"):
+        smallreal.validated_contract(
+            config_capital=bad,
+            config_limits=VALIDATED_BOOK,
+            strategy_class=STRATEGIES["demo_trend"],
+        )
+
+
+def test_a_config_recording_no_capital_is_still_allowed():
+    """Both directions: absent is not invalid. A config with no capital is refused only
+    a `--scale`, and `--capital` states this run's own."""
+    capital, book = smallreal.validated_contract(
+        config_capital=None,
+        config_limits=VALIDATED_BOOK,
+        strategy_class=STRATEGIES["demo_trend"],
+    )
+
+    assert capital is None and book["max_positions"] == 8
