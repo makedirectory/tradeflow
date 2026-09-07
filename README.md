@@ -269,6 +269,8 @@ promoted automatically — is what stays constant.
 | `verdict` | The whole cross-sectional pipeline in one command — scan → alphas → portfolio → information over one universe, one window, one cost model — ending in one gate-derived verdict (read-only) |
 | `backtest` | Scan → run a strategy over history → performance report |
 | `live` | Scan → warm up indicators → stream bars → place paper/live orders. Bar-quality guards (staleness, spikes, inconsistent OHLC, out-of-order) veto bad bars — rejecting, never repairing — and a position ledger records intent vs. observed fills |
+| `live --dry-run` | What this contract **would** try to do right now: the orders it would send, the caps that would bind, the signals it would skip. The broker has no order methods that work, so trading is a capability it does not have rather than a rule it was told. No credentials, no fills, nothing journaled |
+| `small-real` | **Places real orders.** Trades a validated config at reduced capital to measure fills, slippage and fees — the caps scaled with the book rather than shrunk by hand, since a ceiling small enough to force fills biases the sample toward low-priced names. Mandatory preflight, paper by default, telemetry to its own ledger, and no trial journaled |
 | `reconcile` | Check the position ledger against the broker's actual account state. Reports divergence; never corrects it (read-only) |
 | `halt` / `resume` / `halts` | Stop opening new positions, and say so durably — a running engine sees it on the next bar. Blocks entries, never exits, so it can't trap the book |
 | `flatten` | Emergency: halt, cancel every order, close every position. Goes straight to the broker, so it works when the engine is wedged |

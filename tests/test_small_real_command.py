@@ -516,3 +516,29 @@ def test_the_session_header_records_what_the_run_inherited(wired, tmp_path, monk
     (session,) = PositionLedger(small_real_ledger_path()).sessions()
     assert session["adopted_positions"] == 1
     assert session["adopted_symbols"] == ["OLD"]
+
+
+def test_the_documented_preflight_sample_is_one_the_code_actually_prints(wired, tmp_path, capsys):
+    """A fabricated sample has shipped here twice, both times under a green suite that
+    asserted the payload and never the text. So the usage guide's sample lines are
+    checked against real output, line for line.
+
+    Only the structural lines are compared. The account figures in the guide are
+    illustrative and labelled as such — a sample that reproduced a real balance would be
+    a different problem.
+    """
+    import pathlib
+    import re
+
+    _run(["small-real", "--config", str(_config(tmp_path)), "--scale", "0.05", "--preflight"])
+    printed = capsys.readouterr().out
+
+    guide = pathlib.Path("docs/content/usage/live-trading.md").read_text()
+    sample = re.search(r"=== SMALL-REAL PREFLIGHT.*?Nothing below is a rehearsal\.", guide, re.S)
+    assert sample, "the usage guide no longer carries a small-real preflight sample"
+
+    skip = ("account ", "...", "validated capital", "this run deploys")
+    for line in sample.group(0).splitlines():
+        if not line.strip() or line.strip().startswith(skip):
+            continue
+        assert line in printed, f"the guide shows a line the preflight does not print:\n  {line!r}"

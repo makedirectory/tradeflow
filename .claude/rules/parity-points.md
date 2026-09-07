@@ -66,6 +66,23 @@ two callers reach it with different arguments.
 *Guarded by* `tests/test_surface_parity.py`, which now compares a *default* run over
 each surface and reads every default from its own signature rather than restating it.
 
+**The validated contract ↔ the contract a small run actually trades** — one book
+written twice, and the only permitted relation between them is the scale.
+`services.smallreal` is the single rule (fractions unchanged, counts unchanged, dollar
+ceilings scaled, venue floors absolute), and the hazard is not two implementations but
+one implementation whose result never arrives: the scaled book has to be *applied* to
+the strategy, recorded in the telemetry session header, and printed in the preflight,
+and those are three separate statements of it. A mutation deleting the line that applies
+it to the strategy passed every test, because the tests asserted the recorded contract —
+the arithmetic — rather than the effect. The guard now captures the strategy the engine
+is handed and asks it to size a position.
+
+Small-real is also the one command deliberately **absent from MCP** rather than mirrored
+there: see the CLI↔MCP entry below, and `mcp.server.OPERATOR_ONLY`. That absence is the
+exception the next entry's rule would otherwise forbid, so it is written down in both
+places.
+*Guarded by* `tests/test_small_real_command.py`, `tests/test_small_real_contract.py`.
+
 **CLI flags ↔ MCP tool parameters** — anything a run can be configured with should be
 reachable from both, and an MCP argument the service does not accept fails only at call
 time. An agent cannot notice a stale description; it acts on one. The direction that

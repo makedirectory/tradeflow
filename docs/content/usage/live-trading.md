@@ -299,6 +299,161 @@ multiple-testing budget on a rehearsal.
 outside a dry run: a live session streams for as long as it runs and has no single report
 to serialize.
 
+## Small-real: what happens when the broker tries to do it
+
+```bash
+tradeflow small-real --config configs/candidate.json --scale 0.05 --preflight
+tradeflow small-real --config configs/candidate.json --scale 0.05
+tradeflow execution-report --small-real
+```
+
+> **This is the one mode that places real orders.** Everything else here reads or
+> rehearses. A dry run is safe because trading is a capability its broker does not have;
+> none of that transfers to a mode whose entire purpose is to reach a broker that really
+> can trade, because broker fills, slippage and fees cannot be observed any other way.
+
+It trades the **validated contract at reduced capital**, so the caps stay meaningful.
+That is the whole difference from the thing it replaces: measuring execution used to
+mean shrinking the book's caps by hand until fills happened, and a position ceiling
+small enough to guarantee fills biases the book toward low-priced names.
+
+### Which numbers move when the book shrinks
+
+```
+Fractions scale. Counts stay counts. Dollar strategy limits scale.
+Venue floors stay absolute.
+```
+
+Each clause is a different unit, and applying one clause to another clause's limit is a
+distortion in one direction or the other:
+
+| Limit | Unit | Under a shrink | Why |
+| --- | --- | --- | --- |
+| `max_gross_exposure`, `max_net_exposure`, `max_total_risk` | fraction of capital | **unchanged** | they already scaled, because capital did — scaling them again turns a 0.80 gross cap into 0.04 |
+| `max_positions` | count | **unchanged** | this is the book's *shape*: how many names compete for one budget is what is being measured |
+| `max_position_size` | dollars | **scaled** | left alone it sits above the whole run and binds nothing, so the validated contract had a ceiling and the run would have none |
+| `min_notional` | dollars (venue) | **not scaled** | a broker's minimum does not get smaller because this run chose to |
+
+The floor not scaling is a cost, taken deliberately. It refuses more orders at small
+capital, expensive names first — and share granularity refuses more still, because a
+book with a few hundred dollars a position cannot buy one share of a four-figure stock.
+Rather than pretend otherwise, **the preflight reports the price above which a name
+cannot be traded at all**, and both refusals carry a reason code so they can be counted.
+The bias becomes a number in the report instead of a silence in the sample.
+
+### The preflight, which cannot be skipped
+
+```
+=== SMALL-REAL PREFLIGHT — this run can place orders ===
+  broker mode             PAPER
+  account                 equity $100,000.00  cash $97,000.00
+  validated capital       $200,000.00 (from config)
+  this run deploys        $10,000.00  (scale 0.05)
+  stated by               --scale 0.05
+
+  Fractions scale. Counts stay counts. Dollar strategy limits scale. Venue floors stay absolute.
+  limit                        validated      this run   treatment
+  max_gross_exposure                 0.8           0.8   fraction of capital — unchanged
+  max_net_exposure                   0.3           0.3   fraction of capital — unchanged
+  max_position_size           $10,000.00       $500.00   dollar ceiling — scaled
+  max_positions                        8             8   count — unchanged
+  max_total_risk                    0.05          0.05   fraction of capital — unchanged
+  min_notional                    $50.00        $50.00   venue floor — not scaled
+
+  a position gets about   $500.00
+                          so a name priced above about $500.00 cannot be traded here
+                          at all. Those refusals are counted, not silent.
+  max loss envelope       $500.00
+                          if every open position stops out *at its stop price*.
+                          A gap through a stop fills below it, so this is a floor on the
+                          loss and not a ceiling on it.
+  ...
+  research journal        untouched — this run records no trial and no search
+
+  This can place orders. Nothing below is a rehearsal.
+```
+
+*(Illustrative figures.)*
+
+Every limit appears beside the validated one it came from, because the claim this mode
+makes is that the proportions survived, and a column of scaled figures cannot be checked
+against a claim nobody printed. `--preflight` prints all of it and starts nothing.
+
+### The size of the run is stated, never chosen for you
+
+Exactly one of `--scale` (a fraction of the validated capital) and `--capital` (an
+amount). There is no default: a mode that places real orders must not deploy an amount
+nobody chose. Passing both is refused even when they agree — two sources for one number
+is a thing to keep in step, and the arithmetic that checks they agree is the arithmetic
+that would be wrong.
+
+`--scale` needs a config that records the capital it was validated at, since otherwise
+there is nothing to take a fraction of; the refusal names `--capital` as the way out. And
+where no ratio is known, a dollar ceiling **cannot** be restated, so a config recording
+no capital but declaring a `max_position_size` is refused rather than run with a limit
+gone quietly inert.
+
+### It cannot be reached by composing live flags
+
+`small-real` is a separate command, and its parser carries **no cap override at all** —
+`--max-position-size` and the rest are not flags here, so argparse refuses them. An
+absent flag cannot be forgotten on one branch or inverted in a refactor. There is no
+`--no-ledger` either: a run whose purpose is to record what execution did has nothing
+left if it does not record.
+
+`--config` is required. Without it there is no validated contract, and scaling the
+strategy class's defaults would preserve proportions nobody validated.
+
+### Paper by default; real money said twice, then confirmed
+
+Paper is the allowed path and needs nothing extra. Real money needs `PAPER_TRADE=false`
+**and** `--live-money` on the command line, because a default nobody set is
+indistinguishable from a decision somebody made. `--live-money` against a paper
+environment is **refused rather than ignored** — for the one mode that can lose money,
+"you asked for real capital and quietly got paper" is not a state to enter.
+
+Real money then needs `--confirm`, and the gate deliberately comes *after* the preflight:
+agreeing to a contract you have not been shown is a formality, not a check. Paper needs
+no confirmation — a gate on the run that cannot lose anything teaches the reflex that
+makes the real gate stop working.
+
+### Telemetry, not a trial
+
+Execution evidence goes to a **small-real ledger of its own**, separate from the live
+one. Every roll-up over a ledger is an average, and averaging a full-size book's fills
+with the same book's fills at a twentieth of it produces a number describing neither.
+
+Each session writes a header first, recording the scaled contract, the capital and its
+source, the broker mode, the account and what the run inherited. Without it a fill is a
+number with no denominator — 40 basis points of slippage against *what book, at what
+size*? `execution-report --small-real` prints that line before any number derived from
+it, and warns when one file holds more than one session.
+
+**Nothing is journaled as a trial.** A run that measures its own execution has searched
+nothing, so it must never count toward the multiple-testing total that the deflated
+Sharpe deflates against.
+
+### A book this run did not open
+
+The engine adopts whatever the broker already holds — a process that believes it is flat
+cannot exit a position it owns. But positions carried over from a full-size session are
+not this contract's book, and their exits land in this session's telemetry at the size
+they were opened at. Worse, if the adopted count already fills the scaled book, no entry
+can be admitted and the session measures nothing while looking like it is running.
+
+The preflight says both, and the session header records what was inherited. It is
+reported rather than refused: on a restart those positions *are* this run's own, and
+nothing can tell the two cases apart.
+
+### It is deliberately not available over MCP
+
+The [MCP server](../engineering/mcp-server) builds only a data client, so it physically
+cannot trade — and `small_real` is named in the forbidden list as well, because a list of
+forbidden capabilities that omits the newest one reads as a list somebody checked.
+Deciding to spend real capital is not a research step an agent takes on somebody's
+behalf. An agent that thinks execution telemetry is worth gathering should say so and let
+a person start the run.
+
 ## Preflight: the contract before the order path
 
 Every live run prints what it is about to do, before any order logic runs:
