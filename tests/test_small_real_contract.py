@@ -290,25 +290,63 @@ def test_the_contract_states_the_bias_it_cannot_design_away():
 
 
 # --- the account has to be able to fund what was asked for -------------------------
+def _account(equity=10_000.0, cash=None, buying_power=None):
+    from tradeflow.brokers.base import AccountSnapshot
+
+    return AccountSnapshot(
+        cash=equity if cash is None else cash,
+        equity=equity,
+        buying_power=equity if buying_power is None else buying_power,
+        portfolio_value=equity,
+    )
+
+
 def test_an_account_too_small_for_the_scaled_contract_is_named():
     """Sizing caps at whatever the account has rather than failing, so the run would
     trade a smaller book than the one whose proportions it claims to preserve — and the
     telemetry would look exactly like telemetry from the contract that was asked for."""
-    shortfall = smallreal.account_shortfall(equity=5_000.0, capital=10_000.0)
+    shortfall = smallreal.account_shortfall(_account(equity=5_000.0), capital=10_000.0)
 
     assert shortfall is not None and "$5,000.00" in shortfall and "$10,000.00" in shortfall
 
 
+def test_restricted_buying_power_is_a_shortfall_even_when_equity_is_ample():
+    """Found by an independent review. The guard checked equity alone, and the sizer
+    sizes off *buying power* — so an account with plenty of equity and restricted buying
+    power passed, then traded a book smaller than the contract. The exact failure this
+    guard exists to prevent, arriving one field over."""
+    shortfall = smallreal.account_shortfall(_account(equity=50_000.0, buying_power=3_000.0), capital=10_000.0)
+
+    assert shortfall is not None
+    assert "buying power $3,000.00" in shortfall
+    # And it does not accuse the fields that were fine.
+    assert "equity" not in shortfall.split("Sizing caps")[0]
+
+
+def test_restricted_cash_is_a_shortfall_too():
+    shortfall = smallreal.account_shortfall(_account(equity=50_000.0, cash=1_000.0), capital=10_000.0)
+
+    assert shortfall is not None and "cash $1,000.00" in shortfall
+
+
 def test_an_account_that_can_fund_it_is_not_refused():
-    """Both directions, including the exact boundary."""
-    assert smallreal.account_shortfall(equity=10_000.0, capital=10_000.0) is None
-    assert smallreal.account_shortfall(equity=10_000.01, capital=10_000.0) is None
+    """Both directions, including the exact boundary, on every field the cap applies
+    to — a guard that rejects the account it exists to permit is indistinguishable from
+    one that rejects everything."""
+    assert smallreal.account_shortfall(_account(equity=10_000.0), capital=10_000.0) is None
+    assert smallreal.account_shortfall(_account(equity=10_000.01), capital=10_000.0) is None
+    assert (
+        smallreal.account_shortfall(
+            _account(equity=10_000.0, cash=10_000.0, buying_power=40_000.0), capital=10_000.0
+        )
+        is None
+    )
 
 
 def test_an_unreadable_account_is_not_treated_as_an_empty_one():
     """Refusing on an absent number would turn a broker hiccup into a claim about the
     balance. The preflight already reports that it could not be read."""
-    assert smallreal.account_shortfall(equity=None, capital=10_000.0) is None
+    assert smallreal.account_shortfall(None, capital=10_000.0) is None
 
 
 # --- a book the run did not open --------------------------------------------------

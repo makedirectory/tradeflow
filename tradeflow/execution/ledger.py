@@ -299,7 +299,13 @@ class PositionLedger:
         symbol: omission would only hold until someone recorded a per-symbol fact about
         the run.
         """
-        self._append({"event": "session", "mode": mode, **(context or {})})
+        # The fixed keys go *after* the spread. Written the other way round, a context
+        # key named `event` silently replaced the record's kind: a session header
+        # carrying `{"event": "fill", "symbol": ..., "qty": 999}` stopped being a header,
+        # vanished from `sessions()`, and moved the replayed book by 999 shares. A caller
+        # is trusted to choose what it records about itself and must not be able to
+        # choose what kind of record it is writing.
+        self._append({**(context or {}), "event": "session", "mode": mode})
 
     def sessions(self) -> List[Dict[str, Any]]:
         """Every session header in this file, oldest first.
@@ -353,7 +359,10 @@ class PositionLedger:
         raises. A gap in the ledger is a visible reconciliation divergence, which
         is exactly the signal it exists to produce.
         """
-        record = {"ts": datetime.now(timezone.utc).isoformat(), "v": LEDGER_VERSION, **record}
+        # The stamp is applied last for the same reason a session's kind is: a record
+        # that could overwrite its own version or timestamp would be unreadable by the
+        # one mechanism that exists to make every past shape readable.
+        record = {**record, "ts": datetime.now(timezone.utc).isoformat(), "v": LEDGER_VERSION}
         try:
             with _LOCK:
                 with self.path.open("a") as fh:

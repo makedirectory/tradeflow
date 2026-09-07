@@ -367,6 +367,8 @@ The bias becomes a number in the report instead of a silence in the sample.
                           if every open position stops out *at its stop price*.
                           A gap through a stop fills below it, so this is a floor on the
                           loss and not a ceiling on it.
+
+  universe                3 symbols (replayed from the config)
   ...
   research journal        untouched — this run records no trial and no search
 
@@ -432,6 +434,30 @@ it, and warns when one file holds more than one session.
 **Nothing is journaled as a trial.** A run that measures its own execution has searched
 nothing, so it must never count toward the multiple-testing total that the deflated
 Sharpe deflates against.
+
+### The universe is part of what was validated
+
+`--symbols` and `--scanner` still work, and narrowing to one name is a reasonable thing
+to want. But the symbols a config records are part of what its evidence covers, so the
+preflight names where this run's universe came from and says plainly when it is not the
+validated one:
+
+```
+  universe                1 symbols (OVERRIDDEN by --symbols)
+                          these are not the symbols the config records as validated,
+                          so this run's evidence does not carry over to them
+```
+
+Allowed, never silent — the "validated contract" claim on the lines above would
+otherwise be read as covering the names too.
+
+### The account has to be able to fund it
+
+Sizing **caps** at whatever the account holds rather than failing, so an account that
+cannot fund the scaled contract would quietly trade something smaller while the
+telemetry recorded the larger capital. Every field the cap applies to is checked —
+equity, cash and buying power — because the sizer sizes off buying power, and an account
+with ample equity and restricted buying power is the case that otherwise slips through.
 
 ### A book this run did not open
 

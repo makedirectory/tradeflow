@@ -4063,20 +4063,26 @@ def cmd_small_real(args) -> None:
     broker, data_client = build_data_and_broker(feed=_live_feed(args))
     universe = resolve_universe(data_client, args.scanner, args.symbols)
 
-    account, held = None, []
+    account = None
     try:
         account = broker.get_account()
-        # One call, and the answer matters: the engine adopts whatever is already open,
-        # so a book carried over from a full-size session lands in this run's telemetry.
-        held = broker.list_positions() or []
     except Exception as exc:  # noqa: BLE001 - a preflight reports; it does not fail the run
         print(f"  (account unreadable: {exc})")
 
+    # Read separately, and `None` when it could not be read at all. Sharing one handler
+    # with the account meant a `list_positions` failure printed "account unreadable"
+    # about an account that had just been read, and left the count at zero — so the
+    # session header claimed the run started flat while the engine went on to adopt
+    # whatever was there. Absent is not zero, most of all about a book somebody holds.
+    held = None
+    try:
+        held = broker.list_positions() or []
+    except Exception as exc:  # noqa: BLE001
+        print(f"  (open positions unreadable: {exc})")
+
     _print_small_real_preflight(args, contract, broker, universe, account, held)
 
-    shortfall = smallreal.account_shortfall(
-        equity=account.equity if account is not None else None, capital=capital
-    )
+    shortfall = smallreal.account_shortfall(account, capital)
     if shortfall is not None:
         sys.exit(f"Refusing to start: {shortfall}")
 
@@ -4100,7 +4106,10 @@ def cmd_small_real(args) -> None:
     from tradeflow.execution.ledger import default_ledger_path
 
     ledger_path = Path(args.ledger) if args.ledger else small_real_ledger_path()
-    if ledger_path == default_ledger_path():
+    # Resolved, not compared as text: `..`, a relative spelling and a symlink all name
+    # the live ledger without matching it character for character, and a guard that can
+    # be walked around by spelling the path differently is not a guard.
+    if _same_file(ledger_path, default_ledger_path()):
         sys.exit(
             f"--ledger points at the live ledger ({ledger_path}). Small-real keeps its "
             "telemetry apart because every roll-up over a ledger is an average, and "
@@ -4119,8 +4128,11 @@ def cmd_small_real(args) -> None:
             "account_equity": account.equity if account is not None else None,
             # So a reader of the telemetry can tell this session's own fills from the
             # exits of positions it inherited at another size.
-            "adopted_positions": len(held),
-            "adopted_symbols": sorted(position.symbol for position in held),
+            # `None`, not 0, when the broker could not be asked. A run that started
+            # holding a book it never learned about is exactly the case a later reader
+            # needs to distinguish from one that started flat.
+            "adopted_positions": len(held) if held is not None else None,
+            "adopted_symbols": (sorted(position.symbol for position in held) if held is not None else None),
         },
     )
 
@@ -4162,6 +4174,19 @@ def cmd_small_real(args) -> None:
         _print_closing_inventory(ledger, strategy)
     finally:
         print(f"\n  Telemetry from this session: {_invocation(f'execution-report --ledger {ledger.path}')}")
+
+
+def _same_file(left: Path, right: Path) -> bool:
+    """Whether two paths name the same file, after following links and `..`.
+
+    ``Path.resolve`` rather than ``==``: a path is a string until something asks the
+    filesystem, and the whole point of the check that uses this is that it must not be
+    avoidable by spelling the same file another way.
+    """
+    try:
+        return left.resolve() == right.resolve()
+    except OSError:  # pragma: no cover - an unresolvable path is not the live ledger
+        return False
 
 
 def _refuse_ambiguous_small_real_posture(args) -> None:
@@ -4273,10 +4298,22 @@ def _print_small_real_preflight(args, contract, broker, universe, account, held=
     else:
         print(f"  {'max loss envelope':24}not computable (no max_total_risk declared)")
 
-    print(
-        f"\n  {'universe':24}{len(universe)} symbols "
-        f"({'replayed' if args.scanner == 'none' else args.scanner})"
+    # Where the universe came from, not just how big it is. The mode's whole claim is
+    # fidelity to a validated contract, and the symbols are part of what was validated —
+    # so a run narrowed with `--symbols` or re-scanned live is placing real orders on
+    # names this config's evidence may say nothing about. Allowed, because narrowing to
+    # one name is a reasonable thing to want; never silent, because the claim on the
+    # line above would otherwise cover it.
+    source = getattr(args, "universe_source", None)
+    origin = {"config": "replayed from the config", "flag": "OVERRIDDEN by --symbols"}.get(
+        source, f"resolved now by the {args.scanner} scanner"
     )
+    print(f"\n  {'universe':24}{len(universe)} symbols ({origin})")
+    if source != "config":
+        print(
+            f"  {'':24}these are not the symbols the config records as validated,\n"
+            f"  {'':24}so this run's evidence does not carry over to them"
+        )
     feed = _live_feed(args)
     print(f"  {'data feed':24}{feed or 'SDK default'}")
     print(f"  {'bar guards':24}{'off' if args.no_bar_checks else 'on'}")
@@ -4287,9 +4324,16 @@ def _print_small_real_preflight(args, contract, broker, universe, account, held=
     print(f"  {'research journal':24}untouched — this run records no trial and no search")
     from tradeflow.services import smallreal
 
-    adopted = smallreal.adopted_book_note(len(held), contract["book"])
-    if adopted:
-        print(f"\n  ADOPTED BOOK: {adopted}")
+    if held is None:
+        print(
+            "\n  ADOPTED BOOK: unknown — the broker's open positions could not be read.\n"
+            "  The engine adopts whatever it finds at start-up, so this run may inherit a\n"
+            "  book at another size, and this session's telemetry would include its exits."
+        )
+    else:
+        adopted = smallreal.adopted_book_note(len(held), contract["book"])
+        if adopted:
+            print(f"\n  ADOPTED BOOK: {adopted}")
 
     print("\n  This can place orders. Nothing below is a rehearsal.")
 

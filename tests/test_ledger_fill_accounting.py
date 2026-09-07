@@ -580,3 +580,40 @@ def test_the_small_real_ledger_is_a_different_file_from_the_live_one(tmp_path, m
     from tradeflow.settings import trial_journal_path
 
     assert small_real_ledger_path() != trial_journal_path()
+
+
+def test_a_session_context_cannot_change_what_kind_of_record_it_is(ledger):
+    """Found by an independent review, and reproduced before fixing.
+
+    The context was spread *after* the fixed keys, so a caller passing `event` replaced
+    the record's kind: a header carrying `{"event": "fill", "symbol": "COP", "qty": 999}`
+    stopped being a header, vanished from `sessions()`, and moved the replayed book by
+    999 shares — a corrupted durable record, written by the mode whose whole job is
+    honest telemetry.
+
+    A caller is trusted to choose what it records about its run. It must not be able to
+    choose what kind of record it is writing, or to overwrite the version stamp that
+    exists to keep every past shape readable.
+    """
+    import json
+
+    from tradeflow.execution.ledger import LEDGER_VERSION
+
+    ledger.record_session(
+        "small_real",
+        {
+            "event": "fill",
+            "symbol": "COP",
+            "side": "buy",
+            "qty": 999.0,
+            "basis": CUMULATIVE,
+            "v": 99,
+            "mode": "impostor",
+        },
+    )
+
+    (session,) = ledger.sessions()
+    assert session["mode"] == "small_real"
+    assert ledger.expected_positions() == {}
+    written = json.loads(ledger.path.read_text().splitlines()[0])
+    assert written["event"] == "session" and written["v"] == LEDGER_VERSION

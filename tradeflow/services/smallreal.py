@@ -333,7 +333,7 @@ def adopted_book_note(held: int, book: Dict[str, Any]) -> Optional[str]:
     return note
 
 
-def account_shortfall(equity: Optional[float], capital: float) -> Optional[str]:
+def account_shortfall(account, capital: float) -> Optional[str]:
     """Why this account cannot fund the scaled contract, or ``None`` if it can.
 
     Sizing caps the account at the configured capital rather than replacing it, so an
@@ -343,16 +343,35 @@ def account_shortfall(equity: Optional[float], capital: float) -> Optional[str]:
     telemetry it produces looks exactly like telemetry from the contract that was asked
     for.
 
+    **Every field the cap applies to is checked, not only equity.** The first version
+    checked equity alone, and the sizer sizes off ``buying_power`` — so an account with
+    ample equity and restricted buying power passed the guard and then traded a book
+    smaller than the contract, which is the exact failure this exists to prevent
+    arriving one field over. Whichever field binds is the one that decides the book, so
+    the guard has to look at all of them.
+
     An unreadable account returns ``None``: the preflight already reports that it could
     not be read, and refusing on an absent number would turn a broker hiccup into a
     claim about the balance.
     """
-    if equity is None or equity >= capital:
+    if account is None:
         return None
+    short = {
+        name: float(value)
+        for name, value in (
+            ("equity", getattr(account, "equity", None)),
+            ("cash", getattr(account, "cash", None)),
+            ("buying power", getattr(account, "buying_power", None)),
+        )
+        if value is not None and float(value) < capital
+    }
+    if not short:
+        return None
+    detail = ", ".join(f"{name} ${value:,.2f}" for name, value in short.items())
     return (
-        f"this account holds ${equity:,.2f}, less than the ${capital:,.2f} this run is "
-        "sized for. Sizing caps at whatever the account has, so the run would trade a "
-        "smaller book than the one whose proportions it claims to preserve, and the "
-        "telemetry would not say so.\n"
+        f"this account cannot fund the ${capital:,.2f} this run is sized for: {detail}. "
+        "Sizing caps at whatever the account has — and the sizer sizes off buying power "
+        "— so the run would trade a smaller book than the one whose proportions it "
+        "claims to preserve, and the telemetry would not say so.\n"
         "  Fund the account, or lower the scale to one it can carry."
     )

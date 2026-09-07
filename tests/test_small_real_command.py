@@ -77,9 +77,16 @@ def wired(monkeypatch, tmp_path):
     return broker
 
 
-def _run(argv):
+def _run(argv, flags_given=()):
+    """Drive the command as `main` would.
+
+    `flags_given` is the set of flags actually typed, which the real entry point derives
+    from the tokens. It matters: the config loader consults it to decide whether a file
+    value or a flag won, so a test that always passes an empty set cannot exercise an
+    override at all.
+    """
     args = cli.build_parser().parse_args(argv)
-    args.flags_given = set()
+    args.flags_given = set(flags_given)
     cli.cmd_small_real(args)
     return args
 
@@ -222,7 +229,7 @@ def test_an_account_too_small_for_the_scaled_contract_refuses(monkeypatch, tmp_p
     monkeypatch.setattr(cli, "resolve_universe", lambda *a, **k: ["AAA"])
     config = _config(tmp_path)
 
-    with pytest.raises(SystemExit, match="less than the"):
+    with pytest.raises(SystemExit, match="cannot fund the"):
         _run(["small-real", "--config", str(config), "--capital", "10000", "--preflight"])
 
 
@@ -547,11 +554,17 @@ def test_the_documented_preflight_sample_is_one_the_code_actually_prints(wired, 
     sample = re.search(r"=== SMALL-REAL PREFLIGHT.*?Nothing below is a rehearsal\.", guide, re.S)
     assert sample, "the usage guide no longer carries a small-real preflight sample"
 
-    skip = ("account ", "...", "validated capital", "this run deploys")
+    # Lines whose numbers depend on the environment rather than the contract: the
+    # account balance and the universe size are properties of whoever is running, not of
+    # the code. Their *wording* is still checked below, because that is the half a
+    # fabricated sample gets wrong.
+    skip = ("account ", "universe ", "...", "validated capital", "this run deploys")
     for line in sample.group(0).splitlines():
         if not line.strip() or line.strip().startswith(skip):
             continue
         assert line in printed, f"the guide shows a line the preflight does not print:\n  {line!r}"
+
+    assert "(replayed from the config)" in printed
 
 
 def test_the_telemetry_cannot_be_written_into_the_live_ledger(wired, tmp_path):
@@ -592,3 +605,107 @@ def test_another_ledger_path_is_still_allowed(wired, tmp_path):
         )
 
     assert elsewhere.exists()
+
+
+def test_an_unreadable_position_list_is_not_recorded_as_a_flat_start(monkeypatch, tmp_path, capsys):
+    """Found by an independent review. `get_account` and `list_positions` shared one
+    handler, so a failure of the second printed "account unreadable" about an account
+    that had just been read, left the count at zero, and wrote `adopted_positions: 0`
+    into the session header — a claim that the run started flat, while the engine went
+    on to adopt whatever was there.
+
+    Absent is not zero, most of all about a book somebody holds.
+    """
+    from tradeflow.brokers.errors import BrokerError
+    from tradeflow.execution.ledger import PositionLedger, small_real_ledger_path
+
+    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("PAPER_TRADE", "true")
+
+    class _Blind(FakeBroker):
+        def list_positions(self):
+            raise BrokerError("positions endpoint unavailable")
+
+    monkeypatch.setattr(
+        cli,
+        "build_data_and_broker",
+        lambda **kw: (
+            _Blind(buying_power=100_000.0),
+            MarketDataClient(DictMarketData({"AAA": _frame()})),
+        ),
+    )
+    monkeypatch.setattr(cli, "resolve_universe", lambda *a, **k: ["AAA"])
+
+    with pytest.raises(RuntimeError, match="does not support streaming"):
+        _run(["small-real", "--config", str(_config(tmp_path)), "--scale", "0.05"])
+
+    printed = capsys.readouterr().out
+    assert "open positions unreadable" in printed
+    assert "ADOPTED BOOK: unknown" in printed
+    # The account itself was readable, so it must not be blamed.
+    assert "account unreadable" not in printed
+
+    (session,) = PositionLedger(small_real_ledger_path()).sessions()
+    assert session["adopted_positions"] is None
+    assert session["adopted_symbols"] is None
+
+
+def test_the_live_ledger_guard_is_not_avoidable_by_spelling_the_path_differently(wired, tmp_path):
+    """Found by an independent review: the guard compared paths as text, so `..` or a
+    relative spelling named the same file without matching it. A guard that can be
+    walked around by writing the path another way is not a guard."""
+    from tradeflow.execution.ledger import default_ledger_path
+
+    live = default_ledger_path()
+    live.parent.mkdir(parents=True, exist_ok=True)
+    live.touch()
+    indirect = live.parent / ".." / live.parent.name / live.name
+
+    with pytest.raises(SystemExit, match="points at the live ledger"):
+        _run(
+            [
+                "small-real",
+                "--config",
+                str(_config(tmp_path)),
+                "--scale",
+                "0.05",
+                "--ledger",
+                str(indirect),
+            ]
+        )
+
+
+def test_a_universe_that_is_not_the_validated_one_says_so(wired, tmp_path, capsys):
+    """Found by an independent review. The symbols are part of what was validated, and
+    `--symbols` overrides them — so a run can place real orders on names this config's
+    evidence says nothing about, under a preflight claiming a validated contract.
+
+    Allowed, because narrowing to one name is a reasonable thing to want. Never silent.
+    """
+    _run(
+        [
+            "small-real",
+            "--config",
+            str(_config(tmp_path)),
+            "--scale",
+            "0.05",
+            "--symbols",
+            "ZZZ",
+            "--preflight",
+        ],
+        flags_given={"symbols"},
+    )
+
+    printed = capsys.readouterr().out
+    assert "OVERRIDDEN by --symbols" in printed
+    assert "evidence does not carry over" in printed
+
+
+def test_the_configs_own_universe_is_not_flagged(wired, tmp_path, capsys):
+    """Both directions: the warning must not fire on the ordinary case, or it is noise
+    that trains the reader to skip the line."""
+    _run(["small-real", "--config", str(_config(tmp_path)), "--scale", "0.05", "--preflight"])
+
+    printed = capsys.readouterr().out
+    assert "replayed from the config" in printed
+    assert "evidence does not carry over" not in printed
