@@ -468,6 +468,16 @@ def apply_run_config(args):
             setattr(args, field, value)
             sources.append(f"{field}=<config>")
 
+    # What the *file* recorded, kept beside what the run will deploy. The two answer
+    # different questions and the loop above can only carry one: `args.capital` becomes
+    # whichever of the flag and the file won, so a caller asking "did this config state
+    # a capital" cannot tell a file that recorded one from a flag that supplied it.
+    # Every mode that scales a validated contract needs the second number, and the one
+    # that already did read an attribute nothing set - so a dry run over a config that
+    # recorded a capital refused for want of one, on the line after printing
+    # `capital=<config>`.
+    args.config_capital = payload.get("capital")
+
     # Limits recorded in the file win over the strategy class's defaults, because the
     # file is what was validated. Merged rather than replaced so a config written before
     # this still gets the defaults for keys it never recorded.

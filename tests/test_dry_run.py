@@ -375,6 +375,57 @@ def test_a_dry_run_needs_no_broker_credentials(monkeypatch, capsys):
     assert "DRY RUN" in capsys.readouterr().out
 
 
+def test_a_config_that_records_a_capital_is_enough_to_dry_run(tmp_path, monkeypatch, capsys):
+    """Driven through the CLI, and asserted against the text a reader sees.
+
+    ``resolve_capital`` was unit-tested and correct; nothing set the attribute the CLI
+    handed it, so a config that recorded a capital refused for want of one — printing
+    ``capital=<config>`` on the line above the refusal. A test that calls the resolver
+    directly cannot see that, which is the whole reason this one goes through the
+    command.
+    """
+    import json
+
+    from tests.fakes import FakeMarketData
+    from tradeflow import cli
+    from tradeflow.marketdata.client import MarketDataClient
+
+    config = tmp_path / "validated.json"
+    config.write_text(
+        json.dumps(
+            {
+                "strategy": "demo_trend",
+                "params": {
+                    "fast_ema_period": 10,
+                    "slow_ema_period": 30,
+                    "risk_per_trade": 0.02,
+                    "stop_loss": 0.03,
+                    "take_profit": 0.06,
+                },
+                "scanner": "none",
+                "symbols": ["AAA"],
+                "capital": 8000.0,
+                "position_limits": {"max_positions": 4},
+            }
+        )
+    )
+    # The real client over a fake provider, not a stub of the client: a hand-written
+    # stub agrees with however the caller happens to be calling it.
+    monkeypatch.setattr(
+        "tradeflow.services.data.build_data_client",
+        lambda **kw: MarketDataClient(FakeMarketData(["AAA"], n=200, freq="1D")),
+    )
+    monkeypatch.setattr(cli, "build_data_and_broker", lambda *a, **k: pytest.fail("broker factory reached"))
+
+    args = cli.build_parser().parse_args(["live", "--dry-run", "--config", str(config)])
+    args.flags_given = {"dry_run", "config"}
+    cli.cmd_live(args)
+
+    printed = capsys.readouterr().out
+    assert "$8,000.00 (from config)" in printed
+    assert "needs a stated capital" not in printed
+
+
 def test_dry_run_and_live_money_together_are_refused():
     """Refused rather than ignored: someone who typed --live-money believes this run can
     trade, and silently honouring --dry-run leaves them right about the intent and wrong
