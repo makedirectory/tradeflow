@@ -336,6 +336,11 @@ def test_the_mcp_surface_writes_the_same_provenance_schema(tmp_path):
     written = json.loads(open(saved["path"]).read())
 
     assert written["provenance"]["campaign"][RECIPE]["validation"]["train_days"] == 252
+    # And the runnable half matches the provenance. This call passes no
+    # `position_limits`, which used to write a config recording an eight-position
+    # validation that would run at the class default of one.
+    validated = written["provenance"]["campaign"][RECIPE]["folded_into_identity"]["_limits"]
+    assert written["position_limits"] == validated
 
 
 # --- the renderer -------------------------------------------------------------------
