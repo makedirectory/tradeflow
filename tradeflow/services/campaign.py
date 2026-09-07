@@ -90,11 +90,39 @@ def campaign_material(store, trial_id: str, *, journal_path: Optional[Any] = Non
             "kind": row.get("kind"),
             "strategy": row.get("strategy"),
             RECIPE: _recipe_section(row, inputs, record),
-            EVIDENCE: _evidence_section(store, row, trial_id, accounting, ACCOUNTING_VERSION),
-            METADATA: _metadata_section(row, record, trial_id),
+            EVIDENCE: _evidence_section(store, row, inputs, trial_id, accounting, ACCOUNTING_VERSION),
+            METADATA: _metadata_section(row, inputs, record, trial_id),
         }
     )
     return material
+
+
+#: Context facts that describe how a run was set up, in the order a reader wants them.
+_CONTEXT_FACTS = ("capital", "scanner", "scan_as_of", "cache")
+
+
+def _context_section(inputs: Dict[str, Any]) -> Dict[str, Any]:
+    """The recorded run context, with every fact carrying whether it was recorded.
+
+    Each fact reports ``recorded`` rather than being present-or-missing, so a reader -
+    or an agent - can tell "this run used no scanner" from "nobody wrote down whether it
+    did". Every trial predating this block reads as the second, which is what it is: the
+    fact was never captured, and defaulting it would put a capital or a cache policy in
+    the record that nobody chose.
+    """
+    context = inputs.get("context") or {}
+    return {fact: {"recorded": fact in context, "value": context.get(fact)} for fact in _CONTEXT_FACTS}
+
+
+def _recorded(inputs: Dict[str, Any], key: str) -> Dict[str, Any]:
+    """One context fact off a trial's journal inputs, with its recorded status.
+
+    Reads the *journal* rather than the store row: the context is not indexed, because
+    nothing queries on it and duplicating it into a column would be a second copy of a
+    fact the journal already holds.
+    """
+    context = (inputs or {}).get("context") or {}
+    return {"recorded": key in context, "value": context.get(key)}
 
 
 def _recipe_section(row, inputs, record) -> Dict[str, Any]:
@@ -104,6 +132,12 @@ def _recipe_section(row, inputs, record) -> Dict[str, Any]:
         "note": "how this was validated — reusable, and unaffected by an accounting bump",
         "window": inputs.get("window") or {"start": row.get("window_start"), "end": row.get("window_end")},
         "objective": inputs.get("objective") or None,
+        # How the run was set up, for the parts that are *not* its identity: the capital
+        # it ran at, the scanner and as-of clock its universe came through, the cache
+        # policy its bars were read under. Labelled separately from `validation` because
+        # nothing here is hashed - two runs differing only in these keys are one trial to
+        # the memo, which a reader comparing them needs to know.
+        "context": _context_section(inputs),
     }
     if record is None:
         # The store knows the trial happened and the journal line is where the recipe
@@ -155,7 +189,7 @@ def _parse_metrics(row) -> Optional[Dict[str, Any]]:
     return parsed or None
 
 
-def _evidence_section(store, row, trial_id, accounting, current) -> Dict[str, Any]:
+def _evidence_section(store, row, inputs, trial_id, accounting, current) -> Dict[str, Any]:
     """What was measured. Scoped to one accounting era and worthless outside it."""
     strategy, universe_hash = row.get("strategy"), row.get("universe_hash")
     family = (
@@ -180,6 +214,10 @@ def _evidence_section(store, row, trial_id, accounting, current) -> Dict[str, An
         # SQLite has no boolean, so the column is 0/1/NULL. A JSON artifact that says
         # `"promotable": 1` invites a reader to treat the count-looking value as one.
         "promotable": None if row.get("promotable") is None else bool(row.get("promotable")),
+        # Which probes ran and what they said. A probe absent here did not run, which is
+        # not the same as running and passing - the distinction the probe suite itself
+        # is built around, carried into the record.
+        "probes": _recorded(inputs, "probes"),
         "family_n_trials": family,
         "quarantined": bool(row.get("contaminated_at")),
         "quarantine_reason": row.get("contamination_reason"),
@@ -198,7 +236,7 @@ def _evidence_section(store, row, trial_id, accounting, current) -> Dict[str, An
     return section
 
 
-def _metadata_section(row, record, trial_id) -> Dict[str, Any]:
+def _metadata_section(row, inputs, record, trial_id) -> Dict[str, Any]:
     """About the record: where it came from, and what is still recoverable.
 
     Artifacts are named by the command that reads them rather than by a path. A config
@@ -225,5 +263,6 @@ def _metadata_section(row, record, trial_id) -> Dict[str, Any]:
         "git_sha": row.get("git_sha"),
         "seed": row.get("seed"),
         "journal_line_found": record is not None,
+        "notes": _recorded(inputs, "notes"),
         "artifacts": stored,
     }

@@ -355,7 +355,7 @@ def run_backtest(
     # Sharpe deflates against. It must never be the default: a run that quietly does
     # not count is how a campaign loses track of what it tried.
     if journal:
-        from tradeflow.services.audit import journal_trial
+        from tradeflow.services.audit import journal_trial, run_context
 
         journal_trial(
             "backtest",
@@ -365,6 +365,9 @@ def run_backtest(
             end=end,
             params=dedup_params,
             metrics=result.metrics,
+            # Same builder the CLI adapter calls, so a trial recorded over MCP and one
+            # recorded over the CLI describe their context in one vocabulary.
+            context=run_context(capital=capital),
         )
 
     trades_csv = None
@@ -1164,6 +1167,8 @@ def run_walk_forward(
         )
 
     if result.folds:
+        from tradeflow.services.audit import cache_policy, probe_verdicts, run_context
+
         chosen = result.holdout_params or result.folds[-1].is_best_params
         gate_report = result.gate_report(gates)
         journal_trial(
@@ -1182,6 +1187,11 @@ def run_walk_forward(
             },
             returns=result.oos_returns,
             dedup_params=recipe,
+            context=run_context(
+                capital=capital,
+                cache=cache_policy(cache=cache_dir is not None, offline=offline, cache_dir=cache_dir),
+                probes=probe_verdicts(gate_report),
+            ),
         )
 
     return walk_forward_payload(
