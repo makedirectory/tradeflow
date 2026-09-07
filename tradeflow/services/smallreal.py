@@ -227,11 +227,19 @@ def per_position_budget(capital: float, book: Dict[str, Any]) -> Optional[float]
     """
     candidates = []
     ceiling = book.get("max_position_size")
-    if ceiling:
+    if ceiling is not None:
         candidates.append(float(ceiling))
     positions = book.get("max_positions")
     if positions:
-        deployable = capital * float(book.get("max_gross_exposure") or 1.0)
+        # `is not None` above and truthiness here, deliberately: a ceiling of zero is a
+        # real ceiling (nothing may be deployed), while a *count* of zero cannot be
+        # divided by. A book that may hold no positions has no per-position budget in
+        # the arithmetic sense, and the zero ceiling above already says so.
+        gross = book.get("max_gross_exposure")
+        # An undeclared gross cap leaves the whole capital deployable; a declared cap of
+        # zero leaves none of it. `or 1.0` read the second as the first, turning the most
+        # restrictive book into the most permissive number.
+        deployable = capital * (1.0 if gross is None else float(gross))
         candidates.append(deployable / float(positions))
     return min(candidates) if candidates else None
 
@@ -250,7 +258,11 @@ def max_loss_envelope(capital: float, book: Dict[str, Any]) -> Optional[float]:
     possible number for the least bounded possible book.
     """
     risk = book.get("max_total_risk")
-    return capital * float(risk) if risk else None
+    # `is not None`, not truthiness. A declared budget of zero permits no loss at all,
+    # and reading it as "undeclared" rendered the most restrictive possible book as the
+    # unbounded one — the project's own absent-is-not-zero rule, inverted: a recorded
+    # zero is not an absence.
+    return capital * float(risk) if risk is not None else None
 
 
 def contract(
@@ -319,13 +331,15 @@ def adopted_book_note(held: int, book: Dict[str, Any]) -> Optional[str]:
     """
     if not held:
         return None
+    # `is not None`: a book that may hold no positions is *definitionally* full, and
+    # truthiness silenced the warning for exactly that case.
     limit = book.get("max_positions")
     note = (
         f"this account already holds {held} position(s) that this run did not open. The "
         "engine will adopt them, so their exits will be recorded in this session's "
         "telemetry at whatever size they were opened at — not at this run's."
     )
-    if limit and held >= int(limit):
+    if limit is not None and held >= int(limit):
         note += (
             f"\n  They already fill the scaled book ({held} of {limit}), so no new entry "
             "can be admitted and this session would measure no entry execution at all."

@@ -410,3 +410,38 @@ def test_a_config_recording_no_capital_is_still_allowed():
     )
 
     assert capital is None and book["max_positions"] == 8
+
+
+# --- a recorded zero is not an absence ---------------------------------------------
+# The project's rule is "absent is not zero". These are its inverse, which truthiness
+# checks get wrong in the direction that matters: a limit explicitly set to zero is the
+# most restrictive book there is, and reading it as unset renders it as the least.
+def test_a_zero_risk_budget_is_an_envelope_of_zero_not_an_absent_one():
+    """`max_total_risk: 0` permits no loss at all. It read as "not declared", which the
+    preflight renders as *unbounded* — the most reassuring line printed for the most
+    restrictive setting."""
+    assert smallreal.max_loss_envelope(10_000.0, {**VALIDATED_BOOK, "max_total_risk": 0.0}) == 0.0
+    # Both directions: an undeclared budget is still genuinely absent.
+    assert smallreal.max_loss_envelope(10_000.0, {**VALIDATED_BOOK, "max_total_risk": None}) is None
+
+
+def test_a_zero_gross_cap_deploys_nothing_rather_than_everything():
+    """`or 1.0` read a declared cap of zero as an undeclared one, so a book permitted no
+    exposure at all reported a positive per-position budget."""
+    book = {**VALIDATED_BOOK, "max_gross_exposure": 0.0, "max_position_size": None}
+
+    assert smallreal.per_position_budget(10_000.0, book) == 0.0
+    # An undeclared cap still means the whole capital is deployable.
+    undeclared = {**VALIDATED_BOOK, "max_gross_exposure": None, "max_position_size": None}
+    assert smallreal.per_position_budget(10_000.0, undeclared) == pytest.approx(1_250.0)
+
+
+def test_a_zero_dollar_ceiling_is_a_real_ceiling():
+    assert smallreal.per_position_budget(10_000.0, {**VALIDATED_BOOK, "max_position_size": 0.0}) == 0.0
+
+
+def test_a_book_that_may_hold_no_positions_is_already_full():
+    """Definitionally full, and the warning was silenced for exactly that case."""
+    note = smallreal.adopted_book_note(3, {**VALIDATED_BOOK, "max_positions": 0})
+
+    assert note is not None and "no new entry can be admitted" in note
