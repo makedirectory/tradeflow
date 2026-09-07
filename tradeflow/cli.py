@@ -160,14 +160,24 @@ def _run_context(args, *, probes: Optional[Dict[str, Any]] = None) -> Dict[str, 
     """
     from tradeflow.services.audit import cache_policy, run_context
 
+    scanner = getattr(args, "scanner", None)
+    # The clock the scanner was *actually* resolved at. `resolve_universe` is called
+    # with `args.scan_as_of or args.end`, so recording only the flag left a defaulted
+    # run with no clock at all - and the clock is the thing that decides whether the
+    # universe could have seen the future. `scan_as_of_explicit` keeps the default
+    # distinguishable from a value somebody chose.
+    explicit = getattr(args, "scan_as_of", None)
+    effective = explicit or (getattr(args, "end", None) if scanner else None)
     return run_context(
         capital=getattr(args, "capital", None),
-        scanner=getattr(args, "scanner", None),
-        scan_as_of=getattr(args, "scan_as_of", None),
+        scanner=scanner,
+        scan_as_of=effective,
+        scan_as_of_explicit=None if effective is None else explicit is not None,
         cache=cache_policy(
             cache=getattr(args, "cache", None),
             offline=getattr(args, "offline", None),
             cache_dir=getattr(args, "cache_dir", None),
+            workers=getattr(args, "workers", None),
         ),
         probes=probes,
         notes=getattr(args, "note", None),
@@ -1893,6 +1903,7 @@ def _journal_alpha(args, strategy_label: str, source: str, result: dict) -> None
             "benchmark_available": result.get("benchmark_available"),
             "low_confidence": result.get("low_confidence"),
         },
+        context=_run_context(args),
     )
 
 

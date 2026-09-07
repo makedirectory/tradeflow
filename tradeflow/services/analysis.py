@@ -653,8 +653,18 @@ def run_optimization(
         result.results.to_csv(results_csv, index=False)
         top = [_jsonable(row) for row in result.results.head(TOP_N).to_dict("records")]
 
+        from tradeflow.services.audit import cache_policy, run_context
+
         searchable = opt.space.searchable
         defaults = opt.space.defaults
+        # Built once: it is the same for every row of one optimization, and rebuilding
+        # it per candidate would be N identical dicts.
+        optimize_context = run_context(
+            capital=capital,
+            cache=cache_policy(
+                cache=cache_dir is not None, offline=offline, cache_dir=cache_dir, workers=workers
+            ),
+        )
         for row in result.results.to_dict("records"):
             if "_memoized_from" in row:
                 # Already exists as its own trial; re-journaling it would double-count
@@ -672,6 +682,9 @@ def run_optimization(
                 params={**defaults, **searched, "_cost": cost_key},
                 metrics=metrics,
                 objective=objective,
+                # The service path journalled none of this, so an optimization run over
+                # MCP recorded no capital while the same run over the CLI did.
+                context=optimize_context,
             )
 
     return {
@@ -1167,7 +1180,7 @@ def run_walk_forward(
         )
 
     if result.folds:
-        from tradeflow.services.audit import cache_policy, probe_verdicts, run_context
+        from tradeflow.services.audit import probe_verdicts, run_context
 
         chosen = result.holdout_params or result.folds[-1].is_best_params
         gate_report = result.gate_report(gates)
@@ -1187,11 +1200,9 @@ def run_walk_forward(
             },
             returns=result.oos_returns,
             dedup_params=recipe,
-            context=run_context(
-                capital=capital,
-                cache=cache_policy(cache=cache_dir is not None, offline=offline, cache_dir=cache_dir),
-                probes=probe_verdicts(gate_report),
-            ),
+            # The draft path takes no cache arguments, so it records none - absent
+            # rather than a policy it cannot know.
+            context=run_context(capital=capital, probes=probe_verdicts(gate_report)),
         )
 
     return walk_forward_payload(
@@ -1712,6 +1723,8 @@ def run_draft_walk_forward(
     # an unrecorded one. Same placement as run_walk_forward, for the same reason.
     journaled = bool(journal and result.folds)
     if journaled:
+        from tradeflow.services.audit import probe_verdicts, run_context
+
         chosen = result.holdout_params or result.folds[-1].is_best_params
         gate_report = result.gate_report(gates)
         journal_trial(
@@ -1730,6 +1743,12 @@ def run_draft_walk_forward(
             },
             returns=result.oos_returns,
             dedup_params=recipe,
+            # The draft path journalled no context at all, so a drafted validation
+            # recorded neither its capital nor its probe verdicts while every other
+            # walk-forward did.
+            # The draft path takes no cache arguments, so it records none — absent
+            # rather than a policy it cannot know.
+            context=run_context(capital=capital, probes=probe_verdicts(gate_report)),
         )
 
     payload = walk_forward_payload(
@@ -2684,7 +2703,9 @@ def run_verdict(
     result["provenance"] = _verdict_provenance(inputs, cache, n_trials)
 
     if journal:
-        _journal_verdict(result, strategy, universe, start, end, dedup_params)
+        from tradeflow.services.audit import run_context
+
+        _journal_verdict(result, strategy, universe, start, end, dedup_params, run_context(capital=capital))
     return result
 
 
@@ -2912,6 +2933,7 @@ def _journal_verdict(
     start: datetime,
     end: datetime,
     dedup_params: Dict[str, Any],
+    context: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Record the composite as exactly one trial, and keep its full object beside it.
 
@@ -2941,6 +2963,9 @@ def _journal_verdict(
             metrics={k: v for k, v in metrics.items() if v is not None},
             extra={"verdict": verdict.get("verdict"), "promotable": verdict.get("promotable")},
             weights=_verdict_weights_payload(result),
+            # Passed in by the caller, which is the only place that knows the run's
+            # capital; this helper is handed a finished result.
+            context=context or {},
         )
     except Exception:  # noqa: BLE001 - journaling is bookkeeping, not the answer
         logger.warning("Verdict trial journaling failed", exc_info=True)

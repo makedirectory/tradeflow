@@ -138,6 +138,15 @@ def _recipe_section(row, inputs, record) -> Dict[str, Any]:
         # nothing here is hashed - two runs differing only in these keys are one trial to
         # the memo, which a reader comparing them needs to know.
         "context": _context_section(inputs),
+        # The universe that was actually resolved, and the list it was resolved *from*.
+        # The store keeps only a hash of the first and nothing of the second, so this is
+        # the only place a reader gets them back - and without it the module's own
+        # claim to read the universe back was false, and a config's symbols could
+        # contradict the campaign with nothing able to notice.
+        "universe": {
+            "symbols": list(inputs.get("symbols") or []) or None,
+            "candidate_symbols": list(inputs.get("candidate_symbols") or []) or None,
+        },
     }
     if record is None:
         # The store knows the trial happened and the journal line is where the recipe

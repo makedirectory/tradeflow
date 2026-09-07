@@ -217,9 +217,11 @@ def test_the_cli_adapter_and_the_service_builder_produce_one_shape():
         capital=250_000.0,
         scanner="volume_spike",
         scan_as_of=datetime(2024, 3, 1),
+        end=datetime(2024, 6, 1),
         cache=True,
         offline=False,
         cache_dir="/tmp/bars",
+        workers=None,
         note="paper run",
     )
 
@@ -228,7 +230,8 @@ def test_the_cli_adapter_and_the_service_builder_produce_one_shape():
         capital=250_000.0,
         scanner="volume_spike",
         scan_as_of=datetime(2024, 3, 1),
-        cache=cache_policy(cache=True, offline=False, cache_dir="/tmp/bars"),
+        scan_as_of_explicit=True,
+        cache=cache_policy(cache=True, offline=False, cache_dir="/tmp/bars", workers=None),
         notes="paper run",
     )
 
@@ -313,3 +316,235 @@ def test_a_trial_with_no_recorded_capital_promotes_without_one(tmp_path):
     args.func(args)
 
     assert "capital" not in json.loads(out.read_text())
+
+
+# --- findings from an independent Codex review of this branch -----------------------
+# One test per finding, named for the requirement it pins rather than the mechanics, so
+# a failure says which guarantee broke.
+
+
+def test_the_rendered_campaign_shows_every_context_fact_and_its_status():
+    """R1. `campaign_material` returned `recipe.context`, `evidence.probes` and
+    `metadata.notes`; the formatter rendered none of them — and the usage docs showed a
+    sample of output the code never produced. The tests asserted the JSON and never the
+    rendered text, which is exactly how a fabricated example survives."""
+    from tradeflow.analytics.reporting import format_campaign_material
+
+    material = {
+        "available": True,
+        "trial_id": "t1",
+        "kind": "walkforward",
+        "recipe": {
+            "available": True,
+            "window": {"start": "2024-01-01", "end": "2024-06-01"},
+            "validation": {"train_days": 252},
+            "folded_into_identity": {},
+            "context": {
+                "capital": {"recorded": True, "value": 250_000.0},
+                "scanner": {"recorded": False, "value": None},
+            },
+        },
+        "evidence": {
+            "accounting": 5,
+            "metrics": {},
+            "trial_ids": ["t1"],
+            "probes": {"recorded": True, "value": {"leakage_probe": {"ran": True}}},
+        },
+        "metadata": {"artifacts": [], "notes": {"recorded": True, "value": "paper week two"}},
+    }
+
+    printed = format_campaign_material(material)
+
+    assert "SET UP WITH" in printed
+    assert "250,000.00" in printed  # a recorded fact shows its value
+    assert "not recorded" in printed  # an unrecorded one says so, rather than blank
+    assert "leakage_probe" in printed  # probes reach the page
+    assert "paper week two" in printed  # so do notes
+
+
+def test_capital_cannot_contradict_the_campaign_it_was_given():
+    """R2. `_reconcile_book` guarded the book and nothing else, so a caller could hand
+    over campaign material recording 250,000 and write a config saying 1. Guarding one
+    runnable field and not the next leaves the same contradiction one column over."""
+    import tempfile
+
+    from tradeflow.services import configs
+
+    material = {"recipe": {"context": {"capital": {"recorded": True, "value": 250_000.0}}}}
+    with tempfile.TemporaryDirectory() as tmp, pytest.raises(ValueError, match="disagrees"):
+        configs.save_config(
+            f"{tmp}/bad.json",
+            strategy="demo_trend",
+            params={"fast_ema_period": 9},
+            capital=1.0,
+            provenance={"campaign": material},
+        )
+
+
+def test_an_omitted_capital_is_filled_from_the_campaign_and_an_agreeing_one_passes():
+    """R2, both directions. The guard must fill what the caller left out and accept the
+    value it was drawn to protect — a guard that only refuses is indistinguishable from
+    one that refuses everything."""
+    import tempfile
+
+    from tradeflow.services import configs
+
+    material = {"recipe": {"context": {"capital": {"recorded": True, "value": 250_000.0}}}}
+    with tempfile.TemporaryDirectory() as tmp:
+        filled = configs.save_config(
+            f"{tmp}/filled.json",
+            strategy="demo_trend",
+            params={"fast_ema_period": 9},
+            provenance={"campaign": material},
+        )
+        assert json.loads(open(filled["path"]).read())["capital"] == pytest.approx(250_000.0)
+
+        agreeing = configs.save_config(
+            f"{tmp}/ok.json",
+            strategy="demo_trend",
+            params={"fast_ema_period": 9},
+            capital=250_000.0,
+            provenance={"campaign": material},
+        )
+        assert json.loads(open(agreeing["path"]).read())["capital"] == pytest.approx(250_000.0)
+
+
+def test_a_campaign_with_no_recorded_capital_leaves_the_callers_value_alone():
+    """R2, the absent case. Nothing to reconcile against means nothing is invented and
+    nothing is refused."""
+    import tempfile
+
+    from tradeflow.services import configs
+
+    with tempfile.TemporaryDirectory() as tmp:
+        saved = configs.save_config(
+            f"{tmp}/plain.json",
+            strategy="demo_trend",
+            params={"fast_ema_period": 9},
+            capital=7.0,
+            provenance={"campaign": {"recipe": {"context": {}}}},
+        )
+        assert json.loads(open(saved["path"]).read())["capital"] == pytest.approx(7.0)
+
+
+def test_campaign_material_reads_back_the_universe_it_claims_to(tmp_path):
+    """R3. The module docstring said it reads the universe back out of the journal, and
+    it contained no reference to symbols at all — so a config's symbols could contradict
+    the campaign with nothing able to notice, and the claim was simply false."""
+    journal = tmp_path / "journal.jsonl"
+    trial_id = journal_trial(
+        "backtest",
+        strategy="demo_trend",
+        symbols=["AAA", "BBB"],
+        candidate_symbols=["AAA", "BBB", "CCC"],
+        start=datetime(2024, 1, 1),
+        end=datetime(2024, 6, 1),
+        params={"fast_ema_period": 5},
+        metrics={"sharpe_ratio": 1.0},
+        path=journal,
+    )
+
+    with TrialStore(db_path_for_journal(journal), journal_path=journal) as store:
+        universe = campaign_material(store, trial_id, journal_path=journal)["recipe"]["universe"]
+
+    assert universe["symbols"] == ["AAA", "BBB"]
+    assert universe["candidate_symbols"] == ["AAA", "BBB", "CCC"]
+
+
+def test_a_trial_with_no_candidate_list_reports_none_rather_than_its_own_universe(tmp_path):
+    """R3, both directions. The resolved book and the list it was resolved *from* are
+    different decisions, and a trial that recorded only the first must not appear to
+    have recorded both."""
+    journal = tmp_path / "journal.jsonl"
+    trial_id = journal_trial(
+        "backtest",
+        strategy="demo_trend",
+        symbols=["AAA"],
+        start=datetime(2024, 1, 1),
+        end=datetime(2024, 6, 1),
+        params={"fast_ema_period": 5},
+        metrics={"sharpe_ratio": 1.0},
+        path=journal,
+    )
+
+    with TrialStore(db_path_for_journal(journal), journal_path=journal) as store:
+        universe = campaign_material(store, trial_id, journal_path=journal)["recipe"]["universe"]
+
+    assert universe["symbols"] == ["AAA"]
+    assert universe["candidate_symbols"] is None
+
+
+def test_a_workers_run_records_the_cache_it_actually_read_through():
+    """R4. Parallel execution is cache-backed by construction — `_worker_data_spec`'s own
+    docstring says asking for workers implies the cache whether or not `--cache` was
+    passed. Recording the flag alone had a `--workers 4` run write `cache: false` while
+    every bar it read came through the cache: a record less true than the run."""
+    implied = cache_policy(cache=None, workers=4)
+
+    assert implied["cache"] is True
+    assert implied["cache_implied_by"] == "workers"
+    assert implied["workers"] == 4
+
+
+def test_a_sequential_run_records_only_the_cache_it_was_asked_for():
+    """R4, both directions. The implication must not fire where it does not hold, or
+    every run would claim a cache it never used."""
+    assert cache_policy(cache=False, workers=1) == {"cache": False, "workers": 1}
+    assert "cache_implied_by" not in cache_policy(cache=True, workers=1)
+    assert cache_policy() == {}
+
+
+def test_the_effective_scanner_clock_is_recorded_and_marked_as_defaulted():
+    """R5. The universe is resolved at `args.scan_as_of or args.end`, but only the flag
+    was recorded — so a defaulted run recorded no clock at all, and the clock is what
+    decides whether the universe could have seen the future."""
+    from argparse import Namespace
+
+    from tradeflow.cli import _run_context
+
+    defaulted = _run_context(Namespace(scanner="volume_spike", scan_as_of=None, end=datetime(2024, 6, 1)))
+    assert defaulted["scan_as_of"].startswith("2024-06-01")
+    assert defaulted["scan_as_of_explicit"] is False
+
+    chosen = _run_context(
+        Namespace(scanner="volume_spike", scan_as_of=datetime(2024, 3, 1), end=datetime(2024, 6, 1))
+    )
+    assert chosen["scan_as_of"].startswith("2024-03-01")
+    assert chosen["scan_as_of_explicit"] is True
+
+
+def test_a_run_with_no_scanner_records_no_scanner_clock():
+    """R5, the absent case. With symbols given directly there is no scanner clock, and
+    recording the window end as one would invent a resolution that never happened."""
+    from argparse import Namespace
+
+    from tradeflow.cli import _run_context
+
+    context = _run_context(Namespace(scanner=None, scan_as_of=None, end=datetime(2024, 6, 1)))
+
+    assert "scan_as_of" not in context
+    assert "scan_as_of_explicit" not in context
+
+
+def test_every_journalling_path_that_can_record_context_does(_isolated_state):
+    """R6. The draft walk-forward and the service optimize path passed no `context=` at
+    all, so the commit's claim that run context is recorded was untrue on both — a field
+    landing on one surface and not another, which is the failure this whole branch is
+    about."""
+    import ast
+
+    import tradeflow.cli
+    import tradeflow.services.analysis
+
+    missing = []
+    for module in (tradeflow.cli, tradeflow.services.analysis):
+        tree = ast.parse(open(module.__file__).read())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if getattr(node.func, "attr", getattr(node.func, "id", "")) != "journal_trial":
+                continue
+            if "context" not in {kw.arg for kw in node.keywords}:
+                missing.append(f"{module.__name__}:{node.lineno}")
+
+    assert missing == [], f"journal_trial call sites recording no run context: {missing}"

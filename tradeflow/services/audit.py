@@ -139,7 +139,15 @@ def audit_log(
 
 #: Keys of the run-context block, in the order a reader wants them. Declared so the
 #: writer and every reader agree on the vocabulary rather than each inventing one.
-RUN_CONTEXT_KEYS = ("capital", "scanner", "scan_as_of", "cache", "probes", "notes")
+RUN_CONTEXT_KEYS = (
+    "capital",
+    "scanner",
+    "scan_as_of",
+    "scan_as_of_explicit",
+    "cache",
+    "probes",
+    "notes",
+)
 
 
 def run_context(
@@ -147,6 +155,7 @@ def run_context(
     capital: Optional[float] = None,
     scanner: Optional[str] = None,
     scan_as_of: Optional[Any] = None,
+    scan_as_of_explicit: Optional[bool] = None,
     cache: Optional[Dict[str, Any]] = None,
     probes: Optional[Dict[str, Any]] = None,
     notes: Optional[str] = None,
@@ -173,6 +182,7 @@ def run_context(
         "capital": None if capital is None else float(capital),
         "scanner": scanner or None,
         "scan_as_of": _iso(scan_as_of),
+        "scan_as_of_explicit": scan_as_of_explicit,
         "cache": dict(cache) if cache else None,
         "probes": dict(probes) if probes else None,
         "notes": notes or None,
@@ -181,18 +191,36 @@ def run_context(
 
 
 def cache_policy(
-    *, cache: Optional[bool] = None, offline: Optional[bool] = None, cache_dir: Optional[Any] = None
+    *,
+    cache: Optional[bool] = None,
+    offline: Optional[bool] = None,
+    cache_dir: Optional[Any] = None,
+    workers: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """The bar-cache policy a run read under, as a recorded fact.
+    """The bar-cache policy a run actually read under, as a recorded fact.
 
     Whether a result came from a live fetch or a cache, and whether the run was allowed
     to reach the network at all, is part of what produced it - an offline replay against
     a stale cache and a fresh fetch are different runs with the same parameters.
+
+    **The effective policy, not the flag.** Parallel execution is cache-backed by
+    construction: a live client cannot cross a process boundary, so asking for workers
+    implies the cache whether or not ``--cache`` was passed (see
+    ``services.analysis._worker_data_spec``). Recording the flag alone had a
+    ``--workers 4`` run write ``cache: false`` while every bar it read came through the
+    cache - a record less true than the run it describes. ``cache_implied_by`` names
+    what turned it on when the caller did not.
     """
+    from tradeflow.optimization.parallel import resolve_workers
+
+    parallel = workers is not None and resolve_workers(workers) > 1
+    effective = True if parallel else (None if cache is None else bool(cache))
     policy: Dict[str, Any] = {
-        "cache": None if cache is None else bool(cache),
+        "cache": effective,
+        "cache_implied_by": "workers" if parallel and not cache else None,
         "offline": None if offline is None else bool(offline),
         "cache_dir": str(cache_dir) if cache_dir else None,
+        "workers": int(workers) if workers else None,
     }
     return {key: value for key, value in policy.items() if value is not None}
 

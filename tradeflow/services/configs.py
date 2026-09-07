@@ -37,6 +37,7 @@ def save_config(
     """
     filename = name if name.endswith(".json") else f"{name}.json"
     position_limits = _reconcile_book(position_limits, provenance)
+    capital = _reconcile_capital(capital, provenance)
     prov = config_store.Provenance(**provenance) if isinstance(provenance, dict) else provenance
     path = config_store.save_config(
         filename,
@@ -49,6 +50,43 @@ def save_config(
         provenance=prov,
     )
     return {"path": str(path), "name": name}
+
+
+def _reconcile_capital(capital: Optional[float], provenance: Optional[Any]) -> Optional[float]:
+    """The capital to write, checked against the one the provenance recorded.
+
+    The same rule the book gets, for the same reason: guarding one runnable field and
+    not the next leaves a config that can still argue with itself, one column over. An
+    omitted capital is taken from the campaign material that recorded it; a disagreeing
+    one is refused rather than resolved.
+
+    A campaign whose capital was never recorded changes nothing — absent stays absent,
+    and the caller's value (including none) stands.
+    """
+    recorded = _campaign_fact(provenance, "capital")
+    if recorded is None:
+        return capital
+    if capital is None:
+        return recorded
+    if float(capital) != float(recorded):
+        raise ValueError(
+            f"capital {capital} disagrees with the capital this config's own provenance "
+            f"records as validated ({recorded}). One of them is wrong and this cannot "
+            "tell which; pass the validated capital, or omit it and it will be used."
+        )
+    return capital
+
+
+def _campaign_fact(provenance: Optional[Any], fact: str) -> Optional[Any]:
+    """One recorded run-context fact out of campaign material, or ``None``.
+
+    ``None`` covers both "no campaign material" and "the material recorded no such
+    fact", which are the same thing to a caller deciding whether there is anything to
+    reconcile against.
+    """
+    campaign = (provenance or {}).get("campaign") if isinstance(provenance, dict) else None
+    entry = ((campaign or {}).get("recipe") or {}).get("context", {}).get(fact) or {}
+    return entry.get("value") if entry.get("recorded") else None
 
 
 def _reconcile_book(
