@@ -632,3 +632,57 @@ def test_an_omitted_knob_is_not_forwarded_at_all(monkeypatch):
 
     for absent in ("book", "gross_leverage", "neutralize_factors", "commission_bps", "min_weight"):
         assert absent not in seen, f"{absent} was forwarded despite not being set"
+
+
+# --- connection and discovery ------------------------------------------------------
+def test_every_documented_connection_recipe_covers_both_kinds_of_copy():
+    """The installed-copy-versus-checkout point, applied to connection instructions.
+
+    An installed reader has no `main.py` and no checkout to `cwd` into, so a page that
+    offers only `uv run python main.py mcp` sends them to a file that was never there —
+    the failure this project has already fixed in several other messages. Every page
+    that shows a client config must show both forms.
+
+    The requirement is deliberately one-directional, and narrow. A page may show *only*
+    the installed form — `getting-started.md` does, and that is right for a reader who
+    arrived via `uv tool install` and has no checkout to point at. A container recipe is
+    a third thing again, with its own prerequisites. What no page may do is offer the
+    checkout form *alone*, because that is the reader who cannot follow it.
+
+    Checked against the pages themselves rather than a remembered list of them, so a new
+    page carrying a recipe is covered the day it is added.
+    """
+    import pathlib
+    import re
+
+    roots = [pathlib.Path("README.md"), *pathlib.Path("docs/content").rglob("*.md")]
+    carriers = [p for p in roots if "mcpServers" in p.read_text()]
+    assert carriers, "no page documents an MCP client config any more"
+
+    checked = 0
+    for page in carriers:
+        text = page.read_text()
+        # Only pages offering a *checkout-anchored local* recipe are in scope. A
+        # container recipe (`command: docker`) is a third deployment with its own
+        # prerequisites and no local path to get wrong.
+        if not re.search(r'"command":\s*"uv"', text):
+            continue
+        checked += 1
+        assert re.search(r'"command":\s*"tradeflow"', text), (
+            f"{page} offers a checkout recipe with no installed-copy one beside it. "
+            "`uv run python main.py` sends an installed reader to a file that was "
+            "never there."
+        )
+    assert checked, "no page offers a checkout recipe any more — is this check stale?"
+
+
+def test_the_prerequisites_are_stated_where_a_client_is_registered():
+    """Both prerequisites fail the same way from a client — the server exits before
+    answering, and the client shows only that it would not start. Verified by
+    handshaking an installed copy with no credentials: the pipe closes before the first
+    response. So the pages that tell someone to register it have to say so."""
+    import pathlib
+
+    guide = pathlib.Path("docs/content/engineering/mcp-server.md").read_text().lower()
+    assert "credentials" in guide and "extra" in guide
+    assert "would not start" in guide or "never appears" in guide

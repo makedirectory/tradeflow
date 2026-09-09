@@ -93,6 +93,15 @@ From a checkout, the equivalent is the script it wraps:
   "args": ["run", "--project", "/path/to/tradeflow", "python", "main.py", "mcp"]}}}
 ```
 
+**Two prerequisites, and both fail the same way from a client.** The server needs the
+`mcp` extra and a working set of market-data credentials, and without either it prints
+its reason and exits immediately — which a human running it reads and acts on, but an
+MCP client generally shows as nothing more than a server that would not start. Verified
+by handshaking against an installed copy: with no credentials the client sees the pipe
+close before the first response. So run `tradeflow mcp` once in a terminal before
+registering it, and `tradeflow init` if it asks for keys; a tool list that never appears
+is almost always one of these two rather than a client-side problem.
+
 Both reach the same `tradeflow.cli:main`. Note that they resolve **different state
 roots** (`~/.tradeflow` vs. the checkout), so an agent and a human should be pointed
 at the same one — or `TRADEFLOW_HOME` set explicitly — if they are meant to share a

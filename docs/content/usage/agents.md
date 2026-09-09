@@ -27,12 +27,24 @@ uv run python main.py mcp     # serves over stdio
 
 Register it with an MCP client:
 
+An installed copy needs no paths:
+
+```json
+{ "mcpServers": { "tradeflow": { "command": "tradeflow", "args": ["mcp"] } } }
+```
+
+From a checkout, point it at the script instead:
+
 ```json
 { "mcpServers": { "tradeflow": {
     "command": "uv",
     "args": ["run", "--extra", "mcp", "python", "main.py", "mcp"],
     "cwd": "/path/to/tradeflow" } } }
 ```
+
+Run `tradeflow mcp` (or the checkout equivalent) once in a terminal first. It needs the
+`mcp` extra and market-data credentials, and without either it exits immediately with
+the reason — which from inside a client looks only like a server that never started.
 
 The agent gets tools for discovery (`list_strategies`, `list_scanners`,
 `get_param_ranges`), analysis (`run_scan`, `run_backtest`, `run_optimization`,
