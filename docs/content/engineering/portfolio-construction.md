@@ -258,6 +258,9 @@ not a missing feature: every account this stack targets is assumed non-taxable.
 benchmark-neutral alphas and Σ as of the date, optimizes, and returns the proposed
 weights plus the report. The CLI (`python main.py allocate --objective utility
 --target-te 0.04`) and the read-only MCP tool `construct_portfolio` route through
-it — though the MCP surface doesn't yet expose the cost-aware, benchmark,
-conditional, posterior, or policy knobs (see
-[MCP server](./mcp-server.md#known-gap)). See the [usage guide](../usage/portfolio.md).
+it. The MCP surface exposes the cost-aware, benchmark-relative and long/short knobs;
+the conditional, posterior and policy families are withheld there on purpose, because
+their adoption gates have not cleared and an agent surface must not be the easier way to
+switch them on (see
+[MCP server](./mcp-server.md#what-this-surface-deliberately-withholds)). See the
+[usage guide](../usage/portfolio.md).

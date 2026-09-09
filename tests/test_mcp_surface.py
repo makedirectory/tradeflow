@@ -410,3 +410,225 @@ def test_the_mode_that_can_place_real_orders_is_unreachable_over_mcp(built):
     assert "small-real" in mcp_server.OPERATOR_ONLY
     # And nothing registered merely mentions it under another name.
     assert not [name for name in registered if "small" in name and "real" in name]
+
+
+# --- CLI/service surface parity, enumerated rather than remembered ------------------
+#: Parameters a tool legitimately does not take because they are not knobs: the
+#: injected client, the risk-model handle the server owns, and the CLI's own config
+#: plumbing. Named so the check below cannot be quietly widened.
+_NOT_KNOBS = {"data_client", "config", "risk_model", "current_weights"}
+
+
+def _tool_params(built, name):
+    import asyncio
+
+    tools = {t.name: t for t in asyncio.run(built.list_tools())}
+    return set((tools[name].inputSchema.get("properties") or {}).keys())
+
+
+def _service_params(fn):
+    import inspect
+
+    return {
+        p
+        for p, spec in inspect.signature(fn).parameters.items()
+        if spec.kind not in (spec.VAR_POSITIONAL, spec.VAR_KEYWORD)
+    } - _NOT_KNOBS
+
+
+@pytest.mark.parametrize(
+    "tool_name, service_name",
+    [
+        ("construct_portfolio", "construct_portfolio"),
+        ("compute_alphas", "compute_alphas"),
+        ("compute_attribution", "compute_attribution"),
+    ],
+)
+def test_every_service_knob_is_exposed_or_deliberately_deferred(built, tool_name, service_name):
+    """The parity point, enumerated from the service signature.
+
+    An MCP surface that lags the CLI is not merely less convenient — a knob that cannot
+    be set on a surface is a setting that silently never applies there, and nothing says
+    so. `construct_portfolio` exposed nine of the service's parameters while the CLI
+    carried about thirty.
+
+    Every service parameter must now be either reachable as a tool argument or listed in
+    `DEFERRED_PARAMS` with a reason. Read from the signature rather than a hand-written
+    list, so a parameter added to the service later fails here instead of quietly
+    becoming unreachable — which is exactly how the gap this closes opened.
+    """
+    from tradeflow.services import analysis
+
+    exposed = _tool_params(built, tool_name)
+    service = _service_params(getattr(analysis, service_name))
+    unreachable = service - exposed - set(mcp_server.DEFERRED_PARAMS)
+
+    assert not unreachable, (
+        f"{tool_name} cannot set {sorted(unreachable)}: expose them, or add each to "
+        "DEFERRED_PARAMS with the reason it is withheld"
+    )
+
+
+def test_no_evidence_gated_knob_is_reachable_from_an_agent():
+    """The rule that wins where parity and evidence gating disagree.
+
+    A feature whose own adoption gate does not clear must not find in the agent surface
+    an easier way to be switched on than the one a human reads a warning before using.
+    Being reachable is not the same as being validated, and an agent acts on a
+    description at machine speed with every call costing a journaled trial.
+    """
+    assert set(mcp_server.DEFERRED_PARAMS) >= {
+        "conditional",
+        "conditional_lambda",
+        "posterior",
+        "posterior_ic",
+        "policy",
+        "trade_rate",
+    }
+    for param, reason in mcp_server.DEFERRED_PARAMS.items():
+        assert reason.strip(), f"{param} is deferred with no reason"
+        assert "evidence-gated" in reason, f"{param}'s reason does not say why it is withheld"
+
+
+def test_the_deferred_knobs_are_absent_from_every_registered_tool(built):
+    """Both directions: the list is only worth keeping if it describes reality."""
+    import asyncio
+
+    for tool in asyncio.run(built.list_tools()):
+        params = set((tool.inputSchema.get("properties") or {}).keys())
+        leaked = params & set(mcp_server.DEFERRED_PARAMS)
+        assert not leaked, f"{tool.name} exposes deferred knob(s) {sorted(leaked)}"
+
+
+def test_the_gated_ab_tools_are_not_exposed(built):
+    """`run_conditional_risk_ab`, `run_policy_ab` and `evaluate_conditional_risk` exist
+    as services and stay off this surface: each one exists to evaluate a feature whose
+    gate has not cleared, so exposing it makes the agent the judge of its own gate."""
+    import asyncio
+
+    registered = {t.name for t in asyncio.run(built.list_tools())}
+    for name in ("run_conditional_risk_ab", "run_policy_ab", "evaluate_conditional_risk"):
+        assert name not in registered
+        assert name not in mcp_server.EXPOSED_TOOLS
+
+
+def test_attribution_is_exposed_and_journals_nothing(built):
+    """The one genuinely missing read-only diagnostic. It answers where realized return
+    came from, which is a different question from whether the signal ranks names."""
+    import asyncio
+
+    registered = {t.name for t in asyncio.run(built.list_tools())}
+    assert "compute_attribution" in registered
+    assert "compute_attribution" in mcp_server.EXPOSED_TOOLS
+    assert "compute_attribution" not in mcp_server.JOURNALING_TOOLS
+
+
+def test_an_exposed_knob_actually_reaches_the_service(monkeypatch):
+    """Presence in the schema is not reach, and the original defect was exactly that gap.
+
+    `compute_alphas` advertised a `neutralized_against` field and could never populate
+    it, because the tool had no parameter to pass. Wiring one is only half the fix: a
+    parameter that exists in the signature and is dropped from the forwarding dict looks
+    identical from the schema, and a mutation doing precisely that passed every other
+    test here.
+
+    So this calls the tools for real and asserts the service was handed the values.
+    """
+    import asyncio
+
+    from tradeflow.services import analysis
+
+    seen = {}
+
+    def _spy(name, real):
+        def recorder(*args, **kwargs):
+            seen[name] = kwargs
+            return {"ok": True}
+
+        return recorder
+
+    monkeypatch.setattr(analysis, "compute_alphas", _spy("compute_alphas", None))
+    monkeypatch.setattr(analysis, "construct_portfolio", _spy("construct_portfolio", None))
+    monkeypatch.setattr(analysis, "compute_attribution", _spy("compute_attribution", None))
+
+    built = mcp_server.build_server(
+        data_client=MarketDataClient(FakeMarketData([*SYMBOLS, "SPY"], n=200, freq="1D"))
+    )
+
+    asyncio.run(
+        built.call_tool(
+            "compute_alphas",
+            {
+                "strategy": "demo_trend",
+                "symbols": SYMBOLS,
+                "as_of": "2025-06-01",
+                "neutralize_factors": ["market", "size"],
+            },
+        )
+    )
+    assert seen["compute_alphas"].get("neutralize_factors") == ["market", "size"]
+
+    asyncio.run(
+        built.call_tool(
+            "construct_portfolio",
+            {
+                "strategy": "demo_trend",
+                "symbols": SYMBOLS,
+                "as_of": "2025-06-01",
+                "book": "market_neutral",
+                "gross_leverage": 1.6,
+                "short_max_weight": 0.1,
+                "neutralize_factors": ["momentum"],
+                "min_weight": 0.01,
+                "commission_bps": 2.5,
+            },
+        )
+    )
+    forwarded = seen["construct_portfolio"]
+    assert forwarded.get("book") == "market_neutral"
+    assert forwarded.get("gross_leverage") == 1.6
+    assert forwarded.get("short_max_weight") == 0.1
+    assert forwarded.get("neutralize_factors") == ["momentum"]
+    assert forwarded.get("min_weight") == 0.01
+    assert forwarded.get("commission_bps") == 2.5
+
+    asyncio.run(
+        built.call_tool(
+            "compute_attribution",
+            {
+                "strategy": "demo_trend",
+                "symbols": SYMBOLS,
+                "start": "2024-01-02",
+                "end": "2025-06-01",
+                "neutralize_factors": ["volatility"],
+                "n_trials": 12,
+            },
+        )
+    )
+    assert seen["compute_attribution"].get("neutralize_factors") == ["volatility"]
+    assert seen["compute_attribution"].get("n_trials") == 12
+
+
+def test_an_omitted_knob_is_not_forwarded_at_all(monkeypatch):
+    """Both directions. Omitted must mean "the service keeps its own default", not "this
+    surface restates one" — a second copy of a default is a second thing to keep in
+    step, and the two would drift silently."""
+    import asyncio
+
+    from tradeflow.services import analysis
+
+    seen = {}
+    monkeypatch.setattr(analysis, "construct_portfolio", lambda *a, **k: seen.update(k) or {"ok": True})
+    built = mcp_server.build_server(
+        data_client=MarketDataClient(FakeMarketData([*SYMBOLS, "SPY"], n=200, freq="1D"))
+    )
+
+    asyncio.run(
+        built.call_tool(
+            "construct_portfolio",
+            {"strategy": "demo_trend", "symbols": SYMBOLS, "as_of": "2025-06-01"},
+        )
+    )
+
+    for absent in ("book", "gross_leverage", "neutralize_factors", "commission_bps", "min_weight"):
+        assert absent not in seen, f"{absent} was forwarded despite not being set"

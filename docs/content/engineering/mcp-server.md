@@ -127,29 +127,39 @@ journaling and memoization, and that gated tools name their gate. String asserti
 are crude, but they catch silent regressions to stale text, which is the failure that
 actually happens.
 
-## Known gap
+## What this surface deliberately withholds
 
-The tool surface still lags the CLI on some parameters. What is genuinely missing,
-as of the description audit:
+The tool surface reaches everything the CLI can express **except** the evidence-gated
+construction families, which are withheld on purpose:
 
-- `neutralize_factors` ([factor-neutral alphas](./alphas.md#neutralization)) —
-  results echo a `neutralized_against` field, but via this surface it is always
-  empty.
-- `construct_portfolio` solves the long-only, cash-relative book. It **is**
-  cost-aware (the objective carries turnover and square-root impact by default), but
-  `book`/`gross_leverage`/`short_max_weight`
-  ([long/short](./portfolio-construction.md#longshort---book-market-neutral)),
-  `benchmark_holdings` ([benchmark-relative](./portfolio-construction.md#benchmark-relative-construction---benchmark-holdings)),
-  `conditional` ([conditional risk](./risk-model.md#conditional-risk)),
-  `posterior` ([Black–Litterman](./portfolio-construction.md#blacklitterman---posterior-bl)),
-  and `policy`/`trade_rate` ([multi-period trading](./multi-period-trading.md)) are
-  not arguments here. The tool's own description says so, so an agent does not assume
-  otherwise.
-- `compute_attribution`, `run_conditional_risk_ab`, `run_policy_ab`, and
-  `evaluate_conditional_risk` are not exposed as tools.
+- **Conditional risk**, the **Black–Litterman posterior**, and the **multi-period aim
+  policy** ship *off* because their own adoption gates do not clear on this
+  repository's data. The command line makes a human read that before using them; an
+  agent reads a description as fact and acts on it at machine speed, so offering the
+  same knob as a neutral argument would make this the easier way to switch on a feature
+  nothing has validated. Being reachable is not being validated.
+- `trade_rate` is withheld for a second reason worth keeping distinct: the service
+  passes it only when `policy` is `"aim"`, so exposing it without the gated policy would
+  be a knob that reaches nothing.
 
-Wiring these through is a small, mechanical follow-up — the underlying service
-functions already support everything; only the tool signatures are behind.
+`mcp.server.DEFERRED_PARAMS` is that list, with a reason per parameter, and a test
+requires every service parameter to be either exposed or listed there. Revisit only when
+a gated feature is promoted.
+
+Everything else is reachable. `construct_portfolio` takes the long/short book
+(`book`, `gross_leverage`, `short_max_weight`), the benchmark-relative solve
+(`benchmark_holdings`, `benchmark_premium`), `neutralize_factors`, `min_weight`,
+`current_weights` and the cost assumptions; `compute_alphas` takes `neutralize_factors`,
+so `neutralized_against` reports what was actually removed rather than always being
+empty; and `compute_attribution` is exposed as a read-only diagnostic that journals
+nothing.
+
+The parity guard enumerates the **service signature** rather than a remembered list, so
+a parameter added to a service later fails the test instead of quietly becoming
+unreachable — which is how the previous gap opened. A second test calls each tool and
+asserts the service received the value, because presence in the schema is not reach: the
+original defect was a tool advertising a `neutralized_against` field it had no parameter
+to populate.
 
 ## The hard wall
 
