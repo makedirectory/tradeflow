@@ -1114,6 +1114,7 @@ def build_server(data_client=None):
         holding_period_years: Optional[float] = None,
         lookback_days: Optional[int] = None,
         timeframe: Optional[str] = None,
+        risk_model: Optional[str] = None,
         cost_aware: Optional[bool] = None,
         commission_bps: Optional[float] = None,
         impact_eta: Optional[float] = None,
@@ -1150,7 +1151,6 @@ def build_server(data_client=None):
         from an agent is not the same as being validated, and this surface must not be
         the easier way to switch on a feature the command line warns about.
         """
-        inputs = {"strategy": strategy, "symbols": symbols, "as_of": as_of, "target_te": target_te}
         # Only what the caller actually set is forwarded, so an omitted knob keeps the
         # service's own default rather than this surface restating it — a second copy of
         # a default is a second thing to keep in step.
@@ -1168,11 +1168,28 @@ def build_server(data_client=None):
             "holding_period_years": holding_period_years,
             "lookback_days": lookback_days,
             "timeframe": timeframe,
+            "risk_model": risk_model,
             "cost_aware": cost_aware,
             "commission_bps": commission_bps,
             "impact_eta": impact_eta,
             "participation_cap": participation_cap,
             "borrow_bps": borrow_bps,
+        }
+        # Every knob the caller set, not just the four this used to record. The audit
+        # log exists so a human can replay what an agent did, and the tool grew from
+        # nine parameters to twenty-seven while the record stayed at four — a
+        # market-neutral, leveraged proposal audited identically to a default one.
+        inputs = {
+            "strategy": strategy,
+            "symbols": symbols,
+            "as_of": as_of,
+            "source": source,
+            "target_te": target_te,
+            "max_weight": max_weight,
+            "max_names": max_names,
+            "benchmark": benchmark,
+            "capital": capital,
+            **{k: v for k, v in optional.items() if v is not None},
         }
         result = analysis.construct_portfolio(
             dc,
@@ -1242,9 +1259,10 @@ def build_server(data_client=None):
         benchmark_premium: Optional[float] = None,
         detail: Optional[bool] = None,
         min_obs: Optional[int] = None,
+        risk_model: Optional[str] = None,
         bootstrap_skill: Optional[bool] = None,
         bootstrap_b: Optional[int] = None,
-        bootstrap_block_length: Optional[int] = None,
+        bootstrap_block_length: Optional[float] = None,
         bootstrap_seed: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Attribute realized active return to timing, risk factors, signals and picking.
@@ -1267,7 +1285,6 @@ def build_server(data_client=None):
         `n_trials` deflates for the search that produced this candidate — pass the
         number of configurations tried, not 1, or the t-stats flatter themselves.
         """
-        inputs = {"strategy": strategy, "symbols": symbols, "start": start, "end": end}
         optional = {
             "neutralize_factors": neutralize_factors,
             "signals": signals,
@@ -1276,10 +1293,24 @@ def build_server(data_client=None):
             "benchmark_premium": benchmark_premium,
             "detail": detail,
             "min_obs": min_obs,
+            "risk_model": risk_model,
             "bootstrap_skill": bootstrap_skill,
             "bootstrap_b": bootstrap_b,
             "bootstrap_block_length": bootstrap_block_length,
             "bootstrap_seed": bootstrap_seed,
+        }
+        inputs = {
+            "strategy": strategy,
+            "symbols": symbols,
+            "start": start,
+            "end": end,
+            "source": source,
+            "scanner": scanner,
+            "benchmark": benchmark,
+            "horizon": horizon,
+            "n_points": n_points,
+            "n_trials": n_trials,
+            **{k: v for k, v in optional.items() if v is not None},
         }
         result = analysis.compute_attribution(
             dc,

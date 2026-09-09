@@ -12,13 +12,21 @@ mapping into something the optimizer and reverse-optimization report can use.
 import csv
 import json
 from pathlib import Path
-from typing import Dict, Iterable, Tuple
+from typing import Dict, Iterable, Mapping, Tuple, Union
 
 from tradeflow.risk.base import RiskMatrix
 
 
-def load_benchmark_weights(source: str, symbols: Iterable[str]) -> Dict[str, float]:
-    """Load ``w_B`` from ``"equal"`` (uniform over ``symbols``) or a holdings file.
+def load_benchmark_weights(
+    source: Union[str, Mapping[str, float]], symbols: Iterable[str]
+) -> Dict[str, float]:
+    """Load ``w_B`` from ``"equal"``, a holdings file, or a mapping given directly.
+
+    The mapping form exists because not every caller has a filesystem to point at. The
+    agent surface passes weights as data and is deliberately never given a *path*: a
+    parameter that names a file is a file-read primitive, and this surface's whole
+    premise is that it holds no capability it was not handed. Same normalization either
+    way, so a book loaded from disk and the same book passed inline cannot disagree.
 
     A file is CSV (``symbol,weight`` header + rows) or JSON (``{"symbol": weight}``).
     Cap-proxy weighting (shares outstanding) is deliberately not supported in v1 -
@@ -31,6 +39,13 @@ def load_benchmark_weights(source: str, symbols: Iterable[str]) -> Dict[str, flo
     before renormalization.
     """
     symbols = list(symbols)
+    if not isinstance(source, str):
+        weights = {str(k): float(v) for k, v in dict(source).items()}
+        total = sum(weights.values())
+        if total <= 0:
+            raise ValueError("benchmark holdings mapping has no positive weight")
+        return {s: w / total for s, w in weights.items()}
+
     if source == "equal":
         if not symbols:
             return {}

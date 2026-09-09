@@ -413,10 +413,16 @@ def test_the_mode_that_can_place_real_orders_is_unreachable_over_mcp(built):
 
 
 # --- CLI/service surface parity, enumerated rather than remembered ------------------
-#: Parameters a tool legitimately does not take because they are not knobs: the
-#: injected client, the risk-model handle the server owns, and the CLI's own config
-#: plumbing. Named so the check below cannot be quietly widened.
-_NOT_KNOBS = {"data_client", "config", "risk_model", "current_weights"}
+#: Parameters a tool legitimately does not take because they are not knobs: the injected
+#: data client, and the CLI's own config plumbing.
+#:
+#: Deliberately only two. It briefly held `risk_model` too, excused as "the handle the
+#: server owns" — which was false: `run_verdict` exposes it and the CLI has
+#: `--risk-model`, so the exception was hiding a real knob behind a rationale its own
+#: sibling tool contradicted. It also held `current_weights`, which is exposed and so
+#: could never have been flagged anyway. An escape hatch is the loophole, so it stays
+#: small enough to check by eye.
+_NOT_KNOBS = {"data_client", "config"}
 
 
 def _tool_params(built, name):
@@ -464,8 +470,11 @@ def test_every_service_knob_is_exposed_or_deliberately_deferred(built, tool_name
     unreachable = service - exposed - set(mcp_server.DEFERRED_PARAMS)
 
     assert not unreachable, (
-        f"{tool_name} cannot set {sorted(unreachable)}: expose them, or add each to "
-        "DEFERRED_PARAMS with the reason it is withheld"
+        f"{tool_name} cannot set {sorted(unreachable)}.\n"
+        "If the knob is ungated, expose it. If it belongs to an evidence-gated family "
+        "(conditional risk, the Black-Litterman posterior, the aim policy), it must NOT "
+        "be exposed — add it to DEFERRED_PARAMS with its reason. Exposing a gated knob "
+        "makes this surface the easy way to switch on a feature nothing has validated."
     )
 
 
@@ -477,13 +486,21 @@ def test_no_evidence_gated_knob_is_reachable_from_an_agent():
     Being reachable is not the same as being validated, and an agent acts on a
     description at machine speed with every call costing a journaled trial.
     """
-    assert set(mcp_server.DEFERRED_PARAMS) >= {
+    # Every gated name, not a subset. The first version pinned six of the ten, and the
+    # other four could each be deleted from DEFERRED_PARAMS *and* exposed with the suite
+    # still green — because the absence check below iterates the dict, so removing an
+    # entry removes its own guard. A list that shrinks silently is not a guard.
+    assert set(mcp_server.DEFERRED_PARAMS) == {
         "conditional",
         "conditional_lambda",
+        "conditional_method",
         "posterior",
         "posterior_ic",
+        "posterior_t_eff",
+        "posterior_tau",
         "policy",
         "trade_rate",
+        "decay_lookback_days",
     }
     for param, reason in mcp_server.DEFERRED_PARAMS.items():
         assert reason.strip(), f"{param} is deferred with no reason"
@@ -686,3 +703,44 @@ def test_the_prerequisites_are_stated_where_a_client_is_registered():
     guide = pathlib.Path("docs/content/engineering/mcp-server.md").read_text().lower()
     assert "credentials" in guide and "extra" in guide
     assert "would not start" in guide or "never appears" in guide
+
+
+def test_the_audit_log_records_the_knobs_a_proposal_was_made_with(tmp_path, monkeypatch):
+    """The audit log exists so a human can replay what an agent did.
+
+    `construct_portfolio` grew from nine parameters to twenty-seven while its audit
+    record stayed at four, so a market-neutral, leveraged, cost-adjusted proposal audited
+    identically to a default one — the record present but not saying what was decided.
+    """
+    import asyncio
+    import json
+
+    from tradeflow.services import audit
+
+    monkeypatch.setattr(audit, "DEFAULT_AUDIT_PATH", tmp_path / "audit.jsonl")
+    built = mcp_server.build_server(
+        data_client=MarketDataClient(FakeMarketData([*SYMBOLS, "SPY"], n=300, freq="1D"))
+    )
+
+    asyncio.run(
+        built.call_tool(
+            "construct_portfolio",
+            {
+                "strategy": "demo_trend",
+                "symbols": SYMBOLS,
+                "as_of": "2025-06-01",
+                "book": "market_neutral",
+                "gross_leverage": 2.0,
+                "short_max_weight": 0.1,
+                "commission_bps": 25.0,
+            },
+        )
+    )
+
+    line = json.loads((tmp_path / "audit.jsonl").read_text().splitlines()[-1])
+    recorded = line.get("inputs", {})
+    assert recorded.get("book") == "market_neutral"
+    assert recorded.get("gross_leverage") == 2.0
+    assert recorded.get("commission_bps") == 25.0
+    # And an unset knob is not recorded as though it had been chosen.
+    assert "posterior" not in recorded and "min_weight" not in recorded
