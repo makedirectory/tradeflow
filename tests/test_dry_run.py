@@ -307,28 +307,13 @@ def test_the_dry_run_branch_never_calls_the_broker_factory(monkeypatch, capsys):
     Alpaca broker builder fail too, so neither the CLI's wrapper nor the layer under it
     can be entered.
     """
-    import pandas as pd
-
-    from tradeflow import cli
-    from tradeflow.utils.timeutils import NEW_YORK
 
     def _never(*args, **kwargs):
         raise AssertionError("a dry run reached the broker factory")
 
+    cli = _dry_run_cli(monkeypatch)
     monkeypatch.setattr(cli, "build_data_and_broker", _never)
     monkeypatch.setattr("tradeflow.brokers.alpaca.factory.build_broker", _never, raising=False)
-
-    idx = pd.date_range("2024-01-02", periods=60, freq="D", tz=NEW_YORK)
-    bars = pd.DataFrame(
-        {"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0, "volume": 1_000_000}, index=idx
-    )
-
-    class _Data:
-        def get_bars(self, symbols, start, end, **kwargs):
-            return {s: bars for s in symbols}
-
-    monkeypatch.setattr("tradeflow.services.data.build_data_client", lambda **kw: _Data())
-    monkeypatch.setattr(cli, "resolve_universe", lambda *a, **k: ["AAA"])
 
     args = cli.build_parser().parse_args(
         ["live", "--dry-run", "--strategy", "demo_trend", "--symbols", "AAA", "--capital", "8000"]
@@ -345,26 +330,9 @@ def test_a_dry_run_needs_no_broker_credentials(monkeypatch, capsys):
     """Credentials gate a *broker*, and a dry run has none. Requiring them would make
     the mode unusable in exactly the situation it is most useful — before an account
     exists."""
-    import pandas as pd
-
-    from tradeflow import cli
-    from tradeflow.utils.timeutils import NEW_YORK
-
     monkeypatch.delenv("APCA_API_KEY_ID", raising=False)
     monkeypatch.delenv("APCA_API_SECRET_KEY", raising=False)
-    monkeypatch.setattr(cli, "build_data_and_broker", lambda *a, **k: pytest.fail("broker factory reached"))
-
-    idx = pd.date_range("2024-01-02", periods=60, freq="D", tz=NEW_YORK)
-    bars = pd.DataFrame(
-        {"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0, "volume": 1_000_000}, index=idx
-    )
-
-    class _Data:
-        def get_bars(self, symbols, start, end, **kwargs):
-            return {s: bars for s in symbols}
-
-    monkeypatch.setattr("tradeflow.services.data.build_data_client", lambda **kw: _Data())
-    monkeypatch.setattr(cli, "resolve_universe", lambda *a, **k: ["AAA"])
+    cli = _dry_run_cli(monkeypatch)
 
     args = cli.build_parser().parse_args(
         ["live", "--dry-run", "--strategy", "demo_trend", "--symbols", "AAA", "--capital", "8000"]
@@ -373,6 +341,157 @@ def test_a_dry_run_needs_no_broker_credentials(monkeypatch, capsys):
     cli.cmd_live(args)
 
     assert "DRY RUN" in capsys.readouterr().out
+
+
+def _dry_run_cli(monkeypatch, symbols=("AAA",), n=200):
+    """The CLI wired to the real client over a fake *provider*.
+
+    Deliberately not a stub of ``MarketDataClient``: a hand-written stub takes whatever
+    arguments the caller happens to pass, so it agrees with a wrong call and the test
+    proves only that the caller is consistent with itself.
+    """
+    from tests.fakes import FakeMarketData
+    from tradeflow import cli
+    from tradeflow.marketdata.client import MarketDataClient
+
+    monkeypatch.setattr(
+        "tradeflow.services.data.build_data_client",
+        lambda **kw: MarketDataClient(FakeMarketData(list(symbols), n=n, freq="1D")),
+    )
+    monkeypatch.setattr(cli, "build_data_and_broker", lambda *a, **k: pytest.fail("broker factory reached"))
+    monkeypatch.setattr(cli, "resolve_universe", lambda *a, **k: list(symbols))
+    return cli
+
+
+def test_a_dry_run_actually_evaluates_its_universe(monkeypatch, capsys):
+    """The mode's whole output is what it decided, and it decided nothing.
+
+    The history request omitted the timeframe argument entirely, so every call raised
+    ``TypeError`` — caught by a per-symbol handler that reported it as "bars
+    unavailable" and filed the symbol under UNABLE TO EVALUATE. Against a real data
+    client the report was therefore *always* empty, in the one bucket that reads as a
+    data problem rather than a defect.
+
+    Asserted through the rendered report, on the count that has to be non-zero.
+    """
+    cli = _dry_run_cli(monkeypatch)
+
+    args = cli.build_parser().parse_args(
+        ["live", "--dry-run", "--strategy", "demo_trend", "--symbols", "AAA", "--capital", "8000"]
+    )
+    args.flags_given = {"dry_run", "capital"}
+    cli.cmd_live(args)
+
+    printed = capsys.readouterr().out
+    assert "evaluated           1" in printed
+    assert "UNABLE TO EVALUATE — no decision was possible: 0" in printed
+    assert "bars unavailable" not in printed
+
+
+def test_a_dry_run_asks_for_the_window_the_live_path_would_ask_for(monkeypatch):
+    """Same timeframe, same lookback derivation — otherwise the rehearsal reads a
+    different tape from the run it rehearses, and a short window looks like a strategy
+    with no opinion."""
+    from tradeflow import cli
+    from tradeflow.engine.live import LiveEngine
+    from tradeflow.marketdata.timeframe import Timeframe
+
+    strategy = ScriptedStrategy({"pivot": 100.0, "risk_per_trade": 0.02, "stop_loss": 0.03})
+    strategy.config["timeframe"] = "1Day"
+    strategy.config["required_lookback_periods"] = 50
+
+    asked = {}
+
+    class _Client:
+        def get_bars(self, symbols, timeframe, start, end):
+            asked.update(symbols=symbols, timeframe=timeframe, start=start)
+            return {}
+
+    cli._dry_run_history(_Client(), strategy, ["AAA", "BBB"])
+
+    timeframe = Timeframe.parse("1Day")
+    assert asked["timeframe"] == timeframe
+    # One request for the whole universe, the way warm-up asks.
+    assert asked["symbols"] == ["AAA", "BBB"]
+    expected = LiveEngine.lookback_start(timeframe, 50)
+    assert abs((asked["start"] - expected).total_seconds()) < 5
+
+
+def test_a_failed_history_request_is_reported_and_a_broken_call_is_not_swallowed(monkeypatch):
+    """Both directions of the same handler. A feed that could not answer is a fact about
+    every symbol and belongs in the report; a call this code got wrong is a defect and
+    must not wear the feed's clothes."""
+    from tradeflow import cli
+    from tradeflow.brokers.errors import BrokerError
+
+    strategy = ScriptedStrategy({"pivot": 100.0, "risk_per_trade": 0.02, "stop_loss": 0.03})
+    strategy.config["timeframe"] = "1Day"
+
+    class _Refusing:
+        def get_bars(self, symbols, timeframe, start, end):
+            raise BrokerError("feed unreachable")
+
+    history, failure = cli._dry_run_history(_Refusing(), strategy, ["AAA"])
+    assert history == {} and "feed unreachable" in failure
+    assert cli._latest_signal(strategy, None, failure)[2] == failure
+
+    class _Broken:
+        def get_bars(self, symbols, timeframe, start, end):
+            raise TypeError("missing a required argument")
+
+    with pytest.raises(TypeError):
+        cli._dry_run_history(_Broken(), strategy, ["AAA"])
+
+
+def test_a_config_that_records_a_capital_is_enough_to_dry_run(tmp_path, monkeypatch, capsys):
+    """Driven through the CLI, and asserted against the text a reader sees.
+
+    ``resolve_capital`` was unit-tested and correct; nothing set the attribute the CLI
+    handed it, so a config that recorded a capital refused for want of one — printing
+    ``capital=<config>`` on the line above the refusal. A test that calls the resolver
+    directly cannot see that, which is the whole reason this one goes through the
+    command.
+    """
+    import json
+
+    from tests.fakes import FakeMarketData
+    from tradeflow import cli
+    from tradeflow.marketdata.client import MarketDataClient
+
+    config = tmp_path / "validated.json"
+    config.write_text(
+        json.dumps(
+            {
+                "strategy": "demo_trend",
+                "params": {
+                    "fast_ema_period": 10,
+                    "slow_ema_period": 30,
+                    "risk_per_trade": 0.02,
+                    "stop_loss": 0.03,
+                    "take_profit": 0.06,
+                },
+                "scanner": "none",
+                "symbols": ["AAA"],
+                "capital": 8000.0,
+                "position_limits": {"max_positions": 4},
+            }
+        )
+    )
+    # The real client over a fake provider, not a stub of the client: a hand-written
+    # stub agrees with however the caller happens to be calling it.
+    monkeypatch.setattr(
+        "tradeflow.services.data.build_data_client",
+        lambda **kw: MarketDataClient(FakeMarketData(["AAA"], n=200, freq="1D")),
+    )
+    monkeypatch.setattr(cli, "build_data_and_broker", lambda *a, **k: pytest.fail("broker factory reached"))
+
+    args = cli.build_parser().parse_args(["live", "--dry-run", "--config", str(config)])
+    args.flags_given = {"dry_run", "config"}
+    cli.cmd_live(args)
+
+    printed = capsys.readouterr().out
+    assert "$8,000.00 (from config)" in printed
+    assert "needs a stated capital" not in printed
 
 
 def test_dry_run_and_live_money_together_are_refused():
@@ -463,24 +582,23 @@ def test_a_short_history_symbol_reaches_the_unevaluated_bucket_through_the_cli(m
     this one existed."""
     import pandas as pd
 
+    from tests.fakes import DictMarketData
     from tradeflow import cli
+    from tradeflow.marketdata.client import MarketDataClient
     from tradeflow.utils.timeutils import NEW_YORK
 
-    long_enough = pd.date_range("2024-01-02", periods=60, freq="D", tz=NEW_YORK)
-    too_short = pd.date_range("2024-01-02", periods=3, freq="D", tz=NEW_YORK)
-
-    def _frame(index):
+    def _frame(periods):
+        index = pd.date_range("2024-01-02", periods=periods, freq="D", tz=NEW_YORK)
         return pd.DataFrame(
             {"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0, "volume": 1_000_000},
             index=index,
         )
 
-    class _Data:
-        def get_bars(self, symbols, start, end, **kwargs):
-            return {s: _frame(too_short if s == "XYZ" else long_enough) for s in symbols}
-
+    # The real client over a provider fake, so the request this makes has to be one the
+    # client will actually accept.
+    client = MarketDataClient(DictMarketData({"AAA": _frame(60), "XYZ": _frame(3)}))
     monkeypatch.setattr(cli, "build_data_and_broker", lambda *a, **k: pytest.fail("broker built"))
-    monkeypatch.setattr("tradeflow.services.data.build_data_client", lambda **kw: _Data())
+    monkeypatch.setattr("tradeflow.services.data.build_data_client", lambda **kw: client)
     monkeypatch.setattr(cli, "resolve_universe", lambda *a, **k: ["AAA", "XYZ"])
 
     args = cli.build_parser().parse_args(

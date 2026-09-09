@@ -341,7 +341,7 @@ class LiveEngine:
         """
         timeframe = Timeframe.parse(self.strategy.config["timeframe"])
         periods = self.strategy.config.get("required_lookback_periods", 50)
-        start = self._lookback_start(timeframe, periods)
+        start = self.lookback_start(timeframe, periods)
         end = datetime.now(NEW_YORK)
 
         try:
@@ -504,8 +504,13 @@ class LiveEngine:
             logger.warning("Scheduled reconciliation failed", exc_info=True)
 
     @staticmethod
-    def _lookback_start(timeframe: Timeframe, periods: int) -> datetime:
+    def lookback_start(timeframe: Timeframe, periods: int) -> datetime:
         """How far back to fetch so warm-up actually yields ``periods`` bars.
+
+        Public because a rehearsal of this path has to ask for the same window. A
+        second derivation had already been written in the CLI, in exactly the shape
+        described below as the bug this one fixed — bars converted straight to calendar
+        days — so a dry run asked for a window the run it rehearses would not have used.
 
         This used to convert bars to wall-clock time directly — 50 one-minute bars
         became 100 minutes ago — which silently treats the overnight gap, the weekend,

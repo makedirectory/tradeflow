@@ -22,6 +22,26 @@ from tradeflow.brokers.base import AccountSnapshot
 from tradeflow.strategies.base import Strategy
 
 
+def below_min_notional(qty: float, price: float, min_notional) -> bool:
+    """Whether a rounded order is too small for the venue to be worth sending.
+
+    One definition, reached by both clocks. The backtest refused an entry under the
+    floor and the live path did not look at it at all, so a config validated with a
+    floor traded without one — the same declared book admitting different orders
+    depending on which clock was asking, which is the failure mode the two-clock
+    separation makes invisible.
+
+    A floor is an execution fact rather than a preference: an order below it is
+    refused at the venue, or its costs swamp what it can earn. Filling one in a
+    backtest validates a book that could not be traded; sending one live trades a book
+    that was never validated.
+
+    An undeclared floor bounds nothing — absent is not zero, and a book that never
+    named a minimum has no minimum rather than one of zero.
+    """
+    return bool(min_notional) and abs(qty) * price < min_notional
+
+
 class PositionSizer(ABC):
     """Decides the (pre-rounding) size of a new position."""
 

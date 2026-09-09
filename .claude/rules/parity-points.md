@@ -28,6 +28,20 @@ Position limits, sizing, exit ordering, and signal causality all exist in both. 
 [cross-clock parity](cross-clock-parity.md), which is the long form of this entry.
 *Guarded by* `tests/test_signal_causality.py`, `tests/test_net_exposure.py`.
 
+The **execution floor** was the case where one side simply had nothing: `min_notional`
+was enforced in the backtest and absent from the live path entirely, so a config
+validated with a floor traded without one — the same declared book admitting different
+orders depending on which clock was asking. It was worse than a silent difference,
+because the live preflight *printed* the floor on every run, so the surface said the
+limit was in force while nothing applied it. Now `execution.sizing.below_min_notional`
+is the one definition both clocks call, and both the sub-floor refusal and the
+size-rounds-to-zero one carry a `reason_code` — the two ways a book can be too small to
+express a position in a name are the signature of trading below the size something was
+validated at, and they only show up as a number if they can be grouped.
+*Guarded by* `tests/test_min_notional_parity.py`, which puts one order to both
+admission paths and compares the verdicts either side of the boundary, rather than
+asserting each clock separately — the backtest's own test passed throughout.
+
 **CLI ↔ service dedup identity** — `cli._cost_key` and `services.analysis._cost_key` are
 two implementations that must produce the same shape, because a trial recorded over one
 surface has to be found by the other. The CLI additionally folds a bar-cache vintage.
@@ -51,6 +65,23 @@ and this parameter has no effect at all. Identical construction is not parity if
 two callers reach it with different arguments.
 *Guarded by* `tests/test_surface_parity.py`, which now compares a *default* run over
 each surface and reads every default from its own signature rather than restating it.
+
+**The validated contract ↔ the contract a small run actually trades** — one book
+written twice, and the only permitted relation between them is the scale.
+`services.smallreal` is the single rule (fractions unchanged, counts unchanged, dollar
+ceilings scaled, venue floors absolute), and the hazard is not two implementations but
+one implementation whose result never arrives: the scaled book has to be *applied* to
+the strategy, recorded in the telemetry session header, and printed in the preflight,
+and those are three separate statements of it. A mutation deleting the line that applies
+it to the strategy passed every test, because the tests asserted the recorded contract —
+the arithmetic — rather than the effect. The guard now captures the strategy the engine
+is handed and asks it to size a position.
+
+Small-real is also the one command deliberately **absent from MCP** rather than mirrored
+there: see the CLI↔MCP entry below, and `mcp.server.OPERATOR_ONLY`. That absence is the
+exception the next entry's rule would otherwise forbid, so it is written down in both
+places.
+*Guarded by* `tests/test_small_real_command.py`, `tests/test_small_real_contract.py`.
 
 **CLI flags ↔ MCP tool parameters** — anything a run can be configured with should be
 reachable from both, and an MCP argument the service does not accept fails only at call

@@ -29,7 +29,7 @@ from tradeflow.execution import decision as decisions
 from tradeflow.execution.decision import Decision
 from tradeflow.execution.halt import HaltState
 from tradeflow.execution.order_id import client_order_id
-from tradeflow.execution.sizing import PositionSizer, RiskBasedSizer
+from tradeflow.execution.sizing import PositionSizer, RiskBasedSizer, below_min_notional
 from tradeflow.strategies import signals
 from tradeflow.strategies.base import Strategy
 from tradeflow.utils.numeric import round_price, round_quantity
@@ -277,7 +277,35 @@ class LiveTrader:
         )
         if qty <= 0:
             logger.warning("Computed position size <= 0 for %s; skipping", symbol)
-            return decisions.decline(symbol, signal, "size rounds to zero", tuple(guards))
+            return decisions.decline(
+                symbol,
+                signal,
+                f"size rounds to zero at ${price:,.2f}",
+                tuple(guards),
+                code=decisions.ROUNDS_TO_ZERO,
+            )
+
+        # Placed here, after rounding and before affordability, because that is where
+        # the backtest places it. Same book, same rule, same order of questions — see
+        # `below_min_notional`, which is the one definition both clocks reach.
+        guards.append(decisions.MIN_NOTIONAL)
+        min_notional = (self._strategy.position_limits() or {}).get("min_notional")
+        notional = qty * price
+        if below_min_notional(qty, price, min_notional):
+            logger.warning(
+                "Refusing %s entry for %s: $%.2f is below the $%.2f minimum notional",
+                signal,
+                symbol,
+                notional,
+                min_notional,
+            )
+            return decisions.decline(
+                symbol,
+                signal,
+                f"below minimum notional: ${notional:,.2f} of ${min_notional:,.2f}",
+                tuple(guards),
+                code=decisions.BELOW_MIN_NOTIONAL,
+            )
 
         guards.append(decisions.BUYING_POWER)
         cost = qty * price

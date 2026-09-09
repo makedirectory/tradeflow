@@ -32,7 +32,7 @@ from tradeflow.analytics import metrics as m
 from tradeflow.analytics import performance
 from tradeflow.brokers.base import AccountSnapshot
 from tradeflow.costs.base import CostModel, Trade
-from tradeflow.execution.sizing import PositionSizer, RiskBasedSizer
+from tradeflow.execution.sizing import PositionSizer, RiskBasedSizer, below_min_notional
 from tradeflow.marketdata.client import MarketDataClient
 from tradeflow.marketdata.timeframe import Timeframe
 from tradeflow.strategies import signals
@@ -1034,10 +1034,10 @@ class BacktestEngine:
             if requested > 0:
                 book.execution.rounded_to_zero += 1
             return None
-        if min_notional and size * price < min_notional:
-            # A venue floor is an execution fact, not a preference: an order below it
-            # would be refused, so filling it here would validate a book that could not
-            # be traded.
+        if below_min_notional(size, price, min_notional):
+            # The same rule the live path applies, from the same definition — the two
+            # clocks agreeing about what is fillable is the whole point of it living in
+            # one place.
             book.execution.below_min_notional += 1
             return None
         # The affordability check must include what this fill will cost to enter,

@@ -416,13 +416,17 @@ def test_every_record_carries_the_shape_it_was_written_in(ledger):
 def test_a_pre_version_record_is_counted_apart(ledger):
     """A file that mixes shapes is the normal case for anything append-only, and the
     counts are what let an operator decide whether to archive rather than guess."""
+    from tradeflow.execution.ledger import LEDGER_VERSION
+
     ledger.path.write_text('{"event": "fill", "symbol": "AAA", "side": "buy", "qty": 8}\n')
     ledger.record_fill("BBB", "sell", 2, order_id="o1", basis=CUMULATIVE)
 
     summary = ledger.version_summary()
 
     assert summary["pre-version"] == 1
-    assert summary["1"] == 1
+    # Read from the constant, not spelled out: a literal here turns every version bump
+    # into a test failure that says nothing about whether the bump was handled.
+    assert summary[str(LEDGER_VERSION)] == 1
 
 
 def test_an_empty_ledger_summarises_to_nothing(ledger):
@@ -490,3 +494,126 @@ def test_a_pre_basis_fill_is_still_read_as_cumulative(ledger):
         ledger._append({"event": "fill", "symbol": "COP", "side": "buy", "qty": qty, "order_id": "o1"})
 
     assert ledger.lifecycles()[0]["filled_qty"] == 8
+
+
+# --- the session header: what run wrote the records after it -----------------------
+def test_a_session_header_is_read_back_with_the_context_it_was_given(ledger):
+    """A fill is a number with no denominator until something says what capital, book
+    and account it was measured against."""
+    ledger.record_session(
+        "small_real",
+        {"capital": 12_500.0, "capital_source": "--scale 0.05", "broker_mode": "paper"},
+    )
+
+    (session,) = ledger.sessions()
+
+    assert session["mode"] == "small_real"
+    assert session["capital"] == 12_500.0
+    assert session["broker_mode"] == "paper"
+
+
+def test_a_session_header_moves_no_position_whatever_fields_it_carries(ledger):
+    """It is a header, not a position event, and the protection is that both readers
+    dispatch on the event *name* — so an event neither of them names moves nothing
+    however it is shaped.
+
+    Deliberately written with the fields of a fill. A test using a header that merely
+    omits a symbol passes against a reader keyed on symbol presence *and* against one
+    keyed on the event, so it cannot tell which property is holding — and a mode is
+    free to record a per-symbol fact about its run here. Both readers are checked
+    because they are separate walks over the same file.
+    """
+    ledger.record_session("small_real", {"symbol": "COP", "side": "buy", "qty": 999.0, "order_id": "o1"})
+    _fills(ledger, "o1", "COP", "buy", [5, 8])
+    ledger.record_intent("COP", "buy", 8, order_id="o1")
+
+    assert ledger.expected_positions() == {"COP": 8.0}
+    assert [row["order_id"] for row in ledger.lifecycles()] == ["o1"]
+    assert [row["submitted_qty"] for row in ledger.lifecycles()] == [8.0]
+
+
+def test_a_session_header_does_not_disturb_reconciliation(ledger):
+    """The sweep walks the same file. A header with no symbol must be skipped there the
+    way a reconcile record is, or a run's own start reports as a divergence."""
+    from tests.fakes import FakeBroker
+
+    ledger.record_session("small_real", {"capital": 12_500.0})
+
+    report = ledger.reconcile(FakeBroker())
+
+    assert report.clean
+
+
+def test_a_ledger_with_no_session_says_so_rather_than_adopting_the_asking_run(ledger):
+    """Absent is absent. Backfilling the contract of whoever is reading now would put a
+    capital nobody traded at onto somebody else's fills, which is the one direction an
+    append-only record must never move."""
+    _fills(ledger, "o1", "COP", "buy", [8])
+
+    assert ledger.sessions() == []
+
+
+def test_a_session_header_carries_the_current_version_stamp(ledger):
+    """The stamp is how a reader asks what shape it is looking at instead of inferring
+    it from which keys happen to be present."""
+    import json
+
+    from tradeflow.execution.ledger import LEDGER_VERSION
+
+    ledger.record_session("small_real", {"capital": 1.0})
+
+    written = json.loads(ledger.path.read_text().splitlines()[0])
+    assert written["v"] == LEDGER_VERSION and written["event"] == "session"
+
+
+def test_the_small_real_ledger_is_a_different_file_from_the_live_one(tmp_path, monkeypatch):
+    """Averaging fills from a book at full size with fills from the same book at a
+    twentieth of it produces a number describing neither, and the whole reason the small
+    run exists is that its execution is different."""
+    from tradeflow.execution.ledger import default_ledger_path, small_real_ledger_path
+
+    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
+
+    assert small_real_ledger_path() != default_ledger_path()
+    # And neither is the research journal: a run that measures its own execution has
+    # searched nothing, so it must not reach the multiple-testing total.
+    from tradeflow.settings import trial_journal_path
+
+    assert small_real_ledger_path() != trial_journal_path()
+
+
+def test_a_session_context_cannot_change_what_kind_of_record_it_is(ledger):
+    """Found by an independent review, and reproduced before fixing.
+
+    The context was spread *after* the fixed keys, so a caller passing `event` replaced
+    the record's kind: a header carrying `{"event": "fill", "symbol": "COP", "qty": 999}`
+    stopped being a header, vanished from `sessions()`, and moved the replayed book by
+    999 shares — a corrupted durable record, written by the mode whose whole job is
+    honest telemetry.
+
+    A caller is trusted to choose what it records about its run. It must not be able to
+    choose what kind of record it is writing, or to overwrite the version stamp that
+    exists to keep every past shape readable.
+    """
+    import json
+
+    from tradeflow.execution.ledger import LEDGER_VERSION
+
+    ledger.record_session(
+        "small_real",
+        {
+            "event": "fill",
+            "symbol": "COP",
+            "side": "buy",
+            "qty": 999.0,
+            "basis": CUMULATIVE,
+            "v": 99,
+            "mode": "impostor",
+        },
+    )
+
+    (session,) = ledger.sessions()
+    assert session["mode"] == "small_real"
+    assert ledger.expected_positions() == {}
+    written = json.loads(ledger.path.read_text().splitlines()[0])
+    assert written["event"] == "session" and written["v"] == LEDGER_VERSION
