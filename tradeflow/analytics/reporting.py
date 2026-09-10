@@ -1076,6 +1076,83 @@ def format_dry_run(report: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+#: How many symbol names to print before summarising. A campaign universe runs to
+#: hundreds, and a wall of tickers is not more auditable than a count plus a sample —
+#: but a *silent* truncation would be, so the elision says how many it hid and the JSON
+#: keeps the full list either way.
+_UNIVERSE_SAMPLE = 12
+
+
+def _seed_cell(metadata: Dict[str, Any]) -> str:
+    """The seed, however this record happens to spell it.
+
+    Four shapes exist in the wild and all four have to read correctly, because this
+    block is embedded in saved config files and a config written last month is not going
+    to be rewritten: the key **absent**, an explicit **null**, a bare **scalar** (what
+    every config written before the field carried its own provenance holds), and the
+    current ``{recorded, value, from}`` object.
+
+    A scalar is a *recorded* seed. Dropping it silently — which an `isinstance(dict)`
+    check does — turns a value the record holds into no line at all, which is the same
+    false absence this field was changed to fix, arriving from the other direction.
+    """
+    seed = metadata.get("seed")
+    if isinstance(seed, dict):
+        rendered = _recorded_cell(seed)
+        if seed.get("recorded") and seed.get("from"):
+            rendered += f"   (from the {seed['from']})"
+        clash = seed.get("disagrees_with")
+        if clash:
+            rendered += (
+                f"  — DISAGREES with {clash.get('value')} in the {clash.get('from')}; "
+                "the recipe defines the run, but this record is inconsistent"
+            )
+        return rendered
+    if seed is None:
+        # Covers both the absent key and an explicit null: nobody wrote one down.
+        return f"{NOT_RECORDED} not recorded"
+    return f"{seed}   (recorded before this block named its source)"
+
+
+def _universe_lines(universe: Dict[str, Any], readable: Optional[bool] = None) -> List[str]:
+    """The names the evidence covers, and how many were considered to reach them.
+
+    Absent is not empty: a trial that recorded no universe says so, rather than
+    rendering as a run over nothing.
+
+    And *unreadable* is not absent. When the journal line could not be read at all —
+    an archived store queried without its journal, or a research-agent trial whose
+    record this scanner does not match — nothing here knows whether a universe was
+    recorded, and saying "not recorded for this trial" asserts more than the code can
+    see. The recipe reason one line above already draws that distinction; this used to
+    contradict it.
+    """
+    symbols = universe.get("symbols")
+    candidates = universe.get("candidate_symbols")
+    unknown = (
+        f"{NOT_RECORDED} the journal line for this trial could not be read"
+        if readable is False
+        else f"{NOT_RECORDED} not recorded for this trial"
+    )
+    if symbols is None and candidates is None:
+        return [f"    {'universe':<16}{unknown}"]
+
+    lines = []
+    if symbols is None:
+        lines.append(f"    {'universe':<16}{unknown}")
+    else:
+        shown = ", ".join(symbols[:_UNIVERSE_SAMPLE])
+        hidden = len(symbols) - _UNIVERSE_SAMPLE
+        if hidden > 0:
+            shown += f", … (+{hidden} more)"
+        lines.append(f"    {'universe':<16}{len(symbols)} symbol(s): {shown}")
+    if candidates is not None:
+        # The pre-scan set. Its *size* is the interesting part — it says how much the
+        # scanner rejected, which is the "how it was resolved" half of the question.
+        lines.append(f"    {'considered':<16}{len(candidates)} candidate(s) before the scan")
+    return lines
+
+
 def format_campaign_material(material: Dict[str, Any]) -> str:
     """What validated a trial, with each section labelled by what kind of thing it is.
 
@@ -1104,6 +1181,14 @@ def format_campaign_material(material: Dict[str, Any]) -> str:
             lines.append(f"    {key:<16}{value}   (folded into its identity)")
     else:
         lines.append(f"    {NOT_RECORDED} {recipe.get('reason')}")
+
+    # The universe is part of what validated this, and the block carried it in JSON while
+    # this renderer printed none of it — the same "the payload has it, the text a reader
+    # sees does not" defect already found once in this function. Rendered under the
+    # recipe because that is what it is: which names the evidence covers, and how many
+    # were considered to get there. Outside the `available` branch on purpose: a
+    # backtest has no validation recipe and still has a universe.
+    lines.extend(_universe_lines(recipe.get("universe") or {}, readable=metadata.get("journal_line_found")))
 
     lines.append("")
     lines.append("  SET UP WITH — how the run was configured. Not part of its identity.")
@@ -1139,6 +1224,11 @@ def format_campaign_material(material: Dict[str, Any]) -> str:
     lines.append("  METADATA — about the record, not about the strategy.")
     lines.append(f"    {'recorded':<16}{str(metadata.get('recorded_at'))[:19]}")
     lines.append(f"    {'git':<16}{metadata.get('git_sha') or NOT_RECORDED}")
+    # Named alongside the sha because both answer "what would it take to reproduce
+    # this", and because an omitted line reads as nothing to say rather than as nothing
+    # recorded. The source is printed with it: the seed's real home is the validation
+    # recipe, and a reader checking provenance should know which record it came off.
+    lines.append(f"    {'seed':<16}{_seed_cell(metadata)}")
     lines.append(f"    {'notes':<16}{_recorded_cell(metadata.get('notes'))}")
     for artifact in metadata.get("artifacts") or []:
         state = artifact["read_with"] if artifact["recorded"] else f"{NOT_RECORDED} not recorded"

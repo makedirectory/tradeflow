@@ -245,6 +245,43 @@ def _evidence_section(store, row, inputs, trial_id, accounting, current) -> Dict
     return section
 
 
+def _seed(row, record) -> Dict[str, Any]:
+    """The seed this run used, and whether anybody wrote it down.
+
+    Read from the validation recipe first, because that is where it actually lives. The
+    ``seed`` column exists but only the research agent's session records ever populate
+    it — ``journal_trial`` has no seed parameter at all — so reading the column alone
+    reported ``None`` for every walk-forward driven from the CLI or MCP *while the same
+    block carried the real value two sections above*. A record that contradicts itself
+    about a fact it holds is worse than one that admits the fact is missing.
+
+    The column is still consulted, for the research-agent trials that do populate it and
+    may carry no recipe. Absent stays absent: a run whose seed nobody recorded reads as
+    unrecorded rather than as some default, which is the same rule every other fact in
+    this block follows.
+    """
+    recipe_seed = ((record or {}).get("dedup_params") or {}).get("seed")
+    stored = row.get("seed")
+
+    if recipe_seed is not None and stored is not None and recipe_seed != stored:
+        # Two records of one fact, disagreeing. The recipe is what defines the run, so
+        # it is the value — but reporting only the winner would hide that the record is
+        # internally inconsistent, and this block exists to make provenance checkable.
+        # Nothing here can tell which is the mistake, so it says both and neither is
+        # quietly dropped.
+        return {
+            "recorded": True,
+            "value": recipe_seed,
+            "from": "validation recipe",
+            "disagrees_with": {"value": stored, "from": "session record"},
+        }
+    if recipe_seed is not None:
+        return {"recorded": True, "value": recipe_seed, "from": "validation recipe"}
+    if stored is not None:
+        return {"recorded": True, "value": stored, "from": "session record"}
+    return {"recorded": False, "value": None, "from": None}
+
+
 def _metadata_section(row, inputs, record, trial_id) -> Dict[str, Any]:
     """About the record: where it came from, and what is still recoverable.
 
@@ -270,7 +307,7 @@ def _metadata_section(row, inputs, record, trial_id) -> Dict[str, Any]:
         "trial_id": trial_id,
         "recorded_at": row.get("ts"),
         "git_sha": row.get("git_sha"),
-        "seed": row.get("seed"),
+        "seed": _seed(row, record),
         "journal_line_found": record is not None,
         "notes": _recorded(inputs, "notes"),
         "artifacts": stored,

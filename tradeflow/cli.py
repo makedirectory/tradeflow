@@ -3393,7 +3393,12 @@ def _promote_trial(store, args) -> None:
             windows={"start": trial.get("window_start"), "end": trial.get("window_end")},
             oos_metrics=trial.get("metrics") or {},
             n_trials=int(trial.get("n_trials_in_session") or 1),
-            seed=trial.get("seed"),
+            # The value `campaign_material` already resolved, not the store column it
+            # supersedes. `provenance.seed` is the older and more widely read field, so
+            # leaving it on the column wrote a file that says `seed: null` at the top
+            # and `seed: 42` inside its own campaign block — the same contradiction this
+            # change fixed, one layer out and in the half most readers look at first.
+            seed=((material.get("metadata") or {}).get("seed") or {}).get("value"),
             git_sha=trial.get("git_sha"),
             timestamp=trial.get("ts"),
             accounting=int(trial.get("accounting") or 1),

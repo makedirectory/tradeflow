@@ -178,6 +178,12 @@ All of it was already recorded. The recipe is in the journal, written as the tri
 dedup identity; the resolved universe is there too, in full, because the store keeps
 only its hash. This reads them back — nothing is re-run.
 
+The universe line names what the evidence covers, and `considered` says how many the
+scanner looked at to get there — the gap between the two is how the book was resolved. A
+long list elides with a count of what it hid, never silently. The seed is read from the
+validation recipe, which is where it lives; a run that recorded none says so rather than
+showing a default.
+
 ```
 === What validated a1b2c3d4e5f6 (walkforward) ===
 
@@ -188,7 +194,10 @@ only its hash. This reads them back — nothing is re-run.
     embargo_days    5
     method          grid
     objective       sharpe_ratio
+    seed            42
     _limits         {'max_positions': 8}   (folded into its identity)
+    universe        8 symbol(s): AAA, BBB, CCC, DDD, EEE, FFF, GGG, HHH
+    considered      31 candidate(s) before the scan
 
   EVIDENCE — what was measured, under accounting v5. Valid only there.
     sharpe_ratio    1.12
@@ -198,6 +207,8 @@ only its hash. This reads them back — nothing is re-run.
 
   METADATA — about the record, not about the strategy.
     recorded        2026-03-01T09:14:22
+    git             a1b2c3d
+    seed            42   (from the validation recipe)
     return series   tradeflow trials compare a1b2c3d4e5f6 <other-trial-id>
     trade table     — not recorded
 ```
