@@ -75,10 +75,12 @@ FLATTEN
   positions observed closed : pending
   last broker position check: 2026-01-02T14:31:07+00:00
   remaining positions       : 4 (AAPL, KO, MSFT, PFE)
+  resting orders observed   : 0
 
-NOT FLAT YET — the close orders are with the broker and these positions
-are still open. Queued closes do not fill outside market hours, and
-fill piecemeal at the open. Re-check before believing you are flat.
+NOT FLAT — the close orders were accepted and these positions are
+still open. A queued close fills at the next open; a *refused* one
+never will, and this cannot tell them apart. Re-run to re-read, and
+check the symbols above at the broker if they persist.
 ```
 
 `positions observed closed` is four-valued, because the four mean different things to
@@ -91,8 +93,21 @@ whoever has to act:
 | `no` | the close request itself failed, and positions are still open |
 | `unknown` | the confirming read failed, so nothing here knows what is open |
 
-The command exits non-zero for everything except `yes`. A script that treated exit 0 as
-"flat" was previously being told only that the request had been accepted.
+**Both legs are observed, not assumed.** The cancel is a submitted fact too, so the same
+read reports how many orders are still resting — a resting order the cancel missed can
+refill the book after the instant the read was taken. `unknown` there means the order
+book could not be read.
+
+The command exits zero only when the halt is recorded **and** a broker read saw no
+positions **and** saw no resting orders. Everything else exits non-zero. A script that
+treated exit 0 as "flat" was previously being told only that the close request had been
+accepted.
+
+Note the case this makes newly honest: if the cancel *call* failed but the read finds no
+positions and no resting orders, that is reported as flat — with the failed call still
+listed — because the account is verifiably in the terminal state. The old logic called
+it incomplete on the strength of a call that failed over an order book which turned out
+to be empty anyway.
 
 ## A halt never blocks an exit
 

@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 #: Four values, not a boolean, because submitting a close and observing it is not the
 #: same fact and the gap between them is where an operator gets hurt. Closes queue
 #: outside market hours and fill piecemeal at the open: a real flatten reported every
-#: position closed and the account still held twelve of them eight minutes later.
+#: position closed and the account still held its whole book minutes later.
 CLOSED = "yes"  # a broker read came back with no positions
 PENDING = "pending"  # closes were submitted and positions are still open
 NOT_CLOSED = "no"  # the close request itself failed, and positions are still open
@@ -58,6 +58,9 @@ class FlattenReport:
     observed: str = UNKNOWN
     checked_at: Optional[str] = None
     remaining: List[str] = field(default_factory=list)
+    #: Resting orders the confirming read still saw. ``None`` means it could not be
+    #: asked — absent, not zero, in the field that decides whether the book can refill.
+    open_orders: Optional[int] = None
     failures: List[str] = field(default_factory=list)
 
     @property
@@ -67,8 +70,14 @@ class FlattenReport:
         This used to be satisfied by the close call returning, so a flatten whose orders
         merely queued reported success and printed a reassuring next step. Submission is
         not a terminal state; nothing may claim one without a read that saw it.
+
+        Both legs are held to that. ``open_orders == 0`` rather than ``orders_cancelled``
+        because the cancel is a submitted fact too, and a resting order the cancel missed
+        can refill the book after the instant the read was taken — so a verifiably empty
+        account with an unknown order book is not a terminal state either. ``None``
+        (unreadable) fails this, as it should.
         """
-        return self.halted and self.orders_cancelled and self.observed == CLOSED
+        return self.halted and self.observed == CLOSED and self.open_orders == 0
 
     def as_dict(self) -> Dict[str, Any]:
         return {
@@ -80,6 +89,7 @@ class FlattenReport:
             "observed": self.observed,
             "checked_at": self.checked_at,
             "remaining": self.remaining,
+            "open_orders": self.open_orders,
             "failures": self.failures,
         }
 
@@ -97,25 +107,44 @@ class FlattenReport:
             f"  positions observed closed : {self.observed}",
             f"  last broker position check: {self.checked_at or 'never'}",
             f"  remaining positions       : {remaining}",
+            f"  resting orders observed   : {'unknown' if self.open_orders is None else self.open_orders}",
         ]
         for failure in self.failures:
             lines.append(f"  ! {failure}")
 
         if self.complete:
-            lines.append("\nFlat, and confirmed by a broker read at the time above.")
-            lines.append("The engine cannot re-enter while the halt stands;")
-            lines.append("`tradeflow resume all` when you are ready.")
+            lines.append("\nFlat, and confirmed by a broker read at the time above: no")
+            lines.append("positions and no resting orders. The engine cannot re-enter while")
+            lines.append("the halt stands; `tradeflow resume all` when you are ready.")
         elif self.observed == PENDING:
-            # The case that used to read as success. Say what is true: the venue has the
-            # orders and has not filled them, which outside market hours can last hours.
-            lines.append("\nNOT FLAT YET — the close orders are with the broker and these positions")
-            lines.append("are still open. Queued closes do not fill outside market hours, and")
-            lines.append("fill piecemeal at the open. Re-check before believing you are flat.")
+            # The case that used to read as success. Say what is true and no more. It
+            # must NOT promise a fill: a symbol refused for being halted, non-tradable
+            # or restricted never will, and this cannot tell that apart from a queued
+            # close, because the venue's per-symbol answer is not surfaced here.
+            lines.append("\nNOT FLAT — the close orders were accepted and these positions are")
+            lines.append("still open. A queued close fills at the next open; a *refused* one")
+            lines.append("never will, and this cannot tell them apart. Re-run to re-read, and")
+            lines.append("check the symbols above at the broker if they persist.")
         elif self.observed == UNKNOWN:
             lines.append("\nUNCONFIRMED — the position read failed, so nothing here knows what")
             lines.append("is open. Check the broker directly.")
+        elif self.observed == CLOSED:
+            # Positions verifiably gone, but something else is unfinished. The old
+            # catch-all said "finish by hand" while pointing at the positions, which are
+            # the one thing that is done.
+            lines.append("\nPOSITIONS FLAT, BUT NOT FINISHED:")
+            unfinished = []
+            if not self.halted:
+                unfinished.append("the halt was not recorded, so the engine may re-enter")
+            if self.open_orders is None:
+                unfinished.append("the resting orders could not be read")
+            elif self.open_orders:
+                unfinished.append(f"{self.open_orders} order(s) still resting, which can refill the book")
+            for item in unfinished or ["something above did not complete"]:
+                lines.append(f"  - {item}")
         else:
-            lines.append("\nINCOMPLETE — check the broker directly and finish by hand.")
+            lines.append("\nNOT FLAT — the close request was not accepted and these positions")
+            lines.append("are still open. Check the broker directly and finish by hand.")
         return "\n".join(lines)
 
 
@@ -149,8 +178,12 @@ def flatten(
     try:
         # Orders were cancelled above; asking again is harmless and covers the case
         # where that call failed but the close path can still clear them.
-        broker.close_all_positions(cancel_orders=True)
-        report.close_submitted = True
+        # The return value is consulted, not discarded. A broker that answers False has
+        # said it did not take the request, and recording that as "submitted" would be
+        # the same lie this change exists to remove, one line above the fix.
+        report.close_submitted = bool(broker.close_all_positions(cancel_orders=True))
+        if not report.close_submitted:
+            report.failures.append("the broker did not accept the close request")
     except BrokerError as exc:
         report.failures.append(f"could not close positions: {exc}")
         logger.error("Could not close positions", exc_info=True)
@@ -188,15 +221,43 @@ def _confirm(broker: Broker, report: FlattenReport) -> None:
     """
     report.checked_at = datetime.now(timezone.utc).isoformat()
     try:
-        positions = broker.list_positions() or []
-    except BrokerError as exc:
+        positions = broker.list_positions()
+        if positions is None:
+            # A broker that answers "I don't know" must not be read as "nothing is
+            # open". `or []` did exactly that, in the one function whose whole purpose
+            # is refusing to call an unobserved book flat.
+            raise BrokerError("broker returned no position list")
+        # Inside the guard: a lazy or paged result raises while being consumed, not
+        # when it is returned.
+        report.remaining = [position.symbol for position in positions]
+    except Exception as exc:  # noqa: BLE001 - see below
+        # Deliberately bare, matching `PositionLedger.reconcile`. This is a *reporting*
+        # step running after the halt, the cancel and the closes have already happened,
+        # and a reporting step that raises destroys the report of the order path — the
+        # operator loses not just the confirmation but the fact that the halt was set
+        # and the closes were sent. Catching only `BrokerError` was a promise about
+        # brokers this module does not control: a `TimeoutError` from a socket, or an
+        # `AttributeError` from a partial implementation, escaped and left a traceback
+        # where the report should be. `UNKNOWN` already means precisely this.
         report.failures.append(f"could not confirm positions: {exc}")
         report.observed = UNKNOWN
         logger.error("Could not confirm the flatten against the broker", exc_info=True)
         return
 
-    report.remaining = [p.symbol for p in positions]
-    if not positions:
-        report.observed = CLOSED
-    else:
+    if report.remaining:
         report.observed = PENDING if report.close_submitted else NOT_CLOSED
+    else:
+        report.observed = CLOSED
+
+    # The same question asked of the other leg. `orders_cancelled` is a *submitted*
+    # fact, and this change exists because submitted is not observed — applying that to
+    # the positions and not to the orders would leave `complete` meaning "one observed
+    # fact and one hopeful one". A resting order the cancel missed can refill the book
+    # after the instant this read was taken.
+    try:
+        resting = broker.list_open_orders()
+        report.open_orders = len(resting or [])
+    except Exception as exc:  # noqa: BLE001 - as above; never break the report
+        report.failures.append(f"could not confirm open orders: {exc}")
+        report.open_orders = None
+        logger.error("Could not confirm resting orders against the broker", exc_info=True)
