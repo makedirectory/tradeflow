@@ -29,6 +29,24 @@ paths:
   because an outer timeout cancelled the wait, sequential awaits that pass whatever a
   lock does. If reverting is awkward, that is a signal the test is asserting the wrong
   thing.
+- **A test must fail when the property is violated on the surface a user actually
+  reaches.** The strongest version of the rule above, and the one the last four changes
+  each taught in a different outfit. Every time, a green suite sat on top of a real
+  break because the test exercised something adjacent to the thing that ships:
+
+  - a guard installed on a convenience method while every real client went through a
+    protocol handler captured earlier — the wrapper existed, and nothing reached it;
+  - a scaled book computed correctly and never applied, because the test asserted the
+    *recorded* contract rather than the strategy the engine was handed;
+  - a report whose formatter dropped a whole vocabulary the payload carried, because
+    the tests asserted the JSON and never the rendered text;
+  - a rejected argument that was unknown to *every* tool, which proves the global
+    reject path and never that the schema consulted belonged to the tool being called.
+
+  So: drive the real path, read the artifact back, and pick inputs that can tell the
+  right implementation from a plausibly-wrong one. "Does the field exist" is rarely
+  that test; "does a wrong implementation fail" always is.
+
 - **Read the schema before writing against it.** Field names guessed from memory
   compile, pass, and report a confident wrong answer — an invented cost key made the
   model silently unconfigured, and `trades` instead of `total_trades` reported 0 for a
