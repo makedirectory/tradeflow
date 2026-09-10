@@ -744,3 +744,120 @@ def test_the_audit_log_records_the_knobs_a_proposal_was_made_with(tmp_path, monk
     assert recorded.get("commission_bps") == 25.0
     # And an unset knob is not recorded as though it had been chosen.
     assert "posterior" not in recorded and "min_weight" not in recorded
+
+
+# --- an argument this surface does not accept is an error, not a silence ------------
+def _dispatch(built, tool, args):
+    """Straight through `call_tool`, which is where the guard lives."""
+    import asyncio
+
+    return asyncio.run(built.call_tool(tool, args))
+
+
+def test_a_withheld_knob_is_refused_and_says_why(built):
+    """The gap the parity work left open. The framework validates against the schema and
+    then *drops* undeclared keys, so an agent told to "turn on conditional risk" passed
+    `conditional="ewma"`, got a portfolio back, and reported that it had done so. The
+    wall held; the agent's account of what it did did not.
+
+    The reason is quoted at the moment it is needed rather than referred to — this is
+    where an agent actually has to learn that the knob is withheld and not broken.
+    """
+    with pytest.raises(Exception) as exc:
+        _dispatch(
+            built,
+            "construct_portfolio",
+            {
+                "strategy": "demo_trend",
+                "symbols": SYMBOLS,
+                "as_of": "2025-06-01",
+                "conditional": "ewma",
+            },
+        )
+
+    message = str(exc.value)
+    assert "does not accept: conditional" in message
+    assert "withheld from this surface" in message
+    assert "adoption gate does not clear" in message
+
+
+def test_a_mistyped_argument_is_refused_and_the_near_miss_named(built):
+    """A typo has the identical shape: the default silently stays in place. A human
+    would see it in the output and wonder; an agent has nothing to wonder at."""
+    with pytest.raises(Exception) as exc:
+        _dispatch(
+            built,
+            "construct_portfolio",
+            {"strategy": "demo_trend", "symbols": SYMBOLS, "as_of": "2025-06-01", "targt_te": 0.04},
+        )
+
+    message = str(exc.value)
+    assert "targt_te" in message
+    assert "Did you mean target_te" in message
+
+
+def test_every_declared_argument_is_still_accepted(built):
+    """Both directions, and the one that matters for a guard at dispatch: it must not
+    reject the calls it exists to permit. Driven from each tool's own schema, so a knob
+    added later is covered without being remembered here."""
+    import asyncio
+
+    tools = {t.name: t for t in asyncio.run(built.list_tools())}
+    declared = set((tools["construct_portfolio"].inputSchema.get("properties") or {}).keys())
+
+    # Every ungated knob, passed at once, must get through the guard.
+    args = {
+        "strategy": "demo_trend",
+        "symbols": SYMBOLS,
+        "as_of": "2025-06-01",
+        "book": "market_neutral",
+        "gross_leverage": 1.6,
+        "short_max_weight": 0.1,
+        "neutralize_factors": ["market"],
+        "min_weight": 0.01,
+        "commission_bps": 2.0,
+        "risk_model": "shrinkage",
+    }
+    assert set(args) <= declared, "the test is passing something the tool never declared"
+    _dispatch(built, "construct_portfolio", args)  # must not raise
+
+
+def test_a_call_with_no_arguments_is_untouched(built):
+    _dispatch(built, "get_metrics_glossary", {})
+
+
+def test_a_tool_that_declares_no_arguments_still_refuses_one(built):
+    """A no-argument tool declares `properties: {}`, which is a real answer — it accepts
+    nothing — and must be distinguished from a schema that could not be read at all.
+    Passing an argument to such a tool is exactly as silent a mistake as passing an
+    unknown one anywhere else."""
+    with pytest.raises(Exception) as exc:
+        _dispatch(built, "get_metrics_glossary", {"bogus": 1})
+
+    assert "does not accept: bogus" in str(exc.value)
+
+
+def test_an_unknown_tool_still_fails_the_frameworks_way(built):
+    """The guard must not invent a second way for a call to fail. A tool nobody
+    registered is the framework's business."""
+    with pytest.raises(Exception) as exc:
+        _dispatch(built, "no_such_tool", {"x": 1})
+
+    assert "no_such_tool" in str(exc.value)
+
+
+def test_an_unreadable_schema_does_not_turn_into_a_call_failure(built, monkeypatch):
+    """Refusing a call on a guess about what a tool accepts would be worse than the
+    silence this replaces, so any doubt passes through."""
+    monkeypatch.setattr(
+        built._tool_manager, "get_tool", lambda name: (_ for _ in ()).throw(RuntimeError("boom"))
+    )
+
+    # A *legitimate* argument, so the assertion can tell "passed through" from
+    # "refused". With `{}` this test could not see the difference: nothing is unknown in
+    # an empty mapping, so a guard that had decided the tool accepts nothing would look
+    # identical to one that stood aside.
+    with pytest.raises(Exception) as exc:
+        _dispatch(built, "get_trial", {"trial_id": "whatever"})
+
+    assert "does not accept" not in str(exc.value)

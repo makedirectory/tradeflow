@@ -1767,7 +1767,89 @@ def build_server(data_client=None):
         """
         return _logged("list_configs", {}, configs.list_configs())
 
+    _refuse_unknown_arguments(server)
     return server
+
+
+def _refuse_unknown_arguments(server) -> None:
+    """Make an argument this surface does not accept an error rather than a silence.
+
+    The framework validates a call against the tool's schema and then **drops** every
+    key the schema does not declare. Nothing raises, nothing is logged, and the tool
+    returns a perfectly good result computed without the argument — so an agent told to
+    "turn on conditional risk" passes `conditional="ewma"`, gets a portfolio back, and
+    reports that it did. The wall held; its account of what it did did not.
+
+    That is the failure this whole surface is designed against: an agent reads a
+    description as fact and acts on it, and every action costs a journaled trial. A
+    dropped argument is the same class of lie as a stale description, arriving at call
+    time instead of read time.
+
+    A plain typo has the identical shape — `targt_te` silently leaves the default in
+    place — so both are refused. Naming the near-miss matters more here than for a
+    human, who would see the default in the output and wonder; an agent has nothing to
+    wonder at.
+
+    Wrapped at dispatch rather than declared per tool: `**kwargs` cannot express this,
+    because the framework turns it into a *required* schema property called `extra`,
+    which changes every tool's contract to fix a problem in none of them.
+    """
+    import difflib
+
+    original = server.call_tool
+
+    async def call_tool(name, arguments, *args, **kwargs):
+        declared = _declared_arguments(server, name)
+        # An unknown tool, or a schema we could not read, is the framework's business:
+        # pass it through rather than inventing a second way for a call to fail.
+        if declared is not None and isinstance(arguments, dict):
+            unknown = sorted(set(arguments) - declared)
+            if unknown:
+                raise ValueError(_unknown_argument_message(name, unknown, declared, difflib))
+        return await original(name, arguments, *args, **kwargs)
+
+    server.call_tool = call_tool
+
+
+def _declared_arguments(server, name: str):
+    """The argument names one tool accepts, or ``None`` if that cannot be established.
+
+    Read from the registered tool's own schema rather than from a signature, so it is
+    the same thing the client was shown. ``None`` on any doubt: refusing a call on a
+    guess about what a tool accepts would be worse than the silence this replaces.
+    """
+    try:
+        tool = server._tool_manager.get_tool(name)
+        schema = getattr(tool, "parameters", None) or {}
+        properties = schema.get("properties")
+    except Exception:  # noqa: BLE001 - never turn a lookup problem into a call failure
+        return None
+    return set(properties) if isinstance(properties, dict) else None
+
+
+def _unknown_argument_message(name: str, unknown, declared, difflib) -> str:
+    """Say what was ignored, and — where it can be known — why.
+
+    A withheld knob and a mistyped one need different actions, so they get different
+    sentences. `DEFERRED_PARAMS` already records why each gated family is absent; this
+    is the moment an agent actually needs that reason, so it is quoted rather than
+    referred to.
+    """
+    lines = [f"{name} does not accept: {', '.join(unknown)}."]
+    for argument in unknown:
+        reason = DEFERRED_PARAMS.get(argument)
+        if reason:
+            lines.append(f"  {argument}: withheld from this surface — {reason}.")
+            continue
+        close = difflib.get_close_matches(argument, sorted(declared), n=1)
+        if close:
+            lines.append(f"  {argument}: not a parameter of this tool. Did you mean {close[0]}?")
+        else:
+            lines.append(f"  {argument}: not a parameter of this tool.")
+    lines.append(
+        "Refused rather than ignored: an argument dropped in silence leaves you believing it was applied."
+    )
+    return "\n".join(lines)
 
 
 def serve() -> None:

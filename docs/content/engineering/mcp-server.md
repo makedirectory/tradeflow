@@ -163,6 +163,41 @@ so `neutralized_against` reports what was actually removed rather than always be
 empty; and `compute_attribution` is exposed as a read-only diagnostic that journals
 nothing.
 
+### An argument this surface does not accept is an error
+
+The framework validates a call against the tool's schema and then **drops** every key the
+schema does not declare — nothing raises, and the tool returns a good result computed
+without the argument. So an agent told to "turn on conditional risk" could pass
+`conditional="ewma"`, get a portfolio back, and report that it had done so. The wall
+held; the agent's account of what it did did not, which is the failure this whole surface
+is designed against.
+
+Unknown arguments are now refused at dispatch, and the refusal says which kind of mistake
+it was:
+
+```
+construct_portfolio does not accept: conditional.
+  conditional: withheld from this surface — evidence-gated: the conditional-risk
+  adoption gate does not clear.
+Refused rather than ignored: an argument dropped in silence leaves you believing it
+was applied.
+```
+
+```
+construct_portfolio does not accept: targt_te.
+  targt_te: not a parameter of this tool. Did you mean target_te?
+```
+
+A typo is refused for the same reason a withheld knob is: it silently leaves the default
+in place. A human would see that in the output and wonder; an agent has nothing to wonder
+at.
+
+It is wrapped at dispatch rather than declared per tool because `**kwargs` cannot express
+it — the framework turns that into a *required* schema property called `extra`, changing
+every tool's contract to fix a problem in none of them. Any doubt about what a tool
+accepts passes the call through untouched: refusing on a guess would be worse than the
+silence it replaces.
+
 The parity guard enumerates the **service signature** rather than a remembered list, so
 a parameter added to a service later fails the test instead of quietly becoming
 unreachable — which is how the previous gap opened. A second test calls each tool and
