@@ -371,3 +371,100 @@ def test_an_unavailable_campaign_renders_as_absent_not_as_an_empty_report(tmp_pa
 
     assert "trials rebuild" in printed
     assert "RECIPE" not in printed
+
+
+# --- the export carries what it claims, on the surface a reader sees ----------------
+def test_the_universe_reaches_the_rendered_block_not_just_the_payload(tmp_path):
+    """The block has carried the universe in JSON since the beginning and the renderer
+    printed none of it — "which names does this evidence cover" being exactly what an
+    export is for.
+
+    Asserted against the rendered text, because that is where this defect lives: the
+    same function already shipped once with a whole vocabulary present in the payload
+    and absent from the output, under tests that checked only the payload.
+    """
+    journal = tmp_path / "journal.jsonl"
+    trial_id = _journal_walkforward(journal)
+
+    with _store(journal) as store:
+        material = campaign_material(store, trial_id, journal_path=journal)
+
+    assert material[RECIPE]["universe"]["symbols"] == ["AAA", "BBB"]
+    text = format_campaign_material(material)
+    assert "AAA" in text and "BBB" in text
+    assert "2 symbol(s)" in text
+    # And how it was resolved: the pre-scan set is larger than what survived it.
+    assert "3 candidate(s) before the scan" in text
+
+
+def test_a_long_universe_says_how_many_it_elided(tmp_path):
+    """A silent truncation would be worse than the wall of tickers it avoids: a reader
+    counting names would be counting the renderer's limit, not the book's."""
+    journal = tmp_path / "journal.jsonl"
+    wide = [f"S{i:02d}" for i in range(18)]
+    trial_id = journal_trial(
+        "walkforward",
+        strategy="demo_trend",
+        symbols=wide,
+        start=datetime(2024, 1, 1),
+        end=datetime(2024, 4, 30),
+        params={},
+        metrics={"sharpe_ratio": 1.0},
+        dedup_params=walk_forward_recipe(**RECIPE_ARGS),
+        path=journal,
+    )
+
+    with _store(journal) as store:
+        text = format_campaign_material(campaign_material(store, trial_id, journal_path=journal))
+
+    assert "18 symbol(s)" in text
+    assert "(+6 more)" in text
+
+
+def test_a_trial_with_no_recorded_universe_says_so_rather_than_rendering_empty(tmp_path):
+    """Absent is not empty. A record that never captured its universe must not read as
+    a run over no symbols."""
+    from tradeflow.analytics.reporting import _universe_lines
+
+    (line,) = _universe_lines({})
+
+    assert "not recorded" in line
+
+
+def test_the_seed_is_read_from_where_it_actually_lives(tmp_path):
+    """The block contradicted itself: `metadata.seed` was `None` while
+    `recipe.validation.seed` held the real value two sections above.
+
+    `journal_trial` has no seed parameter, so the `seed` column is only ever populated
+    by the research agent's own session records — every walk-forward driven from the CLI
+    or MCP reported its seed as unrecorded while carrying it.
+    """
+    journal = tmp_path / "journal.jsonl"
+    trial_id = _journal_walkforward(journal)
+
+    with _store(journal) as store:
+        material = campaign_material(store, trial_id, journal_path=journal)
+
+    seed = material[METADATA]["seed"]
+    assert seed["recorded"] is True
+    assert seed["value"] == RECIPE_ARGS["seed"]
+    assert seed["from"] == "validation recipe"
+    # The two halves of the block now agree about it.
+    assert seed["value"] == material[RECIPE]["validation"]["seed"]
+    assert "(from the validation recipe)" in format_campaign_material(material)
+
+
+def test_a_run_whose_seed_nobody_recorded_still_says_so(tmp_path):
+    """Both directions, and the rule every other fact here follows: a backtest carries
+    no validation recipe, so its seed is genuinely absent — and an omitted line would
+    read as nothing to say rather than as nothing recorded."""
+    journal = tmp_path / "journal.jsonl"
+    trial_id = _journal_backtest(journal)
+
+    with _store(journal) as store:
+        material = campaign_material(store, trial_id, journal_path=journal)
+
+    seed = material[METADATA]["seed"]
+    assert seed["recorded"] is False and seed["value"] is None
+    assert "seed" in format_campaign_material(material)
+    assert "not recorded" in format_campaign_material(material)

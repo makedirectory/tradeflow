@@ -1076,6 +1076,40 @@ def format_dry_run(report: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+#: How many symbol names to print before summarising. A campaign universe runs to
+#: hundreds, and a wall of tickers is not more auditable than a count plus a sample —
+#: but a *silent* truncation would be, so the elision says how many it hid and the JSON
+#: keeps the full list either way.
+_UNIVERSE_SAMPLE = 12
+
+
+def _universe_lines(universe: Dict[str, Any]) -> List[str]:
+    """The names the evidence covers, and how many were considered to reach them.
+
+    Absent is not empty: a trial that recorded no universe says so, rather than
+    rendering as a run over nothing.
+    """
+    symbols = universe.get("symbols")
+    candidates = universe.get("candidate_symbols")
+    if symbols is None and candidates is None:
+        return [f"    {'universe':<16}{NOT_RECORDED} not recorded for this trial"]
+
+    lines = []
+    if symbols is None:
+        lines.append(f"    {'universe':<16}{NOT_RECORDED} not recorded for this trial")
+    else:
+        shown = ", ".join(symbols[:_UNIVERSE_SAMPLE])
+        hidden = len(symbols) - _UNIVERSE_SAMPLE
+        if hidden > 0:
+            shown += f", … (+{hidden} more)"
+        lines.append(f"    {'universe':<16}{len(symbols)} symbol(s): {shown}")
+    if candidates is not None:
+        # The pre-scan set. Its *size* is the interesting part — it says how much the
+        # scanner rejected, which is the "how it was resolved" half of the question.
+        lines.append(f"    {'considered':<16}{len(candidates)} candidate(s) before the scan")
+    return lines
+
+
 def format_campaign_material(material: Dict[str, Any]) -> str:
     """What validated a trial, with each section labelled by what kind of thing it is.
 
@@ -1104,6 +1138,13 @@ def format_campaign_material(material: Dict[str, Any]) -> str:
             lines.append(f"    {key:<16}{value}   (folded into its identity)")
     else:
         lines.append(f"    {NOT_RECORDED} {recipe.get('reason')}")
+
+    # The universe is part of what validated this, and the block has carried it in JSON
+    # since the beginning while this renderer printed none of it — the same "the payload
+    # has it, the text a reader sees does not" defect already found once in this
+    # function. Rendered under the recipe because that is what it is: which names the
+    # evidence covers, and how many were considered to get there.
+    lines.extend(_universe_lines(recipe.get("universe") or {}))
 
     lines.append("")
     lines.append("  SET UP WITH — how the run was configured. Not part of its identity.")
@@ -1139,6 +1180,16 @@ def format_campaign_material(material: Dict[str, Any]) -> str:
     lines.append("  METADATA — about the record, not about the strategy.")
     lines.append(f"    {'recorded':<16}{str(metadata.get('recorded_at'))[:19]}")
     lines.append(f"    {'git':<16}{metadata.get('git_sha') or NOT_RECORDED}")
+    # Named alongside the sha because both answer "what would it take to reproduce
+    # this", and because an omitted line reads as nothing to say rather than as nothing
+    # recorded. The source is printed with it: the seed's real home is the validation
+    # recipe, and a reader checking provenance should know which record it came off.
+    seed = metadata.get("seed")
+    if isinstance(seed, dict):
+        rendered = _recorded_cell(seed)
+        if seed.get("recorded") and seed.get("from"):
+            rendered += f"   (from the {seed['from']})"
+        lines.append(f"    {'seed':<16}{rendered}")
     lines.append(f"    {'notes':<16}{_recorded_cell(metadata.get('notes'))}")
     for artifact in metadata.get("artifacts") or []:
         state = artifact["read_with"] if artifact["recorded"] else f"{NOT_RECORDED} not recorded"
