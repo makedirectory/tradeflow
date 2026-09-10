@@ -91,6 +91,34 @@ so over MCP every fold reported `benchmark_available: False` and the benchmark-r
 promotion prerequisites were never *evaluated* — a gate that cannot be configured on a
 surface is not stricter there, it simply does not run, and nothing says so.
 
+**MCP intentionally does not expose evidence-gated construction knobs** whose own specs
+say they have not cleared adoption gates. This is not a parity miss; it is the evidence
+gate applying to an agent surface. Revisit only when the gated feature is promoted.
+
+Conditional risk, the Black-Litterman posterior and the multi-period aim policy ship
+*off* because their adoption gates do not clear, and the CLI makes a human read that
+before using them. An agent reads a description as fact and acts on it at machine speed,
+so a surface that offered the same knob as a neutral argument would become the easier way
+to switch on a feature nothing has validated. Being reachable is not being validated.
+`mcp.server.DEFERRED_PARAMS` is the list with a reason per parameter — `trade_rate` is
+there for a second reason worth keeping distinct: the service passes it only when
+`policy` is `"aim"`, so exposing it alone would be a knob that reaches nothing, which is
+the defect `_refuse_inert_flags` exists to stop on the CLI.
+
+Everything *ungated* must still be reachable, and the guard enumerates the **service
+signature** rather than a remembered list: every parameter is exposed or in
+`DEFERRED_PARAMS` with a reason. `construct_portfolio` exposed nine of the service's
+parameters while `allocate` carried about thirty, and the check found two more
+(`neutralize`, `scanner`) that reading the code had missed.
+
+Presence in the schema is not reach. The defect that started this was a tool advertising
+a `neutralized_against` field it could never populate, because no parameter existed to
+pass — and a mutation leaving the parameter in the signature while dropping it from the
+forwarding dict is indistinguishable from the outside. So a further test calls each tool
+and asserts the *service* received the value, and that an omitted knob is not forwarded
+at all, since a restated default is a second definition to keep in step.
+*Guarded by* `tests/test_mcp_surface.py`.
+
 `screen` is guarded the stronger way: its CLI flags are enumerated *from the parser*
 and every one must have a counterpart in the MCP tool's signature, rather than a
 hand-written list of the flags somebody remembered. Two knobs are spelled differently

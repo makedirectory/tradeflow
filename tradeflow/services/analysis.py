@@ -12,7 +12,7 @@ import json
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
 
 import numpy as np
 import pandas as pd
@@ -2994,7 +2994,7 @@ def compute_attribution(
     n_trials: int = 1,
     timeframe: str = "1Day",
     risk_model: str = "shrinkage",
-    benchmark_holdings: str = "equal",
+    benchmark_holdings: Union[str, Mapping[str, float]] = "equal",
     benchmark_premium: float = 0.05,
     signals: Optional[Sequence[str]] = None,
     min_obs: int = 60,
@@ -3868,7 +3868,7 @@ def construct_portfolio(
     current_weights: Optional[Dict[str, float]] = None,
     holding_period_years: float = 1.0 / 12.0,
     cost_aware: bool = True,
-    benchmark_holdings: Optional[str] = None,
+    benchmark_holdings: Optional[Union[str, Mapping[str, float]]] = None,
     benchmark_premium: float = 0.05,
     book: str = "long_only",
     gross_leverage: Optional[float] = None,

@@ -46,6 +46,7 @@ EXPOSED_TOOLS = (
     "compute_risk",
     "construct_portfolio",
     "compute_information",
+    "compute_attribution",
     "compute_horizon",
     "render_report",
     "list_trials",
@@ -91,6 +92,35 @@ NON_JOURNALING_NOTE = (
 #: description must name the gate and its current verdict rather than presenting the
 #: flag as a neutral option - an agent reads a description as fact and acts on it.
 EVIDENCE_GATED = ("conditional", "policy", "posterior")
+
+#: Service parameters this surface deliberately does **not** expose, and why.
+#:
+#: MCP parity says anything a run can be configured with should be reachable from both
+#: surfaces. Evidence gating is the stronger rule, and where the two disagree this is the
+#: list that records which won. A feature whose own adoption gate does not clear must not
+#: find in the agent surface an easier way to be switched on than the one a human reads a
+#: warning before using — an agent acts on a description at machine speed, and being
+#: reachable is not the same as being validated.
+#:
+#: Keyed by service parameter, because that is what the parity test enumerates: a
+#: parameter absent from a tool must appear here with a reason, or the test fails. That
+#: makes "not wired yet" impossible to confuse with "deliberately withheld".
+DEFERRED_PARAMS = {
+    "conditional": "evidence-gated: the conditional-risk adoption gate does not clear",
+    "conditional_lambda": "evidence-gated: configures conditional risk",
+    "conditional_method": "evidence-gated: configures conditional risk",
+    "posterior": "evidence-gated: the Black-Litterman posterior gate does not clear",
+    "posterior_ic": "evidence-gated: configures the posterior",
+    "posterior_t_eff": "evidence-gated: configures the posterior",
+    "posterior_tau": "evidence-gated: configures the posterior",
+    "policy": "evidence-gated: the multi-period aim policy gate does not clear",
+    # Inert rather than dangerous, and withheld for that reason: the service passes it
+    # only when `policy == "aim"`, so exposing it without the gated policy would be a
+    # knob that silently reaches nothing — the defect `_refuse_inert_flags` exists to
+    # stop on the CLI.
+    "trade_rate": "evidence-gated: reaches nothing unless `policy` is 'aim', which is gated",
+    "decay_lookback_days": "evidence-gated: only feeds the aim policy's decay estimate",
+}
 
 #: Deliberately CLI-only, and not an oversight. Quarantining evidence and retiring an
 #: era are operator decisions about a campaign's record, not run configuration: one
@@ -909,6 +939,9 @@ def build_server(data_client=None):
         neutralize: bool = False,
         lookback_days: int = 180,
         scaling: str = "case1",
+        neutralize_factors: Optional[List[str]] = None,
+        price_derived: Optional[bool] = None,
+        timeframe: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Rank `symbols` by continuous alpha (residual-return forecast) as of a date.
 
@@ -921,6 +954,12 @@ def build_server(data_client=None):
         uses the strategy's continuous conviction; "signal" uses its BUY/SELL/HOLD as
         +1/-1/0; "scanner" uses the scanner's continuous strength. Read-only. The
         absolute scale is only as good as the assumed IC; relative ranking is not.
+
+        `neutralize_factors` names risk-model factors to regress out of the alpha, and
+        the factors actually removed come back in `neutralized_against`. Without it that
+        field is empty — which is what this surface reported for every call before the
+        parameter existed, so a caller could ask for neutralization and be told, in a
+        field it echoed back, that none had happened.
         """
         inputs = {
             "strategy": strategy,
@@ -945,6 +984,15 @@ def build_server(data_client=None):
             neutralize=neutralize,
             lookback_days=lookback_days,
             scaling=scaling,
+            **{
+                k: v
+                for k, v in (
+                    ("neutralize_factors", neutralize_factors),
+                    ("price_derived", price_derived),
+                    ("timeframe", timeframe),
+                )
+                if v is not None
+            },
         )
         return _logged("compute_alphas", inputs, result)
 
@@ -1051,8 +1099,27 @@ def build_server(data_client=None):
         target_te: float = 0.04,
         max_weight: float = 0.25,
         max_names: Optional[int] = None,
+        min_weight: Optional[float] = None,
         benchmark: str = "SPY",
         capital: Optional[float] = None,
+        scanner: Optional[str] = None,
+        neutralize: Optional[bool] = None,
+        neutralize_factors: Optional[List[str]] = None,
+        book: Optional[str] = None,
+        gross_leverage: Optional[float] = None,
+        short_max_weight: Optional[float] = None,
+        benchmark_holdings: Optional[Dict[str, float]] = None,
+        benchmark_premium: Optional[float] = None,
+        current_weights: Optional[Dict[str, float]] = None,
+        holding_period_years: Optional[float] = None,
+        lookback_days: Optional[int] = None,
+        timeframe: Optional[str] = None,
+        risk_model: Optional[str] = None,
+        cost_aware: Optional[bool] = None,
+        commission_bps: Optional[float] = None,
+        impact_eta: Optional[float] = None,
+        participation_cap: Optional[float] = None,
+        borrow_bps: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Construct the mean-variance optimal portfolio from alphas and Σ.
 
@@ -1070,13 +1137,60 @@ def build_server(data_client=None):
         A PROPOSAL, never an order. This is research-clock only: it cannot trade, and
         a human promotes any config that comes out of it.
 
-        Scope note, so you do not assume more than this exposes: this tool solves the
-        long-only, cash-relative book with the default cost assumptions. Factor
-        neutralization, a portfolio-level benchmark, market-neutral books, and the
-        evidence-gated features below are reachable from the command line but are not
-        arguments here — `run_verdict` is the composite path with coherent defaults.
+        `book="market_neutral"` with `gross_leverage`/`short_max_weight` builds a
+        long/short book; `benchmark_holdings` (plus `benchmark_premium`) makes the solve
+        benchmark-relative; `neutralize_factors` regresses named risk-model factors out
+        of the alpha first; `current_weights` makes turnover measured from a real book
+        rather than from cash. The cost knobs set the assumptions the objective prices
+        turnover with.
+
+        Scope note, so you do not assume more than this exposes: the evidence-gated
+        features — conditional risk, the Black-Litterman posterior, and the multi-period
+        aim policy — are **not** arguments here and will not become so while their own
+        adoption gates do not clear. That is deliberate, not an omission: being reachable
+        from an agent is not the same as being validated, and this surface must not be
+        the easier way to switch on a feature the command line warns about.
         """
-        inputs = {"strategy": strategy, "symbols": symbols, "as_of": as_of, "target_te": target_te}
+        # Only what the caller actually set is forwarded, so an omitted knob keeps the
+        # service's own default rather than this surface restating it — a second copy of
+        # a default is a second thing to keep in step.
+        optional = {
+            "min_weight": min_weight,
+            "scanner": scanner,
+            "neutralize": neutralize,
+            "neutralize_factors": neutralize_factors,
+            "book": book,
+            "gross_leverage": gross_leverage,
+            "short_max_weight": short_max_weight,
+            "benchmark_holdings": benchmark_holdings,
+            "benchmark_premium": benchmark_premium,
+            "current_weights": current_weights,
+            "holding_period_years": holding_period_years,
+            "lookback_days": lookback_days,
+            "timeframe": timeframe,
+            "risk_model": risk_model,
+            "cost_aware": cost_aware,
+            "commission_bps": commission_bps,
+            "impact_eta": impact_eta,
+            "participation_cap": participation_cap,
+            "borrow_bps": borrow_bps,
+        }
+        # Every knob the caller set, not just the four this used to record. The audit
+        # log exists so a human can replay what an agent did, and the tool grew from
+        # nine parameters to twenty-seven while the record stayed at four — a
+        # market-neutral, leveraged proposal audited identically to a default one.
+        inputs = {
+            "strategy": strategy,
+            "symbols": symbols,
+            "as_of": as_of,
+            "source": source,
+            "target_te": target_te,
+            "max_weight": max_weight,
+            "max_names": max_names,
+            "benchmark": benchmark,
+            "capital": capital,
+            **{k: v for k, v in optional.items() if v is not None},
+        }
         result = analysis.construct_portfolio(
             dc,
             strategy,
@@ -1088,6 +1202,7 @@ def build_server(data_client=None):
             max_names=max_names,
             benchmark=benchmark,
             capital=capital,
+            **{k: v for k, v in optional.items() if v is not None},
         )
         return _logged("construct_portfolio", inputs, result)
 
@@ -1124,6 +1239,94 @@ def build_server(data_client=None):
             n_trials=n_trials,
         )
         return _logged("compute_information", inputs, result)
+
+    @tool("information_ratio")
+    def compute_attribution(
+        strategy: str,
+        symbols: List[str],
+        start: str,
+        end: str,
+        source: str = "strategy",
+        scanner: str = "demo_volume",
+        benchmark: str = "SPY",
+        neutralize_factors: Optional[List[str]] = None,
+        signals: Optional[List[str]] = None,
+        horizon: int = 5,
+        n_points: int = 24,
+        n_trials: int = 1,
+        timeframe: Optional[str] = None,
+        benchmark_holdings: Optional[Dict[str, float]] = None,
+        benchmark_premium: Optional[float] = None,
+        detail: Optional[bool] = None,
+        min_obs: Optional[int] = None,
+        risk_model: Optional[str] = None,
+        bootstrap_skill: Optional[bool] = None,
+        bootstrap_b: Optional[int] = None,
+        bootstrap_block_length: Optional[float] = None,
+        bootstrap_seed: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Attribute realized active return to timing, risk factors, signals and picking.
+
+        Splits each sampled rebalance's active return by an exact regression identity
+        into the systematic benchmark-timing bucket, each risk factor
+        (market/momentum/volatility/size), the strategy's own alpha as a signal column
+        (plus any additional `signals`), and a stock-picking remainder — then confronts
+        every attributed t-stat with the same research-integrity guardrails
+        `compute_information` applies to ICs, so a bucket that looks significant on a
+        short sample is not read as skill.
+
+        Answers the question `compute_information` cannot: not "does the signal rank
+        names" but "where did the realized return actually come from". A book whose
+        return is mostly the factor bucket is a factor bet wearing a strategy's name.
+
+        Read-only, research-clock, leakage-safe by construction: each cross-section is
+        rebuilt from bars strictly at or before its own instant. Journals nothing.
+
+        `n_trials` deflates for the search that produced this candidate — pass the
+        number of configurations tried, not 1, or the t-stats flatter themselves.
+        """
+        optional = {
+            "neutralize_factors": neutralize_factors,
+            "signals": signals,
+            "timeframe": timeframe,
+            "benchmark_holdings": benchmark_holdings,
+            "benchmark_premium": benchmark_premium,
+            "detail": detail,
+            "min_obs": min_obs,
+            "risk_model": risk_model,
+            "bootstrap_skill": bootstrap_skill,
+            "bootstrap_b": bootstrap_b,
+            "bootstrap_block_length": bootstrap_block_length,
+            "bootstrap_seed": bootstrap_seed,
+        }
+        inputs = {
+            "strategy": strategy,
+            "symbols": symbols,
+            "start": start,
+            "end": end,
+            "source": source,
+            "scanner": scanner,
+            "benchmark": benchmark,
+            "horizon": horizon,
+            "n_points": n_points,
+            "n_trials": n_trials,
+            **{k: v for k, v in optional.items() if v is not None},
+        }
+        result = analysis.compute_attribution(
+            dc,
+            strategy,
+            symbols,
+            _parse_date(start),
+            _parse_date(end),
+            source=source,
+            scanner=scanner,
+            benchmark=benchmark,
+            horizon=horizon,
+            n_points=n_points,
+            n_trials=n_trials,
+            **{k: v for k, v in optional.items() if v is not None},
+        )
+        return _logged("compute_attribution", inputs, result)
 
     @tool("deflated_sharpe_ratio", "information_ratio", notes=[_JOURNALING_NOTE, _GATED_NOTE])
     def run_verdict(
