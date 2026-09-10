@@ -54,10 +54,45 @@ In this order, deliberately:
    account refills behind you.
 2. **Cancel** every open order.
 3. **Close** every position.
+4. **Read the account back** and report what is *actually* still open.
 
 Every step is attempted even if an earlier one failed, because a partial flatten
 beats stopping halfway and leaving positions open. The report says exactly which
 steps succeeded, and the command exits non-zero if any did not.
+
+### Submitted is not closed
+
+A close is a **request**. Outside market hours it queues, and at the open it fills
+piecemeal — so there is an interval, minutes wide at best, where every close has been
+accepted and the account still holds everything. The report therefore separates the two
+facts and never calls the book flat without a broker read that saw it:
+
+```
+FLATTEN
+  halt set                  : yes
+  orders cancelled          : yes
+  close orders submitted    : yes
+  positions observed closed : pending
+  last broker position check: 2026-01-02T14:31:07+00:00
+  remaining positions       : 4 (AAPL, KO, MSFT, PFE)
+
+NOT FLAT YET — the close orders are with the broker and these positions
+are still open. Queued closes do not fill outside market hours, and
+fill piecemeal at the open. Re-check before believing you are flat.
+```
+
+`positions observed closed` is four-valued, because the four mean different things to
+whoever has to act:
+
+| Value | Meaning |
+| --- | --- |
+| `yes` | a broker read came back with no positions — the only state that counts as flat |
+| `pending` | the closes were accepted and positions are still open; they may fill later |
+| `no` | the close request itself failed, and positions are still open |
+| `unknown` | the confirming read failed, so nothing here knows what is open |
+
+The command exits non-zero for everything except `yes`. A script that treated exit 0 as
+"flat" was previously being told only that the request had been accepted.
 
 ## A halt never blocks an exit
 

@@ -181,7 +181,7 @@ def test_flatten_still_closes_positions_when_cancelling_orders_fails(halts):
 
     report = flatten(broker, reason="drill", halt_state=halts)
 
-    assert report.positions_closed is True
+    assert report.close_submitted is True
     assert report.orders_cancelled is False
     assert not report.complete
     assert report.failures
@@ -196,3 +196,89 @@ def test_an_incomplete_flatten_says_so_rather_than_reporting_success(halts):
     assert not report.complete
     assert "INCOMPLETE" in report.summary()
     assert halts.is_halted() is True  # the halt still stands
+
+
+# --- submitted is not observed -----------------------------------------------------
+class QueueingBroker(FakeBroker):
+    """A broker that accepts the close and keeps the positions.
+
+    Exactly what a real venue does outside market hours: `close_all_positions` returns
+    successfully, the orders queue, and the account still holds everything until the
+    open. Observed in practice — a flatten reported every position closed and the
+    account still held twelve of them eight minutes later.
+    """
+
+    def close_all_positions(self, cancel_orders: bool = True) -> bool:
+        return True  # accepted, and nothing is closed
+
+
+def test_a_queued_close_is_not_reported_as_a_closed_position(halts):
+    """The defect this exists to stop: `positions_closed` was set when the *request*
+    returned, so a flatten whose orders merely queued printed a complete report and a
+    reassuring next step, while the book was untouched."""
+    from tradeflow.execution.flatten import PENDING
+
+    broker = QueueingBroker(positions=[_position()])
+
+    report = flatten(broker, reason="drill", halt_state=halts)
+
+    assert report.close_submitted is True  # the request was accepted
+    assert report.observed == PENDING  # and nothing was observed closed
+    assert not report.complete
+    assert report.remaining == [_position().symbol]
+    assert report.checked_at
+
+    text = report.summary()
+    assert "NOT FLAT YET" in text
+    assert "close orders submitted    : yes" in text
+    assert "positions observed closed : pending" in text
+    # It must not claim the terminal state anywhere.
+    assert "Flat, and confirmed" not in text
+
+
+def test_a_confirmed_flatten_says_flat_and_names_when_it_looked(halts):
+    """Both directions: the guard must still recognise the case it exists to permit,
+    and the confirmation has to carry the instant it was taken — a flat report with no
+    timestamp is a claim with no evidence behind it."""
+    from tradeflow.execution.flatten import CLOSED
+
+    report = flatten(FakeBroker(positions=[_position()]), reason="drill", halt_state=halts)
+
+    assert report.observed == CLOSED
+    assert report.complete
+    assert report.remaining == []
+    assert report.checked_at
+    text = report.summary()
+    assert "positions observed closed : yes" in text
+    assert "Flat, and confirmed by a broker read" in text
+
+
+def test_an_unreadable_account_is_never_reported_as_flat(halts):
+    """Absent is not zero, in the place it would hurt most. A confirming read that
+    failed must not render as a clean book."""
+    from tradeflow.execution.flatten import UNKNOWN
+
+    broker = FailingBroker(positions=[_position()])
+    broker.failures["list_positions"] = BrokerUnavailableError("timeout")
+
+    report = flatten(broker, reason="drill", halt_state=halts)
+
+    assert report.observed == UNKNOWN
+    assert not report.complete
+    assert "UNCONFIRMED" in report.summary()
+    assert "positions observed closed : unknown" in report.summary()
+
+
+def test_a_failed_close_is_distinguished_from_a_queued_one(halts):
+    """`no` and `pending` are different operator situations: one means the venue never
+    took the request, the other means it took it and has not filled it."""
+    from tradeflow.execution.flatten import NOT_CLOSED
+
+    broker = FailingBroker(positions=[_position()])
+    broker.failures["close_all_positions"] = BrokerUnavailableError("timeout")
+
+    report = flatten(broker, reason="drill", halt_state=halts)
+
+    assert report.close_submitted is False
+    assert report.observed == NOT_CLOSED
+    assert not report.complete

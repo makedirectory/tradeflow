@@ -30,19 +30,45 @@ from tradeflow.execution.halt import ALL, HaltState
 logger = logging.getLogger(__name__)
 
 
+#: What a broker read afterwards actually established about the positions.
+#:
+#: Four values, not a boolean, because submitting a close and observing it is not the
+#: same fact and the gap between them is where an operator gets hurt. Closes queue
+#: outside market hours and fill piecemeal at the open: a real flatten reported every
+#: position closed and the account still held twelve of them eight minutes later.
+CLOSED = "yes"  # a broker read came back with no positions
+PENDING = "pending"  # closes were submitted and positions are still open
+NOT_CLOSED = "no"  # the close request itself failed, and positions are still open
+UNKNOWN = "unknown"  # the confirming read failed; nothing here knows what is open
+
+
 @dataclass
 class FlattenReport:
-    """What each step of the flatten actually did."""
+    """What each step of the flatten did, and what a broker read afterwards observed.
+
+    The distinction this type exists to keep is between a request that was *accepted*
+    and a state that was *observed*. ``close_submitted`` is the first; ``observed`` is
+    the second, and only the second can be called flat.
+    """
 
     started_at: str
     halted: bool = False
     orders_cancelled: bool = False
-    positions_closed: bool = False
+    close_submitted: bool = False
+    observed: str = UNKNOWN
+    checked_at: Optional[str] = None
+    remaining: List[str] = field(default_factory=list)
     failures: List[str] = field(default_factory=list)
 
     @property
     def complete(self) -> bool:
-        return self.halted and self.orders_cancelled and self.positions_closed
+        """Flat, and known to be. Deliberately requires the *observation*.
+
+        This used to be satisfied by the close call returning, so a flatten whose orders
+        merely queued reported success and printed a reassuring next step. Submission is
+        not a terminal state; nothing may claim one without a read that saw it.
+        """
+        return self.halted and self.orders_cancelled and self.observed == CLOSED
 
     def as_dict(self) -> Dict[str, Any]:
         return {
@@ -50,22 +76,44 @@ class FlattenReport:
             "complete": self.complete,
             "halted": self.halted,
             "orders_cancelled": self.orders_cancelled,
-            "positions_closed": self.positions_closed,
+            "close_submitted": self.close_submitted,
+            "observed": self.observed,
+            "checked_at": self.checked_at,
+            "remaining": self.remaining,
             "failures": self.failures,
         }
 
     def summary(self) -> str:
+        remaining = (
+            f"{len(self.remaining)} ({', '.join(sorted(self.remaining))})"
+            if self.remaining
+            else ("none" if self.observed == CLOSED else "unknown")
+        )
         lines = [
             "FLATTEN",
-            f"  halt set          : {'yes' if self.halted else 'NO'}",
-            f"  orders cancelled  : {'yes' if self.orders_cancelled else 'NO'}",
-            f"  positions closed  : {'yes' if self.positions_closed else 'NO'}",
+            f"  halt set                  : {'yes' if self.halted else 'NO'}",
+            f"  orders cancelled          : {'yes' if self.orders_cancelled else 'NO'}",
+            f"  close orders submitted    : {'yes' if self.close_submitted else 'NO'}",
+            f"  positions observed closed : {self.observed}",
+            f"  last broker position check: {self.checked_at or 'never'}",
+            f"  remaining positions       : {remaining}",
         ]
         for failure in self.failures:
             lines.append(f"  ! {failure}")
+
         if self.complete:
-            lines.append("\nThe engine cannot re-enter while the halt stands. Verify at the broker,")
-            lines.append("then `tradeflow resume all` when you are ready.")
+            lines.append("\nFlat, and confirmed by a broker read at the time above.")
+            lines.append("The engine cannot re-enter while the halt stands;")
+            lines.append("`tradeflow resume all` when you are ready.")
+        elif self.observed == PENDING:
+            # The case that used to read as success. Say what is true: the venue has the
+            # orders and has not filled them, which outside market hours can last hours.
+            lines.append("\nNOT FLAT YET — the close orders are with the broker and these positions")
+            lines.append("are still open. Queued closes do not fill outside market hours, and")
+            lines.append("fill piecemeal at the open. Re-check before believing you are flat.")
+        elif self.observed == UNKNOWN:
+            lines.append("\nUNCONFIRMED — the position read failed, so nothing here knows what")
+            lines.append("is open. Check the broker directly.")
         else:
             lines.append("\nINCOMPLETE — check the broker directly and finish by hand.")
         return "\n".join(lines)
@@ -102,13 +150,53 @@ def flatten(
         # Orders were cancelled above; asking again is harmless and covers the case
         # where that call failed but the close path can still clear them.
         broker.close_all_positions(cancel_orders=True)
-        report.positions_closed = True
+        report.close_submitted = True
     except BrokerError as exc:
         report.failures.append(f"could not close positions: {exc}")
         logger.error("Could not close positions", exc_info=True)
 
+    _confirm(broker, report)
+
     if report.complete:
-        logger.warning("Flatten complete: %s", reason)
+        logger.warning("Flatten complete and confirmed flat: %s", reason)
+    elif report.observed == PENDING:
+        logger.error(
+            "Flatten submitted but NOT FLAT: %d position(s) still open at %s (%s)",
+            len(report.remaining),
+            report.checked_at,
+            ", ".join(sorted(report.remaining)),
+        )
     else:
         logger.error("Flatten INCOMPLETE: %s", report.failures)
     return report
+
+
+def _confirm(broker: Broker, report: FlattenReport) -> None:
+    """Ask the broker what is actually open, and record it.
+
+    The step that makes the difference between "we asked" and "it happened". A close is
+    a *request*: outside market hours it queues, and at the open it fills piecemeal, so
+    the interval where the account still holds everything is minutes wide at best.
+
+    One read, and no waiting. This is the command someone runs when they have stopped
+    trusting the system, so it must answer now rather than block on a fill that may be
+    hours away — and it must never poll a broker in a loop. Reporting a truthful
+    ``pending`` is worth more than a confident answer arrived at late.
+
+    A read that fails leaves ``UNKNOWN``, never ``CLOSED``: this is exactly the place
+    where an absent answer must not be rendered as a clean one.
+    """
+    report.checked_at = datetime.now(timezone.utc).isoformat()
+    try:
+        positions = broker.list_positions() or []
+    except BrokerError as exc:
+        report.failures.append(f"could not confirm positions: {exc}")
+        report.observed = UNKNOWN
+        logger.error("Could not confirm the flatten against the broker", exc_info=True)
+        return
+
+    report.remaining = [p.symbol for p in positions]
+    if not positions:
+        report.observed = CLOSED
+    else:
+        report.observed = PENDING if report.close_submitted else NOT_CLOSED
