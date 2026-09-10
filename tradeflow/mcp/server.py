@@ -1793,10 +1793,19 @@ def _refuse_unknown_arguments(server) -> None:
     Wrapped at dispatch rather than declared per tool: `**kwargs` cannot express this,
     because the framework turns it into a *required* schema property called `extra`,
     which changes every tool's contract to fix a problem in none of them.
-    """
-    import difflib
 
-    original = server.call_tool
+    **Wrapped on the tool manager, not on the server.** The obvious place —
+    reassigning ``server.call_tool`` after the tools are registered — does not work, and
+    fails in the worst possible way: the framework registers its low-level protocol
+    handler during ``FastMCP.__init__``, capturing the *bound method* as it was then, so
+    a later reassignment is invisible to every real client while a test that calls
+    ``server.call_tool`` directly still sees it. That is a guard which passes its own
+    suite and protects nobody, and it is what the first version of this did.
+    ``FastMCP.call_tool`` looks its manager up as ``self._tool_manager`` at call time, so
+    wrapping the manager is on both paths.
+    """
+    manager = server._tool_manager
+    original = manager.call_tool
 
     async def call_tool(name, arguments, *args, **kwargs):
         declared = _declared_arguments(server, name)
@@ -1805,10 +1814,10 @@ def _refuse_unknown_arguments(server) -> None:
         if declared is not None and isinstance(arguments, dict):
             unknown = sorted(set(arguments) - declared)
             if unknown:
-                raise ValueError(_unknown_argument_message(name, unknown, declared, difflib))
+                raise ValueError(_unknown_argument_message(name, unknown, declared))
         return await original(name, arguments, *args, **kwargs)
 
-    server.call_tool = call_tool
+    manager.call_tool = call_tool
 
 
 def _declared_arguments(server, name: str):
@@ -1827,7 +1836,7 @@ def _declared_arguments(server, name: str):
     return set(properties) if isinstance(properties, dict) else None
 
 
-def _unknown_argument_message(name: str, unknown, declared, difflib) -> str:
+def _unknown_argument_message(name: str, unknown, declared) -> str:
     """Say what was ignored, and — where it can be known — why.
 
     A withheld knob and a mistyped one need different actions, so they get different
@@ -1835,6 +1844,8 @@ def _unknown_argument_message(name: str, unknown, declared, difflib) -> str:
     is the moment an agent actually needs that reason, so it is quoted rather than
     referred to.
     """
+    import difflib
+
     lines = [f"{name} does not accept: {', '.join(unknown)}."]
     for argument in unknown:
         reason = DEFERRED_PARAMS.get(argument)
