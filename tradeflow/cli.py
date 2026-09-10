@@ -4631,6 +4631,24 @@ def cmd_flatten(args) -> None:
         print(json.dumps(report.as_dict(), indent=2))
     else:
         print(report.summary())
+        if not report.complete:
+            # `pending` is otherwise a dead end: the operator is told the book is not
+            # flat and not how to find out when it is. The library cannot phrase this —
+            # it is trade-clock code and the answer differs between an installed copy
+            # and a checkout — so the surface that knows renders it.
+            #
+            # Deliberately NOT `reconcile`: that answers "does my ledger match the
+            # broker", not "am I flat", and in this exact state it reports no divergence
+            # while the whole book is still open. Re-running the flatten is what takes
+            # the read again.
+            try:
+                rerun = _invocation("flatten --confirm --reason ...")
+            except OSError:  # pragma: no cover - the working directory was deleted
+                rerun = "tradeflow flatten --confirm --reason ..."
+            print(f"\n  Re-read the broker:  {rerun}")
+    # Exit non-zero unless a broker read *observed* the book flat. A queued close now
+    # fails this, which is the point: a script that treated exit 0 as "flat" was being
+    # told the request had been accepted.
     if not report.complete:
         raise SystemExit(1)
 

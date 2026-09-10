@@ -54,10 +54,60 @@ In this order, deliberately:
    account refills behind you.
 2. **Cancel** every open order.
 3. **Close** every position.
+4. **Read the account back** and report what is *actually* still open.
 
 Every step is attempted even if an earlier one failed, because a partial flatten
 beats stopping halfway and leaving positions open. The report says exactly which
 steps succeeded, and the command exits non-zero if any did not.
+
+### Submitted is not closed
+
+A close is a **request**. Outside market hours it queues, and at the open it fills
+piecemeal — so there is an interval, minutes wide at best, where every close has been
+accepted and the account still holds everything. The report therefore separates the two
+facts and never calls the book flat without a broker read that saw it:
+
+```
+FLATTEN
+  halt set                  : yes
+  orders cancelled          : yes
+  close orders submitted    : yes
+  positions observed closed : pending
+  last broker position check: 2026-01-02T14:31:07+00:00
+  remaining positions       : 4 (AAPL, KO, MSFT, PFE)
+  resting orders observed   : 0
+
+NOT FLAT — the close orders were accepted and these positions are
+still open. A queued close fills at the next open; a *refused* one
+never will, and this cannot tell them apart. Re-run to re-read, and
+check the symbols above at the broker if they persist.
+```
+
+`positions observed closed` is four-valued, because the four mean different things to
+whoever has to act:
+
+| Value | Meaning |
+| --- | --- |
+| `yes` | a broker read came back with no positions — the only state that counts as flat |
+| `pending` | the closes were accepted and positions are still open; they may fill later |
+| `no` | the close request itself failed, and positions are still open |
+| `unknown` | the confirming read failed, so nothing here knows what is open |
+
+**Both legs are observed, not assumed.** The cancel is a submitted fact too, so the same
+read reports how many orders are still resting — a resting order the cancel missed can
+refill the book after the instant the read was taken. `unknown` there means the order
+book could not be read.
+
+The command exits zero only when the halt is recorded **and** a broker read saw no
+positions **and** saw no resting orders. Everything else exits non-zero. A script that
+treated exit 0 as "flat" was previously being told only that the close request had been
+accepted.
+
+Note the case this makes newly honest: if the cancel *call* failed but the read finds no
+positions and no resting orders, that is reported as flat — with the failed call still
+listed — because the account is verifiably in the terminal state. The old logic called
+it incomplete on the strength of a call that failed over an order book which turned out
+to be empty anyway.
 
 ## A halt never blocks an exit
 
