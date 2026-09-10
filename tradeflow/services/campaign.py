@@ -261,9 +261,22 @@ def _seed(row, record) -> Dict[str, Any]:
     this block follows.
     """
     recipe_seed = ((record or {}).get("dedup_params") or {}).get("seed")
+    stored = row.get("seed")
+
+    if recipe_seed is not None and stored is not None and recipe_seed != stored:
+        # Two records of one fact, disagreeing. The recipe is what defines the run, so
+        # it is the value — but reporting only the winner would hide that the record is
+        # internally inconsistent, and this block exists to make provenance checkable.
+        # Nothing here can tell which is the mistake, so it says both and neither is
+        # quietly dropped.
+        return {
+            "recorded": True,
+            "value": recipe_seed,
+            "from": "validation recipe",
+            "disagrees_with": {"value": stored, "from": "session record"},
+        }
     if recipe_seed is not None:
         return {"recorded": True, "value": recipe_seed, "from": "validation recipe"}
-    stored = row.get("seed")
     if stored is not None:
         return {"recorded": True, "value": stored, "from": "session record"}
     return {"recorded": False, "value": None, "from": None}
