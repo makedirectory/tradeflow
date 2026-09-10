@@ -744,3 +744,180 @@ def test_the_audit_log_records_the_knobs_a_proposal_was_made_with(tmp_path, monk
     assert recorded.get("commission_bps") == 25.0
     # And an unset knob is not recorded as though it had been chosen.
     assert "posterior" not in recorded and "min_weight" not in recorded
+
+
+# --- an argument this surface does not accept is an error, not a silence ------------
+def _dispatch(built, tool, args):
+    """Through the **registered protocol handler**, which is what a client reaches.
+
+    Deliberately not `built.call_tool(...)`. The framework captures its low-level
+    handler during construction, so a guard installed afterwards can be live on the
+    method a test calls and absent from the path a client uses — and the first version
+    of this guard was exactly that: green suite, no protection. Driving the handler is
+    the only way the test can tell those two worlds apart.
+
+    Returns the protocol result, so a refusal arrives as `isError` rather than a raised
+    exception, which is also what a client actually sees.
+    """
+    import asyncio
+
+    import mcp.types as mcp_types
+
+    handler = built._mcp_server.request_handlers[mcp_types.CallToolRequest]
+    request = mcp_types.CallToolRequest(
+        method="tools/call",
+        params=mcp_types.CallToolRequestParams(name=tool, arguments=args),
+    )
+    return asyncio.run(handler(request)).root
+
+
+def _dispatch_text(built, tool, args):
+    """The text a client would be shown, and whether the call was an error."""
+    result = _dispatch(built, tool, args)
+    content = getattr(result, "content", None) or []
+    text = getattr(content[0], "text", "") if content else ""
+    return bool(getattr(result, "isError", False)), text
+
+
+def test_a_withheld_knob_is_refused_and_says_why(built):
+    """The gap the parity work left open. The framework validates against the schema and
+    then *drops* undeclared keys, so an agent told to "turn on conditional risk" passed
+    `conditional="ewma"`, got a portfolio back, and reported that it had done so. The
+    wall held; the agent's account of what it did did not.
+
+    The reason is quoted at the moment it is needed rather than referred to — this is
+    where an agent actually has to learn that the knob is withheld and not broken.
+    """
+    errored, message = _dispatch_text(
+        built,
+        "construct_portfolio",
+        {
+            "strategy": "demo_trend",
+            "symbols": SYMBOLS,
+            "as_of": "2025-06-01",
+            "conditional": "ewma",
+        },
+    )
+
+    assert errored, "the call succeeded — the knob was dropped in silence again"
+    assert "does not accept: conditional" in message
+    assert "withheld from this surface" in message
+    assert "adoption gate does not clear" in message
+
+
+def test_a_mistyped_argument_is_refused_and_the_near_miss_named(built):
+    """A typo has the identical shape: the default silently stays in place. A human
+    would see it in the output and wonder; an agent has nothing to wonder at."""
+    errored, message = _dispatch_text(
+        built,
+        "construct_portfolio",
+        {"strategy": "demo_trend", "symbols": SYMBOLS, "as_of": "2025-06-01", "targt_te": 0.04},
+    )
+
+    assert errored
+    assert "targt_te" in message
+    assert "Did you mean target_te" in message
+
+
+def test_every_declared_argument_is_still_accepted(built):
+    """Both directions, and the one that matters for a guard at dispatch: it must not
+    reject the calls it exists to permit. Driven from each tool's own schema, so a knob
+    added later is covered without being remembered here."""
+    import asyncio
+
+    tools = {t.name: t for t in asyncio.run(built.list_tools())}
+    declared = set((tools["construct_portfolio"].inputSchema.get("properties") or {}).keys())
+
+    # Every ungated knob, passed at once, must get through the guard.
+    args = {
+        "strategy": "demo_trend",
+        "symbols": SYMBOLS,
+        "as_of": "2025-06-01",
+        "book": "market_neutral",
+        "gross_leverage": 1.6,
+        "short_max_weight": 0.1,
+        "neutralize_factors": ["market"],
+        "min_weight": 0.01,
+        "commission_bps": 2.0,
+        "risk_model": "shrinkage",
+    }
+    assert set(args) <= declared, "the test is passing something the tool never declared"
+    _dispatch(built, "construct_portfolio", args)  # must not raise
+
+
+def test_a_call_with_no_arguments_is_untouched(built):
+    _dispatch(built, "get_metrics_glossary", {})
+
+
+def test_a_tool_that_declares_no_arguments_still_refuses_one(built):
+    """A no-argument tool declares `properties: {}`, which is a real answer — it accepts
+    nothing — and must be distinguished from a schema that could not be read at all.
+    Passing an argument to such a tool is exactly as silent a mistake as passing an
+    unknown one anywhere else."""
+    errored, message = _dispatch_text(built, "get_metrics_glossary", {"bogus": 1})
+
+    assert errored
+    assert "does not accept: bogus" in message
+
+
+def test_an_unknown_tool_still_fails_the_frameworks_way(built):
+    """The guard must not invent a second way for a call to fail. A tool nobody
+    registered is the framework's business."""
+    errored, message = _dispatch_text(built, "no_such_tool", {"x": 1})
+
+    assert errored
+    assert "no_such_tool" in message
+    assert "does not accept" not in message  # the framework's error, not ours
+
+
+def test_an_unreadable_schema_does_not_turn_into_a_call_failure(built, monkeypatch):
+    """Refusing a call on a guess about what a tool accepts would be worse than the
+    silence this replaces, so any doubt passes through."""
+    monkeypatch.setattr(
+        built._tool_manager, "get_tool", lambda name: (_ for _ in ()).throw(RuntimeError("boom"))
+    )
+
+    # A *legitimate* argument, so the assertion can tell "passed through" from
+    # "refused". With `{}` this test could not see the difference: nothing is unknown in
+    # an empty mapping, so a guard that had decided the tool accepts nothing would look
+    # identical to one that stood aside.
+    _, message = _dispatch_text(built, "get_trial", {"trial_id": "whatever"})
+
+    assert "does not accept" not in message
+
+
+def test_the_guard_is_per_tool_not_per_server(built):
+    """A mutation making `_declared_arguments` return the union of *every* tool's
+    parameters survived the whole suite.
+
+    Under it `list_configs` would accept `bootstrap_seed`, `run_backtest` would accept
+    dozens of foreign knobs, and each would be silently dropped — the original defect,
+    restored, with a green suite. Every other test here passes an argument unknown to
+    *all* tools (`conditional`, `targt_te`, `bogus`), so none of them can see the
+    difference between per-tool and per-server scoping.
+
+    This passes one tool's genuine parameter to another tool, which is the only shape
+    that can.
+    """
+    import asyncio
+
+    tools = {t.name: t for t in asyncio.run(built.list_tools())}
+    borrowed = "bootstrap_seed"
+    assert borrowed in (tools["compute_attribution"].inputSchema.get("properties") or {})
+    assert borrowed not in (tools["list_configs"].inputSchema.get("properties") or {})
+
+    errored, message = _dispatch_text(built, "list_configs", {borrowed: 7})
+
+    assert errored, "a parameter belonging to another tool was accepted"
+    assert f"does not accept: {borrowed}" in message
+
+
+def test_the_refusal_says_the_call_did_not_run(built):
+    """The sentence a mutation could delete with the suite still green. It is the part
+    that tells an agent the call did not execute — without it the message reads as a
+    warning sitting next to what might be a result, which is the ambiguity this whole
+    change exists to remove."""
+    _, message = _dispatch_text(built, "get_metrics_glossary", {"bogus": 1})
+
+    assert "Refused rather than ignored" in message
+    assert "believing it was applied" in message
