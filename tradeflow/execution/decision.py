@@ -52,6 +52,12 @@ EQUITY_UNREADABLE = "equity_unreadable"
 #: cause across as many rows as there were symbols.
 BELOW_MIN_NOTIONAL = "below_min_notional"
 ROUNDS_TO_ZERO = "size_rounds_to_zero"
+#: The kill switch refusing an entry. Distinct from the ``HALT`` guard name above: that
+#: says the check ran, this says it fired. Coded for the same reason the caps are — the
+#: message carries the halt's own reason, actor and *timestamp*, so re-halting for a new
+#: reason, or halting a second strategy, split one throttle into a row per halt. A
+#: reader counting refusal kinds would see several one-off families and no halt.
+HALTED = "halted"
 
 #: Message prefixes written before decisions carried a code, mapped to the family they
 #: belong to. A read-path concern only: rows written from here on carry a code and never
@@ -67,6 +73,9 @@ _LEGACY_REASON_PREFIXES = (
     ("net exposure capped", NET_EXPOSURE),
     ("risk budget exhausted", RISK_BUDGET),
     ("cannot check portfolio limits", EQUITY_UNREADABLE),
+    # Every halted refusal already in a ledger was written without a code, and the words
+    # before the em dash are the only stable part of the message.
+    ("halted", HALTED),
 )
 
 

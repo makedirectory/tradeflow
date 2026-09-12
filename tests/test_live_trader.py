@@ -498,3 +498,78 @@ def test_portfolio_limits_are_fractions_of_the_capital_not_the_account():
     filled = sum(order["qty"] * 100 for order in broker.orders)
 
     assert filled <= 8_000.0 * 0.5 + 1e-6  # half the capital, not half the account
+
+
+def test_two_halts_are_one_refusal_family_not_two(tmp_path):
+    """A halted refusal used to carry no reason code, so its family was the whole
+    message — including the halt's own timestamp and reason. Re-halting for a new
+    reason, or halting a second strategy, therefore split one throttle across as many
+    rows as there had been halts, which is the exact fragmentation reason codes were
+    introduced to fix for the exposure caps.
+
+    Driven through `handle_signal` and summarised by the report a reader actually sees,
+    rather than asserting the code on the decision: the code exists to make the grouping
+    right, so the grouping is what has to be checked."""
+    from tradeflow.analytics.execution_quality import decline_summary
+    from tradeflow.execution.halt import HaltState
+
+    halts = HaltState(tmp_path / "halts.json")
+    trader = LiveTrader(FakeBroker(), DemoTrendStrategy.create_with_defaults(), halt_state=halts)
+
+    halts.set("first drill", actor="cli")
+    first = trader.handle_signal("AAA", signals.BUY, 100.0, bar_timestamp=_ts(1))
+    # Re-halting replaces the reason *and* the timestamp, which is what made the second
+    # refusal look like a different kind of refusal.
+    halts.set("a different reason entirely", actor="cli")
+    second = trader.handle_signal("BBB", signals.BUY, 100.0, bar_timestamp=_ts(2))
+
+    assert not first.allowed and not second.allowed
+    summary = decline_summary([first.as_dict(), second.as_dict()])
+
+    assert list(summary) == [decisions.HALTED], f"halts fragmented into {list(summary)}"
+    assert summary[decisions.HALTED]["count"] == 2
+    # The message still explains: the code groups, and one example per family is kept
+    # so a reader can still see which halt was in force.
+    assert "first drill" in summary[decisions.HALTED]["example"]
+
+
+def test_the_recorded_code_and_not_the_message_is_what_groups_a_halt(tmp_path):
+    """The grouping test above passes with the write-path code removed, because the
+    legacy prefix table recognises the message and folds it in anyway — so on its own it
+    proves the *reader*, not the fix. The message is not the identity: it is prose, it
+    will be reworded, and an append-only ledger is read long after that happens.
+
+    Rewriting the message to something no prefix recognises is what separates a row that
+    carries its family from one that merely looks familiar today."""
+    from tradeflow.analytics.execution_quality import decline_summary
+    from tradeflow.execution.halt import HaltState
+
+    halts = HaltState(tmp_path / "halts.json")
+    halts.set("drill", actor="cli")
+    trader = LiveTrader(FakeBroker(), DemoTrendStrategy.create_with_defaults(), halt_state=halts)
+
+    record = trader.handle_signal("AAA", signals.BUY, 100.0, bar_timestamp=_ts(1)).as_dict()
+    assert record["reason_code"] == decisions.HALTED
+
+    record["reason"] = "the switch was pulled"
+    assert list(decline_summary([record])) == [decisions.HALTED]
+
+
+def test_a_halt_refusal_recorded_before_codes_existed_joins_the_same_family():
+    """The ledger is append-only, so every halt already journaled carries the old
+    message and no code. A report that grouped only new rows would show one throttle as
+    a tidy family beside a scatter of one-off rows saying the same thing."""
+    from tradeflow.analytics.execution_quality import decline_summary
+
+    legacy = {
+        "reason": "halted — [all] first drill (set by cli at 2026-09-01T00:00:00+00:00)",
+    }
+    coded = {
+        "reason": "halted — [all] second drill (set by cli at 2026-09-02T00:00:00+00:00)",
+        "reason_code": decisions.HALTED,
+    }
+
+    summary = decline_summary([legacy, coded])
+
+    assert list(summary) == [decisions.HALTED]
+    assert summary[decisions.HALTED]["count"] == 2
