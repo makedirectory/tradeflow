@@ -414,9 +414,16 @@ def isolated_halt_state(tmp_path, monkeypatch):
     The command builds `HaltState()` itself, so it writes to the session-wide
     `TRADEFLOW_HOME` that conftest sets — not to the `halts` fixture. Without this the
     halt these tests set stands for the rest of the session and every later test that
-    tries to enter a position is refused, which is exactly what happened: twenty-seven
+    tries to enter a position is refused, which is exactly what happened: a cascade of
     unrelated failures in `test_live_trader` and `test_min_notional_parity`, none of
-    them reproducible in isolation.
+    them reproducible in isolation. Twenty-seven when it first happened; twenty-four
+    when the leak was staged again on 2026-09-11, because the suite has changed since.
+    The count is the symptom, not the fact — the fact is that none of them was about
+    the code that failed.
+
+    Still needed with the leak guard in place, and the two are complementary: this
+    fixture is the prevention, the guard is the detection. Without it these tests error
+    at teardown instead of passing.
     """
     monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path / "state"))
     return tmp_path
@@ -469,3 +476,25 @@ def test_the_json_report_carries_the_observed_fields(isolated_halt_state, monkey
     assert payload["open_orders"] == 0
     assert payload["checked_at"]
     assert payload["complete"] is True
+
+
+def test_a_halt_file_that_is_valid_json_but_not_an_object_reads_as_no_halt(tmp_path, caplog):
+    """`absent is not halted` has to hold for every shape a hand edit can produce, not
+    only for a file that fails to parse. `null`, a list and a bare number are all valid
+    JSON, and each one used to raise AttributeError out of `_read` — reaching the trade
+    clock through the per-signal entry check, so a mistyped file during an incident
+    crashed the decision path instead of answering it."""
+    from tradeflow.execution.halt import HaltState
+
+    for document in ("null", "5", "[]", '[{"scope": "all"}]', '"halted"'):
+        path = tmp_path / "halts.json"
+        path.write_text(document)
+        state = HaltState(path)
+
+        assert state.is_halted() is False, document
+        assert state.active("anything") is None, document
+        assert state.list() == [], document
+
+    # Loud, because the switch is not working: a silent default here would be the
+    # unreadable-file case all over again.
+    assert "treating as NO halt" in caplog.text

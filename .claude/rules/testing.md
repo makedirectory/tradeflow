@@ -20,7 +20,7 @@ paths:
   there outlives the test that wrote it. Most of it is a record and harms nothing;
   **halt state is not**, because the live path consults it before every entry. A test
   that builds `HaltState()` with no argument writes to the shared root and changes the
-  rules for everything after it, which once cost twenty-four failures in two unrelated
+  rules for everything after it, which once cost two dozen failures in two unrelated
   files, none reproducible alone. `tests/state_leak_guard.py` now clears such a leak
   and fails the test that caused it; build `HaltState(tmp_path / "halts.json")` and it
   never comes up.

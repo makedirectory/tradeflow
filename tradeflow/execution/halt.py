@@ -133,6 +133,14 @@ class HaltState:
             # nobody made. Loud, because the switch is now not working.
             logger.error("Halt state at %s is unreadable; treating as NO halt", self.path, exc_info=True)
             return {}
+        if not isinstance(raw, dict):
+            # Valid JSON that is not an object - `null`, a list, a bare number. Only a
+            # hand edit produces one, which is exactly when this is read: during an
+            # incident. Without this the scope loop raises AttributeError straight out
+            # of the entry decision on the trade clock, which is the reverse of the
+            # default this module promises, arriving as a crash rather than a halt.
+            logger.error("Halt state at %s is not an object; treating as NO halt", self.path)
+            return {}
         halts = {}
         for scope, record in raw.items():
             try:
