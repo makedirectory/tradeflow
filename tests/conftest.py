@@ -22,6 +22,10 @@ variable themselves.
 import os
 import tempfile
 
+#: Registered here rather than inlined, so the guard is one module a nested pytest
+#: session can load too - its own tests run it against a session they control.
+pytest_plugins = ["tests.state_leak_guard", "pytester"]
+
 _PREVIOUS = {}
 
 

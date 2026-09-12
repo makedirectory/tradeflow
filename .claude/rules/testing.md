@@ -15,7 +15,15 @@ paths:
   itself is how a broken dependency shipped. Assert the version actually installed.
 - **Isolate state.** Point `ARTIFACT_DIR`, the journal, and `TRADEFLOW_HOME` at
   `tmp_path`; a test that memoizes against the real journal depends on what someone
-  ran yesterday.
+  ran yesterday. The state root is deliberately *one directory for the whole session*
+  — module-level path constants make a per-test root unsafe — so anything written
+  there outlives the test that wrote it. Most of it is a record and harms nothing;
+  **halt state is not**, because the live path consults it before every entry. A test
+  that builds `HaltState()` with no argument writes to the shared root and changes the
+  rules for everything after it, which once cost twenty-four failures in two unrelated
+  files, none reproducible alone. `tests/state_leak_guard.py` now clears such a leak
+  and fails the test that caused it; build `HaltState(tmp_path / "halts.json")` and it
+  never comes up.
 - **Name the property, not the mechanics.** `test_a_rejected_bar_does_not_become_the_baseline`
   says what breaks if it fails; `test_check_2` does not.
 - **Every bug found in review gets a regression test**, and the docstring says what
