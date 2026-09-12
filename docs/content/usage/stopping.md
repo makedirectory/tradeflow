@@ -119,6 +119,12 @@ is the difference between a switch you will pull and one you will hesitate over:
 - `flatten` sets a halt and then closes positions. If the halt blocked exits, it
   would deadlock against its own gate.
 
+Every entry a halt refuses is counted under one `halted` row in
+`tradeflow execution-report`, however many separate halts were in force over the
+period. The row keeps one example message, so the halt's reason, actor and time are
+still there to read — the grouping only stops one stop from looking like several
+different problems.
+
 ## Resuming
 
 ```bash

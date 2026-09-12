@@ -220,7 +220,9 @@ class LiveTrader:
             halt = self._halts.active(type(self._strategy).__name__)
             if halt is not None:
                 logger.warning("HALTED — refusing %s entry for %s: %s", signal, symbol, halt)
-                return decisions.decline(symbol, signal, f"halted — {halt}", tuple(guards))
+                return decisions.decline(
+                    symbol, signal, f"halted — {halt}", tuple(guards), code=decisions.HALTED
+                )
             return self._handle_entry(symbol, signal, price, position, bar_timestamp, guards)
 
         logger.warning("Ignoring unrecognized signal %r for %s", signal, symbol)
