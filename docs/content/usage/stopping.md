@@ -125,6 +125,44 @@ period. The row keeps one example message, so the halt's reason, actor and time 
 still there to read — the grouping only stops one stop from looking like several
 different problems.
 
+## What the ledger learns from a flatten
+
+A flatten goes straight to the broker, so the ledger never observes those exits. Left
+alone it keeps expecting every position the flatten closed, and `reconcile` reports each
+one as `missing` — *"a fill may have been missed"* — from then on, for good. The wording
+is honest and the file is useless: a book that can never reconcile clean cannot tell
+"something is wrong" from "the operator meant it".
+
+So a flatten confirmed flat records a terminal event per position, and names the ledger
+it told:
+
+```text
+ledger: /…/logs/position_ledger.jsonl (live)
+FLATTEN
+  positions observed closed : yes
+  recorded in the ledger    : 2 (KO, PFE) closed by operator
+```
+
+Three things it deliberately does **not** do:
+
+- **No fill is invented.** The event says the position ended and who ended it — not at
+  what price, not for how much. A flatten submits market orders whose fills the ledger
+  genuinely did not see, and manufacturing them would put fabricated prices into the one
+  file that exists to be evidence.
+- **Nothing is rewritten.** The order history before the flatten stands exactly as it
+  was; the terminal event only resets what is expected from that point on.
+- **A pending flatten records nothing.** `pending` means the closes were accepted and
+  nothing has confirmed they filled. Recording a terminal fact there would assert an
+  exit nobody has observed.
+
+`execution-report` lists these separately from fills, because a position closed outside
+the engine has no price, no latency and no slippage — counting it among the fills would
+put a hole in every average.
+
+Use `--small-real` (or `--ledger PATH`) when the book being flattened was traded by a
+small-real session, for the same reason `reconcile` takes them: the two ledgers are
+separate files on purpose and the default is the live one.
+
 ## Resuming
 
 ```bash

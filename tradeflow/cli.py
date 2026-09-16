@@ -4711,13 +4711,23 @@ def cmd_flatten(args) -> None:
         raise SystemExit(
             "flatten closes every position and halts trading. Re-run with --confirm once you are sure."
         )
+    from tradeflow.execution.ledger import PositionLedger
+
+    # Resolved before the broker, so a contradictory pair is refused without a round
+    # trip — and named in the output, because which book was told about this flatten is
+    # exactly as ambiguous here as it is for `reconcile`.
+    ledger_path = _execution_ledger_path(args)
     broker, _ = build_data_and_broker()
-    report = flatten(broker, reason=args.reason, actor="cli")
+    report = flatten(broker, reason=args.reason, actor="cli", ledger=PositionLedger(ledger_path))
     if args.json:
         import json
 
-        print(json.dumps(report.as_dict(), indent=2))
+        # Inside the payload, not printed beside it: a line of prose before the JSON is
+        # not JSON, and a script parsing this is exactly who needs to know which book
+        # was told about the flatten.
+        print(json.dumps({"ledger": _describe_ledger(ledger_path), **report.as_dict()}, indent=2))
     else:
+        print(_describe_ledger(ledger_path))
         print(report.summary())
         if not report.complete:
             # `pending` is otherwise a dead end: the operator is told the book is not
@@ -4781,7 +4791,7 @@ def cmd_execution_report(args) -> None:
     from tradeflow.execution.ledger import PositionLedger
 
     ledger = PositionLedger(_execution_ledger_path(args))
-    report = execution_report(ledger.lifecycles(), ledger.declines())
+    report = execution_report(ledger.lifecycles(), ledger.declines(), ledger.flattens())
     _print_ledger_sessions(ledger, args.json)
     if args.json:
         print(json.dumps(report, indent=2, default=str))
@@ -4984,6 +4994,17 @@ def _print_execution_report(report, show_orders: bool = False) -> None:
             else "not reported by this venue — not the same as zero"
         )
     )
+
+    if report.get("flattens"):
+        print("\n  Positions closed by an operator, outside the engine:")
+        for row in report["flattens"]:
+            when = row.get("checked_at") or row.get("ts") or "time not recorded"
+            print(f"    {row.get('symbol', '?'):8}{when}  {row.get('reason', 'no reason recorded')}")
+        print(
+            "    These are not fills. A flatten submits market orders the ledger never\n"
+            "    observed, so no price or quantity is claimed for them — only that the\n"
+            "    position ended and who ended it."
+        )
 
     if report["declines"]:
         print("\n  Signals that produced no order:")
@@ -5998,6 +6019,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     flat.add_argument("--confirm", action="store_true", help="Required — this closes real positions")
     flat.add_argument("--reason", required=True, help="Why — recorded with the halt")
+    flat.add_argument("--ledger", default=None, help="Ledger path (default: logs/position_ledger.jsonl)")
+    flat.add_argument("--small-real", dest="small_real", action="store_true", help=_SMALL_REAL_LEDGER_HELP)
     flat.add_argument("--json", action="store_true", help="Emit the report as JSON")
     flat.set_defaults(func=cmd_flatten)
 
