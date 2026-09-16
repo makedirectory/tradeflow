@@ -733,3 +733,99 @@ def test_a_ledger_the_run_would_refuse_is_refused_before_the_preflight_shows_it(
         )
 
     assert "SMALL-REAL PREFLIGHT" not in capsys.readouterr().out
+
+
+# --- the venue floor above every order this scale can size ---------------------------
+def test_a_scale_where_the_floor_blocks_every_entry_refuses_to_start(wired, tmp_path):
+    """The floor is absolute and the dollar ceilings are not, so shrinking capital far
+    enough puts every order the book can size underneath it. That run is not a smaller
+    version of the validated contract, it is one that cannot enter at all — and the
+    difference is invisible in a column of scaled numbers because every line in it is
+    individually correct.
+
+    Refused rather than warned: a session where no entry can reach the venue observes
+    no fills, no slippage and no fees, so it cannot be evidence of anything."""
+    config = _config(tmp_path)
+
+    with pytest.raises(SystemExit, match="min_notional will bind every entry"):
+        _run(["small-real", "--config", str(config), "--capital", "200"])
+
+
+def test_the_refusal_names_both_numbers_and_the_way_out(wired, tmp_path):
+    """A refusal that does not say how far under the floor it is leaves the operator
+    guessing at the capital that would clear it."""
+    config = _config(tmp_path)
+
+    with pytest.raises(SystemExit) as raised:
+        _run(["small-real", "--config", str(config), "--capital", "200"])
+
+    message = str(raised.value)
+    assert "~$10.00" in message, "the largest order this scale can size is missing"
+    assert "$50.00" in message, "the floor it falls under is missing"
+    assert "--allow-min-notional-all-blocked" in message, "no way out is named"
+    assert "Raise --capital" in message
+
+
+def test_a_scale_that_clears_the_floor_is_not_refused(wired, tmp_path, capsys):
+    """The boundary. A guard that refused here would be indistinguishable from one that
+    refuses every small-real run, which is the whole mode."""
+    config = _config(tmp_path)
+
+    _run(["small-real", "--config", str(config), "--scale", "0.05", "--preflight"])
+
+    printed = capsys.readouterr().out
+    assert "a position gets about   $500.00" in printed
+    assert "venue floor binds all" not in printed
+
+
+def test_the_preflight_states_the_conclusion_rather_than_the_two_numbers(wired, tmp_path, capsys):
+    """The budget and the floor were already on their own lines and the preflight still
+    left the reader to compare them — which is the single surprise this preflight exists
+    to prevent, and the one thing it did not say."""
+    config = _config(tmp_path)
+
+    _run(["small-real", "--config", str(config), "--capital", "200", "--preflight"])
+
+    printed = capsys.readouterr().out
+    assert "min_notional will bind every entry at this scale" in printed
+    assert "~$10.00 < floor $50.00" in printed
+    assert "nothing here for it to be evidence of" in printed
+    # A preflight exists to show a reader exactly this, so it reports and exits clean.
+    assert "--preflight: nothing was started" in printed
+
+
+def test_the_opt_in_starts_the_run_and_still_says_what_it_is(wired, tmp_path, capsys):
+    """Kept because a run that enters nothing is still a way to exercise the path. It
+    must not become a way to *forget* — the finding is printed either way."""
+    config = _config(tmp_path)
+
+    # No `--preflight` here: the gate sits *after* the preflight returns, so the only
+    # way to show it was passed is to reach the order path. The fake feed cannot stream,
+    # which is exactly how far past the gate this needs to get.
+    with pytest.raises(RuntimeError, match="does not support streaming"):
+        _run(
+            [
+                "small-real",
+                "--config",
+                str(config),
+                "--capital",
+                "200",
+                "--allow-min-notional-all-blocked",
+            ]
+        )
+
+    printed = capsys.readouterr().out
+    assert "min_notional will bind every entry at this scale" in printed
+    assert "Refusing to start" not in printed
+
+
+def test_a_book_with_no_floor_declared_is_never_blocked(wired, tmp_path, capsys):
+    """Absent is not zero, and it is not infinite either. A config declaring no venue
+    floor has none to fall under, however small the scale."""
+    limits = {key: value for key, value in VALIDATED_BOOK.items() if key != "min_notional"}
+    config = _config(tmp_path, limits=limits, name="no-floor.json")
+
+    _run(["small-real", "--config", str(config), "--capital", "200", "--preflight"])
+
+    printed = capsys.readouterr().out
+    assert "venue floor binds all" not in printed

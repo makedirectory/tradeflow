@@ -341,6 +341,22 @@ Rather than pretend otherwise, **the preflight reports the price above which a n
 cannot be traded at all**, and both refusals carry a reason code so they can be counted.
 The bias becomes a number in the report instead of a silence in the sample.
 
+Shrink far enough and the cost stops being a bias and becomes the whole result: the
+floor rises above *every* order the book can size, so nothing can enter at all. That is
+not a smaller version of the validated contract, and it is invisible in the scaled
+column because every line there is individually correct. The preflight states the
+comparison rather than leaving it to be made:
+
+```text
+  venue floor binds all   min_notional will bind every entry at this scale:
+                          max intended order ~$24.00 < floor $50.00
+```
+
+and the run is **refused**, because a session where no entry reaches the venue observes
+no fills, no slippage and no fees — there is nothing for it to be evidence of. Raise the
+capital until a position clears the floor, or pass `--allow-min-notional-all-blocked` to
+run it anyway as a diagnostic; the finding is printed either way.
+
 ### The preflight, which cannot be skipped
 
 ```

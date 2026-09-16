@@ -244,6 +244,56 @@ def per_position_budget(capital: float, book: Dict[str, Any]) -> Optional[float]
     return min(candidates) if candidates else None
 
 
+def floor_blocks_every_entry(capital: float, book: Dict[str, Any]) -> Optional[Dict[str, float]]:
+    """The venue floor standing above the largest order this scale can size, or ``None``.
+
+    The floor is absolute and the dollar ceilings are not, so shrinking capital far
+    enough eventually puts *every* order the book can size underneath it. That run is
+    not a smaller version of the validated contract - it is a contract that cannot enter
+    at all, and the difference is invisible in a column of scaled numbers, because every
+    line in it is individually correct.
+
+    Distinct from the bias this mode reports and cannot remove, where the floor refuses
+    the *expensive* names and the cheap ones still trade. That one is measured. This one
+    leaves nothing to measure.
+    """
+    budget = per_position_budget(capital, book)
+    floor = book.get("min_notional")
+    # `is None` rather than truthiness on both: a declared floor of zero is a real
+    # statement that the venue has none, and a budget of zero is a book that may deploy
+    # nothing - neither is an absence, and neither can be read as the other.
+    if budget is None or floor is None:
+        return None
+    if budget >= float(floor):
+        return None
+    return {"budget": float(budget), "floor": float(floor)}
+
+
+#: Why the headline matters, kept apart so the headline stays one line. Both the
+#: preflight and the refusal print the pair, so a reader who sees the finding in a
+#: rehearsal and a reader who runs into it at the gate read the same words.
+EVERY_ENTRY_BLOCKED_CONSEQUENCE = (
+    "No entry this run can size will reach the venue, so it observes no fills, no "
+    "slippage and no fees — there is nothing here for it to be evidence of."
+)
+
+
+def every_entry_blocked_note(contract_: Dict[str, Any]) -> Optional[str]:
+    """The headline, or ``None`` when the floor still leaves something tradable.
+
+    States the comparison rather than restating the two numbers and leaving it to the
+    reader - the preflight has already printed the budget and the floor on their own
+    lines, and a third printing would still be two numbers and no conclusion.
+    """
+    finding = contract_.get("floor_blocks_every_entry")
+    if not finding:
+        return None
+    return (
+        f"min_notional will bind every entry at this scale: max intended order "
+        f"~${finding['budget']:,.2f} < floor ${finding['floor']:,.2f}"
+    )
+
+
 def max_loss_envelope(capital: float, book: Dict[str, Any]) -> Optional[float]:
     """What the book gives up if every open position stops out, or ``None``.
 
@@ -301,6 +351,10 @@ def contract(
             key: treatments.get(key, "carried unchanged — no rule for this limit") for key in scaled_book
         },
         "per_position_budget": per_position_budget(capital, scaled_book),
+        # Recorded, not only printed: a session header that says the run could not
+        # enter is the difference between "this book found nothing" and "this book
+        # was never able to ask".
+        "floor_blocks_every_entry": floor_blocks_every_entry(capital, scaled_book),
         "max_loss_envelope": max_loss_envelope(capital, scaled_book),
         # Said rather than left to be inferred from a clean-looking report. This is the
         # bias the mode cannot design away, only measure.
