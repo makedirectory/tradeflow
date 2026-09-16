@@ -455,7 +455,24 @@ def apply_run_config(args):
         sources.append(f"strategy={name!r}")
         # Construct it here purely to validate: params an older strategy can no longer
         # honour must fail now, not four steps into a pipeline.
-        _load_strategy_from_config(args.config)
+        try:
+            _load_strategy_from_config(args.config)
+        except ValueError as exc:
+            # The service already says what is wrong and what is available; what it
+            # cannot know is which file asked. Rendered as a refusal rather than left
+            # to become a traceback: this path is reached by `live` and `small-real`,
+            # and a stack trace out of a command that places orders tells an operator
+            # nothing about whether anything was sent.
+            sys.exit(
+                f"Refusing to run: {args.config} cannot be used by this build.\n"
+                f"  {exc}\n"
+                "  The config records a strategy and params that this installation "
+                "cannot honour — usually a config\n"
+                "  saved against a strategy that has since been renamed, removed, or "
+                "moved into a package that is not\n"
+                "  installed here. Re-validate the idea and save a new config, or "
+                "install the package that provides it."
+            )
         args.strategy = name
 
     for field, flag in (("scanner", "--scanner"), ("symbols", "--symbols"), ("capital", "--capital")):

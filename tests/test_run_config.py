@@ -840,3 +840,77 @@ def test_a_config_with_no_limits_keys_like_one_that_has_no_such_concept():
 
     assert absent == all_none
     assert "_limits" not in absent
+
+
+# --- a config this build cannot honour --------------------------------------------
+def _config_naming(tmp_path, strategy, params=None, name="retired.json"):
+    path = tmp_path / name
+    path.write_text(
+        json.dumps(
+            {
+                "strategy": strategy,
+                "params": params if params is not None else _PARAMS,
+                "provenance": {},
+            }
+        )
+    )
+    return str(path)
+
+
+def test_a_config_naming_a_strategy_this_build_lacks_is_refused_not_crashed(tmp_path):
+    """A config saved against a strategy that has since been renamed, removed, or moved
+    into a package that is not installed here used to raise `ValueError` all the way out
+    as a stack trace — from `live` and `small-real` among others, so an operator reading
+    it learned nothing about whether an order had been sent.
+
+    The registry already knows what is wrong and what is available; it just arrived in
+    the wrong shape."""
+    config = _config_naming(tmp_path, "a_strategy_that_was_retired")
+
+    args = parse_cli(["backtest", "--config", config, "--start", "2024-01-02", "--end", "2024-06-01"])
+    with pytest.raises(SystemExit) as raised:
+        apply_run_config(args)
+
+    message = str(raised.value)
+    assert "Refusing to run" in message
+    assert config in message, "the file that asked is not named"
+    assert "a_strategy_that_was_retired" in message, "the strategy it names is missing"
+    assert "install the package that provides it" in message, "no way out is offered"
+
+
+def test_the_refusal_reaches_the_order_placing_commands_too(tmp_path):
+    """`live` and `small-real` share this loader, and they are the commands where a
+    traceback is worst. Asserted on the surface rather than assumed from the shared
+    call: a refusal that only covers `backtest` would leave the two that matter."""
+    config = _config_naming(tmp_path, "a_strategy_that_was_retired", name="retired-live.json")
+
+    for argv in (
+        ["live", "--config", config],
+        ["small-real", "--config", config, "--capital", "500"],
+    ):
+        args = parse_cli(argv)
+        with pytest.raises(SystemExit, match="Refusing to run"):
+            apply_run_config(args)
+
+
+def test_a_config_whose_params_the_strategy_can_no_longer_honour_is_refused_too(tmp_path):
+    """The other half of the same loader. Construction validates params, so a config
+    carrying one the strategy has dropped or moved out of range fails here — and it
+    failed the same way, as a traceback."""
+    config = _config_naming(
+        tmp_path,
+        "demo_trend",
+        params={**_PARAMS, "fast_ema_period": 10_000},
+        name="out-of-range.json",
+    )
+
+    args = parse_cli(["backtest", "--config", config, "--start", "2024-01-02", "--end", "2024-06-01"])
+    with pytest.raises(SystemExit, match="Refusing to run"):
+        apply_run_config(args)
+
+
+def test_a_config_this_build_can_honour_is_untouched(saved):
+    """The boundary. A guard that refused here would refuse every saved config."""
+    args = parse_cli(["backtest", "--config", saved, "--start", "2024-01-02", "--end", "2024-06-01"])
+
+    assert apply_run_config(args) == _PARAMS
