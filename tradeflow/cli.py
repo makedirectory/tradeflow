@@ -4211,7 +4211,25 @@ def cmd_small_real(args) -> None:
         print("\nInterrupted - small-real stopped. No orders were sent while shutting down.")
         _print_closing_inventory(ledger, strategy)
     finally:
-        print(f"\n  Telemetry from this session: {_invocation(f'execution-report --ledger {ledger.path}')}")
+        print(f"\n  Telemetry from this session: {_invocation(_telemetry_command(ledger.path))}")
+
+
+def _telemetry_command(path) -> str:
+    """How to read this session's telemetry back, in the form a reader should learn.
+
+    `--small-real` exists precisely so nobody has to know where the small-real ledger
+    lives, so printing the path when the flag would do teaches the long way round to
+    the one person guaranteed to be reading — the operator who just finished a session.
+    A run pointed somewhere else with `--ledger` still gets the path, because for that
+    file there is no flag and the path is the only answer.
+
+    Printed instructions are an interface, and this one had outlived its own flag.
+    """
+    from tradeflow.execution.ledger import small_real_ledger_path
+
+    if Path(path) == small_real_ledger_path():
+        return "execution-report --small-real"
+    return f"execution-report --ledger {path}"
 
 
 def _small_real_ledger_path(args) -> Path:
