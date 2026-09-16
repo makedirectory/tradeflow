@@ -71,7 +71,14 @@ logger = logging.getLogger(__name__)
 #:   simply not carried by the file. Never inferred from the absence of a later row,
 #:   because a session that began and traded nothing and one that never began are
 #:   indistinguishable from silence and are opposite facts.
-LEDGER_VERSION = 3
+#: * **4** - the current shape. Adds the ``flattened`` event: a position an operator
+#:   closed directly at the broker, bypassing the engine. A flatten has to work when the
+#:   engine is wedged, so the ledger never observes those exits and reconciliation
+#:   reported every one of them as ``missing`` from then on, for good. A v3 file simply
+#:   has none, and a book flattened before this existed still reads as missing - the
+#:   records cannot say what happened to it, and inferring a flatten from a divergence
+#:   would excuse exactly the dropped fill the divergence exists to surface.
+LEDGER_VERSION = 4
 
 #: What a recorded fill quantity measures. ``CUMULATIVE`` is the order's running
 #: total (what Alpaca reports); ``INCREMENTAL`` is this event's own shares.
@@ -421,6 +428,51 @@ class PositionLedger:
         """A position we asked to close. Zeroes our expectation for the symbol."""
         self._append({"event": "close", "symbol": symbol})
 
+    #: A position closed by an operator's flatten, outside the engine.
+    FLATTENED = "flattened"
+
+    def record_flatten(
+        self, symbols: Iterable[str], *, reason: str, actor: str, checked_at: Optional[str] = None
+    ) -> List[str]:
+        """Positions an operator closed directly at the broker, bypassing the engine.
+
+        A flatten goes straight to the venue on purpose - it has to work when the engine
+        is wedged - so the ledger never sees those exits. What it sees is a book it still
+        expects and a broker holding nothing, which reconciliation reports as ``missing``
+        with the note that a fill may have been dropped. Every symbol, for good. The
+        wording is honest and the file is useless: a ledger that can never reconcile
+        clean again cannot tell "something is wrong" from "the operator meant it".
+
+        Recorded as its own kind rather than as :meth:`record_close`, which is what the
+        *engine* writes when it asks to close a position. Both zero the expectation, and
+        collapsing them would make an operator's emergency exit indistinguishable from
+        an ordinary one in the record that exists to tell them apart.
+
+        **No fill is invented.** This says the position is gone and who ended it - not
+        at what price, not for how much. A flatten submits market orders whose fills the
+        ledger genuinely did not observe, and manufacturing them would put fabricated
+        prices into the one file that is supposed to be evidence.
+
+        Returns the symbols actually recorded, which is what the caller should report.
+        """
+        recorded = []
+        for symbol in symbols:
+            self._append(
+                {
+                    "event": self.FLATTENED,
+                    "symbol": symbol,
+                    "reason": reason,
+                    "actor": actor,
+                    **({"checked_at": checked_at} if checked_at else {}),
+                }
+            )
+            recorded.append(symbol)
+        return recorded
+
+    def flattens(self) -> List[Dict[str, Any]]:
+        """Every flatten this file recorded, oldest first."""
+        return [record for record in self._read() if record.get("event") == self.FLATTENED]
+
     def record_decision(self, decision) -> None:
         """What execution decided about a signal, and which guards it consulted.
 
@@ -490,8 +542,12 @@ class PositionLedger:
                 continue
             seq += 1
             event = record.get("event")
-            if event == "close":
-                # A close zeroes the symbol, so only activity *after* it counts.
+            if event in ("close", self.FLATTENED):
+                # Both zero the symbol, so only activity *after* one counts. They are
+                # separate events because the *reason* differs and a report has to be
+                # able to say which — but to a replay of the book they mean the same
+                # thing, and giving the flatten its own arithmetic would be a second
+                # answer to a question that has one.
                 reset[symbol] = (seq, 0.0)
             elif event == "adopt":
                 signed = abs(float(record.get("qty") or 0.0))

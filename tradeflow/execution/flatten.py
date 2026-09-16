@@ -62,6 +62,10 @@ class FlattenReport:
     #: asked — absent, not zero, in the field that decides whether the book can refill.
     open_orders: Optional[int] = None
     failures: List[str] = field(default_factory=list)
+    #: Symbols recorded in the ledger as closed by this flatten. ``None`` means no
+    #: ledger was given, which is different from an empty list: the first says nobody
+    #: was told, the second says there was nothing this ledger still expected.
+    recorded_closed: Optional[List[str]] = None
 
     @property
     def complete(self) -> bool:
@@ -91,6 +95,7 @@ class FlattenReport:
             "remaining": self.remaining,
             "open_orders": self.open_orders,
             "failures": self.failures,
+            "recorded_closed": self.recorded_closed,
         }
 
     def summary(self) -> str:
@@ -109,6 +114,15 @@ class FlattenReport:
             f"  remaining positions       : {remaining}",
             f"  resting orders observed   : {'unknown' if self.open_orders is None else self.open_orders}",
         ]
+        if self.recorded_closed is None:
+            lines.append("  recorded in the ledger    : no ledger given")
+        elif self.recorded_closed:
+            lines.append(
+                f"  recorded in the ledger    : {len(self.recorded_closed)} "
+                f"({', '.join(self.recorded_closed)}) closed by operator"
+            )
+        else:
+            lines.append("  recorded in the ledger    : nothing was expected there")
         for failure in self.failures:
             lines.append(f"  ! {failure}")
 
@@ -154,8 +168,16 @@ def flatten(
     reason: str,
     actor: str = "cli",
     halt_state: Optional[HaltState] = None,
+    ledger: Optional[Any] = None,
 ) -> FlattenReport:
-    """Halt, cancel all open orders, and close all positions. Returns what happened."""
+    """Halt, cancel all open orders, and close all positions. Returns what happened.
+
+    ``ledger`` is optional and the flatten works without one, deliberately: this path
+    has to run when the engine is wedged, and a ledger that cannot be written must never
+    be the reason a book stays open. Given one, the positions it was still expecting are
+    recorded as closed by an operator — see :meth:`PositionLedger.record_flatten` — so a
+    reconciliation afterwards does not report every one of them as a dropped fill.
+    """
     report = FlattenReport(started_at=datetime.now(timezone.utc).isoformat())
     halts = halt_state or HaltState()
 
@@ -189,6 +211,22 @@ def flatten(
         logger.error("Could not close positions", exc_info=True)
 
     _confirm(broker, report)
+
+    # Only on an observed-flat book, and only for what this ledger was expecting.
+    # `pending` means the closes were accepted and nothing has confirmed they filled;
+    # recording a terminal fact there would assert an exit nobody has seen, which is
+    # the submitted-versus-observed confusion this module exists to end.
+    if ledger is not None and report.observed == CLOSED:
+        try:
+            report.recorded_closed = ledger.record_flatten(
+                sorted(ledger.expected_positions()),
+                reason=reason,
+                actor=actor,
+                checked_at=report.checked_at,
+            )
+        except Exception as exc:  # noqa: BLE001 - a bookkeeping failure must not fail the flatten
+            report.failures.append(f"could not record the flatten in the ledger: {exc}")
+            logger.error("Could not record the flatten in the ledger", exc_info=True)
 
     if report.complete:
         logger.warning("Flatten complete and confirmed flat: %s", reason)

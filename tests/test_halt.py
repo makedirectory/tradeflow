@@ -498,3 +498,134 @@ def test_a_halt_file_that_is_valid_json_but_not_an_object_reads_as_no_halt(tmp_p
     # Loud, because the switch is not working: a silent default here would be the
     # unreadable-file case all over again.
     assert "treating as NO halt" in caplog.text
+
+
+# --- a flatten is a terminal fact in the ledger, not a fill --------------------------
+def _own_halts(tmp_path):
+    """This test's own halt file. `flatten` builds `HaltState()` when given none,
+    which resolves to the session-wide root and leaves the switch thrown for every
+    test after it — the leak the autouse guard exists to catch."""
+    return HaltState(tmp_path / "halts.json")
+
+
+def _ledger_holding(tmp_path, *symbols):
+    from tradeflow.execution.ledger import CUMULATIVE, PositionLedger
+
+    ledger = PositionLedger(tmp_path / "ledger.jsonl")
+    for i, symbol in enumerate(symbols):
+        ledger.record_intent(symbol, "buy", 10, order_id=f"o{i}", decision_id=f"d{i}")
+        ledger.record_fill(symbol, "buy", 10, order_id=f"o{i}", basis=CUMULATIVE, fill_price=100.0)
+    return ledger
+
+
+def test_a_confirmed_flatten_stops_reconcile_calling_those_positions_missing(tmp_path):
+    """The defect this closes. A flatten goes straight to the broker so the ledger never
+    sees the exits, and reconciliation then reports every flattened position as
+    `missing` — "a fill may have been missed" — for good. The wording is honest and the
+    file is useless: a book that can never reconcile clean cannot tell "something is
+    wrong" from "the operator meant it"."""
+    from tradeflow.execution.flatten import flatten
+
+    ledger = _ledger_holding(tmp_path, "AAA", "BBB")
+    assert set(ledger.expected_positions()) == {"AAA", "BBB"}
+
+    report = flatten(
+        FakeBroker(), reason="release fixture", actor="cli", ledger=ledger, halt_state=_own_halts(tmp_path)
+    )
+
+    assert report.observed == "yes"
+    assert report.recorded_closed == ["AAA", "BBB"]
+    assert ledger.expected_positions() == {}
+    assert ledger.reconcile(FakeBroker()).clean
+
+
+def test_a_flatten_that_is_only_pending_records_nothing(tmp_path):
+    """The boundary, and the one that matters most. `pending` means the closes were
+    accepted and nothing has confirmed they filled — recording a terminal fact there
+    would assert an exit nobody has observed, which is the submitted-versus-observed
+    confusion this whole module exists to end."""
+    from tradeflow.execution.flatten import flatten
+
+    class Queueing(FakeBroker):
+        def close_all_positions(self, cancel_orders: bool = True) -> bool:
+            return True  # accepted, nothing closed
+
+    ledger = _ledger_holding(tmp_path, "AAA")
+    broker = Queueing(positions=[_position()])
+
+    report = flatten(broker, reason="drill", actor="cli", ledger=ledger, halt_state=_own_halts(tmp_path))
+
+    assert report.observed == "pending"
+    assert report.recorded_closed is None
+    assert set(ledger.expected_positions()) == {"AAA"}, "a pending close ended a position"
+
+
+def test_a_flatten_invents_no_fill(tmp_path):
+    """It says the position is gone and who ended it — not at what price, not for how
+    much. A flatten submits market orders whose fills the ledger genuinely did not see,
+    and manufacturing them would put fabricated prices into the file that exists to be
+    evidence."""
+    from tradeflow.execution.flatten import flatten
+
+    ledger = _ledger_holding(tmp_path, "AAA")
+    before = ledger.lifecycles()
+
+    flatten(
+        FakeBroker(), reason="release fixture", actor="cli", ledger=ledger, halt_state=_own_halts(tmp_path)
+    )
+
+    assert ledger.lifecycles() == before, "the order history was rewritten"
+    recorded = ledger.flattens()
+    assert [r["symbol"] for r in recorded] == ["AAA"]
+    assert recorded[0]["reason"] == "release fixture"
+    assert recorded[0]["actor"] == "cli"
+    assert "fill_price" not in recorded[0] and "qty" not in recorded[0]
+
+
+def test_a_flatten_is_distinguishable_from_an_engine_close(tmp_path):
+    """`record_close` is what the *engine* writes when it asks to close a position.
+    Both zero the expectation, and collapsing them would make an operator's emergency
+    exit indistinguishable from an ordinary one in the record that exists to tell them
+    apart."""
+    from tradeflow.execution.flatten import flatten
+
+    ledger = _ledger_holding(tmp_path, "AAA", "BBB")
+    ledger.record_close("AAA")
+
+    flatten(
+        FakeBroker(), reason="release fixture", actor="cli", ledger=ledger, halt_state=_own_halts(tmp_path)
+    )
+
+    assert [r["symbol"] for r in ledger.flattens()] == ["BBB"], "an engine close was re-attributed"
+
+
+def test_a_flatten_with_no_ledger_still_flattens(tmp_path):
+    """The path has to work when the engine is wedged, so a ledger is optional and its
+    absence is reported rather than guessed at: `None` says nobody was told, an empty
+    list says there was nothing this ledger still expected."""
+    from tradeflow.execution.flatten import flatten
+
+    report = flatten(FakeBroker(), reason="drill", actor="cli", halt_state=_own_halts(tmp_path))
+
+    assert report.complete
+    assert report.recorded_closed is None
+    assert "no ledger given" in report.summary()
+
+
+def test_a_ledger_that_cannot_be_written_does_not_fail_the_flatten(tmp_path):
+    """A bookkeeping failure must never be the reason a book stays open."""
+    from tradeflow.execution.flatten import flatten
+    from tradeflow.execution.ledger import PositionLedger
+
+    class Exploding(PositionLedger):
+        def record_flatten(self, *args, **kwargs):
+            raise RuntimeError("disk went away")
+
+    ledger = Exploding(tmp_path / "ledger.jsonl")
+
+    report = flatten(
+        FakeBroker(), reason="drill", actor="cli", ledger=ledger, halt_state=_own_halts(tmp_path)
+    )
+
+    assert report.observed == "yes"
+    assert any("could not record the flatten" in f for f in report.failures)

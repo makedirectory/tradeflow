@@ -158,10 +158,19 @@ def decline_summary(declines: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]
 
 
 def execution_report(
-    rows: List[Dict[str, Any]], declines: Optional[List[Dict[str, Any]]] = None
+    rows: List[Dict[str, Any]],
+    declines: Optional[List[Dict[str, Any]]] = None,
+    flattens: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
-    """Everything the ledger can say about how well this book was executed."""
+    """Everything the ledger can say about how well this book was executed.
+
+    ``flattens`` are carried beside the orders rather than folded into them: a position
+    an operator closed at the broker never produced a fill this file saw, so it has no
+    price, no latency and no slippage. Counting it among the fills would put a hole in
+    every average; leaving it out entirely would lose the reason a position vanished.
+    """
     return {
+        "flattens": list(flattens or []),
         "slippage": slippage_summary(rows),
         "latency": latency_summary(rows),
         "fills": fill_summary(rows),
