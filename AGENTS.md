@@ -1,7 +1,9 @@
 # Working on TradeFlow
 
 Topic rules live in `.claude/rules/`; the cycle a change goes through, and the gate it
-has to pass, are in [how a change gets built here](.claude/rules/build-process.md).
+has to pass, are in [how a change gets built here](.claude/rules/build-process.md). The
+procedures that cycle names are skills — `review-gate`, `consolidation-pass`,
+`dependency-truth` — and `/ship-check` reports what the definition of done is missing.
 This file is only what is true in every session.
 
 ## The one invariant
