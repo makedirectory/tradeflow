@@ -154,6 +154,13 @@ class LiveEngine:
             )
         self._cold_start()
 
+        if self.ledger is not None:
+            # Here, and not at construction: every warm-up refusal above this line is a
+            # run that committed to a contract and never traded it. Recorded so a report
+            # can tell that apart from a run that began and found nothing — two facts
+            # that look identical from a header alone, and are opposite.
+            self.ledger.record_session_outcome(self.ledger.SESSION_STARTED)
+
         broker = self.live_trader.broker
         tasks = [self.data_client.stream(symbols, self._on_bar)]
         if broker.supports_trade_updates():

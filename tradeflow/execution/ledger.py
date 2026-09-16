@@ -62,7 +62,16 @@ logger = logging.getLogger(__name__)
 #:   reads as exactly that - the records are still readable, and what they were traded
 #:   at is simply not recoverable. Never inferred from whatever run happens to be
 #:   asking now, which would put a contract nobody used onto somebody else's fills.
-LEDGER_VERSION = 2
+#: * **3** - the current shape. Adds the ``session_outcome`` event: what became of the
+#:   header before it. The header is written when the contract is *committed to*, before
+#:   anything can fill, so a run that dies on its first bar still records what its fills
+#:   were measured against - and the cost of that placement was that a committed run and
+#:   a run that actually traded were the same record. A v2 header has no outcome, and
+#:   that is a third state rather than either of the two: not started, not refused,
+#:   simply not carried by the file. Never inferred from the absence of a later row,
+#:   because a session that began and traded nothing and one that never began are
+#:   indistinguishable from silence and are opposite facts.
+LEDGER_VERSION = 3
 
 #: What a recorded fill quantity measures. ``CUMULATIVE`` is the order's running
 #: total (what Alpaca reports); ``INCREMENTAL`` is this event's own shares.
@@ -306,6 +315,77 @@ class PositionLedger:
         # is trusted to choose what it records about itself and must not be able to
         # choose what kind of record it is writing.
         self._append({**(context or {}), "event": "session", "mode": mode})
+
+    #: The outcomes a session can reach. ``started`` is the only one that means fills
+    #: were possible; everything else means a contract was committed to and then was
+    #: not traded. Deliberately a closed set: a reader has to be able to tell "this run
+    #: never began" from "this run began and did nothing", and free text cannot.
+    SESSION_STARTED = "started"
+    SESSION_REFUSED = "refused"
+
+    def record_session_outcome(self, outcome: str, detail: Optional[str] = None) -> None:
+        """What became of the session header written before it.
+
+        The header is written when the contract is *committed to* - before anything can
+        fill, so a run that dies on its first bar still records what capital and what
+        book its fills were measured against. The cost of that placement is that a
+        committed run and a run that actually traded were the same record, and a report
+        listing both alike says a session happened when one never began.
+
+        A separate event rather than a rewrite: the file is append-only, and an outcome
+        is genuinely later news about the same run. ``_replay`` and ``lifecycles``
+        dispatch on the event name, so a name neither of them knows moves no position,
+        whatever it carries.
+
+        **Never inferred from absence.** A row written before outcomes existed has no
+        outcome, and that is a third thing - not started, not refused. Readers say so
+        rather than guessing, because a session that traded nothing and a session that
+        never began are indistinguishable from silence and are opposite facts.
+        """
+        paired = self.sessions_with_outcomes()
+        if not paired or paired[-1]["outcome"] is not None:
+            # Nothing to attach it to. `live` runs the same engine and records no
+            # header, so an outcome written there would belong to no run — and a later
+            # reader pairing by position would hang it on whichever session came next.
+            # Refusing at the writer makes the orphan impossible rather than something
+            # every reader has to remember to drop.
+            #
+            # One outcome per session is today's lifecycle, not a law: a `stopped`
+            # event after `started` is the obvious next one, and this is the line it
+            # will have to change.
+            return
+        self._append(
+            {
+                "event": "session_outcome",
+                "outcome": outcome,
+                **({"detail": detail} if detail is not None else {}),
+            }
+        )
+
+    def sessions_with_outcomes(self) -> List[Dict[str, Any]]:
+        """Each session header paired with the outcome recorded after it, if any.
+
+        Paired by position, which is what an append-only file makes true: an outcome
+        belongs to the most recent header before it. An outcome with no header before
+        it is dropped rather than attached to the next one - it belongs to a run this
+        file did not record the start of, and hanging it on a later session would
+        mislabel that session with another run's ending.
+
+        Returned as ``{"session": ..., "outcome": ...}`` rather than folded into the
+        header, because ``record_session`` passes its context through uninterpreted: a
+        mode is free to record a key called ``outcome`` about itself, and a derived key
+        merged into the same dict would silently take its place.
+        """
+        paired: List[Dict[str, Any]] = []
+        for record in self._read():
+            event = record.get("event")
+            if event == "session":
+                paired.append({"session": record, "outcome": None})
+            elif event == "session_outcome" and paired and paired[-1]["outcome"] is None:
+                # Only the first outcome after a header counts. A second would be a
+                # later run's, or a bug; either way the first is what that session did.
+                paired[-1]["outcome"] = record
+        return paired
 
     def sessions(self) -> List[Dict[str, Any]]:
         """Every session header in this file, oldest first.

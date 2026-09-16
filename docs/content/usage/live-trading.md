@@ -357,6 +357,28 @@ no fills, no slippage and no fees — there is nothing for it to be evidence of.
 capital until a position clears the floor, or pass `--allow-min-notional-all-blocked` to
 run it anyway as a diagnostic; the finding is printed either way.
 
+### What became of a session
+
+The session header is written when the contract is **committed to** — before anything
+can fill, so a run that dies on its first bar still records the capital, book and
+universe its fills were measured against. The cost of that placement is that a run which
+committed and a run which actually traded were the same record, and a report listing
+both said a session happened when one never began.
+
+Each header now carries an outcome, and `execution-report` says which:
+
+```text
+  session  small_real  $200.00 (scale 0.008 of $25,000.00)  paper
+           committed, never started — Warm-up history could not be fetched
+  session  small_real  $1,250.00 (scale 0.05 of $25,000.00)  paper
+           started — warm-up completed and the trading loop began
+```
+
+A header written before outcomes were recorded says `outcome not recorded`, which is a
+third state rather than either of the other two. It is never inferred from the absence
+of a later row: a session that began and traded nothing and a session that never began
+are indistinguishable from silence, and they are opposite facts.
+
 ### The preflight, which cannot be skipped
 
 ```
