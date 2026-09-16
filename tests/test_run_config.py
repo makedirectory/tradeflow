@@ -914,3 +914,43 @@ def test_a_config_this_build_can_honour_is_untouched(saved):
     args = parse_cli(["backtest", "--config", saved, "--start", "2024-01-02", "--end", "2024-06-01"])
 
     assert apply_run_config(args) == _PARAMS
+
+
+def test_every_way_a_config_can_be_unusable_refuses_rather_than_crashes(tmp_path):
+    """Four distinct raises reach the same place, and fixing only the interesting one
+    left three tracebacks on the commands that place orders — a mistyped path being the
+    commonest of all. Enumerated rather than sampled, because "the one I thought of"
+    is how three of these survived the first pass."""
+    unreadable = tmp_path / "not-json.json"
+    unreadable.write_text('{"strategy": "demo_trend", "params": {')
+    nameless = tmp_path / "nameless.json"
+    nameless.write_text(json.dumps({"params": _PARAMS}))
+
+    cases = {
+        "missing": str(tmp_path / "never-written.json"),
+        "not JSON": str(unreadable),
+        "no strategy recorded": str(nameless),
+        "strategy this build lacks": _config_naming(tmp_path, "a_strategy_that_was_retired"),
+    }
+    for label, config in cases.items():
+        args = parse_cli(["small-real", "--config", config, "--capital", "500"])
+        with pytest.raises(SystemExit) as raised:
+            apply_run_config(args)
+
+        message = str(raised.value)
+        assert "Refusing to run" in message, label
+        assert config in message, f"{label}: the file that asked is not named"
+
+
+def test_the_refusal_carries_the_original_complaint_verbatim(tmp_path):
+    """Summarising it would lose the part that says what is actually wrong — the
+    registry's message lists every strategy this build *can* run, and a JSON error
+    carries the line and column. The transport adds context; it does not paraphrase."""
+    nameless = tmp_path / "nameless.json"
+    nameless.write_text(json.dumps({"params": _PARAMS}))
+
+    args = parse_cli(["live", "--config", str(nameless)])
+    with pytest.raises(SystemExit) as raised:
+        apply_run_config(args)
+
+    assert "KeyError: 'strategy'" in str(raised.value)

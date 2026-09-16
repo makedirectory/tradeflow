@@ -324,6 +324,35 @@ def parse_cli(argv: Optional[List[str]] = None):
     return args
 
 
+def _refuse_unusable_config(path, exc) -> "NoReturn":  # noqa: F821 - string annotation
+    """Every way a `--config` can be unusable, as one refusal a reader can act on.
+
+    The loader raises in four distinct ways - the file is missing or unreadable, it is
+    not JSON, it records no strategy, or it records a strategy and params this build
+    cannot honour - and all four used to reach the top of the CLI as a stack trace.
+    This path is shared by every command taking `--config`, `live` and `small-real`
+    among them, and a traceback out of a command that places orders tells an operator
+    nothing about the only question that matters: whether anything was sent.
+
+    The original exception is carried verbatim because it is the part that says what is
+    actually wrong - the registry's message lists every strategy this build *can* run,
+    and no summary here would be better than that. What this adds is what the loader
+    cannot know: which file asked, and the likeliest reason.
+    """
+    detail = f"{type(exc).__name__}: {exc}" if isinstance(exc, (OSError, KeyError)) else str(exc)
+    sys.exit(
+        f"Refusing to run: {path} cannot be used by this build.\n"
+        f"  {detail}\n"
+        "  A config must exist, be readable JSON, name a strategy, and record params "
+        "this installation can honour.\n"
+        "  The commonest causes are a mistyped path and a config saved against a "
+        "strategy that has since been\n"
+        "  renamed, removed, or moved into a package that is not installed here. "
+        "Re-validate the idea and save a\n"
+        "  new config, or install the package that provides it."
+    )
+
+
 def _load_strategy_from_config(path: str):
     """Load a saved config and construct the strategy directly from its params.
 
@@ -441,8 +470,15 @@ def apply_run_config(args):
             if action.dest != "help" and getattr(args, action.dest, None) != sub.get_default(action.dest)
         }
 
-    payload = load_config(args.config)
-    name = payload["strategy"]
+    try:
+        payload = load_config(args.config)
+        name = payload["strategy"]
+    except (OSError, ValueError, KeyError) as exc:
+        # Every way the file itself can be unusable: missing, unreadable, not JSON, or
+        # JSON that records no strategy. A typo in a path is the commonest of all, and
+        # it used to arrive as a `FileNotFoundError` traceback out of a command that
+        # places orders.
+        _refuse_unusable_config(args.config, exc)
     if "strategy" in given and getattr(args, "strategy", name) != name:
         raise SystemExit(
             f"--config {args.config} holds strategy {name!r} and its tuned params, but "
@@ -457,22 +493,8 @@ def apply_run_config(args):
         # honour must fail now, not four steps into a pipeline.
         try:
             _load_strategy_from_config(args.config)
-        except ValueError as exc:
-            # The service already says what is wrong and what is available; what it
-            # cannot know is which file asked. Rendered as a refusal rather than left
-            # to become a traceback: this path is reached by `live` and `small-real`,
-            # and a stack trace out of a command that places orders tells an operator
-            # nothing about whether anything was sent.
-            sys.exit(
-                f"Refusing to run: {args.config} cannot be used by this build.\n"
-                f"  {exc}\n"
-                "  The config records a strategy and params that this installation "
-                "cannot honour — usually a config\n"
-                "  saved against a strategy that has since been renamed, removed, or "
-                "moved into a package that is not\n"
-                "  installed here. Re-validate the idea and save a new config, or "
-                "install the package that provides it."
-            )
+        except (OSError, ValueError, KeyError) as exc:
+            _refuse_unusable_config(args.config, exc)
         args.strategy = name
 
     for field, flag in (("scanner", "--scanner"), ("symbols", "--symbols"), ("capital", "--capital")):
