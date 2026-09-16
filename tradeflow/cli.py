@@ -4206,6 +4206,10 @@ def cmd_small_real(args) -> None:
     try:
         run_until_stopped(engine.start(universe), teardown_timeout=SHUTDOWN_TIMEOUT + 1.0)
     except BlindStartError as exc:
+        # The session header is already written — it has to be, so a run that dies
+        # on its first bar still records what its fills were measured against. This
+        # is the other half of that bargain: the header now says it never traded.
+        ledger.record_session_outcome(ledger.SESSION_REFUSED, detail=str(exc).splitlines()[0])
         sys.exit(f"Refusing to start: {exc}")
     except KeyboardInterrupt:
         print("\nInterrupted - small-real stopped. No orders were sent while shutting down.")
@@ -4873,7 +4877,8 @@ def _print_ledger_sessions(ledger, as_json: bool) -> None:
             f"averages across all of them,\n  and they did not necessarily trade the "
             f"same book at the same size."
         )
-    for session in sessions:
+    for pair in ledger.sessions_with_outcomes():
+        session = pair["session"]
         capital = session.get("capital")
         scale = session.get("scale")
         print(
@@ -4882,6 +4887,31 @@ def _print_ledger_sessions(ledger, as_json: bool) -> None:
             + (f" (scale {scale:g} of ${session['validated_capital']:,.2f})" if scale else "")
             + f"  {session.get('broker_mode', 'broker mode not recorded')}"
         )
+        print(f"  {'':9}{_session_outcome_line(pair['outcome'])}")
+
+
+def _session_outcome_line(outcome) -> str:
+    """What became of one session, in the reader's words rather than the record's.
+
+    Three states, never two. A header written before outcomes were recorded has no
+    outcome, and that is not "refused" and not "started" — it is a fact this file does
+    not carry. Inferring it from the absence of a later row would make a session that
+    began and traded nothing indistinguishable from one that never began, which are
+    opposite things and the reason this event exists.
+    """
+    from tradeflow.execution.ledger import PositionLedger
+
+    if outcome is None:
+        return "outcome not recorded (written before sessions recorded one)"
+    kind = outcome.get("outcome")
+    detail = outcome.get("detail")
+    if kind == PositionLedger.SESSION_STARTED:
+        return "started — warm-up completed and the trading loop began"
+    if kind == PositionLedger.SESSION_REFUSED:
+        return "committed, never started" + (f" — {detail}" if detail else "")
+    # An outcome this build does not know is still an outcome, and saying so beats
+    # rendering a newer writer's vocabulary as though nothing were recorded.
+    return f"outcome recorded as {kind!r}" + (f" — {detail}" if detail else "")
 
 
 def _fmt(value, spec: str = ",.2f", missing: str = "not measured") -> str:

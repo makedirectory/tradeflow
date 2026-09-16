@@ -847,3 +847,62 @@ def test_a_run_pointed_elsewhere_still_gets_the_path(wired, tmp_path, capsys):
     printed = capsys.readouterr().out
     assert f"execution-report --ledger {elsewhere}" in printed
     assert "--small-real" not in printed.split("Telemetry from this session")[-1]
+
+
+# --- what became of the session -----------------------------------------------------
+def test_a_run_that_reached_the_trading_loop_records_that_it_started(wired, tmp_path, capsys):
+    """The header is written when the contract is committed to, before anything can
+    fill — that placement is deliberate and keeps a run that dies on its first bar from
+    losing the capital and book its fills were measured against. The cost was that a
+    committed run and a run that actually traded were the same record.
+
+    The fixture's stream fails *after* warm-up, which is exactly the window this pins."""
+    from tradeflow.execution.ledger import PositionLedger, small_real_ledger_path
+
+    _start_and_let_the_stream_fail(_config(tmp_path))
+
+    paired = PositionLedger(small_real_ledger_path()).sessions_with_outcomes()
+    assert paired[-1]["outcome"]["outcome"] == PositionLedger.SESSION_STARTED
+
+
+def test_a_run_refused_after_committing_says_it_never_traded(wired, tmp_path, monkeypatch, capsys):
+    """A warm-up the feed could not answer refuses the run — after the header is
+    written. Without an outcome the ledger then held a session indistinguishable from
+    one that traded, and `execution-report` listed it with its capital and scale as
+    though it had happened."""
+    from tradeflow.engine.live import BlindStartError, LiveEngine
+    from tradeflow.execution.ledger import PositionLedger, small_real_ledger_path
+
+    def refuse(self, symbols):
+        raise BlindStartError("Warm-up history could not be fetched: feed unreachable\n  second line")
+
+    monkeypatch.setattr(LiveEngine, "start", refuse)
+
+    with pytest.raises(SystemExit, match="Refusing to start"):
+        _run(["small-real", "--config", str(_config(tmp_path)), "--scale", "0.05"])
+
+    paired = PositionLedger(small_real_ledger_path()).sessions_with_outcomes()
+    outcome = paired[-1]["outcome"]
+    assert outcome["outcome"] == PositionLedger.SESSION_REFUSED
+    # The first line only: the reason, not the two lines of remediation advice that
+    # follow it, which belong to the operator reading the refusal and not to the record.
+    assert outcome["detail"] == "Warm-up history could not be fetched: feed unreachable"
+
+
+def test_the_report_tells_a_committed_session_from_one_that_traded(wired, tmp_path, capsys):
+    """The defect as a reader sees it. Both sessions carry a capital and a scale, and
+    before this they rendered identically."""
+    from tradeflow.cli import _print_ledger_sessions
+    from tradeflow.execution.ledger import PositionLedger
+
+    ledger = PositionLedger(tmp_path / "l.jsonl")
+    ledger.record_session("small_real", {"capital": 200.0, "broker_mode": "paper"})
+    ledger.record_session_outcome(PositionLedger.SESSION_REFUSED, detail="feed unreachable")
+    ledger.record_session("small_real", {"capital": 500.0, "broker_mode": "paper"})
+    ledger.record_session_outcome(PositionLedger.SESSION_STARTED)
+
+    _print_ledger_sessions(ledger, as_json=False)
+
+    printed = capsys.readouterr().out
+    assert "committed, never started — feed unreachable" in printed
+    assert "started — warm-up completed and the trading loop began" in printed

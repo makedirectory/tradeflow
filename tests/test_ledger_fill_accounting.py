@@ -617,3 +617,109 @@ def test_a_session_context_cannot_change_what_kind_of_record_it_is(ledger):
     assert ledger.expected_positions() == {}
     written = json.loads(ledger.path.read_text().splitlines()[0])
     assert written["event"] == "session" and written["v"] == LEDGER_VERSION
+
+
+# --- a session header and what became of it -----------------------------------------
+def test_a_session_outcome_attaches_to_the_header_before_it(tmp_path):
+    """Paired by position, which is what an append-only file makes true. Two runs in one
+    file must not swap endings — a refused run wearing a later run's `started` would say
+    the opposite of what happened."""
+    from tradeflow.execution.ledger import PositionLedger
+
+    ledger = PositionLedger(tmp_path / "l.jsonl")
+    ledger.record_session("small_real", {"capital": 200.0})
+    ledger.record_session_outcome(PositionLedger.SESSION_REFUSED, detail="warm-up unavailable")
+    ledger.record_session("small_real", {"capital": 500.0})
+    ledger.record_session_outcome(PositionLedger.SESSION_STARTED)
+    ledger.record_session("small_real", {"capital": 900.0})
+
+    paired = ledger.sessions_with_outcomes()
+
+    assert [p["session"]["capital"] for p in paired] == [200.0, 500.0, 900.0]
+    assert paired[0]["outcome"]["outcome"] == PositionLedger.SESSION_REFUSED
+    assert paired[0]["outcome"]["detail"] == "warm-up unavailable"
+    assert paired[1]["outcome"]["outcome"] == PositionLedger.SESSION_STARTED
+    # The third is still running, or was written by a build that recorded no outcome.
+    # Absent, and never filled in from the runs around it.
+    assert paired[2]["outcome"] is None
+
+
+def test_a_header_written_before_outcomes_existed_reports_neither_state(tmp_path):
+    """Absence is not a state. A session that began and traded nothing and one that
+    never began are indistinguishable from silence, and they are opposite facts — which
+    is the whole reason the outcome is recorded rather than inferred."""
+    from tradeflow.cli import _session_outcome_line
+    from tradeflow.execution.ledger import PositionLedger
+
+    ledger = PositionLedger(tmp_path / "l.jsonl")
+    ledger.record_session("small_real", {"capital": 200.0})
+
+    line = _session_outcome_line(ledger.sessions_with_outcomes()[0]["outcome"])
+
+    assert "not recorded" in line
+    assert "started" not in line
+    assert "never started" not in line
+
+
+def test_an_outcome_with_no_header_to_attach_to_is_not_written(tmp_path):
+    """`live` runs the same engine and records no session header, so an outcome written
+    there would belong to no run — and a reader pairing by position would hang it on
+    whichever session came next. Refused at the writer, so the orphan cannot exist
+    rather than having to be dropped by every reader."""
+    from tradeflow.execution.ledger import PositionLedger
+
+    ledger = PositionLedger(tmp_path / "l.jsonl")
+    ledger.record_session_outcome(PositionLedger.SESSION_STARTED)
+
+    assert ledger.sessions_with_outcomes() == []
+    assert not any(r.get("event") == "session_outcome" for r in ledger._read())
+
+
+def test_a_session_outcome_moves_no_position(tmp_path):
+    """The property every new event in this file has to clear: `_replay` and
+    `lifecycles` dispatch on the event name, so a name neither knows must move nothing
+    whatever fields it carries."""
+    from tradeflow.execution.ledger import PositionLedger
+
+    ledger = PositionLedger(tmp_path / "l.jsonl")
+    ledger.record_session("small_real", {"capital": 200.0})
+    before = dict(ledger.expected_positions())
+    ledger.record_session_outcome(PositionLedger.SESSION_STARTED, detail="AAA 999")
+
+    assert dict(ledger.expected_positions()) == before
+    assert ledger.lifecycles() == []
+
+
+def test_a_session_written_by_the_previous_ledger_version_reads_as_unrecorded(tmp_path):
+    """Built as a v2 file writes one — a session header with no outcome event after it —
+    rather than as today's shape minus a field, because the two are only the same until
+    somebody changes the header.
+
+    A v2 header is the reachable case: every session in every ledger written before this
+    existed is one, and rendering any of them as 'started' would claim a run traded when
+    the file says nothing either way."""
+    import json
+
+    from tradeflow.cli import _session_outcome_line
+    from tradeflow.execution.ledger import PositionLedger
+
+    path = tmp_path / "v2.jsonl"
+    path.write_text(
+        json.dumps(
+            {
+                "capital": 10_000.0,
+                "broker_mode": "paper",
+                "event": "session",
+                "mode": "small_real",
+                "ts": "2026-09-08T13:39:01+00:00",
+                "v": 2,
+            }
+        )
+        + "\n"
+    )
+
+    paired = PositionLedger(path).sessions_with_outcomes()
+
+    assert len(paired) == 1
+    assert paired[0]["outcome"] is None
+    assert "not recorded" in _session_outcome_line(paired[0]["outcome"])
