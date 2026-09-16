@@ -423,14 +423,19 @@ def test_the_telemetry_goes_to_its_own_ledger_not_the_live_one(wired, tmp_path):
 
 def test_the_run_says_how_to_read_its_own_telemetry(wired, tmp_path, capsys):
     """Telemetry nobody can find is telemetry nobody checks, and the command that reads
-    it differs between an installed copy and a checkout."""
+    it differs between an installed copy and a checkout.
+
+    It names `--small-real` rather than the path, now that the flag exists: the flag is
+    there so nobody has to know where this ledger lives, and printing the path taught
+    the long way round to the one reader guaranteed to see it. Printed instructions are
+    an interface, and this one had outlived its own flag."""
     from tradeflow.execution.ledger import small_real_ledger_path
 
     _start_and_let_the_stream_fail(_config(tmp_path))
 
     printed = capsys.readouterr().out
-    assert "execution-report --ledger" in printed
-    assert str(small_real_ledger_path()) in printed
+    assert "execution-report --small-real" in printed
+    assert f"--ledger {small_real_ledger_path()}" not in printed
 
 
 def test_the_scaled_book_is_what_the_engine_is_actually_handed(wired, tmp_path, monkeypatch):
@@ -829,3 +834,16 @@ def test_a_book_with_no_floor_declared_is_never_blocked(wired, tmp_path, capsys)
 
     printed = capsys.readouterr().out
     assert "venue floor binds all" not in printed
+
+
+def test_a_run_pointed_elsewhere_still_gets_the_path(wired, tmp_path, capsys):
+    """The boundary. For a file named with `--ledger` there is no flag that finds it
+    again, so the path is the only answer — and a hint that named the flag anyway would
+    send the reader to a different ledger than the one they had just written."""
+    elsewhere = tmp_path / "somewhere-else.jsonl"
+
+    _start_and_let_the_stream_fail(_config(tmp_path), extra=["--ledger", str(elsewhere)])
+
+    printed = capsys.readouterr().out
+    assert f"execution-report --ledger {elsewhere}" in printed
+    assert "--small-real" not in printed.split("Telemetry from this session")[-1]
