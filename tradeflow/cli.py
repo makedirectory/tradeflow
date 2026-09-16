@@ -4096,6 +4096,17 @@ def cmd_small_real(args) -> None:
         print("\n--preflight: nothing was started and no order path ran.")
         return
 
+    # After the --preflight return, deliberately: a preflight exists to show a reader
+    # this exact finding, so it reports and exits clean. Starting is the thing refused.
+    blocked = smallreal.every_entry_blocked_note(contract)
+    if blocked is not None and not getattr(args, "allow_min_notional_all_blocked", False):
+        sys.exit(
+            f"Refusing to start: {blocked}.\n"
+            f"  {smallreal.EVERY_ENTRY_BLOCKED_CONSEQUENCE}\n"
+            "  Raise --capital (or --scale) until a position clears the floor, or pass\n"
+            "  --allow-min-notional-all-blocked to run it anyway as a diagnostic."
+        )
+
     # After the preflight, deliberately. The contradictory-posture refusals above run
     # before a broker is even built, but this one is a human being asked to agree to
     # something — and agreeing to a contract you have not been shown is a formality
@@ -4264,6 +4275,7 @@ def _print_small_real_preflight(args, contract, broker, universe, account, held=
     """
     from tradeflow.execution.halt import HaltState
     from tradeflow.execution.ledger import small_real_ledger_path
+    from tradeflow.services import smallreal
     from tradeflow.settings import paper_trade_mode
 
     print("\n=== SMALL-REAL PREFLIGHT — this run can place orders ===")
@@ -4301,6 +4313,16 @@ def _print_small_real_preflight(args, contract, broker, universe, account, held=
             f"  {'':24}so a name priced above about ${budget:,.2f} cannot be traded here\n"
             f"  {'':24}at all. Those refusals are counted, not silent."
         )
+    blocked = smallreal.every_entry_blocked_note(contract)
+    if blocked is not None:
+        # Directly beneath the budget and the floor, because it is the conclusion those
+        # two lines support and the one thing a reader should not have to derive.
+        import textwrap
+
+        print(f"\n  {'venue floor binds all':24}{blocked}")
+        for line in textwrap.wrap(smallreal.EVERY_ENTRY_BLOCKED_CONSEQUENCE, width=52):
+            print(f"  {'':24}{line}")
+
     envelope = contract["max_loss_envelope"]
     if envelope is not None:
         print(f"  {'max loss envelope':24}${envelope:,.2f}")
@@ -5823,6 +5845,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=DATA_FEEDS,
         default=None,
         help="Pin the Alpaca market-data feed for both warm-up and the live stream",
+    )
+    small.add_argument(
+        "--allow-min-notional-all-blocked",
+        action="store_true",
+        help="Start even when the venue floor is above every order this scale can size. "
+        "The run places nothing and observes nothing; it is a diagnostic, not evidence",
     )
     small.add_argument(
         "--ledger",
