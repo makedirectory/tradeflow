@@ -139,7 +139,12 @@ being durable.
 1. Verify at the broker that you are actually flat. The report is what this system
    believes; the broker is what is true.
 2. `tradeflow halts` — confirm the halt is in force.
-3. `tradeflow reconcile` — compare the ledger against the account.
+3. `tradeflow reconcile` — compare the ledger against the account. After a
+   **small-real** session, `tradeflow reconcile --small-real`: the two ledgers are
+   separate files on purpose, and the default is the live one, so a small-real book
+   checked without the flag is compared against a ledger that never recorded it. Every
+   run names the file it opened on its first line, so the answer is never about an
+   unstated book.
 4. `tradeflow execution-report` — what the live path actually did: slippage,
    latency, submitted-versus-filled notional, and which refusals stopped a signal.
 5. Diagnose, fix, then `tradeflow resume all`.

@@ -201,19 +201,14 @@ def test_the_limited_payload_is_still_json():
 def test_the_execution_report_command_runs_over_an_empty_ledger(capsys, tmp_path):
     """A session that placed nothing is the most likely first run of this command, and
     it must report that rather than fail."""
-    from unittest import mock
-
     from tradeflow.cli import cmd_execution_report
 
-    args = mock.Mock(ledger=str(tmp_path / "ledger.jsonl"), json=False, orders=False)
-    cmd_execution_report(args)
+    cmd_execution_report(_ledger_args(ledger=str(tmp_path / "ledger.jsonl")))
 
     assert "Execution quality" in capsys.readouterr().out
 
 
 def test_the_execution_report_emits_valid_json(capsys, tmp_path):
-    from unittest import mock
-
     from tradeflow.cli import cmd_execution_report
     from tradeflow.execution.ledger import CUMULATIVE, PositionLedger
 
@@ -228,7 +223,7 @@ def test_the_execution_report_emits_valid_json(capsys, tmp_path):
     )
     ledger.record_fill("AAA", "buy", 1, order_id="o1", basis=CUMULATIVE, fill_price=100.5)
 
-    args = mock.Mock(ledger=str(tmp_path / "ledger.jsonl"), json=True, orders=False)
+    args = _ledger_args(ledger=str(tmp_path / "ledger.jsonl"), json=True)
     cmd_execution_report(args)
 
     payload = json.loads(capsys.readouterr().out)
@@ -469,3 +464,100 @@ def test_the_breadth_remedy_is_not_printed_at_a_book_that_already_has_breadth():
     assert "at most 1 of 40" in note(1)
     assert "shipped default" not in note(5)
     assert "at most 5 of 40" in note(5)
+
+
+# --- which ledger a read-only command opened -----------------------------------------
+def _ledger_args(**overrides):
+    """An argparse-shaped namespace, not a Mock.
+
+    A `Mock` invents every attribute it is asked for, and invents them *truthy* — so a
+    fixture built that way answers "yes" to `--small-real` whether the flag exists or
+    not, and would have hidden this whole change.
+    """
+    import argparse
+
+    defaults = {"ledger": None, "small_real": False, "json": False, "orders": False}
+    return argparse.Namespace(**{**defaults, **overrides})
+
+
+def test_reconcile_names_the_ledger_it_opened_even_when_it_is_the_default(capsys, tmp_path):
+    """A reconciliation that does not say which book it compared reads as a verdict on
+    *the* book. There are two ledgers on purpose, so "the" is never well defined — and
+    after a small-real session the default is the wrong one."""
+    from unittest import mock
+
+    from tests.fakes import FakeBroker
+    from tradeflow.cli import cmd_reconcile
+
+    with mock.patch("tradeflow.cli.build_data_and_broker", return_value=(FakeBroker(), None)):
+        cmd_reconcile(_ledger_args(ledger=str(tmp_path / "ledger.jsonl")))
+
+    out = capsys.readouterr().out
+    assert f"ledger: {tmp_path / 'ledger.jsonl'}" in out
+
+
+def test_reconcile_small_real_reads_the_small_real_ledger_and_says_so(capsys, tmp_path):
+    """The flag mirrors `execution-report --small-real`, which had it and `reconcile`
+    did not — so the command an operator reaches for after a small-real session was the
+    one that could only answer about the live book."""
+    from unittest import mock
+
+    from tests.fakes import FakeBroker
+    from tradeflow.cli import cmd_reconcile
+    from tradeflow.execution.ledger import small_real_ledger_path
+
+    with mock.patch("tradeflow.cli.build_data_and_broker", return_value=(FakeBroker(), None)):
+        cmd_reconcile(_ledger_args(small_real=True))
+
+    out = capsys.readouterr().out
+    assert f"ledger: {small_real_ledger_path()} (small-real)" in out
+
+
+def test_reconcile_refuses_ledger_and_small_real_together(tmp_path):
+    """Both name a ledger and they disagree. It used to prefer `--ledger` and drop
+    `--small-real` without a word, which is the same silent-wrong-answer shape the
+    named default exists to remove: the operator said two things and only one happened.
+
+    Refused before the broker is built, so it costs no credentials and no round trip."""
+    import pytest as _pytest
+
+    from tradeflow.cli import cmd_reconcile
+
+    with _pytest.raises(SystemExit) as raised:
+        cmd_reconcile(_ledger_args(ledger=str(tmp_path / "l.jsonl"), small_real=True))
+
+    assert "--ledger and --small-real" in str(raised.value)
+
+
+def test_execution_report_refuses_the_same_ambiguous_pair(tmp_path):
+    """The resolver is shared, so the sibling command inherits the refusal. Asserted
+    rather than assumed: these two are the only commands over this pair of ledgers, and
+    the whole point of one resolver is that they cannot answer differently."""
+    import pytest as _pytest
+
+    from tradeflow.cli import cmd_execution_report
+
+    args = _ledger_args(ledger=str(tmp_path / "l.jsonl"), small_real=True, orders=False)
+    with _pytest.raises(SystemExit) as raised:
+        cmd_execution_report(args)
+
+    assert "--ledger and --small-real" in str(raised.value)
+
+
+def test_reconcile_json_carries_the_ledger_alongside_the_findings(capsys, tmp_path):
+    """A script reading the JSON has the same question as a human reading the text, and
+    the answer is a fact about the invocation rather than about what was found — so it
+    wraps the report instead of being added inside it."""
+    import json
+    from unittest import mock
+
+    from tests.fakes import FakeBroker
+    from tradeflow.cli import cmd_reconcile
+
+    with mock.patch("tradeflow.cli.build_data_and_broker", return_value=(FakeBroker(), None)):
+        cmd_reconcile(_ledger_args(small_real=True, json=True))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert "(small-real)" in payload["ledger"]
+    # The report's own keys survive untouched beside it.
+    assert "clean" in payload and "checked_at" in payload

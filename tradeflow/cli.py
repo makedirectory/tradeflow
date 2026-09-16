@@ -4669,11 +4669,17 @@ def cmd_reconcile(args) -> None:
 
     from tradeflow.execution.ledger import PositionLedger
 
+    # Resolved before the broker is built: refusing an argument combination should not
+    # need credentials, a network round trip, or a reader to wonder whether it connected.
+    path = _execution_ledger_path(args)
     broker, _ = build_data_and_broker()
-    report = PositionLedger(args.ledger).reconcile(broker)
+    report = PositionLedger(path).reconcile(broker)
     if args.json:
-        print(json.dumps(report.as_dict(), indent=2))
+        # Added around the report rather than inside it: which file was opened is a fact
+        # about this invocation, not part of what reconciliation found.
+        print(json.dumps({"ledger": _describe_ledger(path), **report.as_dict()}, indent=2))
     else:
+        print(_describe_ledger(path))
         print(report.summary())
     if not report.clean:
         raise SystemExit(1)
@@ -4700,18 +4706,58 @@ def cmd_execution_report(args) -> None:
     _print_execution_report(report, show_orders=args.orders)
 
 
+#: One help string for one knob, so the two commands carrying it cannot describe it
+#: differently — a reader comparing `reconcile --help` and `execution-report --help`
+#: should not have to work out whether two wordings mean two things.
+_SMALL_REAL_LEDGER_HELP = (
+    "Read the small-real telemetry ledger instead of the live one. They are separate "
+    "files on purpose: averaging a full-size book's fills with the same book's fills at "
+    "a fraction of the size describes neither"
+)
+
+
 def _execution_ledger_path(args):
-    """Which ledger to summarise. Explicit path, the small-real one, or the live one.
+    """Which ledger to read. Explicit path, the small-real one, or the live one.
 
     A flag rather than a path the reader has to know, because telemetry nobody can find
     is telemetry nobody checks — and the two files exist precisely so their contents are
     never averaged together.
+
+    Giving both is refused rather than resolved. It used to prefer ``--ledger`` and drop
+    ``--small-real`` without a word, which is the same silent-wrong-answer shape as the
+    default this pair exists to make explicit: the operator has said two things, only
+    one of them happened, and the output named neither.
     """
     from tradeflow.execution.ledger import small_real_ledger_path
 
+    small_real = bool(getattr(args, "small_real", False))
+    if args.ledger and small_real:
+        raise SystemExit(
+            "--ledger and --small-real both name a ledger, and they disagree. Pass "
+            "--small-real for the small-real telemetry ledger, or --ledger PATH for a "
+            "specific file — not both."
+        )
     if args.ledger:
         return args.ledger
-    return small_real_ledger_path() if getattr(args, "small_real", False) else None
+    return small_real_ledger_path() if small_real else None
+
+
+def _describe_ledger(path) -> str:
+    """The ledger a read-only command actually opened, named in its own output.
+
+    Printed even for the default. A reconciliation that does not say which book it
+    compared reads as a verdict on *the* book, and after a small-real session the
+    default is the wrong one — which is how three positions came to be reported as
+    unexplained while a second ledger's four sat unmentioned.
+    """
+    from tradeflow.execution.ledger import default_ledger_path, small_real_ledger_path
+
+    resolved = Path(path) if path else default_ledger_path()
+    if resolved == small_real_ledger_path():
+        return f"ledger: {resolved} (small-real)"
+    if resolved == default_ledger_path():
+        return f"ledger: {resolved} (live)"
+    return f"ledger: {resolved}"
 
 
 def _print_ledger_sessions(ledger, as_json: bool) -> None:
@@ -5845,6 +5891,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Check the position ledger against the broker's actual account state — read-only",
     )
     reconcile.add_argument("--ledger", default=None, help="Ledger path (default: logs/position_ledger.jsonl)")
+    reconcile.add_argument(
+        "--small-real", dest="small_real", action="store_true", help=_SMALL_REAL_LEDGER_HELP
+    )
     reconcile.add_argument("--json", action="store_true", help="Emit the report as JSON")
     reconcile.set_defaults(func=cmd_reconcile)
 
@@ -5854,12 +5903,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     execution.add_argument("--ledger", default=None, help="Ledger path (default: logs/position_ledger.jsonl)")
     execution.add_argument(
-        "--small-real",
-        dest="small_real",
-        action="store_true",
-        help="Read the small-real telemetry ledger instead of the live one. They are "
-        "separate files on purpose: averaging a full-size book's fills with the same "
-        "book's fills at a fraction of the size describes neither",
+        "--small-real", dest="small_real", action="store_true", help=_SMALL_REAL_LEDGER_HELP
     )
     execution.add_argument("--json", action="store_true", help="Emit the report as JSON")
     execution.add_argument(
