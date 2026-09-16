@@ -813,6 +813,13 @@ def test_walkforward_save_config_then_backtest_config_round_trips(monkeypatch, t
 
 
 def test_backtest_config_out_of_range_param_fails_loudly(tmp_path):
+    """Loudly, and as a refusal rather than a traceback.
+
+    The requirement is unchanged — a param the strategy can no longer honour must never
+    be silently accepted — but the shape it arrives in is not. `ValueError` reaching the
+    top of a CLI is a stack trace, and this loader is shared with `live` and
+    `small-real`, where a stack trace tells an operator nothing about whether an order
+    was sent."""
     from tradeflow import cli as main
     from tradeflow.services.registry import resolve_strategy_class
 
@@ -837,8 +844,13 @@ def test_backtest_config_out_of_range_param_fails_loudly(tmp_path):
             "2024-06-01",
         ]
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(SystemExit) as raised:
         args.func(args)
+
+    message = str(raised.value)
+    assert "Refusing to run" in message
+    assert str(config_path) in message, "the file that asked is not named"
+    assert "fast_ema_period" in message, "the param that was rejected is not named"
 
 
 # --- MCP parity ---------------------------------------------------------
