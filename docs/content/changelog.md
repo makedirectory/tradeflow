@@ -28,9 +28,10 @@ index; they are tagged in the repository.
 
 ---
 
-## Unreleased
+## 2.3.0 — 2026-09-16
 
-Research affordances, and the second half of the causality defect.
+Research affordances, the second half of the causality defect, and two telemetry modes
+kept deliberately apart.
 
 ### The headline
 
@@ -50,6 +51,25 @@ and the default sizer is untouched because it sizes off cash, which is not marke
 recalibrated: unlike the mark-to-market change at v2, this moves no metric
 systematically, and rescaling a threshold with no measured shift behind it is
 gate-fitting.
+
+**Two telemetry modes, kept apart on purpose.** Observing what execution actually does
+used to require shrinking a book's caps by hand until fills happened, which biases the
+sample toward low-priced names and means the strategy under observation is not the
+strategy that was validated. That is now two separate answers to two separate questions.
+
+`live --dry-run` drives the real decision path against a stated capital with a broker
+that *cannot* trade, and reports what would have been sent. Its vocabulary is
+deliberate — `would_submit`, `would_bind`, `would_skip`, never *submitted* or *filled* —
+because a report that borrows execution's words gets read as execution's evidence. It
+journals nothing: a rehearsal must not spend a family's statistical budget.
+
+`small-real` trades the validated contract at **reduced capital** rather than reduced
+caps. Fractions scale because capital did, counts stay counts, dollar ceilings scale,
+and venue floors stay absolute — a broker's minimum does not get smaller because a run
+chose to. The floor not scaling is a cost taken deliberately, and it is measured rather
+than hidden: refusals carry reason codes so the bias is a number in the report. Shrink
+far enough and it stops being a bias and becomes the whole result, so a scale at which
+no order could clear the floor is refused outright.
 
 ### Added
 
@@ -76,8 +96,68 @@ gate-fitting.
 - **`trials list`** now says how many rows the accounting filter is hiding. The day the
   version is bumped, an empty table would otherwise read as "nothing was ever run here".
 
+- **`trials analyze` and `trials compare`** — the trade table, exit-reason split and
+  excursion of a recorded trial, and two trials read side by side. The browser could
+  list a run and not answer the first question anyone asks of one.
+- **Portfolio excursion** — how far the *book* went against itself, not just each trade,
+  so a drawdown can be attributed rather than only reported.
+- **Campaign materialisation and export** — a validated config carries how it was
+  produced as a field of its own provenance, never as a second file beside it: the
+  recipe, the resolved book, the seed, the universe and the command that reads its
+  trades back. Two artifacts claiming to say how a config was made is the failure this
+  avoids.
+- **`live --dry-run`** — what a contract would do, against a broker with no trading
+  capability. See the headline.
+- **`small-real`** — the validated contract at reduced capital, with a mandatory
+  preflight that shows every limit beside the value it was validated at. Deliberately
+  absent from MCP: it is the one command an agent must not reach.
+- **MCP agent attachment** — the supported construction surface widened from nine
+  parameters to the service's full ungated set, with `compute_attribution` added.
+  Evidence-gated families stay off: conditional risk, the Black–Litterman posterior and
+  the multi-period aim policy ship disabled because their adoption gates do not clear,
+  and an agent reads a description as fact and acts on it at machine speed. Being
+  reachable is not being validated.
+- **`reconcile --small-real`** and **`flatten --ledger` / `--small-real`**, mirroring
+  `execution-report`. Both commands now print the ledger they opened, the live default
+  included — a reconciliation that does not say which book it compared reads as a
+  verdict on *the* book, and there are two on purpose.
+
 ### Fixed
 
+- **A saved config traded a book it was never validated at.** A config's
+  `position_limits` and the limits folded into its trial's identity are the same book
+  written twice and were not checked against each other. Omitting the first does not
+  leave the book unspecified — it resolves to the strategy class default of one
+  position, so a config whose own provenance recorded eight silently traded one. Four
+  writers each lost it a different way.
+- **`min_notional` was enforced in the backtest and absent from the live path.** A
+  config validated with a venue floor traded without one, while the live preflight
+  *printed* the floor on every run — the surface said the limit was in force and nothing
+  applied it. One definition both clocks call, and both the sub-floor refusal and the
+  size-rounds-to-zero one now carry reason codes.
+- **`flatten` reported a submitted close as a closed position.** Exit zero meant the
+  broker had accepted the request, not that anything was flat. It now requires a broker
+  read that observed no positions and no resting orders, and reports `pending`
+  otherwise — a queued close fills at the next open and a refused one never will, and
+  nothing could tell them apart.
+- **A flatten left the ledger permanently unreconcilable.** It goes straight to the
+  broker by design, so the ledger never saw those exits and reported every flattened
+  position as a possibly-dropped fill, for good. A confirmed-flat flatten now records a
+  terminal event per position — no invented fill, no price, nothing rewritten.
+- **A session header said a run happened when it never began.** The header is written
+  when the contract is committed to, before anything can fill, which is what keeps a run
+  that dies on its first bar from losing the capital its fills were measured against.
+  It now carries an outcome as well; a header written before outcomes existed reads as
+  *not recorded*, never inferred from the absence of a later row.
+- **MCP silently discarded unknown arguments.** An agent passing a withheld knob got a
+  normal successful result with no signal it was dropped. Every unknown argument is now
+  refused with a did-you-mean suggestion.
+- **A halted refusal grouped by its timestamped message**, so two halts counted as two
+  refusal families — the fragmentation reason codes were introduced to fix for the
+  exposure caps, surviving in the one refusal that never got a code.
+- **A config this build cannot honour crashed instead of refusing.** Missing, not JSON,
+  no strategy recorded, or naming a strategy that has since moved into a package that is
+  not installed — all four raised a traceback out of commands that place orders.
 - The long/short decomposition never rendered: `log_backtest_report` accepted `legs` and
   dropped it before the formatter, so the block was fully tested and dead at the surface.
 - Execution checks were all rendered as percentages, so `book_breadth` — a position count
@@ -93,7 +173,35 @@ gate-fitting.
 - `costs/base.py` claimed to be research-clock only long after the live path began
   importing it.
 
+### Durable records
+
+`ACCOUNTING_VERSION` is **5** and `LEDGER_VERSION` is **4**. Both are stamped so a
+reader can ask what shape it is looking at rather than inferring it from which keys
+happen to be present — two compatibility decisions in this file were already improvised
+per-field and each cost a live session before anyone noticed.
+
+The ledger gained two event kinds: `session_outcome`, what became of a run that
+committed to a contract, and `flattened`, a position an operator closed at the broker
+outside the engine. Older files simply lack them, and that reads as exactly what it is.
+A book flattened before the event existed still reconciles as missing, because inferring
+a flatten from a divergence would excuse the dropped fill the divergence exists to
+surface.
+
+### A note on how these were found
+
+Most of the fixes above came from running the software rather than reading it, and
+several were found while attempting something else entirely. A venue-floor evidence
+check that never completed — the universe produced no signal that day — nonetheless
+surfaced four separate defects on the way to not completing. The recurring shape is a
+green test suite sitting on top of a real break because the test exercised something
+adjacent to the thing that ships.
+
 ## 2.2.0 — 2026-09-02
+
+*Tagged and published on 2026-09-16. The version and this entry were written on the date
+above and the tag was never pushed, so the release sat in the repository for two weeks
+without reaching the package index. Tagged at the commit that set the version, so what
+was published is what this entry describes rather than the month of work that followed.*
 
 Live-path validation against a real paper account, and the defect it eventually found.
 Everything here came from *running* the thing — the preflight, the ledger, the execution
