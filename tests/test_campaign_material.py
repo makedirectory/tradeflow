@@ -634,3 +634,31 @@ def test_a_promoted_config_does_not_contradict_itself_about_the_seed(tmp_path):
     assert provenance["seed"] == RECIPE_ARGS["seed"]
     embedded = provenance["campaign"]["metadata"]["seed"]["value"]
     assert provenance["seed"] == embedded, "the file disagrees with its own campaign block"
+
+
+# --- a verdict's scanner is a recorded fact ------------------------------------------
+def test_a_verdict_trials_scanner_is_reported_as_recorded(tmp_path):
+    """A verdict keeps its scanner inside its identity (`_verdict.scanner`), not in the
+    context block, so the material reported `scanner.recorded: false` for a run whose
+    journal line names it. A kind that really has none still reads as not recorded."""
+    journal = tmp_path / "journal.jsonl"
+    verdict_params = {"fast_ema_period": 5, "_verdict": {"scanner": "demo_volume", "source": "scanner"}}
+    verdict_id = journal_trial(
+        "verdict",
+        strategy="demo_trend",
+        symbols=["AAA"],
+        start=datetime(2024, 1, 1),
+        end=datetime(2024, 4, 30),
+        params=verdict_params,
+        metrics={"ic_tstat": 1.0},
+        dedup_params=verdict_params,
+        path=journal,
+    )
+    backtest_id = _journal_backtest(journal)
+
+    with _store(journal) as store:
+        verdict = campaign_material(store, verdict_id, journal_path=journal)
+        backtest = campaign_material(store, backtest_id, journal_path=journal)
+
+    assert verdict[RECIPE]["context"]["scanner"] == {"recorded": True, "value": "demo_volume"}
+    assert backtest[RECIPE]["context"]["scanner"]["recorded"] is False

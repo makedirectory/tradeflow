@@ -111,7 +111,7 @@ def campaign_material(store, trial_id: str, *, journal_path: Optional[Any] = Non
 _CONTEXT_FACTS = ("capital", "scanner", "scan_as_of", "cache")
 
 
-def _context_section(inputs: Dict[str, Any]) -> Dict[str, Any]:
+def _context_section(inputs: Dict[str, Any], record: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """The recorded run context, with every fact carrying whether it was recorded.
 
     Each fact reports ``recorded`` rather than being present-or-missing, so a reader -
@@ -119,8 +119,17 @@ def _context_section(inputs: Dict[str, Any]) -> Dict[str, Any]:
     did". Every trial predating this block reads as the second, which is what it is: the
     fact was never captured, and defaulting it would put a capital or a cache policy in
     the record that nobody chose.
+
+    A verdict trial keeps its scanner in its identity (``_verdict.scanner``) rather than
+    in the context block, so that is read as the recorded fact: reporting such a trial's
+    scanner as not recorded sent a reader to guess at a value the journal holds.
     """
-    context = inputs.get("context") or {}
+    context = dict(inputs.get("context") or {})
+    if "scanner" not in context:
+        identity = (record or {}).get("dedup_params") or (record or {}).get("resolved_config") or {}
+        scanner = (identity.get("_verdict") or {}).get("scanner")
+        if scanner:
+            context["scanner"] = scanner
     return {fact: {"recorded": fact in context, "value": context.get(fact)} for fact in _CONTEXT_FACTS}
 
 
@@ -147,7 +156,7 @@ def _recipe_section(row, inputs, record) -> Dict[str, Any]:
         # policy its bars were read under. Labelled separately from `validation` because
         # nothing here is hashed - two runs differing only in these keys are one trial to
         # the memo, which a reader comparing them needs to know.
-        "context": _context_section(inputs),
+        "context": _context_section(inputs, record),
         # The universe that was actually resolved, and the list it was resolved *from*.
         # The store keeps only a hash of the first and nothing of the second, so this is
         # the only place a reader gets them back - and without it the module's own
