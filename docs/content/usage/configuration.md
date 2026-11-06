@@ -14,7 +14,7 @@ separate artefact with its own page: [run configs](run-configs.md).
 :::
 
 :::tip No keys needed to explore
-Want to see TradeFlow work before signing up for anything? Run `tradeflow demo` — it
+Want to see TradeFlow work before signing up for anything? Run `quantred demo` — it
 runs the whole pipeline (backtest + walk-forward) on synthetic data, offline.
 :::
 
@@ -199,13 +199,13 @@ Everything else (symbols, dates, capital, strategy, scanner) is passed per run o
 the command line — nothing else needs editing:
 
 ```bash
-tradeflow backtest --symbols AAPL,MSFT --start 2024-06-01 --end 2024-09-01 --capital 50000
+quantred backtest --symbols AAPL,MSFT --start 2024-06-01 --end 2024-09-01 --capital 50000
 ```
 
 See the individual workflow pages for the full option list.
 
 ## From a source checkout (contributors)
 
-The commands above are the installed `tradeflow` command. In a checkout, run them as
+The commands above are the installed `quantred` command. In a checkout, run them as
 `uv run python main.py <command> ...`. Extras are installed with `uv sync --inexact --extra <name>`
 (see [optional extras](extras)).

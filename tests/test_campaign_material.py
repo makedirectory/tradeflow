@@ -279,7 +279,7 @@ def test_promotion_writes_the_campaign_into_the_config_s_own_provenance(tmp_path
     monkeypatch.setattr(
         "sys.argv",
         [
-            "tradeflow",
+            settings.CLI_NAME,
             "trials",
             "promote",
             trial_id,

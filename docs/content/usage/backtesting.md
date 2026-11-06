@@ -10,7 +10,7 @@ reports performance. It answers "would this have worked?" — a useful question,
 long as you remember it's not the same as "will this work?"
 
 ```bash
-tradeflow backtest \
+quantred backtest \
     --strategy demo_trend --scanner demo_volume \
     --symbols NVDA,META,TSLA --start 2024-01-02 --end 2024-04-01 --capital 100000
 ```
@@ -142,7 +142,7 @@ A single cost assumption produces a single number, and no way to tell how much o
 result was the assumption. `--cost-stress` re-runs the same config under scaled costs:
 
 ```bash
-tradeflow backtest --strategy demo_trend --symbols NVDA,META,TSLA \
+quantred backtest --strategy demo_trend --symbols NVDA,META,TSLA \
     --cost-stress
 ```
 
@@ -253,6 +253,6 @@ Once a backtest runs, search for better parameters with
 
 ## From a source checkout (contributors)
 
-The commands above are the installed `tradeflow` command. In a checkout, run them as
+The commands above are the installed `quantred` command. In a checkout, run them as
 `uv run python main.py <command> ...`. The Makefile shortcut for this page is `make backtest`. Extras are installed with `uv sync --inexact --extra <name>`
 (see [optional extras](extras)).

@@ -5,13 +5,13 @@ title: One-command verdict
 
 # One-command verdict
 
-`tradeflow verdict` runs the whole cross-sectional pipeline once — scan →
+`quantred verdict` runs the whole cross-sectional pipeline once — scan →
 alphas → portfolio → information — and prints **one** consolidated report ending in
 a single verdict line. It is **read-only**: it proposes a book, it never places an
 order.
 
 ```bash
-tradeflow verdict \
+quantred verdict \
   --strategy demo_trend \
   --symbols NVDA,AAPL,META,AMD,TSLA,GOOG,MSFT,AMZN \
   --start 2024-01-01 --end 2024-12-31
@@ -182,6 +182,6 @@ keeps the service's default.
 
 ## From a source checkout (contributors)
 
-The commands above are the installed `tradeflow` command. In a checkout, run them as
+The commands above are the installed `quantred` command. In a checkout, run them as
 `uv run python main.py <command> ...`. The Makefile shortcut for this page is `make verdict`. Extras are installed with `uv sync --inexact --extra <name>`
 (see [optional extras](extras)).

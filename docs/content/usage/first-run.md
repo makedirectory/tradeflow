@@ -13,12 +13,12 @@ on its own; you can stop after any of them.
 ## 1. Install
 
 ```bash
-uv tool install tradeflow-engine
-tradeflow --version
+uv tool install quantred
+quantred --version
 ```
 
-In an activated virtual environment instead: `python -m pip install tradeflow-engine`.
-The distribution is `tradeflow-engine`; the command is `tradeflow`. Capabilities such
+In an activated virtual environment instead: `python -m pip install quantred`.
+The distribution and the command are both `quantred`. Capabilities such
 as charts, the MCP server and the model SDKs are opt-in extras; see
 [optional extras](extras) for which one unlocks what and how to add one later without
 losing the rest.
@@ -26,16 +26,16 @@ losing the rest.
 ## 2. See it work with no keys
 
 ```bash
-tradeflow demo
+quantred demo
 ```
 
 `demo` runs the entire pipeline on synthetic data with no keys and no network, and
 ends in an honest promotion verdict. You do not need `init` to try TradeFlow.
 
-## 3. `tradeflow init`
+## 3. `quantred init`
 
 ```bash
-tradeflow init
+quantred init
 ```
 
 A guided setup that writes a valid `.env` in your state directory (`~/.tradeflow`
@@ -71,7 +71,7 @@ exists, and only then find out whether the keys work.
 ## 4. Check what is ready: `init --check`
 
 ```bash
-tradeflow init --check
+quantred init --check
 ```
 
 ```
@@ -80,7 +80,7 @@ TradeFlow setup check
   state root: ~/.tradeflow
   (journal, trial store, bar cache, and configs all live here)
 
-  [ok]       version                tradeflow-engine 2.3.0
+  [ok]       version                quantred 2.3.0
   [optional] env file               ~/.tradeflow/.env not found
         -> run `init` to create it, or export the keys as environment variables
   [blocked]  APCA_API_KEY_ID        (not set) - no command that touches the market will run
@@ -100,8 +100,8 @@ TradeFlow setup check
   blocked for: mcp (APCA_API_KEY_ID, APCA_API_SECRET_KEY)
 
   Missing extras (viz) - one command adds them all:
-    With uv tool: uv tool install --force 'tradeflow-engine[mcp,viz]==2.3.0'
-    In an activated venv: python -m pip install 'tradeflow-engine[viz]==2.3.0'
+    With uv tool: uv tool install --force 'quantred[mcp,viz]==2.3.0'
+    In an activated venv: python -m pip install 'quantred[viz]==2.3.0'
 ```
 
 That is a trimmed example from a machine with no keys; your rows will differ (the
@@ -126,8 +126,8 @@ never fails anything; a `[FAIL]` row fails every task. `--provider
 {anthropic,openai,ollama}` checks that provider's SDK and key for `research`:
 
 ```bash
-tradeflow init --check --for research --provider ollama
-tradeflow init --check --for mcp
+quantred init --check --for research --provider ollama
+quantred init --check --for mcp
 ```
 
 The "state directory" check is worth understanding: a session that cannot write its
@@ -137,7 +137,7 @@ correction after it. Better to learn that before the first run.
 ### Is the model actually reachable? `--probe-model`
 
 ```bash
-tradeflow init --probe-model --provider anthropic --for research
+quantred init --probe-model --provider anthropic --for research
 ```
 
 `--for research` makes the exit code answer for the research task (the market-data keys
@@ -159,24 +159,24 @@ missing model.
 ## 5. Connect an MCP client
 
 ```bash
-claude mcp add tradeflow -- tradeflow mcp      # Claude Code
+claude mcp add quantred -- quantred mcp      # Claude Code
 ```
 
 or, for any client that takes a JSON config:
 
 ```json
-{ "mcpServers": { "tradeflow": { "command": "tradeflow", "args": ["mcp"] } } }
+{ "mcpServers": { "quantred": { "command": "quantred", "args": ["mcp"] } } }
 ```
 
-A desktop client often has a smaller `PATH` than your terminal, so a bare `tradeflow` may not be found. `tradeflow init` prints this same block with the **absolute** command for your copy, ready to paste, and `tradeflow mcp --self-test` runs exactly that command (and prints the block again when it passes), so what passes is what you configure.
+A desktop client often has a smaller `PATH` than your terminal, so a bare `quantred` may not be found. `quantred init` prints this same block with the **absolute** command for your copy, ready to paste, and `quantred mcp --self-test` runs exactly that command (and prints the block again when it passes), so what passes is what you configure.
 
-Your client **launches the server itself**, from that command. Starting `tradeflow mcp`
+Your client **launches the server itself**, from that command. Starting `quantred mcp`
 in a terminal does not connect any chat; it only proves the server starts. Needs the
 `mcp` extra and market-data keys. To confirm discovery works without a chat client:
 
 ```bash
-tradeflow mcp --self-test
-tradeflow init --check --for mcp
+quantred mcp --self-test
+quantred init --check --for mcp
 ```
 
 The first lists the tools and calls the discovery tools through a real MCP client;
@@ -189,7 +189,7 @@ With keys in place, `verdict` runs the whole cross-sectional pipeline once and e
 in one consolidated verdict:
 
 ```bash
-tradeflow verdict --strategy demo_trend --scanner none \
+quantred verdict --strategy demo_trend --scanner none \
     --symbols AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,JPM,XOM,UNH,COST,WMT \
     --start 2024-01-01 --end 2024-12-31
 ```
@@ -208,24 +208,24 @@ full report line by line.
 
 ## 7. Only then, autonomous research
 
-`tradeflow research` is the one command that calls a model. Set a provider up in
-`tradeflow init` (step 3), probe it with `--probe-model`, and then run it ([agents](agents#research-agent)).
-It is separate from `tradeflow info`, which measures information diagnostics and
+`quantred research` is the one command that calls a model. Set a provider up in
+`quantred init` (step 3), probe it with `--probe-model`, and then run it ([agents](agents#research-agent)).
+It is separate from `quantred info`, which measures information diagnostics and
 calls no model.
 
 ## From a source checkout (contributors)
 
 Everything above works from a checkout too, with `uv run python main.py` in place of
-`tradeflow` (`make init`, `make check`, `make demo` are the Makefile shortcuts), and
+`quantred` (`make init`, `make check`, `make demo` are the Makefile shortcuts), and
 `uv sync --inexact --extra <name>` in place of an installer command. A checkout does not keep
 its own state: state lives in `~/.tradeflow` unless `TRADEFLOW_HOME` is set, and
-`tradeflow init --dev-local-state` prints the setting that puts it back inside the
+`quantred init --dev-local-state` prints the setting that puts it back inside the
 working tree.
 
 ## `--non-interactive`
 
 ```bash
-APCA_API_KEY_ID=... APCA_API_SECRET_KEY=... tradeflow init --non-interactive
+APCA_API_KEY_ID=... APCA_API_SECRET_KEY=... quantred init --non-interactive
 ```
 
 Builds the `.env` purely from environment variables, with no prompts and no retry
@@ -237,7 +237,7 @@ that provider's variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `OLLAMA_BAS
 `OLLAMA_TIMEOUT` / `OLLAMA_NUM_CTX`):
 
 ```bash
-ANTHROPIC_API_KEY=... tradeflow init --non-interactive --provider anthropic
+ANTHROPIC_API_KEY=... quantred init --non-interactive --provider anthropic
 ```
 
 Without `--provider`, model variables in the environment are left alone and named in the

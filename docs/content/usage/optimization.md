@@ -16,7 +16,7 @@ a hypothesis and put it through [walk-forward validation](walk-forward) before
 believing a word of it.
 
 ```bash
-tradeflow optimize \
+quantred optimize \
     --strategy demo_trend --scanner none --symbols NVDA,META,TSLA \
     --start 2024-01-02 --end 2024-04-01 --method grid --max-evals 50
 ```
@@ -38,7 +38,7 @@ it every random search on a given space returned the same candidates.
 Bayesian needs the `optimize` extra (see [optional extras](extras)); with it installed:
 
 ```bash
-tradeflow optimize --method bayesian --scanner none --symbols NVDA,META
+quantred optimize --method bayesian --scanner none --symbols NVDA,META
 ```
 
 ## Output
@@ -81,7 +81,7 @@ backtest over the same read-only bars — so a search can use the cores the mach
 already has:
 
 ```bash
-tradeflow optimize --strategy demo_trend --symbols NVDA,AAPL,META \
+quantred optimize --strategy demo_trend --symbols NVDA,AAPL,META \
     --start 2024-01-01 --end 2024-12-31 --method grid --max-evals 200 --workers 4
 ```
 
@@ -141,6 +141,6 @@ refits. Same evaluation budget, fewer rounds.
 
 ## From a source checkout (contributors)
 
-The commands above are the installed `tradeflow` command. In a checkout, run them as
+The commands above are the installed `quantred` command. In a checkout, run them as
 `uv run python main.py <command> ...`. The Makefile shortcut for this page is `make optimize`. Extras are installed with `uv sync --inexact --extra <name>`
 (see [optional extras](extras)).

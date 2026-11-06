@@ -3,6 +3,8 @@
 .DEFAULT_GOAL := help
 
 # --- tunable defaults -------------------------------------------------------
+# Interpreter for the clean venv release-check builds (needs 3.10+; the system python3 on some machines is older).
+PYTHON ?= python3
 SYMBOLS ?= NVDA,RIVN,NFLX,META,BAC,MS,TSLA,GS,AMD,AAPL
 START   ?= 2024-01-02
 END      ?= 2024-04-01
@@ -159,13 +161,16 @@ close-positions:  ## Close all open positions (also cancels orders)
 build:  ## Build the wheel and sdist into dist/
 	rm -rf dist && uv build
 
-release-check: build  ## Build, validate the metadata, and install into a clean venv
+release-check: build  ## Build, validate the metadata, and install into a clean venv outside the checkout
 	uvx twine check dist/*
-	@rm -rf /tmp/tradeflow-release-check
-	@python3 -m venv /tmp/tradeflow-release-check
-	@/tmp/tradeflow-release-check/bin/pip install -q dist/*.whl
-	@TRADEFLOW_HOME=/tmp/tradeflow-release-state /tmp/tradeflow-release-check/bin/tradeflow --version
-	@echo "OK — the wheel installs and runs outside this checkout."
+	@rm -rf /tmp/quantred-release-check
+	@$(PYTHON) -m venv /tmp/quantred-release-check
+	@/tmp/quantred-release-check/bin/pip install -q dist/*.whl
+	@cd /tmp && TRADEFLOW_HOME=/tmp/quantred-release-state /tmp/quantred-release-check/bin/quantred --version | tee /tmp/quantred-release-check/banner.txt
+	@cd /tmp && TRADEFLOW_HOME=/tmp/quantred-release-state /tmp/quantred-release-check/bin/tradeflow --version
+	@grep -q '^quantred ' /tmp/quantred-release-check/banner.txt || { echo "FAIL: the banner does not start with 'quantred '"; exit 1; }
+	@cd /tmp && /tmp/quantred-release-check/bin/python -c "import importlib.metadata as m, tradeflow; assert m.metadata('quantred')['Name'] == 'quantred', m.metadata('quantred')['Name']; assert m.version('quantred') == tradeflow.__version__, (m.version('quantred'), tradeflow.__version__); assert tradeflow.__file__.startswith('/tmp/quantred-release-check'), tradeflow.__file__"
+	@echo "OK — the wheel installs and runs, as quantred and as tradeflow, outside this checkout."
 
 # --- quality & docs ---------------------------------------------------------
 check-links:  ## Verify Markdown links + heading anchors (includes local specs/)
@@ -200,10 +205,10 @@ compose-smoke:  ## Verify the compose wiring end to end (needs Docker; not run i
 	./scripts/compose_smoke.sh
 
 docker-build:  ## Build the Docker image
-	docker build -t tradeflow .
+	docker build -t quantred .
 
 docker-run:  ## Run the container (prints help; pass a verb to do anything)
-	docker run --rm -it -v $$(pwd)/.env:/state/.env:ro tradeflow
+	docker run --rm -it -v $$(pwd)/.env:/state/.env:ro quantred
 
 clean:  ## Remove caches, build output, and results
 	rm -rf .venv optimization_results.csv docs/build docs/node_modules

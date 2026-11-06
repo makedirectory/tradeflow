@@ -8,7 +8,7 @@ title: Getting started
 :::note The shipped strategies are examples
 
 `demo_trend` and the `demo_volume` scanner exist to demonstrate the interface and give
-`tradeflow demo` something to run. Neither is an edge, and a bare install ships nothing
+`quantred demo` something to run. Neither is an edge, and a bare install ships nothing
 else. Your own work belongs in a private package — see
 [your own strategies](private-strategies.md).
 
@@ -24,14 +24,14 @@ You need a terminal. Steps 1–2 need nothing else — no keys, no account, no n
 ## 1. Install it
 
 ```bash
-uv tool install tradeflow-engine
+uv tool install quantred
 ```
 
 No `uv`? [Install it first](https://docs.astral.sh/uv/getting-started/installation/),
-or use `python -m pip install tradeflow-engine` in a virtual environment. This gives you a `tradeflow` command.
+or use `python -m pip install quantred` in a virtual environment. This gives you a `quantred` command.
 
 ```bash
-tradeflow --version
+quantred --version
 ```
 
 That prints the version, which copy is running, and — worth noting now — **where its
@@ -41,7 +41,7 @@ in `~/.tradeflow`.
 ## 2. See it work, with no keys at all
 
 ```bash
-tradeflow demo
+quantred demo
 ```
 
 This runs the entire pipeline on synthetic data: it backtests every bundled
@@ -68,7 +68,7 @@ You want the **paper** keys. Paper and live credentials are different, and this 
 defaults to paper for a reason.
 
 ```bash
-tradeflow init
+quantred init
 ```
 
 The wizard prompts for both (hidden — nothing lands in your shell history), checks
@@ -87,13 +87,13 @@ provider's variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `OLLAMA_BASE_URL
 variables are not copied.
 
 The closing steps also say how an MCP client attaches: the client launches
-`tradeflow mcp` itself over stdio, so you add it to the client's configuration rather
+`quantred mcp` itself over stdio, so you add it to the client's configuration rather
 than running it in a terminal ([AI agents](agents.md)).
 
 Check it any time:
 
 ```bash
-tradeflow init --check
+quantred init --check
 ```
 
 That reports every setting independently — what is set, what is missing, whether
@@ -102,7 +102,7 @@ optional extras are installed — and writes nothing.
 ## 4. Your first real result
 
 ```bash
-tradeflow verdict --scanner none --symbols AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,JPM,XOM,UNH,COST,WMT \
+quantred verdict --scanner none --symbols AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,JPM,XOM,UNH,COST,WMT \
     --start 2024-01-01 --end 2024-12-31
 ```
 
@@ -131,7 +131,7 @@ value and its threshold, so you can see exactly which part failed:
 Want it as a file you can keep or share?
 
 ```bash
-tradeflow verdict --scanner none --symbols AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,JPM,XOM,UNH,COST,WMT \
+quantred verdict --scanner none --symbols AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,JPM,XOM,UNH,COST,WMT \
     --start 2024-01-01 --end 2024-12-31 --html result.html
 ```
 
@@ -141,7 +141,7 @@ opened.
 ## 5. Connect Claude
 
 ```bash
-uv tool install --force "tradeflow-engine[mcp]"
+uv tool install --force "quantred[mcp]"
 ```
 
 Then register the server with your MCP client.
@@ -149,7 +149,7 @@ Then register the server with your MCP client.
 **Claude Code:**
 
 ```bash
-claude mcp add tradeflow -- tradeflow mcp
+claude mcp add quantred -- quantred mcp
 ```
 
 **Claude Desktop** — add to `claude_desktop_config.json`:
@@ -157,7 +157,7 @@ claude mcp add tradeflow -- tradeflow mcp
 ```json
 {
   "mcpServers": {
-    "tradeflow": { "command": "tradeflow", "args": ["mcp"] }
+    "quantred": { "command": "quantred", "args": ["mcp"] }
   }
 }
 ```

@@ -96,7 +96,7 @@ def _pack_distributions() -> List[str]:
     """
     from importlib import metadata
 
-    from tradeflow.settings import DISTRIBUTION_NAME, SCANNER_ENTRY_POINT_GROUP, STRATEGY_ENTRY_POINT_GROUP
+    from tradeflow.settings import SCANNER_ENTRY_POINT_GROUP, STRATEGY_ENTRY_POINT_GROUP, is_own_distribution
 
     names = set()
     try:
@@ -109,7 +109,7 @@ def _pack_distributions() -> List[str]:
             for entry_point in selected:
                 dist = getattr(entry_point, "dist", None)
                 name = getattr(dist, "name", None) if dist is not None else None
-                if name and name.lower().replace("_", "-") != DISTRIBUTION_NAME:
+                if name and not is_own_distribution(name):
                     names.add(name)
     except Exception:  # noqa: BLE001 - advice about installing must not fail over its own lookup
         return []
@@ -141,12 +141,12 @@ def _quote(text: str) -> str:
 
 def _with_flags(requirements: List[Dict[str, Any]]) -> List[str]:
     """``--with`` arguments that restate every requirement but this distribution."""
-    from tradeflow.settings import DISTRIBUTION_NAME
+    from tradeflow.settings import is_own_distribution
 
     flags: List[str] = []
     for req in requirements:
         name = str(req.get("name", ""))
-        if not name or name.lower().replace("_", "-") == DISTRIBUTION_NAME:
+        if not name or is_own_distribution(name):
             continue
         extras_part = f"[{','.join(req['extras'])}]" if req.get("extras") else ""
         if req.get("editable"):
@@ -169,13 +169,13 @@ def _uv_tool_command(wanted: List[str], extra_flags: Tuple[str, ...] = ()):
     built from. Without one it cannot, and ``note`` says what to add by hand.
     """
     import tradeflow
-    from tradeflow.settings import DISTRIBUTION_NAME
+    from tradeflow.settings import DISTRIBUTION_NAME, is_own_distribution
 
     receipt = _tool_receipt()
     requirements = list(((receipt or {}).get("tool") or {}).get("requirements") or [])
     recorded: set = set()
     for req in requirements:
-        if str(req.get("name", "")).lower().replace("_", "-") == DISTRIBUTION_NAME:
+        if is_own_distribution(str(req.get("name", ""))):
             recorded.update(req.get("extras") or ())
     union = sorted({*installed_extras(), *recorded, *wanted})
     command = f"uv tool install --force '{DISTRIBUTION_NAME}[{','.join(union)}]=={tradeflow.__version__}'"

@@ -9,7 +9,7 @@ TradeFlow is primarily a command-line tool, but the layer the CLI and the MCP se
 both call is a clean, JSON-returning boundary — and it is usable from your own code.
 
 ```bash
-uv add tradeflow-engine        # or: pip install tradeflow-engine
+uv add quantred        # or: pip install quantred
 ```
 
 ```python
@@ -77,7 +77,7 @@ client, never a broker — the same structural guarantee that makes the MCP serv
 safe. Live trading lives behind `tradeflow.engine.live` and is deliberately not part
 of the supported surface.
 
-**Optional capabilities are extras.** `tradeflow-engine[store]` for the bar cache,
+**Optional capabilities are extras.** `quantred[store]` for the bar cache,
 `[viz]` for charts, `[optimize]` for Bayesian search, `[portfolio]` for the
 constraint solver. A missing extra raises an actionable message at the point of use,
 not at import.

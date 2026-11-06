@@ -2117,6 +2117,87 @@ wheels = [
 ]
 
 [[package]]
+name = "quantred"
+source = { editable = "." }
+dependencies = [
+    { name = "alpaca-py" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "pandas", version = "3.0.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "pytz" },
+]
+
+[package.optional-dependencies]
+ai = [
+    { name = "anthropic" },
+]
+dev = [
+    { name = "duckdb" },
+    { name = "hatchling" },
+    { name = "matplotlib", version = "3.10.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "matplotlib", version = "3.11.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "mcp" },
+    { name = "ortools" },
+    { name = "polars" },
+    { name = "pyarrow" },
+    { name = "pytest" },
+    { name = "ruff" },
+    { name = "scikit-learn", version = "1.7.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scikit-learn", version = "1.9.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
+mcp = [
+    { name = "mcp" },
+]
+openai = [
+    { name = "openai" },
+]
+optimize = [
+    { name = "scikit-learn", version = "1.7.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scikit-learn", version = "1.9.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
+portfolio = [
+    { name = "ortools" },
+]
+store = [
+    { name = "duckdb" },
+    { name = "polars" },
+    { name = "pyarrow" },
+]
+viz = [
+    { name = "matplotlib", version = "3.10.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "matplotlib", version = "3.11.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "alpaca-py", specifier = ">=0.35" },
+    { name = "anthropic", marker = "extra == 'ai'", specifier = ">=0.40" },
+    { name = "duckdb", marker = "extra == 'dev'", specifier = ">=1.0" },
+    { name = "duckdb", marker = "extra == 'store'", specifier = ">=1.0" },
+    { name = "hatchling", marker = "extra == 'dev'", specifier = ">=1.21" },
+    { name = "matplotlib", marker = "extra == 'dev'", specifier = ">=3.8" },
+    { name = "matplotlib", marker = "extra == 'viz'", specifier = ">=3.8" },
+    { name = "mcp", marker = "extra == 'dev'", specifier = ">=1.10,<2" },
+    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.10,<2" },
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "openai", marker = "extra == 'openai'", specifier = ">=1.40" },
+    { name = "ortools", marker = "extra == 'dev'", specifier = ">=9.8" },
+    { name = "ortools", marker = "extra == 'portfolio'", specifier = ">=9.8" },
+    { name = "pandas", specifier = ">=2.0" },
+    { name = "polars", marker = "extra == 'dev'", specifier = ">=1.25" },
+    { name = "polars", marker = "extra == 'store'", specifier = ">=1.25" },
+    { name = "pyarrow", marker = "extra == 'dev'", specifier = ">=14" },
+    { name = "pyarrow", marker = "extra == 'store'", specifier = ">=14" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
+    { name = "pytz", specifier = ">=2024.1" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
+    { name = "scikit-learn", marker = "extra == 'dev'", specifier = ">=1.4" },
+    { name = "scikit-learn", marker = "extra == 'optimize'", specifier = ">=1.4" },
+]
+provides-extras = ["ai", "dev", "mcp", "openai", "optimize", "portfolio", "store", "viz"]
+
+[[package]]
 name = "referencing"
 version = "0.37.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2814,87 +2895,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/87/d7/0535a28b1f5f24f66
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d8/8e/bb97bb0c71802080bfc8952937d174e49cfc50de5c951dd47b2496f0dcdb/tqdm-4.68.3-py3-none-any.whl", hash = "sha256:39832cc2def2789a6f29df83f172db7416cea70052c0907a57801c5f2fdccb03", size = 78337, upload-time = "2026-06-17T07:36:50.132Z" },
 ]
-
-[[package]]
-name = "tradeflow-engine"
-source = { editable = "." }
-dependencies = [
-    { name = "alpaca-py" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "pandas", version = "3.0.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "pytz" },
-]
-
-[package.optional-dependencies]
-ai = [
-    { name = "anthropic" },
-]
-dev = [
-    { name = "duckdb" },
-    { name = "hatchling" },
-    { name = "matplotlib", version = "3.10.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "matplotlib", version = "3.11.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "mcp" },
-    { name = "ortools" },
-    { name = "polars" },
-    { name = "pyarrow" },
-    { name = "pytest" },
-    { name = "ruff" },
-    { name = "scikit-learn", version = "1.7.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "scikit-learn", version = "1.9.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-]
-mcp = [
-    { name = "mcp" },
-]
-openai = [
-    { name = "openai" },
-]
-optimize = [
-    { name = "scikit-learn", version = "1.7.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "scikit-learn", version = "1.9.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-]
-portfolio = [
-    { name = "ortools" },
-]
-store = [
-    { name = "duckdb" },
-    { name = "polars" },
-    { name = "pyarrow" },
-]
-viz = [
-    { name = "matplotlib", version = "3.10.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "matplotlib", version = "3.11.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "alpaca-py", specifier = ">=0.35" },
-    { name = "anthropic", marker = "extra == 'ai'", specifier = ">=0.40" },
-    { name = "duckdb", marker = "extra == 'dev'", specifier = ">=1.0" },
-    { name = "duckdb", marker = "extra == 'store'", specifier = ">=1.0" },
-    { name = "hatchling", marker = "extra == 'dev'", specifier = ">=1.21" },
-    { name = "matplotlib", marker = "extra == 'dev'", specifier = ">=3.8" },
-    { name = "matplotlib", marker = "extra == 'viz'", specifier = ">=3.8" },
-    { name = "mcp", marker = "extra == 'dev'", specifier = ">=1.10,<2" },
-    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.10,<2" },
-    { name = "numpy", specifier = ">=1.26" },
-    { name = "openai", marker = "extra == 'openai'", specifier = ">=1.40" },
-    { name = "ortools", marker = "extra == 'dev'", specifier = ">=9.8" },
-    { name = "ortools", marker = "extra == 'portfolio'", specifier = ">=9.8" },
-    { name = "pandas", specifier = ">=2.0" },
-    { name = "polars", marker = "extra == 'dev'", specifier = ">=1.25" },
-    { name = "polars", marker = "extra == 'store'", specifier = ">=1.25" },
-    { name = "pyarrow", marker = "extra == 'dev'", specifier = ">=14" },
-    { name = "pyarrow", marker = "extra == 'store'", specifier = ">=14" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
-    { name = "pytz", specifier = ">=2024.1" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
-    { name = "scikit-learn", marker = "extra == 'dev'", specifier = ">=1.4" },
-    { name = "scikit-learn", marker = "extra == 'optimize'", specifier = ">=1.4" },
-]
-provides-extras = ["ai", "dev", "mcp", "openai", "optimize", "portfolio", "store", "viz"]
 
 [[package]]
 name = "trove-classifiers"

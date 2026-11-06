@@ -34,7 +34,7 @@ fi
 docker compose build mcp >/dev/null
 pass "image builds"
 
-DEFAULT_CMD=$(docker image inspect tradeflow:local --format '{{json .Config.Cmd}}')
+DEFAULT_CMD=$(docker image inspect quantred:local --format '{{json .Config.Cmd}}')
 if grep -q '"live"' <<<"$DEFAULT_CMD"; then
     fail "image CMD defaults to live: $DEFAULT_CMD"
 else

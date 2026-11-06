@@ -16,6 +16,7 @@ import pytest
 
 from tests.fakes import FakeMarketData
 from tests.test_research import _VALID_CODE, _VALID_SCANNER_CODE
+from tradeflow import settings
 from tradeflow.marketdata.client import MarketDataClient
 from tradeflow.mcp import server as mcp_server
 from tradeflow.mcp.server import EVIDENCE_GATED, EXPOSED_TOOLS, FORBIDDEN_TOOLS, JOURNALING_TOOLS
@@ -681,6 +682,35 @@ def test_an_omitted_knob_is_not_forwarded_at_all(monkeypatch):
 
 
 # --- connection and discovery ------------------------------------------------------
+def test_documented_mcp_configs_use_the_server_name():
+    """The key a client config is written under is the name the server reports.
+
+    A client may namespace tools by the config key rather than by the server's own
+    name, so a page that registers the server under a different spelling teaches a
+    reader names the server never uses. Read from every page rather than a remembered
+    list, and both spellings of a registration are covered: the JSON key and the
+    `claude mcp add` argument.
+    """
+    import pathlib
+    import re
+
+    from tradeflow.mcp import server
+
+    assert server.SERVER_NAME == settings.MCP_SERVER_NAME
+    pages = [pathlib.Path("README.md"), *pathlib.Path("docs/content").rglob("*.md")]
+    seen = 0
+    for page in pages:
+        if page.name == "changelog.md":
+            continue  # history records what was true when each release shipped
+        text = page.read_text()
+        keys = re.findall(r'"mcpServers":\s*\{\s*"([^"]+)"', text)
+        keys += re.findall(r"claude mcp add\s+(?:--\S+\s+)*([\w-]+)\s+--", text)
+        for key in keys:
+            seen += 1
+            assert key == settings.MCP_SERVER_NAME, f"{page} registers the server as {key!r}"
+    assert seen >= 4, "the scan found almost no registrations - is it stale?"
+
+
 def test_every_documented_connection_recipe_covers_both_kinds_of_copy():
     """The installed-copy-versus-checkout point, applied to connection instructions.
 
@@ -714,7 +744,7 @@ def test_every_documented_connection_recipe_covers_both_kinds_of_copy():
         if not re.search(r'"command":\s*"uv"', text):
             continue
         checked += 1
-        assert re.search(r'"command":\s*"tradeflow"', text), (
+        assert re.search(rf'"command":\s*"{re.escape(settings.CLI_NAME)}"', text), (
             f"{page} offers a checkout recipe with no installed-copy one beside it. "
             "`uv run python main.py` sends an installed reader to a file that was "
             "never there."

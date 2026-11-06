@@ -2,7 +2,7 @@
 # survives container replacement.
 #
 # This is deliberately not an adoption path — Docker is itself a prerequisite, so
-# `uv tool install tradeflow` is the easier way to simply try this. What compose adds
+# `uv tool install quantred` is the easier way to simply try this. What compose adds
 # is volume and environment wiring (the part people get wrong by hand) and a seam a
 # database service can attach to later without changing how anyone boots the stack.
 #
@@ -23,7 +23,7 @@ x-app: &app
     args:
       # `ai` is deliberately absent: the base image should need no paid credentials.
       EXTRAS: "mcp,store,viz"
-  image: tradeflow:local
+  image: quantred:local
   environment:
     # Every path the application writes resolves under this one root.
     TRADEFLOW_HOME: /state
@@ -117,6 +117,8 @@ services:
     entrypoint: ["uv", "run", "python", "main.py", "live"]
     restart: "no"
 
+# Volume names keep their original spelling: they are the recorded trial history, and a
+# renamed volume is a new, empty one. Renaming the image does not touch them.
 volumes:
   tradeflow-logs:
   tradeflow-cache:

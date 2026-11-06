@@ -47,5 +47,5 @@ USER tradeflow
 # A safe default. This image previously defaulted to `live`, so `docker run` with no
 # arguments started a paper-trading loop — turning the machine on must not turn
 # trading on. Override with any verb:
-#   docker run --rm tradeflow uv run python main.py demo
+#   docker run --rm quantred uv run python main.py demo
 CMD ["uv", "run", "python", "main.py", "--help"]

@@ -916,11 +916,11 @@ def test_an_installed_launch_command_uses_the_script_beside_the_interpreter(monk
     bindir = tmp_path / "bin"
     bindir.mkdir()
     (bindir / "python").write_text("")
-    (bindir / "tradeflow").write_text("")
+    (bindir / settings.CLI_NAME).write_text("")
     monkeypatch.setattr(sys, "executable", str(bindir / "python"))
     monkeypatch.setattr(settings, "_looks_like_checkout", lambda _p: False)
-    assert setup.mcp_launch_command() == [str(bindir / "tradeflow"), "mcp"]
-    (bindir / "tradeflow").unlink()
+    assert setup.mcp_launch_command() == [str(bindir / settings.CLI_NAME), "mcp"]
+    (bindir / settings.CLI_NAME).unlink()
     assert setup.mcp_launch_command() == [str(bindir / "python"), "-m", "tradeflow.cli", "mcp"]
 
 
@@ -932,7 +932,7 @@ def test_a_checkout_launch_command_names_main_py_by_absolute_path():
     command = setup.mcp_launch_command()
     assert command[1] == str(settings.PROJECT_ROOT / "main.py") and Path(command[1]).is_file()
     assert setup.mcp_client_config() == {
-        "mcpServers": {"tradeflow": {"command": command[0], "args": command[1:]}}
+        "mcpServers": {settings.MCP_SERVER_NAME: {"command": command[0], "args": command[1:]}}
     }
 
 

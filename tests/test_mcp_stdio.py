@@ -23,7 +23,7 @@ import anyio  # noqa: E402
 from mcp import ClientSession, StdioServerParameters  # noqa: E402
 from mcp.client.stdio import stdio_client  # noqa: E402
 
-from tradeflow import cli  # noqa: E402
+from tradeflow import cli, settings  # noqa: E402
 from tradeflow.mcp.selftest import DISCLAIMER, default_command  # noqa: E402
 
 pytestmark = pytest.mark.slow
@@ -76,6 +76,9 @@ def test_self_test_reports_discovery_and_disclaims_chat_attachment(child_env, ca
 
     out = capsys.readouterr().out
     assert "self-test passed" in out
+    # The name the server announced in `initialize`, read from the child - what a client
+    # displays - rather than the constant the server was built from.
+    assert f"server:     {settings.MCP_SERVER_NAME}" in out
     # Not just the words: a run that found nothing prints "0 strategies (0 demo, ...)".
     assert re.search(r"[1-9]\d* strategies \([1-9]\d* demo", out), out
     assert re.search(r"[1-9]\d* scanners \([1-9]\d* demo", out), out
@@ -116,9 +119,9 @@ def test_init_tells_a_reader_to_configure_the_command_the_self_test_runs(capsys)
     cli._print_next_steps()
     out = capsys.readouterr().out
     block = out[out.index("{") : out.rindex("}") + 1]
-    server = json.loads(block)["mcpServers"]["tradeflow"]
+    server = json.loads(block)["mcpServers"][settings.MCP_SERVER_NAME]
     assert [server["command"], *server["args"]] == default_command()
-    assert f"claude mcp add tradeflow -- {shlex.join(default_command())}" in out
+    assert f"claude mcp add {settings.MCP_SERVER_NAME} -- {shlex.join(default_command())}" in out
     assert Path(server["command"]).is_absolute()
 
 

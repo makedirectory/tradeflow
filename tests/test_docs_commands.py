@@ -1,4 +1,4 @@
-"""Every `tradeflow ...` command a usage page or the README shows must parse.
+"""Every `quantred ...` command a usage page or the README shows must parse.
 
 Prose drifts from the parser silently: a flag is renamed, a page keeps the old spelling,
 and a reader pastes a command that fails with a usage error. This reads the fenced shell
@@ -43,7 +43,8 @@ def _shell_blocks(path: Path):
 
 
 def _commands(path: Path):
-    """Each logical command line (continuations joined) starting with `tradeflow `."""
+    """Each logical command line (continuations joined) starting with the program name."""
+    programs = tuple(f"{name} " for name in (settings.CLI_NAME, *settings.LEGACY_CLI_NAMES))
     for block in _shell_blocks(path):
         joined, buffer = [], ""
         for line in block:
@@ -56,7 +57,7 @@ def _commands(path: Path):
         if buffer:
             joined.append(buffer)
         for line in joined:
-            if line.lstrip().startswith("tradeflow "):
+            if line.lstrip().startswith(programs):
                 yield line.strip()
 
 
@@ -92,7 +93,7 @@ def test_a_documented_command_parses(page, line, capsys):
     tokens = _tokens(line)
     if tokens is None:
         pytest.skip("placeholder or marked as expected to fail")
-    assert tokens[0] == "tradeflow"
+    assert tokens[0] in (settings.CLI_NAME, *settings.LEGACY_CLI_NAMES)
     try:
         cli.build_parser().parse_args(tokens[1:])
     except SystemExit as exc:

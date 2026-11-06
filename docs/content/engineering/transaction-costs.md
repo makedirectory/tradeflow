@@ -90,7 +90,7 @@ so the two price the same model. Surfaced as backtest flags (`--gross`,
 tool both return net metrics + `total_cost`.
 
 **Live runs use it too, to record rather than to charge.** The venue prices the fill;
-the model says what the fill was *expected* to cost, and `tradeflow execution-report`
+the model says what the fill was *expected* to cost, and `quantred execution-report`
 shows the two side by side. That comparison is only meaningful if both came from the
 same parameters, so `live` takes the same cost flags and a saved config's `cost` block
 fills them the same way — a second, live-only cost formula would make the number look

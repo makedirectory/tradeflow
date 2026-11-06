@@ -6,7 +6,7 @@
 # research agent — because they only ever depended on the base interface.
 #
 #     uv pip install -e example
-#     tradeflow init --check          # lists it under "private packs installed"
+#     quantred init --check          # lists it under "private packs installed"
 [project]
 name = "my-signals"
 version = "0.1.0"

@@ -5,12 +5,12 @@ title: Estimating risk (Σ)
 
 # Estimating risk (Σ)
 
-`tradeflow risk` estimates the universe's covariance matrix **Σ** as of a date
+`quantred risk` estimates the universe's covariance matrix **Σ** as of a date
 and summarizes its risk structure. It is **read-only**: Σ sizes conviction for the
 portfolio optimizer, it never places an order.
 
 ```bash
-tradeflow risk \
+quantred risk \
   --symbols NVDA,AAPL,META,AMD,TSLA,GOOG,MSFT,AMZN \
   --as-of 2025-06-01 \
   --model shrinkage
@@ -70,7 +70,7 @@ tracking error is measured against *current* risk instead of a flat
 trailing-window average:
 
 ```bash
-tradeflow risk --symbols NVDA,AAPL,META,AMD,TSLA --as-of 2025-06-01 --conditional ewma
+quantred risk --symbols NVDA,AAPL,META,AMD,TSLA --as-of 2025-06-01 --conditional ewma
 ```
 
 ```
@@ -87,7 +87,7 @@ own trailing average — above 1 means recent vol is running hot.
 whether conditioning is actually worth it for your universe:
 
 ```bash
-tradeflow risk --symbols NVDA,AAPL,META,AMD,TSLA --evaluate-conditional
+quantred risk --symbols NVDA,AAPL,META,AMD,TSLA --evaluate-conditional
 ```
 
 This compares EWMA/HAR against the unconditional trailing baseline on two
@@ -104,6 +104,6 @@ The same computation is available to agents as the read-only MCP tool `compute_r
 
 ## From a source checkout (contributors)
 
-The commands above are the installed `tradeflow` command. In a checkout, run them as
+The commands above are the installed `quantred` command. In a checkout, run them as
 `uv run python main.py <command> ...`. The Makefile shortcut for this page is `make risk`. Extras are installed with `uv sync --inexact --extra <name>`
 (see [optional extras](extras)).

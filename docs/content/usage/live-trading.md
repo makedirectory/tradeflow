@@ -9,7 +9,7 @@ Live mode warms up the strategy with recent history, subscribes to the Alpaca
 real-time bar stream, and routes signals to the broker as bracket orders.
 
 ```bash
-tradeflow live --strategy demo_trend --scanner demo_volume --symbols NVDA,META,TSLA
+quantred live --strategy demo_trend --scanner demo_volume --symbols NVDA,META,TSLA
 ```
 
 :::warning
@@ -49,7 +49,7 @@ config (`RiskBasedSizer`). Add `--portfolio` to instead size positions by
 across the universe rather than sized per trade:
 
 ```bash
-tradeflow live --scanner demo_volume --symbols NVDA,META,TSLA \
+quantred live --scanner demo_volume --symbols NVDA,META,TSLA \
     --portfolio --max-positions 5 --max-weight 0.25
 ```
 
@@ -62,13 +62,13 @@ benchmark (default `SPY`) — higher-beta names get smaller positions, evening o
 risk:
 
 ```bash
-tradeflow live --scanner demo_volume --symbols NVDA,META,TSLA --beta-sizing --benchmark SPY
+quantred live --scanner demo_volume --symbols NVDA,META,TSLA --beta-sizing --benchmark SPY
 ```
 
 ## Managing the account
 
 ```bash
-tradeflow flatten --confirm --reason "end of test"   # halt, cancel all orders, close all positions
+quantred flatten --confirm --reason "end of test"   # halt, cancel all orders, close all positions
 ```
 
 See [stopping](stopping) for the smaller levels. A checkout also has two single-purpose
@@ -107,9 +107,9 @@ loudly. A guard quietly eating a third of the feed looks, from the strategy's si
 exactly like a quiet market.
 
 ```bash
-tradeflow live --symbols NVDA,AAPL             # guards on
-tradeflow live --symbols NVDA --max-bar-return 0.15   # stricter
-tradeflow live --symbols NVDA --no-bar-checks         # off (not recommended)
+quantred live --symbols NVDA,AAPL             # guards on
+quantred live --symbols NVDA --max-bar-return 0.15   # stricter
+quantred live --symbols NVDA --no-bar-checks         # off (not recommended)
 ```
 
 ## Position reconciliation
@@ -123,7 +123,7 @@ The live loop now keeps an append-only ledger of **intent** (what was submitted)
 account state on a timer. Check it any time:
 
 ```bash
-tradeflow reconcile          # or: reconcile --json
+quantred reconcile          # or: reconcile --json
 ```
 
 ```
@@ -173,7 +173,7 @@ mid-trend should hold the trend rather than sit flat until the next crossing.
 If you would rather wait for a fresh edge:
 
 ```bash
-tradeflow live --strategy demo_trend --no-reaffirm-entries
+quantred live --strategy demo_trend --no-reaffirm-entries
 ```
 
 or set `reaffirm_entries: false` in a strategy config. **Exits are never gated by
@@ -210,8 +210,8 @@ trace.
 ## Dry run: what would this trade?
 
 ```bash
-tradeflow live --config configs/breakout.json --dry-run
-tradeflow live --config configs/breakout.json --dry-run --json
+quantred live --config configs/breakout.json --dry-run
+quantred live --config configs/breakout.json --dry-run --json
 ```
 
 > **Dry-run answers: what would this contract try to do right now?**
@@ -299,9 +299,9 @@ to serialize.
 ## Small-real: what happens when the broker tries to do it
 
 ```bash
-tradeflow small-real --config configs/candidate.json --scale 0.05 --preflight
-tradeflow small-real --config configs/candidate.json --scale 0.05
-tradeflow execution-report --small-real
+quantred small-real --config configs/candidate.json --scale 0.05 --preflight
+quantred small-real --config configs/candidate.json --scale 0.05
+quantred execution-report --small-real
 ```
 
 > **This is the one mode that places real orders.** Everything else here reads or
@@ -763,7 +763,7 @@ side to buy, so their numbers cannot be recovered. Archive the file and start fr
 ## Execution quality
 
 The ledger records enough to reconstruct the whole life of an order: what the strategy
-decided, what was submitted, and what the venue did with it. `tradeflow
+decided, what was submitted, and what the venue did with it. `quantred
 execution-report` rolls that up; `--orders` lists every lifecycle, `--json` emits it
 whole. Both are read-only.
 
@@ -891,9 +891,9 @@ again. To stop trading in a way that *sticks*, and to close everything in an
 emergency, see [Stopping trading](./stopping.md).
 
 ```bash
-tradeflow halts                                  # what is currently halted
-tradeflow halt all --reason "why"                # refuse new entries
-tradeflow flatten --confirm --reason "why"       # halt, cancel, close everything
+quantred halts                                  # what is currently halted
+quantred halt all --reason "why"                # refuse new entries
+quantred flatten --confirm --reason "why"       # halt, cancel, close everything
 ```
 
 Halts block entries and never block exits, so pulling the switch can never trap the
@@ -901,6 +901,6 @@ book.
 
 ## From a source checkout (contributors)
 
-The commands above are the installed `tradeflow` command. In a checkout, run them as
+The commands above are the installed `quantred` command. In a checkout, run them as
 `uv run python main.py <command> ...`. The Makefile shortcut for this page is `make live`. Extras are installed with `uv sync --inexact --extra <name>`
 (see [optional extras](extras)).

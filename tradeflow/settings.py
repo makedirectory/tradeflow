@@ -17,6 +17,7 @@ does this credential come from?"
 
 import logging
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Tuple
@@ -33,7 +34,11 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 #: rather than by the mere presence of a ``pyproject.toml`` — every Python project
 #: has one of those, and mistaking someone else's for ours would put our journal in
 #: their repository.
-DISTRIBUTION_NAME = "tradeflow-engine"
+DISTRIBUTION_NAME = "quantred"
+
+#: Names this project was previously distributed under. A checkout of an older
+#: revision still declares one of these, and must still be recognised as ours.
+LEGACY_DISTRIBUTION_NAMES: Tuple[str, ...] = ("tradeflow-engine",)
 
 #: The executable a reader types. The one definition of the command's name: argparse's
 #: ``prog``, the version banner, the MCP launch command and every printed instruction
@@ -41,17 +46,17 @@ DISTRIBUTION_NAME = "tradeflow-engine"
 #: package. Deliberately separate from the import package (``tradeflow``), the
 #: entry-point groups and :data:`DISTRIBUTION_NAME`, none of which a rename of the
 #: command changes.
-CLI_NAME = "tradeflow"
+CLI_NAME = "quantred"
 
 #: Executables that still launch this copy after :data:`CLI_NAME` changes. Never
 #: printed as an instruction; looked up only where something must *find* a script
 #: that exists on disk (an MCP client config written under an older name).
-LEGACY_CLI_NAMES: Tuple[str, ...] = ()
+LEGACY_CLI_NAMES: Tuple[str, ...] = ("tradeflow",)
 
 #: The name this copy's MCP server reports to a client, and the key its client
 #: configuration is written under. One definition for the server, the printed JSON
 #: and the ``claude mcp add`` line.
-MCP_SERVER_NAME = "tradeflow"
+MCP_SERVER_NAME = "quantred"
 
 #: The documentation root. Pages are served from the site root (there is no ``/docs/``
 #: prefix), so a link built from this constant and a page path is a page that exists.
@@ -64,6 +69,16 @@ STRATEGY_ENTRY_POINT_GROUP = "tradeflow.strategies"
 SCANNER_ENTRY_POINT_GROUP = "tradeflow.scanners"
 
 
+def is_own_distribution(name: str) -> bool:
+    """Whether a distribution ``name`` is this project, under its current or an old name.
+
+    A receipt or entry point written while the project was still ``tradeflow-engine``
+    describes this copy, not a pack someone else installed; counting it as a pack would
+    tell a reader to re-add the engine to its own environment.
+    """
+    return name.lower().replace("_", "-") in (DISTRIBUTION_NAME, *LEGACY_DISTRIBUTION_NAMES)
+
+
 def _looks_like_checkout(path: Path) -> bool:
     """Whether ``path`` is a TradeFlow working copy rather than any old directory.
 
@@ -71,12 +86,21 @@ def _looks_like_checkout(path: Path) -> bool:
     detection: getting this wrong sends a developer's journal to ``~/.tradeflow``
     while their repo still holds the old one, which is the split-campaign failure
     :func:`state_root` exists to prevent — and it fails silently, with no error.
+
+    The names in :data:`LEGACY_DISTRIBUTION_NAMES` count too: a working copy from before
+    the rename declares the old one, and refusing to recognise it would send that
+    checkout's state somewhere else without a word. The match is on the whole ``name``
+    line, so a project merely *starting* with one of these names is not ours.
     """
     manifest = path / "pyproject.toml"
     try:
-        return f'name = "{DISTRIBUTION_NAME}"' in manifest.read_text()
+        text = manifest.read_text()
     except OSError:
         return False
+    return any(
+        re.search(rf'^name\s*=\s*"{re.escape(name)}"\s*(#.*)?$', text, re.MULTILINE)
+        for name in (DISTRIBUTION_NAME, *LEGACY_DISTRIBUTION_NAMES)
+    )
 
 
 def invocation(command: str, *, make_target: Optional[str] = None) -> str:

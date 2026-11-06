@@ -107,13 +107,13 @@ mid-write surfaces as a broken pipe and is reported as a disconnect.
 An installed copy needs no paths:
 
 ```json
-{"mcpServers": {"tradeflow": {"command": "tradeflow", "args": ["mcp"]}}}
+{"mcpServers": {"quantred": {"command": "quantred", "args": ["mcp"]}}}
 ```
 
 From a checkout, the equivalent is the script it wraps:
 
 ```json
-{"mcpServers": {"tradeflow": {"command": "uv",
+{"mcpServers": {"quantred": {"command": "uv",
   "args": ["run", "--project", "/path/to/tradeflow", "python", "main.py", "mcp"]}}}
 ```
 
@@ -122,11 +122,11 @@ From a checkout, the equivalent is the script it wraps:
 its reason and exits immediately — which a human running it reads and acts on, but an
 MCP client generally shows as nothing more than a server that would not start. Verified
 by handshaking against an installed copy: with no credentials the client sees the pipe
-close before the first response. So run `tradeflow mcp` once in a terminal before
-registering it, and `tradeflow init` if it asks for keys; a tool list that never appears
+close before the first response. So run `quantred mcp` once in a terminal before
+registering it, and `quantred init` if it asks for keys; a tool list that never appears
 is almost always one of these two rather than a client-side problem.
 
-**Checking discovery without a chat.** `tradeflow mcp --self-test` launches a child copy
+**Checking discovery without a chat.** `quantred mcp --self-test` launches a child copy
 of the server over stdio (the interpreter running the CLI, so an installed copy and a
 checkout behave alike), initializes with the real MCP SDK client, lists the tools and
 calls `list_strategies` and `list_scanners`. It prints the tool count and how many

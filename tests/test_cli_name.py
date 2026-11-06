@@ -92,14 +92,19 @@ def hard_coded_names(root: Path = PACKAGE) -> List[str]:
     # `tradeflow <verb>`, `tradeflow --flag`, `tradeflow \0` (an interpolated verb),
     # `tradeflow: error` (argparse's own prefix) - but not `tradeflow.module`,
     # `tradeflow/dir`, `~/.tradeflow` or `.tradeflow/`, where a separator precedes or follows.
-    instruction = re.compile(rf"(?<![\w./~-])tradeflow(?: (?:(?:{verbs}|--)\b|\0)|: error)")
+    # Every spelling of the executable, the current one and the alias: a literal
+    # `quantred demo` is as much a hard-coded name as a `tradeflow demo` left behind.
+    names = "|".join(re.escape(n) for n in (settings.CLI_NAME, *settings.LEGACY_CLI_NAMES))
+    instruction = re.compile(rf"(?<![\w./~-])(?:{names})(?: (?:(?:{verbs}|--)\b|\0)|: error)")
     problems = []
     for path in sorted(root.rglob("*.py")):
         rel = path.relative_to(root).as_posix()
         for line, text, func in _strings(path):
             if (rel, func) in ALLOWED:
                 continue
-            if instruction.search(text) or (text == "tradeflow" and (rel, func) not in DEFINITIONS):
+            if instruction.search(text) or (
+                text in (settings.CLI_NAME, *settings.LEGACY_CLI_NAMES) and (rel, func) not in DEFINITIONS
+            ):
                 problems.append(f"{rel}:{line}: {text.strip()[:70]!r}")
     return problems
 

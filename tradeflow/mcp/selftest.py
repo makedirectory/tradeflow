@@ -54,7 +54,8 @@ async def _drive(command: List[str], env: Dict[str, str], errlog, report: Dict[s
     async with stdio_client(params, errlog=errlog) as (read, write):
         async with ClientSession(read, write) as session:
             report["step"] = "initialize"
-            await session.initialize()
+            initialized = await session.initialize()
+            report["server"] = initialized.serverInfo.name
             report["step"] = "list_tools"
             report["tools"] = sorted(t.name for t in (await session.list_tools()).tools)
             for tool in DISCOVERY_TOOLS:

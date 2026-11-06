@@ -19,7 +19,7 @@ Use when a strategy is behaving oddly but you have no reason to distrust the
 *positions*.
 
 ```bash
-tradeflow halt VolumeSpikeStrategy --reason "entries look wrong since 14:00"
+quantred halt VolumeSpikeStrategy --reason "entries look wrong since 14:00"
 ```
 
 - New entries for that strategy are refused.
@@ -31,8 +31,8 @@ tradeflow halt VolumeSpikeStrategy --reason "entries look wrong since 14:00"
 Use when something system-wide looks wrong and you want to think before acting.
 
 ```bash
-tradeflow halt all --reason "feed quality"
-tradeflow halts                        # what is currently in force
+quantred halt all --reason "feed quality"
+quantred halts                        # what is currently in force
 ```
 
 Positions remain open. Nothing is closed.
@@ -43,7 +43,7 @@ Use when you do not trust the system, or a strategy is losing in a way you canno
 diagnose quickly.
 
 ```bash
-tradeflow flatten --confirm --reason "unexplained drawdown"
+quantred flatten --confirm --reason "unexplained drawdown"
 ```
 
 In this order, deliberately:
@@ -119,7 +119,7 @@ is the difference between a switch you will pull and one you will hesitate over:
   would deadlock against its own gate.
 
 Every entry a halt refuses is counted under one `halted` row in
-`tradeflow execution-report`, however many separate halts were in force over the
+`quantred execution-report`, however many separate halts were in force over the
 period. The row keeps one example message, so the halt's reason, actor and time are
 still there to read — the grouping only stops one stop from looking like several
 different problems.
@@ -165,7 +165,7 @@ separate files on purpose and the default is the live one.
 ## Resuming
 
 ```bash
-tradeflow resume all                   # or a strategy name
+quantred resume all                   # or a strategy name
 ```
 
 Then restart the engine. Nothing resumes on its own — that is the point of the state
@@ -175,26 +175,26 @@ being durable.
 
 1. Verify at the broker that you are actually flat. The report is what this system
    believes; the broker is what is true.
-2. `tradeflow halts` — confirm the halt is in force.
-3. `tradeflow reconcile` — compare the ledger against the account. After a
-   **small-real** session, `tradeflow reconcile --small-real`: the two ledgers are
+2. `quantred halts` — confirm the halt is in force.
+3. `quantred reconcile` — compare the ledger against the account. After a
+   **small-real** session, `quantred reconcile --small-real`: the two ledgers are
    separate files on purpose, and the default is the live one, so a small-real book
    checked without the flag is compared against a ledger that never recorded it. Every
    run names the file it opened on its first line, so the answer is never about an
    unstated book.
-4. `tradeflow execution-report` — what the live path actually did: slippage,
+4. `quantred execution-report` — what the live path actually did: slippage,
    latency, submitted-versus-filled notional, and which refusals stopped a signal.
-5. Diagnose, fix, then `tradeflow resume all`.
+5. Diagnose, fix, then `quantred resume all`.
 
 ## Practise it
 
 Run a flatten drill on paper, roughly monthly, while actually holding a position:
 
 ```bash
-tradeflow flatten --confirm --reason "monthly drill"
+quantred flatten --confirm --reason "monthly drill"
 ```
 
-Check that the position closed, `tradeflow halts` shows the halt, and `resume`
+Check that the position closed, `quantred halts` shows the halt, and `resume`
 clears it. An emergency procedure nobody has run is a procedure nobody knows works —
 find out on a day you chose, not on the day you need it.
 
@@ -212,6 +212,6 @@ find out on a day you chose, not on the day you need it.
 
 ## From a source checkout (contributors)
 
-The commands above are the installed `tradeflow` command. In a checkout, run them as
+The commands above are the installed `quantred` command. In a checkout, run them as
 `uv run python main.py <command> ...`. The Makefile shortcut for this page is `make halt`. Extras are installed with `uv sync --inexact --extra <name>`
 (see [optional extras](extras)).

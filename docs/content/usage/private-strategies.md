@@ -23,9 +23,9 @@ data. For the interface reference — every method, every contract — see
 There is a complete one in the repository, and `init` will copy it somewhere you own:
 
 ```bash
-tradeflow init --example-pack ./my-signals
+quantred init --example-pack ./my-signals
 cd my-signals && uv pip install -e .
-tradeflow init --check          # lists it under "private packs installed"
+quantred init --check          # lists it under "private packs installed"
 ```
 
 That gives you a strategy, a scanner, a saved config, a `.gitignore`, and a
@@ -61,7 +61,7 @@ the base interface.
 
 ```bash
 uv pip install -e ../yourfirm-signals     # or from your private index
-tradeflow init --check                    # confirms which packs are installed
+quantred init --check                    # confirms which packs are installed
 ```
 
 `init --check` lists them under **private packs installed**. If your strategy is not
@@ -95,7 +95,7 @@ Each step answers a different question, and passing one says nothing about the o
 **1. Does it run at all?**
 
 ```bash
-tradeflow backtest --strategy my_breakout --symbols AAPL,MSFT,NVDA \
+quantred backtest --strategy my_breakout --symbols AAPL,MSFT,NVDA \
   --start 2024-01-02 --end 2025-01-02
 ```
 
@@ -106,7 +106,7 @@ worth exactly one thing: confirming the strategy executes and trades. Read the
 **2. Does it survive out of sample?**
 
 ```bash
-tradeflow walkforward --strategy my_breakout --symbols AAPL,MSFT,NVDA \
+quantred walkforward --strategy my_breakout --symbols AAPL,MSFT,NVDA \
   --start 2020-01-02 --end 2025-01-02 --folds 4 --save-config configs/breakout.json
 ```
 
@@ -125,7 +125,7 @@ result, and what the book was actually exposed to.
 **4. Paper, then a long look.**
 
 ```bash
-tradeflow live --config configs/breakout.json --capital 8000 --feed iex --preflight
+quantred live --config configs/breakout.json --capital 8000 --feed iex --preflight
 ```
 
 `--preflight` prints the contract and exits without starting the order path. Read
@@ -152,7 +152,7 @@ against half the evidence, with nothing erroring.
 is just a normalized EMA gap. Read it for the shape of the interface, not for the idea.
 
 For anything past that shape, read `example` instead — it is a real
-installable pack, and `tradeflow init --example-pack ./my-signals` writes you a copy.
+installable pack, and `quantred init --example-pack ./my-signals` writes you a copy.
 Its `example_reversion` is long/short, which is what the leg diagnostics and the
 directional cap exist for, and none of that is exercisable by a long-only book.
 

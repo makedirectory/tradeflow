@@ -15,8 +15,8 @@ actually noise.
 No keys, no account, no network:
 
 ```bash
-uv tool install tradeflow-engine
-tradeflow demo
+uv tool install quantred
+quantred demo
 ```
 
 That runs the entire pipeline on synthetic data: it backtests every bundled
@@ -32,7 +32,7 @@ free paper keys, your first verdict, and connecting Claude — six steps, and yo
 stop at any of them.
 
 No `uv`? [Install it](https://docs.astral.sh/uv/getting-started/installation/), or
-use `python -m pip install tradeflow-engine` in a virtual environment.
+use `python -m pip install quantred` in a virtual environment.
 
 ## What it actually does
 
@@ -41,7 +41,7 @@ cost-aware portfolio, and — the part that matters — tells you whether any of
 distinguishable from luck.
 
 ```bash
-tradeflow verdict --scanner none --symbols AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,JPM,XOM,UNH,COST,WMT \
+quantred verdict --scanner none --symbols AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,JPM,XOM,UNH,COST,WMT \
     --start 2024-01-01 --end 2024-12-31
 ```
 

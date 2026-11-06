@@ -3934,6 +3934,7 @@ def _run_mcp_self_test() -> None:
             rows[key] = f"{len(rows[key])} {label} ({demo} demo, {len(rows[key]) - demo} installed)"
         print(f"MCP self-test passed in {out['elapsed']:.1f}s")
         print(f"  command:    {shlex.join(out['command'])}")
+        print(f"  server:     {out['server']}")
         print(f"  tools:      {len(out['tools'])}")
         print(f"  discovery:  {rows['list_strategies']}; {rows['list_scanners']}")
         print(

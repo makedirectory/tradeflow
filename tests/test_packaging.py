@@ -43,7 +43,12 @@ def test_the_declared_entry_point_matches_reality():
     import tomllib
 
     manifest = tomllib.loads(Path("pyproject.toml").read_text())
-    assert manifest["project"]["scripts"]["tradeflow"] == "tradeflow.cli:main"
+    scripts = manifest["project"]["scripts"]
+    # The primary command and the alias are one entry point from one distribution; an
+    # alias that pointed anywhere else would be a second program.
+    assert scripts[settings.CLI_NAME] == "tradeflow.cli:main"
+    for legacy in settings.LEGACY_CLI_NAMES:
+        assert scripts[legacy] == "tradeflow.cli:main"
     assert manifest["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == ["tradeflow"]
 
 
@@ -70,6 +75,60 @@ def test_the_distribution_name_matches_what_is_packaged():
 
     manifest = tomllib.loads(Path("pyproject.toml").read_text())
     assert manifest["project"]["name"] == settings.DISTRIBUTION_NAME
+
+
+def _manifest_dir(tmp_path, name: str, line: str = "") -> Path:
+    (tmp_path / "pyproject.toml").write_text(f'[project]\nname = "{name}"{line}\nversion = "1"\n')
+    return tmp_path
+
+
+def test_an_older_checkout_is_still_recognised(tmp_path):
+    """A working copy from before the rename declares the old distribution name.
+
+    Failing to recognise it would put that checkout's state in the wrong place without
+    a word - the split-campaign failure the state root exists to prevent."""
+    # The one place the historical name is spelled out: it is a fact about what was
+    # published, not something the code can derive, and every old checkout declares it.
+    assert "tradeflow-engine" in settings.LEGACY_DISTRIBUTION_NAMES
+    for legacy in settings.LEGACY_DISTRIBUTION_NAMES:
+        assert settings._looks_like_checkout(_manifest_dir(tmp_path, legacy))
+
+
+def test_a_similarly_named_project_is_not_a_checkout(tmp_path):
+    """The name line is matched whole: a project merely starting with ours is not ours."""
+    for name in (f"{settings.DISTRIBUTION_NAME}-extras", f"{settings.LEGACY_DISTRIBUTION_NAMES[0]}-tools"):
+        assert not settings._looks_like_checkout(_manifest_dir(tmp_path, name))
+    assert settings._looks_like_checkout(_manifest_dir(tmp_path, settings.DISTRIBUTION_NAME, "  # ours"))
+
+
+def test_the_wheel_installs_both_executables(tmp_path):
+    """Read from the built artifact, not from pyproject.toml: the declaration is not
+    what an installer reads."""
+    import shutil
+    import zipfile
+
+    uv = shutil.which("uv")
+    if uv is None:
+        pytest.skip("uv is not available to build the wheel")
+    built = subprocess.run(
+        [uv, "build", "--wheel", "-o", str(tmp_path), str(settings.PROJECT_ROOT)],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    if built.returncode != 0:
+        pytest.skip(f"the wheel could not be built here (offline?): {built.stderr[-200:]}")
+    wheel = next(tmp_path.glob("*.whl"))
+    with zipfile.ZipFile(wheel) as archive:
+        entry_points = next(n for n in archive.namelist() if n.endswith("entry_points.txt"))
+        metadata = next(n for n in archive.namelist() if n.endswith(".dist-info/METADATA"))
+        scripts = archive.read(entry_points).decode()
+        name_line = next(
+            line for line in archive.read(metadata).decode().splitlines() if line.startswith("Name:")
+        )
+    assert name_line == f"Name: {settings.DISTRIBUTION_NAME}"
+    for command in (settings.CLI_NAME, *settings.LEGACY_CLI_NAMES):
+        assert f"{command} = tradeflow.cli:main" in scripts
 
 
 def test_the_version_has_exactly_one_source():
@@ -247,3 +306,12 @@ def test_the_sdist_leaves_repo_local_state_behind():
     roots = {p.split("/", 1)[0] for p in paths}
 
     assert not roots & {"configs", "logs", "cache", "specs", "dist", ".claude", ".vscode", ".venv"}
+
+
+def test_a_receipt_or_entry_point_under_the_old_name_is_this_project():
+    """Evidence written while the project had its previous name describes this copy,
+    not a pack someone installed; counting it as one would advise re-adding the engine."""
+    assert settings.is_own_distribution(settings.DISTRIBUTION_NAME)
+    for legacy in settings.LEGACY_DISTRIBUTION_NAMES:
+        assert settings.is_own_distribution(legacy.upper().replace("-", "_"))
+    assert not settings.is_own_distribution("some-pack")

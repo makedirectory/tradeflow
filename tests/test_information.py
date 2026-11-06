@@ -143,7 +143,7 @@ def test_the_documented_info_example_writes_a_report(tmp_path, monkeypatch, caps
     from tradeflow import cli, settings
 
     page = (Path(settings.PROJECT_ROOT) / "docs" / "content" / "usage" / "information.md").read_text()
-    block = re.search(r"```bash\n(tradeflow info.*?)```", page, re.S).group(1)
+    block = re.search(rf"```bash\n({settings.CLI_NAME} info.*?)```", page, re.S).group(1)
     tokens = shlex.split(block.replace("\\\n", " "))
     symbols = tokens[tokens.index("--symbols") + 1].split(",")
 

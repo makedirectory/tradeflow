@@ -17,7 +17,7 @@ saved **file**.
 ## Producing one
 
 ```bash
-tradeflow walkforward --strategy my_breakout --symbols AAPL,MSFT,NVDA \
+quantred walkforward --strategy my_breakout --symbols AAPL,MSFT,NVDA \
   --start 2020-01-02 --end 2025-01-02 --folds 4 \
   --save-config configs/breakout.json
 ```
@@ -58,9 +58,9 @@ different book from the one the evidence came from.
 ## Consuming one
 
 ```bash
-tradeflow backtest    --config configs/breakout.json --start 2024-01-02 --end 2025-01-02
-tradeflow walkforward --config configs/breakout.json --start 2020-01-02 --end 2025-01-02
-tradeflow live        --config configs/breakout.json --capital 8000 --preflight
+quantred backtest    --config configs/breakout.json --start 2024-01-02 --end 2025-01-02
+quantred walkforward --config configs/breakout.json --start 2020-01-02 --end 2025-01-02
+quantred live        --config configs/breakout.json --capital 8000 --preflight
 ```
 
 Each command prints what it took from the file and what it ignored, because a config
@@ -77,7 +77,7 @@ the validated book. Re-running the scanner would give you today's universe attac
 yesterday's evidence — a different book with the same provenance stamped on it.
 
 ```bash
-tradeflow backtest --config configs/breakout.json --re-resolve-universe
+quantred backtest --config configs/breakout.json --re-resolve-universe
 ```
 
 `--re-resolve-universe` opts into re-scanning from `candidate_symbols`. It is worth
@@ -110,6 +110,6 @@ records the search that produced it.
 
 ## From a source checkout (contributors)
 
-The commands above are the installed `tradeflow` command. In a checkout, run them as
+The commands above are the installed `quantred` command. In a checkout, run them as
 `uv run python main.py <command> ...`. Extras are installed with `uv sync --inexact --extra <name>`
 (see [optional extras](extras)).

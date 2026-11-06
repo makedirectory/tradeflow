@@ -80,32 +80,33 @@ Either way you'll need free Alpaca **paper-trading** API keys from the
 No clone needed — install the command and run the offline demo:
 
 ```bash
-uv tool install tradeflow-engine        # or: python -m pip install tradeflow-engine
-tradeflow demo                          # full pipeline on synthetic data, no keys
-tradeflow init                          # your free Alpaca paper keys, and optionally a model
+uv tool install quantred        # or: python -m pip install quantred
+quantred demo                          # full pipeline on synthetic data, no keys
+quantred init                          # your free Alpaca paper keys, and optionally a model
                                         # provider for `research` (skipping it is fine)
-tradeflow init --check                  # what is ready, for which task, and the next step
-tradeflow init --probe-model --provider anthropic --for research   # optional: one tiny billed request
-tradeflow verdict --scanner none --symbols AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,JPM,XOM,UNH,COST,WMT \
+quantred init --check                  # what is ready, for which task, and the next step
+quantred init --probe-model --provider anthropic --for research   # optional: one tiny billed request
+quantred verdict --scanner none --symbols AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,JPM,XOM,UNH,COST,WMT \
     --start 2024-01-01 --end 2024-12-31
-claude mcp add tradeflow -- tradeflow mcp   # connect an MCP client; it launches the server
-tradeflow mcp --self-test               # confirm discovery works without a chat client
+claude mcp add quantred -- quantred mcp   # connect an MCP client; it launches the server
+quantred mcp --self-test               # confirm discovery works without a chat client
 ```
 
 Optional capabilities are extras (charts, the MCP server, the model SDKs). Adding one
 later with `uv tool` replaces the environment, so list every extra you want — the
 [extras guide](https://tradeflow.mk-dir.com/usage/extras) has the table and the exact
-commands, and `tradeflow init --check` prints them for you.
+commands, and `quantred init --check` prints them for you.
 
 **→ [Getting started](https://tradeflow.mk-dir.com/usage/getting-started)** walks the
 whole path: install → keys → your first real result → Claude connected. Six steps,
 the first two with no keys and no network.
 
-The distribution is **`tradeflow-engine`** (the bare `tradeflow` on PyPI is an
-unrelated package); the command and the importable package are both `tradeflow`.
+The distribution and the command are both **`quantred`**; the importable package is
+still `tradeflow`, and a `tradeflow` command remains as an alias. If you installed the
+older `tradeflow-engine`, uninstall it first: both own the same import package.
 
 State (the research journal, trial store, bar cache, promoted configs) lives in
-`~/.tradeflow` — for an installed copy and for a checkout alike. `tradeflow --version`
+`~/.tradeflow` — for an installed copy and for a checkout alike. `quantred --version`
 prints which copy is running and where its state is; override with `TRADEFLOW_HOME`.
 
 ## Quickstart (from a checkout)
@@ -196,8 +197,8 @@ $ make demo
 
    No edge in a random walk → the gates refuse to promote it. That refusal
    is the product. Point TradeFlow at real data:
-     tradeflow init       add your free Alpaca paper keys
-     tradeflow verdict    then run the whole pipeline on real market data
+     quantred init       add your free Alpaca paper keys
+     quantred verdict    then run the whole pipeline on real market data
 ```
 
 That is one strategy because a bare install ships one. Anything you install
@@ -301,7 +302,7 @@ One strategy ships, and it is a demonstration rather than a candidate:
   whose sign crossings are the golden / death cross (daily). Paired with the
   `demo_volume` scanner.
 
-It exists so `tradeflow demo` has something to run and so the interface has a
+It exists so `quantred demo` has something to run and so the interface has a
 worked example, not because it is an edge — the demo above spends its whole output
 showing that it is not. **The strategies you would actually trade go in your own
 package**, installed beside the engine and discovered by entry point, which keeps
@@ -312,7 +313,7 @@ clock's `BUY/SELL/HOLD` and the
 [continuous alpha](https://tradeflow.mk-dir.com/engineering/alphas) are both
 derived from it — one source of truth.
 
-`example` is a complete working pack to copy — `tradeflow init
+`example` is a complete working pack to copy — `quantred init
 --example-pack ./my-signals` writes it out. See
 [Your own strategies](https://tradeflow.mk-dir.com/usage/private-strategies)
 and [Extending](https://tradeflow.mk-dir.com/engineering/extending).
@@ -390,23 +391,23 @@ config to live is a manual human step outside MCP. The capability simply isn't
 wired in, so it can't be prompt-injected around. The agent works on the
 *research clock* (offline, exploratory); the live order path stays LLM-free.
 
-Register it with a client. Installed (`uv tool install --force "tradeflow-engine[mcp]"`):
+Register it with a client. Installed (`uv tool install --force "quantred[mcp]"`):
 
 ```bash
-claude mcp add tradeflow -- tradeflow mcp     # Claude Code
+claude mcp add quantred -- quantred mcp     # Claude Code
 ```
 
 ```json
-{ "mcpServers": { "tradeflow": { "command": "tradeflow", "args": ["mcp"] } } }
+{ "mcpServers": { "quantred": { "command": "quantred", "args": ["mcp"] } } }
 ```
 
-A desktop client often has a smaller `PATH` than a terminal, so `tradeflow init` prints
-this block with the absolute command for your copy, and `tradeflow mcp --self-test`
+A desktop client often has a smaller `PATH` than a terminal, so `quantred init` prints
+this block with the absolute command for your copy, and `quantred mcp --self-test`
 runs exactly that command (printing the block again when it passes). From a checkout it is the checkout's interpreter and the
 absolute `main.py`:
 
 ```json
-{ "mcpServers": { "tradeflow": {
+{ "mcpServers": { "quantred": {
     "command": "/path/to/tradeflow/.venv/bin/python",
     "args": ["/path/to/tradeflow/main.py", "mcp"] } } }
 ```
@@ -470,7 +471,7 @@ marketdata/     MarketDataProvider interface, Timeframe, MarketDataClient
 indicators/     Pure pandas/numpy technical indicators
 strategies/     Strategy base + signals (score -> BUY/SELL/HOLD, sizing, risk)
 scanners/       ScannerStrategy base + SymbolScanner (universe resolution)
-demo/           The one strategy + scanner a bare install ships, for `tradeflow demo`
+demo/           The one strategy + scanner a bare install ships, for `quantred demo`
 execution/      LiveTrader (signals -> broker orders)
 analytics/      Performance metrics + reporting
 engine/         BacktestEngine + LiveEngine (orchestration only)

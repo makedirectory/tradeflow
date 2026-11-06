@@ -5,7 +5,7 @@ title: Screening a parameter space
 
 # Screening a parameter space
 
-`tradeflow screen` sweeps a strategy's parameters cheaply to answer one question:
+`quantred screen` sweeps a strategy's parameters cheaply to answer one question:
 **is there anything in this family at all?** It runs many configurations in one
 process against one data fetch, and it **journals nothing**.
 
@@ -16,7 +16,7 @@ budget will either spend it carelessly or stop asking, and both are worse than t
 question being free.
 
 ```bash
-tradeflow screen --strategy demo_trend --symbols AAPL,MSFT,NVDA \
+quantred screen --strategy demo_trend --symbols AAPL,MSFT,NVDA \
     --start 2019-01-01 --end 2023-06-30 \
     --method random --max-evals 60 --max-positions 5
 ```
@@ -86,7 +86,7 @@ cannot tell you that.
 parameter's type or drop its default:
 
 ```bash
-tradeflow screen --range fast_ema_period=5:12:1 --range stop_loss=0.02:0.06:0.01
+quantred screen --range fast_ema_period=5:12:1 --range stop_loss=0.02:0.06:0.01
 ```
 
 A name the strategy does not declare is **refused**, not ignored: a typo that quietly
@@ -108,7 +108,7 @@ to deploy, reported under the same name.
 `--confirm` re-runs **exactly one** point as a proper journaled trial:
 
 ```bash
-tradeflow screen ... --confirm best     # or --confirm 3, the rank in the table
+quantred screen ... --confirm best     # or --confirm 3, the rank in the table
 ```
 
 Exactly one is the constraint that matters. A confirm that could take a set would be a
@@ -134,6 +134,6 @@ optimize is worth its statistical budget at all.
 
 ## From a source checkout (contributors)
 
-The commands above are the installed `tradeflow` command. In a checkout, run them as
+The commands above are the installed `quantred` command. In a checkout, run them as
 `uv run python main.py <command> ...`. The Makefile shortcut for this page is `make screen`. Extras are installed with `uv sync --inexact --extra <name>`
 (see [optional extras](extras)).

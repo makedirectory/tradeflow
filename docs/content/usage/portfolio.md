@@ -11,7 +11,7 @@ rather than ad-hoc rules. It maximizes total expected score subject to hard
 constraints.
 
 ```bash
-tradeflow allocate --scanner demo_volume --symbols NVDA,META,TSLA,AMD \
+quantred allocate --scanner demo_volume --symbols NVDA,META,TSLA,AMD \
     --capital 100000 --max-positions 5 --max-weight 0.25
 ```
 
@@ -51,7 +51,7 @@ the **risk-adjusted, cost-aware** portfolio from a strategy's [alpha](alphas) an
 error. It is a **read-only research proposal** (it places no orders):
 
 ```bash
-tradeflow allocate --objective utility \
+quantred allocate --objective utility \
   --strategy demo_trend --symbols NVDA,AAPL,META,AMD,TSLA,GOOG,MSFT,AMZN \
   --as-of 2025-06-01 --target-te 0.04 --max-names 20 --capital 1000000
 ```
@@ -100,7 +100,7 @@ error, alpha neutralization, and the transfer coefficient all move into **active
 space** (`w_a = w − w_B`):
 
 ```bash
-tradeflow allocate --objective utility --strategy demo_trend \
+quantred allocate --objective utility --strategy demo_trend \
   --symbols NVDA,AAPL,META,AMD,TSLA,GOOG,MSFT,AMZN --as-of 2025-06-01 \
   --benchmark-holdings equal --benchmark-premium 0.05
 ```
@@ -121,7 +121,7 @@ cap is then **mandatory** (an unconstrained long/short book on a noisy Σ is a
 leverage machine):
 
 ```bash
-tradeflow allocate --objective utility --strategy demo_trend \
+quantred allocate --objective utility --strategy demo_trend \
   --symbols NVDA,AAPL,META,AMD,TSLA,GOOG,MSFT,AMZN --as-of 2025-06-01 \
   --book market-neutral --gross-leverage 2.0 --short-max-weight 0.25
 ```
@@ -148,7 +148,7 @@ prior, so names outside your alpha's coverage get a real, correlation-propagated
 posterior instead of being silently excluded:
 
 ```bash
-tradeflow allocate --objective utility --strategy demo_trend \
+quantred allocate --objective utility --strategy demo_trend \
   --symbols NVDA,AAPL,META,AMD,TSLA,GOOG,MSFT,AMZN --as-of 2025-06-01 \
   --benchmark-holdings equal --posterior bl --posterior-t-eff 60
 ```
@@ -166,7 +166,7 @@ before the book finishes trading into them, and the book moves a derived
 fraction `κ` of the gap each rebalance instead of all of it:
 
 ```bash
-tradeflow allocate --objective utility --strategy demo_trend \
+quantred allocate --objective utility --strategy demo_trend \
   --symbols NVDA,AAPL,META,AMD,TSLA,GOOG,MSFT,AMZN --as-of 2025-06-01 \
   --capital 1000000 --policy aim
 ```
@@ -180,7 +180,7 @@ tradeflow allocate --objective utility --strategy demo_trend \
 whether it's worth turning on with the net-of-cost A/B:
 
 ```bash
-tradeflow info --policy-ab --strategy demo_trend \
+quantred info --policy-ab --strategy demo_trend \
   --symbols NVDA,AAPL,META,AMD,TSLA,GOOG,MSFT,AMZN --start 2024-01-01 --end 2024-12-31
 ```
 
@@ -191,6 +191,6 @@ the derivation.
 
 ## From a source checkout (contributors)
 
-The commands above are the installed `tradeflow` command. In a checkout, run them as
+The commands above are the installed `quantred` command. In a checkout, run them as
 `uv run python main.py <command> ...`. The Makefile shortcut for this page is `make allocate`. Extras are installed with `uv sync --inexact --extra <name>`
 (see [optional extras](extras)).

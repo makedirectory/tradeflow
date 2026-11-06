@@ -12,9 +12,9 @@ engine's side these *are* demonstrations. Renaming both is the first thing you d
 the next section says how.
 
 ```bash
-tradeflow init --example-pack ./my-signals   # the destination is yours to name
+quantred init --example-pack ./my-signals   # the destination is yours to name
 cd my-signals && uv pip install -e .
-tradeflow init --check                       # lists it under "private packs installed"
+quantred init --check                       # lists it under "private packs installed"
 ```
 
 ## Make it yours
@@ -30,7 +30,7 @@ Three renames, none of them optional if you plan to keep this:
    type at `--strategy` and `--scanner`. The only rule is that they must not collide
    with a name the engine reserves, and it refuses the pack rather than shadowing one.
 
-Then `uv pip install -e .` again, and `tradeflow init --check` to confirm they are
+Then `uv pip install -e .` again, and `quantred init --check` to confirm they are
 discovered.
 
 ## Layout
@@ -70,7 +70,7 @@ Substitute your own dates and symbols.
 ### 1. Does it run, and where did the money come from?
 
 ```bash
-tradeflow backtest --config configs/breakout.json --start 2023-01-02 --end 2025-01-02
+quantred backtest --config configs/breakout.json --start 2023-01-02 --end 2025-01-02
 ```
 
 The weakest evidence this system produces, and worth exactly one thing: confirming the
@@ -81,8 +81,8 @@ fill assumption.
 ### 2. What is the result actually resting on?
 
 ```bash
-tradeflow backtest --config configs/breakout.json --start ... --end ... --fill-stress
-tradeflow backtest --config configs/breakout.json --start ... --end ... --cost-stress
+quantred backtest --config configs/breakout.json --start ... --end ... --fill-stress
+quantred backtest --config configs/breakout.json --start ... --end ... --cost-stress
 ```
 
 `--fill-stress` requires the price to trade progressively further *through* each
@@ -97,7 +97,7 @@ how you choose a cap from the strategy's own history instead of picking a number
 ### 3. Which parameters, and how many did you try?
 
 ```bash
-tradeflow optimize --strategy example_breakout --scanner example_liquidity \
+quantred optimize --strategy example_breakout --scanner example_liquidity \
   --symbols AAPL,MSFT,NVDA,AMD --start 2023-01-02 --end 2025-01-02 \
   --method grid --max-evals 40
 ```
@@ -108,7 +108,7 @@ a search is not free — it raises the bar for everything in that family afterwa
 ### 4. Does it survive out of sample?
 
 ```bash
-tradeflow walkforward --strategy example_breakout --scanner example_liquidity \
+quantred walkforward --strategy example_breakout --scanner example_liquidity \
   --symbols AAPL,MSFT,NVDA,AMD --start 2020-01-02 --end 2025-01-02 \
   --folds 4 --save-config configs/breakout_validated.json
 ```
@@ -120,7 +120,7 @@ limits and a provenance block recording how they were arrived at.
 ### 5. How would it sit in a portfolio?
 
 ```bash
-tradeflow allocate --strategy example_breakout --symbols AAPL,MSFT,NVDA,AMD \
+quantred allocate --strategy example_breakout --symbols AAPL,MSFT,NVDA,AMD \
   --capital 25000 --objective utility
 ```
 
@@ -130,7 +130,7 @@ by default. `--objective weights` for a plain mean-variance allocation.
 ### 6. One verdict across the pipeline
 
 ```bash
-tradeflow verdict --strategy example_breakout --symbols AAPL,MSFT,NVDA,AMD \
+quantred verdict --strategy example_breakout --symbols AAPL,MSFT,NVDA,AMD \
   --start 2023-01-02 --end 2025-01-02
 ```
 
@@ -141,7 +141,7 @@ says nothing about the others, and the report keeps them apart.
 ### 7. Paper, and only then
 
 ```bash
-tradeflow live --config configs/breakout_validated.json \
+quantred live --config configs/breakout_validated.json \
   --capital 8000 --feed iex --preflight
 ```
 
@@ -153,8 +153,8 @@ output is boring.
 Afterwards:
 
 ```bash
-tradeflow execution-report --orders     # slippage, latency, refusals by kind
-tradeflow reconcile                     # ledger against the broker
+quantred execution-report --orders     # slippage, latency, refusals by kind
+quantred reconcile                     # ledger against the broker
 ```
 
 ## Where your evidence goes

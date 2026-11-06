@@ -12,7 +12,7 @@ a later slice the optimizer never saw, and reserve a final slice nobody touches
 until the very end.**
 
 ```bash
-tradeflow walkforward \
+quantred walkforward \
   --strategy demo_trend --scanner demo_volume --symbols NVDA,AAPL,MSFT \
   --start 2024-01-01 --end 2025-12-31 --capital 100000 \
   --mode anchored --folds 6 \
@@ -33,7 +33,7 @@ Sharpe** that discounts your result by how many configs you tried.) Optimize and
 report on the *same* window and you've measured how well you fit that window's
 noise, not whether the strategy will work next month.
 
-`tradeflow demo` shows the trap in one screen: a moving-average crossover posts
+`quantred demo` shows the trap in one screen: a moving-average crossover posts
 +16.8% in-sample, then collapses to a **−0.42 median Sharpe out-of-sample** and
 fails every promotion gate. Same strategy, same data — the only thing that
 changed is that it had to perform on bars it wasn't tuned on.
@@ -198,10 +198,10 @@ recorded keys win, unrecorded ones fall back to the strategy's own. So one file 
 versioned in a private repository beside the strategies it belongs to:
 
 ```bash
-tradeflow backtest --config configs/alpha.json --start 2024-01-02 --end 2024-06-01
-tradeflow verdict  --config configs/alpha.json --start 2024-01-02 --end 2024-06-01
-tradeflow alphas   --config configs/alpha.json
-tradeflow risk     --config configs/alpha.json
+quantred backtest --config configs/alpha.json --start 2024-01-02 --end 2024-06-01
+quantred verdict  --config configs/alpha.json --start 2024-01-02 --end 2024-06-01
+quantred alphas   --config configs/alpha.json
+quantred risk     --config configs/alpha.json
 ```
 
 `--config` is accepted by `backtest`, `live`, `verdict`, `info`, `alphas`, `horizon`,
@@ -256,9 +256,9 @@ journal — `logs/trials.db`. It's what makes campaign-wide counts answerable
 without reading the whole journal:
 
 ```bash
-tradeflow trials query --strategy demo_trend --symbols NVDA,AAPL,META
-tradeflow trials status      # row/journal-line counts + a drift check
-tradeflow trials rebuild     # rebuild from the journal — safe, it's derived
+quantred trials query --strategy demo_trend --symbols NVDA,AAPL,META
+quantred trials status      # row/journal-line counts + a drift check
+quantred trials rebuild     # rebuild from the journal — safe, it's derived
 ```
 
 `trials query --strategy ... --symbols ...` prints the campaign's real
@@ -305,6 +305,6 @@ the full contract and its costs.
 
 ## From a source checkout (contributors)
 
-The commands above are the installed `tradeflow` command. In a checkout, run them as
+The commands above are the installed `quantred` command. In a checkout, run them as
 `uv run python main.py <command> ...`. Extras are installed with `uv sync --inexact --extra <name>`
 (see [optional extras](extras)).

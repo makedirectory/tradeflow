@@ -10,19 +10,22 @@ title: Installation
 ### Fresh install
 
 ```bash
-uv tool install tradeflow-engine
-tradeflow demo
+uv tool install quantred
+quantred demo
 ```
 
-In an activated virtual environment: `python -m pip install tradeflow-engine`.
+In an activated virtual environment: `python -m pip install quantred`.
 
-The distribution is **`tradeflow-engine`**; the command and the importable package
-are both `tradeflow`. The bare `tradeflow` name on PyPI belongs to an unrelated
-project (time-series sign simulation) — installing both into one environment would
-collide at import, so pick one.
+The distribution and the command are both **`quantred`**; the importable package is
+still `tradeflow`, and a `tradeflow` command is installed alongside as an alias so
+existing scripts and client configs keep working. The project was previously
+distributed as `tradeflow-engine`: that distribution owns the same import package, so
+uninstall it *before* installing `quantred` (`uv tool uninstall tradeflow-engine`, or
+`python -m pip uninstall tradeflow-engine`) rather than installing both into one
+environment.
 
-This gives you a `tradeflow` command with every verb — `tradeflow demo`,
-`tradeflow init`, `tradeflow verdict`, `tradeflow mcp` — and needs no repository, no
+This gives you a `quantred` command with every verb — `quantred demo`,
+`quantred init`, `quantred verdict`, `quantred mcp` — and needs no repository, no
 keys, and no network for the demo. Next: [first run](first-run).
 
 ### Adding a capability later
@@ -30,12 +33,12 @@ keys, and no network for the demo. Next: [first run](first-run).
 Optional capabilities are opt-in extras. To choose them at install time:
 
 ```bash
-uv tool install 'tradeflow-engine[viz,store,mcp]'
+uv tool install 'quantred[viz,store,mcp]'
 ```
 
 Adding one to an installed copy later is *not* additive with `uv tool`: it replaces
 the environment, so list every extra you want. The [optional extras](extras) page has
-the table of what each unlocks and the exact commands; `tradeflow init --check` prints
+the table of what each unlocks and the exact commands; `quantred init --check` prints
 them with your current extras filled in.
 
 ### Where state lives
@@ -47,17 +50,17 @@ trial evidence never sits inside a git working tree.
 
 Resolution: `TRADEFLOW_HOME` if set, otherwise `~/.tradeflow`. Contributors who want
 state inside their checkout again set `TRADEFLOW_HOME` to it explicitly;
-`tradeflow init --dev-local-state` prints the line to use.
+`quantred init --dev-local-state` prints the line to use.
 
 This matters more than it looks. The multiple-testing correction rests on **one**
 journal accumulating every trial, so a campaign split across two roots would deflate
-its Sharpe against half the evidence — and nothing would error. `tradeflow --version`
-and `tradeflow init --check` both print the resolved root, so it is never a mystery.
+its Sharpe against half the evidence — and nothing would error. `quantred --version`
+and `quantred init --check` both print the resolved root, so it is never a mystery.
 
 ## From a checkout (contributors)
 
 The rest of this page is for working on TradeFlow itself. The Makefile targets and
-`uv run python main.py` below are the checkout forms of the `tradeflow` commands used
+`uv run python main.py` below are the checkout forms of the `quantred` commands used
 everywhere else in these docs.
 
 ## Prerequisites
@@ -97,7 +100,7 @@ make docker-run                       # paper live-trading; mounts your .env
 No local Python or uv needed. Override the command to backtest/scan, e.g.:
 
 ```bash
-docker run --rm -v $(pwd)/.env:/app/.env tradeflow \
+docker run --rm -v $(pwd)/.env:/app/.env quantred \
     uv run python main.py backtest --symbols NVDA,META --start 2024-01-02 --end 2024-04-01
 ```
 

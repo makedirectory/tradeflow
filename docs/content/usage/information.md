@@ -5,15 +5,15 @@ title: Information report (IC / IR)
 
 # Information report (IC / IR)
 
-`tradeflow info` measures whether a strategy has **skill** — its information
+`quantred info` measures whether a strategy has **skill** — its information
 coefficient and effective breadth — and reconciles the predicted information ratio
 with the realized one. It is **read-only**: a diagnostic, never a control input. It
 measures an existing strategy over a window and **calls no model**; the
-LLM-driven proposer loop is a different command, `tradeflow research`
+LLM-driven proposer loop is a different command, `quantred research`
 ([agents](agents#research-agent)).
 
 ```bash
-tradeflow info \
+quantred info \
   --strategy demo_trend \
   --symbols NVDA,AAPL,META,AMD,TSLA,GOOG,MSFT,AMZN \
   --start 2024-01-01 --end 2024-12-31 \
@@ -88,7 +88,7 @@ construction (they sum to the realized active return) and Bayesian-blended for
 a short-sample-honest t-stat.
 
 ```bash
-tradeflow info --attribution \
+quantred info --attribution \
   --strategy demo_trend --symbols NVDA,AAPL,META,AMD,TSLA,GOOG,MSFT,AMZN \
   --start 2024-01-01 --end 2024-12-31
 ```
@@ -126,7 +126,7 @@ and an unconditional Σ, carries each variant's weights forward, and compares
 realized net IR — not TE-tracking alone.
 
 ```bash
-tradeflow info --conditional-ab --conditional ewma \
+quantred info --conditional-ab --conditional ewma \
   --strategy demo_trend --symbols NVDA,AAPL,META,AMD,TSLA --start 2024-01-01 --end 2024-12-31
 ```
 
@@ -147,7 +147,7 @@ The equivalent net-of-cost decision for
 vs the aim (`--policy aim`) policy on the same alpha book.
 
 ```bash
-tradeflow info --policy-ab --strategy demo_trend \
+quantred info --policy-ab --strategy demo_trend \
   --symbols NVDA,AAPL,META,AMD,TSLA --start 2024-01-01 --end 2024-12-31
 ```
 
@@ -181,6 +181,6 @@ Capacity analysis lives on the [portfolio construction](portfolio) report
 
 ## From a source checkout (contributors)
 
-The commands above are the installed `tradeflow` command. In a checkout, run them as
+The commands above are the installed `quantred` command. In a checkout, run them as
 `uv run python main.py <command> ...`. The Makefile shortcut for this page is `make info`. Extras are installed with `uv sync --inexact --extra <name>`
 (see [optional extras](extras)).

@@ -5,12 +5,12 @@ title: Ranking by alpha
 
 # Ranking by alpha
 
-`tradeflow alphas` ranks a universe by **continuous alpha** — a forecast of
+`quantred alphas` ranks a universe by **continuous alpha** — a forecast of
 each name's residual return (annualized, benchmark-relative), so the names are
 directly comparable. It is **read-only**: it produces no orders and saves no config.
 
 ```bash
-tradeflow alphas \
+quantred alphas \
   --strategy demo_trend \
   --symbols NVDA,AAPL,META,AMD,TSLA \
   --as-of 2025-06-01 \
@@ -58,7 +58,7 @@ price-derived signals the vol is already *inside* the signal (**Case 2**), and t
 `--scaling auto` runs a regression to decide and prints the verdict:
 
 ```bash
-tradeflow alphas --strategy demo_trend --symbols ... --as-of 2025-06-01 --scaling auto
+quantred alphas --strategy demo_trend --symbols ... --as-of 2025-06-01 --scaling auto
 ```
 
 ```
@@ -74,7 +74,7 @@ Use `--source scanner` to rank by a scanner's continuous conviction instead of t
 strategy's score:
 
 ```bash
-tradeflow alphas --source scanner --scanner demo_volume --symbols NVDA,AAPL,META --as-of 2025-06-01
+quantred alphas --source scanner --scanner demo_volume --symbols NVDA,AAPL,META --as-of 2025-06-01
 ```
 
 ## Factor-neutral alphas
@@ -84,7 +84,7 @@ tradeflow alphas --source scanner --scanner demo_volume --symbols NVDA,AAPL,META
 alphas can't hide an incidental market/volatility/size tilt:
 
 ```bash
-tradeflow alphas --strategy demo_trend --symbols ... --neutralize-factors
+quantred alphas --strategy demo_trend --symbols ... --neutralize-factors
 ```
 
 The report states what was **actually applied** — and warns when it couldn't be:
@@ -117,7 +117,7 @@ below are `demo_trend` plus the two from the [example pack](private-strategies.m
 substitute your own:
 
 ```bash
-tradeflow alphas --combine demo_trend,example_breakout,example_reversion \
+quantred alphas --combine demo_trend,example_breakout,example_reversion \
   --symbols NVDA,AAPL,META,AMD,TSLA --as-of 2025-06-01
 ```
 
@@ -152,6 +152,6 @@ The same computation is available to agents as the read-only MCP tool
 
 ## From a source checkout (contributors)
 
-The commands above are the installed `tradeflow` command. In a checkout, run them as
+The commands above are the installed `quantred` command. In a checkout, run them as
 `uv run python main.py <command> ...`. The Makefile shortcut for this page is `make alphas`. Extras are installed with `uv sync --inexact --extra <name>`
 (see [optional extras](extras)).

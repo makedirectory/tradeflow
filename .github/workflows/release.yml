@@ -10,7 +10,9 @@ name: Release
 #      repository, on a tag. A leaked secret cannot publish because there is no
 #      secret.
 #
-# Set up once at https://pypi.org/manage/project/tradeflow-engine/settings/publishing/
+# Set up once at https://pypi.org/manage/project/quantred/settings/publishing/ (a new
+# project name needs its own trusted publisher; the one registered for the previous
+# distribution name does not carry over)
 #   owner: makedirectory   repository: tradeflow
 #   workflow: release.yml  environment: pypi
 

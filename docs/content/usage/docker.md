@@ -15,7 +15,7 @@ itself a prerequisite, so if you just want to run this, [installing the
 command](installation#as-a-command-no-clone) is strictly simpler:
 
 ```bash
-uv tool install tradeflow-engine && tradeflow demo
+uv tool install quantred && quantred demo
 ```
 
 What compose adds is the volume and environment wiring people get wrong by hand, a
@@ -86,7 +86,7 @@ The server speaks stdio, so the `mcp` service is attach-oriented rather than a
 listening port:
 
 ```json
-{"mcpServers": {"tradeflow": {"command": "docker",
+{"mcpServers": {"quantred": {"command": "docker",
   "args": ["compose", "-f", "/path/to/tradeflow/docker-compose.yml", "run", "--rm", "mcp"]}}}
 ```
 
