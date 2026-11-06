@@ -159,6 +159,12 @@ without guessing. The history below keeps the old name as it was written.
   repeated and a new trial recorded, instead of reporting success and leaving the caller
   without the table. That trial counts toward the multiple-testing total; for a
   walk-forward it adds the whole inner search again, so ask on the first run.
+- A unique trial-id prefix (four or more characters) works wherever an id is taken, on
+  both surfaces; an ambiguous one is refused with the candidates. `trials status` on a
+  fresh setup no longer reports the journal as unreadable, `compare` refuses a single
+  id, `mark-contaminated --id` refuses an id that matches nothing (and `--id` beside a
+  filter, which used to ignore the filter), and `archive --dry-run` names what it would
+  move.
 
 ### MCP
 

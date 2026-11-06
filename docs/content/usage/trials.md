@@ -60,7 +60,13 @@ Two rules the listing follows:
 
 ```bash
 quantred trials show a1b2c3d4e5f6
+quantred trials show a1b2          # a unique prefix of at least four characters works too
 ```
+
+Anywhere a trial id is taken - `show`, `analyze`, `compare`, `campaign`, `promote`,
+`mark-contaminated --id`, and the MCP tools - a unique prefix of four or more characters
+stands for the full id. A prefix two trials share is refused with both listed, never
+guessed.
 
 Prints everything the store knows about one trial: its full params (including the
 folded `_cost`, `_limits` and data-vintage keys that make up its dedup identity —
