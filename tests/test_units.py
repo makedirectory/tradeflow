@@ -201,3 +201,15 @@ def test_random_samples_are_on_grid():
     for sample in samples:
         assert sample["a"] in (1, 2, 3)
         assert sample["b"] in (0.0, 0.5, 1.0)
+
+
+def test_a_losing_run_has_a_negative_calmar_and_sterling():
+    """Both took the magnitude of the whole ratio, so CAGR -4.1% over a 5.5% drawdown
+    reported a Calmar of +0.74 - a losing run reading as a rewarded one. Either sign
+    convention for the drawdown gives the same answer."""
+    from tradeflow.analytics import metrics as m
+
+    for drawdown in (0.055, -0.055):
+        assert m.calmar_ratio(-0.041, drawdown) == pytest.approx(-0.041 / 0.055)
+        assert m.sterling_ratio(-0.041, drawdown) == pytest.approx(-0.041 / 0.055)
+    assert m.calmar_ratio(0.041, -0.055) == pytest.approx(0.041 / 0.055)

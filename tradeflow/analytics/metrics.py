@@ -166,11 +166,13 @@ def sortino_ratio(returns: Numbers, periods_per_year: int = TRADING_DAYS_PER_YEA
 def calmar_ratio(cagr_value: float, max_drawdown_value: float) -> float:
     """CAGR / max drawdown.
 
-    Both arguments are fractions. ``inf`` when drawdown is zero.
+    Both arguments are fractions. ``inf`` when drawdown is zero. The drawdown's sign
+    convention varies by caller, so only its magnitude is used; the CAGR keeps its sign.
+    Taking the magnitude of the whole ratio reported a losing run's Calmar as positive.
     """
     if max_drawdown_value == 0:
         return float("inf")
-    return float(abs(cagr_value / max_drawdown_value))
+    return float(cagr_value / abs(max_drawdown_value))
 
 
 #: Below this, a book has no market exposure worth dividing by and Treynor stops
@@ -251,10 +253,11 @@ def martin_ratio(cagr_value: float, ulcer_index_value: float) -> float:
 
 
 def sterling_ratio(cagr_value: float, average_drawdown: float) -> float:
-    """CAGR / average drawdown. ``inf`` when average drawdown is zero."""
+    """CAGR / average drawdown. ``inf`` when average drawdown is zero; negative for a
+    losing run, as :func:`calmar_ratio` is."""
     if average_drawdown == 0:
         return float("inf")
-    return float(abs(cagr_value / average_drawdown))
+    return float(cagr_value / abs(average_drawdown))
 
 
 # --------------------------------------------------------------------------- #
