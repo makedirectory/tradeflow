@@ -1,0 +1,171 @@
+"""A newcomer's likeliest mistakes are refused with a message that says what to type.
+
+Each of these used to reach the user as a stack trace, a credentials wall hiding the
+real problem, or no refusal at all - a run over a nonsense input that then printed a
+recovery command which could never work.
+"""
+
+from datetime import datetime, timedelta
+
+import pytest
+
+from tradeflow import cli
+from tradeflow.settings import CLI_NAME, SettingsError
+from tradeflow.store.bars import CacheMiss
+from tradeflow.utils.timeutils import NEW_YORK
+
+
+def _refusal(argv, capsys):
+    with pytest.raises(SystemExit) as exited:
+        cli.parse_cli(argv)
+    assert exited.value.code == 2
+    return capsys.readouterr().err
+
+
+def _no_keys(monkeypatch):
+    def _refuse():
+        raise SettingsError("Missing Alpaca credentials")
+
+    monkeypatch.setattr("tradeflow.settings.load_settings", _refuse)
+
+
+# --- --offline needs a cache, not keys ----------------------------------------------
+
+
+def test_an_offline_research_command_without_keys_reports_the_missing_bars(monkeypatch, tmp_path):
+    """Every research command built the trading client and discarded it, so a cache-only
+    run demanded broker keys and said nothing about the bars it could not find."""
+    _no_keys(monkeypatch)
+    args = cli.parse_cli(["scan", "--offline", "--symbols", "AAA", "--cache-dir", str(tmp_path / "bars")])
+    with pytest.raises(CacheMiss) as miss:
+        args.func(args)
+    assert "AAA" in str(miss.value) and "cache warm" in str(miss.value)
+
+
+def test_an_online_research_command_still_asks_for_keys(monkeypatch):
+    """The other direction: only a cache-only run may skip them."""
+    _no_keys(monkeypatch)
+    args = cli.parse_cli(["scan", "--symbols", "AAA"])
+    with pytest.raises(SettingsError):
+        args.func(args)
+
+
+def test_research_commands_never_build_a_trading_client(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "build_data_and_broker", lambda **kw: pytest.fail("a broker was built"))
+    args = cli.parse_cli(["scan", "--offline", "--symbols", "AAA", "--cache-dir", str(tmp_path / "bars")])
+    with pytest.raises(CacheMiss):
+        args.func(args)
+
+
+# --- windows ------------------------------------------------------------------------
+
+
+def test_a_reversed_window_is_refused_before_anything_runs(capsys):
+    """It surfaced as a cache miss with a silently re-ordered warm window, and `cache warm`
+    over it reported an empty cache as already cached."""
+    for command in (["backtest"], ["verdict"], ["cache", "warm", "--symbols", "AAA"]):
+        err = _refusal([*command, "--start", "2024-06-01", "--end", "2024-01-01"], capsys)
+        assert "ends (2024-01-01) before it starts (2024-06-01)" in err
+        assert err.startswith(f"{CLI_NAME} {command[0]}: error:")
+
+
+def test_a_window_starting_in_the_future_is_refused(capsys):
+    """Its warm command could never succeed."""
+    start = (datetime.now(NEW_YORK) + timedelta(days=400)).strftime("%Y-%m-%d")
+    end = (datetime.now(NEW_YORK) + timedelta(days=500)).strftime("%Y-%m-%d")
+    assert "in the future" in _refusal(["backtest", "--start", start, "--end", end], capsys)
+
+
+def test_an_ordinary_window_and_an_end_after_today_are_accepted():
+    """The boundary: a window may end after now (it is clipped by the data), and the
+    default window must pass, or every command without dates would refuse."""
+    from tradeflow.utils.timeutils import window_refusal
+
+    cli.parse_cli(["backtest", "--start", "2024-01-02", "--end", "2024-01-03"])
+    cli.parse_cli(["backtest"])
+    now = datetime(2024, 6, 1, tzinfo=NEW_YORK)
+    assert (
+        window_refusal(datetime(2024, 5, 1, tzinfo=NEW_YORK), datetime(2024, 7, 1, tzinfo=NEW_YORK), now)
+        is None
+    )
+    assert window_refusal(datetime(2024, 6, 1, tzinfo=NEW_YORK), datetime(2024, 7, 1, tzinfo=NEW_YORK), now)
+
+
+def test_a_service_caller_gets_the_same_refusal_and_nothing_is_journaled(tmp_path, monkeypatch):
+    """Over MCP a verdict on a reversed window was recorded as a trial, raising the
+    multiple-testing count for a run that measured nothing."""
+    from tests.fakes import FakeMarketData
+    from tradeflow.marketdata.client import MarketDataClient
+    from tradeflow.services import analysis, audit
+
+    journal = tmp_path / "journal.jsonl"
+    monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", journal)
+    client = MarketDataClient(FakeMarketData(["AAA", "BBB"], n=300, freq="1D"))
+    start, end = cli._date("2024-06-01"), cli._date("2024-01-01")
+    for run in (analysis.run_verdict, analysis.run_backtest, analysis.run_walk_forward):
+        with pytest.raises(ValueError, match="before it starts"):
+            run(client, "demo_trend", ["AAA", "BBB"], start, end)
+    assert not journal.exists() or not journal.read_text().strip()
+
+
+# --- names, dates and amounts -------------------------------------------------------
+
+
+def test_a_mistyped_scanner_is_refused_with_a_suggestion(capsys):
+    """It was a fourteen-line traceback from inside the scan; a mistyped strategy has
+    always been an argparse refusal listing the choices."""
+    err = _refusal(["scan", "--scanner", "demo_volum"], capsys)
+    assert "unknown scanner 'demo_volum'" in err
+    assert "Did you mean 'demo_volume'?" in err
+    assert "Traceback" not in err
+
+
+def test_none_and_an_installed_scanner_are_accepted():
+    assert cli.parse_cli(["backtest", "--scanner", "none"]).scanner == "none"
+    assert cli.parse_cli(["backtest", "--scanner", "demo_volume"]).scanner == "demo_volume"
+
+
+@pytest.mark.parametrize("value", ["2024/01/02", "01-02-2024", "2025-13-45"])
+def test_a_malformed_date_names_the_format_not_a_private_function(value, capsys):
+    err = _refusal(["backtest", "--start", value], capsys)
+    assert "_date" not in err
+    assert "YYYY-MM-DD" in err and repr(value) in err
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["backtest", "--capital", "0"],
+        ["verdict", "--capital", "-5"],
+        ["backtest", "--capital", "nan"],
+        ["backtest", "--max-positions", "0"],
+        ["allocate", "--max-positions", "-1"],
+    ],
+)
+def test_an_amount_that_cannot_fund_a_book_is_refused(argv, capsys):
+    """Nothing refused these; a run sized every position from them."""
+    assert "error: argument" in _refusal(argv, capsys)
+
+
+def test_the_smallest_meaningful_amounts_are_accepted():
+    args = cli.parse_cli(["backtest", "--capital", "0.01", "--max-positions", "1"])
+    assert (args.capital, args.max_positions) == (0.01, 1)
+
+
+# --- rejected keys ------------------------------------------------------------------
+
+
+def test_rejected_keys_end_the_command_with_their_message_not_a_stack(monkeypatch):
+    """The fix text was good and sat under sixty lines of the vendor SDK's stack."""
+    from argparse import Namespace
+
+    from tradeflow.brokers.errors import AuthenticationError
+
+    def _rejected(args):
+        raise AuthenticationError("Alpaca rejected these credentials (HTTP 401).")
+
+    monkeypatch.setattr(cli, "parse_cli", lambda: Namespace(func=_rejected))
+    monkeypatch.setattr(cli, "setup_logging", lambda: None)
+    with pytest.raises(SystemExit) as exited:
+        cli.main()
+    assert exited.value.code == "Alpaca rejected these credentials (HTTP 401)."

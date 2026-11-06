@@ -232,7 +232,7 @@ def _fake_cli_env(monkeypatch, tmp_path, symbols):
     from tradeflow.services import audit
 
     client = MarketDataClient(FakeMarketData(symbols, n=400, freq="1D"))
-    monkeypatch.setattr(main, "build_data_and_broker", lambda **kwargs: (None, client))
+    monkeypatch.setattr(main, "build_research_data", lambda **kwargs: client)
     journal = tmp_path / "journal.jsonl"
     monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", journal)
     return journal
@@ -448,7 +448,7 @@ def test_walkforward_gate_report_is_unaffected_by_a_broken_trial_store(monkeypat
     from tradeflow.store import trials as trials_mod
 
     client = MarketDataClient(FakeMarketData(["AAA", "BBB"], n=400, freq="1D"))
-    monkeypatch.setattr(main, "build_data_and_broker", lambda **kwargs: (None, client))
+    monkeypatch.setattr(main, "build_research_data", lambda **kwargs: client)
 
     def _run(journal_path):
         monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", journal_path)
@@ -574,7 +574,7 @@ def _fake_cli_env_with_cache(monkeypatch, tmp_path, symbols, cache_dir=None):
     cache_dir = cache_dir or (tmp_path / "cache" / "bars")
     provider = CachedMarketData(FakeMarketData(symbols, n=400, freq="1D"), cache_dir=cache_dir)
     client = MarketDataClient(provider)
-    monkeypatch.setattr(main, "build_data_and_broker", lambda **kwargs: (None, client))
+    monkeypatch.setattr(main, "build_research_data", lambda **kwargs: client)
     journal = tmp_path / "journal.jsonl"
     monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", journal)
     return journal, provider

@@ -5,6 +5,7 @@ timestamps are normalized to that zone in one place.
 """
 
 from datetime import datetime
+from typing import Optional
 
 import pandas as pd
 import pytz
@@ -81,3 +82,29 @@ def parse_market_date(value: str) -> datetime:
     if parsed.tzinfo is None:
         return NEW_YORK.localize(parsed)
     return parsed.astimezone(NEW_YORK)
+
+
+def _day(moment: datetime) -> str:
+    """A bound as the reader typed it: the date alone when it is a midnight."""
+    if (moment.hour, moment.minute, moment.second, moment.microsecond) == (0, 0, 0, 0):
+        return f"{moment:%Y-%m-%d}"
+    return moment.isoformat(timespec="minutes")
+
+
+def window_refusal(start: datetime, end: datetime, now: Optional[datetime] = None) -> Optional[str]:
+    """Why ``[start, end]`` cannot be a research window, or ``None`` when it can.
+
+    Neither case was refused anywhere. The bar store read a reversed window as an
+    ordinary cache miss and printed a warm command that then reported the empty range
+    "already cached"; a window starting in the future printed one that could never
+    succeed. And a verdict over a reversed window was journaled as a trial, raising the
+    multiple-testing count for a run that measured nothing.
+    """
+    if end <= start:
+        return f"the window ends ({_day(end)}) before it starts ({_day(start)}); the end must come after the start."
+    if now is None:
+        # Library callers still pass naive values; compare like with like.
+        now = datetime.now(NEW_YORK) if start.tzinfo else datetime.now()
+    if start >= now:
+        return f"the window starts in the future ({_day(start)}); there are no bars for it yet."
+    return None

@@ -864,7 +864,7 @@ def test_cli_and_mcp_agree_on_an_infeasible_verdict(monkeypatch, tmp_path):
     monkeypatch.setattr(audit, "DEFAULT_AUDIT_PATH", tmp_path / "audit.jsonl")
     names = ["AAA", "BBB", "CCC"]
     client = MarketDataClient(FakeMarketData([*names, "SPY"], n=600, freq="1D"))
-    monkeypatch.setattr(main, "build_data_and_broker", lambda **kwargs: (None, client))
+    monkeypatch.setattr(main, "build_research_data", lambda **kwargs: client)
 
     out = tmp_path / "cli.json"
     args = main.build_parser().parse_args(
@@ -963,7 +963,7 @@ def test_the_same_verdict_over_both_surfaces_is_one_journaled_trial(monkeypatch,
     monkeypatch.setattr(audit, "DEFAULT_AUDIT_PATH", tmp_path / "audit.jsonl")
     names = [f"SYM{i:02d}" for i in range(12)]
     client = MarketDataClient(FakeMarketData([*names, "SPY"], n=600, freq="1D"))
-    monkeypatch.setattr(main, "build_data_and_broker", lambda **kwargs: (None, client))
+    monkeypatch.setattr(main, "build_research_data", lambda **kwargs: client)
 
     args = main.build_parser().parse_args(
         [

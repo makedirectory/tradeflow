@@ -69,6 +69,20 @@ def _strategy(strategy_name: str, config: Optional[Dict[str, Any]] = None):
     return cls(params)
 
 
+def _refuse_unusable_window(start: datetime, end: datetime) -> None:
+    """Refuse a reversed or future window before anything is read or journaled.
+
+    The CLI refuses these at parse time; this is the same rule for every caller of the
+    service, the MCP server included, where a verdict over a reversed window used to
+    be recorded as a trial.
+    """
+    from tradeflow.utils.timeutils import window_refusal
+
+    problem = window_refusal(start, end)
+    if problem:
+        raise ValueError(problem[0].upper() + problem[1:])
+
+
 def _build_cost_model(
     gross: bool,
     commission_bps: float,
@@ -444,6 +458,7 @@ def run_backtest(
     is repeated and a new trial recorded, because serving it would leave the caller
     without the table it asked for. Ignored when ``journal=False``: nothing is stored.
     """
+    _refuse_unusable_window(start, end)
     from tradeflow.services.sizing import build_beta_sizer
 
     run_id = new_run_id()
@@ -748,6 +763,7 @@ def run_optimization(
     was scheduled. A parallel run and a sequential run of the same search produce
     the same trials and the same winner.
     """
+    _refuse_unusable_window(start, end)
     from tradeflow.services.audit import journal_trial
 
     run_id = new_run_id()
@@ -922,6 +938,7 @@ def run_screen(
     the same count of positive points scattered at random, and it can point off the
     edge of the searched space, which a best-point report never does.
     """
+    _refuse_unusable_window(start, end)
     from tradeflow.analytics import screening
     from tradeflow.optimization.param_space import ParameterSpace
     from tradeflow.optimization.walk_forward import PrefetchedProvider
@@ -1230,6 +1247,7 @@ def run_walk_forward(
     per-fold progress stays readable. Journaling is unaffected: this process still
     records exactly one validated trial when the whole run finishes.
     """
+    _refuse_unusable_window(start, end)
     from tradeflow.optimization.config_store import current_git_sha
     from tradeflow.services.audit import journal_trial
 
@@ -2669,6 +2687,7 @@ def run_verdict(
     ``run_id``, ``inputs``, ``steps``, ``scan``, ``alphas``, ``combination``,
     ``portfolio``, ``information``, ``verdict``.
     """
+    _refuse_unusable_window(start, end)
     from tradeflow.engine.backtest import ACCOUNTING_VERSION
     from tradeflow.marketdata.session import session_client
     from tradeflow.portfolio.optimizer import long_only_cap_shortfall

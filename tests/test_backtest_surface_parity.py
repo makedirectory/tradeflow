@@ -93,7 +93,7 @@ def _over_cli(monkeypatch):
         return render(metrics, *args, **kwargs)
 
     monkeypatch.setattr(reporting, "format_backtest_report", capture)
-    monkeypatch.setattr(cli, "build_data_and_broker", lambda **kw: (None, _client()))
+    monkeypatch.setattr(cli, "build_research_data", lambda **kw: _client())
     argv = [
         "backtest",
         "--strategy",

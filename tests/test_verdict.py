@@ -683,7 +683,7 @@ def test_report_names_the_cost_model_it_priced_with():
 def _cli(monkeypatch, provider, *argv):
     from tradeflow import cli as main
 
-    monkeypatch.setattr(main, "build_data_and_broker", lambda **kwargs: (None, MarketDataClient(provider)))
+    monkeypatch.setattr(main, "build_research_data", lambda **kwargs: MarketDataClient(provider))
     args = main.build_parser().parse_args(
         [
             "verdict",

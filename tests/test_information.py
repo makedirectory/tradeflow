@@ -150,7 +150,7 @@ def test_the_documented_info_example_writes_a_report(tmp_path, monkeypatch, caps
     monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path / "home"))
     # The default benchmark is part of what the command fetches.
     client = MarketDataClient(FakeMarketData([*symbols, "SPY"], n=300, freq="1D"))
-    monkeypatch.setattr(cli, "build_data_and_broker", lambda **kwargs: (None, client))
+    monkeypatch.setattr(cli, "build_research_data", lambda **kwargs: client)
     out = tmp_path / "info.html"
     args = cli.parse_cli(tokens[1:] + ["--html", str(out)])
     cli.cmd_info(args)

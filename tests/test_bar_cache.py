@@ -296,7 +296,7 @@ def _offline_command(monkeypatch, cache_dir, argv):
     from tradeflow.marketdata.client import MarketDataClient
 
     cached = CachedMarketData(WindowedFakeProvider([*SYMBOLS, "SPY"]), cache_dir=cache_dir, offline=True)
-    monkeypatch.setattr(cli, "build_data_and_broker", lambda **kw: (None, MarketDataClient(cached)))
+    monkeypatch.setattr(cli, "build_research_data", lambda **kw: MarketDataClient(cached))
     args = cli.build_parser().parse_args(argv)
     try:
         getattr(cli, f"cmd_{argv[0]}")(args)

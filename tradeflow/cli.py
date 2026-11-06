@@ -76,6 +76,19 @@ def build_data_and_broker(
     return broker, data_client
 
 
+def build_research_data(cache: bool = False, offline: bool = False, cache_dir: Optional[Any] = None):
+    """The market-data client a research command reads through, and nothing else.
+
+    Research commands used to build the trading client too and throw it away, so a
+    cache-only ``--offline`` run still demanded broker keys and a newcomer with a
+    warmed cache could not use it. Delegates to the builder the MCP server uses, which
+    constructs no trading client: a research run is structurally unable to place orders.
+    """
+    from tradeflow.services.data import build_data_client
+
+    return build_data_client(cache=cache, offline=offline, cache_dir=cache_dir)
+
+
 def resolve_universe(
     data_client,
     scanner_name: Optional[str],
@@ -378,8 +391,22 @@ def parse_cli(argv: Optional[List[str]] = None):
         sys.exit(0)
     _refuse_sibling_command_after_research(parser, argv)
     args = parser.parse_args(argv)
+    _refuse_unusable_window(args)
     args.flags_given = _flags_given(parser, argv, getattr(args, "command", None))
     return args
+
+
+def _refuse_unusable_window(args) -> None:
+    """Refuse a reversed or future ``--start``/``--end`` before anything is read or recorded."""
+    from tradeflow.utils.timeutils import window_refusal
+
+    start, end = getattr(args, "start", None), getattr(args, "end", None)
+    if not (isinstance(start, datetime) and isinstance(end, datetime)):
+        return
+    problem = window_refusal(start, end)
+    if problem:
+        sys.stderr.write(f"{CLI_NAME} {args.command}: error: {problem}\n")
+        sys.exit(2)
 
 
 def _refuse_unusable_config(path, exc) -> "NoReturn":  # noqa: F821 - string annotation
@@ -630,7 +657,7 @@ def cmd_backtest(args) -> None:
     # config declares, the same precedence every other flag has.
     _apply_limit_overrides(args, strategy)
 
-    _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
+    data_client = build_research_data(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
     timeframe = strategy.config["timeframe"]
 
     def later_reads(names):
@@ -822,7 +849,7 @@ def cmd_scan(args) -> None:
     from tradeflow.analytics.reporting import format_offline_scan_notice
     from tradeflow.scanners.symbol_scanner import SymbolScanner, resolve_scan_clock
 
-    _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
+    data_client = build_research_data(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
     # Before the result, not after it: a caveat under a list of symbols is a caveat
     # most readers have already scrolled past.
     if args.offline:
@@ -872,7 +899,7 @@ def cmd_allocate(args) -> None:
     from tradeflow.scanners.symbol_scanner import SymbolScanner
     from tradeflow.services.sizing import allocate_portfolio
 
-    _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
+    data_client = build_research_data(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
     scanner = SymbolScanner(data_client, args.scanner)
     flagged = [symbol for symbol, _ in scanner.scan(args.symbols)]
     if not flagged:
@@ -895,7 +922,7 @@ def _allocate_utility(args, tuned=None) -> None:
     """Mean-variance portfolio construction (alpha + Σ) — a read-only proposal."""
     from tradeflow.services.analysis import construct_portfolio, longshort_report
 
-    _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
+    data_client = build_research_data(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
     book = args.book.replace("-", "_")
 
     if args.longshort_report:
@@ -1114,7 +1141,7 @@ def cmd_optimize(args) -> None:
     from tradeflow.engine.backtest import ACCOUNTING_VERSION
     from tradeflow.optimization.optimizer import ParameterOptimizer
 
-    _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
+    data_client = build_research_data(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
     timeframe = STRATEGIES[args.strategy].create_with_defaults().config["timeframe"]
     universe = resolve_universe(
         data_client,
@@ -1348,7 +1375,7 @@ def cmd_screen(args) -> None:
 
     from tradeflow.services import analysis
 
-    _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
+    data_client = build_research_data(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
     timeframe = STRATEGIES[args.strategy].create_with_defaults().config.get("timeframe", "1Day")
     universe = resolve_universe(
         data_client,
@@ -1465,7 +1492,7 @@ def cmd_walkforward(args) -> None:
     # universe or a cost parameter silently drifts from what was saved.
     tuned = apply_run_config(args)
 
-    _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
+    data_client = build_research_data(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
     timeframe = _strategy_from(args, tuned).config["timeframe"]
     # The validation reads a warmup before --start, and the benchmark, in one fetch that
     # comes after the vintage stamp and the memo lookup. Asking for that read in the
@@ -2651,7 +2678,7 @@ def cmd_verdict(args) -> None:
     from tradeflow.services.analysis import run_verdict
 
     tuned = apply_run_config(args)
-    _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
+    data_client = build_research_data(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
 
     result = run_verdict(
         data_client,
@@ -2716,7 +2743,7 @@ def cmd_alphas(args) -> None:
 
     from tradeflow.services.analysis import compute_alphas, compute_combined_alphas
 
-    _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
+    data_client = build_research_data(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
 
     if args.combine:
         combined = compute_combined_alphas(
@@ -2843,7 +2870,7 @@ def cmd_risk(args) -> None:
     """
     apply_run_config(args)
 
-    _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
+    data_client = build_research_data(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
 
     if getattr(args, "evaluate_conditional", False):
         _print_conditional_evidence_gate(data_client, args)
@@ -2936,7 +2963,7 @@ def cmd_info(args) -> None:
 
     from tradeflow.services.analysis import compute_information
 
-    _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
+    data_client = build_research_data(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
 
     if getattr(args, "scaling_ab", False):
         _print_scaling_ab(data_client, args)
@@ -3423,7 +3450,7 @@ def cmd_horizon(args) -> None:
 
     from tradeflow.services.analysis import compute_horizon
 
-    _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
+    data_client = build_research_data(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
     r = compute_horizon(
         data_client,
         args.strategy,
@@ -5832,7 +5859,7 @@ def _add_limit_flags(parser) -> None:
     parser.add_argument(
         "--max-positions",
         dest="max_positions",
-        type=int,
+        type=_positive_count,
         default=None,
         help="How many positions the book may hold at once",
     )
@@ -5960,7 +5987,58 @@ def _date(value: str) -> datetime:
     definition shared with the MCP server. The contract and the reason for it are
     documented there.
     """
-    return parse_market_date(value)
+    try:
+        return parse_market_date(value)
+    except ValueError:
+        # argparse would otherwise name this function - "invalid _date value" - and
+        # never say what it wanted.
+        raise argparse.ArgumentTypeError(
+            f"expected a date as YYYY-MM-DD (or an ISO time such as 2024-01-02T09:30), got {value!r}"
+        ) from None
+
+
+def _scanner(value: str) -> str:
+    """A scanner name, refused at parse time when nothing installed provides it.
+
+    A mistyped scanner used to surface as a stack trace from inside the scan, after
+    the data client was built; a mistyped strategy has always been refused by
+    argparse with the choices listed. Scanners arrive by entry point, so the choices
+    are read from the registry when the flag is parsed rather than fixed in the parser.
+    """
+    import difflib
+
+    from tradeflow.services.registry import SCANNERS
+
+    if value == "none" or value in SCANNERS:
+        return value
+    close = difflib.get_close_matches(value, list(SCANNERS), n=1)
+    hint = f" Did you mean {close[0]!r}?" if close else ""
+    installed = ", ".join(sorted(SCANNERS)) or "none installed"
+    raise argparse.ArgumentTypeError(
+        f"unknown scanner {value!r}.{hint} Available: {installed}; or 'none' to skip the scan."
+    )
+
+
+def _positive_amount(value: str) -> float:
+    """A dollar amount that has to be above zero to mean anything."""
+    try:
+        amount = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a number, got {value!r}") from None
+    if not amount > 0:  # also refuses nan
+        raise argparse.ArgumentTypeError(f"must be greater than zero, got {value}")
+    return amount
+
+
+def _positive_count(value: str) -> int:
+    """A count that has to be at least one - a book of zero positions trades nothing."""
+    try:
+        count = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a whole number, got {value!r}") from None
+    if count < 1:
+        raise argparse.ArgumentTypeError(f"must be at least 1, got {count}")
+    return count
 
 
 def _now() -> datetime:
@@ -6122,14 +6200,16 @@ def build_parser() -> argparse.ArgumentParser:
             help="Which strategy to run. The engine ships one demonstration of the "
             "interface; bring your own in an installed package",
         )
-        p.add_argument("--scanner", default="demo_volume", help="Universe scanner ('none' to skip)")
+        p.add_argument(
+            "--scanner", type=_scanner, default="demo_volume", help="Universe scanner ('none' to skip)"
+        )
         p.add_argument(
             "--symbols", type=_symbols, default=DEFAULT_UNIVERSE, help="Comma-separated candidate symbols"
         )
         if with_dates:
             p.add_argument("--start", type=_date, default=_now() - timedelta(days=30))
             p.add_argument("--end", type=_date, default=_now())
-            p.add_argument("--capital", type=float, default=100_000.0)
+            p.add_argument("--capital", type=_positive_amount, default=100_000.0)
             p.add_argument(
                 "--scan-as-of",
                 dest="scan_as_of",
@@ -6286,7 +6366,7 @@ def build_parser() -> argparse.ArgumentParser:
     live.add_argument("--benchmark", default="SPY", help="Benchmark symbol for beta")
     live.add_argument(
         "--capital",
-        type=float,
+        type=_positive_amount,
         default=None,
         help="How much of the account this run may deploy. A saved config supplies it; "
         "without either, sizing uses the whole account balance - which on a paper "
@@ -6320,7 +6400,7 @@ def build_parser() -> argparse.ArgumentParser:
     live.add_argument(
         "--max-positions",
         dest="max_positions",
-        type=int,
+        type=_positive_count,
         default=5,
         help="How many positions the book may hold at once. Overrides the strategy's and "
         "the saved config's limit, and bounds the allocator under --portfolio",
@@ -6464,7 +6544,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     small.add_argument(
         "--capital",
-        type=float,
+        type=_positive_amount,
         default=None,
         help="Amount to deploy, stated outright. Use this when the config records no "
         "validated capital for --scale to be a fraction of",
@@ -6486,7 +6566,9 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print the scaled contract and exit without starting the order path",
     )
-    small.add_argument("--scanner", default="none", help="Universe scanner ('none' replays the config's)")
+    small.add_argument(
+        "--scanner", type=_scanner, default="none", help="Universe scanner ('none' replays the config's)"
+    )
     small.add_argument("--symbols", type=_symbols, default=None, help="Explicit universe")
     small.add_argument(
         "--feed",
@@ -6590,7 +6672,7 @@ def build_parser() -> argparse.ArgumentParser:
     execution.set_defaults(func=cmd_execution_report)
 
     scan = subparsers.add_parser("scan", help="Run the universe scanner only")
-    scan.add_argument("--scanner", default="demo_volume")
+    scan.add_argument("--scanner", type=_scanner, default="demo_volume")
     scan.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
     scan.add_argument(
         "--drift",
@@ -6610,10 +6692,10 @@ def build_parser() -> argparse.ArgumentParser:
     scan.set_defaults(func=cmd_scan)
 
     alloc = subparsers.add_parser("allocate", help="Weight a portfolio over scanned symbols")
-    alloc.add_argument("--scanner", default="demo_volume")
+    alloc.add_argument("--scanner", type=_scanner, default="demo_volume")
     alloc.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
-    alloc.add_argument("--capital", type=float, default=100_000.0)
-    alloc.add_argument("--max-positions", dest="max_positions", type=int, default=5)
+    alloc.add_argument("--capital", type=_positive_amount, default=100_000.0)
+    alloc.add_argument("--max-positions", dest="max_positions", type=_positive_count, default=5)
     alloc.add_argument("--max-weight", dest="max_weight", type=float, default=0.25)
     alloc.add_argument(
         "--objective",
@@ -6828,7 +6910,7 @@ def build_parser() -> argparse.ArgumentParser:
     screen.add_argument(
         "--max-positions",
         dest="max_positions",
-        type=int,
+        type=_positive_count,
         default=None,
         help="Screen against a book of this size. Without it (or a --config carrying "
         "position_limits) every point is evaluated at whatever the strategy class "
@@ -7049,11 +7131,13 @@ def build_parser() -> argparse.ArgumentParser:
         "one universe, one window, one consolidated verdict — read-only",
     )
     verdict.add_argument("--strategy", choices=STRATEGIES, default="demo_trend")
-    verdict.add_argument("--scanner", default="demo_volume", help="Universe scanner ('none' to skip)")
+    verdict.add_argument(
+        "--scanner", type=_scanner, default="demo_volume", help="Universe scanner ('none' to skip)"
+    )
     verdict.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
     verdict.add_argument("--start", type=_date, default=_now() - timedelta(days=365))
     verdict.add_argument("--end", type=_date, default=_now())
-    verdict.add_argument("--capital", type=float, default=100_000.0)
+    verdict.add_argument("--capital", type=_positive_amount, default=100_000.0)
     verdict.add_argument(
         "--source", choices=["strategy", "signal", "scanner"], default="strategy", help="Alpha score origin"
     )
@@ -7114,7 +7198,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Rank a universe by continuous alpha (residual-return forecast) — read-only",
     )
     alphas.add_argument("--strategy", choices=STRATEGIES, default="demo_trend")
-    alphas.add_argument("--scanner", default="demo_volume", help="Scanner used as the --source score metric")
+    alphas.add_argument(
+        "--scanner", type=_scanner, default="demo_volume", help="Scanner used as the --source score metric"
+    )
     alphas.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
     alphas.add_argument(
         "--as-of", dest="as_of", type=_date, default=_now(), help="Rebalance date (YYYY-MM-DD)"
@@ -7162,7 +7248,9 @@ def build_parser() -> argparse.ArgumentParser:
     info.add_argument(
         "--source", choices=["strategy", "signal", "scanner"], default="strategy", help="Alpha score origin"
     )
-    info.add_argument("--scanner", default="demo_volume", help="Scanner used when --source scanner")
+    info.add_argument(
+        "--scanner", type=_scanner, default="demo_volume", help="Scanner used when --source scanner"
+    )
     info.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
     info.add_argument("--start", type=_date, default=_now() - timedelta(days=365))
     info.add_argument("--end", type=_date, default=_now())
@@ -7256,7 +7344,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     hz.add_argument("--strategy", choices=STRATEGIES, default="demo_trend")
     hz.add_argument("--source", choices=["strategy", "signal", "scanner"], default="strategy")
-    hz.add_argument("--scanner", default="demo_volume")
+    hz.add_argument("--scanner", type=_scanner, default="demo_volume")
     hz.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
     hz.add_argument("--start", type=_date, default=_now() - timedelta(days=365))
     hz.add_argument("--end", type=_date, default=_now())
@@ -7327,7 +7415,7 @@ def build_parser() -> argparse.ArgumentParser:
     c_warm = cache_sub.add_parser("warm", help="Prefetch and cache bars for a universe/window")
     _add_cache_dir_flag(c_warm)
     c_warm.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
-    c_warm.add_argument("--scanner", default="none", help="Universe scanner ('none' to skip)")
+    c_warm.add_argument("--scanner", type=_scanner, default="none", help="Universe scanner ('none' to skip)")
     c_warm.add_argument("--timeframe", default="1Day")
     c_warm.add_argument("--start", type=_date, default=_now() - timedelta(days=365))
     c_warm.add_argument("--end", type=_date, default=_now())
@@ -7685,7 +7773,7 @@ def build_parser() -> argparse.ArgumentParser:
     dagent.add_argument("--max-evals", dest="max_evals", type=int, default=25)
     dagent.add_argument("--max-trials", dest="max_trials", type=int, default=6)
     dagent.add_argument("--max-dry-rounds", dest="max_dry_rounds", type=int, default=3)
-    dagent.add_argument("--capital", type=float, default=100_000.0)
+    dagent.add_argument("--capital", type=_positive_amount, default=100_000.0)
     dagent.add_argument(
         "--provider",
         choices=["replay", "anthropic", "openai", "ollama"],
@@ -7726,6 +7814,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    from tradeflow.brokers.errors import AuthenticationError
     from tradeflow.settings import SettingsError
     from tradeflow.store.bars import CacheMiss
 
@@ -7733,7 +7822,9 @@ def main() -> None:
     args = parse_cli()
     try:
         args.func(args)
-    except (SettingsError, CacheMiss) as exc:
+    except (SettingsError, CacheMiss, AuthenticationError) as exc:
+        # Rejected keys are the likeliest first mistake, and their message says what to
+        # do - it used to sit under sixty lines of the vendor SDK's stack.
         sys.exit(str(exc))
     except KeyboardInterrupt:
         # A traceback reads as a crash; Ctrl-C is a choice. What matters more than the

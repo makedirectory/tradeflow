@@ -31,7 +31,7 @@ def _isolated(tmp_path, monkeypatch):
 @pytest.fixture
 def client(monkeypatch):
     c = MarketDataClient(FakeMarketData(SYMBOLS, n=400, freq="1D"))
-    monkeypatch.setattr(main, "build_data_and_broker", lambda **kwargs: (None, c))
+    monkeypatch.setattr(main, "build_research_data", lambda **kwargs: c)
     return c
 
 

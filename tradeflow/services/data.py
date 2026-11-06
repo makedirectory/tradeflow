@@ -10,6 +10,7 @@ import logging
 from datetime import datetime
 from typing import Any, List, Optional, Tuple
 
+from tradeflow.marketdata.base import MarketDataProvider
 from tradeflow.marketdata.client import MarketDataClient
 
 logger = logging.getLogger(__name__)
@@ -31,7 +32,8 @@ def build_data_client(
     provider so repeated requests reuse previously-fetched bars; ``offline``
     additionally forbids any network call (a request touching an uncached range
     raises rather than falling through to Alpaca), and implies ``cache`` on its
-    own. Default behavior (neither flag) is unchanged - a plain Alpaca provider.
+    own and needs no credentials. Default behavior (neither flag) is a plain Alpaca
+    provider.
 
     ``feed`` pins the Alpaca market-data feed; ``None`` (the default) resolves from
     ``ALPACA_DATA_FEED`` and otherwise leaves the SDK's defaults alone.
@@ -39,13 +41,38 @@ def build_data_client(
     from tradeflow.brokers.alpaca.factory import build_market_data
     from tradeflow.settings import data_feed, load_settings
 
-    settings = load_settings()
-    provider = build_market_data(settings.alpaca_key, settings.alpaca_secret, feed=feed or data_feed())
-    if cache or offline:
+    if offline:
         from tradeflow.store.bars import CachedMarketData
 
-        provider = CachedMarketData(provider, cache_dir=cache_dir, offline=offline)
+        # A cache-only run never reaches the vendor, so it needs no keys: demanding
+        # them hid "these bars are not cached" behind a credentials wall, and a
+        # warmed cache was unusable on a machine without them.
+        return MarketDataClient(CachedMarketData(_NoVendor(), cache_dir=cache_dir, offline=True))
+    settings = load_settings()
+    provider = build_market_data(settings.alpaca_key, settings.alpaca_secret, feed=feed or data_feed())
+    if cache:
+        from tradeflow.store.bars import CachedMarketData
+
+        provider = CachedMarketData(provider, cache_dir=cache_dir)
     return MarketDataClient(provider)
+
+
+class _NoVendor(MarketDataProvider):
+    """The upstream of a cache-only client: there is no vendor behind it.
+
+    ``CachedMarketData(offline=True)`` refuses an uncached read before it would ask its
+    upstream, so nothing should reach this; if something does, it fails loudly rather
+    than becoming a network call nobody asked for.
+    """
+
+    def get_bars(self, symbols, timeframe, start, end):
+        raise RuntimeError("--offline: an uncached read reached the vendor")
+
+    async def stream_bars(self, symbols, handler):
+        raise RuntimeError("--offline: live streaming needs a network connection")
+
+    def supports_streaming(self) -> bool:
+        return False
 
 
 #: ``(symbols, timeframe, start, end)``: the arguments of one ``get_bars`` call.

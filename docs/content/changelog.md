@@ -56,6 +56,14 @@ without guessing. The history below keeps the old name as it was written.
 - A new [extras guide](usage/extras) says which optional capability each command needs.
 - Install hints match how you installed (uv tool, virtual environment, checkout),
   and keep the packs you added with `--with`.
+- `--offline` no longer asks for broker keys: a cache-only run never reaches the
+  vendor, and research commands no longer build a trading client at all. Without keys,
+  an uncached window now says which bars are missing instead of asking for credentials.
+- Common mistakes are refused up front with what to type instead: a reversed or
+  future `--start`/`--end` (over MCP too, where a verdict over a reversed window used
+  to be recorded as a trial), a mistyped `--scanner` (with a suggestion), a malformed
+  date (the expected format), and a zero or negative `--capital` or `--max-positions`.
+  Rejected keys end the command with their fix instead of a stack trace.
 
 ### Verdicts and examples
 

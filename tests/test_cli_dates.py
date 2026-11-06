@@ -98,7 +98,7 @@ def test_the_cache_flags_reach_the_data_client_of_every_command_that_offers_them
         seen.update(cache=cache, offline=offline)
         raise RuntimeError("stop once the client would have been built")
 
-    monkeypatch.setattr(cli, "build_data_and_broker", _spy)
+    monkeypatch.setattr(cli, "build_research_data", _spy)
     args = parse_cli([command, "--offline"])
     with pytest.raises(RuntimeError):
         args.func(args)
@@ -117,7 +117,7 @@ def test_the_allocate_utility_book_reads_the_cache_too(monkeypatch):
         seen.update(cache=cache, offline=offline)
         raise RuntimeError("stop")
 
-    monkeypatch.setattr(cli, "build_data_and_broker", _spy)
+    monkeypatch.setattr(cli, "build_research_data", _spy)
     args = parse_cli(["allocate", "--objective", "utility", "--offline"])
     with pytest.raises(RuntimeError):
         args.func(args)
@@ -134,7 +134,7 @@ def test_an_offline_scan_says_its_universe_is_only_as_current_as_the_cache(monke
     from tradeflow.marketdata.client import MarketDataClient
 
     client = MarketDataClient(DictMarketData({"AAA": make_ohlcv(n=60, seed=0, freq="1D")}))
-    monkeypatch.setattr(cli, "build_data_and_broker", lambda **kw: (None, client))
+    monkeypatch.setattr(cli, "build_research_data", lambda **kw: client)
 
     cli.cmd_scan(build_parser().parse_args(["scan", "--offline", "--symbols", "AAA"]))
     offline_output = capsys.readouterr().out

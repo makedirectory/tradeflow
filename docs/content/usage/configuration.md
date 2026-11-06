@@ -16,6 +16,10 @@ separate artefact with its own page: [run configs](run-configs.md).
 :::tip No keys needed to explore
 Want to see QuantRed work before signing up for anything? Run `quantred demo` — it
 runs the whole pipeline (backtest + walk-forward) on synthetic data, offline.
+
+The research commands read real market bars, so they need keys to fetch them. Once bars
+are in the local cache (`quantred cache warm`), `--offline` reads only the cache and
+needs no keys at all.
 :::
 
 Credentials live in a `.env` file, which is **gitignored** so your keys are never
