@@ -154,12 +154,18 @@ def _dedup_params(
     first. Limits that are unset are omitted rather than recorded as null, so a config
     that never mentioned them keys identically to one that does not have the concept.
     """
-    from tradeflow.services.analysis import limits_key
+    from tradeflow.services.analysis import backtest_run_key, limits_key
 
     # One definition, shared with the service the MCP server calls. Two copies of this
     # would drift, and the moment they did a trial recorded over one surface would stop
-    # being found by the other.
-    return {**params, "_cost": _cost_key(args, vintage), **limits_key(limits)}
+    # being found by the other. The CLI has no take-profit margin flag, so it is the
+    # service's default of none.
+    return {
+        **params,
+        "_cost": _cost_key(args, vintage),
+        **limits_key(limits),
+        **backtest_run_key(args.capital, args.benchmark, args.beta_sizing),
+    }
 
 
 def _run_context(args, *, probes: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:

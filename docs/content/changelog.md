@@ -117,6 +117,10 @@ without guessing. The history below keeps the old name as it was written.
 - An HTML backtest report shows the execution-viability check the terminal prints, with
   a warning above the metrics when the book is not executable at its capital. A reused
   result, which does not carry the check, says it was not recorded.
+- A backtest is reused only for the same capital, benchmark, beta sizing and take-profit
+  margin. None of these was part of what makes two runs "the same", so a backtest at
+  $100,000 answered a request at $4,000. Backtests recorded before this change are re-run
+  once rather than reused.
 - A memoized backtest, over the CLI or MCP,
   now carries `not_recorded` (total cost, execution checks, excursion, trades CSV,
   resolved config, and so on), `from_request` and `derived` lists, and how to recover

@@ -15,7 +15,7 @@ import pytest
 
 from tradeflow.cli import _dedup_params, parse_cli
 from tradeflow.services.analysis import _cost_key as service_cost_key
-from tradeflow.services.analysis import limits_key
+from tradeflow.services.analysis import backtest_run_key, limits_key
 from tradeflow.services.registry import STRATEGIES
 
 _PARAMS = {"fast_ema_period": 10, "slow_ema_period": 30}
@@ -39,12 +39,36 @@ def _cli_key(argv, limits):
     return _dedup_params(_PARAMS, parse_cli(argv), None, limits)
 
 
-def _service_key(limits, *, gross=False, commission_bps=1.0, impact_eta=0.3, borrow_bps=50.0):
-    """Built exactly as `run_backtest` builds it."""
+def _backtest_default(name):
+    import inspect
+
+    from tradeflow.services import analysis
+
+    return inspect.signature(analysis.run_backtest).parameters[name].default
+
+
+def _service_key(
+    limits,
+    *,
+    gross=False,
+    commission_bps=1.0,
+    impact_eta=0.3,
+    borrow_bps=50.0,
+    capital=None,
+    benchmark=None,
+    beta_sizing=None,
+):
+    """Built exactly as `run_backtest` builds it, with its own defaults read from its signature."""
     return {
         **_PARAMS,
         "_cost": service_cost_key(gross, commission_bps, impact_eta, borrow_bps),
         **limits_key(limits),
+        **backtest_run_key(
+            _backtest_default("capital") if capital is None else capital,
+            _backtest_default("benchmark") if benchmark is None else benchmark,
+            _backtest_default("beta_sizing") if beta_sizing is None else beta_sizing,
+            _backtest_default("take_profit_margin_bps"),
+        ),
     }
 
 
@@ -67,6 +91,23 @@ def test_the_two_surfaces_agree_on_cost_assumptions():
 
 def test_the_two_surfaces_agree_on_a_gross_run():
     assert _cli_key(["backtest", "--gross"], None) == _service_key(None, gross=True)
+
+
+def test_the_two_surfaces_agree_on_capital_benchmark_and_beta_sizing():
+    """Found in review: none of these was in the key, so a backtest at $100,000 answered
+    a request at $4,000 and the reused result labelled the request's capital as its own."""
+    argv = ["backtest", "--capital", "4000", "--benchmark", "QQQ", "--beta-sizing"]
+
+    assert _cli_key(argv, None) == _service_key(None, capital=4000.0, benchmark="QQQ", beta_sizing=True)
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [["--capital", "4000"], ["--benchmark", "QQQ"], ["--beta-sizing"]],
+    ids=["capital", "benchmark", "beta"],
+)
+def test_each_run_shape_assumption_changes_the_key(argv):
+    assert _cli_key(["backtest", *argv], None) != _cli_key(["backtest"], None)
 
 
 def test_limits_actually_change_the_key():

@@ -211,6 +211,28 @@ def _cost_key(gross: bool, commission_bps: float, impact_eta: float, borrow_bps:
     }
 
 
+def backtest_run_key(
+    capital: float, benchmark: Optional[str], beta_sizing: bool, take_profit_margin_bps: float = 0.0
+) -> Dict[str, Any]:
+    """The run-shape assumptions folded into a backtest's dedup key, on both surfaces.
+
+    The key held the strategy's params, its cost model and its book limits, and not the
+    capital, the benchmark, beta sizing or the take-profit margin, every one of which
+    changes the result: whole-share rounding scales with capital, the benchmark sets
+    alpha and beta, and the other two change sizing and exits. A backtest at $100,000
+    therefore answered a request at $4,000, and a reused result then labelled the
+    request's capital as its own and derived a final capital no run produced.
+    """
+    return {
+        "_run": {
+            "capital": float(capital),
+            "benchmark": benchmark or None,
+            "beta_sizing": bool(beta_sizing),
+            "take_profit_margin_bps": float(take_profit_margin_bps),
+        }
+    }
+
+
 def _tunable_params(strategy) -> Dict[str, Any]:
     """The strategy's own tunable knobs (its ``config`` narrowed to
     ``PARAM_RANGES`` keys) - what identifies a trial, not the incidental config
@@ -421,6 +443,7 @@ def run_backtest(
         **_tunable_params(strat),
         "_cost": _cost_key(gross, commission_bps, impact_eta, borrow_bps),
         **limits_key(strat.position_limits()),
+        **backtest_run_key(capital, benchmark, beta_sizing, take_profit_margin_bps),
     }
 
     if not force:

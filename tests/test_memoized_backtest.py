@@ -153,3 +153,15 @@ def test_asking_the_cli_for_a_trade_table_is_not_answered_by_a_memo_without_one(
         rows = store.list_trials(kind="backtest", limit=10, all_accounting=True)
         assert len(rows) == 2
         assert any(store.get_trial(r["id"]).get("trades") for r in rows)
+
+
+def test_a_backtest_at_another_capital_is_not_served_the_first_ones_result(client):
+    """Found in review: capital was not in the dedup key, so a request at $4,000 was
+    answered by a run at $100,000, its card said the capital was as requested, and it
+    derived a final capital that no run produced."""
+    first = _service(client, capital=100_000.0)
+    assert not first.get("memoized")
+    other = _service(client, capital=4_000.0)
+    assert not other.get("memoized")
+    assert other["initial_capital"] == 4_000.0
+    assert _service(client, capital=4_000.0)["memoized"] is True
