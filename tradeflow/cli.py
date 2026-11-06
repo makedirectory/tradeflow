@@ -36,7 +36,7 @@ from tradeflow.analytics.series_comparison import MIN_OVERLAP as SERIES_MIN_OVER
 from tradeflow.marketdata.base import MarketDataProvider
 from tradeflow.research.provider_errors import ModelProviderError
 from tradeflow.services.registry import STRATEGIES
-from tradeflow.settings import DATA_FEEDS
+from tradeflow.settings import DATA_FEEDS, DOCS_URL
 from tradeflow.strategies import signals
 from tradeflow.utils.extras import installed as extras_installed
 from tradeflow.utils.extras import missing_extra_message
@@ -2010,7 +2010,7 @@ def _scaffold_example_pack(destination) -> None:
         sys.exit(
             "The example pack is not part of this installation. It ships in the source "
             "repository under example; clone it, or read the private-strategies "
-            "guide at https://tradeflow.mk-dir.com/docs/usage/private-strategies"
+            f"guide at {DOCS_URL}/usage/private-strategies"
         )
     target = Path(destination).expanduser()
     if target.exists() and any(target.iterdir()):
@@ -2115,22 +2115,107 @@ def _print_doctor(checks, *, task: str = "data", provider=None, probe: bool = Fa
 
 
 def _init_non_interactive(args, setup) -> None:
-    """Build a `.env` purely from environment variables — no prompts, no retries."""
+    """Build a `.env` purely from environment variables — no prompts, no retries.
+
+    Covers the same choices as the wizard: market-data keys, paper trading, and a model
+    provider (an API key, or an Ollama endpoint with its timeout and context length).
+    """
     import os
 
-    updates = setup.build_updates(
-        key=os.environ.get("APCA_API_KEY_ID"),
-        secret=os.environ.get("APCA_API_SECRET_KEY"),
-        paper_trade=None if "PAPER_TRADE" not in os.environ else os.environ["PAPER_TRADE"] != "false",
-    )
+    env = os.environ
+    try:
+        updates = setup.build_updates(
+            key=env.get("APCA_API_KEY_ID"),
+            secret=env.get("APCA_API_SECRET_KEY"),
+            paper_trade=None if "PAPER_TRADE" not in env else env["PAPER_TRADE"] != "false",
+            anthropic_key=env.get("ANTHROPIC_API_KEY"),
+            openai_key=env.get("OPENAI_API_KEY"),
+            ollama_base_url=env.get("OLLAMA_BASE_URL"),
+            ollama_timeout=env.get("OLLAMA_TIMEOUT"),
+            ollama_num_ctx=env.get("OLLAMA_NUM_CTX"),
+        )
+    except ValueError as exc:
+        raise SystemExit(f"Nothing written: {exc}")
     if not updates:
         raise SystemExit(
-            "Nothing to write: set APCA_API_KEY_ID / APCA_API_SECRET_KEY in the environment first."
+            "Nothing to write: set APCA_API_KEY_ID / APCA_API_SECRET_KEY, or a model setting "
+            "(ANTHROPIC_API_KEY, OPENAI_API_KEY, OLLAMA_BASE_URL, OLLAMA_TIMEOUT, OLLAMA_NUM_CTX), "
+            "in the environment first."
         )
     result = setup.write_env(updates, args.env_path)
     print(f"Wrote {result['path']}: {', '.join(f'{k}={v}' for k, v in result['updated'].items())}")
     if result["backup"]:
         print(f"Previous file backed up to {result['backup']}")
+    for provider in setup.MODEL_PROVIDERS:
+        owned = [setup.PROVIDER_KEYS[provider]] if provider in setup.PROVIDER_KEYS else None
+        if any(k in updates for k in owned) if owned else any(k.startswith("OLLAMA_") for k in updates):
+            _print_provider_followup(setup, provider)
+
+
+def _prompt_model_provider(setup, args) -> Dict[str, str]:
+    """Ask which model provider, if any, `research` should use; return the answers.
+
+    Keyword arguments for ``build_updates``. Nothing here touches the network: a hosted
+    probe can bill and an Ollama one can load a model, so it is a command the reader
+    runs, never a step the wizard takes.
+    """
+    import getpass
+
+    from tradeflow import settings
+
+    print(
+        "\nA model provider is only for `research`, the autonomous agent. The demo, backtest,"
+        "\nverdict and MCP server need no model - skipping this is fine and can be redone later."
+    )
+    choices = "/".join(("none",) + setup.MODEL_PROVIDERS)
+    while True:
+        answer = input(f"Set up a model provider for `research`? [{choices}] (none) ").strip().lower()
+        if answer in ("", "none", "n", "no"):
+            return {}
+        if answer in setup.MODEL_PROVIDERS:
+            break
+        print(f"  Please answer one of: {choices}.")
+
+    if answer in ("anthropic", "openai"):
+        name = setup.PROVIDER_KEYS[answer]
+        value = getpass.getpass(f"  {name} (hidden, Enter to skip): ").strip()
+        return {f"{answer}_key": value} if value else {}
+
+    answers: Dict[str, str] = {}
+    for param, env_name, label in (
+        ("ollama_base_url", "OLLAMA_BASE_URL", f"endpoint [{settings.ollama_base_url()}]"),
+        (
+            "ollama_timeout",
+            "OLLAMA_TIMEOUT",
+            f"response timeout in seconds [{settings.DEFAULT_OLLAMA_TIMEOUT:g}; raise it for a slow GPU]",
+        ),
+        ("ollama_num_ctx", "OLLAMA_NUM_CTX", "context length in tokens [blank = the model's own]"),
+    ):
+        while True:
+            value = input(f"  Ollama {label}: ").strip()
+            if not value and param == "ollama_base_url":
+                value = settings.ollama_base_url()
+            if not value:
+                break
+            try:
+                setup.validate_model_setting(env_name, value)
+            except ValueError as exc:
+                print(f"  {exc}")
+                continue
+            answers[param] = value
+            break
+    return answers
+
+
+def _print_provider_followup(setup, provider: str) -> None:
+    """What to do next for a provider that was just configured: the missing extra if
+    there is one, and the exact probe command - which is never run for the reader."""
+    needed = setup.PROVIDER_EXTRA.get(provider)
+    if needed and not extras_installed(needed):
+        print(f"\n{missing_extra_message(f'The {provider} provider', needed)}")
+    probe = _invocation(f"init --check --for research --provider {provider} --probe-model")
+    cost = "makes one real request that may be billed" if provider != "ollama" else "makes one real request"
+    print(f"\nNothing has been tested yet. To confirm the connection ({cost}):\n  {probe}")
 
 
 def _init_interactive(args, setup) -> None:
@@ -2141,53 +2226,67 @@ def _init_interactive(args, setup) -> None:
     print("\nTradeFlow setup\n")
     state = setup.inspect_env(args.env_path)
 
+    ask_for_keys = True
     if state.exists:
         print(f"Found {state.path}:")
         for key, masked in state.summary().items():
             print(f"  {key:<22} {masked}")
         if state.complete and not _confirm("\nCredentials already look set. Replace them?", default=False):
             print("Left unchanged.")
-            _print_next_steps()
-            return
+            ask_for_keys = False
     else:
         print(f"No {state.path} yet — this will create one.")
 
-    print(
-        "\nAlpaca paper-trading keys come from https://app.alpaca.markets/"
-        " → Paper Account → API Keys."
-        "\nPress Enter at both prompts to skip and stay in keyless demo mode.\n"
-    )
-    # getpass, not input: a key echoed into a terminal ends up in scrollback and
-    # shell history, which is exactly where a secret should never be.
-    key = getpass.getpass("  APCA_API_KEY_ID (hidden): ").strip()
-    secret = getpass.getpass("  APCA_API_SECRET_KEY (hidden): ").strip() if key else ""
-
-    if not key or not secret:
+    key = secret = ""
+    paper: Optional[bool] = None
+    if ask_for_keys:
         print(
-            f"\nSkipped — no keys written. `{_invocation('demo', make_target='demo')}` runs offline with no credentials at all."
+            "\nAlpaca paper-trading keys come from https://app.alpaca.markets/"
+            " → Paper Account → API Keys."
+            "\nPress Enter at both prompts to skip and stay in keyless demo mode.\n"
         )
-        _print_next_steps()
-        return
+        # getpass, not input: a key echoed into a terminal ends up in scrollback and
+        # shell history, which is exactly where a secret should never be.
+        key = getpass.getpass("  APCA_API_KEY_ID (hidden): ").strip()
+        secret = getpass.getpass("  APCA_API_SECRET_KEY (hidden): ").strip() if key else ""
 
-    paper = True
-    if not _confirm("\nKeep PAPER_TRADE=true (orders go to the paper account)?", default=True):
-        print(
-            "\n  Live trading means real money. The research clock proposes; a human promotes —\n"
-            "  turning this off removes the safety net that makes that separation matter."
-        )
-        paper = not _typed_confirmation("ENABLE LIVE")
+        if not key or not secret:
+            key = secret = ""
+            print(
+                f"\nSkipped — no keys written. `{_invocation('demo', make_target='demo')}` runs offline with no credentials at all."
+            )
+        else:
+            paper = True
+            if not _confirm("\nKeep PAPER_TRADE=true (orders go to the paper account)?", default=True):
+                print(
+                    "\n  Live trading means real money. The research clock proposes; a human promotes —\n"
+                    "  turning this off removes the safety net that makes that separation matter."
+                )
+                paper = not _typed_confirmation("ENABLE LIVE")
 
-    result = setup.write_env(setup.build_updates(key, secret, paper), args.env_path)
-    print(f"\nWrote {result['path']} ({', '.join(f'{k}={v}' for k, v in result['updated'].items())}).")
-    if result["backup"]:
-        print(f"Previous file backed up to {result['backup']} — nothing else in it was changed.")
+    model_answers = _prompt_model_provider(setup, args)
+    try:
+        updates = setup.build_updates(key, secret, paper, **model_answers)
+    except ValueError as exc:
+        raise SystemExit(f"Nothing written: {exc}")
 
-    print("\nChecking the credentials against Alpaca…")
-    check = _check_credentials_now(setup)
-    print(f"  {check.message}")
+    if updates:
+        result = setup.write_env(updates, args.env_path)
+        print(f"\nWrote {result['path']} ({', '.join(f'{k}={v}' for k, v in result['updated'].items())}).")
+        if result["backup"]:
+            print(f"Previous file backed up to {result['backup']} — nothing else in it was changed.")
 
-    if check.ok and _confirm("\nWarm the local bar cache now (a small universe, ~1 year daily)?", False):
-        _warm_cache(args)
+    if key and secret:
+        print("\nChecking the credentials against Alpaca…")
+        check = _check_credentials_now(setup)
+        print(f"  {check.message}")
+
+        if check.ok and _confirm("\nWarm the local bar cache now (a small universe, ~1 year daily)?", False):
+            _warm_cache(args)
+
+    for provider in setup.MODEL_PROVIDERS:
+        if any(k.startswith(provider) for k in model_answers):
+            _print_provider_followup(setup, provider)
 
     _print_next_steps()
 
@@ -2244,8 +2343,12 @@ def _print_next_steps() -> None:
         f"\n  {_invocation('demo', make_target='demo'):<30}the whole pipeline on synthetic data — no keys, no network"
         f"\n  {_invocation('verdict'):<30}scan → alphas → portfolio → information, one verdict"
         f"\n  {_invocation('backtest'):<30}did the idea ever work?"
-        f"\n  {_invocation('mcp'):<30}serve it to an agent over MCP (needs the 'mcp' extra)"
+        f"\n  {_invocation('mcp'):<30}the MCP server (needs the 'mcp' extra) - see below"
         f"\n  {_invocation('init --check'):<30}re-run these checks any time\n"
+        "\nConnecting an MCP client (Claude Code, Claude Desktop, ...):"
+        f"\n  The client launches `{_invocation('mcp')}` itself, over stdio - add that command to the"
+        "\n  client's MCP configuration. Starting it in this terminal does not connect any chat."
+        f"\n  Setup for each client: {DOCS_URL}/usage/agents\n"
     )
 
 

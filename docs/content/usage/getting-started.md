@@ -75,6 +75,20 @@ The wizard prompts for both (hidden — nothing lands in your shell history), ch
 them against Alpaca with one cheap request, confirms paper trading is on, and offers
 to warm a small local data cache. It writes `~/.tradeflow/.env`.
 
+It then asks whether to set up a model provider for `research` (Anthropic, OpenAI or a
+local Ollama). Skipping is fine: the demo, backtest, verdict and MCP server need no
+model. A key is read hidden and an existing one is never blanked; for Ollama it asks
+for the endpoint, a response timeout and an optional context length. It does not test
+the connection for you - it prints the `init --check --for research --provider <name>
+--probe-model` command to run when you are ready (a hosted provider bills one tiny
+request). With `--non-interactive` the same choices come from `ANTHROPIC_API_KEY`,
+`OPENAI_API_KEY`, `OLLAMA_BASE_URL`, `OLLAMA_TIMEOUT` and `OLLAMA_NUM_CTX` in the
+environment.
+
+The closing steps also say how an MCP client attaches: the client launches
+`tradeflow mcp` itself over stdio, so you add it to the client's configuration rather
+than running it in a terminal ([AI agents](agents.md)).
+
 Check it any time:
 
 ```bash

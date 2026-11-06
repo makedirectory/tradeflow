@@ -33,13 +33,35 @@ logger = logging.getLogger(__name__)
 
 #: The keys this project owns. Anything else in a ``.env`` belongs to someone else
 #: and is preserved untouched.
-OWNED_KEYS = ("APCA_API_KEY_ID", "APCA_API_SECRET_KEY", "PAPER_TRADE")
+OWNED_KEYS = (
+    "APCA_API_KEY_ID",
+    "APCA_API_SECRET_KEY",
+    "PAPER_TRADE",
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "OLLAMA_BASE_URL",
+    "OLLAMA_TIMEOUT",
+    "OLLAMA_NUM_CTX",
+)
+
+#: Owned keys that are secrets and so are never printed in full. Everything else owned
+#: (a URL, a timeout) is shown as it is - masking it hides nothing and costs the reader
+#: the value they most want to confirm.
+SECRET_KEYS = ("APCA_API_KEY_ID", "APCA_API_SECRET_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY")
+
+#: The model providers ``init`` can set up, and the extra each hosted one needs.
+MODEL_PROVIDERS = ("anthropic", "openai", "ollama")
+PROVIDER_EXTRA = {"anthropic": "ai", "openai": "openai"}
+PROVIDER_KEYS = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}
 
 #: The two that must be real for any command that touches the market.
 CREDENTIAL_KEYS = ("APCA_API_KEY_ID", "APCA_API_SECRET_KEY")
 
 #: A small, liquid default universe for the optional first cache warm.
 DEFAULT_WARM_UNIVERSE = ("SPY", "AAPL", "MSFT", "NVDA", "AMZN")
+
+
+_BASE_KEYS = ("APCA_API_KEY_ID", "APCA_API_SECRET_KEY", "PAPER_TRADE")
 
 
 def invocation(command: str, *, make_target: Optional[str] = None) -> str:
@@ -119,8 +141,11 @@ class EnvState:
         are shown as they are — masking ``PAPER_TRADE=true`` to ``****`` hides
         nothing and costs the reader the one value they most want to confirm."""
         return {
-            key: (mask(self.resolved(key)) if key in CREDENTIAL_KEYS else (self.resolved(key) or "(not set)"))
+            key: (mask(self.resolved(key)) if key in SECRET_KEYS else (self.resolved(key) or "(not set)"))
             for key in OWNED_KEYS
+            # Model settings are optional; listing five "(not set)" rows would bury the
+            # three that matter for a reader who never asked for a model.
+            if key in _BASE_KEYS or self.resolved(key)
         }
 
 
@@ -214,9 +239,7 @@ def write_env(updates: Dict[str, str], path: Optional[Any] = None, *, backup: bo
         "path": str(env_path),
         "backup": str(backup_path) if backup_path else None,
         # Same rule as EnvState.summary: mask credentials, show plain settings.
-        "updated": {
-            key: (mask(value) if key in CREDENTIAL_KEYS else value) for key, value in updates.items()
-        },
+        "updated": {key: (mask(value) if key in SECRET_KEYS else value) for key, value in updates.items()},
     }
 
 
@@ -690,13 +713,53 @@ def _extras_checks() -> List[Check]:
     return checks
 
 
+def validate_model_setting(name: str, value: str) -> str:
+    """A model-setting answer in the form that gets written, or ``ValueError`` naming it.
+
+    The URL and the two numbers reuse ``settings``' own parsers, so the wizard cannot
+    accept a value that a research run would later refuse.
+    """
+    from urllib.parse import urlparse
+
+    from tradeflow.settings import (
+        SettingsError,
+        normalize_ollama_url,
+        parse_ollama_num_ctx,
+        parse_ollama_timeout,
+    )
+
+    text = value.strip()
+    try:
+        if name == "OLLAMA_BASE_URL":
+            parsed = urlparse(text)
+            if parsed.scheme not in ("http", "https") or not parsed.netloc:
+                raise ValueError(f"OLLAMA_BASE_URL must start with http:// or https://, got {text!r}.")
+            return normalize_ollama_url(text)
+        if name == "OLLAMA_TIMEOUT":
+            parse_ollama_timeout(text)
+        elif name == "OLLAMA_NUM_CTX":
+            parse_ollama_num_ctx(text)
+    except SettingsError as exc:
+        raise ValueError(str(exc)) from exc
+    return text
+
+
 def build_updates(
-    key: Optional[str] = None, secret: Optional[str] = None, paper_trade: Optional[bool] = None
+    key: Optional[str] = None,
+    secret: Optional[str] = None,
+    paper_trade: Optional[bool] = None,
+    *,
+    anthropic_key: Optional[str] = None,
+    openai_key: Optional[str] = None,
+    ollama_base_url: Optional[str] = None,
+    ollama_timeout: Optional[str] = None,
+    ollama_num_ctx: Optional[str] = None,
 ) -> Dict[str, str]:
     """The ``.env`` updates for the answers given, skipping anything left blank.
 
     Only what was actually answered is written, so filling in one missing key
-    never rewrites the other.
+    never rewrites the other - and a model setting left blank never overwrites a key
+    that is already there with nothing. A placeholder counts as blank.
     """
     updates: Dict[str, str] = {}
     if key:
@@ -705,4 +768,14 @@ def build_updates(
         updates["APCA_API_SECRET_KEY"] = secret.strip()
     if paper_trade is not None:
         updates["PAPER_TRADE"] = "true" if paper_trade else "false"
+    for name, value in (
+        ("ANTHROPIC_API_KEY", anthropic_key),
+        ("OPENAI_API_KEY", openai_key),
+        ("OLLAMA_BASE_URL", ollama_base_url),
+        ("OLLAMA_TIMEOUT", ollama_timeout),
+        ("OLLAMA_NUM_CTX", ollama_num_ctx),
+    ):
+        if value is None or is_placeholder(value):
+            continue
+        updates[name] = validate_model_setting(name, value)
     return updates

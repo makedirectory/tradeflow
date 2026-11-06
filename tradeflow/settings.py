@@ -250,9 +250,12 @@ def ollama_base_url() -> str:
     return normalize_ollama_url(get_credential("OLLAMA_BASE_URL", DEFAULT_OLLAMA_URL) or DEFAULT_OLLAMA_URL)
 
 
-def ollama_timeout() -> float:
-    """``OLLAMA_TIMEOUT`` in seconds. A slow local GPU can need minutes per response."""
-    raw = get_credential("OLLAMA_TIMEOUT")
+def parse_ollama_timeout(raw: Optional[str]) -> float:
+    """``OLLAMA_TIMEOUT`` text as seconds; blank means the default.
+
+    One parser for the settings reader and for ``init``, so a value the wizard accepts
+    is exactly one a research run will accept.
+    """
     if raw is None or not raw.strip():
         return DEFAULT_OLLAMA_TIMEOUT
     try:
@@ -264,13 +267,8 @@ def ollama_timeout() -> float:
     return value
 
 
-def ollama_num_ctx() -> Optional[int]:
-    """``OLLAMA_NUM_CTX``: the context length to request, or ``None`` to send nothing.
-
-    Never inferred - a model's own default is the right behaviour until someone with a
-    memory-constrained machine says otherwise.
-    """
-    raw = get_credential("OLLAMA_NUM_CTX")
+def parse_ollama_num_ctx(raw: Optional[str]) -> Optional[int]:
+    """``OLLAMA_NUM_CTX`` text as a token count; blank means send nothing (``None``)."""
     if raw is None or not raw.strip():
         return None
     try:
@@ -280,6 +278,20 @@ def ollama_num_ctx() -> Optional[int]:
     if value <= 0:
         raise SettingsError(f"OLLAMA_NUM_CTX must be a positive whole number of tokens, got {raw!r}.")
     return value
+
+
+def ollama_timeout() -> float:
+    """``OLLAMA_TIMEOUT`` in seconds. A slow local GPU can need minutes per response."""
+    return parse_ollama_timeout(get_credential("OLLAMA_TIMEOUT"))
+
+
+def ollama_num_ctx() -> Optional[int]:
+    """``OLLAMA_NUM_CTX``: the context length to request, or ``None`` to send nothing.
+
+    Never inferred - a model's own default is the right behaviour until someone with a
+    memory-constrained machine says otherwise.
+    """
+    return parse_ollama_num_ctx(get_credential("OLLAMA_NUM_CTX"))
 
 
 def _parse_bool(value: object, default: bool = True) -> bool:

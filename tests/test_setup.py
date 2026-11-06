@@ -314,6 +314,8 @@ def test_cli_non_interactive_refuses_when_there_is_nothing_to_write(tmp_path, mo
     monkeypatch.delenv("APCA_API_KEY_ID", raising=False)
     monkeypatch.delenv("APCA_API_SECRET_KEY", raising=False)
     monkeypatch.delenv("PAPER_TRADE", raising=False)
+    for name in MODEL_ENV:
+        monkeypatch.delenv(name, raising=False)
     args = main.build_parser().parse_args(["init", "--non-interactive", "--env-path", str(tmp_path / ".env")])
     with pytest.raises(SystemExit) as exc:
         args.func(args)
@@ -327,6 +329,7 @@ def test_cli_interactive_skip_path_writes_nothing(tmp_path, monkeypatch, capsys)
     from tradeflow import cli as main
 
     monkeypatch.setattr(getpass, "getpass", lambda *a, **k: "")
+    monkeypatch.setattr("builtins.input", lambda *a, **k: "")  # no model provider
     path = tmp_path / ".env"
     args = main.build_parser().parse_args(["init", "--env-path", str(path)])
     args.func(args)
@@ -347,6 +350,7 @@ def test_an_installed_copy_is_told_to_use_its_command(tmp_path, monkeypatch, cap
     from tradeflow import cli as main
 
     monkeypatch.setattr(getpass, "getpass", lambda *a, **k: "")
+    monkeypatch.setattr("builtins.input", lambda *a, **k: "")
     monkeypatch.setattr("tradeflow.settings.running_from_checkout", lambda: False)
     args = main.build_parser().parse_args(["init", "--env-path", str(tmp_path / ".env")])
     args.func(args)
@@ -361,8 +365,8 @@ def test_cli_interactive_writes_keys_and_confirms_paper_trading(tmp_path, monkey
 
     answers = iter([REAL_KEY, REAL_SECRET])
     monkeypatch.setattr(getpass, "getpass", lambda *a, **k: next(answers))
-    # Keep PAPER_TRADE, then decline the cache warm.
-    replies = iter(["y", "n"])
+    # Keep PAPER_TRADE, no model provider, then decline the cache warm.
+    replies = iter(["y", "none", "n"])
     monkeypatch.setattr("builtins.input", lambda *a, **k: next(replies))
     monkeypatch.setattr(
         setup, "check_credentials", lambda *a, **k: setup.CredentialCheck(setup.CREDENTIALS_OK, "fine")
@@ -388,8 +392,8 @@ def test_cli_interactive_requires_a_typed_phrase_to_disable_paper_trading(tmp_pa
 
     answers = iter([REAL_KEY, REAL_SECRET])
     monkeypatch.setattr(getpass, "getpass", lambda *a, **k: next(answers))
-    # Decline to keep paper trading, then fail the typed confirmation, then no warm.
-    replies = iter(["n", "yes please", "n"])
+    # Decline to keep paper trading, fail the typed confirmation, no model, no warm.
+    replies = iter(["n", "yes please", "none", "n"])
     monkeypatch.setattr("builtins.input", lambda *a, **k: next(replies))
     monkeypatch.setattr(
         setup, "check_credentials", lambda *a, **k: setup.CredentialCheck(setup.CREDENTIALS_OK, "fine")
@@ -629,3 +633,213 @@ def test_probe_model_needs_a_provider_and_exits_non_zero_on_a_failed_probe(monke
     monkeypatch.setattr(setup, "probe_model", lambda p, m=None, **k: setup.ProbeResult(p, "m", "ok", "fine"))
     code, out = _run_init(monkeypatch, capsys, "--probe-model", "--provider", "ollama")
     assert code == 0 and "[ok] ollama / m  ok" in out
+
+
+# --- model provider setup ----------------------------------------------------
+MODEL_ENV = ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OLLAMA_BASE_URL", "OLLAMA_TIMEOUT", "OLLAMA_NUM_CTX")
+MODEL_SECRET = "sk-test-0123456789abcdefghijkl"
+
+
+@pytest.fixture
+def wizard(tmp_path, monkeypatch):
+    """Drive the interactive wizard with scripted prompts and no network.
+
+    ``run(getpass_answers, input_answers, existing=None)`` returns ``(env_path, output)``;
+    any extra prompt beyond the script fails the test, so a prompt that appears
+    unasked is caught rather than answered with a default.
+    """
+    import getpass
+
+    from tradeflow import cli as main
+
+    # The wizard asks for keys only when none resolve, and other tests' dotenv loading can
+    # leave real-looking ones in the process environment.
+    for name in ("APCA_API_KEY_ID", "APCA_API_SECRET_KEY", "PAPER_TRADE", *MODEL_ENV):
+        monkeypatch.delenv(name, raising=False)
+
+    def probe(*a, **k):
+        raise AssertionError("init must never probe a model on its own")
+
+    monkeypatch.setattr(setup, "probe_model", probe)
+    monkeypatch.setattr(
+        setup, "check_credentials", lambda *a, **k: setup.CredentialCheck(setup.CREDENTIALS_OK, "fine")
+    )
+    monkeypatch.setattr("tradeflow.services.data.build_data_client", lambda *a, **k: object())
+
+    def run(secrets, replies, existing=None, capsys=None):
+        path = tmp_path / ".env"
+        if existing is not None:
+            path.write_text(existing)
+        secret_iter, reply_iter = iter(secrets), iter(replies)
+        monkeypatch.setattr(getpass, "getpass", lambda *a, **k: next(secret_iter))
+        monkeypatch.setattr("builtins.input", lambda *a, **k: next(reply_iter))
+        args = main.build_parser().parse_args(["init", "--env-path", str(path)])
+        args.func(args)
+        assert next(secret_iter, None) is None and next(reply_iter, None) is None, "unused answers"
+        return path
+
+    return run
+
+
+def test_init_writes_a_model_key_without_touching_the_alpaca_keys(wizard, tmp_path, capsys):
+    existing = f"APCA_API_KEY_ID={REAL_KEY}\nAPCA_API_SECRET_KEY={REAL_SECRET}\nPAPER_TRADE=true\n"
+    # Keep the existing credentials, choose anthropic, give a key.
+    path = wizard([MODEL_SECRET], ["n", "anthropic"], existing=existing)
+
+    written = path.read_text()
+    assert written.startswith(existing.rstrip("\n"))
+    assert f"ANTHROPIC_API_KEY={MODEL_SECRET}" in written
+    out = capsys.readouterr().out
+    assert MODEL_SECRET not in out and REAL_SECRET not in out
+    assert "--provider anthropic --probe-model" in out
+
+
+def test_init_writes_an_ollama_endpoint_timeout_and_context(wizard):
+    path = wizard(
+        [
+            "",
+        ],
+        ["ollama", "http://gpu-box:11434/api/chat", "300", "8192"],
+    )
+    written = path.read_text()
+    # The endpoint is stored as the server root, the way the settings reader sees it.
+    assert "OLLAMA_BASE_URL=http://gpu-box:11434\n" in written
+    assert "OLLAMA_TIMEOUT=300" in written and "OLLAMA_NUM_CTX=8192" in written
+
+
+def test_init_reprompts_on_a_bad_ollama_value_instead_of_writing_it(wizard, capsys):
+    path = wizard([""], ["ollama", "", "soon", "60", ""])
+    written = path.read_text()
+    assert "OLLAMA_TIMEOUT=60" in written and "soon" not in written
+    assert "OLLAMA_TIMEOUT must be a positive number" in capsys.readouterr().out
+
+
+def test_init_leaves_an_existing_model_key_alone_when_skipped(wizard):
+    existing = f"ANTHROPIC_API_KEY={MODEL_SECRET}\nOLLAMA_TIMEOUT=45\n"
+    path = wizard([""], ["none"], existing=existing)
+    assert path.read_text() == existing
+
+
+def test_init_does_not_blank_a_model_key_when_the_key_prompt_is_left_empty(wizard):
+    existing = f"OPENAI_API_KEY={MODEL_SECRET}\n"
+    path = wizard(["", ""], ["openai"], existing=existing)  # chose openai, then pressed Enter at the key
+    assert path.read_text() == existing
+
+
+def test_init_never_probes_the_model_on_its_own(wizard):
+    # The fixture's probe_model raises if called; choosing each provider must not.
+    wizard(["", MODEL_SECRET], ["openai"])
+    wizard([""], ["ollama", "", "", ""])
+
+
+def test_init_names_the_missing_sdk_for_a_hosted_provider(wizard, monkeypatch, capsys):
+    monkeypatch.setattr("tradeflow.cli.extras_installed", lambda name: False)
+    wizard(["", MODEL_SECRET], ["anthropic"])
+    out = capsys.readouterr().out
+    assert "'ai' extra" in out
+
+
+def test_a_model_secret_is_masked_in_the_env_summary_and_the_write_result(tmp_path):
+    path = tmp_path / ".env"
+    result = setup.write_env(setup.build_updates(anthropic_key=MODEL_SECRET), path)
+    assert MODEL_SECRET not in str(result)
+    assert MODEL_SECRET not in str(setup.inspect_env(path, environ={}).summary())
+    assert setup.inspect_env(path, environ={}).summary()["ANTHROPIC_API_KEY"] != "(not set)"
+
+
+def test_build_updates_skips_blank_and_placeholder_model_answers():
+    assert setup.build_updates(anthropic_key="", openai_key="  ", ollama_timeout=None) == {}
+    assert setup.build_updates(anthropic_key=MODEL_SECRET) == {"ANTHROPIC_API_KEY": MODEL_SECRET}
+
+
+@pytest.mark.parametrize(
+    "kwargs,variable",
+    [
+        ({"ollama_base_url": "localhost:11434"}, "OLLAMA_BASE_URL"),
+        ({"ollama_base_url": "ftp://host"}, "OLLAMA_BASE_URL"),
+        ({"ollama_timeout": "0"}, "OLLAMA_TIMEOUT"),
+        ({"ollama_timeout": "fast"}, "OLLAMA_TIMEOUT"),
+        ({"ollama_num_ctx": "-3"}, "OLLAMA_NUM_CTX"),
+        ({"ollama_num_ctx": "4k"}, "OLLAMA_NUM_CTX"),
+    ],
+)
+def test_build_updates_rejects_a_bad_model_setting_by_name(kwargs, variable):
+    with pytest.raises(ValueError, match=variable):
+        setup.build_updates(**kwargs)
+
+
+def test_the_wizard_accepts_exactly_what_the_settings_reader_accepts(tmp_path, monkeypatch):
+    """One parser for both, so a value init writes never makes research refuse to start."""
+    from tradeflow import settings
+
+    for value in ("90", "2.5"):
+        written = setup.build_updates(ollama_timeout=value)["OLLAMA_TIMEOUT"]
+        monkeypatch.setenv("OLLAMA_TIMEOUT", written)
+        assert settings.ollama_timeout() == float(value)
+
+
+def test_non_interactive_init_accepts_only_a_model_key(tmp_path, monkeypatch, capsys):
+    from tradeflow import cli as main
+
+    for name in ("APCA_API_KEY_ID", "APCA_API_SECRET_KEY", "PAPER_TRADE", *MODEL_ENV):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", MODEL_SECRET)
+    path = tmp_path / ".env"
+    args = main.build_parser().parse_args(["init", "--non-interactive", "--env-path", str(path)])
+    args.func(args)
+
+    assert path.read_text() == f"OPENAI_API_KEY={MODEL_SECRET}\n"
+    out = capsys.readouterr().out
+    assert MODEL_SECRET not in out
+    assert "--provider openai --probe-model" in out
+
+
+def test_non_interactive_init_reads_the_ollama_settings(tmp_path, monkeypatch):
+    from tradeflow import cli as main
+
+    for name in ("APCA_API_KEY_ID", "APCA_API_SECRET_KEY", "PAPER_TRADE", *MODEL_ENV):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://box:11434/")
+    monkeypatch.setenv("OLLAMA_TIMEOUT", "240")
+    monkeypatch.setenv("OLLAMA_NUM_CTX", "4096")
+    path = tmp_path / ".env"
+    args = main.build_parser().parse_args(["init", "--non-interactive", "--env-path", str(path)])
+    args.func(args)
+    assert path.read_text() == "OLLAMA_BASE_URL=http://box:11434\nOLLAMA_TIMEOUT=240\nOLLAMA_NUM_CTX=4096\n"
+
+
+def test_non_interactive_init_refuses_a_bad_model_setting_without_writing(tmp_path, monkeypatch):
+    from tradeflow import cli as main
+
+    for name in ("APCA_API_KEY_ID", "APCA_API_SECRET_KEY", "PAPER_TRADE", *MODEL_ENV):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("OLLAMA_TIMEOUT", "never")
+    path = tmp_path / ".env"
+    args = main.build_parser().parse_args(["init", "--non-interactive", "--env-path", str(path)])
+    with pytest.raises(SystemExit, match="OLLAMA_TIMEOUT"):
+        args.func(args)
+    assert not path.exists()
+
+
+def test_next_steps_say_the_client_launches_the_mcp_server(capsys):
+    from tradeflow import cli as main
+    from tradeflow.settings import DOCS_URL
+
+    main._print_next_steps()
+    out = " ".join(capsys.readouterr().out.split())
+    assert "client launches" in out and "over stdio" in out
+    assert "does not connect any chat" in out
+    assert f"{DOCS_URL}/usage/agents" in out
+
+
+def test_the_private_strategies_link_has_no_docs_prefix(tmp_path, monkeypatch):
+    from tradeflow import cli as main
+    from tradeflow.settings import DOCS_URL
+
+    monkeypatch.setattr("tradeflow.services.setup.example_pack_source", lambda: None)
+    args = main.build_parser().parse_args(["init", "--example-pack", str(tmp_path / "pack")])
+    with pytest.raises(SystemExit) as exc:
+        args.func(args)
+    message = str(exc.value)
+    assert f"{DOCS_URL}/usage/private-strategies" in message
+    assert "/docs/usage" not in message
