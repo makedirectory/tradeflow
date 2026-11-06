@@ -206,9 +206,11 @@ def _chart(png: Optional[bytes], alt: str) -> str:
     strictly better than no report.
     """
     if png is None:
+        from tradeflow.utils.extras import install_hint
+
         return (
-            '<p class="empty">Chart not rendered — install the viz extra '
-            "(<code>uv sync --extra viz</code>) to include charts.</p>"
+            '<p class="empty">Chart not rendered — the viz extra is not installed.</p>'
+            f'<pre class="empty">{esc(install_hint("viz"))}</pre>'
         )
     encoded = base64.b64encode(png).decode("ascii")
     return f'<img alt="{esc(alt)}" src="data:image/png;base64,{encoded}">'

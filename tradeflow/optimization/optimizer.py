@@ -403,8 +403,7 @@ class ParameterOptimizer:
             from sklearn.gaussian_process import GaussianProcessRegressor
             from sklearn.gaussian_process.kernels import Matern
         except ImportError as exc:  # pragma: no cover - depends on optional extra
-            raise RuntimeError(
-                "Bayesian optimization requires scikit-learn. Install the optional extra:\n"
-                "    uv sync --extra optimize"
-            ) from exc
+            from tradeflow.utils.extras import missing_extra_message
+
+            raise RuntimeError(missing_extra_message("Bayesian optimization", "optimize")) from exc
         return GaussianProcessRegressor(kernel=Matern(nu=2.5), n_restarts_optimizer=3, random_state=42)

@@ -36,9 +36,9 @@ def _mpl():
         plt.rcParams.update({"font.size": 11, "axes.edgecolor": _GRID, "text.color": _INK})
         return plt, GridSpec
     except ModuleNotFoundError as exc:  # pragma: no cover - depends on optional extra
-        raise RuntimeError(
-            "Charting needs matplotlib. Install the viz extra: `uv sync --extra viz`."
-        ) from exc
+        from tradeflow.utils.extras import missing_extra_message
+
+        raise RuntimeError(missing_extra_message("Charting", "viz")) from exc
 
 
 def _fmt(value: Any) -> str:

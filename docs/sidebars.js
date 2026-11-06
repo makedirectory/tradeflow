@@ -12,6 +12,7 @@ const sidebars = {
       items: [
         'usage/getting-started',
         'usage/installation',
+        'usage/extras',
         'usage/first-run',
         'usage/configuration',
         'usage/brokers',

@@ -456,48 +456,28 @@ def _writable_check() -> Check:
     return Check("state directory", True, f"{directory} is writable")
 
 
-#: Optional extras, what each unlocks, and the module that proves it is installed.
-_EXTRAS = (
-    ("store", "pyarrow", "the bar cache (`--cache`/`--offline`) and the Parquet bar store"),
-    ("viz", "matplotlib", "charts in `--chart` and in HTML reports"),
-    # No command in the description: the way to start it differs by how this copy was
-    # reached, and a checkout-only invocation here is a dead end for every installed
-    # reader. The next-steps block names it correctly for the copy that is running.
-    ("mcp", "mcp", "the MCP server (`mcp`)"),
-    ("optimize", "sklearn", "`optimize --method bayesian`"),
-    ("portfolio", "ortools", "`allocate` (the constraint solver)"),
-)
-
-
 def _extras_checks() -> List[Check]:
-    """One row per optional extra, with the exact command to install it — phrased
+    """One row per optional extra, with the exact command to install it - phrased
     for the copy that is running.
 
-    An installed copy has no checkout to ``uv sync`` in, so suggesting it is a dead
-    end. The wizard configures; the user installs.
+    The map, the probe and the recovery text all live in :mod:`tradeflow.utils.extras`;
+    the wizard configures and the user installs.
     """
-    import importlib.util
+    from tradeflow.utils import extras
 
     checks = []
-    for extra, module, what in _EXTRAS:
-        present = importlib.util.find_spec(module) is not None
+    for name, extra in extras.EXTRAS.items():
+        present = extras.installed(name)
         checks.append(
             Check(
-                f"extra: {extra}",
+                f"extra: {name}",
                 present,
-                f"installed — {what}" if present else f"not installed — {what}: {install_hint(extra)}",
+                f"installed - {extra.unlocks}"
+                if present
+                else f"not installed - {extra.unlocks}:\n{extras.install_hint(name)}",
             )
         )
     return checks
-
-
-def install_hint(extra: str) -> str:
-    """The command that installs an optional extra here, checkout or not."""
-    from tradeflow.settings import running_from_checkout
-
-    if running_from_checkout():
-        return f"uv sync --extra {extra}"
-    return f'uv tool install --force "tradeflow-engine[{extra}]"'
 
 
 def build_updates(

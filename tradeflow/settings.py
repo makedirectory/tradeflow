@@ -35,6 +35,16 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 #: their repository.
 DISTRIBUTION_NAME = "tradeflow-engine"
 
+#: The documentation root. Pages are served from the site root (there is no ``/docs/``
+#: prefix), so a link built from this constant and a page path is a page that exists.
+DOCS_URL = "https://tradeflow.mk-dir.com"
+
+#: The entry-point groups an installed pack registers strategies and scanners under.
+#: Here, at the bottom layer, because both the registry that loads them and the
+#: install hint that names the packages providing them need the same two strings.
+STRATEGY_ENTRY_POINT_GROUP = "tradeflow.strategies"
+SCANNER_ENTRY_POINT_GROUP = "tradeflow.scanners"
+
 
 def _looks_like_checkout(path: Path) -> bool:
     """Whether ``path`` is a TradeFlow working copy rather than any old directory.

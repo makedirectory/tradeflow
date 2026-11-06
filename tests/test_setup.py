@@ -246,7 +246,9 @@ def test_a_missing_extra_reports_the_exact_install_command(tmp_path):
     assert rows
     for row in rows:
         if not row.passed:
-            assert "uv sync --extra" in row.detail
+            # Which command is right depends on the copy running the test; either way
+            # the row names the extra and carries a runnable instruction.
+            assert "uv sync --extra" in row.detail or "uv tool install --force" in row.detail
 
 
 def test_the_doctor_never_prints_a_raw_credential(tmp_path):
@@ -395,16 +397,28 @@ def test_cli_interactive_requires_a_typed_phrase_to_disable_paper_trading(tmp_pa
 
 # --- install hints and masking ----------------------------------------------
 def test_extras_hints_are_phrased_for_the_copy_that_is_running(monkeypatch, tmp_path):
-    """An installed copy has no checkout to `uv sync` in — the third place this same
-    dead end turned up."""
+    """An installed copy has no checkout to `uv sync` in - the third place this same
+    dead end turned up. The wording itself is covered in `test_extras_map.py`."""
     from tradeflow import settings
+    from tradeflow.utils import extras
 
     monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
     monkeypatch.setattr(settings, "_looks_like_checkout", lambda _p: False)
-    assert setup.install_hint("store") == 'uv tool install --force "tradeflow-engine[store]"'
+    assert "uv sync" not in extras.install_hint("store")
+    assert "uv tool install --force" in extras.install_hint("store")
 
     monkeypatch.setattr(settings, "_looks_like_checkout", lambda _p: True)
-    assert setup.install_hint("store") == "uv sync --extra store"
+    assert "uv sync" in extras.install_hint("store")
+    assert "--extra store" in extras.install_hint("store")
+
+
+def test_the_doctor_reports_every_published_extra(tmp_path):
+    """`ai` and `openai` were missing from the doctor, so a reader choosing a research
+    provider was never told their module was absent."""
+    from tradeflow.utils import extras
+
+    rows = {c.name for c in setup.run_checks(tmp_path / ".env", environ={}) if c.name.startswith("extra:")}
+    assert rows == {f"extra: {name}" for name in extras.EXTRAS}
 
 
 def test_only_credentials_are_masked(tmp_path):

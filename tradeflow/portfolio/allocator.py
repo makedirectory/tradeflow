@@ -125,10 +125,9 @@ class PortfolioAllocator:
         try:
             from ortools.linear_solver import pywraplp
         except ImportError as exc:  # pragma: no cover - depends on optional extra
-            raise RuntimeError(
-                "The portfolio manager requires Google OR-Tools. Install the optional extra:\n"
-                "    uv sync --extra portfolio"
-            ) from exc
+            from tradeflow.utils.extras import missing_extra_message
+
+            raise RuntimeError(missing_extra_message("The portfolio allocator", "portfolio")) from exc
 
         solver = pywraplp.Solver.CreateSolver("CBC")
         if solver is None:  # pragma: no cover

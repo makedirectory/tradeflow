@@ -15,12 +15,10 @@ from tradeflow.demo.strategies import DemoTrendStrategy
 from tradeflow.scanners.base import ScannerStrategy
 from tradeflow.scanners.symbol_scanner import BUILTIN_SCANNERS as _BUILTIN_SCANNERS
 from tradeflow.scanners.symbol_scanner import SymbolScanner
+from tradeflow.settings import SCANNER_ENTRY_POINT_GROUP, STRATEGY_ENTRY_POINT_GROUP
 from tradeflow.strategies.base import Strategy
 
 logger = logging.getLogger(__name__)
-
-STRATEGY_ENTRY_POINT_GROUP = "tradeflow.strategies"
-SCANNER_ENTRY_POINT_GROUP = "tradeflow.scanners"
 
 _NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
 

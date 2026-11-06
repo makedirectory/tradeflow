@@ -37,6 +37,8 @@ from tradeflow.marketdata.base import MarketDataProvider
 from tradeflow.services.registry import STRATEGIES
 from tradeflow.settings import DATA_FEEDS
 from tradeflow.strategies import signals
+from tradeflow.utils.extras import installed as extras_installed
+from tradeflow.utils.extras import missing_extra_message
 from tradeflow.utils.logging_config import setup_logging
 from tradeflow.utils.timeutils import NEW_YORK
 
@@ -1867,15 +1869,10 @@ def cmd_research(args) -> None:
     via walk-forward, and writes a shortlist of provenance-stamped candidate
     configs for a human to review. Never touches live trading.
     """
-    import importlib.util
-
     # Each provider pulls in a different optional dependency (Ollama needs none).
-    required = {"anthropic": "anthropic", "openai": "openai"}.get(args.provider)
-    if required and importlib.util.find_spec(required) is None:
-        extra = {"anthropic": "ai", "openai": "openai"}[args.provider]
-        sys.exit(
-            f"Provider '{args.provider}' needs the '{extra}' extra. Install it:\n    uv sync --extra {extra}"
-        )
+    extra = {"anthropic": "ai", "openai": "openai"}.get(args.provider)
+    if extra and not extras_installed(extra):
+        sys.exit(missing_extra_message(f"Provider '{args.provider}'", extra))
 
     from tradeflow.research.agent import ResearchAgent, ResearchConfig
     from tradeflow.research.proposer import build_proposer
@@ -3641,7 +3638,7 @@ def cmd_mcp(args) -> None:
 
         serve()
     except ImportError:
-        sys.exit(_missing_extra_message("mcp", "The MCP server"))
+        sys.exit(missing_extra_message("The MCP server", "mcp"))
 
 
 def _run_mcp_self_test() -> None:
@@ -3649,7 +3646,7 @@ def _run_mcp_self_test() -> None:
     try:
         from tradeflow.mcp.selftest import DISCLAIMER, run_self_test
     except ImportError:
-        sys.exit(_missing_extra_message("mcp", "The MCP server"))
+        sys.exit(missing_extra_message("The MCP server", "mcp"))
 
     out = run_self_test()
     if out["ok"]:
@@ -3668,21 +3665,6 @@ def _run_mcp_self_test() -> None:
         print("    " + out["server_stderr"].replace("\n", "\n    "))
     print(DISCLAIMER)
     sys.exit(1)
-
-
-def _missing_extra_message(extra: str, what: str) -> str:
-    """How to install an optional extra, phrased for the copy that is running.
-
-    An installed copy has no checkout to `uv sync` in, so telling it to is a dead
-    end — the same failure the missing-credentials message used to have.
-    """
-    from tradeflow.settings import running_from_checkout
-
-    if running_from_checkout():
-        command = f"uv sync --extra {extra}"
-    else:
-        command = f'uv tool install --force "tradeflow-engine[{extra}]"'
-    return f"{what} needs the '{extra}' extra. Install it:\n    {command}"
 
 
 def _invocation(command: str, *, make_target: Optional[str] = None) -> str:

@@ -169,7 +169,15 @@ reading the manifest — reading it is exactly what missed this.
 main.py`, `uv sync`, and `.env.example` do not exist for an installed reader. Use
 `services.setup.invocation` (the CLI's `_invocation` delegates to it) rather than a
 literal — services print instructions too.
-*Guarded by* `tests/test_setup.py`, `tests/test_surface_parity.py`.
+
+The same goes for *install and recovery* text: it has one definition,
+`utils.extras.install_hint`, and `cli._missing_extra_message` was its second copy (five
+more guards printed a bare `uv sync`). The copy that ships has to be right for three
+environments at once, and `uv tool install --force 'pkg[X]'` is wrong in the common one —
+it rebuilds the tool with only `X`, silently removing every other extra and `--with` pack —
+so the hint carries the extras already installed and pins the running version. The map of
+extras to the modules each provides is checked against `pyproject.toml`, not remembered.
+*Guarded by* `tests/test_setup.py`, `tests/test_surface_parity.py`, `tests/test_extras_map.py`.
 
 **Strategy convention ↔ engine execution** — `generate_signals` keys a signal at the bar
 whose close produced it, and the engine must execute it on the bar after. Neither side

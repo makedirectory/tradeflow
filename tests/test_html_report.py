@@ -261,13 +261,13 @@ def test_the_report_renders_without_the_plotting_extra(monkeypatch):
     from tradeflow.analytics import charts
 
     def missing(*args, **kwargs):
-        raise RuntimeError("Charting needs matplotlib. Install the viz extra: `uv sync --extra viz`.")
+        raise RuntimeError("Charting needs the 'viz' extra.")
 
     monkeypatch.setattr(charts, "render_gate_png", missing)
     monkeypatch.setattr(charts, "render_bars_png", missing)
     document = render_html(_verdict_result(), "verdict")
 
-    assert "install the viz extra" in document.lower()
+    assert "viz extra is not installed" in document.lower()
     assert "data:image/png;base64," not in document
     assert "mixed" in document  # the report is still complete in text
 
