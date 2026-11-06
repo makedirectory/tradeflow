@@ -107,6 +107,23 @@ def test_self_test_reports_discovery_and_disclaims_chat_attachment(child_env, ca
     assert shlex.join(default_command()) in out  # says which command it checked
 
 
+def test_a_keyless_pass_says_bar_tools_will_ask_for_keys(child_env, monkeypatch, capsys):
+    """The server now starts without keys, so a passing self-test no longer implies it
+    can fetch bars; a keyless pass that said nothing read as a working setup. With keys,
+    or with --offline, there is nothing to say."""
+    from tradeflow.services import setup
+
+    monkeypatch.setattr(setup, "credentials_missing", lambda state=None: ["APCA_API_KEY_ID"])
+    args = cli.parse_cli(["mcp", "--self-test"])
+    args.func(args)
+    out = capsys.readouterr().out
+    assert "no broker keys were found" in out and "mcp --offline" in out
+
+    monkeypatch.setattr(setup, "credentials_missing", lambda state=None: [])
+    args.func(args)
+    assert "no broker keys" not in capsys.readouterr().out
+
+
 def test_self_test_fails_rather_than_pass_on_a_server_with_no_structured_output(
     child_env, monkeypatch, capsys
 ):

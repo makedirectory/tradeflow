@@ -4278,6 +4278,15 @@ def _run_mcp_self_test(offline: bool = False, cache_dir: Optional[Any] = None) -
                 "this pass does not show it would find them: put them in the .env "
                 f"({setup.ENV_PATH}) - `{_invocation('init')}` writes it.\n"
             )
+        # The server now starts without keys, so a pass no longer implies it can fetch
+        # bars; saying nothing would let a keyless pass read as a working setup.
+        if not offline and setup.credentials_missing():
+            print(
+                "Note: no broker keys were found, so the server started with catalogue and "
+                "trial-history tools only; any tool that fetches bars will ask for keys. Add them "
+                f"with `{_invocation('init')}`, or launch `{_invocation('mcp --offline')}` to read "
+                "the local bar cache, which needs none.\n"
+            )
         print(DISCLAIMER)
         return
     print(f"MCP self-test FAILED at step '{out['step']}' after {out['elapsed']:.1f}s: {out['error']}")

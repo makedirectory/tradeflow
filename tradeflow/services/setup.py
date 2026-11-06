@@ -149,6 +149,16 @@ def credentials_only_in_shell(state: Optional["EnvState"] = None) -> List[str]:
     ]
 
 
+def credentials_missing(state: Optional["EnvState"] = None) -> List[str]:
+    """Credential keys neither the ``.env`` nor the shell supplies."""
+    state = state or inspect_env()
+    return [
+        k
+        for k in CREDENTIAL_KEYS
+        if is_placeholder(state.values.get(k)) and is_placeholder(state.from_environment.get(k))
+    ]
+
+
 def mcp_client_config(*, offline: bool = False, cache_dir: Optional[Any] = None) -> Dict[str, Any]:
     """The ``mcpServers`` block for :func:`mcp_launch_command`, ready to paste."""
     from tradeflow.settings import MCP_SERVER_NAME
