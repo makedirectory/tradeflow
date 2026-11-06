@@ -245,6 +245,28 @@ def test_a_scan_first_command_needs_one_warm_not_two(tmp_path):
     assert again.vintage_stamp(universe, "1Day", start, end) is not None
 
 
+def test_a_run_on_another_timeframe_is_left_to_its_own_miss(tmp_path):
+    """One warm command takes one timeframe, so the run's read on a different timeframe
+    from the scanner's cannot join the scan's miss; it must not be claimed in its
+    explanation either."""
+    from tradeflow.marketdata.client import MarketDataClient
+    from tradeflow.services.data import resolve_universe
+
+    start, end = _run_window()
+    cached, _ = _cache(tmp_path, offline=True)
+    with pytest.raises(CacheMiss) as miss:
+        resolve_universe(
+            MarketDataClient(cached),
+            "demo_volume",
+            SYMBOLS,
+            as_of=end,
+            then_reads=(SYMBOLS, "1Hour", start, end),
+        )
+    assert miss.value.timeframe == "1day"
+    assert "every candidate" not in str(miss.value)
+    assert "--start 2024-03-01" not in str(miss.value)
+
+
 def test_a_runnable_scan_is_not_widened_to_every_candidate(tmp_path):
     """Once the scan can run, the names it keeps are checked on their own: asking for every
     candidate over the run window would warm names the scanner then drops."""
@@ -300,8 +322,10 @@ _WINDOW = [
         ["walkforward", "--strategy", "demo_trend", "--benchmark", "SPY", "--folds", "2", "--max-evals", "2"],
         ["walkforward", "--strategy", "demo_trend", "--folds", "2", "--max-evals", "2"],
         ["backtest", "--strategy", "demo_trend"],
+        ["optimize", "--strategy", "demo_trend", "--max-evals", "2"],
+        ["screen", "--strategy", "demo_trend", "--max-evals", "2"],
     ],
-    ids=["walkforward-benchmark", "walkforward", "backtest"],
+    ids=["walkforward-benchmark", "walkforward", "backtest", "optimize", "screen"],
 )
 def test_one_warm_fixes_an_offline_command_that_reads_beyond_its_window(tmp_path, monkeypatch, argv, scanner):
     """A walk-forward reads an indicator warmup before --start, and its benchmark, in a
@@ -313,7 +337,7 @@ def test_one_warm_fixes_an_offline_command_that_reads_beyond_its_window(tmp_path
     argv = [*argv, "--scanner", scanner, *_WINDOW]
     first = _offline_command(monkeypatch, cache_dir, argv)
     assert first is not None
-    if "walkforward" not in argv or "--benchmark" in argv:
+    if argv[0] == "backtest" or "--benchmark" in argv:
         assert "SPY" in first.missing
     _warm_from(first, cache_dir, symbols=[*SYMBOLS, "SPY"])
     assert _offline_command(monkeypatch, cache_dir, argv) is None

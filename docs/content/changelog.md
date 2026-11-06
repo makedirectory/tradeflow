@@ -89,7 +89,10 @@ without guessing. The history below keeps the old name as it was written.
   and then again on its own window. The same goes for reads past the request's own
   window: `walkforward` also reads an indicator warmup before `--start` and its
   `--benchmark`, and `backtest` its `--benchmark` (which offline used to drop alpha and
-  beta with only a warning); a cold miss now asks for those too. The note about the
+  beta with only a warning); a cold miss now asks for those too. Still a second round: a
+  scanner on a different timeframe from the strategy (one warm covers one timeframe), and
+  the extra windows read by `backtest --beta-sizing/--causality/--cost-stress` and the
+  walk-forward's optional probes. The note about the
   market-date change appears only for the few-hour gap that change leaves (coverage
   recorded through UTC midnight, asked for through New York midnight), not on every miss
   or on any symbol that happens to have some coverage.
