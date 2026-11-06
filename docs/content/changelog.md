@@ -70,6 +70,10 @@ without guessing. The history below keeps the old name as it was written.
 - An incomplete verdict whose skill test never ran no longer counts as a trial, so a
   failed attempt does not raise the campaign's multiple-testing total. The report says
   `Not recorded as a trial` and why.
+- A very small deflated or probabilistic Sharpe prints `<0.01` in the terminal, the
+  chart and the HTML report alike. Before, the terminal printed `0.00` (which reads as a
+  probability of zero) and the chart `4.4e-04`. An unrecorded deflated Sharpe on a
+  reused walk-forward prints `—`, not `0.000`.
 - `quantred demo` prints its scorecard without the hundred progress lines above it, and
   an offline cache miss names `quantred cache warm`, not a script an installed copy
   does not have.

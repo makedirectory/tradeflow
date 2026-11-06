@@ -58,6 +58,17 @@ def _fmt(value: Any) -> str:
     return f"{v:.2f}"
 
 
+def _gate(name: str, value: Any) -> str:
+    """A gate value in its own unit, exactly as the terminal prints it.
+
+    The chart used to apply :func:`_fmt` to every gate, so a deflated Sharpe of 0.0004
+    was ``4.4e-04`` here and ``0.00`` in the terminal beside it.
+    """
+    from tradeflow.optimization.walk_forward import format_gate_value
+
+    return format_gate_value(name, value)
+
+
 def _metrics_subtitle(metrics: Dict[str, float]) -> str:
     return (
         f"Sharpe {metrics.get('sharpe_ratio', 0):.2f}   ·   "
@@ -169,7 +180,7 @@ def _verdict_panel(
         ax.text(
             1.0,
             y,
-            f"{_fmt(check.get('value'))} / {_fmt(check.get('threshold'))}",
+            f"{_gate(name, check.get('value'))} / {_gate(name, check.get('threshold'))}",
             transform=ax.transAxes,
             va="top",
             ha="right",

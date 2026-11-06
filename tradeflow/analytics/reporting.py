@@ -84,6 +84,10 @@ _SECTIONS = [
     ),
 ]
 
+#: Rows that are probabilities, rendered through the shared unit table so a tiny value
+#: says ``<0.01`` here exactly as it does in the walk-forward report and its chart.
+_PROBABILITY_ROWS = frozenset({"probabilistic_sharpe_ratio", "deflated_sharpe_ratio"})
+
 # Flat view for backward compatibility / simple consumers.
 _ROWS = [row for _, rows in _SECTIONS for row in rows]
 
@@ -274,7 +278,11 @@ def format_backtest_report(
                 # One trial deflates against nothing, so the row says what it is rather
                 # than borrowing the name of a correction that was not applied.
                 label = "  Sharpe (undeflated)"
-            if key in metrics:
+            if key in metrics and key in _PROBABILITY_ROWS:
+                from tradeflow.optimization.walk_forward import format_gate_value
+
+                section_lines.append(f"{label:28}{format_gate_value(key, metrics[key])}")
+            elif key in metrics:
                 value = fmt.format(metrics[key]) if metrics[key] != float("inf") else "inf"
                 section_lines.append(f"{label:28}{value}")
         if section_lines:

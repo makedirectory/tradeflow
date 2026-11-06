@@ -654,3 +654,47 @@ def test_every_gate_a_report_produces_can_be_rendered():
         for key in ("value", "threshold"):
             rendered = format_gate_value(name, check[key])
             assert isinstance(rendered, str) and rendered
+
+
+def test_a_tiny_deflated_sharpe_is_small_not_zero_and_reads_alike_everywhere():
+    """A deflated Sharpe of 0.0004 printed ``0.00`` in the terminal (a probability of
+    exactly zero, which it is not) and ``4.4e-04`` in the chart beside it — one number,
+    two answers. Both now go through the one unit table."""
+    pytest.importorskip("matplotlib")
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    from tradeflow.analytics import charts
+    from tradeflow.analytics.reporting import format_backtest_report
+    from tradeflow.cli import _dsr_text
+    from tradeflow.optimization.walk_forward import format_gate_value
+
+    assert format_gate_value("deflated_sharpe", 4.4e-4) == "<0.01"
+    assert format_gate_value("deflated_sharpe", 0.9991) == ">0.99"
+    # The boundaries stay numbers: an exact zero is zero, and 0.5 is the gate itself.
+    assert format_gate_value("deflated_sharpe", 0.0) == "0.00"
+    assert format_gate_value("deflated_sharpe", 0.5) == "0.50"
+    assert format_gate_value("deflated_sharpe", 1.0) == "1.00"
+    # A Sharpe is not a probability and keeps its plain format.
+    assert format_gate_value("oos_sharpe", 0.0004) == "0.00"
+
+    assert _dsr_text(4.4e-4) == "<0.01"
+    assert _dsr_text(None) == "—"  # unrecorded, never a probability of zero
+
+    checks = {"deflated_sharpe": {"value": 4.4e-4, "threshold": 0.5, "passed": False}}
+    fig, ax = plt.subplots()
+    try:
+        charts._verdict_panel(
+            ax, promotable=False, oos_sharpe=1.0, efficiency=0.5, oos_trades=40, checks=checks
+        )
+        texts = [t.get_text() for t in ax.texts]
+    finally:
+        plt.close(fig)
+    assert "<0.01 / 0.50" in texts
+
+    report = format_backtest_report(
+        {"deflated_sharpe_ratio": 4.4e-4, "deflation_applied": True}, 1000.0, 1000.0
+    )
+    assert "<0.01" in report

@@ -299,6 +299,10 @@ _GATE_VALUE_KINDS = {
     "benchmark_available": "flag",
     "treynor_available": "flag",
     "promotable": "flag",
+    "deflated_sharpe": "probability",
+    "deflated_sharpe_ratio": "probability",
+    "probabilistic_sharpe_ratio": "probability",
+    "pbo": "probability",
 }
 
 
@@ -328,6 +332,12 @@ def format_gate_value(gate_name: str, value: Any) -> str:
         return "unbounded" if number > 0 else str(number)
     if kind == "count":
         return f"{int(round(number))}"
+    if kind == "probability" and 0.0 < number < 0.005:
+        # Two decimals would print 0.00, which reads as "certainly zero", and the chart
+        # printed the same value as 4.4e-04 — one number, two answers. Say it is small.
+        return "<0.01"
+    if kind == "probability" and 0.995 <= number < 1.0:
+        return ">0.99"
     return f"{number:.2f}"
 
 

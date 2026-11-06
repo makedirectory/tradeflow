@@ -1628,6 +1628,18 @@ def cmd_walkforward(args) -> None:
     _maybe_print_attribution_verdict(data_client, args.strategy, universe, args.start, args.end)
 
 
+def _dsr_text(value: Any) -> str:
+    """A deflated (or probabilistic) Sharpe as every surface prints it.
+
+    Through the shared unit table, so the terminal and the chart agree, and an
+    unrecorded value reads as unrecorded rather than as a probability of zero.
+    """
+    from tradeflow.analytics.reporting import NOT_RECORDED
+    from tradeflow.optimization.walk_forward import format_gate_value
+
+    return NOT_RECORDED if value is None else format_gate_value("deflated_sharpe", value)
+
+
 def _print_cached_walkforward(row: Dict[str, Any]) -> None:
     """The reduced report served for a memoized walk-forward: the OOS aggregate
     and verdict the trial store denormalized, not the full per-fold table (that
@@ -1635,7 +1647,7 @@ def _print_cached_walkforward(row: Dict[str, Any]) -> None:
     print("\n=== Walk-Forward Validation (cached — per-fold detail not stored) ===")
     print(
         f"  OOS Sharpe {row.get('oos_sharpe') or 0:.3f}  MaxDD {row.get('oos_max_dd') or 0:.2f}%  "
-        f"PF {row.get('oos_profit_factor') or 0:.2f}  DSR {row.get('deflated_sharpe') or 0:.3f}  "
+        f"PF {row.get('oos_profit_factor') or 0:.2f}  DSR {_dsr_text(row.get('deflated_sharpe'))}  "
         f"trades {row.get('oos_trades') or 0}"
     )
     efficiency = row.get("efficiency")
@@ -1669,7 +1681,7 @@ def _print_walkforward(result, objective: str) -> None:
     print(
         f"  Sharpe {agg.get('sharpe_ratio', 0):.3f}  CAGR {agg.get('cagr', 0):.2f}%  "
         f"MaxDD {agg.get('max_drawdown', 0):.2f}%  PF {agg.get('profit_factor', 0):.2f}  "
-        f"DSR {agg.get('deflated_sharpe_ratio', 0):.3f}  trades {agg.get('total_trades', 0)}"
+        f"DSR {_dsr_text(agg.get('deflated_sharpe_ratio'))}  trades {agg.get('total_trades', 0)}"
     )
     print(
         f"  Efficiency (OOS/IS {objective}): {result.efficiency:.3f}  trials total: {result.n_trials_total}"
@@ -1703,7 +1715,7 @@ def _print_walkforward(result, objective: str) -> None:
     print(
         f"\nVerdict: {verdict} — OOS Sharpe {median_sharpe:.2f}, efficiency "
         f"{result.median_efficiency():.2f}, {result.total_oos_trades()} OOS trades, "
-        f"DSR {agg.get('deflated_sharpe_ratio', 0):.2f}"
+        f"DSR {_dsr_text(agg.get('deflated_sharpe_ratio'))}"
     )
 
 
@@ -1890,8 +1902,8 @@ def _print_bootstrap_skill(report: Dict[str, Any]) -> None:
         print(f"  family: unavailable — {family.get('note', 'see n_used/n_attempted')}")
     cross = report["parametric_cross_check"]
     print(
-        f"  parametric cross-check: PSR {cross['probabilistic_sharpe_ratio']:.2f}, "
-        f"DSR {cross['deflated_sharpe_ratio']:.2f} (n_trials={report['n_trials_total']})"
+        f"  parametric cross-check: PSR {_dsr_text(cross['probabilistic_sharpe_ratio'])}, "
+        f"DSR {_dsr_text(cross['deflated_sharpe_ratio'])} (n_trials={report['n_trials_total']})"
     )
     print(f"  verdict: {report['verdict']}")
 
