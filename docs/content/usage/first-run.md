@@ -154,6 +154,8 @@ or, for any client that takes a JSON config:
 { "mcpServers": { "tradeflow": { "command": "tradeflow", "args": ["mcp"] } } }
 ```
 
+A desktop client often has a smaller `PATH` than your terminal, so a bare `tradeflow` may not be found. `tradeflow init` prints this same block with the **absolute** command for your copy, ready to paste, and `tradeflow mcp --self-test` runs exactly that command (and prints the block again when it passes), so what passes is what you configure.
+
 Your client **launches the server itself**, from that command. Starting `tradeflow mcp`
 in a terminal does not connect any chat; it only proves the server starts. Needs the
 `mcp` extra and market-data keys. To confirm discovery works without a chat client:

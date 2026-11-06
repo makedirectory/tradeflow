@@ -83,6 +83,41 @@ def invocation(command: str, *, make_target: Optional[str] = None) -> str:
     return f"make {make_target}" if make_target else f"python main.py {command}"
 
 
+def mcp_launch_command() -> List[str]:
+    """The command an MCP client should run to start *this* copy's server.
+
+    One definition for three readers: ``mcp --self-test`` runs it, ``init`` prints it,
+    and the documented client config is the same shape. A client spawns the process
+    itself - no shell, no working directory, often none of the PATH a terminal has - so
+    everything here is absolute. A self-test that passed on a different command than the
+    one a reader was told to configure would be reporting on something nobody uses.
+
+    * **Installed:** the ``tradeflow`` script that sits next to the running interpreter
+      (a tool environment's own ``bin``), else ``python -m tradeflow.cli mcp``.
+    * **Checkout:** this interpreter and the absolute ``main.py``, which needs neither
+      ``uv`` on the client's PATH nor a ``cwd``.
+    """
+    import sys
+
+    from tradeflow.settings import PROJECT_ROOT, _looks_like_checkout
+
+    python = Path(sys.executable)
+    main = PROJECT_ROOT / "main.py"
+    if _looks_like_checkout(PROJECT_ROOT) and main.is_file():
+        return [str(python), str(main), "mcp"]
+    for name in ("tradeflow", "tradeflow.exe"):
+        script = python.parent / name
+        if script.is_file():
+            return [str(script), "mcp"]
+    return [str(python), "-m", "tradeflow.cli", "mcp"]
+
+
+def mcp_client_config() -> Dict[str, Any]:
+    """The ``mcpServers`` block for :func:`mcp_launch_command`, ready to paste."""
+    command = mcp_launch_command()
+    return {"mcpServers": {"tradeflow": {"command": command[0], "args": command[1:]}}}
+
+
 def is_placeholder(value: Optional[str]) -> bool:
     """Whether a value means "not actually filled in".
 

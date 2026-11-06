@@ -33,12 +33,14 @@ DISCOVERY_TOOLS = ("list_strategies", "list_scanners")
 
 
 def default_command() -> List[str]:
-    """The server command for *this* copy: the interpreter already running the CLI.
+    """The server command for *this* copy - the one ``init`` tells a reader to configure.
 
-    Using ``sys.executable`` makes the check work identically for an installed copy
-    and a checkout, with no dependence on what is on ``PATH``.
+    Delegates to the setup service so the check and the instruction cannot name two
+    different commands (the check passing on one nobody was told to use).
     """
-    return [sys.executable, "-m", "tradeflow.cli", "mcp"]
+    from tradeflow.services.setup import mcp_launch_command
+
+    return mcp_launch_command()
 
 
 def _rows(result: Any) -> List[Dict[str, Any]]:
@@ -62,7 +64,15 @@ async def _drive(command: List[str], env: Dict[str, str], errlog, report: Dict[s
                 if result.isError:
                     text = " ".join(getattr(c, "text", "") for c in result.content)
                     raise RuntimeError(f"{tool} returned an error: {text}")
-                report[tool] = _rows(result)
+                rows = _rows(result)
+                if not rows:
+                    raise RuntimeError(
+                        f"{tool} returned no structured rows - the server's MCP SDK may predate "
+                        "structured output (the 'mcp' extra needs >=1.10), or discovery found nothing"
+                    )
+                if not any(r.get("demo") for r in rows):
+                    raise RuntimeError(f"{tool} did not list the built-in demo entries")
+                report[tool] = rows
     report["step"] = "close"
 
 
@@ -107,6 +117,7 @@ def run_self_test(
                 }
 
     out = anyio.run(go)
+    out["command"] = command
     out["elapsed"] = time.monotonic() - started
     return out
 

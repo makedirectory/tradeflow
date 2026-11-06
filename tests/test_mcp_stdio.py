@@ -9,7 +9,11 @@ The registry tools make no network call, so the dummy credentials below (needed 
 because the server builds a data client at startup) never leave the machine.
 """
 
+import json
+import re
+import shlex
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -72,8 +76,50 @@ def test_self_test_reports_discovery_and_disclaims_chat_attachment(child_env, ca
 
     out = capsys.readouterr().out
     assert "self-test passed" in out
-    assert "strategies" in out and "scanners" in out
+    # Not just the words: a run that found nothing prints "0 strategies (0 demo, ...)".
+    assert re.search(r"[1-9]\d* strategies \([1-9]\d* demo", out), out
+    assert re.search(r"[1-9]\d* scanners \([1-9]\d* demo", out), out
     assert DISCLAIMER in out
+    assert shlex.join(default_command()) in out  # says which command it checked
+
+
+def test_self_test_fails_rather_than_pass_on_a_server_with_no_structured_output(
+    child_env, monkeypatch, capsys
+):
+    """Structured content first exists in mcp 1.10. A client without it hands back no
+    rows, and a check that reports `0 strategies` as a pass has verified nothing."""
+    from tradeflow.mcp import selftest
+
+    monkeypatch.setattr(selftest, "_rows", lambda result: [])
+    args = cli.parse_cli(["mcp", "--self-test"])
+    with pytest.raises(SystemExit) as raised:
+        args.func(args)
+    out = capsys.readouterr().out
+    assert raised.value.code == 1
+    assert "no structured rows" in out and "FAILED" in out
+
+
+def test_self_test_fails_when_the_builtin_demo_entries_are_missing(child_env, monkeypatch, capsys):
+    from tradeflow.mcp import selftest
+
+    monkeypatch.setattr(selftest, "_rows", lambda result: [{"name": "x", "demo": False}])
+    args = cli.parse_cli(["mcp", "--self-test"])
+    with pytest.raises(SystemExit):
+        args.func(args)
+    assert "did not list the built-in demo entries" in capsys.readouterr().out
+
+
+def test_init_tells_a_reader_to_configure_the_command_the_self_test_runs(capsys):
+    """Two definitions of "the server command" - one validated, one printed - is how a
+    check passes on something no client was ever told to launch. The printed JSON and
+    the Claude Code line are read back and compared with the command under test."""
+    cli._print_next_steps()
+    out = capsys.readouterr().out
+    block = out[out.index("{") : out.rindex("}") + 1]
+    server = json.loads(block)["mcpServers"]["tradeflow"]
+    assert [server["command"], *server["args"]] == default_command()
+    assert f"claude mcp add tradeflow -- {shlex.join(default_command())}" in out
+    assert Path(server["command"]).is_absolute()
 
 
 def test_self_test_names_the_step_and_exits_nonzero_when_the_server_cannot_start(

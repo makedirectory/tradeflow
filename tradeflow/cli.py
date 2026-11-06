@@ -2379,10 +2379,32 @@ def _print_next_steps() -> None:
         f"\n  {_invocation('mcp'):<30}the MCP server (needs the 'mcp' extra) - see below"
         f"\n  {_invocation('init --check'):<30}re-run these checks any time\n"
         "\nConnecting an MCP client (Claude Code, Claude Desktop, ...):"
-        f"\n  The client launches `{_invocation('mcp')}` itself, over stdio - add that command to the"
-        "\n  client's MCP configuration. Starting it in this terminal does not connect any chat."
+        "\n  The client launches the server itself, over stdio, from its own configuration;"
+        "\n  starting it in this terminal does not connect any chat. Paste this into that configuration"
+        "\n  (an absolute command, since a client has no shell and often a smaller PATH):\n"
+    )
+    print(_mcp_client_block())
+    print(
+        f"\n  Check that this exact command answers: {_invocation('mcp --self-test')}"
         f"\n  Setup for each client: {DOCS_URL}/usage/agents\n"
     )
+
+
+def _mcp_client_block() -> str:
+    """The launch command as a ready-to-paste client config, and the Claude Code form.
+
+    Both come from ``setup.mcp_launch_command`` - the command ``mcp --self-test`` runs -
+    so what a reader is told to configure is what was checked.
+    """
+    import json
+    import shlex
+
+    from tradeflow.services import setup
+
+    config = json.dumps(setup.mcp_client_config(), indent=2)
+    indented = "\n".join(f"    {line}" for line in config.splitlines())
+    claude = f"claude mcp add tradeflow -- {shlex.join(setup.mcp_launch_command())}"
+    return f"{indented}\n\n  Claude Code, instead of editing a file:\n    {claude}"
 
 
 def cmd_verdict(args) -> None:
@@ -3831,6 +3853,8 @@ def cmd_mcp(args) -> None:
 
 def _run_mcp_self_test() -> None:
     """Render ``run_self_test``; exit 0 when discovery worked, 1 naming the step if not."""
+    import shlex
+
     try:
         from tradeflow.mcp.selftest import DISCLAIMER, run_self_test
     except ImportError:
@@ -3843,11 +3867,16 @@ def _run_mcp_self_test() -> None:
             demo = sum(1 for r in rows[key] if r.get("demo"))
             rows[key] = f"{len(rows[key])} {label} ({demo} demo, {len(rows[key]) - demo} installed)"
         print(f"MCP self-test passed in {out['elapsed']:.1f}s")
+        print(f"  command:    {shlex.join(out['command'])}")
         print(f"  tools:      {len(out['tools'])}")
         print(f"  discovery:  {rows['list_strategies']}; {rows['list_scanners']}")
+        print(
+            f"\nTo use this command from a client, add it to the client's configuration:\n\n{_mcp_client_block()}\n"
+        )
         print(DISCLAIMER)
         return
     print(f"MCP self-test FAILED at step '{out['step']}' after {out['elapsed']:.1f}s: {out['error']}")
+    print(f"  command:    {shlex.join(out['command'])}")
     if out.get("server_stderr"):
         print("What the server printed before it stopped:")
         print("    " + out["server_stderr"].replace("\n", "\n    "))

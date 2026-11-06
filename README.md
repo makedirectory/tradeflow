@@ -400,13 +400,15 @@ claude mcp add tradeflow -- tradeflow mcp     # Claude Code
 { "mcpServers": { "tradeflow": { "command": "tradeflow", "args": ["mcp"] } } }
 ```
 
-From a checkout, point it at the script instead:
+A desktop client often has a smaller `PATH` than a terminal, so `tradeflow init` prints
+this block with the absolute command for your copy, and `tradeflow mcp --self-test`
+runs exactly that command (printing the block again when it passes). From a checkout it is the checkout's interpreter and the
+absolute `main.py`:
 
 ```json
 { "mcpServers": { "tradeflow": {
-    "command": "uv",
-    "args": ["run", "--extra", "mcp", "python", "main.py", "mcp"],
-    "cwd": "/path/to/tradeflow" } } }
+    "command": "/path/to/tradeflow/.venv/bin/python",
+    "args": ["/path/to/tradeflow/main.py", "mcp"] } } }
 ```
 
 Note the two resolve **different state roots** (`~/.tradeflow` vs. the checkout), so

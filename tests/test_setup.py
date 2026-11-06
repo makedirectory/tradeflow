@@ -844,3 +844,43 @@ def test_the_private_strategies_link_has_no_docs_prefix(tmp_path, monkeypatch):
     message = str(exc.value)
     assert f"{DOCS_URL}/usage/private-strategies" in message
     assert "/docs/usage" not in message
+
+
+# --- the MCP launch command ---------------------------------------------------
+def test_the_launch_command_is_absolute_and_runnable_from_anywhere(monkeypatch, tmp_path):
+    """A client spawns this with no shell, no cwd and a small PATH."""
+    from pathlib import Path
+
+    command = setup.mcp_launch_command()
+    assert Path(command[0]).is_absolute()
+    assert command[-1] == "mcp"
+    monkeypatch.chdir(tmp_path)
+    assert setup.mcp_launch_command() == command
+
+
+def test_an_installed_launch_command_uses_the_script_beside_the_interpreter(monkeypatch, tmp_path):
+    import sys
+
+    from tradeflow import settings
+
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "python").write_text("")
+    (bindir / "tradeflow").write_text("")
+    monkeypatch.setattr(sys, "executable", str(bindir / "python"))
+    monkeypatch.setattr(settings, "_looks_like_checkout", lambda _p: False)
+    assert setup.mcp_launch_command() == [str(bindir / "tradeflow"), "mcp"]
+    (bindir / "tradeflow").unlink()
+    assert setup.mcp_launch_command() == [str(bindir / "python"), "-m", "tradeflow.cli", "mcp"]
+
+
+def test_a_checkout_launch_command_names_main_py_by_absolute_path():
+    from pathlib import Path
+
+    from tradeflow import settings
+
+    command = setup.mcp_launch_command()
+    assert command[1] == str(settings.PROJECT_ROOT / "main.py") and Path(command[1]).is_file()
+    assert setup.mcp_client_config() == {
+        "mcpServers": {"tradeflow": {"command": command[0], "args": command[1:]}}
+    }

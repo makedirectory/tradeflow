@@ -35,6 +35,12 @@ Any other client takes the same command in its JSON config:
 { "mcpServers": { "tradeflow": { "command": "tradeflow", "args": ["mcp"] } } }
 ```
 
+A desktop client often has a smaller `PATH` than your terminal, so a bare `tradeflow`
+may not be found. `tradeflow init`
+prints this same block with the **absolute** command for your copy, ready to paste, and
+`tradeflow mcp --self-test` runs exactly that command (and prints the block again when
+it passes), so what passes is what you configure.
+
 Run `tradeflow mcp` once in a terminal first. Without the extra or credentials it
 exits immediately with the reason, which from inside a client looks only like a
 server that never started.
@@ -141,11 +147,12 @@ architecture and guardrails.
 
 Replace `tradeflow` with `uv run python main.py`, and install an extra with
 `uv sync --inexact --extra mcp` (or `ai`, `openai`; plain `uv sync` removes extras and packs you do not name).
-To register a checkout with an MCP client:
+To register a checkout with an MCP client, give it the checkout's interpreter and the
+absolute path to `main.py` - no `uv` on the client's `PATH` and no `cwd` needed.
+`python main.py init` prints the block with your paths filled in; its shape is:
 
 ```json
 { "mcpServers": { "tradeflow": {
-    "command": "uv",
-    "args": ["run", "--extra", "mcp", "python", "main.py", "mcp"],
-    "cwd": "/path/to/tradeflow" } } }
+    "command": "/path/to/tradeflow/.venv/bin/python",
+    "args": ["/path/to/tradeflow/main.py", "mcp"] } } }
 ```
