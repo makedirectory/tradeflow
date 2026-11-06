@@ -128,8 +128,9 @@ def test_capacity_is_liquidity_sensitive():
 
     cap_liquid = _capacity(weights, liquid, gross_alpha=0.05, holding_period_years=1 / 12)
     cap_illiquid = _capacity(weights, illiquid, gross_alpha=0.05, holding_period_years=1 / 12)
-    assert cap_liquid > cap_illiquid  # deeper liquidity → more capacity before cost bites
-    assert _capacity(weights, liquid, gross_alpha=0.0, holding_period_years=1 / 12) == 0.0  # no edge
+    assert cap_liquid[1] == cap_illiquid[1] == "measured"
+    assert cap_liquid[0] > cap_illiquid[0]  # deeper liquidity → more capacity before cost bites
+    assert _capacity(weights, liquid, gross_alpha=0.0, holding_period_years=1 / 12) == (None, "no_edge")
 
 
 # --- integration / leakage ---------------------------------------------------

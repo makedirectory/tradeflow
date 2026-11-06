@@ -1131,8 +1131,11 @@ def _allocate_utility(args, tuned=None) -> None:
                 f"    this rebalance: turnover cost {d['cost_drag']:.2%}/yr one-way; "
                 f"one-way net {d['expected_active_return_net_oneway']:.2%}"
             )
-    if "capacity_capital" in d:
-        print(f"  capacity ≈ ${d['capacity_capital']:,.0f} (where √-impact erases the alpha)")
+    from tradeflow.analytics.reporting import capacity_text
+
+    capacity = capacity_text(d)
+    if capacity is not None:
+        print(f"  capacity {capacity}")
     if "sigma_regime" in result:
         regime = result["sigma_regime"]
         print(

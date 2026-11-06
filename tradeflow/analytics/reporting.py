@@ -15,6 +15,29 @@ from tradeflow.analytics import performance
 
 logger = logging.getLogger(__name__)
 
+
+def capacity_text(diagnostics: Dict[str, Any]) -> Optional[str]:
+    """Words for a portfolio's capacity result, or ``None`` when none was computed.
+
+    A number only when one was solved for; otherwise which bound the search hit, so a
+    search sentinel never reads as a measured capital.
+    """
+    if "capacity_status" not in diagnostics:
+        return None
+    status = diagnostics["capacity_status"]
+    capital = diagnostics.get("capacity_capital")
+    if status == "measured" and capital is not None:
+        return f"≈ ${capital:,.0f} (where √-impact erases the alpha)"
+    return {
+        "no_edge": "not applicable - expected gross alpha is not positive, so there is no capital at which "
+        "it survives cost",
+        "below_search_floor": "not measured - the alpha does not cover √-impact cost even at the smallest "
+        "capital searched ($1,000)",
+        "above_search_ceiling": "not measured - the alpha still covers √-impact cost at the largest capital "
+        "searched ($1 trillion)",
+    }.get(status, f"unknown ({status})")
+
+
 # (metric key, label, format spec), grouped into report sections.
 _SECTIONS = [
     (

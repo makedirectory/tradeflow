@@ -4771,9 +4771,13 @@ def construct_portfolio(
             result.diagnostics["expected_active_return_net"] = expected - round_trip
             result.diagnostics["expected_active_return_net_oneway"] = expected - one_way
         # Capacity: the capital at which √-impact cost erases the gross alpha.
-        result.diagnostics["capacity_capital"] = _capacity(
+        # None (never 0 or a search bound) when no capital was solved for: ``capacity_status``
+        # says which bound was hit, and renderers say it in words.
+        capacity, status = _capacity(
             result.weights, universe_bars, result.diagnostics["expected_active_return"], holding_period_years
         )
+        result.diagnostics["capacity_capital"] = capacity
+        result.diagnostics["capacity_status"] = status
         if benchmark_report is not None and result.diagnostics.get("has_benchmark"):
             # Value-added identity: SR_P² ≈ SR_B² + IR² -
             # active management adds to the benchmark's own Sharpe in quadrature.
@@ -5329,12 +5333,20 @@ def _cost_inputs(universe_bars, cost_model, window: int = _COST_WINDOW):
     return CostInputs(spread=spread, adv_dollar=adv_dollar, daily_vol=daily_vol)
 
 
-def _capacity(weights, universe_bars, gross_alpha, holding_period_years) -> float:
-    """Capital at which √-impact cost erases the gross alpha (net active return → 0).
+CAPACITY_SEARCH_FLOOR = 1e3
+CAPACITY_SEARCH_CEILING = 1e12
+
+
+def _capacity(weights, universe_bars, gross_alpha, holding_period_years) -> tuple:
+    """``(capital, status)``: where √-impact cost erases the gross alpha (net → 0).
 
     Cost as a fraction of capital grows ∝ √capital (square-root impact), so net alpha
-    is monotone-decreasing in capital — solved by bisection. Returns 0 if the alpha
-    can't even cover cost at tiny size.
+    is monotone-decreasing in capital — solved by bisection. ``capital`` is a number
+    only when ``status == "measured"``; otherwise it is ``None`` and ``status`` names
+    the bound that was hit: ``"no_edge"`` (gross alpha <= 0, or no priced holdings),
+    ``"below_search_floor"`` (alpha does not cover cost even at the search floor) or
+    ``"above_search_ceiling"`` (still positive at the ceiling). A sentinel such as 0
+    or the search bound is not a capacity and must not read as one.
     """
     from tradeflow.costs import ParametricCostModel, Trade
 
@@ -5351,7 +5363,7 @@ def _capacity(weights, universe_bars, gross_alpha, holding_period_years) -> floa
             float(frame["close"].pct_change().tail(20).std()),
         )
     if not liquidity or gross_alpha <= 0:
-        return 0.0
+        return None, "no_edge"
 
     def net(capital: float) -> float:
         total = sum(
@@ -5360,15 +5372,15 @@ def _capacity(weights, universe_bars, gross_alpha, holding_period_years) -> floa
         )
         return gross_alpha - 2.0 * (total / capital) / max(holding_period_years, 1e-9)
 
-    lo, hi = 1e3, 1e12
+    lo, hi = CAPACITY_SEARCH_FLOOR, CAPACITY_SEARCH_CEILING
     if net(lo) <= 0:
-        return lo
+        return None, "below_search_floor"
     if net(hi) > 0:
-        return hi
+        return None, "above_search_ceiling"
     for _ in range(60):
         mid = 0.5 * (lo + hi)
         lo, hi = (mid, hi) if net(mid) > 0 else (lo, mid)
-    return 0.5 * (lo + hi)
+    return 0.5 * (lo + hi), "measured"
 
 
 def _build_covariance(

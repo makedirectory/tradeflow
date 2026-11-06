@@ -24,6 +24,8 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from tradeflow.analytics.reporting import capacity_text
+
 #: Result kinds this module knows how to render.
 KINDS = ("verdict", "backtest", "walkforward", "info")
 
@@ -587,7 +589,7 @@ def _portfolio_card(portfolio: Optional[Dict[str, Any]]) -> str:
                 ("Expected active return (net)", _pct(d.get("expected_active_return_net"))),
                 ("Predicted IR", _num(d.get("predicted_ir"), "{:+.2f}")),
                 ("Transfer coefficient", _num(d.get("transfer_coefficient"), "{:+.2f}")),
-                ("Capacity (capital)", _num(d.get("capacity_capital"), "{:,.0f}")),
+                ("Capacity", capacity_text(d) or "n/a"),
                 ("Risk model", portfolio.get("risk_model")),
             ]
         )
