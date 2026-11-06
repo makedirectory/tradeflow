@@ -169,3 +169,44 @@ def test_rejected_keys_end_the_command_with_their_message_not_a_stack(monkeypatc
     with pytest.raises(SystemExit) as exited:
         cli.main()
     assert exited.value.code == "Alpaca rejected these credentials (HTTP 401)."
+
+
+# --- a hand-edited config -----------------------------------------------------------
+
+
+def test_a_typo_d_config_key_is_named_with_the_parameter_it_left_unset(tmp_path):
+    """`"parms"` for `"params"` reached the reader as `KeyError: 'slow_ema_period'` under
+    causes - renamed strategies, missing packages - that pointed away from the typo."""
+    import json
+
+    path = tmp_path / "bad.json"
+    path.write_text(json.dumps({"strategy": "demo_trend", "parms": {"fast_ema_period": 3}}))
+    args = cli.parse_cli(["backtest", "--config", str(path)])
+    with pytest.raises(SystemExit) as exited:
+        cli.apply_run_config(args)
+    message = str(exited.value.code)
+    assert "'parms' is not a config key - did you mean 'params'?" in message
+    assert "which the config's params do not set" in message
+
+
+def test_every_key_the_writer_produces_is_one_the_hint_recognises(tmp_path):
+    """The writer and the hint's list are two statements of one format; a field added to
+    `save_config` and not to the list would be reported to its reader as a typo."""
+    import inspect
+
+    from tradeflow.optimization.config_store import CONFIG_KEYS, Provenance, save_config, unrecognised_keys
+
+    every = {
+        name: ({"a": 1} if name in ("params", "position_limits", "cost") else "x")
+        for name in inspect.signature(save_config).parameters
+        if name not in ("path", "provenance")
+    }
+    written = json_load(save_config(tmp_path / "c.json", provenance=Provenance(), **every))
+    assert unrecognised_keys(written) == []
+    assert set(written) == set(CONFIG_KEYS)
+
+
+def json_load(path):
+    import json
+
+    return json.loads(path.read_text())

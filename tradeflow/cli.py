@@ -428,7 +428,8 @@ def _refuse_unusable_config(path, exc) -> "NoReturn":  # noqa: F821 - string ann
     sys.exit(
         f"Refusing to run: {path} cannot be used by this build.\n"
         f"  {detail}\n"
-        "  A config must exist, be readable JSON, name a strategy, and record params "
+        + _config_key_hint(path, exc)
+        + "  A config must exist, be readable JSON, name a strategy, and record params "
         "this installation can honour.\n"
         "  The commonest causes are a mistyped path and a config saved against a "
         "strategy that has since been\n"
@@ -436,6 +437,32 @@ def _refuse_unusable_config(path, exc) -> "NoReturn":  # noqa: F821 - string ann
         "Re-validate the idea and save a\n"
         "  new config, or install the package that provides it."
     )
+
+
+def _config_key_hint(path, exc) -> str:
+    """What a bare ``KeyError: 'slow_ema_period'`` meant, when the file can say.
+
+    A hand-edited config with ``"parms"`` for ``"params"`` reached the reader as the
+    name of the first parameter the strategy could not find, under a list of causes -
+    renamed strategies, missing packages - that pointed away from the typo.
+    """
+    import difflib
+
+    from tradeflow.optimization.config_store import CONFIG_KEYS, load_config, unrecognised_keys
+
+    if not isinstance(exc, KeyError):
+        return ""
+    try:
+        payload = load_config(path)
+    except (OSError, ValueError):
+        return ""
+    lines = []
+    if exc.args and exc.args[0] != "strategy":
+        lines.append(f"  The strategy needs {exc.args[0]!r}, which the config's params do not set.")
+    for key in unrecognised_keys(payload):
+        close = difflib.get_close_matches(key, CONFIG_KEYS, n=1)
+        lines.append(f"  {key!r} is not a config key" + (f" - did you mean {close[0]!r}?" if close else "."))
+    return "".join(f"{line}\n" for line in lines)
 
 
 def _load_strategy_from_config(path: str):

@@ -16,7 +16,7 @@ import subprocess
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from tradeflow.engine.backtest import ACCOUNTING_VERSION
 from tradeflow.settings import state_root
@@ -190,6 +190,30 @@ def save_config(
     path.write_text(json.dumps(payload, indent=2, sort_keys=False))
     logger.info("Saved config to %s", path)
     return path
+
+
+#: Every top-level key :func:`save_config` writes.
+CONFIG_KEYS = (
+    "strategy",
+    "scanner",
+    "params",
+    "provenance",
+    "symbols",
+    "candidate_symbols",
+    "capital",
+    "position_limits",
+    "cost",
+)
+
+
+def unrecognised_keys(payload: Dict[str, Any]) -> List[str]:
+    """Top-level keys no writer of this format produces - usually a hand-edit's typo.
+
+    Reported, not refused: a key the loader does not read harms nothing on its own, and
+    an older file with an extra field should still load. It matters when something the
+    run needs is missing, because then the typo is the likeliest reason.
+    """
+    return [key for key in payload if key not in CONFIG_KEYS]
 
 
 def load_config(path) -> Dict[str, Any]:
