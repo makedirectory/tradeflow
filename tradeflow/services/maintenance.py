@@ -79,6 +79,10 @@ def select_trials(
     trials recorded after the decision was made — a quarantine that grows on its own is
     not a record of what somebody decided.
     """
+    if trial_ids and any(f is not None for f in (strategy, kind, accounting, before)):
+        # Ids name trials outright, and the filters used to be ignored beside them, so
+        # `--id X --strategy Y` quarantined X whatever its strategy, saying nothing.
+        raise ValueError("ids name trials outright; give either ids or filters, not both")
     journal = _resolve_journal(journal_path)
     with TrialStore(db_path_for_journal(journal), journal_path=journal) as store:
         if trial_ids:
@@ -151,9 +155,13 @@ def mark_contaminated(
     }
     if dry_run or not ids or payload_unmatched:
         payload["applied"] = 0
+        if payload_unmatched:
+            first = "An id matched no trial, so nothing was written."
+        else:
+            first = "Nothing selected." if not selected else "Dry run: nothing was written."
         payload["note"] = (
-            "Nothing selected." if not selected else "Dry run: nothing was written."
-        ) + " A quarantined trial still counts toward its family's multiple-testing total."
+            first + " A quarantined trial still counts toward its family's multiple-testing total."
+        )
         return payload
 
     run_id = audit.audit_log(

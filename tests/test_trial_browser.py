@@ -729,3 +729,37 @@ def test_quarantining_an_id_that_matches_no_trial_fails_and_writes_nothing(monke
 
     run("--strategy", "no_such_strategy")  # a filter matching nothing: exit 0
     assert "Selected" in capsys.readouterr().out
+
+
+def test_ids_and_filters_together_are_refused_rather_than_the_filters_ignored(tmp_path):
+    """Found in review: beside `--id`, `--strategy`/`--kind`/`--accounting`/`--before`
+    were silently ignored, so `--id X --strategy other` quarantined X anyway."""
+    from tradeflow import cli as main
+
+    journal = tmp_path / "journal.jsonl"
+    real = journal_trial(
+        "backtest",
+        strategy="s",
+        symbols=["AAA"],
+        start=datetime(2024, 1, 1),
+        end=datetime(2024, 6, 1),
+        params={"fast": 5},
+        metrics={"sharpe_ratio": 1.0},
+        path=journal,
+    )
+    before = journal.read_text()
+    args = main.build_parser().parse_args(
+        ["trials", "mark-contaminated", "--reason", "t", "--journal", str(journal), "--id", real]
+        + ["--strategy", "other"]
+    )
+    with pytest.raises(SystemExit) as exc:
+        args.func(args)
+    assert "either ids or filters" in str(exc.value.code)
+    assert journal.read_text() == before
+
+    # The other direction: an id alone still quarantines.
+    args = main.build_parser().parse_args(
+        ["trials", "mark-contaminated", "--reason", "t", "--journal", str(journal), "--id", real]
+    )
+    args.func(args)
+    assert journal.read_text() != before

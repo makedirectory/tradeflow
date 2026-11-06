@@ -452,8 +452,10 @@ quantred trials mark-contaminated --reason "vendor split adjustment was wrong"  
 quantred trials mark-contaminated --reason "vendor split adjustment was wrong" --id abc123def456
 ```
 
-An `--id` that matches no trial is refused (exit 1, naming the id, nothing written even
-for the other ids beside it); a filter that matches nothing is an ordinary empty answer.
+Select by `--id` or by filters, not both: ids name trials outright, and combining them is
+refused. An `--id` that matches no trial is refused (exit 1, naming the id, nothing
+written even for the other ids beside it); a filter that matches nothing is an ordinary
+empty answer.
 
 `--reason` is required. Rows excluded from every leaderboard with nothing saying why
 cannot be judged later, which is worse than not excluding them.
