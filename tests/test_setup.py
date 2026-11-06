@@ -241,15 +241,16 @@ def test_live_trading_enabled_fails_its_check_loudly(tmp_path):
     assert "real money" in paper.detail
 
 
-def test_a_missing_extra_reports_the_exact_install_command(tmp_path):
-    rows = [c for c in setup.run_checks(tmp_path / ".env", environ={}) if c.name.startswith("extra:")]
+def test_a_missing_extra_is_collected_for_the_one_install_command(tmp_path):
+    """Rows no longer carry their own command (two of them undo each other); they name
+    the extra, and the doctor prints a single command over the union."""
+    checks = setup.run_checks(tmp_path / ".env", environ={})
+    rows = [c for c in checks if c.name.startswith("extra:")]
     assert rows
     for row in rows:
-        if not row.passed:
-            # Which command is right depends on the copy running the test; either way
-            # the row names the extra and carries a runnable instruction.
-            action = row.next_action or ""
-            assert "uv sync --extra" in action or "uv tool install --force" in action
+        assert row.passed or row.installs == (row.name.split(": ")[1],)
+        assert "uv sync" not in (row.next_action or "") and "uv tool" not in (row.next_action or "")
+    assert set(setup.missing_extras(checks)) >= {r.name.split(": ")[1] for r in rows if not r.passed}
 
 
 def test_the_doctor_never_prints_a_raw_credential(tmp_path):

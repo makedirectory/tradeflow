@@ -189,7 +189,14 @@ The same goes for *install and recovery* text: it has one definition,
 more guards printed a bare `uv sync`). The copy that ships has to be right for three
 environments at once, and `uv tool install --force 'pkg[X]'` is wrong in the common one —
 it rebuilds the tool with only `X`, silently removing every other extra and `--with` pack —
-so the hint carries the extras already installed and pins the running version. The map of
+so the hint carries the extras already installed and pins the running version. For a
+`uv tool` copy it reads the tool's own `uv-receipt.toml` and restates every `--with`
+package, because naming the packs in a parenthetical was the same silent removal one step
+removed. A checkout gets `uv sync --inexact --extra X`: plain `uv sync` is exact, and
+running the printed command uninstalled the dev tools and an editable pack. A diagnostic
+prints **one** command over every missing extra, never one per row, since each form
+replaces the environment and two of them undo one another. An HTML report carries no
+install text at all (it is attached and forwarded, and the text names the reader's packs). The map of
 extras to the modules each provides is checked against `pyproject.toml`, not remembered.
 *Guarded by* `tests/test_setup.py`, `tests/test_surface_parity.py`, `tests/test_extras_map.py`.
 

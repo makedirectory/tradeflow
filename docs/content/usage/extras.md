@@ -53,9 +53,18 @@ python -m pip install 'tradeflow-engine[mcp]==<installed version>'
 ```
 
 The error messages and `init --check` print these commands with the extras you
-already have filled in, and the running version.
+already have filled in and the running version. For a `uv tool` install they also read
+the tool's own receipt (`uv-receipt.toml`, in the tool environment) and write out every
+`--with` package it was built from, so the command can be pasted as it stands. When
+several extras are missing, `init --check` prints **one** command for all of them at the
+end, never one per extra: each form replaces the environment, so running two would leave
+only the second's extras. A report written with `--html` does not carry this text, since
+the file gets attached and forwarded; it points at this page.
 
 ## Contributors (source checkout)
 
-`uv sync --extra a --extra b` is the equivalent, and it likewise removes extras that
-are not named. Never run a bare `uv sync` in a checkout that holds an editable pack.
+`uv sync --inexact --extra a` adds an extra to the checkout's environment and leaves
+everything else where it is - the `dev` tools and any pack installed with
+`uv pip install -e` included. Plain `uv sync` is *exact*: it uninstalls whatever the
+lockfile does not name for the extras you gave, which takes those out. `init --check`
+prints the `--inexact` form, and it only needs the extras you are adding.

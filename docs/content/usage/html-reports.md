@@ -81,5 +81,5 @@ few megabytes.
 ## From a source checkout (contributors)
 
 The commands above are the installed `tradeflow` command. In a checkout, run them as
-`uv run python main.py <command> ...`. Extras are installed with `uv sync --extra <name>`
+`uv run python main.py <command> ...`. Extras are installed with `uv sync --inexact --extra <name>`
 (see [optional extras](extras)).

@@ -14,7 +14,6 @@ import sys
 from pathlib import Path
 
 import pytest
-import tomllib
 
 from tradeflow import __version__, cli, settings
 from tradeflow.utils import extras
@@ -30,6 +29,7 @@ def _requirement_name(requirement: str) -> str:
 
 
 def _published_extras() -> dict:
+    tomllib = pytest.importorskip("tomllib")  # 3.11+; the package still imports on 3.10
     manifest = tomllib.loads(PYPROJECT.read_text())
     return manifest["project"]["optional-dependencies"]
 
@@ -39,6 +39,7 @@ def _as_installed_copy(monkeypatch, installed=()):
     monkeypatch.setattr(extras, "installed_extras", lambda: sorted(installed))
     monkeypatch.setattr(extras, "_pack_distributions", lambda: [])
     monkeypatch.setattr(extras, "_in_uv_tool_env", lambda: False)
+    monkeypatch.setattr(extras, "_tool_receipt", lambda: None)
 
 
 def test_the_extras_map_matches_the_published_extras():
@@ -118,13 +119,72 @@ def test_this_distributions_own_entry_points_are_not_reported_as_packs():
     assert settings.DISTRIBUTION_NAME.lower() not in {n.lower() for n in extras._pack_distributions()}
 
 
-def test_a_checkout_hint_is_uv_sync_with_every_extra(monkeypatch):
-    """`uv sync` removes whatever is not named, so the union is the command."""
+def test_a_checkout_hint_adds_without_removing(monkeypatch):
+    """Plain `uv sync` is exact: it uninstalled the dev tools and an editable pack when
+    the printed command was run. `--inexact` only adds, so the extras already present
+    need not be restated either."""
     monkeypatch.setattr(settings, "running_from_checkout", lambda: True)
     monkeypatch.setattr(extras, "installed_extras", lambda: ["store", "viz"])
     hint = extras.install_hint("mcp")
-    assert "uv sync --extra mcp --extra store --extra viz" in hint
+    assert "uv sync --inexact --extra mcp" in hint
+    assert "--extra store" not in hint
     assert "uv tool" not in hint
+
+
+# The receipt `uv tool install --with ... --with-editable ...` really wrote (uv 0.13),
+# paths shortened. Asserting against the real shape, not one imagined for the test.
+RECEIPT = """
+[tool]
+requirements = [
+    { name = "tradeflow-engine", extras = ["viz"], specifier = "==2.3.0" },
+    { name = "tqdm" },
+    { name = "requests", specifier = ">=2" },
+    { name = "packdir", directory = "/work/packdir" },
+    { name = "packdir", editable = "/work/packdir" },
+]
+entrypoints = [
+    { name = "tradeflow", install-path = "/bin/tradeflow", from = "tradeflow-engine" },
+]
+
+[tool.options]
+find-links = ["file:///wheels"]
+"""
+
+
+def test_the_uv_tool_command_restates_what_the_receipt_was_built_from(monkeypatch, tmp_path):
+    """The command replaces the environment, so every extra and every `--with` package
+    has to be in it - named in a parenthetical, the reader loses them on copy-paste."""
+    (tmp_path / "uv-receipt.toml").write_text(RECEIPT)
+    monkeypatch.setattr(settings, "running_from_checkout", lambda: False)
+    monkeypatch.setattr(sys, "prefix", str(tmp_path))
+    monkeypatch.setattr(extras, "installed_extras", lambda: [])
+    hint = extras.install_hint("mcp")
+    command = next(line for line in hint.splitlines() if "uv tool install" in line)
+    assert f"'{settings.DISTRIBUTION_NAME}[mcp,viz]=={__version__}'" in command
+    assert "--with tqdm" in command
+    assert "--with 'requests>=2'" in command
+    assert "--with /work/packdir" in command
+    assert "--with-editable /work/packdir" in command
+    assert "(detected)" in hint
+    assert "re-add any packs" not in hint  # nothing left for the reader to remember
+
+
+def test_without_a_receipt_the_hint_falls_back_to_naming_the_packs(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "running_from_checkout", lambda: False)
+    monkeypatch.setattr(sys, "prefix", str(tmp_path))  # no receipt here
+    monkeypatch.setattr(extras, "installed_extras", lambda: [])
+    monkeypatch.setattr(extras, "_pack_distributions", lambda: ["acme-signals"])
+    assert "re-add any packs you installed with --with: acme-signals" in extras.install_hint("viz")
+
+
+def test_a_pack_install_command_is_additive(monkeypatch, tmp_path):
+    (tmp_path / "uv-receipt.toml").write_text(RECEIPT)
+    monkeypatch.setattr(settings, "running_from_checkout", lambda: True)
+    assert extras.pack_install_hint("/p") == "uv pip install -e /p"
+    monkeypatch.setattr(settings, "running_from_checkout", lambda: False)
+    monkeypatch.setattr(sys, "prefix", str(tmp_path))
+    command = extras.pack_install_hint("/p")
+    assert "--with-editable /p" in command and "--with tqdm" in command
 
 
 def test_installed_hint_never_names_an_interpreter_path(monkeypatch):
@@ -183,7 +243,8 @@ def test_no_missing_dependency_message_sends_an_installed_reader_to_a_checkout(m
             guard()
         _assert_installed_reader_message(str(caught.value))
 
-    _assert_installed_reader_message(htmlreport._chart(None, "equity curve"))
+    # The HTML placeholder deliberately carries no command at all (see its own test).
+    assert "uv sync" not in htmlreport._chart(None, "equity curve")
 
     for provider in ("anthropic", "openai"):
         with pytest.raises(SystemExit) as caught:
@@ -201,13 +262,43 @@ def test_no_missing_dependency_message_sends_an_installed_reader_to_a_checkout(m
     _assert_installed_reader_message(str(caught.value.code))
 
 
-def test_the_html_placeholder_escapes_the_hint(monkeypatch):
+def test_the_html_placeholder_never_carries_this_machines_install_text(monkeypatch):
+    """A report is attached and forwarded. The install command names the installer, the
+    version and every pack the reader added with `--with`, so it stays in the terminal."""
     from tradeflow.analytics import htmlreport
 
-    monkeypatch.setattr(extras, "install_hint", lambda *a: "pip install 'x[viz]' <b>&")
+    monkeypatch.setattr(settings, "running_from_checkout", lambda: False)
+    monkeypatch.setattr(extras, "_pack_distributions", lambda: ["acme-signals"])
+    monkeypatch.setattr(extras, "_tool_receipt", lambda: tomllib_loads(RECEIPT))
     rendered = htmlreport._chart(None, "equity curve")
-    assert "<b>" not in rendered and "&lt;b&gt;" in rendered
-    assert "<pre" in rendered
+    assert "viz extra is not installed" in rendered
+    assert f"{settings.DOCS_URL}/usage/extras" in rendered
+    for leaked in ("acme-signals", "packdir", "uv tool", "pip install", "--with", "/work"):
+        assert leaked not in rendered, leaked
+
+
+def tomllib_loads(text):
+    return pytest.importorskip("tomllib").loads(text)
+
+
+def test_the_doctor_prints_one_install_command_not_one_per_extra(monkeypatch, capsys, tmp_path):
+    """Each `uv tool install --force` replaces the environment, so two of them leave
+    only the second's extras. One command over everything missing is the only safe
+    thing to print - and the ai extra, reported by two rows, appears once."""
+    from tradeflow.services import setup
+
+    _as_installed_copy(monkeypatch, installed={"viz", "mcp"})
+    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
+    args = cli.parse_cli(["init", "--check"])
+    with pytest.raises(SystemExit):  # no credentials in this home: not ready for `data`
+        args.func(args)
+    out = capsys.readouterr().out
+    assert out.count("uv tool install --force") == 1, out
+    command = next(line for line in out.splitlines() if "uv tool install --force" in line)
+    for name in setup.missing_extras(setup.run_checks(tmp_path / ".env", environ={})):
+        assert name in command
+    for name in ("mcp", "viz"):  # already installed: kept, not dropped
+        assert name in command
 
 
 def test_the_extras_page_lists_every_extra():

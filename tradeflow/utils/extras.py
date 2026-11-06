@@ -15,10 +15,11 @@ services layer.
 from __future__ import annotations
 
 import importlib.util
+import shlex
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 @dataclass(frozen=True)
@@ -115,40 +116,129 @@ def _pack_distributions() -> List[str]:
     return sorted(names)
 
 
+def _tool_receipt() -> Optional[Dict[str, Any]]:
+    """The ``uv tool`` receipt of this environment, or ``None``.
+
+    ``uv tool install`` writes ``uv-receipt.toml`` at the root of the tool environment:
+    exactly the requirements, extras and ``--with`` entries it was built from. That is
+    what a rebuild has to restate, so reading it beats guessing from the packages that
+    happen to be importable. Absent for any other installer, and unreadable on a Python
+    without :mod:`tomllib` (3.10) - in both cases the caller falls back to advice.
+    """
+    receipt = Path(sys.prefix) / "uv-receipt.toml"
+    try:
+        import tomllib
+
+        data = tomllib.loads(receipt.read_text(encoding="utf-8"))
+    except (ImportError, OSError, ValueError):
+        return None
+    return data if isinstance(data.get("tool"), dict) else None
+
+
+def _quote(text: str) -> str:
+    return shlex.quote(text)
+
+
+def _with_flags(requirements: List[Dict[str, Any]]) -> List[str]:
+    """``--with`` arguments that restate every requirement but this distribution."""
+    from tradeflow.settings import DISTRIBUTION_NAME
+
+    flags: List[str] = []
+    for req in requirements:
+        name = str(req.get("name", ""))
+        if not name or name.lower().replace("_", "-") == DISTRIBUTION_NAME:
+            continue
+        extras_part = f"[{','.join(req['extras'])}]" if req.get("extras") else ""
+        if req.get("editable"):
+            flags.append(f"--with-editable {_quote(str(req['editable']))}")
+        elif req.get("directory") or req.get("path"):
+            flags.append(f"--with {_quote(str(req.get('directory') or req['path']))}")
+        elif req.get("git"):
+            flags.append(f"--with {_quote(f'{name}{extras_part} @ git+' + str(req['git']))}")
+        elif req.get("url"):
+            flags.append(f"--with {_quote(f'{name}{extras_part} @ ' + str(req['url']))}")
+        else:
+            flags.append(f"--with {_quote(name + extras_part + str(req.get('specifier', '')))}")
+    return flags
+
+
+def _uv_tool_command(wanted: List[str], extra_flags: Tuple[str, ...] = ()):
+    """``(command, receipt, note)`` that rebuilds this tool environment with ``wanted``.
+
+    With a receipt the command restates every extra and ``--with`` package the tool was
+    built from. Without one it cannot, and ``note`` says what to add by hand.
+    """
+    import tradeflow
+    from tradeflow.settings import DISTRIBUTION_NAME
+
+    receipt = _tool_receipt()
+    requirements = list(((receipt or {}).get("tool") or {}).get("requirements") or [])
+    recorded: set = set()
+    for req in requirements:
+        if str(req.get("name", "")).lower().replace("_", "-") == DISTRIBUTION_NAME:
+            recorded.update(req.get("extras") or ())
+    union = sorted({*installed_extras(), *recorded, *wanted})
+    command = f"uv tool install --force '{DISTRIBUTION_NAME}[{','.join(union)}]=={tradeflow.__version__}'"
+    note = None
+    if receipt is not None:
+        command = " ".join([command, *_with_flags(requirements), *extra_flags])
+    else:
+        packs = _pack_distributions()
+        note = (
+            f"(re-add any packs you installed with --with: {', '.join(packs) if packs else 'none detected'})"
+        )
+    return command, receipt, note
+
+
+def pack_install_hint(path: str) -> str:
+    """How to install a pack from a directory, without removing anything already there.
+
+    A checkout installs it into its own environment (additive). A ``uv tool`` copy has
+    to rebuild the tool environment, so the command carries everything it already had.
+    """
+    from tradeflow.settings import running_from_checkout
+
+    if running_from_checkout():
+        return f"uv pip install -e {shlex.quote(path)}"
+    command, receipt, note = _uv_tool_command([], (f"--with-editable {shlex.quote(path)}",))
+    if receipt is None:
+        return f"python -m pip install -e {shlex.quote(path)}"
+    return command
+
+
 def install_hint(*extras: str) -> str:
     """The recovery text for adding ``extras``, phrased for how this copy was reached.
 
-    A checkout gets one ``uv sync`` line. An installed copy gets both ways to add an
-    extra, because which installer made the environment cannot be known for certain:
-    the ``uv tool`` form carries the extras already installed (it replaces the whole
-    environment, so naming only the new one would silently remove the rest) and is
-    pinned to the running version, since adding a capability is not an upgrade.
+    A checkout gets one ``uv sync --inexact`` line: plain ``uv sync`` is *exact* and
+    uninstalls whatever the lock does not name for the extras given - the ``dev`` tools
+    and any pack installed with ``uv pip install -e`` - while ``--inexact`` only adds.
+
+    An installed copy gets both ways to add an extra, because which installer made the
+    environment cannot be known for certain. The ``uv tool`` form replaces the whole
+    environment, so it restates the extras and ``--with`` packs the tool was built from
+    (read from its receipt) and is pinned to the running version, since adding a
+    capability is not an upgrade.
     """
     import tradeflow
     from tradeflow.settings import DISTRIBUTION_NAME, DOCS_URL, running_from_checkout
 
     wanted = sorted(set(extras))
-    union = sorted({*installed_extras(), *wanted})
 
     if running_from_checkout():
-        # `uv sync` also removes whatever is not named, so the union is the command.
-        return "    uv sync " + " ".join(f"--extra {name}" for name in union)
+        return "    uv sync --inexact " + " ".join(f"--extra {name}" for name in wanted)
 
     version = tradeflow.__version__
-    uv_form = f"uv tool install --force '{DISTRIBUTION_NAME}[{','.join(union)}]=={version}'"
-    packs = _pack_distributions()
-    packs_note = ", ".join(packs) if packs else "none detected"
+    uv_form, receipt, note = _uv_tool_command(wanted)
     pip_form = f"python -m pip install '{DISTRIBUTION_NAME}[{','.join(wanted)}]=={version}'"
 
-    detected = _in_uv_tool_env()
+    detected = receipt is not None or _in_uv_tool_env()
     uv_label = "With uv tool (detected):" if detected else "With uv tool:"
     pip_label = "In an activated venv:"
     width = max(len(uv_label), len(pip_label)) + 1
-    lines = [
-        f"    {uv_label:<{width}}{uv_form}",
-        f"    {'':<{width}}(re-add any packs you installed with --with: {packs_note})",
-        f"    {pip_label:<{width}}{pip_form}",
-    ]
+    lines = [f"    {uv_label:<{width}}{uv_form}"]
+    if note:
+        lines.append(f"    {'':<{width}}{note}")
+    lines.append(f"    {pip_label:<{width}}{pip_form}")
     lines.append(f"    Extras guide: {DOCS_URL}/usage/extras")
     return "\n".join(lines)
 

@@ -140,7 +140,7 @@ architecture and guardrails.
 ## From a source checkout (contributors)
 
 Replace `tradeflow` with `uv run python main.py`, and install an extra with
-`uv sync --extra mcp` (or `ai`, `openai`; `uv sync` removes extras you do not name).
+`uv sync --inexact --extra mcp` (or `ai`, `openai`; plain `uv sync` removes extras and packs you do not name).
 To register a checkout with an MCP client:
 
 ```json

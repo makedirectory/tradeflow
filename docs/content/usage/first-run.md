@@ -201,7 +201,7 @@ calls no model.
 
 Everything above works from a checkout too, with `uv run python main.py` in place of
 `tradeflow` (`make init`, `make check`, `make demo` are the Makefile shortcuts), and
-`uv sync --extra <name>` in place of an installer command. A checkout does not keep
+`uv sync --inexact --extra <name>` in place of an installer command. A checkout does not keep
 its own state: state lives in `~/.tradeflow` unless `TRADEFLOW_HOME` is set, and
 `tradeflow init --dev-local-state` prints the setting that puts it back inside the
 working tree.

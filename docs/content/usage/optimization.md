@@ -142,5 +142,5 @@ refits. Same evaluation budget, fewer rounds.
 ## From a source checkout (contributors)
 
 The commands above are the installed `tradeflow` command. In a checkout, run them as
-`uv run python main.py <command> ...`. The Makefile shortcut for this page is `make optimize`. Extras are installed with `uv sync --extra <name>`
+`uv run python main.py <command> ...`. The Makefile shortcut for this page is `make optimize`. Extras are installed with `uv sync --inexact --extra <name>`
 (see [optional extras](extras)).

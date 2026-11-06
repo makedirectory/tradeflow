@@ -2043,7 +2043,9 @@ def _scaffold_example_pack(destination) -> None:
     )
     print(f"\nA working private pack is now at {target}\n")
     print("  Install it, and its strategy and scanner appear everywhere a built-in does:\n")
-    print(f"    uv pip install -e {target}")
+    from tradeflow.utils.extras import pack_install_hint
+
+    print(f"    {pack_install_hint(str(target))}")
     print("    tradeflow init --check          # lists it under 'private packs installed'")
     print(f"    tradeflow backtest --config {target / 'configs' / 'breakout.json'} \\")
     print("        --start 2024-01-02 --end 2025-01-02\n")
@@ -2116,6 +2118,15 @@ def _print_doctor(checks, *, task: str = "data", provider=None, probe: bool = Fa
         why = "" if info["ready"] else f" ({', '.join(info['blocking'])})"
         unverified = f" [not verified: {', '.join(info['unverified'])}]" if info["unverified"] else ""
         print(f"  {mark}{name}{why}{unverified}")
+
+    absent = setup.missing_extras(checks)
+    if absent:
+        # One command for all of them: each form of the command replaces the whole
+        # environment, so running one per extra would leave only the last one's.
+        from tradeflow.utils.extras import install_hint
+
+        print(f"\n  Missing extras ({', '.join(absent)}) - one command adds them all:")
+        print(install_hint(*absent))
 
     probe_failed = False
     if probe:

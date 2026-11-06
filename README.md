@@ -344,7 +344,7 @@ checkout:
 ```bash
 make install-optimize     # scikit-learn, for `optimize --method bayesian`
 make install-portfolio    # Google OR-Tools, for `allocate`
-uv sync --extra mcp       # the MCP SDK, for `python main.py mcp`
+uv sync --inexact --extra mcp   # the MCP SDK, for `python main.py mcp`
 ```
 
 ## Project status
@@ -424,8 +424,8 @@ The proposer is **provider-agnostic** — choose with `--provider`:
 
 | Provider | Install | Default model | Credential |
 |----------|---------|---------------|------------|
-| `anthropic` (default) | `uv sync --extra ai` | `claude-opus-4-8` | `ANTHROPIC_API_KEY` |
-| `openai` | `uv sync --extra openai` | `gpt-4o` | `OPENAI_API_KEY` |
+| `anthropic` (default) | `uv sync --inexact --extra ai` | `claude-opus-4-8` | `ANTHROPIC_API_KEY` |
+| `openai` | `uv sync --inexact --extra openai` | `gpt-4o` | `OPENAI_API_KEY` |
 | `ollama` (local) | none | `llama3.1` | none |
 
 Set the credential in `.env` (alongside your Alpaca keys — see `.env.example`)

@@ -206,11 +206,14 @@ def _chart(png: Optional[bytes], alt: str) -> str:
     strictly better than no report.
     """
     if png is None:
-        from tradeflow.utils.extras import install_hint
+        # Deliberately not the install command: a report is attached and forwarded, and
+        # the command names this machine's packs and installer. `init --check` prints it
+        # for the reader's own terminal.
+        from tradeflow.settings import DOCS_URL
 
         return (
-            '<p class="empty">Chart not rendered — the viz extra is not installed.</p>'
-            f'<pre class="empty">{esc(install_hint("viz"))}</pre>'
+            '<p class="empty">Chart not rendered — the viz extra is not installed. '
+            f"See {esc(DOCS_URL)}/usage/extras for how to add it.</p>"
         )
     encoded = base64.b64encode(png).decode("ascii")
     return f'<img alt="{esc(alt)}" src="data:image/png;base64,{encoded}">'

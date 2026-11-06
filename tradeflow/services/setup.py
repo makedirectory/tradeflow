@@ -346,6 +346,10 @@ class Check:
     next_action: Optional[str] = None
     #: Tasks this row gates; empty means informational.
     needed_for: FrozenSet[str] = frozenset()
+    #: Extras whose absence this row reports. The doctor prints one install command for
+    #: all of them together, because two commands that each replace the environment
+    #: undo one another.
+    installs: Tuple[str, ...] = ()
 
     @property
     def passed(self) -> bool:
@@ -467,12 +471,20 @@ def _model_checks(state: EnvState, environ: Optional[Dict[str, str]], provider: 
         actions = []
         if not sdk_ok:
             missing.append(f"the '{extra}' extra (SDK not installed)")
-            actions.append(extras.install_hint(extra))
         if not key_ok:
             missing.append(key_name)
             actions.append(f"set {key_name} in the environment or in .env")
         status: Status = "blocked" if selected else "optional_missing"
-        rows.append(Check(label, status, "missing " + " and ".join(missing), "\n".join(actions), gate))
+        rows.append(
+            Check(
+                label,
+                status,
+                "missing " + " and ".join(missing),
+                "\n".join(actions) or None,
+                gate,
+                () if sdk_ok else (extra,),
+            )
+        )
 
     if provider is None:
         usable = bool(ready_providers)
@@ -490,6 +502,12 @@ def _model_checks(state: EnvState, environ: Optional[Dict[str, str]], provider: 
             )
         )
     return rows
+
+
+def missing_extras(checks: List[Check]) -> List[str]:
+    """Every extra some row reports absent, once each and sorted - the input to the one
+    install command the doctor prints (see :attr:`Check.installs`)."""
+    return sorted({name for c in checks if c.status != "ready" for name in c.installs})
 
 
 def readiness(checks: List[Check]) -> Dict[str, Dict[str, Any]]:
@@ -706,8 +724,9 @@ def _extras_checks() -> List[Check]:
                 f"extra: {name}",
                 "blocked" if gated else "optional_missing",
                 f"not installed - {extra.unlocks}",
-                extras.install_hint(name),
+                None,
                 gated,
+                (name,),
             )
         )
     return checks
