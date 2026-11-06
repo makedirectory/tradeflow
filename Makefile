@@ -173,8 +173,11 @@ release-check: build  ## Build, validate the metadata, and install into a clean 
 	@echo "OK — the wheel installs and runs, as quantred and as tradeflow, outside this checkout."
 
 # --- quality & docs ---------------------------------------------------------
-check-links:  ## Verify Markdown links + heading anchors (includes local specs/)
+check-links:  ## Verify Markdown links + heading anchors in the tracked docs
 	uv run python scripts/check_links.py
+
+check-spec-links:  ## Verify links inside the local, gitignored specs/ (not run in CI)
+	uv run python scripts/check_links.py specs
 
 test:  ## Run the offline test suite (no API keys needed)
 	uv run --extra dev pytest -q

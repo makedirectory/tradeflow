@@ -88,3 +88,23 @@ def test_repo_docs_have_no_broken_links():
     finally:
         os.chdir(cwd)
     assert problems == [], "\n" + "\n".join(problems)
+
+
+def test_a_tracked_doc_linking_into_the_gitignored_specs_is_refused(tmp_path, monkeypatch):
+    """`specs/` is not in the repository, so a doc linking into it resolves on the
+    author's machine and nowhere else - the ordinary missing-file check passes locally.
+    Spec-to-spec links stay fine; only the crossing is refused."""
+    monkeypatch.chdir(tmp_path)
+    _write(tmp_path, "specs/plan.md", "# Plan\nSee [sibling](other.md).")
+    _write(tmp_path, "specs/other.md", "# Other\n")
+    _write(tmp_path, "docs/guide.md", "Background in [the plan](../specs/plan.md).")
+
+    problems = check(["docs", "specs"])
+    assert len(problems) == 1
+    assert "docs/guide.md: links into gitignored specs/" in problems[0]
+
+
+def test_the_specs_are_not_a_default_root():
+    """They are local-only; a local folder's broken links failed the repository's own
+    check (and its test) on one machine while CI, which has no `specs/`, stayed green."""
+    assert not any(root == "specs" or root.startswith("specs/") for root in DEFAULT_ROOTS)

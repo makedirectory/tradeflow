@@ -34,7 +34,7 @@ correct in the source:
 ```bash
 uv run ruff check . && uv run ruff format --check .   # exactly what CI runs
 make test                                             # offline, no keys
-make check-links                                      # includes gitignored specs/
+make check-links                                      # tracked docs; specs/ never linked
 make release-check                                    # build + install into a clean venv
 ```
 
