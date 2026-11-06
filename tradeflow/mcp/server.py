@@ -242,6 +242,27 @@ def _trial_store():
 _USE_LIST_TRIALS = "Use list_trials to see which trial ids are recorded."
 
 
+def _verdict_trade_note(report: Dict[str, Any]) -> Dict[str, Any]:
+    """Say what an agent can actually do when a verdict trial has no trade table.
+
+    The shared reason tells the caller to re-run "with trades recorded", which a verdict
+    cannot do: `run_verdict` has no `record_trades` parameter, and a verdict is a
+    cross-sectional pipeline that makes no trades of its own. Advice that names a
+    parameter the tool lacks is worse than none - the agent acts on it.
+    """
+    if report.get("kind") == "verdict" and report.get("status") == "unavailable":
+        report = {
+            **report,
+            "reason": (
+                "a verdict trial carries no trade table - it scores a cross-sectional book, not "
+                "a sequence of trades, and `run_verdict` cannot record one. To see trades, run "
+                "`run_backtest` with `record_trades=true` over the same window and universe "
+                "and analyze that trial instead."
+            ),
+        }
+    return report
+
+
 #: Appended where a tool accepts `workers`. Parallelism is a throughput choice, and
 #: an agent should know it changes nothing else about the answer.
 _WORKERS_NOTE = (
@@ -1688,7 +1709,8 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         Read `status` before any number. `complete` means the figures cover every trade
         the run made. `unavailable` means there are none and `reason` says why — most
         often that the run did not record trades (`record_trades=true` on `run_backtest` or
-        `run_walk_forward`), which is NOT the same as a run that made no trades. `truncated` appears only with `allow_partial=true`,
+        `run_walk_forward`), which is NOT the same as a run that made no trades. A `verdict` trial
+        never carries a trade table (`run_verdict` cannot record one); `reason` says what to run instead. `truncated` appears only with `allow_partial=true`,
         and then every count and total is a partial and must be reported as one.
 
         A trade table capped at the storage ceiling is refused by default rather than
@@ -1708,7 +1730,7 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
             report = analysis.analyze_trial(store, trial_id, allow_partial=allow_partial)
             if report.get("error"):
                 raise ValueError(f"{report['error']} {_USE_LIST_TRIALS}")
-            return _logged("analyze_trial", inputs, report)
+            return _logged("analyze_trial", inputs, _verdict_trade_note(report))
 
     @tool()
     def compare_trials(

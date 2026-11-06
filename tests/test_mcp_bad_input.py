@@ -102,3 +102,17 @@ def test_loading_an_unknown_config_names_list_configs_and_leaks_no_path(built, t
     message = _refused(built, "load_config", name="nope")
     assert "no saved config" in message.lower() and "list_configs" in message
     assert str(tmp_path) not in message and "Errno" not in message
+
+
+# --- D: the verdict trial's trade note -----------------------------------------------
+def test_a_verdict_trial_is_not_told_to_re_run_it_with_trades_recorded(built):
+    """`run_verdict` has no `record_trades`, so the shared advice named a parameter the
+    tool does not have. The agent is told what it can actually do."""
+    verdict = _trial("verdict")
+    report = _call(built, "analyze_trial", trial_id=verdict)
+    assert report["status"] == "unavailable"
+    assert "run_backtest" in report["reason"] and "record_trades" in report["reason"]
+    assert "re-run it with trades recorded" not in report["reason"]
+
+    backtest = _call(built, "analyze_trial", trial_id=_trial())
+    assert "re-run it with trades recorded" in backtest["reason"]  # other kinds unchanged
