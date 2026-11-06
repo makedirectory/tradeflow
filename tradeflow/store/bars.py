@@ -29,7 +29,7 @@ import pandas as pd
 from tradeflow.marketdata.base import BarHandler, MarketDataProvider
 from tradeflow.marketdata.client import TimeframeLike
 from tradeflow.marketdata.timeframe import Timeframe
-from tradeflow.settings import state_root
+from tradeflow.settings import invocation, state_root
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tradeflow.data.store import ParquetBarStore
@@ -85,7 +85,7 @@ class CacheMiss(RuntimeError):
         ranges = ", ".join(f"{s.isoformat()}..{e.isoformat()}" for s, e in gaps)
         super().__init__(
             f"--offline: {symbol} ({timeframe}) is missing cached bars for {ranges}. "
-            f"Run `python main.py cache warm --symbols {symbol} --timeframe {timeframe}` first.\n"
+            f"Run `{invocation(f'cache warm --symbols {symbol} --timeframe {timeframe}')}` first.\n"
             f"{DATE_CONTRACT_NOTICE}"
         )
 

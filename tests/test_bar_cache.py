@@ -136,6 +136,28 @@ def test_offline_raises_cache_miss_on_empty_cache(tmp_path):
     assert upstream.calls == []
 
 
+@pytest.mark.parametrize(
+    "checkout, expected, absent",
+    [
+        (False, "`quantred cache warm --symbols AAA", "main.py"),
+        (True, "`python main.py cache warm --symbols AAA", "quantred cache"),
+    ],
+)
+def test_the_miss_names_the_warm_command_of_the_copy_that_is_running(
+    tmp_path, monkeypatch, checkout, expected, absent
+):
+    """An installed copy has no main.py, so telling its user to run it is a dead end."""
+    from tradeflow import settings
+
+    monkeypatch.setattr(settings, "running_from_checkout", lambda: checkout)
+    cached, upstream = _cache(tmp_path, offline=True)
+    start, end = _full_window(upstream)
+    with pytest.raises(CacheMiss) as miss:
+        cached.get_bars(["AAA"], "1Day", start, end)
+    assert expected in str(miss.value)
+    assert absent not in str(miss.value)
+
+
 def test_offline_serves_warm_cache_with_zero_upstream_calls(tmp_path):
     warm_upstream = WindowedFakeProvider(SYMBOLS)
     warm_cache = CachedMarketData(warm_upstream, cache_dir=tmp_path / "bars")
