@@ -363,6 +363,11 @@ def parse_cli(argv: Optional[List[str]] = None):
     """Parse argv and record which flags were typed, for config layering."""
     argv = list(sys.argv[1:]) if argv is None else list(argv)
     parser = build_parser()
+    if not argv:
+        # The bare command is how most people first meet it; "the following arguments
+        # are required: <command>" answered with an error instead of the map.
+        parser.print_help()
+        sys.exit(0)
     _refuse_sibling_command_after_research(parser, argv)
     args = parser.parse_args(argv)
     args.flags_given = _flags_given(parser, argv, getattr(args, "command", None))
@@ -5992,6 +5997,53 @@ def _top_level_epilog() -> str:
     return "\n".join(lines)
 
 
+#: The top-level commands by what a reader is trying to do, in the order they should
+#: meet them. `--help` used to print all of them in one brace and one list in the order
+#: they were defined, so live trading came before the two commands a newcomer needs and
+#: `init` and `demo` sat at the very end. Every command appears in exactly one group
+#: (a test enforces it), so a new command cannot fall out of the help.
+COMMAND_GROUPS = (
+    ("start here", ("init", "demo")),
+    (
+        "evaluate an idea (read-only; never places an order)",
+        (
+            "verdict",
+            "backtest",
+            "walkforward",
+            "optimize",
+            "screen",
+            "scan",
+            "alphas",
+            "info",
+            "horizon",
+            "risk",
+            "allocate",
+        ),
+    ),
+    ("history and data", ("trials", "cache")),
+    ("agents", ("mcp", "research", "demo-agent")),
+    (
+        "trading (paper by default; small-real places real orders)",
+        ("live", "small-real", "halt", "resume", "halts", "flatten", "reconcile", "execution-report"),
+    ),
+)
+
+
+def _command_listing(subparsers) -> str:
+    """The grouped command list, with each command's own one-line help."""
+    import textwrap
+
+    helps = {action.dest: action.help or "" for action in subparsers._choices_actions}
+    lines = []
+    for title, names in COMMAND_GROUPS:
+        lines += ["", f"{title}:"]
+        for name in names:
+            wrapped = textwrap.wrap(helps[name], width=58) or [""]
+            lines.append(f"  {name:<18}{wrapped[0]}")
+            lines += [f"  {'':<18}{more}" for more in wrapped[1:]]
+    return "\n".join(lines)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=CLI_NAME,
@@ -6007,7 +6059,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--version", action=_VersionAction, help="Show the version, which copy is running, and its state root"
     )
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    # Listed by `_command_listing` in the description instead: argparse's own listing
+    # is one block in definition order, with every name repeated in a brace above it.
+    subparsers = parser.add_subparsers(
+        dest="command", required=True, metavar="<command>", help=argparse.SUPPRESS
+    )
 
     def add_common(p, *, with_dates: bool) -> None:
         # The default is a demonstration, and says so. Someone reaching for this flag
@@ -7609,6 +7665,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     demo.set_defaults(func=cmd_demo)
 
+    import textwrap
+
+    parser.description = "\n".join(
+        [*textwrap.wrap(parser.description, width=78), _command_listing(subparsers)]
+    )
+    # The suppressed listing also drops the command from the usage line, which then read
+    # as though the program took no arguments.
+    parser.usage = "%(prog)s [-h] [--version] <command> [options]"
     return parser
 
 

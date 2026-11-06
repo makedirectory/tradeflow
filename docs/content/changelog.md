@@ -98,6 +98,11 @@ without guessing. The history below keeps the old name as it was written.
   or on any symbol that happens to have some coverage.
   An offline `verdict` whose steps miss prints one warm command covering every step,
   instead of one per step with a different window each.
+- `quantred --help`, and the bare `quantred`, show the commands grouped by what you are
+  trying to do - start here, evaluate an idea, history and data, agents, trading - with
+  `init` and `demo` first. They were one long list in definition order with live trading
+  near the top and every name repeated in a brace above it; the bare command was an
+  error.
 - The metrics glossary states which equity curve a result's risk figures come from: a
   backtest and each walk-forward fold are marked to market at bar closes, and only a
   walk-forward's aggregate across folds is rebuilt from closed-trade P&L. It used to say
