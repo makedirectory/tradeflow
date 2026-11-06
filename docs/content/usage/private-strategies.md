@@ -20,20 +20,29 @@ data. For the interface reference — every method, every contract — see
 
 ## Start from a working pack
 
-There is a complete one in the repository, and `init` will copy it somewhere you own:
+There is a complete one in the repository under `example/`. A checkout or an unpacked
+source distribution carries it, and `init` copies it somewhere you own:
 
 ```bash
 quantred init --example-pack ./my-signals
 quantred init --check          # lists it under "private packs installed"
 ```
 
-The command prints the install line for how you installed QuantRed. For a `uv tool`
-install, the tool environment is rebuilt, so restate your extras:
+An installed copy (`uv tool install`, `pip install`) does **not** carry it, and
+`init --example-pack` says so; fetch it and copy it yourself, then install the copy:
+
+```bash
+git clone https://github.com/makedirectory/tradeflow && cp -R tradeflow/example ./my-signals
+```
+
+Install the copy for how you installed QuantRed. For a `uv tool` install, the tool
+environment is rebuilt, so restate your extras:
 `uv tool install --force 'quantred[mcp,viz]' --with-editable ./my-signals`. In an
-activated virtual environment: `python -m pip install --no-deps -e ./my-signals`. From a
-checkout of the repository: `uv pip install -e ./my-signals`. (If a pack of yours still
-depends on the old `tradeflow-engine`, see
-[migrating to QuantRed](migrating-to-quantred#if-you-write-or-use-an-extension-pack).)
+activated virtual environment: `python -m pip install -e ./my-signals`. From a checkout
+of the repository: `uv pip install -e ./my-signals`. If a pack of yours still depends on
+the old `tradeflow-engine`, change that dependency to `quantred`; if you cannot edit it,
+see [migrating to QuantRed](migrating-to-quantred#if-you-write-or-use-an-extension-pack)
+for `--no-deps` and `--excludes`, which keep the old distribution out.
 
 That gives you a strategy, a scanner, a saved config, a `.gitignore`, and a
 `pyproject.toml` with the entry points already declared — a starting point to edit
@@ -68,6 +77,7 @@ the base interface.
 
 ```bash
 uv pip install -e ../yourfirm-signals     # in a venv or checkout; with uv tool, use --with-editable
+                                          # (a pack that depends on tradeflow-engine: see the migration page)
 quantred init --check                    # confirms which packs are installed
 ```
 

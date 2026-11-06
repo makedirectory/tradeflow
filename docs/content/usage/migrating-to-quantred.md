@@ -69,7 +69,7 @@ print `quantred <version>` and show the same state root as before.
 
 Running the new install first does not damage anything, but does not work either: uv
 builds the new environment, then stops with `error: Executable already exists:
-tradeflow (use --force to overwrite)`, and the old tool keeps running. **Do not follow
+tradeflow use `--force` to overwrite`, and the old tool keeps running. **Do not follow
 the `--force` suggestion.** It succeeds and points `tradeflow` at the new tool, but the
 `uv tool uninstall tradeflow-engine` that follows then deletes that `tradeflow` link, so
 the alias stops working while `uv tool list` still shows it under `quantred`. If that
@@ -137,11 +137,12 @@ that declare it exist. Installing one makes the installer pull the old distribut
 beside `quantred`, and the two then share one `tradeflow/` tree. Nothing reports it. You
 notice because:
 
-- `quantred --version` prints `tradeflow <version>`, the old name, and
 - every command starts with `Ignoring duplicate tradeflow.strategies contribution
-  'demo_trend' ...` lines.
+  'demo_trend' ...` lines, and
+- `quantred --version` may print `tradeflow <version>`, the old name (it depends on which
+  copy of the files won).
 
-(In the rehearsal the files were sometimes the old code and sometimes the new, so
+(In the rehearsals the files were sometimes the old code and sometimes the new, so
 behaviour is unpredictable.) If you own the pack, change its dependency to `quantred` or
 drop it; the engine is always present where a pack runs. If you cannot edit it, install
 it so the old distribution is kept out:
@@ -150,7 +151,7 @@ it so the old distribution is kept out:
   exclusion, so it survives later rebuilds of the tool environment:
 
   ```bash
-  echo tradeflow-engine > excludes.txt
+  printf '%s\n' tradeflow-engine > excludes.txt
   uv tool install 'quantred[mcp,viz]' --with-editable ./my-pack --excludes excludes.txt
   ```
 
@@ -165,6 +166,23 @@ it so the old distribution is kept out:
   ```
 
   Without `--no-deps`, pip installs `tradeflow-engine` over `quantred` without a warning.
+  `--no-deps` also skips the pack's *other* dependencies, so it is only for a pack you
+  cannot edit; if you can, change the pack's dependency to `quantred` and install it
+  normally.
+
+- **Checkout.** `uv pip install -e` of such a pack pulls `tradeflow-engine` into the
+  checkout's environment, and `uv run quantred` then runs the old code (it prints
+  `tradeflow <version>`) while `python main.py` runs the checkout's. Install it without
+  the old distribution:
+
+  ```bash
+  uv pip install --no-deps -e ./my-pack
+  ```
+
+  (the same `--no-deps` caveat applies). If it already happened, use the swap in
+  [If you work from a checkout](#if-you-work-from-a-checkout):
+  `uv pip uninstall tradeflow-engine`, then
+  `uv run --extra dev --reinstall-package quantred python main.py --version`.
 
 **Repair.** If it already happened in a virtual environment, remove the old distribution
 and reinstall the new one over the top:

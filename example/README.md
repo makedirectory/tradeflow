@@ -16,16 +16,27 @@ quantred init --example-pack ./my-signals   # the destination is yours to name
 quantred init --check                       # lists it under "private packs installed"
 ```
 
-The command prints the install line for how you installed QuantRed; the forms are:
+`--example-pack` needs a checkout or an unpacked source distribution, because the
+installed package does not carry this directory. From an installed copy:
+
+```bash
+git clone https://github.com/makedirectory/tradeflow && cp -R tradeflow/example ./my-signals
+```
+
+Then install the copy for how you installed QuantRed:
 
 ```bash
 # uv tool: the tool environment is rebuilt, so restate your extras
 uv tool install --force 'quantred[mcp,viz]' --with-editable ./my-signals
 # virtual environment (activated)
-python -m pip install --no-deps -e ./my-signals
+python -m pip install -e ./my-signals
 # a checkout of this repository
 uv pip install -e ./my-signals
 ```
+
+If a pack of yours depends on the old `tradeflow-engine` and you cannot change that to
+`quantred`, add `--no-deps` (it also skips the pack's other dependencies); see the
+migration page in the documentation.
 
 ## Make it yours
 

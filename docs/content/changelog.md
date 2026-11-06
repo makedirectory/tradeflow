@@ -41,7 +41,7 @@ without guessing. The history below keeps the old name as it was written.
   recorded history carry over.
 - MCP clients now see the server as `quantred`. Existing entries keep launching.
 - **Upgrading in place:** uninstall `tradeflow-engine` first, then install `quantred`;
-  the other order leaves a broken environment in a shared virtual environment. A pack
+  in a shared virtual environment, the other order breaks it. A pack
   that still depends on `tradeflow-engine` needs installing without it. Steps,
   symptoms and recovery are in [migrating to QuantRed](usage/migrating-to-quantred).
 
@@ -78,6 +78,8 @@ without guessing. The history below keeps the old name as it was written.
 
 ### MCP
 
+- The `mcp` extra needs the SDK at 1.22 or later; earlier releases do not import
+  under current pydantic.
 - The server reports the application's version to a client, not the MCP SDK's.
 - A date passed to any MCP tool is read in the exchange's time zone, exactly as the
   CLI reads `--start`/`--end`. Before, the same verdict over the CLI and then over MCP
