@@ -62,11 +62,19 @@ bar-frequency returns directly.
 
 ## Known limitation (flagged in the glossary)
 
-`build_equity_curve` accumulates **closed-trade** P&L resampled to daily, so
-intra-trade (mark-to-market) drawdown is invisible — `max_drawdown`,
-`ulcer_index`, and volatility *understate* true risk during long holds. The metric
-glossary surfaces this so agents don't over-trust the numbers. A mark-to-market
-equity curve from bar data is a future enhancement.
+The risk metrics depend on which equity curve they were computed from, and two are
+in use:
+
+- **Bar-close marks.** A backtest, and each walk-forward fold, use the engine's own
+  curve, marked to market at every bar's close. A loss inside an open position counts,
+  but only as of bar closes: a fall and recovery within one bar is not seen.
+- **Closed-trade P&L.** A walk-forward's out-of-sample aggregate across folds has no
+  single simulation behind it, so `build_equity_curve` rebuilds one from realized P&L
+  resampled to daily. Intra-trade drawdown is invisible there, and `max_drawdown`,
+  `ulcer_index` and volatility *understate* risk during long holds.
+
+The metric glossary states which basis applies where, so an agent does not read one
+as the other.
 
 ## Sample-size guard
 

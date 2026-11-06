@@ -37,7 +37,7 @@ agent — no business logic lives in any adapter. Every function takes a data-on
   never inlined. Optimization output is capped to the top-N rows with a
   truncation count.
 - `glossary.py` — `metrics_glossary()`: definition + pitfalls per metric, plus the
-  closed-trade equity-curve caveat and the multiple-testing warning, so an agent
+  equity-basis caveat (bar-close marks vs closed-trade P&L) and the multiple-testing warning, so an agent
   doesn't over-trust in-sample Sharpe.
 - `configs.py` — `save_config` / `load_config` / `list_configs` over the config
   store.

@@ -12,9 +12,12 @@ from tradeflow.analytics.performance import FLAG_KEYS, METRIC_KEYS
 
 #: Cross-cutting caveats the agent should keep in mind for *all* metrics.
 GLOBAL_CAVEATS = [
-    "Equity curve is built from CLOSED-trade P&L resampled to daily: "
-    "intra-trade (mark-to-market) drawdown is invisible, so max_drawdown / ulcer_index / "
-    "volatility UNDERSTATE true risk during long holds.",
+    "The equity basis depends on the result. A backtest, and each walk-forward fold, is "
+    "marked to market at every bar's close, so a loss inside an open position counts - "
+    "but only as of bar closes; a fall and recovery within one bar is not seen. A "
+    "walk-forward's OOS AGGREGATE across folds is rebuilt from CLOSED-trade P&L resampled "
+    "to daily, so its max_drawdown / ulcer_index / volatility UNDERSTATE risk during long "
+    "holds.",
     "In-sample metrics from run_optimization are NOT evidence of edge - they are the "
     "by-product of selecting the best of many configs. Validate with run_walk_forward, "
     "which scores out-of-sample and applies the Deflated Sharpe.",
@@ -31,7 +34,8 @@ _DEFS: Dict[str, str] = {
     "sharpe_ratio": "Annualized mean/std of returns (rf=0). The headline ratio. Inflated by short samples and fat tails - read probabilistic_sharpe_ratio alongside it.",
     "sortino_ratio": "Like Sharpe but only penalizes downside deviation.",
     "calmar_ratio": "CAGR / max drawdown. Reward per unit of worst peak-to-trough loss.",
-    "max_drawdown": "Largest peak-to-trough equity decline, %% (positive). UNDERSTATED - closed-trade curve only.",
+    "max_drawdown": "Largest peak-to-trough equity decline, %% (positive), at bar-close marks for a backtest "
+    "or a fold; UNDERSTATED for a walk-forward OOS aggregate, which uses the closed-trade curve.",
     "total_trades": "Number of closed trades. The sample-size guard; <30 => low_sample.",
     "win_rate": "%% of trades with positive P&L. High win rate can still lose money if losers are large (see payoff_ratio).",
     "profit_factor": "Gross profit / gross loss. >1 is profitable; inf means no losing trades (often a tiny sample).",
@@ -88,7 +92,8 @@ _FLAG_DEFS: Dict[str, str] = {
 _PITFALLS: Dict[str, str] = {
     "sharpe_ratio": "Most likely to mislead: high in-sample after optimization is expected, not impressive. Compare to deflated_sharpe_ratio and OOS.",
     "profit_factor": "inf / very high usually means too few losing trades to be meaningful.",
-    "max_drawdown": "Understated by the closed-trade equity curve; true intra-trade drawdown is worse.",
+    "max_drawdown": "Bar-close marks miss intrabar lows; a walk-forward OOS aggregate (closed-trade curve) "
+    "misses open-position losses entirely, so its true drawdown is worse.",
     "calmar_ratio": "Sensitive to a single drawdown event and to window length.",
     "deflated_sharpe_ratio": "Requires an honest n_trials. The research agent must accumulate trials across the whole session, or this lies.",
 }

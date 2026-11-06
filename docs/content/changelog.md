@@ -95,6 +95,11 @@ without guessing. The history below keeps the old name as it was written.
   or on any symbol that happens to have some coverage.
   An offline `verdict` whose steps miss prints one warm command covering every step,
   instead of one per step with a different window each.
+- The metrics glossary states which equity curve a result's risk figures come from: a
+  backtest and each walk-forward fold are marked to market at bar closes, and only a
+  walk-forward's aggregate across folds is rebuilt from closed-trade P&L. It used to say
+  every curve was closed-trade, so a backtest's drawdown read as missing open-position
+  losses it actually includes.
 - `trials best` / `best_trials` no longer rank a plain backtest by default. It is one pass
   over its window, never validated out of sample, yet it was ranked under "validated runs
   only" with its full-window Sharpe in the out-of-sample column. `--include-in-sample`

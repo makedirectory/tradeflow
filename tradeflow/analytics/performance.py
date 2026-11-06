@@ -7,11 +7,13 @@ about signals and the engine stays about orchestration (separation of concerns).
 The metric *formulas* all live in :mod:`tradeflow.analytics.metrics`; this module only composes them over the trade table
 and equity curve.
 
-Caveat: ``build_equity_curve`` accumulates *closed-trade* P&L
-resampled to calendar-daily, so intra-trade (mark-to-market) drawdown is not
-captured. ``max_drawdown``/``ulcer_index``/volatility therefore understate true
-risk during long holds. Consumers (and the metrics glossary) must not over-trust
-these as mark-to-market figures.
+Caveat: the metrics are only as good as the curve handed in. The engine's own curve
+is marked to market at each bar's close, which a backtest and each walk-forward fold
+use. ``build_equity_curve`` instead accumulates *closed-trade* P&L resampled to
+calendar-daily - the fallback when no single simulation produced the trades, such as
+a walk-forward's aggregate across folds - and there intra-trade drawdown is not
+captured, so ``max_drawdown``/``ulcer_index``/volatility understate risk during long
+holds. The metrics glossary states which basis applies where.
 """
 
 from datetime import datetime

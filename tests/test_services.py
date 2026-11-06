@@ -106,6 +106,34 @@ def test_glossary_covers_every_metric():
     assert g["global_caveats"]  # the over-trust warnings are present
 
 
+def test_the_glossary_states_the_equity_basis_each_result_actually_uses(monkeypatch):
+    """The glossary said every equity curve was rebuilt from closed-trade P&L, so intra-trade
+    drawdown was invisible everywhere. A backtest and each walk-forward fold are marked to
+    market at bar closes; only a walk-forward's aggregate across folds is rebuilt. The
+    caveat names both, and this pins it to the code: the closed-trade rebuild runs once per
+    walk-forward (the aggregate) and never for a backtest."""
+    from tradeflow.analytics import performance
+    from tradeflow.optimization.walk_forward import WalkForwardValidator
+
+    caveat = " ".join(glossary.metrics_glossary()["global_caveats"])
+    assert "marked to market at every bar's close" in caveat
+    assert "AGGREGATE" in caveat and "CLOSED-trade" in caveat
+
+    rebuilt = []
+    original = performance.build_equity_curve
+    monkeypatch.setattr(
+        performance, "build_equity_curve", lambda *a, **k: rebuilt.append(1) or original(*a, **k)
+    )
+    client = MarketDataClient(FakeMarketData(["AAA", "BBB"], n=400, freq="1D"))
+    start, end = datetime(2024, 1, 2), datetime(2025, 1, 31)
+    analysis.run_backtest(client, "demo_trend", ["AAA", "BBB"], start, end, journal=False, force=True)
+    assert rebuilt == []
+
+    validator = WalkForwardValidator(registry.STRATEGIES["demo_trend"], client)
+    validator.run(["AAA", "BBB"], start, end, n_folds=2, max_evals=2)
+    assert len(rebuilt) == 1
+
+
 # --- audit ------------------------------------------------------------------
 def test_audit_log_appends_one_record(tmp_path):
     path = tmp_path / "audit.jsonl"
