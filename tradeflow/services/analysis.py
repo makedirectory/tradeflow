@@ -2755,7 +2755,6 @@ def run_verdict(
 
     if journal:
         reason = _verdict_not_a_trial(result)
-        result["journaled"] = reason is None
         if reason is None:
             from tradeflow.services.audit import run_context
 
@@ -2764,6 +2763,10 @@ def run_verdict(
             )
         else:
             result["not_journaled_reason"] = reason
+        # From the outcome, not the intent: journaling is bookkeeping that may fail
+        # without failing the run, and an agent told `journaled: true` with no trial id
+        # would cite a record that does not exist.
+        result["journaled"] = "trial_id" in result
     return result
 
 
@@ -2771,20 +2774,25 @@ def _verdict_not_a_trial(result: Dict[str, Any]) -> Optional[str]:
     """Why this run should not count toward the campaign's trials, or None if it should.
 
     A trial is a look at the data that the multiple-testing correction has to pay for.
-    An incomplete run whose skill test produced nothing (the information step failed or
-    never ran, typically a cold cache or a dropped connection) was not one: counting it
-    raised the family total for every failed attempt and deflated the next real result
-    against a test nobody saw. An incomplete run that *did* measure skill was a look,
-    whatever else failed, so it still counts — the conservative direction.
+    An incomplete run in which no step measured a realized IC (the information step
+    failed or never ran and no combination was measured, typically a cold cache or a
+    dropped connection) was not one: counting it raised the family total for every
+    failed attempt and deflated the next real result against a test nobody saw. An
+    incomplete run that *did* measure an IC was a look, whatever else failed, so it
+    still counts — the conservative direction.
     """
     verdict = result.get("verdict") or {}
     if verdict.get("verdict") != "incomplete":
         return None
+    # Both steps that measure realized ICs. The combination measures its own over a
+    # trailing window and prints them, so a run showing one was a look at the data.
     if (result.get("information") or {}).get("periods"):
+        return None
+    if (result.get("combination") or {}).get("n_periods"):
         return None
     failed = verdict.get("failed_steps") or []
     what = f"steps failed: {', '.join(failed)}" if failed else "no gate produced a number"
-    return f"skill was never measured ({what}), so this run does not count toward the campaign"
+    return f"no step measured an IC ({what}), so this run does not count toward the campaign"
 
 
 def _campaign_trials(strategy: str, symbols: Sequence[str], accounting: int) -> int:

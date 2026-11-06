@@ -164,12 +164,13 @@ rows per command would inflate the campaign's multiple-testing total fivefold an
 corrupt the deflated-Sharpe accounting. That single trial's count is what the
 report's `P(any |t|>2 across N campaign trials)` line is computed against.
 
-An `incomplete` run whose skill test never produced a number — the information step
-failed, typically on a cold cache or a dropped connection — records **no** trial, and
-the report says `Not recorded as a trial` with the reason. It looked at nothing, so
-counting it would make every failed attempt deflate the next real result. An
-incomplete run that did measure skill still counts, because it was a look at the data
-whatever else failed.
+An `incomplete` run in which no step measured an IC — the information step failed,
+typically on a cold cache or a dropped connection, and no signal combination was
+measured — records **no** trial, and the report says `Not recorded as a trial` with the
+reason. It looked at nothing, so counting it would make every failed attempt deflate
+the next real result. An incomplete run that did measure an IC (either step) still
+counts, because it was a look at the data whatever else failed. `journaled` in the
+structured result says whether a trial was actually written.
 
 An identical rerun is served from the trial store rather than re-run, under the same
 prominent `REUSED` banner every other command uses, with the original run's

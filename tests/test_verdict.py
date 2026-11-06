@@ -484,6 +484,39 @@ def test_a_failed_step_is_reported_once_not_logged_as_a_traceback(_isolated_stat
     assert any(r.exc_info for r in caplog.records if "information" in r.getMessage())
 
 
+def test_an_incomplete_run_whose_combination_measured_ics_is_still_a_trial(_isolated_state, monkeypatch):
+    """Found in review: only the information step was consulted, so a two-signal run whose
+    combination measured and printed realized ICs, with the information step failing,
+    said skill was never measured under a measured IC and was not counted — every
+    signal-set tweak a look nobody paid for."""
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("synthetic information failure")
+
+    monkeypatch.setattr(analysis, "compute_information", boom)
+    result = _run(signals=["demo_trend", "demo_trend"])
+    assert result["verdict"]["verdict"] == "incomplete"
+    assert result["combination"]["n_periods"]
+    assert result["journaled"] is True
+    assert "Not recorded as a trial" not in format_verdict_report(result)
+    rows = [r for r in _journal_rows(_isolated_state) if r.get("tool", "").startswith("trial:")]
+    assert len(rows) == 1
+
+
+def test_journaled_reports_the_outcome_not_the_intent(_isolated_state, monkeypatch):
+    """Found in review: `journaled` was set before journaling ran, and journaling swallows
+    its own failure, so a run whose journal write failed said `journaled: true` with no
+    trial id for an agent to cite."""
+
+    def refuse(*args, **kwargs):
+        raise OSError("synthetic journal failure")
+
+    monkeypatch.setattr(audit, "journal_trial", refuse)
+    result = _run()
+    assert "trial_id" not in result
+    assert result["journaled"] is False
+
+
 def test_force_appends_a_second_trial(_isolated_state):
     _run()
     forced = _run(force=True)
