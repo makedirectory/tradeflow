@@ -30,6 +30,15 @@ from tradeflow.settings import (
 
 @pytest.fixture(autouse=True)
 def _no_inherited_home(monkeypatch):
+    # Modules bind their default state paths at first import. Importing them here,
+    # while the suite's throwaway TRADEFLOW_HOME is still set, keeps a later first
+    # import from happening with it removed and binding a module to the real home
+    # for every test file that runs after this one.
+    import tradeflow.cli  # noqa: F401
+    import tradeflow.mcp.server  # noqa: F401
+    import tradeflow.services.audit  # noqa: F401
+    import tradeflow.services.setup  # noqa: F401
+
     monkeypatch.delenv("TRADEFLOW_HOME", raising=False)
 
 
