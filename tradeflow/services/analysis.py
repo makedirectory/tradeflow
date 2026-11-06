@@ -43,7 +43,7 @@ from tradeflow.optimization import causality as causality_defaults
 from tradeflow.optimization.optimizer import ParameterOptimizer
 from tradeflow.optimization.walk_forward import WalkForwardValidator
 from tradeflow.services.audit import new_run_id
-from tradeflow.services.registry import resolve_strategy_class
+from tradeflow.services.registry import resolve_strategy_class, scanner_refusal
 from tradeflow.settings import state_root
 from tradeflow.strategies.base import build_with_limits
 
@@ -2706,6 +2706,11 @@ def run_verdict(
     ``portfolio``, ``information``, ``verdict``.
     """
     _refuse_unusable_window(start, end)
+    # Before the first step, not inside it: an unknown scanner used to fail the scan and
+    # then leave the report to explain a missing universe as an infeasible book.
+    refusal = scanner_refusal(scanner)
+    if refusal:
+        raise ValueError(refusal)
     from tradeflow.engine.backtest import ACCOUNTING_VERSION
     from tradeflow.marketdata.session import session_client
     from tradeflow.portfolio.optimizer import long_only_cap_shortfall

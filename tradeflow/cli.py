@@ -6090,18 +6090,12 @@ def _scanner(value: str) -> str:
     argparse with the choices listed. Scanners arrive by entry point, so the choices
     are read from the registry when the flag is parsed rather than fixed in the parser.
     """
-    import difflib
+    from tradeflow.services.registry import scanner_refusal
 
-    from tradeflow.services.registry import SCANNERS
-
-    if value == "none" or value in SCANNERS:
-        return value
-    close = difflib.get_close_matches(value, list(SCANNERS), n=1)
-    hint = f" Did you mean {close[0]!r}?" if close else ""
-    installed = ", ".join(sorted(SCANNERS)) or "none installed"
-    raise argparse.ArgumentTypeError(
-        f"unknown scanner {value!r}.{hint} Available: {installed}; or 'none' to skip the scan."
-    )
+    refusal = scanner_refusal(value)
+    if refusal:
+        raise argparse.ArgumentTypeError(refusal)
+    return value
 
 
 def _positive_amount(value: str) -> float:

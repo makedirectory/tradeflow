@@ -8,7 +8,7 @@ import logging
 import re
 from collections.abc import Mapping
 from importlib import metadata
-from typing import Any, Dict, List, Type
+from typing import Any, Dict, List, Optional, Type
 
 from tradeflow.demo.scanners import DemoVolumeScanner
 from tradeflow.demo.strategies import DemoTrendStrategy
@@ -107,6 +107,24 @@ def list_scanners() -> List[Dict[str, Any]]:
         }
         for name, cls in SCANNERS.items()
     ]
+
+
+def scanner_refusal(value: str) -> Optional[str]:
+    """Why ``value`` is not a usable scanner name, or ``None`` when it is.
+
+    ``"none"`` means no scan and is always accepted. One definition for the CLI (at parse
+    time) and the services (before any step runs), so an unknown name is refused the same
+    way on every surface rather than failing inside a scan and being reported as a
+    different problem further down the report.
+    """
+    import difflib
+
+    if value == "none" or value in SCANNERS:
+        return None
+    close = difflib.get_close_matches(value, list(SCANNERS), n=1)
+    hint = f" Did you mean {close[0]!r}?" if close else ""
+    installed = ", ".join(sorted(SCANNERS)) or "none installed"
+    return f"unknown scanner {value!r}.{hint} Available: {installed}; or 'none' to skip the scan."
 
 
 def is_demo(cls: Type) -> bool:

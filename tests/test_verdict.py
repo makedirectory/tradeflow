@@ -871,3 +871,30 @@ def test_an_offline_verdict_prints_one_warm_command_that_fixes_every_step(tmp_pa
     second = offline_run()
     assert not [name for name, s in second["steps"].items() if s.get("cache_miss")]
     assert "cache_miss" not in second
+
+
+# --- an unknown scanner is refused before anything runs ------------------------
+def test_an_unknown_scanner_is_refused_up_front_and_nothing_is_journaled(_isolated_state):
+    """The scan step failed on the unknown name and the report then added a misleading
+    `max_weight*1 < 1` infeasibility line for the universe the scan never produced."""
+    provider = _provider()
+    with pytest.raises(ValueError) as caught:
+        _run(_client(provider), scanner="demo_volum")
+    message = str(caught.value)
+    assert "unknown scanner 'demo_volum'" in message and "demo_volume" in message
+    assert provider.calls == []
+    assert _journal_rows(_isolated_state) == []
+
+
+def test_the_cli_and_the_service_refuse_an_unknown_scanner_in_the_same_words():
+    """One definition below both, so the two cannot drift into different advice."""
+    import argparse
+
+    from tradeflow.cli import _scanner
+
+    with pytest.raises(argparse.ArgumentTypeError) as cli_error:
+        _scanner("demo_volum")
+    with pytest.raises(ValueError) as service_error:
+        _run(scanner="demo_volum")
+    assert str(cli_error.value) == str(service_error.value)
+    assert _scanner("none") == "none" and _scanner("demo_volume") == "demo_volume"
