@@ -218,7 +218,9 @@ def pack_install_hint(path: str) -> str:
         return f"uv pip install -e {shlex.quote(path)}"
     command, receipt, note = _uv_tool_command([], (f"--with-editable {shlex.quote(path)}",))
     if receipt is None:
-        return f"python -m pip install -e {shlex.quote(path)}"
+        # --no-deps: a pack written against the old distribution name would otherwise
+        # pull it in over this one (see the migration page).
+        return f"python -m pip install --no-deps -e {shlex.quote(path)}"
     return command
 
 

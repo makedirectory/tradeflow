@@ -218,6 +218,14 @@ def test_a_pack_install_command_is_additive(monkeypatch, tmp_path):
     assert "--with-editable /p" in command and "--with tqdm" in command
 
 
+def test_the_pack_install_fallback_keeps_pip_from_pulling_in_the_old_distribution(monkeypatch, tmp_path):
+    """With no receipt the command is a plain pip one, and pip resolves a pack's
+    dependency on the old distribution name by installing it over this one."""
+    monkeypatch.setattr(settings, "running_from_checkout", lambda: False)
+    monkeypatch.setattr(sys, "prefix", str(tmp_path))  # no receipt here
+    assert extras.pack_install_hint("/p") == "python -m pip install --no-deps -e /p"
+
+
 def test_installed_hint_never_names_an_interpreter_path(monkeypatch):
     """A recreated tool environment loses whatever was installed by hand into a
     particular interpreter, so a path to one is not a durable instruction."""
