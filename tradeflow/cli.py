@@ -8032,9 +8032,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     from tradeflow.brokers.errors import AuthenticationError
-    from tradeflow.services.analysis import RunRefused
     from tradeflow.settings import SettingsError
     from tradeflow.store.bars import CacheMiss
+    from tradeflow.utils.errors import RunRefused
 
     setup_logging()
     args = parse_cli()

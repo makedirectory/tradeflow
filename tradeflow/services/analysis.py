@@ -46,6 +46,7 @@ from tradeflow.services.audit import new_run_id
 from tradeflow.services.registry import resolve_strategy_class, scanner_refusal
 from tradeflow.settings import state_root
 from tradeflow.strategies.base import build_with_limits, refuse_unknown_limits
+from tradeflow.utils.errors import RunRefused, no_bars_refusal
 
 logger = logging.getLogger(__name__)
 
@@ -73,14 +74,6 @@ def _strategy(strategy_name: str, config: Optional[Dict[str, Any]] = None):
     return cls(params)
 
 
-class RunRefused(ValueError):
-    """A run refused before it read or recorded anything, with what to change.
-
-    A ``ValueError`` so every caller that already handles one keeps working; its own
-    type so the CLI can end on the message rather than a stack trace.
-    """
-
-
 def refuse_a_run_with_no_bars(result, symbols: Sequence[str], start: datetime, end: datetime) -> None:
     """Refuse to report or journal a backtest that read no bars at all.
 
@@ -90,11 +83,7 @@ def refuse_a_run_with_no_bars(result, symbols: Sequence[str], start: datetime, e
     """
     if (result.execution or {}).get("universe_size"):
         return
-    named = ", ".join(symbols) if symbols else "an empty universe"
-    raise RunRefused(
-        f"No bars for any of {named} between {start:%Y-%m-%d} and {end:%Y-%m-%d}, so there is "
-        "nothing to measure and nothing was recorded. Check the symbols and the window."
-    )
+    raise no_bars_refusal(symbols, start, end)
 
 
 #: Search methods each caller accepts; screening has no Bayesian search.
@@ -3130,7 +3119,11 @@ def _verdict_not_a_trial(result: Dict[str, Any]) -> Optional[str]:
     still counts — the conservative direction.
     """
     verdict = result.get("verdict") or {}
-    if verdict.get("verdict") != "incomplete":
+    refused_by_preflight = (
+        verdict.get("verdict") == "infeasible"
+        and ((result.get("steps") or {}).get("alphas") or {}).get("status") == "skipped"
+    )
+    if verdict.get("verdict") != "incomplete" and not refused_by_preflight:
         return None
     # Both steps that measure realized ICs. The combination measures its own over a
     # trailing window and prints them, so a run showing one was a look at the data.
@@ -3138,6 +3131,11 @@ def _verdict_not_a_trial(result: Dict[str, Any]) -> Optional[str]:
         return None
     if (result.get("combination") or {}).get("n_periods"):
         return None
+    if refused_by_preflight:
+        # The allocation preflight refuses the book before any step reads the data; a
+        # constraint the caps cannot satisfy is a property of the request, not a look.
+        # An infeasible solve *after* the alphas ran did read the data and still counts.
+        return "the book was infeasible before any step read the data, so this run does not count toward the campaign"
     failed = verdict.get("failed_steps") or []
     what = f"steps failed: {', '.join(failed)}" if failed else "no gate produced a number"
     return f"no step measured an IC ({what}), so this run does not count toward the campaign"

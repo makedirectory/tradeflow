@@ -379,12 +379,17 @@ def test_a_real_infeasible_result_renders_in_every_reader():
     assert "VERDICT: infeasible" in format_verdict_report(result)
 
 
-def test_an_infeasible_run_is_journaled_once_with_its_verdict(_isolated_state):
-    _run_three()
+def test_a_run_refused_by_the_allocation_preflight_is_not_journaled(_isolated_state):
+    """Reversed on purpose. This used to assert one journaled trial, but the preflight
+    skips every step, so the run looked at nothing - the case the incomplete-run rule
+    already excludes, because counting it deflates the next real result against a test
+    nobody saw. An infeasible *solve*, after the alphas read the data, still counts."""
+    result = _run_three()
     rows = [r for r in _journal_rows(_isolated_state) if r.get("tool", "").startswith("trial:")]
-    assert len(rows) == 1
-    assert rows[0]["verdict"] == "infeasible"
-    assert rows[0]["promotable"] is False
+    assert rows == []
+    assert result["verdict"]["verdict"] == "infeasible"
+    assert result["journaled"] is False
+    assert result["provenance"]["this_run_counted"] is False
 
 
 # --- journaling and memoization ---------------------------------------------

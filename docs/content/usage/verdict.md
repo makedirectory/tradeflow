@@ -169,8 +169,10 @@ typically on a cold cache or a dropped connection, and no signal combination was
 measured — records **no** trial, and the report says `Not recorded as a trial` with the
 reason; its provenance line reads `campaign trials N (this run not counted)`. It looked at nothing, so counting it would make every failed attempt deflate
 the next real result. An incomplete run that did measure an IC (either step) still
-counts, because it was a look at the data whatever else failed. `journaled` in the
-structured result says whether a trial was actually written.
+counts, because it was a look at the data whatever else failed. An `infeasible` run
+refused by the allocation preflight is not recorded either: the caps were checked
+before any step read the data. `journaled` in the structured result says whether a
+trial was actually written.
 
 An identical rerun is served from the trial store rather than re-run, under the same
 prominent `REUSED` banner every other command uses, with the original run's

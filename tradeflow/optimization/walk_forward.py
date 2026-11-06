@@ -625,7 +625,7 @@ class WalkForwardValidator:
         warmup_days = embargo  # warmup buffer == embargo, by construction >= lookback
 
         # Prefetch the whole window once (plus warmup) and slice per fold.
-        frames = self.data_client.get_bars(*self.prefetch_read(symbols, start, end, embargo))
+        frames = self._fetch(symbols, start, end, embargo)
         sliced = MarketDataClient(PrefetchedProvider(frames))
 
         all_trial_sharpes: List[float] = []
@@ -750,7 +750,7 @@ class WalkForwardValidator:
             holdout_days=0,
         )
         warmup_days = embargo
-        frames = self.data_client.get_bars(*self.prefetch_read(symbols, start, end, embargo))
+        frames = self._fetch(symbols, start, end, embargo)
         sliced = MarketDataClient(PrefetchedProvider(frames))
 
         fold_results: List[FoldResult] = []
@@ -811,9 +811,7 @@ class WalkForwardValidator:
         """Leakage-safe metrics for a fixed config over a single window (e.g. holdout)."""
         cls = strategy_class or self.strategy_class
         warmup_days = embargo_days if embargo_days is not None else self.default_embargo_days()
-        frames = self.data_client.get_bars(
-            *self.prefetch_read(symbols, window_start, window_end, warmup_days)
-        )
+        frames = self._fetch(symbols, window_start, window_end, warmup_days)
         sliced = MarketDataClient(PrefetchedProvider(frames))
         metrics, _, _ = self._oos_backtest(
             self._make(params, cls),
@@ -869,6 +867,20 @@ class WalkForwardValidator:
             benchmark_returns=result.benchmark_returns,
         )
         return metrics, oos_trades, result.legs
+
+    def _fetch(self, symbols, start, end, warmup_days):
+        """The one fetch, refused when no symbol of the universe returned a bar.
+
+        Every fold then scored nothing, and the result reported a Sharpe of 0.0 and was
+        journaled as a trial - a measurement of a run that never saw the data. The
+        benchmark does not count: bars for it alone are still nothing to trade.
+        """
+        from tradeflow.utils.errors import no_bars_refusal
+
+        frames = self.data_client.get_bars(*self.prefetch_read(symbols, start, end, warmup_days))
+        if not any(frames.get(s) is not None and not frames[s].empty for s in symbols):
+            raise no_bars_refusal(symbols, start, end)
+        return frames
 
     def prefetch_read(
         self, symbols: List[str], start: datetime, end: datetime, embargo_days: Optional[int] = None

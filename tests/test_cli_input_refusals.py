@@ -474,3 +474,58 @@ def test_an_empty_window_says_so_and_the_refusal_names_the_subcommand(capsys):
     )
     assert "the window is empty" in err
     assert f"{CLI_NAME} cache warm: error:" in err
+
+
+# --- runs that would measure nothing ------------------------------------------------
+
+
+def test_a_walk_forward_over_a_universe_with_no_bars_is_refused_on_both_surfaces(
+    tmp_path, monkeypatch, capsys
+):
+    """It reported an out-of-sample Sharpe of 0.0 and journaled a trial for a run that
+    never saw a bar. Bars for the benchmark alone are still nothing to trade."""
+    from tests.fakes import FakeMarketData
+    from tradeflow.marketdata.client import MarketDataClient
+    from tradeflow.services import analysis, audit
+
+    journal = tmp_path / "journal.jsonl"
+    monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", journal)
+    monkeypatch.setattr(analysis, "ARTIFACT_DIR", tmp_path / "artifacts")
+    client = MarketDataClient(FakeMarketData(["AAA", "SPY"], n=600, freq="1D"))
+    with pytest.raises(analysis.RunRefused, match="No bars for any of ZZZZ"):
+        analysis.run_walk_forward(
+            client,
+            "demo_trend",
+            ["ZZZZ"],
+            cli._date("2023-01-02"),
+            cli._date("2024-06-01"),
+            n_folds=2,
+            max_evals=2,
+            benchmark="SPY",
+        )
+    monkeypatch.setattr(cli, "build_research_data", lambda **kw: client)
+    argv = ["walkforward", "--strategy", "demo_trend", "--scanner", "none", "--symbols", "ZZZZ"]
+    args = cli.parse_cli(
+        argv + ["--start", "2023-01-02", "--end", "2024-06-01", "--folds", "2", "--max-evals", "2"]
+    )
+    with pytest.raises(analysis.RunRefused):
+        args.func(args)
+    assert not journal.exists()
+
+
+def test_a_verdict_refused_by_the_allocation_preflight_records_no_trial(tmp_path, monkeypatch):
+    """The preflight skips every step, so nothing looked at the data; it was journaled
+    anyway, raising the family count for a request the caps alone ruled out."""
+    from tests.fakes import FakeMarketData
+    from tradeflow.marketdata.client import MarketDataClient
+    from tradeflow.services import analysis, audit
+
+    journal = tmp_path / "journal.jsonl"
+    monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", journal)
+    client = MarketDataClient(FakeMarketData(["AAA", "BBB", "SPY"], n=600, freq="1D"))
+    result = analysis.run_verdict(
+        client, "demo_trend", ["AAA", "BBB"], cli._date("2023-01-02"), cli._date("2024-06-01"), scanner="none"
+    )
+    assert result["verdict"]["verdict"] == "infeasible"
+    assert result["journaled"] is False and "infeasible" in result["not_journaled_reason"]
+    assert not journal.exists() or not journal.read_text().strip()
