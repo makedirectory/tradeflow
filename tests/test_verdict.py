@@ -410,6 +410,24 @@ def test_identical_rerun_is_memoized_without_touching_the_provider(_isolated_sta
     assert len(rows) == 1  # a memoized run adds no trial
 
 
+def test_an_incomplete_run_is_not_served_back_on_the_rerun(_isolated_state, monkeypatch):
+    """A step that failed (say, a cache that was not warm yet) answered nothing, so the
+    same request after the fix has to run rather than replay the failure."""
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("synthetic information failure")
+
+    with monkeypatch.context() as broken:
+        broken.setattr(analysis, "compute_information", boom)
+        first = _run()
+    assert first["verdict"]["verdict"] == "incomplete"
+
+    second = _run()
+    assert second["memoized"] is False
+    assert second["verdict"]["verdict"] != "incomplete"
+    assert "information" not in (second["verdict"].get("failed_steps") or [])
+
+
 def test_force_appends_a_second_trial(_isolated_state):
     _run()
     forced = _run(force=True)

@@ -64,6 +64,12 @@ without guessing. The history below keeps the old name as it was written.
   still reported as a data problem.
 - The documented verdict examples use a starter universe that is feasible with its
   defaults, and a test keeps every documented example that way.
+- A verdict that came back **incomplete** (a step failed, for example an offline run
+  before the cache was warm) is no longer served back as "reused" when you repeat the
+  command after fixing the cause; it runs again. Complete verdicts are reused as before.
+- `quantred demo` prints its scorecard without the hundred progress lines above it, and
+  an offline cache miss names `quantred cache warm`, not a script an installed copy
+  does not have.
 - The MCP allocation tool exposes the construction knobs that are not gated on
   evidence, so an agent can state the same book the command line does.
 

@@ -2572,6 +2572,11 @@ def run_verdict(
         cached = _find_cached_trial(strategy, dedup_params, symbols, start, end, ACCOUNTING_VERSION)
         if cached is not None:
             memoized = _load_verdict_artifact(cached["id"])
+            # An incomplete run answered nothing: a step failed (a cache miss, a dropped
+            # connection), so serving it back would tell the user their fix changed
+            # nothing - "reused, not re-run" with the same failure - until --force.
+            if memoized is not None and (memoized.get("verdict") or {}).get("verdict") == "incomplete":
+                memoized = None
             if memoized is not None:
                 memoized["memoized"] = True
                 memoized["trial_id"] = cached["id"]

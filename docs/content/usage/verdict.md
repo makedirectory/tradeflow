@@ -166,7 +166,9 @@ report's `P(any |t|>2 across N campaign trials)` line is computed against.
 
 An identical rerun is served from the trial store rather than re-run, under the same
 prominent `REUSED` banner every other command uses, with the original run's
-timestamp and age. `--force` re-verifies and appends a new trial instead. The run's
+timestamp and age. A run that came back `incomplete` is never reused: a failed step
+answered nothing, so repeating the command after fixing the cause runs it again.
+`--force` re-verifies and appends a new trial instead. The run's
 identity covers every input any step reads — including knobs like `--target-te` that
 live inside a step — so two materially different composites can never collide as
 "the same trial".
