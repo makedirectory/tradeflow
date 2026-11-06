@@ -559,7 +559,8 @@ def analyze_trial(store, trial_id: str, *, allow_partial: bool = False) -> Dict[
     row = store.row_for(trial_id)
     if row is None:
         return {
-            "error": f"No trial with id {trial_id!r}. Use list_trials to see what is recorded.",
+            # No pointer to a listing here: the CLI and the MCP server each name their own.
+            "error": f"No trial with id {trial_id!r}.",
             "trial_id": trial_id,
         }
     report = trade_analytics(store.trades_for(trial_id), allow_partial=allow_partial)
@@ -580,6 +581,9 @@ def analyze_trial(store, trial_id: str, *, allow_partial: bool = False) -> Dict[
     return report
 
 
+COMPARE_NEEDS_TWO = "compare needs at least two trial ids"
+
+
 def compare_trials(
     store,
     trial_ids: Sequence[str],
@@ -593,6 +597,8 @@ def compare_trials(
     trials and getting an error about one is how a comparison of the other three gets
     abandoned for no reason.
     """
+    if len(trial_ids) < 2:
+        return {"error": COMPARE_NEEDS_TWO, "trial_ids": list(trial_ids)}
     entries: List[Dict[str, Any]] = []
     unknown: List[str] = []
     for trial_id in trial_ids:

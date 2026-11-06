@@ -1662,11 +1662,10 @@ def build_server(data_client=None):
         with _trial_store() as store:
             if store is None:
                 return _logged("analyze_trial", inputs, {"error": _NO_STORE})
-            return _logged(
-                "analyze_trial",
-                inputs,
-                analysis.analyze_trial(store, trial_id, allow_partial=allow_partial),
-            )
+            report = analysis.analyze_trial(store, trial_id, allow_partial=allow_partial)
+            if report.get("error"):
+                report["error"] += " Use list_trials to see what is recorded."
+            return _logged("analyze_trial", inputs, report)
 
     @tool()
     def compare_trials(

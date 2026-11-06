@@ -131,6 +131,10 @@ def mark_contaminated(
         accounting=accounting,
         before=before,
     )
+    # An id somebody typed is a claim that the trial exists; a filter matching nothing is
+    # an answer. Only the first is a typo signal, so only it is reported back.
+    found = {r["id"] for r in selected}
+    payload_unmatched = [str(t) for t in (trial_ids or []) if str(t) not in found]
     already = [r for r in selected if r.get("contaminated_at")]
     fresh = [r for r in selected if not r.get("contaminated_at")]
     ids = [r["id"] for r in fresh]
@@ -143,8 +147,9 @@ def mark_contaminated(
         "reason": reason,
         "journal_path": str(journal),
         "dry_run": dry_run,
+        "unmatched_ids": payload_unmatched,
     }
-    if dry_run or not ids:
+    if dry_run or not ids or payload_unmatched:
         payload["applied"] = 0
         payload["note"] = (
             "Nothing selected." if not selected else "Dry run: nothing was written."

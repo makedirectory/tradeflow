@@ -70,8 +70,10 @@ def campaign_material(store, trial_id: str, *, journal_path: Optional[Any] = Non
 
     row = store.row_for(trial_id)
     if row is None:
+        material["not_indexed"] = True
         material["reason"] = (
-            f"no trial with id {trial_id!r} is indexed. Its journal line may still exist — "
+            f"no trial with id {trial_id!r} is indexed. "
+            "Its journal line may still exist — "
             "`trials rebuild` reindexes from the journal"
         )
         return material

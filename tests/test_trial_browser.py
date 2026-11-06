@@ -624,3 +624,108 @@ def test_json_output_exits_zero_when_there_is_an_answer(monkeypatch, tmp_path, c
     )
     args.func(args)  # no SystemExit
     assert json.loads(capsys.readouterr().out)["status"] == "complete"
+
+
+# --- what the trials commands say when an id or a journal is not there -------------
+def _run_trials(monkeypatch, tmp_path, *argv):
+    from tradeflow import cli as main
+
+    journal = tmp_path / "journal.jsonl"
+    monkeypatch.setattr("tradeflow.services.audit.DEFAULT_TRIAL_JOURNAL", journal, raising=False)
+    args = main.build_parser().parse_args(["trials", *argv, "--db", str(tmp_path / "trials.db")])
+    args.func(args)
+
+
+def test_a_fresh_state_root_is_not_reported_as_a_lost_journal(monkeypatch, tmp_path, capsys):
+    """`trials status` on a root where nothing had been run printed `Journal : UNREADABLE
+    - ... restore it`, then `OK`. A journal never written beside an empty index is where
+    everyone starts, not data loss."""
+    journal = tmp_path / "journal.jsonl"
+    _run_trials(monkeypatch, tmp_path, "status", "--journal", str(journal))
+    out = capsys.readouterr().out
+    assert "UNREADABLE" not in out
+    assert "none yet" in out
+    assert "OK" in out
+
+
+def test_a_missing_journal_under_indexed_rows_still_raises_the_alarm(monkeypatch, tmp_path, capsys):
+    """The other direction: rows whose source is gone are the real loss, and the fresh
+    root exemption must not swallow them."""
+    journal = tmp_path / "journal.jsonl"
+    with TrialStore(tmp_path / "trials.db", journal_path=journal) as s:
+        _record(s, "t1")
+    _run_trials(monkeypatch, tmp_path, "status", "--journal", str(journal))
+    out = capsys.readouterr().out
+    assert "UNREADABLE" in out
+    assert "DRIFT DETECTED" in out
+
+
+def test_analyze_names_the_cli_command_and_the_service_names_neither(monkeypatch, tmp_path):
+    """The shared service said `Use list_trials` - an MCP tool name - to a CLI user.
+    The service now names no surface; each surface appends its own pointer."""
+    from tradeflow.services.analysis import analyze_trial
+
+    with pytest.raises(SystemExit) as exc:
+        _run_trials(monkeypatch, tmp_path, "analyze", "abc123")
+    message = str(exc.value.code)
+    assert "abc123" in message and "trials list" in message and "list_trials" not in message
+
+    with TrialStore(tmp_path / "t2.db", journal_path=tmp_path / "j2.jsonl") as s:
+        assert "list_trials" not in analyze_trial(s, "abc123")["error"]
+
+
+@pytest.mark.parametrize("ids", [("abc",), ("abc", "def")])
+def test_comparing_unknown_or_too_few_ids_gives_a_refusal_not_an_empty_report(monkeypatch, tmp_path, ids):
+    """`trials compare abc def` printed the whole `=== Return-series comparison ===`
+    scaffold ending `0 of 0 pair(s) compared`. One id is a usage error; unknown ids are
+    named with a pointer to the listing."""
+    with pytest.raises(SystemExit) as exc:
+        _run_trials(monkeypatch, tmp_path, "compare", *ids)
+    message = str(exc.value.code)
+    assert "Return-series comparison" not in message
+    if len(ids) == 1:
+        assert "at least two" in message
+    else:
+        assert "'abc'" in message and "'def'" in message and "trials list" in message
+
+
+def test_campaign_for_an_unknown_id_points_at_the_listing(monkeypatch, tmp_path, capsys):
+    with pytest.raises(SystemExit) as exc:
+        _run_trials(monkeypatch, tmp_path, "campaign", "abc123")
+    assert exc.value.code == 1
+    assert "trials list" in capsys.readouterr().out
+
+
+def test_quarantining_an_id_that_matches_no_trial_fails_and_writes_nothing(monkeypatch, tmp_path, capsys):
+    """`mark-contaminated --id <typo>` printed `Selected: 0 ... Nothing selected.` and
+    exited 0. An explicitly named id is a claim the trial exists, so it is a typo signal;
+    a filter matching nothing stays an ordinary empty answer."""
+    from tradeflow import cli as main
+
+    journal = tmp_path / "journal.jsonl"
+    real = journal_trial(
+        "backtest",
+        strategy="s",
+        symbols=["AAA"],
+        start=datetime(2024, 1, 1),
+        end=datetime(2024, 6, 1),
+        params={"fast": 5},
+        metrics={"sharpe_ratio": 1.0},
+        path=journal,
+    )
+    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
+    before = journal.read_text()
+
+    def run(*extra):
+        args = main.build_parser().parse_args(
+            ["trials", "mark-contaminated", "--reason", "t", "--journal", str(journal), *extra]
+        )
+        args.func(args)
+
+    with pytest.raises(SystemExit) as exc:
+        run("--id", "abc", "--id", real)
+    assert "'abc'" in str(exc.value.code) and "trials list" in str(exc.value.code)
+    assert journal.read_text() == before  # the good id beside the typo was not applied either
+
+    run("--strategy", "no_such_strategy")  # a filter matching nothing: exit 0
+    assert "Selected" in capsys.readouterr().out

@@ -3607,6 +3607,13 @@ def _trials_maintenance(args) -> None:
             )
         except ValueError as exc:
             sys.exit(f"Cannot quarantine: {exc}")
+        # Before anything is printed or written: a quarantine that half-applied around a
+        # typo would be the worse outcome. Nothing was written when an id matched no trial.
+        if report.get("unmatched_ids"):
+            sys.exit(
+                f"No trial with id {', '.join(repr(t) for t in report['unmatched_ids'])}; "
+                "nothing was quarantined. Try `trials list` to see what is recorded."
+            )
         if args.json:
             print(json.dumps(report, indent=2, default=str))
             return
@@ -3667,8 +3674,18 @@ def cmd_trials(args) -> None:
             print(f"Journal : {info['journal_path']}")
             print(f"Schema  : v{info['schema_version']}")
             print(f"Rows    : {info['rows']}")
-            print(f"Journal : {info['journal_lines']} lines ({info['journal_trial_lines']} trials)")
-            if not info.get("journal_readable"):
+            # A journal that was never written beside an empty index is a fresh state
+            # root, not a loss. The alarm is for rows whose source is gone.
+            fresh_root = (
+                not info.get("journal_readable")
+                and not info["rows"]
+                and not Path(info["journal_path"]).exists()
+            )
+            if fresh_root:
+                print("Journal : none yet (nothing recorded)")
+            else:
+                print(f"Journal : {info['journal_lines']} lines ({info['journal_trial_lines']} trials)")
+            if not info.get("journal_readable") and not fresh_root:
                 print(
                     "Journal : UNREADABLE — the record these rows were built from is not "
                     "there. They cannot be rebuilt; restore it before running anything else"
@@ -3990,6 +4007,8 @@ def _print_campaign(store, args) -> None:
     else:
         print(format_campaign_material(material))
     if not material.get("available"):
+        if material.get("not_indexed") and not args.json:
+            print("Try `trials list` to see what is recorded.")
         raise SystemExit(1)
 
 
@@ -4002,7 +4021,7 @@ def _print_trial_analysis(store, args) -> None:
 
     report = analyze_trial(store, args.trial_id, allow_partial=args.allow_partial)
     if report.get("error"):
-        sys.exit(report["error"])
+        sys.exit(f"{report['error']} Try `trials list` to see what is recorded.")
     if args.json:
         print(json.dumps(report, indent=2, default=str))
     else:
@@ -4028,6 +4047,19 @@ def _print_trial_comparison(store, args) -> None:
         min_overlap=args.min_overlap,
         across_accounting=args.across_accounting,
     )
+    if report.get("error"):
+        sys.exit(report["error"])
+    unknown = report.get("unknown_trial_ids") or []
+    if unknown and len(args.trial_ids) - len(unknown) < 2:
+        # Fewer than two real trials leaves nothing to correlate; the report scaffolding
+        # would only say "0 of 0 pair(s) compared" around the one fact that matters.
+        if args.json:
+            print(json.dumps(report, indent=2, default=str))
+            raise SystemExit(1)
+        sys.exit(
+            f"No trial with id {', '.join(repr(t) for t in unknown)}. "
+            "Try `trials list` to see what is recorded."
+        )
     if args.json:
         print(json.dumps(report, indent=2, default=str))
     else:
