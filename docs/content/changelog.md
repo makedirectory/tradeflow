@@ -45,6 +45,27 @@ but the windows were not the ones asked for, so v5 walk-forwards are not compara
 v6 ones. Earlier trials drop out of the default `trials list` (it says how many);
 `trials archive` retires the era.
 
+### Honest labels
+
+- **Capacity** says which bound it hit instead of a sentinel: `capacity_capital` is
+  null with a `capacity_status` (`no_edge`, `below_search_floor`,
+  `above_search_ceiling`) when no capital was solved for, and the CLI, HTML report
+  and MCP payload say it in words rather than `$1,000` or `0`.
+- **Attribution** counts why rebalances were skipped (too few names, covariance not
+  buildable, no benchmark weights, no spread) and names the dominant reasons, rather
+  than blaming insufficient history. `info --attribution` prints the IC report and
+  then the attribution result instead of replacing the first with the second.
+- **HTML metrics table**: an undeflated Sharpe is labelled `PSR, undeflated (1 trial)`
+  as the terminal already did; percent, money, day and hour metrics carry their units
+  (declared beside the gate-value table). `run_optimization` states that its rows'
+  `deflated_sharpe_ratio` is not deflated.
+- **A walk-forward with no out-of-sample trades** no longer passes the drawdown gate
+  vacuously (it fails with a note), and the payload carries `no_oos_trades_note`.
+- **Verdict and alpha output** says how many names a list cut, shows tiny alphas in
+  scientific notation instead of `+0.0000`, carries the thin-universe reason in the
+  payload (`low_confidence_reason`), and no longer journals a `trial:alpha` for a
+  run that scored no names.
+
 ### Rename
 
 - The distribution is `quantred` (was `tradeflow-engine`) and the main command is

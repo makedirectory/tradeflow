@@ -79,6 +79,12 @@ into linear (commission + spread) and square-root impact. See
 [Portfolio construction (engineering)](../engineering/portfolio-construction) for
 the math.
 
+The **capacity** line is a number only when one was solved for. When the expected
+gross alpha is not positive, or does not cover cost even at the smallest capital
+searched, or still covers it at the largest, the line says which of those happened
+in words (the payload carries `capacity_status` and a null `capacity_capital`) -
+never `$0` or a search bound that reads as a measured capital.
+
 **Cost-aware is the default** — with `--capital` set, the objective carries a
 name-specific linear turnover cost and a square-root market-impact term, and a
 no-trade band *emerges* from each name's own cost (cheap, liquid names trade
