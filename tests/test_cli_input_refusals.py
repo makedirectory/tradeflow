@@ -406,3 +406,19 @@ def test_walk_forward_gates_say_what_they_are_computed_over(tmp_path, monkeypatc
     assert checks["oos_sharpe"]["basis"] == "median across folds"
     assert checks["min_oos_trades"]["basis"] == "total across folds"
     assert checks["deflated_sharpe"]["basis"] == "stitched out-of-sample aggregate"
+
+
+@pytest.mark.parametrize(
+    "objective", ["max_drawdown", "annualized_volatility", "buy_hold_return", "total_trades"]
+)
+def test_an_objective_the_search_would_maximise_into_the_worst_candidate_is_refused(objective, capsys):
+    """The search always maximises, so `--objective max_drawdown` selected the deepest
+    drawdown and `buy_hold_return` (which no parameter changes) selected arbitrarily."""
+    assert "cannot be maximised meaningfully" in _refusal(["optimize", "--objective", objective], capsys)
+
+
+def test_every_objective_is_a_reported_metric():
+    from tradeflow.analytics.performance import METRIC_KEYS, OBJECTIVE_KEYS
+
+    assert set(OBJECTIVE_KEYS) <= set(METRIC_KEYS)
+    cli.parse_cli(["optimize", "--objective", "sortino_ratio"])

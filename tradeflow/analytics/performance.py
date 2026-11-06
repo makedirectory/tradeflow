@@ -87,6 +87,38 @@ METRIC_KEYS = (
     "turnover",
 )
 
+
+#: Metrics a parameter search may maximise: higher is better and the number measures
+#: the strategy. The search always maximises, so a lower-is-better metric
+#: (``max_drawdown``, ``annualized_volatility``, ``var_95``) as the objective picked
+#: the *worst* candidate, and one that does not depend on the strategy
+#: (``buy_hold_return``) picked arbitrarily. ``total_trades`` is excluded because
+#: maximising it selects for turnover, not edge.
+OBJECTIVE_KEYS = (
+    "sharpe_ratio",
+    "sortino_ratio",
+    "calmar_ratio",
+    "sterling_ratio",
+    "martin_ratio",
+    "omega_ratio",
+    "gain_to_pain_ratio",
+    "information_ratio",
+    "treynor_ratio",
+    "probabilistic_sharpe_ratio",
+    "deflated_sharpe_ratio",
+    "total_return",
+    "cagr",
+    "profit_factor",
+    "recovery_factor",
+    "expectancy",
+    "payoff_ratio",
+    "sqn",
+    "alpha",
+    "win_rate",
+    "kelly_criterion",
+    "tail_ratio",
+)
+
 #: Non-numeric flags also always present in a results dict.
 #:
 #: ``treynor_available`` is separate from ``benchmark_available`` because the two fail

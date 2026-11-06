@@ -122,7 +122,7 @@ def refuse_unusable_run_args(
     was arbitrary, and ``capital=-5`` reported a run with all-zero metrics. The CLI's
     argparse choices covered some of these; this is the rule for every caller.
     """
-    from tradeflow.analytics.performance import METRIC_KEYS
+    from tradeflow.analytics.performance import METRIC_KEYS, OBJECTIVE_KEYS
 
     problems = []
     if symbols is not None and not list(symbols):
@@ -131,10 +131,16 @@ def refuse_unusable_run_args(
         problems.append(f"capital must be greater than zero, got {capital}")
     if method is not None and method not in methods:
         problems.append(f"method must be one of {', '.join(methods)}, got {method!r}")
-    if objective is not None and objective not in METRIC_KEYS:
+    if objective is not None and objective in METRIC_KEYS and objective not in OBJECTIVE_KEYS:
+        problems.append(
+            f"objective {objective!r} cannot be maximised meaningfully - the search picks the "
+            "highest value, and for this metric that is the worst candidate or an arbitrary one; "
+            f"use one of {', '.join(OBJECTIVE_KEYS)}"
+        )
+    elif objective is not None and objective not in OBJECTIVE_KEYS:
         import difflib
 
-        close = difflib.get_close_matches(objective, METRIC_KEYS, n=1)
+        close = difflib.get_close_matches(objective, OBJECTIVE_KEYS, n=1)
         hint = f" (did you mean {close[0]!r}?)" if close else ""
         problems.append(
             f"objective {objective!r} is not a metric{hint}; e.g. sharpe_ratio, sortino_ratio, total_return"
