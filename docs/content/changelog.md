@@ -77,6 +77,13 @@ without guessing. The history below keeps the old name as it was written.
 - `quantred demo` prints its scorecard without the hundred progress lines above it, and
   an offline cache miss names `quantred cache warm`, not a script an installed copy
   does not have.
+- An offline cache miss names every missing symbol (the benchmark included) and one
+  `cache warm` command with the dates that cover the request, so running it once is
+  enough. Before, it named only the first symbol and no window, and the rerun failed on
+  the next one. The note about the market-date change appears only where a cache was
+  warmed before it, not on every miss.
+- A verdict step that fails is reported in the verdict's step list; its traceback is
+  logged only at debug level instead of filling the screen above the report.
 - A request that Alpaca refuses for the credentials now says so ("Alpaca rejected these
   credentials", where the keys come from, and `quantred init`) in place of printing the
   gateway's raw HTML page.

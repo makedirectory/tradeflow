@@ -465,6 +465,25 @@ def test_an_incomplete_run_that_measured_skill_is_still_a_trial(_isolated_state,
     assert len(rows) == 1
 
 
+def test_a_failed_step_is_reported_once_not_logged_as_a_traceback(_isolated_state, monkeypatch, caplog):
+    """A cold offline cache made every step fail, and each failure logged its full
+    traceback at WARNING above the report — about eighty lines before the one that
+    said what to do. The report already names each failed step and its error; the
+    traceback is for someone debugging, at DEBUG."""
+    import logging
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("synthetic information failure")
+
+    monkeypatch.setattr(analysis, "compute_information", boom)
+    with caplog.at_level(logging.DEBUG, logger="tradeflow.services.analysis"):
+        result = _run()
+    assert result["steps"]["information"]["status"] == "failed"
+    loud = [r for r in caplog.records if r.levelno >= logging.WARNING and r.exc_info]
+    assert loud == []
+    assert any(r.exc_info for r in caplog.records if "information" in r.getMessage())
+
+
 def test_force_appends_a_second_trial(_isolated_state):
     _run()
     forced = _run(force=True)

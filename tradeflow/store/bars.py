@@ -62,8 +62,8 @@ CREATE INDEX IF NOT EXISTS idx_fetches_symbol ON fetches(symbol, timeframe);
 """
 
 
-#: Printed beside every offline cache miss while the date-contract change washes
-#: through. A bare date now means that market date in New York, so coverage recorded
+#: Printed beside an offline cache miss on a symbol that *was* warmed before, while the
+#: date-contract change washes through. A cold cache has no old coverage to explain. A bare date now means that market date in New York, so coverage recorded
 #: when a naive date was read as UTC sits a few hours short of what the same command
 #: asks for today. The window is genuinely uncached under the new reading - the fix is
 #: a re-warm, not a tolerance - and saying so turns an unexplained miss on data the
@@ -76,18 +76,55 @@ DATE_CONTRACT_NOTICE = (
 
 
 class CacheMiss(RuntimeError):
-    """Raised in ``--offline`` mode when a requested window isn't fully cached."""
+    """Raised in ``--offline`` mode when a requested window isn't fully cached.
 
-    def __init__(self, symbol: str, timeframe: str, gaps: List[Tuple[datetime, datetime]]):
-        self.symbol = symbol
+    One miss covers every symbol of the request, and its warm command covers the whole
+    missing window. It used to stop at the first symbol and print a warm command with no
+    dates: running it fixed one name, the rerun failed on the next, and the warm's default
+    window need not include the request at all.
+    """
+
+    def __init__(
+        self,
+        missing: Dict[str, List[Tuple[pd.Timestamp, pd.Timestamp]]],
+        timeframe: str,
+        *,
+        previously_warmed: bool = False,
+    ):
+        self.missing = missing
         self.timeframe = timeframe
-        self.gaps = gaps
-        ranges = ", ".join(f"{s.isoformat()}..{e.isoformat()}" for s, e in gaps)
-        super().__init__(
-            f"--offline: {symbol} ({timeframe}) is missing cached bars for {ranges}. "
-            f"Run `{invocation(f'cache warm --symbols {symbol} --timeframe {timeframe}')}` first.\n"
-            f"{DATE_CONTRACT_NOTICE}"
+        symbols = list(missing)
+        first = min(s for gaps in missing.values() for s, _ in gaps)
+        last = max(e for gaps in missing.values() for _, e in gaps)
+        start_day, end_day = _warm_window(first, last)
+        shown = ", ".join(symbols[:8]) + (f" +{len(symbols) - 8} more" if len(symbols) > 8 else "")
+        command = invocation(
+            f"cache warm --symbols {','.join(symbols)} --timeframe {timeframe} --start {start_day} --end {end_day}"
         )
+        message = (
+            f"--offline: no cached {timeframe} bars for {shown} between {start_day} and {end_day}. "
+            f"Run `{command}` first."
+        )
+        if previously_warmed:
+            message += f"\n{DATE_CONTRACT_NOTICE}"
+        super().__init__(message)
+
+
+def _warm_window(first: pd.Timestamp, last: pd.Timestamp) -> Tuple[str, str]:
+    """The market dates a ``cache warm`` needs to cover ``[first, last]``.
+
+    Both flags parse a bare date as New York midnight, so the start is the date ``first``
+    falls on and the end is the date ``last`` falls on, or the next one when ``last`` is
+    later in the day — an end on the day itself would stop at its midnight.
+    """
+    from datetime import timedelta
+
+    from tradeflow.utils.timeutils import NEW_YORK
+
+    begin = first.tz_convert(NEW_YORK)
+    finish = last.tz_convert(NEW_YORK)
+    end_day = finish.date() if finish.time() == datetime.min.time() else finish.date() + timedelta(days=1)
+    return begin.date().isoformat(), end_day.isoformat()
 
 
 def _to_utc(value: Any) -> pd.Timestamp:
@@ -344,6 +381,8 @@ class CachedMarketData(MarketDataProvider):
         tf_obj = _as_timeframe(timeframe)
         tf = str(tf_obj)
         start_ts, end_ts = _to_utc(start), _to_utc(end)
+        if self.offline:
+            self._refuse_uncached(list(dict.fromkeys(symbols)), tf, start_ts, end_ts)
         result: Dict[str, pd.DataFrame] = {}
         for symbol in dict.fromkeys(symbols):
             self._fill_gaps(symbol, tf_obj, start_ts, end_ts)
@@ -377,7 +416,7 @@ class CachedMarketData(MarketDataProvider):
         if not gaps:
             return
         if self.offline:
-            raise CacheMiss(symbol, key, gaps)
+            self._refuse_uncached([symbol], key, start, end)
 
         fetched_frames: List[pd.DataFrame] = []
         for gap_start, gap_end in gaps:
@@ -397,6 +436,15 @@ class CachedMarketData(MarketDataProvider):
 
         if fetched_frames:
             self._merge_write(symbol, key, fetched_frames)
+
+    def _refuse_uncached(
+        self, symbols: List[str], timeframe: str, start: pd.Timestamp, end: pd.Timestamp
+    ) -> None:
+        """Raise one :class:`CacheMiss` naming every symbol with a gap, before any is read."""
+        missing = {s: g for s in symbols if (g := self.coverage.gaps(s, timeframe, start, end))}
+        if missing:
+            warmed = any(self.coverage.covered_intervals(s, timeframe) for s in missing)
+            raise CacheMiss(missing, timeframe, previously_warmed=warmed)
 
     def _merge_write(self, symbol: str, timeframe: str, new_frames: List[pd.DataFrame]) -> None:
         """Read the symbol's full existing history, merge in the newly-fetched

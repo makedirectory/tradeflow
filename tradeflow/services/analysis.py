@@ -2608,7 +2608,9 @@ def run_verdict(
         try:
             value = fn()
         except Exception as exc:  # noqa: BLE001 - any step failure is data, not a crash
-            logger.warning("Verdict step %r failed", name, exc_info=True)
+            # The report names the step and its error; the traceback is for debugging.
+            # At WARNING it printed a screen of stack above the line saying what to do.
+            logger.debug("Verdict step %r failed", name, exc_info=True)
             steps[name] = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
             return None
         steps[name] = {"status": "ok"}

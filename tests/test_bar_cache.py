@@ -158,6 +158,57 @@ def test_the_miss_names_the_warm_command_of_the_copy_that_is_running(
     assert absent not in str(miss.value)
 
 
+def test_one_miss_names_every_missing_symbol_and_a_warm_command_that_fixes_it(tmp_path):
+    """The miss used to stop at the first symbol and print `cache warm --symbols AAA` with
+    no window: running it fixed one name, the rerun failed on the next, and the default
+    warm window need not cover the request at all. Running the printed command has to be
+    enough for the same offline request to succeed."""
+    import re
+
+    from tradeflow.utils.timeutils import parse_market_date
+
+    cached, upstream = _cache(tmp_path, offline=True)
+    start, end = _full_window(upstream)
+    with pytest.raises(CacheMiss) as miss:
+        cached.get_bars(SYMBOLS, "1Day", start, end)
+    message = str(miss.value)
+    assert message.count("cache warm") == 1
+    command = re.search(r"`[^`]*cache warm ([^`]*)`", message).group(1)
+    flags = dict(re.findall(r"--(\w+) (\S+)", command))
+    assert flags["symbols"].split(",") == SYMBOLS
+
+    online = CachedMarketData(WindowedFakeProvider(SYMBOLS), cache_dir=tmp_path / "bars")
+    online.warm(
+        flags["symbols"].split(","),
+        flags["timeframe"],
+        parse_market_date(flags["start"]),
+        parse_market_date(flags["end"]),
+    )
+    online.close()
+    again = CachedMarketData(WindowedFakeProvider(SYMBOLS), cache_dir=tmp_path / "bars", offline=True)
+    assert set(again.get_bars(SYMBOLS, "1Day", start, end)) == set(SYMBOLS)
+
+
+def test_the_date_note_appears_only_where_a_cache_was_warmed_before(tmp_path):
+    """The note explains coverage recorded under the old date reading. A cold cache has
+    none, yet the note was printed beside every miss — six times in one verdict."""
+    from tradeflow.store.bars import DATE_CONTRACT_NOTICE
+
+    cached, upstream = _cache(tmp_path, offline=True)
+    start, end = _full_window(upstream)
+    with pytest.raises(CacheMiss) as cold:
+        cached.get_bars(["AAA"], "1Day", start, end)
+    assert DATE_CONTRACT_NOTICE not in str(cold.value)
+
+    online, _ = _cache(tmp_path)
+    online.get_bars(["AAA"], "1Day", start, start + (end - start) / 2)
+    online.close()
+    partly, _ = _cache(tmp_path, offline=True)
+    with pytest.raises(CacheMiss) as short:
+        partly.get_bars(["AAA"], "1Day", start, end)
+    assert DATE_CONTRACT_NOTICE in str(short.value)
+
+
 def test_offline_serves_warm_cache_with_zero_upstream_calls(tmp_path):
     warm_upstream = WindowedFakeProvider(SYMBOLS)
     warm_cache = CachedMarketData(warm_upstream, cache_dir=tmp_path / "bars")
