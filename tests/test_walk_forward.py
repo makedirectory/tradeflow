@@ -635,6 +635,8 @@ def test_gate_values_survive_a_gate_that_recorded_no_verdict():
     assert format_gate_value("leakage_probe", None) == "n/a"
     # `oos_drawdown_vs_is` gets an infinite threshold when in-sample drawdown is 0.
     assert format_gate_value("oos_drawdown_vs_is", float("inf")) == "unbounded"
+    # A drawdown gate is in percent on both sides, and says so.
+    assert format_gate_value("oos_drawdown_vs_is", 10.594) == "10.59%"
 
 
 def test_every_gate_a_report_produces_can_be_rendered():

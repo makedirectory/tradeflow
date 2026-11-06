@@ -288,6 +288,9 @@ def _check(value: float, op: str, threshold: float) -> Dict[str, Any]:
 #: costs two decimal places, and being wrong about a count costs credibility.
 _GATE_VALUE_KINDS = {
     "min_oos_trades": "count",
+    # A drawdown in percent against a threshold in percent; printed bare, "10.59 vs
+    # 15.41" read as a ratio.
+    "oos_drawdown_vs_is": "percent",
     "leakage_probe": "flag",
     "total_trades": "count",
     "oos_trades": "count",
@@ -342,6 +345,8 @@ def format_gate_value(gate_name: str, value: Any) -> str:
         return f"{int(round(number))}"
     if kind == "fine":
         return f"{number:.4g}"
+    if kind == "percent":
+        return f"{number:.2f}%"
     if kind == "probability":
         # Three decimals so a failing 0.496 does not print as the 0.5 gate it missed.
         # Below that, "0.000" reads as "certainly zero" and the chart once printed the
