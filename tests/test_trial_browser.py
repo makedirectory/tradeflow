@@ -763,3 +763,26 @@ def test_ids_and_filters_together_are_refused_rather_than_the_filters_ignored(tm
     )
     args.func(args)
     assert journal.read_text() != before
+
+
+def test_ids_that_are_all_typos_select_nothing_rather_than_the_whole_store(tmp_path):
+    """Found in review: when no typed id resolved, the empty id list read as "no ids, no
+    filters", so the report said every trial in the store would be quarantined. Only
+    the unmatched-id guard stood between that and a whole-store quarantine."""
+    from tradeflow.services.maintenance import mark_contaminated
+
+    journal = tmp_path / "journal.jsonl"
+    for fast in (5, 6, 7):
+        journal_trial(
+            "backtest",
+            strategy="s",
+            symbols=["AAA"],
+            start=datetime(2024, 1, 1),
+            end=datetime(2024, 6, 1),
+            params={"fast": fast},
+            metrics={"sharpe_ratio": 1.0},
+            path=journal,
+        )
+    report = mark_contaminated(reason="t", journal_path=journal, trial_ids=["zzzz9999"])
+    assert report["selected"] == 0 and report["trial_ids"] == []
+    assert report["unmatched_ids"] == ["zzzz9999"]

@@ -191,7 +191,8 @@ without guessing. The history below keeps the old name as it was written.
   two trials to compare, an unknown config name) is a tool error naming the tool to use,
   instead of a successful response carrying an `error` field.
 - `save_config` and `load_config` take a plain name and stay inside the configs
-  directory (a name like `../x` wrote outside it). `save_config` checks the strategy,
+  directory (a name like `../x` wrote outside it), and an existing config is not
+  replaced unless `overwrite=true`. `save_config` checks the strategy,
   scanner, parameters and limits before writing, so a config that could not run is
   never saved; an unknown provenance field lists the accepted ones.
 - Arguments no run can mean are refused before anything is read or journaled, on both
@@ -199,8 +200,8 @@ without guessing. The history below keeps the old name as it was written.
   candidate equally, so the "best" was arbitrary; the search always maximises, so a
   lower-is-better objective such as `max_drawdown` picked the worst candidate and is now
   refused too), negative `holdout_days`,
-  `max_evals` below one, a non-positive `capital`, an empty universe, and a parameter or
-  position limit the strategy does not have (a misspelt one used to run at the default).
+  `max_evals` below one, a non-positive `capital`, an empty universe, a misspelt
+  parameter name (it used to run at the default) and a position limit nothing enforces.
   A backtest that read no bars for any symbol is refused instead of reported as all
   zeros. Each of these used to cost a journaled trial.
 - Walk-forward gates say what they are computed over (median across folds, total
@@ -208,7 +209,8 @@ without guessing. The history below keeps the old name as it was written.
   looks like it contradicts the aggregate metric of the same name.
 - Calmar and Sterling ratios are negative for a losing run; they took the magnitude of
   the whole ratio, so a loss read as a reward. Values already stored for losing runs
-  carry the old sign. Neither ratio feeds a gate or a leaderboard.
+  carry the old sign, so neither is accepted as a search objective for now (a search
+  reuses stored per-candidate results); neither feeds a gate or a leaderboard.
 
 ### Model providers
 

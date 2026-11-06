@@ -138,15 +138,23 @@ def mark_contaminated(
 
     journal = _resolve_journal(journal_path)
     typed = [str(t) for t in (trial_ids or [])]
+    if typed and any(f is not None for f in (strategy, kind, accounting, before)):
+        raise ValueError("ids name trials outright; give either ids or filters, not both")
     resolved = resolve_trial_ids(typed, journal) if typed else {}
-    selected = select_trials(
-        journal_path=journal,
-        trial_ids=[full for full in resolved.values() if full] if typed else None,
-        strategy=strategy,
-        kind=kind,
-        accounting=accounting,
-        before=before,
-    )
+    found = [full for full in resolved.values() if full]
+    if typed and not found:
+        # Every id was a typo. An empty id list is falsy, and handing it on read as "no
+        # ids, no filters" - so the report selected every trial in the store.
+        selected: List[Dict[str, Any]] = []
+    else:
+        selected = select_trials(
+            journal_path=journal,
+            trial_ids=found if typed else None,
+            strategy=strategy,
+            kind=kind,
+            accounting=accounting,
+            before=before,
+        )
     # An id somebody typed is a claim that the trial exists; a filter matching nothing is
     # an answer. Only the first is a typo signal, so only it is reported back.
     payload_unmatched = [t for t in typed if not resolved.get(t)]

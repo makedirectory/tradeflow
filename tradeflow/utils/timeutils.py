@@ -107,7 +107,9 @@ def window_refusal(start: datetime, end: datetime, now: Optional[datetime] = Non
     succeed. And a verdict over a reversed window was journaled as a trial, raising the
     multiple-testing count for a run that measured nothing.
     """
-    if end <= start:
+    if end == start:
+        return f"the window is empty: it starts and ends at {_day(start)}; the end must come after the start."
+    if end < start:
         return f"the window ends ({_day(end)}) before it starts ({_day(start)}); the end must come after the start."
     if now is None:
         # Library callers still pass naive values; compare like with like.

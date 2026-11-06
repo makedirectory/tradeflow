@@ -93,12 +93,13 @@ METRIC_KEYS = (
 #: (``max_drawdown``, ``annualized_volatility``, ``var_95``) as the objective picked
 #: the *worst* candidate, and one that does not depend on the strategy
 #: (``buy_hold_return``) picked arbitrarily. ``total_trades`` is excluded because
-#: maximising it selects for turnover, not edge.
+#: maximising it selects for turnover, not edge. ``calmar_ratio`` and
+#: ``sterling_ratio`` are held out for now: they were positive for losing runs until a
+#: sign fix that did not bump ACCOUNTING_VERSION, and a search reuses stored
+#: per-candidate results, so it could rank a losing candidate by its old value.
 OBJECTIVE_KEYS = (
     "sharpe_ratio",
     "sortino_ratio",
-    "calmar_ratio",
-    "sterling_ratio",
     "martin_ratio",
     "omega_ratio",
     "gain_to_pain_ratio",

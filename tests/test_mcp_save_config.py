@@ -105,3 +105,59 @@ def test_the_description_names_provenance_fields_that_exist(built):
 
     for field in dataclasses.fields(config_store.Provenance):
         assert f"`{field.name}`" in description
+
+
+# --- found in review -----------------------------------------------------------------
+
+
+def test_an_existing_config_is_not_replaced_unless_asked(built, tmp_path):
+    """An agent proposing a config under a name in use silently replaced it - possibly
+    one a person had promoted. Compared without case, as macOS's filesystem is."""
+    _call(built, "save_config", name="momentum", **GOOD)
+    original = (tmp_path / "configs" / "momentum.json").read_text()
+
+    for name in ("momentum", "Momentum"):
+        assert "already exists" in _refused(built, "save_config", name=name, strategy="demo_trend", params={})
+    assert (tmp_path / "configs" / "momentum.json").read_text() == original
+
+    _call(built, "save_config", name="momentum", strategy="demo_trend", params={}, overwrite=True)
+    assert (tmp_path / "configs" / "momentum.json").read_text() != original
+
+
+@pytest.mark.parametrize("name", ["x:y", "con", "NUL.json", "lpt1", "a\nb"])
+def test_a_name_windows_cannot_hold_as_a_plain_file_is_refused(built, name):
+    """`x:y` writes an alternate data stream on Windows and `con` is a device."""
+    assert "plain file name" in _refused(built, "save_config", name=name, **GOOD)
+
+
+def test_a_documented_behavioural_key_and_a_strategy_specific_key_are_saved(built):
+    """Found in review: every undeclared key was refused, which rejected
+    `reaffirm_entries` - a documented config key - and would reject the keys a private
+    strategy reads without declaring. Only near-misses of a declared parameter are typos."""
+    _call(
+        built,
+        "save_config",
+        name="ok",
+        strategy="demo_trend",
+        params={"reaffirm_entries": False, "my_flag": 1},
+    )
+    assert "did you mean 'fast_ema_period'" in _refused(
+        built, "save_config", name="typo", strategy="demo_trend", params={"fast_emaperiod": 9}
+    )
+
+
+def test_the_lazily_built_client_is_still_checked_for_a_trading_client(monkeypatch):
+    """The keyless start moved construction into the first bar tool; the guard must
+    still run there, or a builder that returned something able to trade would be used."""
+    from tradeflow.services import data
+
+    class Leaky(MarketDataClient):
+        broker = object()
+
+    monkeypatch.setattr(
+        data, "build_data_client", lambda **kw: Leaky(FakeMarketData(["AAA"], n=50, freq="1D"))
+    )
+    server = mcp_server.build_server()
+    assert "unexpectedly exposes 'broker'" in _refused(
+        server, "run_backtest", strategy="demo_trend", symbols=["AAA"], start="2024-01-02", end="2024-03-01"
+    )

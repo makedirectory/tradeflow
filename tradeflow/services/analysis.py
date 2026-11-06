@@ -1908,6 +1908,17 @@ def run_draft_walk_forward(
     ``draft:<ClassName>:<hash>`` strategy id so the campaign can still see that a
     generated/private candidate consumed a test.
     """
+    refuse_unusable_run_args(
+        symbols=symbols,
+        capital=capital,
+        method=method,
+        objective=objective,
+        max_evals=max_evals,
+        mode=mode,
+        n_folds=n_folds,
+        holdout_days=holdout_days,
+    )
+    _refuse_unusable_window(start, end)
     from tradeflow.optimization.config_store import current_git_sha
     from tradeflow.research.sandbox import HygieneError, load_strategy_from_code
     from tradeflow.services.audit import journal_trial

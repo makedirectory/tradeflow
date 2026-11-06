@@ -100,23 +100,46 @@ def _did_you_mean(name: str, known) -> str:
     return f" (did you mean {close[0]!r}?)" if close else ""
 
 
+#: Config keys the base class itself reads or writes that are not tunable parameters.
+#: Documented in the configuration guide; a config may carry any of them.
+BEHAVIOURAL_CONFIG_KEYS = ("position_limits", "reaffirm_entries", "required_lookback_periods", "timeframe")
+
+
 def refuse_unknown_params(strategy_class, params: Optional[Dict[str, Any]]) -> None:
-    """Refuse a parameter name the strategy does not declare.
+    """Refuse a key that is a near-miss of a declared parameter - almost always a typo.
 
     ``Strategy.__init__`` range-checks declared parameters and passes any other key
     straight through, so ``{"fast_emaperiod": 9}`` ran at the defaults and was even
     served the defaults' memoized result, with nothing saying the override reached
-    nothing. ``position_limits`` (the book) and ``_``-prefixed identity keys are not
-    parameters and are let through.
+    nothing.
+
+    Only near-misses are refused. The base class documents that strategy-specific keys
+    may be added freely, and a private strategy may read keys it never declares in
+    ``PARAM_RANGES``; refusing every undeclared key broke ``reaffirm_entries`` and would
+    break those. Any other undeclared key is let through and logged. The base class's
+    behavioural keys and ``_``-prefixed identity keys are never questioned.
     """
+    import difflib
+
     declared = strategy_class.PARAM_RANGES
-    unknown = [
+    undeclared = [
         name
         for name in (params or {})
-        if name not in declared and name != "position_limits" and not name.startswith("_")
+        if name not in declared and name not in BEHAVIOURAL_CONFIG_KEYS and not name.startswith("_")
     ]
-    if unknown:
-        named = "; ".join(f"{name!r}{_did_you_mean(name, declared)}" for name in unknown)
+    typos = {}
+    for name in undeclared:
+        close = difflib.get_close_matches(name, list(declared), n=1, cutoff=0.8)
+        if close:
+            typos[name] = close[0]
+        else:
+            logger.warning(
+                "%s declares no parameter %r; passing it through as a strategy-specific key.",
+                strategy_class.__name__,
+                name,
+            )
+    if typos:
+        named = "; ".join(f"{name!r} (did you mean {close!r}?)" for name, close in typos.items())
         raise ValueError(
             f"{strategy_class.__name__} has no parameter {named}. Its parameters: {', '.join(sorted(declared))}."
         )

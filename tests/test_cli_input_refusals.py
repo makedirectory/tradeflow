@@ -66,7 +66,7 @@ def test_a_reversed_window_is_refused_before_anything_runs(capsys):
     for command in (["backtest"], ["verdict"], ["cache", "warm", "--symbols", "AAA"]):
         err = _refusal([*command, "--start", "2024-06-01", "--end", "2024-01-01"], capsys)
         assert "ends (2024-01-01) before it starts (2024-06-01)" in err
-        assert err.startswith(f"{CLI_NAME} {command[0]}: error:")
+        assert f"{CLI_NAME} {' '.join(command[:2]) if command[0] == 'cache' else command[0]}: error:" in err
 
 
 def test_a_window_starting_in_the_future_is_refused(capsys):
@@ -422,3 +422,55 @@ def test_every_objective_is_a_reported_metric():
 
     assert set(OBJECTIVE_KEYS) <= set(METRIC_KEYS)
     cli.parse_cli(["optimize", "--objective", "sortino_ratio"])
+
+
+# --- found in review -----------------------------------------------------------------
+
+
+def test_a_config_carrying_a_documented_behavioural_key_still_loads(tmp_path):
+    """Refusing every undeclared key rejected `reaffirm_entries`, a documented config
+    key, so `live --config` and `backtest --config` refused a valid file."""
+    import json
+
+    from tradeflow.services import analysis
+    from tradeflow.services.registry import resolve_strategy_class
+
+    params = {k: v["default"] for k, v in resolve_strategy_class("demo_trend").PARAM_RANGES.items()}
+    path = tmp_path / "c.json"
+    path.write_text(json.dumps({"strategy": "demo_trend", "params": {**params, "reaffirm_entries": False}}))
+    strategy, name, _ = cli._load_strategy_from_config(str(path))
+    assert strategy.config["reaffirm_entries"] is False
+    assert (
+        analysis._strategy("demo_trend", {"reaffirm_entries": False, "custom_key": 1}).config["custom_key"]
+        == 1
+    )
+
+
+def test_the_draft_walk_forward_gets_the_same_refusals():
+    """It called neither check, so over MCP a bogus objective or a reversed window still
+    recorded a draft trial."""
+    from tradeflow.services import analysis
+
+    with pytest.raises(analysis.RunRefused, match="cannot be maximised"):
+        analysis.run_draft_walk_forward(
+            None,
+            "class X: pass",
+            ["AAA"],
+            cli._date("2024-01-02"),
+            cli._date("2024-06-01"),
+            objective="max_drawdown",
+        )
+
+
+def test_calmar_and_sterling_are_not_objectives_while_stored_values_carry_the_old_sign(capsys):
+    """A search reuses stored per-candidate results, and the sign fix did not bump the
+    accounting version, so ranking by them could pick a losing candidate."""
+    assert "cannot be maximised meaningfully" in _refusal(["optimize", "--objective", "calmar_ratio"], capsys)
+
+
+def test_an_empty_window_says_so_and_the_refusal_names_the_subcommand(capsys):
+    err = _refusal(
+        ["cache", "warm", "--symbols", "AAA", "--start", "2024-01-02", "--end", "2024-01-02"], capsys
+    )
+    assert "the window is empty" in err
+    assert f"{CLI_NAME} cache warm: error:" in err

@@ -159,11 +159,15 @@ their return shapes (the CLI renders them); the raise happens in this module.
 
 **`save_config` and `load_config` take a plain file name.** An agent supplies the name, so
 `services.configs.config_filename` refuses anything with a directory component, `..`, an
-absolute path or an empty stem, and every config is read and written directly under the
-configs directory (a read used to accept any existing path). `save_config` also refuses,
-before writing, a strategy or scanner that is not registered, a parameter the strategy
-does not declare or whose range check fails, and a book limit nothing enforces (the same
-`refuse_unknown_params` / `refuse_unknown_limits` the run paths use). `provenance` accepts
+absolute path, an empty stem, a `:`, a control character or a Windows device name, and
+every config is read and written directly under the configs directory (a read used to
+accept any existing path). A name already in use - compared without case - is refused
+unless `overwrite=true`, since a saved config may be one a person has promoted.
+`save_config` also refuses, before writing, a strategy or scanner that is not registered,
+params that do not construct the strategy or that carry a near-miss of a declared
+parameter name (a typo; other undeclared keys are strategy-specific and pass), and a book
+limit nothing enforces (the same `refuse_unknown_params` / `refuse_unknown_limits` the run
+paths use). `provenance` accepts
 only the `Provenance` dataclass's fields; an unknown key is refused with the accepted list
 rather than a constructor `TypeError`. There is no trial-id field: the trial id goes in
 `notes`, or in the `campaign` block `get_campaign_material` returns.

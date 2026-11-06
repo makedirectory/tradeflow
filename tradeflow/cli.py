@@ -380,6 +380,19 @@ def _refuse_sibling_command_after_research(parser, argv: List[str]) -> None:
         return
 
 
+def _innermost_parser(parser, args):
+    """The innermost parser the user got to - `trials show` before `trials` - and its path."""
+    chosen, path = parser, []
+    while True:
+        action = next((a for a in chosen._actions if isinstance(a, argparse._SubParsersAction)), None)
+        picked = getattr(args, action.dest, None) if action is not None else None
+        if picked is None or picked not in action.choices:
+            break
+        chosen = action.choices[picked]
+        path.append(picked)
+    return chosen, path
+
+
 def _refuse_unrecognized(parser, args, extras: List[str]) -> None:
     """Refuse leftover arguments as the *subcommand* that met them, not the top level.
 
@@ -390,15 +403,7 @@ def _refuse_unrecognized(parser, args, extras: List[str]) -> None:
     on a sibling command (``--range`` belongs to ``screen``) that is said in one line,
     since "unrecognized" alone sends the reader to guess whether it was a typo.
     """
-    # The innermost parser the user got to: `trials show` before `trials`.
-    chosen, path = parser, []
-    while True:
-        action = next((a for a in chosen._actions if isinstance(a, argparse._SubParsersAction)), None)
-        picked = getattr(args, action.dest, None) if action is not None else None
-        if picked is None or picked not in action.choices:
-            break
-        chosen = action.choices[picked]
-        path.append(picked)
+    chosen, path = _innermost_parser(parser, args)
 
     message = f"unrecognized arguments: {' '.join(extras)}"
     if path:
@@ -433,13 +438,14 @@ def parse_cli(argv: Optional[List[str]] = None):
     args, extras = parser.parse_known_args(argv)
     if extras:
         _refuse_unrecognized(parser, args, extras)
-    _refuse_unusable_window(args)
+    _refuse_unusable_window(parser, args)
     args.flags_given = _flags_given(parser, argv, getattr(args, "command", None))
     return args
 
 
-def _refuse_unusable_window(args) -> None:
-    """Refuse a reversed or future ``--start``/``--end`` before anything is read or recorded."""
+def _refuse_unusable_window(parser, args) -> None:
+    """Refuse a reversed, empty or future ``--start``/``--end`` before anything is read or
+    recorded, as the subcommand that took them (`cache warm`, not `cache`)."""
     from tradeflow.utils.timeutils import window_refusal
 
     start, end = getattr(args, "start", None), getattr(args, "end", None)
@@ -447,8 +453,7 @@ def _refuse_unusable_window(args) -> None:
         return
     problem = window_refusal(start, end)
     if problem:
-        sys.stderr.write(f"{CLI_NAME} {args.command}: error: {problem}\n")
-        sys.exit(2)
+        _innermost_parser(parser, args)[0].error(f"{problem} (--start / --end)")
 
 
 def _refuse_unusable_config(path, exc) -> "NoReturn":  # noqa: F821 - string annotation
@@ -7685,7 +7690,8 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=None,
         metavar="TRIAL_ID",
-        help="Quarantine this trial (a unique id prefix of 4+ characters works). Repeatable. Wins over the filters below",
+        help="Quarantine this trial (a unique id prefix of 4+ characters works). Repeatable. "
+        "Select by ids or by the filters below, not both",
     )
     t_quarantine.add_argument("--strategy", default=None)
     t_quarantine.add_argument("--kind", default=None)

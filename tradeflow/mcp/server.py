@@ -1901,6 +1901,7 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         capital: Optional[float] = None,
         position_limits: Optional[Dict[str, Any]] = None,
         provenance: Optional[Dict[str, Any]] = None,
+        overwrite: bool = False,
     ) -> Dict[str, Any]:
         """Propose a candidate config by writing configs/<name>.json, with provenance.
 
@@ -1910,10 +1911,12 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         step by design — the research clock proposes, a person disposes.
 
         `name` is a plain file name (no directories, no `..`); the file is always written
-        under the configs directory. The config is checked before anything is written: the
-        strategy and scanner must exist, `params` may only name parameters the strategy
-        declares and must construct it, and `position_limits` may only name limits that
-        are enforced. A config that could not run is refused, not saved.
+        under the configs directory. A name already in use is refused unless
+        `overwrite=true`: a saved config may be one a person has promoted. The config is
+        checked before anything is written: the strategy and scanner must exist, `params`
+        must construct the strategy (a key that is a near-miss of a declared parameter is
+        refused as a typo), and `position_limits` may only name limits that are enforced.
+        A config that could not run is refused, not saved.
 
         Include the evidence in `provenance` (the walk-forward or verdict run behind
         the proposal, its window and universe), because a config with no recorded
@@ -1941,6 +1944,7 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
             "params": params,
             "scanner": scanner,
             "position_limits": position_limits,
+            "overwrite": overwrite,
         }
         result = configs.save_config(
             name,
@@ -1951,6 +1955,7 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
             capital=capital,
             position_limits=position_limits,
             provenance=provenance,
+            overwrite=overwrite,
         )
         return _logged("save_config", inputs, result)
 

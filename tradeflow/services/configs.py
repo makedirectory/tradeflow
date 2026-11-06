@@ -11,6 +11,16 @@ from typing import Any, Dict, List, Optional
 
 from tradeflow.optimization import config_store
 
+#: Device names Windows refuses as file names whatever the extension.
+_RESERVED_WINDOWS_NAMES = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+}
+
 
 def config_filename(name: Any) -> str:
     """``name`` as the file it names inside the configs directory, or raise.
@@ -28,7 +38,9 @@ def config_filename(name: Any) -> str:
         and stem not in (".", "..")
         and "/" not in text
         and "\\" not in text
-        and "\0" not in text
+        and ":" not in text  # a drive letter, or an alternate data stream on Windows
+        and all(ord(ch) >= 32 for ch in text)
+        and stem.split(".")[0].upper() not in _RESERVED_WINDOWS_NAMES
         and Path(text).name == text
         and not Path(text).is_absolute()
     )
@@ -92,6 +104,7 @@ def save_config(
     capital: Optional[float] = None,
     position_limits: Optional[Dict[str, Any]] = None,
     provenance: Optional[Dict[str, Any]] = None,
+    overwrite: bool = False,
 ) -> Dict[str, Any]:
     """Persist a candidate config to ``configs/<name>.json``; return the path.
 
@@ -107,6 +120,7 @@ def save_config(
     its book is distinguishable from one saved at the class default.
     """
     filename = config_filename(name)
+    _refuse_replacing(filename, overwrite)
     _validate_candidate(strategy, params, scanner, position_limits, provenance)
     position_limits = _reconcile_book(position_limits, provenance)
     capital = _reconcile_capital(capital, provenance)
@@ -122,6 +136,25 @@ def save_config(
         provenance=prov,
     )
     return {"path": str(path), "name": name}
+
+
+def _refuse_replacing(filename: str, overwrite: bool) -> None:
+    """Refuse to replace a saved config unless asked to.
+
+    A config is what a person promotes, and an agent proposing a new one under a name
+    already in use silently replaced it. Compared without case, because a
+    case-insensitive filesystem (the macOS default) maps ``Momentum.json`` onto
+    ``momentum.json``.
+    """
+    root = config_store.DEFAULT_CONFIG_DIR
+    if overwrite or not root.exists():
+        return
+    taken = {path.name.lower(): path.name for path in root.glob("*.json")}
+    if filename.lower() in taken:
+        raise ValueError(
+            f"A config named {taken[filename.lower()]!r} already exists. Choose another name, or "
+            "pass overwrite=true to replace it."
+        )
 
 
 def _reconcile_capital(capital: Optional[float], provenance: Optional[Any]) -> Optional[float]:
