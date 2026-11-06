@@ -675,6 +675,27 @@ def doctor_ok(checks: List[Check], task: str) -> bool:
     return readiness(checks)[task]["ready"] and not any(c.status == "failed" for c in checks)
 
 
+def task_next_step(task: str) -> str:
+    """The one thing to run once ``task`` is ready, so the check ends on the reader's goal.
+
+    It used to end on the same line whatever was asked — "`demo` needs nothing; `verdict`
+    needs the keys above" — so a reader who had just confirmed the MCP server was told
+    about the demo, and nothing about connecting a client.
+    """
+    from tradeflow.settings import DOCS_URL
+
+    steps = {
+        "demo": f"`{invocation('demo', make_target='demo')}` - the whole workflow on synthetic data, no keys",
+        "data": (
+            f"a first verdict on real data - the starter command is in {DOCS_URL}/usage/first-run "
+            f"(`{invocation('verdict')} --help` lists every option)"
+        ),
+        "research": f"`{invocation('research')} --help` - the one command that calls a model",
+        "mcp": f"`{invocation('mcp')} --self-test` - it prints the configuration to paste into your client",
+    }
+    return steps[task]
+
+
 # --------------------------------------------------------------------------- #
 # Opt-in model probe
 # --------------------------------------------------------------------------- #

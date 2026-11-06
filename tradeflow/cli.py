@@ -2222,10 +2222,7 @@ def _print_doctor(checks, *, task: str = "data", probe_result=None, provider: Op
     if not setup.doctor_ok(checks, task) or probe_failed:
         print(f"\nNot ready for '{task}'. Run `{_invocation('init')}` for the guided setup.")
         raise SystemExit(1)
-    print(
-        f"\nReady for '{task}'. `{_invocation('demo', make_target='demo')}` needs nothing; "
-        f"`{_invocation('verdict')}` needs the keys above."
-    )
+    print(f"\nReady for '{task}'. Next: {setup.task_next_step(task)}.")
 
 
 def _init_non_interactive(args, setup) -> None:

@@ -1124,3 +1124,24 @@ def test_a_probe_without_a_key_is_not_sent_either(monkeypatch, tmp_path):
     monkeypatch.setattr(setup, "ENV_PATH", tmp_path / "absent.env")
     assert "ANTHROPIC_API_KEY is not set" in setup.probe_blocker("anthropic", environ={})
     assert setup.probe_blocker("ollama", environ={}) is None
+
+
+@pytest.mark.parametrize(
+    "task, command",
+    [("demo", "demo"), ("data", "verdict"), ("research", "research"), ("mcp", "mcp --self-test")],
+)
+def test_a_ready_check_ends_on_the_next_step_for_the_task_it_checked(task, command, monkeypatch, capsys):
+    """The ready line was one sentence for every task ("`demo` needs nothing; `verdict`
+    needs the keys above"), so a reader who had just confirmed the MCP server was told
+    about the demo and nothing about connecting a client."""
+    from tradeflow import cli as main
+
+    monkeypatch.setattr(settings, "running_from_checkout", lambda: False)
+    monkeypatch.setattr(setup, "run_checks", lambda *a, **k: [setup.Check("version", "ready", "ok")])
+    args = main.build_parser().parse_args(["init", "--check", "--for", task])
+    args.func(args)
+    last = capsys.readouterr().out.strip().splitlines()[-1]
+    assert last.startswith(f"Ready for '{task}'. Next:")
+    assert f"{settings.CLI_NAME} {command}" in last
+    if task != "demo":
+        assert "needs nothing" not in last

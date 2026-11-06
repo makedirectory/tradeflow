@@ -51,7 +51,9 @@ def _record(store, trial_id, **kwargs):
 
 
 def _populate(store):
-    _record(store, "t1", ts="2025-01-01T15:00:00+00:00", oos_sharpe=0.4, deflated_sharpe=0.1, promotable=False)
+    _record(
+        store, "t1", ts="2025-01-01T15:00:00+00:00", oos_sharpe=0.4, deflated_sharpe=0.1, promotable=False
+    )
     _record(store, "t2", ts="2025-02-01T15:00:00+00:00", oos_sharpe=2.1, deflated_sharpe=0.2, promotable=True)
     _record(store, "t3", ts="2025-03-01T15:00:00+00:00", oos_sharpe=1.5, deflated_sharpe=0.9, promotable=True)
     # A different family, and a kind with no Sharpe at all.
