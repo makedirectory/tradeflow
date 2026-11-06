@@ -824,6 +824,9 @@ def cmd_backtest(args) -> None:
     result = BacktestEngine(strategy, data_client, sizer=sizer, cost_model=cost_model).run(
         universe, args.start, args.end, args.capital, benchmark=args.benchmark
     )
+    from tradeflow.services.analysis import refuse_a_run_with_no_bars
+
+    refuse_a_run_with_no_bars(result, universe, args.start, args.end)
 
     if not args.no_journal:
         from tradeflow.analytics.metrics import returns_from_equity
@@ -1900,11 +1903,12 @@ def _print_walkforward(result, objective: str) -> None:
         mark = "PASS" if check["passed"] else "FAIL"
         value = format_gate_value(name, check["value"])
         threshold = format_gate_value(name, check["threshold"])
-        print(f"  [{mark}] {name}: {value} (threshold {threshold})")
+        basis = f" [{check['basis']}]" if check.get("basis") else ""
+        print(f"  [{mark}] {name}: {value} (threshold {threshold}){basis}")
     verdict = "PROMOTABLE" if report["promotable"] else "NOT promotable"
     median_sharpe = result.median_oos("sharpe_ratio")
     print(
-        f"\nVerdict: {verdict} — OOS Sharpe {median_sharpe:.2f}, efficiency "
+        f"\nVerdict: {verdict} — median fold OOS Sharpe {median_sharpe:.2f}, median efficiency "
         f"{result.median_efficiency():.2f}, {result.total_oos_trades()} OOS trades, "
         f"DSR {_dsr_text(agg.get('deflated_sharpe_ratio'))}"
     )
@@ -5946,7 +5950,10 @@ def _wrap_field(text: str, width: int = 58, indent: int = 17) -> str:
 # Argument parsing
 # ---------------------------------------------------------------------------- #
 def _symbols(value: str) -> List[str]:
-    return [s.strip().upper() for s in value.split(",") if s.strip()]
+    symbols = [s.strip().upper() for s in value.split(",") if s.strip()]
+    if not symbols:
+        raise argparse.ArgumentTypeError("expected one or more comma-separated symbols, got none")
+    return symbols
 
 
 #: The bare-flag default for --neutralize-factors: the risk-control factors.
@@ -6121,12 +6128,10 @@ def _date(value: str) -> datetime:
     """
     try:
         return parse_market_date(value)
-    except ValueError:
+    except ValueError as exc:
         # argparse would otherwise name this function - "invalid _date value" - and
         # never say what it wanted.
-        raise argparse.ArgumentTypeError(
-            f"expected a date as YYYY-MM-DD (or an ISO time such as 2024-01-02T09:30), got {value!r}"
-        ) from None
+        raise argparse.ArgumentTypeError(str(exc)) from None
 
 
 def _scanner(value: str) -> str:
@@ -6154,6 +6159,27 @@ def _positive_amount(value: str) -> float:
     if not amount > 0:  # also refuses nan
         raise argparse.ArgumentTypeError(f"must be greater than zero, got {value}")
     return amount
+
+
+def _objective(value: str) -> str:
+    """A metric to optimise, refused here by the same rule the service applies."""
+    from tradeflow.services.analysis import refuse_unusable_run_args
+
+    try:
+        refuse_unusable_run_args(objective=value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from None
+    return value
+
+
+def _non_negative_days(value: str) -> int:
+    try:
+        days = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a whole number of days, got {value!r}") from None
+    if days < 0:
+        raise argparse.ArgumentTypeError(f"cannot be negative, got {days}")
+    return days
 
 
 def _positive_count(value: str) -> int:
@@ -6996,8 +7022,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_common(opt, with_dates=True)
     opt.add_argument("--method", choices=["grid", "random", "bayesian"], default="grid")
-    opt.add_argument("--objective", default="sharpe_ratio")
-    opt.add_argument("--max-evals", dest="max_evals", type=int, default=50)
+    opt.add_argument("--objective", type=_objective, default="sharpe_ratio")
+    opt.add_argument("--max-evals", dest="max_evals", type=_positive_count, default=50)
     opt.add_argument(
         "--seed",
         type=int,
@@ -7020,11 +7046,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_common(screen, with_dates=True)
     screen.add_argument("--method", choices=["grid", "random"], default="grid")
-    screen.add_argument("--objective", default="sharpe_ratio")
+    screen.add_argument("--objective", type=_objective, default="sharpe_ratio")
     screen.add_argument(
         "--max-evals",
         dest="max_evals",
-        type=int,
+        type=_positive_count,
         default=50,
         help="Points to evaluate. A grid larger than this is sampled, not truncated, and the report says so",
     )
@@ -7075,7 +7101,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_common(wf, with_dates=True)
     wf.add_argument("--mode", choices=["anchored", "rolling"], default="anchored")
-    wf.add_argument("--folds", type=int, default=None, help="Number of folds (or use --train/--test-days)")
+    wf.add_argument(
+        "--folds", type=_positive_count, default=None, help="Number of folds (or use --train/--test-days)"
+    )
     wf.add_argument("--train-days", dest="train_days", type=int, default=None)
     wf.add_argument("--test-days", dest="test_days", type=int, default=None)
     wf.add_argument(
@@ -7085,10 +7113,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="IS->OOS gap; defaults to required lookback in calendar days",
     )
-    wf.add_argument("--holdout-days", dest="holdout_days", type=int, default=0)
+    wf.add_argument("--holdout-days", dest="holdout_days", type=_non_negative_days, default=0)
     wf.add_argument("--method", choices=["grid", "random", "bayesian"], default="grid")
-    wf.add_argument("--objective", default="sharpe_ratio")
-    wf.add_argument("--max-evals", dest="max_evals", type=int, default=50)
+    wf.add_argument("--objective", type=_objective, default="sharpe_ratio")
+    wf.add_argument("--max-evals", dest="max_evals", type=_positive_count, default=50)
     wf.add_argument("--seed", type=int, default=42)
     wf.add_argument(
         "--benchmark",
@@ -7881,12 +7909,12 @@ def build_parser() -> argparse.ArgumentParser:
     add_common(res, with_dates=True)
     res.add_argument("--goal", default="Improve out-of-sample Sharpe without raising max drawdown")
     res.add_argument("--mode", choices=["anchored", "rolling"], default="anchored")
-    res.add_argument("--folds", type=int, default=4)
+    res.add_argument("--folds", type=_positive_count, default=4)
     res.add_argument("--embargo-days", dest="embargo_days", type=int, default=None)
-    res.add_argument("--holdout-days", dest="holdout_days", type=int, default=60)
+    res.add_argument("--holdout-days", dest="holdout_days", type=_non_negative_days, default=60)
     res.add_argument("--method", choices=["grid", "random", "bayesian"], default="grid")
-    res.add_argument("--objective", default="sharpe_ratio")
-    res.add_argument("--max-evals", dest="max_evals", type=int, default=25)
+    res.add_argument("--objective", type=_objective, default="sharpe_ratio")
+    res.add_argument("--max-evals", dest="max_evals", type=_positive_count, default=25)
     res.add_argument("--max-trials", dest="max_trials", type=int, default=10)
     res.add_argument("--max-dry-rounds", dest="max_dry_rounds", type=int, default=3)
     res.add_argument("--max-tokens", dest="max_tokens", type=int, default=None)
@@ -7927,9 +7955,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="History to research over when --start is omitted (default: 3 years)",
     )
     dagent.add_argument("--goal", default="Improve out-of-sample Sharpe without raising max drawdown")
-    dagent.add_argument("--folds", type=int, default=4)
-    dagent.add_argument("--holdout-days", dest="holdout_days", type=int, default=90)
-    dagent.add_argument("--max-evals", dest="max_evals", type=int, default=25)
+    dagent.add_argument("--folds", type=_positive_count, default=4)
+    dagent.add_argument("--holdout-days", dest="holdout_days", type=_non_negative_days, default=90)
+    dagent.add_argument("--max-evals", dest="max_evals", type=_positive_count, default=25)
     dagent.add_argument("--max-trials", dest="max_trials", type=int, default=6)
     dagent.add_argument("--max-dry-rounds", dest="max_dry_rounds", type=int, default=3)
     dagent.add_argument("--capital", type=_positive_amount, default=100_000.0)
@@ -7974,6 +8002,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     from tradeflow.brokers.errors import AuthenticationError
+    from tradeflow.services.analysis import RunRefused
     from tradeflow.settings import SettingsError
     from tradeflow.store.bars import CacheMiss
 
@@ -7981,7 +8010,7 @@ def main() -> None:
     args = parse_cli()
     try:
         args.func(args)
-    except (SettingsError, CacheMiss, AuthenticationError) as exc:
+    except (SettingsError, CacheMiss, AuthenticationError, RunRefused) as exc:
         # Rejected keys are the likeliest first mistake, and their message says what to
         # do - it used to sit under sixty lines of the vendor SDK's stack.
         sys.exit(str(exc))

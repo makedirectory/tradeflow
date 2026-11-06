@@ -12,7 +12,7 @@ import json
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -73,6 +73,84 @@ def _strategy(strategy_name: str, config: Optional[Dict[str, Any]] = None):
     return cls(params)
 
 
+class RunRefused(ValueError):
+    """A run refused before it read or recorded anything, with what to change.
+
+    A ``ValueError`` so every caller that already handles one keeps working; its own
+    type so the CLI can end on the message rather than a stack trace.
+    """
+
+
+def refuse_a_run_with_no_bars(result, symbols: Sequence[str], start: datetime, end: datetime) -> None:
+    """Refuse to report or journal a backtest that read no bars at all.
+
+    An empty or all-unknown universe returned a clean-looking result - final capital
+    equal to initial, every ratio 0.0 - and journaled it as a trial. Zero is a
+    measurement; this run measured nothing, and only a log line said so.
+    """
+    if (result.execution or {}).get("universe_size"):
+        return
+    named = ", ".join(symbols) if symbols else "an empty universe"
+    raise RunRefused(
+        f"No bars for any of {named} between {start:%Y-%m-%d} and {end:%Y-%m-%d}, so there is "
+        "nothing to measure and nothing was recorded. Check the symbols and the window."
+    )
+
+
+#: Search methods each caller accepts; screening has no Bayesian search.
+SEARCH_METHODS = ("grid", "random", "bayesian")
+WALK_FORWARD_MODES = ("anchored", "rolling")
+
+
+def refuse_unusable_run_args(
+    *,
+    symbols: Optional[Sequence[str]] = None,
+    capital: Optional[float] = None,
+    method: Optional[str] = None,
+    methods: Tuple[str, ...] = SEARCH_METHODS,
+    objective: Optional[str] = None,
+    max_evals: Optional[int] = None,
+    mode: Optional[str] = None,
+    n_folds: Optional[int] = None,
+    holdout_days: Optional[int] = None,
+) -> None:
+    """Refuse arguments no run can mean, before anything is read or journaled.
+
+    Over MCP these were accepted and each became a journaled trial counting toward the
+    multiple-testing total: ``mode="bogus"`` and ``method="bogus"`` ran and echoed the
+    value back, an unknown ``objective`` scored every candidate as -inf so the "best"
+    was arbitrary, and ``capital=-5`` reported a run with all-zero metrics. The CLI's
+    argparse choices covered some of these; this is the rule for every caller.
+    """
+    from tradeflow.analytics.performance import METRIC_KEYS
+
+    problems = []
+    if symbols is not None and not list(symbols):
+        problems.append("symbols is empty; give at least one symbol")
+    if capital is not None and not capital > 0:
+        problems.append(f"capital must be greater than zero, got {capital}")
+    if method is not None and method not in methods:
+        problems.append(f"method must be one of {', '.join(methods)}, got {method!r}")
+    if objective is not None and objective not in METRIC_KEYS:
+        import difflib
+
+        close = difflib.get_close_matches(objective, METRIC_KEYS, n=1)
+        hint = f" (did you mean {close[0]!r}?)" if close else ""
+        problems.append(
+            f"objective {objective!r} is not a metric{hint}; e.g. sharpe_ratio, sortino_ratio, total_return"
+        )
+    if max_evals is not None and max_evals < 1:
+        problems.append(f"max_evals must be at least 1, got {max_evals}")
+    if mode is not None and mode not in WALK_FORWARD_MODES:
+        problems.append(f"mode must be one of {', '.join(WALK_FORWARD_MODES)}, got {mode!r}")
+    if n_folds is not None and n_folds < 1:
+        problems.append(f"n_folds must be at least 1, got {n_folds}")
+    if holdout_days is not None and holdout_days < 0:
+        problems.append(f"holdout_days cannot be negative, got {holdout_days}")
+    if problems:
+        raise RunRefused("; ".join(problems) + ".")
+
+
 def _refuse_unusable_window(start: datetime, end: datetime) -> None:
     """Refuse a reversed or future window before anything is read or journaled.
 
@@ -84,7 +162,7 @@ def _refuse_unusable_window(start: datetime, end: datetime) -> None:
 
     problem = window_refusal(start, end)
     if problem:
-        raise ValueError(problem[0].upper() + problem[1:])
+        raise RunRefused(problem[0].upper() + problem[1:])
 
 
 def _build_cost_model(
@@ -462,6 +540,7 @@ def run_backtest(
     is repeated and a new trial recorded, because serving it would leave the caller
     without the table it asked for. Ignored when ``journal=False``: nothing is stored.
     """
+    refuse_unusable_run_args(symbols=symbols, capital=capital)
     _refuse_unusable_window(start, end)
     from tradeflow.services.sizing import build_beta_sizer
 
@@ -507,6 +586,7 @@ def run_backtest(
         cost_model=cost_model,
         take_profit_margin_bps=take_profit_margin_bps,
     ).run(symbols, start, end, capital, benchmark=benchmark)
+    refuse_a_run_with_no_bars(result, symbols, start, end)
 
     # `journal=False` exists for re-runs of a config that is already a candidate -
     # a cost-stress curve is one candidate under several stated assumptions, and
@@ -785,6 +865,9 @@ def run_optimization(
     was scheduled. A parallel run and a sequential run of the same search produce
     the same trials and the same winner.
     """
+    refuse_unusable_run_args(
+        symbols=symbols, capital=capital, method=method, objective=objective, max_evals=max_evals
+    )
     _refuse_unusable_window(start, end)
     from tradeflow.services.audit import journal_trial
 
@@ -960,6 +1043,14 @@ def run_screen(
     the same count of positive points scattered at random, and it can point off the
     edge of the searched space, which a best-point report never does.
     """
+    refuse_unusable_run_args(
+        symbols=symbols,
+        capital=capital,
+        method=method,
+        methods=("grid", "random"),
+        objective=objective,
+        max_evals=max_evals,
+    )
     refuse_unknown_limits(position_limits)
     _refuse_unusable_window(start, end)
     from tradeflow.analytics import screening
@@ -1272,6 +1363,16 @@ def run_walk_forward(
     per-fold progress stays readable. Journaling is unaffected: this process still
     records exactly one validated trial when the whole run finishes.
     """
+    refuse_unusable_run_args(
+        symbols=symbols,
+        capital=capital,
+        method=method,
+        objective=objective,
+        max_evals=max_evals,
+        mode=mode,
+        n_folds=n_folds,
+        holdout_days=holdout_days,
+    )
     refuse_unknown_limits(position_limits)
     _refuse_unusable_window(start, end)
     from tradeflow.optimization.config_store import current_git_sha
@@ -2713,6 +2814,7 @@ def run_verdict(
     ``run_id``, ``inputs``, ``steps``, ``scan``, ``alphas``, ``combination``,
     ``portfolio``, ``information``, ``verdict``.
     """
+    refuse_unusable_run_args(symbols=symbols, capital=capital)
     _refuse_unusable_window(start, end)
     # Before the first step, not inside it: an unknown scanner used to fail the scan and
     # then leave the report to explain a missing universe as an infeasible book.

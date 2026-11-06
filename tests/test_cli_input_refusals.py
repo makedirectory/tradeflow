@@ -300,3 +300,109 @@ def test_a_saved_config_with_a_stale_parameter_is_refused(tmp_path):
     with pytest.raises(SystemExit) as exited:
         cli.apply_run_config(args)
     assert "has no parameter 'fast_emaperiod'" in str(exited.value.code)
+
+
+# --- arguments no run can mean ------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "kwargs, fragment",
+    [
+        ({"mode": "bogus"}, "mode must be one of"),
+        ({"method": "bogus"}, "method must be one of"),
+        ({"objective": "sharpe"}, "did you mean 'sharpe_ratio'"),
+        ({"holdout_days": -5}, "holdout_days cannot be negative"),
+        ({"capital": -5.0}, "capital must be greater than zero"),
+        ({"max_evals": 0}, "max_evals must be at least 1"),
+    ],
+)
+def test_a_walk_forward_argument_no_run_can_mean_is_refused_and_not_journaled(
+    kwargs, fragment, tmp_path, monkeypatch
+):
+    """Over MCP each of these ran, echoed the value back and journaled a trial: an
+    unknown objective scored every candidate as -inf, so the "best" was arbitrary."""
+    from tests.fakes import FakeMarketData
+    from tradeflow.marketdata.client import MarketDataClient
+    from tradeflow.services import analysis, audit
+
+    journal = tmp_path / "journal.jsonl"
+    monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", journal)
+    client = MarketDataClient(FakeMarketData(["AAA"], n=300, freq="1D"))
+    with pytest.raises(analysis.RunRefused, match=fragment):
+        analysis.run_walk_forward(
+            client, "demo_trend", ["AAA"], cli._date("2024-01-02"), cli._date("2024-06-01"), **kwargs
+        )
+    assert not journal.exists()
+
+
+def test_a_backtest_that_read_no_bars_is_refused_not_scored_as_zero(tmp_path, monkeypatch):
+    """`symbols=["ZZZZ"]` returned final capital equal to initial and every ratio 0.0,
+    journaled as a trial; only a log line said no bars were fetched."""
+    from tests.fakes import FakeMarketData
+    from tradeflow.marketdata.client import MarketDataClient
+    from tradeflow.services import analysis, audit
+
+    journal = tmp_path / "journal.jsonl"
+    monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", journal)
+    client = MarketDataClient(FakeMarketData(["AAA"], n=300, freq="1D"))
+    start, end = cli._date("2024-01-02"), cli._date("2024-06-01")
+    with pytest.raises(analysis.RunRefused, match="No bars for any of ZZZZ"):
+        analysis.run_backtest(client, "demo_trend", ["ZZZZ"], start, end)
+    with pytest.raises(analysis.RunRefused, match="symbols is empty"):
+        analysis.run_backtest(client, "demo_trend", [], start, end)
+    assert not journal.exists()
+    # The boundary: a universe with bars still runs.
+    assert analysis.run_backtest(client, "demo_trend", ["AAA"], start, end, journal=False)["metrics"]
+
+
+def test_the_cli_refuses_an_unknown_objective_and_ends_a_refused_run_without_a_stack(capsys, monkeypatch):
+    from argparse import Namespace
+
+    from tradeflow.services.analysis import RunRefused
+
+    assert "did you mean 'sortino_ratio'" in _refusal(["optimize", "--objective", "sortino"], capsys)
+    assert "cannot be negative" in _refusal(["walkforward", "--holdout-days", "-1"], capsys)
+    assert "expected one or more" in _refusal(["backtest", "--symbols", " , "], capsys)
+
+    def _refused(args):
+        raise RunRefused("No bars for any of ZZZZ.")
+
+    monkeypatch.setattr(cli, "parse_cli", lambda: Namespace(func=_refused))
+    monkeypatch.setattr(cli, "setup_logging", lambda: None)
+    with pytest.raises(SystemExit) as exited:
+        cli.main()
+    assert exited.value.code == "No bars for any of ZZZZ."
+
+
+def test_a_malformed_date_says_so_on_every_surface():
+    """The MCP server returned strptime's own text - "does not match format '%Y-%m-%d'" -
+    which never said which formats work; the message now lives in the one parser."""
+    from tradeflow.utils.timeutils import parse_market_date
+
+    with pytest.raises(ValueError, match=r"YYYY-MM-DD .* got '01/02/2024'"):
+        parse_market_date("01/02/2024")
+
+
+def test_walk_forward_gates_say_what_they_are_computed_over(tmp_path, monkeypatch):
+    """The fold-median gates sat beside a stitched aggregate with the same metric names;
+    a gate Sharpe of 0.21 next to an aggregate 0.20 read as a bug."""
+    from tests.fakes import FakeMarketData
+    from tradeflow.marketdata.client import MarketDataClient
+    from tradeflow.services import analysis, audit
+
+    monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", tmp_path / "journal.jsonl")
+    monkeypatch.setattr(analysis, "ARTIFACT_DIR", tmp_path / "artifacts")
+    client = MarketDataClient(FakeMarketData(["AAA", "BBB"], n=500, freq="1D"))
+    result = analysis.run_walk_forward(
+        client,
+        "demo_trend",
+        ["AAA", "BBB"],
+        cli._date("2023-01-02"),
+        cli._date("2024-06-01"),
+        n_folds=2,
+        max_evals=2,
+    )
+    checks = result["gate_report"]["checks"]
+    assert checks["oos_sharpe"]["basis"] == "median across folds"
+    assert checks["min_oos_trades"]["basis"] == "total across folds"
+    assert checks["deflated_sharpe"]["basis"] == "stitched out-of-sample aggregate"

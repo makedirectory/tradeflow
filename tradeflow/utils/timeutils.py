@@ -78,7 +78,14 @@ def parse_market_date(value: str) -> datetime:
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
-        parsed = datetime.strptime(value, "%Y-%m-%d")
+        try:
+            parsed = datetime.strptime(value, "%Y-%m-%d")
+        except ValueError:
+            # strptime's own text names only "%Y-%m-%d" and never the value's role; this
+            # is the message every surface shows, the MCP server's included.
+            raise ValueError(
+                f"expected a date as YYYY-MM-DD (or an ISO time such as 2024-01-02T09:30), got {value!r}"
+            ) from None
     if parsed.tzinfo is None:
         return NEW_YORK.localize(parsed)
     return parsed.astimezone(NEW_YORK)
