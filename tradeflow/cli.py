@@ -2163,6 +2163,11 @@ def _journal_alpha(args, strategy_label: str, source: str, result: dict) -> None
     """
     if args.no_journal:
         return
+    if not result.get("universe_size", len(result.get("alphas", []))):
+        # A run that scored no names is not a forecast; recording it would put an empty
+        # row in the journal under a real-looking identity.
+        print("  (not journaled: this alpha run scored no names)")
+        return
     from tradeflow.services.audit import journal_trial
 
     knobs = {
@@ -2844,13 +2849,15 @@ def cmd_alphas(args) -> None:
         "signal": f"'{args.strategy}' signal",
         "scanner": f"scanner '{args.scanner}' strength",
     }[args.source]
+    from tradeflow.analytics.reporting import small_aware
+
     print(f"\nAlphas from {src_desc} as of {args.as_of:%Y-%m-%d} (IC={args.ic}, benchmark={args.benchmark})")
     _print_neutralization(result)
     _print_case(result)
     if not result["benchmark_available"]:
         print("  ! benchmark unavailable — residual vol falls back to total volatility")
     if result["low_confidence"]:
-        print(f"  ! thin universe ({result['universe_size']} names) — demean-only, low confidence")
+        print(f"  ! {result['low_confidence_reason']}")
     if not result["alphas"]:
         print("No scorable names.")
         return
@@ -2858,8 +2865,8 @@ def cmd_alphas(args) -> None:
     print(f"\n{'SYMBOL':10}{'SCORE':>10}{'Z':>9}{'BETA':>8}{'RESID_VOL':>11}{'ALPHA':>10}")
     for row in result["alphas"]:
         print(
-            f"{row['symbol']:10}{row['score']:>10.3f}{row['z']:>9.2f}{row['beta']:>8.2f}"
-            f"{row['residual_vol']:>10.1%}{row['alpha']:>10.2%}"
+            f"{row['symbol']:10}{row['score']:>10.3f}{small_aware(row['z'], '.2f'):>9}{row['beta']:>8.2f}"
+            f"{row['residual_vol']:>10.1%}{small_aware(row['alpha'], '.2%'):>10}"
         )
 
 
@@ -2899,6 +2906,8 @@ def _print_case(result) -> None:
 
 def _print_combined_alphas(result, args) -> None:
     """Print the multi-signal combination: per-signal weights/ICs + the combined alphas."""
+    from tradeflow.analytics.reporting import small_aware
+
     if not result.get("universe_size"):
         print(result.get("note", "No combined alphas produced."))
         return
@@ -2913,12 +2922,12 @@ def _print_combined_alphas(result, args) -> None:
             f"{result['signal_weights'][sig]:>9.3f}"
         )
     if result["low_confidence"]:
-        print(f"\n  ! thin universe ({result['universe_size']} names) — demean-only, low confidence")
+        print(f"\n  ! {result['low_confidence_reason']}")
     print(f"\n{'SYMBOL':10}{'SCORE':>10}{'Z':>9}{'BETA':>8}{'RESID_VOL':>11}{'ALPHA':>10}")
     for row in result["alphas"]:
         print(
-            f"{row['symbol']:10}{row['score']:>10.3f}{row['z']:>9.2f}{row['beta']:>8.2f}"
-            f"{row['residual_vol']:>10.1%}{row['alpha']:>10.2%}"
+            f"{row['symbol']:10}{row['score']:>10.3f}{small_aware(row['z'], '.2f'):>9}{row['beta']:>8.2f}"
+            f"{row['residual_vol']:>10.1%}{small_aware(row['alpha'], '.2%'):>10}"
         )
 
 

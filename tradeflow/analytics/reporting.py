@@ -38,6 +38,22 @@ def capacity_text(diagnostics: Dict[str, Any]) -> Optional[str]:
     }.get(status, f"unknown ({status})")
 
 
+def small_aware(value: Any, spec: str) -> str:
+    """``format(value, spec)``, except a nonzero value that the spec would print as zero.
+
+    ``+0.0000`` and ``-0.00`` read as "exactly nothing" for a value that is merely
+    small; those are shown in scientific notation instead (a percent spec shows the
+    percent).
+    """
+    if value is None:
+        return "n/a"
+    text = format(value, spec)
+    if value != 0 and not any(ch in "123456789" for ch in text):
+        scale = 100.0 if spec.endswith("%") else 1.0
+        return f"{value * scale:.1e}" + ("%" if scale == 100.0 else "")
+    return text
+
+
 # (metric key, label, format spec), grouped into report sections.
 _SECTIONS = [
     (
@@ -552,6 +568,11 @@ def _verdict_scan_lines(result: Dict[str, Any]) -> list:
     return lines
 
 
+def _more_line(shown: int, total: int) -> list:
+    """A truncated list says how many names it left out; silence reads as 'all of them'."""
+    return [f"    ... +{total - shown} more (not shown)"] if total > shown else []
+
+
 def _verdict_alpha_lines(result: Dict[str, Any], top: int = 5) -> list:
     combination = result.get("combination")
     alphas = result.get("alphas")
@@ -566,14 +587,17 @@ def _verdict_alpha_lines(result: Dict[str, Any], top: int = 5) -> list:
             + ", ".join(f"{k} {v:+.2f}" for k, v in weights.items())
         )
     else:
-        flag = "  (low confidence)" if alphas.get("low_confidence") else ""
+        flag = "  (low confidence - thin universe, demean-only)" if alphas.get("low_confidence") else ""
         lines.append(
             f"  Alphas ({alphas.get('scaling', '?')} scaling, assumed IC "
             f"{alphas.get('ic', 0.0):+.4f}): {alphas.get('universe_size', 0)} names{flag}"
         )
-    table = (source.get("alphas") or [])[:top]
-    for row in table:
-        lines.append(f"    {row.get('symbol', '?'):<8} alpha {float(row.get('alpha', 0.0)):+.4f}")
+    full = source.get("alphas") or []
+    for row in full[:top]:
+        lines.append(
+            f"    {row.get('symbol', '?'):<8} alpha {small_aware(float(row.get('alpha', 0.0)), '+.4f')}"
+        )
+    lines.extend(_more_line(min(top, len(full)), len(full)))
     return lines
 
 
@@ -596,8 +620,10 @@ def _verdict_portfolio_lines(result: Dict[str, Any], top: int = 5) -> list:
         f"    predicted IR {float(d.get('predicted_ir', 0.0)):+.2f} | "
         f"transfer coefficient {float(d.get('transfer_coefficient', 0.0)):+.2f}",
     ]
-    for symbol, weight in list((pf.get("weights") or {}).items())[:top]:
+    held = list((pf.get("weights") or {}).items())
+    for symbol, weight in held[:top]:
         lines.append(f"    {symbol:<8} {float(weight):>7.2%}")
+    lines.extend(_more_line(min(top, len(held)), len(held)))
     exposures = pf.get("exposures")
     if exposures:
         lines.append(

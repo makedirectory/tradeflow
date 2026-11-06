@@ -2498,6 +2498,16 @@ def summarize_bars(
     return {"timeframe": timeframe, "lookback_days": lookback_days, "symbols": out}
 
 
+def _low_confidence_reason(panel) -> Optional[str]:
+    """The reason text for ``low_confidence`` (``None`` when it is not set), so a payload
+    reader gets the same explanation the CLI prints rather than a bare flag."""
+    if not panel.meta.get("low_confidence"):
+        return None
+    from tradeflow.alphas.base import thin_universe_text
+
+    return thin_universe_text(int(panel.get("score").notna().sum()) if panel.has("score") else 0)
+
+
 def compute_alphas(
     data_client: MarketDataClient,
     strategy: str,
@@ -2602,6 +2612,7 @@ def compute_alphas(
         "neutralized_against": list(panel.meta.get("neutralized_against", [])),
         "universe_size": int(panel.get("score").notna().sum()) if panel.has("score") else 0,
         "low_confidence": bool(panel.meta.get("low_confidence")),
+        "low_confidence_reason": _low_confidence_reason(panel),
         "scaling": chosen_scaling,
         "case": _jsonable(case_diag) if case_diag else None,
         "shrink_chain": _jsonable(panel.meta.get("shrink_chain", [])),
@@ -2612,6 +2623,12 @@ def compute_alphas(
         "'case' picks Case-1 (ω·IC·z) vs Case-2 (IC·c_g·z) scaling; the IC-uncertainty "
         "level shrink engages only where a MEASURED IC is available (compute_information).",
     }
+
+
+NO_NAMES_SCORED_NOTE = (
+    "No names were scored: at least one signal had no data as of this date, so there is no "
+    "combined alpha, and the combined IC (NaN) was not measured. Nothing was journaled for this run."
+)
 
 
 def compute_combined_alphas(
@@ -2697,6 +2714,7 @@ def compute_combined_alphas(
         "neutralized_against": list(panel.meta.get("neutralized_against", [])),
         "universe_size": int(panel.get("score").notna().sum()) if panel.has("score") else 0,
         "low_confidence": bool(panel.meta.get("low_confidence")),
+        "low_confidence_reason": _low_confidence_reason(panel),
         "n_periods": measurement.n_periods,
         "combined_ic": measurement.combined_ic,
         "signal_ics": _jsonable(measurement.ics),
@@ -2723,7 +2741,9 @@ def compute_combined_alphas(
                 {"step": "combine", "combined_ic": measurement.combined_ic},
             ]
         ),
-        "note": "ICs and the signal correlation are MEASURED over the trailing window "
+        "note": NO_NAMES_SCORED_NOTE
+        if not (panel.has("score") and panel.get("score").notna().any())
+        else "ICs and the signal correlation are MEASURED over the trailing window "
         "(not assumed) and shrunk by estimation confidence; redundant signals split a "
         "weight via Ω⁻¹. The IC-uncertainty level shrink is owned here by the per-signal "
         "Bayesian shrink (not re-applied — that would double-shrink). Measure on "

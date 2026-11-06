@@ -35,6 +35,14 @@ DEFAULT_IC = 0.03
 DEFAULT_MIN_UNIVERSE = 10
 
 
+def thin_universe_text(n_names: int, minimum: int = DEFAULT_MIN_UNIVERSE) -> str:
+    """Why a thin universe lowers confidence, for every surface that reports it."""
+    return (
+        f"thin universe ({n_names} names, fewer than {minimum}) - demean-only: no winsorizing or "
+        "unit-std scaling, so alpha magnitudes are not comparable to a full universe's"
+    )
+
+
 @dataclass
 class Alpha:
     """A refined residual-return forecast: annualized, benchmark-relative."""

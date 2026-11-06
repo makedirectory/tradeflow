@@ -213,3 +213,55 @@ def test_walk_forward_payload_says_when_nothing_traded_out_of_sample():
 
     assert build(0)["no_oos_trades_note"] == NO_OOS_TRADES_NOTE
     assert build(5)["no_oos_trades_note"] is None
+
+
+# --- verdict / alpha display ----------------------------------------------------------
+def test_small_aware_shows_a_tiny_value_instead_of_rounding_it_to_zero():
+    from tradeflow.analytics.reporting import small_aware
+
+    assert small_aware(0.0, "+.4f") == "+0.0000"  # a true zero stays a zero
+    assert small_aware(0.2, "+.4f") == "+0.2000"  # the ordinary case is unchanged
+    assert small_aware(3.2e-6, "+.4f") == "3.2e-06"
+    assert small_aware(-0.001, ".2f") == "-1.0e-03"
+    assert small_aware(2e-5, ".2%") == "2.0e-03%"
+
+
+def test_verdict_lists_say_how_many_names_they_cut():
+    from tradeflow.analytics.reporting import _verdict_alpha_lines, _verdict_portfolio_lines
+
+    alphas = [{"symbol": f"S{i}", "alpha": 0.01 * i} for i in range(6)]
+    lines = _verdict_alpha_lines({"alphas": {"alphas": alphas, "universe_size": 6}})
+    assert any("+1 more" in line for line in lines)
+    assert not any("more" in line for line in _verdict_alpha_lines({"alphas": {"alphas": alphas[:5]}}))
+    pf = {"feasible": True, "weights": {f"S{i}": 1 / 6 for i in range(6)}, "diagnostics": {}}
+    assert any("+1 more" in line for line in _verdict_portfolio_lines({"portfolio": pf}))
+
+
+def test_alpha_payload_carries_the_thin_universe_reason_the_cli_prints():
+    from datetime import datetime
+
+    from tests.fakes import DictMarketData
+    from tradeflow.marketdata.client import MarketDataClient
+    from tradeflow.services.analysis import compute_alphas
+
+    syms = ["S0", "S1", "S2", "S3"]
+    data = {s: make_ohlcv(n=300, seed=i, freq="1D") for i, s in enumerate([*syms, "SPY"])}
+    r = compute_alphas(MarketDataClient(DictMarketData(data)), "demo_trend", syms, as_of=datetime(2024, 6, 1))
+    assert r["low_confidence"] is True
+    assert "thin universe" in r["low_confidence_reason"] and "demean-only" in r["low_confidence_reason"]
+
+
+def test_an_alpha_run_that_scored_no_names_is_not_journaled(monkeypatch, capsys):
+    import argparse
+
+    from tradeflow import cli
+    from tradeflow.services import audit
+
+    calls = []
+    monkeypatch.setattr(audit, "journal_trial", lambda *a, **k: calls.append(k))
+    args = argparse.Namespace(
+        no_journal=False, neutralize=True, neutralize_factors=[], lookback_days=60, symbols=["A"], as_of=None
+    )
+    cli._journal_alpha(args, "a+b", "combine", {"universe_size": 0, "alphas": []})
+    assert calls == []
+    assert "not journaled" in capsys.readouterr().out
