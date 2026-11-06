@@ -55,3 +55,10 @@ def test_the_setup_check_keeps_its_columns_and_names_the_state_root_once(capsys,
     columns = {row.index(detail) for row, detail in zip(rows, ["x", "not inside", "<state root>"])}
     assert len(columns) == 1
     assert "<state root>/logs/research_journal.jsonl" in rows[2]
+
+
+def test_the_state_root_is_abbreviated_only_where_it_starts_a_path():
+    """A plain substring replace rewrote `/mnt/data/x` under a root of `/data`."""
+    assert cli._under_state_root("/data/logs/x is writable", "/data") == "<state root>/logs/x is writable"
+    assert cli._under_state_root("/mnt/data/x", "/data") == "/mnt/data/x"
+    assert cli._under_state_root("/data2/x", "/data") == "/data2/x"

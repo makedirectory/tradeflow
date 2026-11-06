@@ -230,7 +230,7 @@ def test_a_scan_first_command_needs_one_warm_not_two(tmp_path):
             "demo_volume",
             SYMBOLS,
             as_of=end,
-            then_reads=(SYMBOLS, "1Day", start, end),
+            then_reads=[(SYMBOLS, "1Day", start, end)],
         )
     assert "every candidate" in str(miss.value)
     cached.close()
@@ -240,7 +240,7 @@ def test_a_scan_first_command_needs_one_warm_not_two(tmp_path):
 
     again = CachedMarketData(WindowedFakeProvider(SYMBOLS), cache_dir=tmp_path / "bars", offline=True)
     universe = resolve_universe(
-        MarketDataClient(again), "demo_volume", SYMBOLS, as_of=end, then_reads=(SYMBOLS, "1Day", start, end)
+        MarketDataClient(again), "demo_volume", SYMBOLS, as_of=end, then_reads=[(SYMBOLS, "1Day", start, end)]
     )
     assert again.vintage_stamp(universe, "1Day", start, end) is not None
 
@@ -260,7 +260,7 @@ def test_a_run_on_another_timeframe_is_left_to_its_own_miss(tmp_path):
             "demo_volume",
             SYMBOLS,
             as_of=end,
-            then_reads=(SYMBOLS, "1Hour", start, end),
+            then_reads=[(SYMBOLS, "1Hour", start, end)],
         )
     assert miss.value.timeframe == "1day"
     assert "every candidate" not in str(miss.value)
@@ -282,7 +282,11 @@ def test_a_runnable_scan_is_not_widened_to_every_candidate(tmp_path):
 
     cached = CachedMarketData(WindowedFakeProvider(SYMBOLS), cache_dir=tmp_path / "bars", offline=True)
     resolve_universe(
-        MarketDataClient(cached), "demo_volume", SYMBOLS, as_of=end, then_reads=(SYMBOLS, "1Day", start, end)
+        MarketDataClient(cached),
+        "demo_volume",
+        SYMBOLS,
+        as_of=end,
+        then_reads=[(SYMBOLS, "1Day", start, end)],
     )
 
 

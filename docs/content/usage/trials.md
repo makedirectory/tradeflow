@@ -238,9 +238,10 @@ Beside the recipe, a trial records the context it ran under — the capital, the
 and as-of clock its universe was resolved through, the cache policy its bars came under,
 the probes that ran and what they said, and any note left on the run.
 
-None of it is part of the trial's identity. Two runs differing only in capital are still
-one trial to the memo, exactly as before; recording these facts changed no dedup key and
-invalidated nothing.
+Recording these facts changed no dedup key and invalidated nothing. Capital is the
+exception that keys a run anyway, through the run's own identity rather than this record:
+whole-share rounding makes a run at $4,000 a different book from one at $100,000, so a
+backtest or walk-forward at one capital is never served for a request at another.
 
 Every fact reports whether it was **recorded**, not just its value:
 

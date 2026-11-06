@@ -1,8 +1,8 @@
 """What a run was set up with, recorded beside what it measured.
 
 The capital, the scanner and as-of clock, the cache policy, the probes that ran and the
-note somebody left are facts about how a trial was produced. None of them is part of its
-identity, so recording them changes no dedup key and invalidates no memo — and every
+note somebody left are facts about how a trial was produced. Recording them changes no
+dedup key and invalidates no memo (capital also keys a run, through its own key) — and every
 trial written before them reads as *not recorded* rather than being backfilled with a
 default nobody chose.
 
@@ -109,13 +109,11 @@ def test_the_context_lands_under_inputs_and_leaves_the_identity_alone(_isolated_
     assert params_hash(json.loads(row["params_json"])) == row["params_hash"]
 
 
-def test_two_runs_differing_only_in_context_share_one_identity(_isolated_state):
-    """The other half of "no identity change": context is deliberately *not* part of
-    what makes a repeat a repeat, so two runs differing only in capital still key alike.
-
-    Asserted on the identity rather than on whether the second was served from the
-    first — memoization additionally requires a stored trade table, so a run without
-    `--record-trades` misses the cache for reasons that have nothing to do with this."""
+def test_capital_is_recorded_as_context_and_also_keys_the_run(_isolated_state):
+    """Capital used to be context only, so two runs differing only in capital keyed alike
+    and a run at $999,000 could answer a request at $250,000 - a different book once
+    whole-share rounding applies. Recording context still changes no key; capital keys the
+    run through the backtest's own run-shape key, and is recorded in the context too."""
     _one_backtest(capital=250_000.0)
     _one_backtest(capital=999_000.0)
     journal = _isolated_state / "journal.jsonl"
@@ -124,8 +122,8 @@ def test_two_runs_differing_only_in_context_share_one_identity(_isolated_state):
         rows = store.query(limit=5)
         capitals = {journal_record_for_trial(r["id"], journal)["inputs"]["context"]["capital"] for r in rows}
 
-    assert capitals == {250_000.0, 999_000.0}  # the context genuinely differs
-    assert len({r["params_hash"] for r in rows}) == 1  # and the identity does not
+    assert capitals == {250_000.0, 999_000.0}
+    assert len({r["params_hash"] for r in rows}) == 2
 
 
 # --- absent stays absent -------------------------------------------------------------

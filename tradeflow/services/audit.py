@@ -164,9 +164,11 @@ def run_context(
 
     The capital it ran at, the scanner and as-of clock its universe was resolved
     through, the cache policy its bars came under, the probes that were run and what
-    they said, and whatever note a human attached. None of it is hashed - identity is
-    ``(params, universe, window, accounting)`` - so adding a field here changes no
-    trial's dedup key and invalidates no memo.
+    they said, and whatever note a human attached. Nothing here is hashed, so adding a
+    field changes no trial's dedup key and invalidates no memo. Capital is the one fact
+    that also changes the result (whole-share rounding scales with it), so the backtest
+    and walk-forward keys fold it in separately - ``backtest_run_key`` and
+    ``walk_forward_recipe`` - rather than through this record.
 
     **Only what was actually known is written.** A key absent from the returned dict
     means the run did not record that fact, which every reader must render as *not

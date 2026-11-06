@@ -82,7 +82,7 @@ def resolve_universe(
     candidates: List[str],
     as_of: Optional[datetime] = None,
     *,
-    then_reads: Optional[Tuple[List[str], Any, datetime, datetime]] = None,
+    then_reads: Optional[List[Tuple[List[str], Any, datetime, datetime]]] = None,
 ) -> List[str]:
     """Filter ``candidates`` through the scanner, falling back to them if none flag.
 
@@ -1130,7 +1130,7 @@ def cmd_optimize(args) -> None:
         args.scanner,
         args.symbols,
         as_of=args.scan_as_of or args.end,
-        then_reads=(args.symbols, timeframe, args.start, args.end),
+        then_reads=[(args.symbols, timeframe, args.start, args.end)],
     )
     vintage = _vintage_stamp(data_client, universe, timeframe, args.start, args.end)
     # Workers, when asked for, read bars from the local cache rather than the API —
@@ -1364,7 +1364,7 @@ def cmd_screen(args) -> None:
         args.scanner,
         args.symbols,
         as_of=args.scan_as_of or args.end,
-        then_reads=(args.symbols, timeframe, args.start, args.end),
+        then_reads=[(args.symbols, timeframe, args.start, args.end)],
     )
     limits = _screen_limits(args)
     try:
@@ -1487,7 +1487,7 @@ def cmd_walkforward(args) -> None:
         args.scanner,
         args.symbols,
         as_of=args.scan_as_of or args.end,
-        then_reads=reader.prefetch_read(args.symbols, args.start, args.end, args.embargo_days),
+        then_reads=[reader.prefetch_read(args.symbols, args.start, args.end, args.embargo_days)],
     )
     refuse_uncached_together(
         data_client,
@@ -2255,6 +2255,17 @@ def _print_dev_local_state() -> None:
     )
 
 
+def _under_state_root(text: str, root: str) -> str:
+    """``text`` with paths under ``root`` written as ``<state root>/...``.
+
+    Only where the root starts a path: a plain substring replace also rewrote
+    ``/mnt/data/x`` under a root of ``/data``.
+    """
+    import re
+
+    return re.sub(rf"(?<![^\s(\"']){re.escape(root)}/", "<state root>/", text)
+
+
 _STATUS_LABELS = {
     "ready": "ok",
     "blocked": "blocked",
@@ -2291,9 +2302,7 @@ def _print_doctor(checks, *, task: str = "data", probe_result=None, provider: Op
         label = f"[{_STATUS_LABELS[status]}]"
         # The full root is printed once above; repeated on every row it buried the part
         # that differs.
-        detail = (
-            check.detail.replace(root + "/", "<state root>/") if check.name != "state root" else check.detail
-        )
+        detail = check.detail if check.name == "state root" else _under_state_root(check.detail, root)
         print(f"  {label:<10} {check.name:<{width}} {detail}")
         if check.next_action:
             for line in check.next_action.splitlines():
@@ -6077,7 +6086,10 @@ def _command_listing(subparsers) -> str:
     """The grouped command list, with each command's own one-line help."""
     import textwrap
 
-    helps = {action.dest: action.help or "" for action in subparsers._choices_actions}
+    helps = {
+        action.dest: "" if action.help in (None, argparse.SUPPRESS) else action.help
+        for action in subparsers._choices_actions
+    }
     lines = []
     for title, names in COMMAND_GROUPS:
         lines += ["", f"{title}:"]

@@ -113,6 +113,15 @@ def _over_cli(monkeypatch):
     return captured
 
 
+@pytest.fixture(autouse=True)
+def _isolated(tmp_path, monkeypatch):
+    """Both runs journal a trial; keep them out of the session's shared state root."""
+    from tradeflow.services import analysis, audit
+
+    monkeypatch.setattr(analysis, "ARTIFACT_DIR", tmp_path / "artifacts")
+    monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", tmp_path / "journal.jsonl")
+
+
 def _differences(a, b):
     return {k: (a.get(k), b.get(k)) for k in sorted(set(a) | set(b)) if a.get(k) != b.get(k)}
 

@@ -647,7 +647,9 @@ def _backtest_run_rows(result: Dict[str, Any]) -> List[Tuple[str, str]]:
         ("Trades", _recorded(get("total_trades"), "{:,.0f}")),
     ]
     if reused:
-        rows.append(("Benchmark" + request, _recorded(result.get("benchmark_requested"))))
+        # Part of the run's identity, so the reused run had the same one; None is a run
+        # with no benchmark, not a benchmark that went unrecorded.
+        rows.append(("Benchmark" + request, result.get("benchmark_requested") or "none"))
         rows.append(("Not recorded", ", ".join(sorted(missing)) or "nothing"))
     return rows
 

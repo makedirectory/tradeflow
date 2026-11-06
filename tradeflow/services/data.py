@@ -8,7 +8,7 @@ safety model.
 
 import logging
 from datetime import datetime
-from typing import Any, List, Optional, Tuple, Union
+from typing import Any, List, Optional, Tuple
 
 from tradeflow.marketdata.client import MarketDataClient
 
@@ -58,12 +58,12 @@ def resolve_universe(
     candidates: List[str],
     as_of: Optional[datetime] = None,
     *,
-    then_reads: Union[BarRead, List[BarRead], None] = None,
+    then_reads: Optional[List[BarRead]] = None,
 ) -> List[str]:
     """Filter ``candidates`` through a scanner, falling back to them if none flag.
 
-    ``then_reads`` is the read the caller makes next (or a list of them), written as if
-    the scanner kept every candidate. Offline, when the scan itself cannot run from the cache, the miss
+    ``then_reads`` lists the reads the caller makes next, written as if the scanner kept
+    every candidate. Offline, when the scan itself cannot run from the cache, the miss
     covers that read too, so one warm fixes the command rather than one for the scan
     and a second for the run.
     """
@@ -74,12 +74,11 @@ def resolve_universe(
 
     scanner = SymbolScanner(data_client, scanner_name)
     if then_reads is not None:
-        later = [then_reads] if isinstance(then_reads, tuple) else list(then_reads)
         scan_tf, scan_start, scan_end = scanner.scan_window(as_of)
         refuse_uncached_together(
             data_client,
             (candidates, scan_tf, scan_start, scan_end),
-            later,
+            list(then_reads),
             why=(
                 "The scanner picks the universe from these bars, so which names the run keeps "
                 "is not known yet; the command covers the scan and the run for every candidate."
