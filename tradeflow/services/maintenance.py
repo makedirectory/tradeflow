@@ -248,10 +248,16 @@ def archive(
         "destination": str(destination),
         **summary,
     }
-    if dry_run:
-        return {**manifest, "moved": [], "dry_run": True, "note": "Dry run: nothing was moved."}
-
     existing = [path for path in (journal, db) if path.exists()]
+    if dry_run:
+        return {
+            **manifest,
+            "moved": [],
+            "would_move": [path.name for path in existing],
+            "dry_run": True,
+            "note": "Dry run: nothing was moved.",
+        }
+
     if not existing:
         return {
             **manifest,

@@ -392,3 +392,30 @@ def test_a_listing_that_hides_nothing_says_nothing(journal, capsys):
         _print_trials_list(store, args)
 
     assert "further row(s)" not in capsys.readouterr().out
+
+
+def _run_archive_cli(monkeypatch, capsys, *extra):
+    from tradeflow.cli import main
+
+    monkeypatch.setattr("sys.argv", ["cli", "trials", "archive", "--reason", "checking", *extra])
+    main()
+    return capsys.readouterr().out
+
+
+def test_a_dry_run_with_nothing_to_archive_prints_no_destination(journal, monkeypatch, capsys):
+    """It printed a destination directory beside 'Would move: nothing', as though
+    something were about to be written there."""
+    out = _run_archive_cli(monkeypatch, capsys, "--dry-run")
+    assert "Nothing to archive" in out
+    assert "Destination" not in out and "Would move" not in out
+
+
+def test_a_dry_run_names_the_files_it_would_move(journal, monkeypatch, capsys):
+    """`moved` is always empty on a dry run, so the CLI said 'Would move: nothing' even
+    with a journal and store about to go."""
+    _seed(journal)
+    out = _run_archive_cli(monkeypatch, capsys, "--dry-run")
+    would_move = next(line for line in out.splitlines() if line.startswith("Would move"))
+    assert journal.name in would_move and db_path_for_journal(journal).name in would_move
+    assert "Destination" in out
+    assert journal.exists()

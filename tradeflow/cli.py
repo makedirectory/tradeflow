@@ -3665,11 +3665,21 @@ def _trials_maintenance(args) -> None:
     if args.json:
         print(json.dumps(report, indent=2, default=str))
         return
+    # A dry run names what it would move; `moved` is what actually happened, which is
+    # always nothing on a dry run and said so even when two files were about to go.
+    to_move = report.get("would_move", []) if report["dry_run"] else report["moved"]
+    if not to_move:
+        # No destination: there is nothing to put there, and printing one reads as if
+        # something were about to be written.
+        print(f"Journal       : {report['journal_path']}")
+        print(f"Store         : {report['db_path']}")
+        print("\n  Nothing to archive: neither exists, so there is nothing to move.")
+        return
     print(f"Journal       : {report['journal_path']} ({report.get('journal_lines', 0)} lines)")
     print(f"Store         : {report['db_path']} ({report.get('rows', 0)} rows)")
     print(f"Destination   : {report['destination']}")
     print(f"Accounting    : v{report['accounting_version_at_archive']} at archive time")
-    print(f"{'Would move' if report['dry_run'] else 'Moved':14}: {', '.join(report['moved']) or 'nothing'}")
+    print(f"{'Would move' if report['dry_run'] else 'Moved':14}: {', '.join(to_move)}")
     print(f"Reason        : {report['reason']}")
     print(f"\n  {report['note']}")
     if not report["dry_run"] and report["moved"]:
