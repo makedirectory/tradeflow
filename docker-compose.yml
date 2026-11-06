@@ -12,7 +12,7 @@
 #
 #   docker compose up -d                       the research-clock surfaces
 #   docker compose --profile docs up docs      the documentation site
-#   docker compose run --rm verdict --symbols NVDA,AAPL --start 2024-01-01 --end 2024-12-31
+#   docker compose run --rm verdict --scanner none --symbols AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,JPM,XOM,UNH,COST,WMT --start 2024-01-01 --end 2024-12-31
 #   docker compose run --rm demo               offline, no keys
 #
 # Live trading is NEVER started by `up`. See the `live` service at the bottom.

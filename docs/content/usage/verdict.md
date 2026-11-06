@@ -12,20 +12,22 @@ order.
 
 ```bash
 quantred verdict \
-  --strategy demo_trend \
-  --symbols NVDA,AAPL,META,AMD,TSLA,GOOG,MSFT,AMZN \
+  --strategy demo_trend --scanner none \
+  --symbols NVDA,AAPL,META,AMD,TSLA,GOOG,MSFT,AMZN,AVGO,JPM,XOM,UNH \
   --start 2024-01-01 --end 2024-12-31
 ```
 
 ```
 === Research verdict: 'demo_trend' 2024-01-01..2024-12-31 ===
-  universe: 8 names (NVDA, AAPL, META, AMD, TSLA, GOOG, MSFT, AMZN)
+  universe: 12 names (NVDA, AAPL, META, AMD, TSLA, GOOG, MSFT, AMZN, +4 more)
   timeframe 1Day | benchmark SPY | cost 1.0bps commission, impact η=0.3, borrow 50.0bps
   provenance: git 4f2c1ab | campaign trials 14 | bar requests: 3 of 7 reached the data client, the rest shared within this run
 
-  Scan (demo_volume): 5 of 8 candidates flagged
+  Steps:
+    - scan: skipped — no scanner — candidates used as-is
+    - combination: skipped — one signal — nothing to combine
 
-  Alphas (case1 scaling, assumed IC +0.0300): 5 names
+  Alphas (case1 scaling, assumed IC +0.0300): 12 names
     NVDA     alpha +0.0412
     AMD      alpha +0.0188
     ...
@@ -37,7 +39,7 @@ quantred verdict \
 
   Information (24 rebalances, horizon 5 bars):
     IC +0.0184  t-stat +0.74  rank-IC +0.0210
-    breadth 142 effective (ρ̄ 0.41, 8 names)
+    breadth 142 effective (ρ̄ 0.41, 12 names)
     IR predicted +0.21 vs realized +0.18 ± 0.61
     P(any |t|>2 across 14 campaign trials) = 0.51
 
@@ -116,7 +118,10 @@ that flags only a few of your candidates is the usual cause - and the alphas,
 portfolio and information steps are reported as skipped. The caps are never relaxed
 for you; the way out is a wider `--symbols` list, `--scanner none`, or an explicit
 `--max-weight` / `--max-names`. It is a necessary check only: a universe that passes
-it can still fail to solve, and that failure is reported as `infeasible` too.
+it can still fail to solve, and a solve that names the constraint it hit is reported
+as `infeasible` too. A solve that fails only for want of history (too few bars to
+estimate a covariance matrix) names no constraint, so it is `needs more data` instead:
+that one more dates do fix.
 
 The documented starter (twelve names, no scanner) passes. It is a usability example,
 not a validated universe.

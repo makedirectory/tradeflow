@@ -140,7 +140,9 @@ make up                               # MCP + persistent state. Never starts tra
 make down                             # stop; your trial history survives
 
 docker compose run --rm demo          # offline, no keys
-docker compose run --rm verdict --symbols NVDA,META --start 2024-01-02 --end 2024-04-01
+docker compose run --rm verdict --scanner none \
+  --symbols AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,JPM,XOM,UNH,COST,WMT \
+  --start 2024-01-02 --end 2024-12-31
 ```
 
 `live` is profile-gated and is never started by `up` — turning the machine on must

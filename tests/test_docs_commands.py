@@ -24,6 +24,10 @@ SHELL = {"bash", "sh", "shell", "console"}
 #: Pages that are about a contributor's or operator's stack, so their first command is
 #: legitimately not the installed one.
 CONTRIBUTOR_FIRST = {"docker.md"}
+#: The names the docs themselves use for "your strategy" (``example_breakout`` ships in
+#: the example pack, which a plain install does not have). Only these are swapped for a
+#: registered one: substituting any unknown name would turn a typo in a page into a pass.
+PLACEHOLDER_STRATEGIES = {"my_breakout", "example_breakout"}
 DATE_FLAGS = {"--start", "--end", "--as-of"}
 CHECKOUT_PREFIXES = ("python main.py", "uv run", "uv sync", "make ")
 
@@ -80,7 +84,7 @@ def _tokens(line: str):
     # registers; the parser should be asked about the flags, not about whose pack is
     # present on this machine.
     for i, tok in enumerate(out[:-1]):
-        if tok == "--strategy" and out[i + 1] not in cli.STRATEGIES:
+        if tok == "--strategy" and out[i + 1] in PLACEHOLDER_STRATEGIES:
             out[i + 1] = "demo_trend"
     return out
 
@@ -119,12 +123,35 @@ def test_primary_examples_are_installed_user_commands(page):
         return
 
 
+DOCKER_VERDICT = re.compile(r"^\s*(?:#\s*|\$\s*)?docker compose run --rm verdict\b(.*)$")
+
+
+def _verdict_docs():
+    """Every file that teaches a verdict command: all the docs, the READMEs (including
+    the one the sdist ships inside the example pack) and the compose file."""
+    files = sorted((ROOT / "docs" / "content").rglob("*.md"))
+    files += [ROOT / "README.md", ROOT / "example" / "README.md", ROOT / "docker-compose.yml"]
+    return [f for f in dict.fromkeys(files) if f.is_file()]
+
+
 def _documented_verdict_commands():
-    pages = PAGES + sorted((ROOT / "docs" / "content").glob("*.md"))
-    for page in dict.fromkeys(pages):
-        for line in _commands(page):
-            if line.split()[1:2] == ["verdict"]:
-                yield page, line
+    for page in _verdict_docs():
+        if page.suffix == ".md":
+            for line in _commands(page):
+                if line.split()[1:2] == ["verdict"]:
+                    yield page, line
+        # The compose service is a verdict entrypoint, so its usage lines are verdict
+        # commands even though they do not start with the program name.
+        joined = ""
+        for raw in page.read_text().splitlines():
+            stripped = raw.rstrip()
+            if stripped.endswith("\\"):
+                joined += stripped[:-1] + " "
+                continue
+            line, joined = joined + stripped, ""
+            match = DOCKER_VERDICT.match(line)
+            if match:
+                yield page, f"{settings.CLI_NAME} verdict{match.group(1)}"
 
 
 VERDICT_CASES = list(_documented_verdict_commands())
@@ -135,7 +162,12 @@ def test_documented_verdict_examples_can_fund_a_long_only_book(page, line):
     """A first example that cannot be funded teaches the wrong lesson: three names at
     the default weight cap read as "needs more data" for a long time. Every documented
     verdict must pass the same cap check the verdict itself makes, using the real
-    parser's defaults for whatever the command leaves out."""
+    parser's defaults for whatever the command leaves out.
+
+    The scanner is part of the universe. A scanner may flag any number of the candidates
+    - the book is funded from what it keeps, not from what was typed - so no name count
+    can promise a fundable book through one. An example that runs a scanner must say
+    ``--scanner none``; showing a scanner is for the scanning pages, not a first verdict."""
     from tradeflow.portfolio.optimizer import long_only_cap_shortfall
 
     tokens = _tokens(line)
@@ -145,8 +177,14 @@ def test_documented_verdict_examples_can_fund_a_long_only_book(page, line):
 
     shortfall = long_only_cap_shortfall(len(args.symbols), args.max_weight, args.max_names)
     assert shortfall is None, f"{page.name}: `{line}` cannot be funded - {shortfall}"
+    # A saved config names its own scanner and universe, which this check cannot see.
+    assert args.config or str(args.scanner).lower() == "none", (
+        f"{page.name}: `{line}` filters its candidates through scanner {args.scanner!r}, which can "
+        "leave too few names to fund a book; add --scanner none"
+    )
 
 
 def test_the_verdict_docs_guard_found_commands():
     """Guard the guard: a scan that finds no verdict example passes forever."""
-    assert len(VERDICT_CASES) >= 2
+    assert len(VERDICT_CASES) >= 8
+    assert {p.name for p, _ in VERDICT_CASES} >= {"README.md", "docker-compose.yml", "verdict.md"}

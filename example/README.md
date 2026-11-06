@@ -130,7 +130,8 @@ by default. `--objective weights` for a plain mean-variance allocation.
 ### 6. One verdict across the pipeline
 
 ```bash
-quantred verdict --strategy example_breakout --symbols AAPL,MSFT,NVDA,AMD \
+quantred verdict --strategy example_breakout --scanner none \
+  --symbols AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,JPM,XOM,UNH,COST,WMT \
   --start 2023-01-02 --end 2025-01-02
 ```
 
