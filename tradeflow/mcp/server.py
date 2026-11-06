@@ -8,7 +8,7 @@ placing an order. The hard wall is the *absence* of any
 order/live/account-mutation tool; it cannot be prompt-injected around because the
 capability is not wired in.
 
-Run with ``tradeflow mcp`` when installed, or ``python main.py mcp`` from a checkout
+Run with ``quantred mcp`` when installed, or ``python main.py mcp`` from a checkout
 (needs the ``mcp`` extra either way).
 """
 
@@ -307,6 +307,11 @@ def build_server(data_client=None):
     _assert_no_trading_client(data_client)
 
     server = FastMCP(SERVER_NAME)
+    # FastMCP takes no version, so a client would display this app as the SDK's own
+    # ("quantred 1.30.0"). The low-level server's `version` is what `initialize` reports.
+    import tradeflow
+
+    server._mcp_server.version = tradeflow.__version__
     dc = data_client
 
     def _logged(tool: str, inputs: Dict[str, Any], result: Any) -> Any:

@@ -162,11 +162,16 @@ def _with_flags(requirements: List[Dict[str, Any]]) -> List[str]:
     return flags
 
 
+#: What the printed ``uv tool install`` command calls the exclusions file it asks for.
+EXCLUDES_FILE = "excludes.txt"
+
+
 def _uv_tool_command(wanted: List[str], extra_flags: Tuple[str, ...] = ()):
     """``(command, receipt, note)`` that rebuilds this tool environment with ``wanted``.
 
     With a receipt the command restates every extra and ``--with`` package the tool was
-    built from. Without one it cannot, and ``note`` says what to add by hand.
+    built from, including any ``--excludes``. Without one it cannot, and ``note`` says
+    what to add by hand.
     """
     import tradeflow
     from tradeflow.settings import DISTRIBUTION_NAME, is_own_distribution
@@ -181,7 +186,15 @@ def _uv_tool_command(wanted: List[str], extra_flags: Tuple[str, ...] = ()):
     command = f"uv tool install --force '{DISTRIBUTION_NAME}[{','.join(union)}]=={tradeflow.__version__}'"
     note = None
     if receipt is not None:
-        command = " ".join([command, *_with_flags(requirements), *extra_flags])
+        excludes = [str(name) for name in ((receipt.get("tool") or {}).get("excludes") or [])]
+        flags = [*_with_flags(requirements), *extra_flags]
+        if excludes:
+            # Restated for the same reason as the extras: the tool environment is rebuilt,
+            # and a pack that still declares the old engine would otherwise bring it
+            # straight back beside this one. uv takes exclusions from a file, not inline.
+            flags.append(f"--excludes {EXCLUDES_FILE}")
+            note = f"({EXCLUDES_FILE} holds one line per excluded package: {', '.join(excludes)})"
+        command = " ".join([command, *flags])
     else:
         packs = _pack_distributions()
         # Silent when nothing was detected outside a uv tool environment: "re-add your

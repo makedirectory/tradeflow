@@ -13,6 +13,7 @@ to ask.
 """
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -250,3 +251,78 @@ def test_an_unknown_attribute_still_raises_attribute_error():
     for module in (trials, audit):
         with pytest.raises(AttributeError):
             module.NO_SUCH_CONSTANT
+
+
+# --- how the copy was reached: where the package lives, not where you stand --------
+def _installed_copy(monkeypatch, tmp_path):
+    """Make the running package look like it was imported from site-packages."""
+    monkeypatch.setattr(settings, "PROJECT_ROOT", tmp_path / "site-packages")
+
+
+def test_an_installed_copy_run_inside_a_checkout_is_still_installed(monkeypatch, tmp_path):
+    """The working directory says nothing about which copy is running. An installed
+    command typed inside a clone of this repository used to be told to `uv sync` and
+    `python main.py`, neither of which is the thing that is running."""
+    _installed_copy(monkeypatch, tmp_path)
+    monkeypatch.chdir(PROJECT_ROOT)
+
+    assert running_from_checkout() is False
+    assert settings.invocation("demo") == f"{settings.CLI_NAME} demo"
+
+
+def test_a_checkout_is_detected_from_anywhere_it_is_run(monkeypatch, tmp_path):
+    """`python main.py` imports the package from the working copy, wherever the shell is."""
+    monkeypatch.chdir(tmp_path)
+
+    assert running_from_checkout() is True
+    assert settings.invocation("demo") == "python main.py demo"
+
+
+def test_messages_still_render_when_the_working_directory_is_gone(monkeypatch, tmp_path):
+    """The flatten report, the halt line and the missing-credentials message all name a
+    command, and naming it used to read the working directory - which raises once it
+    has been deleted. That is the state a shell is in after `git clean`, and these
+    messages are printed after the halt and the closes have already happened."""
+    if sys.platform == "win32":
+        pytest.skip("a process cannot delete its own working directory on Windows")
+    from tradeflow import cli
+    from tradeflow.execution.flatten import CLOSED, FlattenReport
+
+    _installed_copy(monkeypatch, tmp_path)
+    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path / "home"))
+    doomed = tmp_path / "doomed"
+    doomed.mkdir()
+    monkeypatch.chdir(doomed)
+    doomed.rmdir()
+    with pytest.raises(OSError):
+        Path.cwd()  # the premise: this really is a deleted working directory
+
+    report = FlattenReport(
+        started_at="t",
+        halted=True,
+        orders_cancelled=True,
+        close_submitted=True,
+        observed=CLOSED,
+        checked_at="t",
+        open_orders=0,
+        recorded_closed=[],
+    )
+    assert report.complete
+    assert "resume all" in report.summary()
+    assert "resume" in cli._invocation("resume all")
+    assert "init" in settings._missing_credentials_message(["APCA_API_KEY_ID"])
+
+
+def test_another_tables_name_line_is_not_a_checkout(tmp_path):
+    """Only `[project]` names the project: an index or a tool table can carry a
+    `name = "..."` that is merely ours."""
+    own = settings.DISTRIBUTION_NAME
+    (tmp_path / "pyproject.toml").write_text(
+        f'[project]\nname = "someone-else"\n\n[[tool.uv.index]]\nname = "{own}"\nurl = "https://x"\n'
+    )
+    assert not settings._looks_like_checkout(tmp_path)
+
+    (tmp_path / "pyproject.toml").write_text(
+        f'[build-system]\nrequires = []\n\n[ project ]\nversion = "1"\nname = "{own}"\n'
+    )
+    assert settings._looks_like_checkout(tmp_path)

@@ -1,10 +1,10 @@
-"""What `tradeflow demo` runs on, and what a bare install falls back to.
+"""What `quantred demo` runs on, and what a bare install falls back to.
 
 Not examples to copy — that is ``example``, which
-``tradeflow init --example-pack`` hands you as a repository you own. These exist for
+``quantred init --example-pack`` hands you as a repository you own. These exist for
 three narrower jobs:
 
-* ``tradeflow demo`` needs a strategy to put through the pipeline, offline and with no
+* ``quantred demo`` needs a strategy to put through the pipeline, offline and with no
   keys, and it cannot depend on anything the user has not installed yet.
 * ``--strategy`` and ``--scanner`` need a default that resolves on a bare install, or
   every command fails at lookup rather than saying something useful.

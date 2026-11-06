@@ -88,24 +88,36 @@ def _looks_like_checkout(path: Path) -> bool:
     """Whether ``path`` is a QuantRed working copy rather than any old directory.
 
     Matched against :data:`DISTRIBUTION_NAME` so a rename cannot silently break
-    detection: getting this wrong sends a developer's journal to ``~/.tradeflow``
-    while their repo still holds the old one, which is the split-campaign failure
-    :func:`state_root` exists to prevent — and it fails silently, with no error.
+    detection, and so someone else's ``pyproject.toml`` is not mistaken for ours.
 
     The names in :data:`LEGACY_DISTRIBUTION_NAMES` count too: a working copy from before
-    the rename declares the old one, and refusing to recognise it would send that
-    checkout's state somewhere else without a word. The match is on the whole ``name``
-    line, so a project merely *starting* with one of these names is not ours.
+    the rename declares the old one, and refusing to recognise it would give a developer
+    in it the installed copy's instructions (``quantred demo`` and a ``uv tool`` install
+    line) in place of ``python main.py`` and ``uv sync``. That is all this decides; where
+    state lives is :func:`state_root`'s question and does not read it.
+
+    Only the ``[project]`` table's ``name`` counts. A ``name = "quantred"`` line under
+    some other table - an index called ``quantred``, say - belongs to a project that
+    merely mentions us. (``tomllib`` would be exact, but it is 3.11+ and this supports
+    3.10.)
     """
     manifest = path / "pyproject.toml"
     try:
         text = manifest.read_text()
     except OSError:
         return False
-    return any(
-        re.search(rf'^name\s*=\s*"{re.escape(name)}"\s*(#.*)?$', text, re.MULTILINE)
-        for name in (DISTRIBUTION_NAME, *LEGACY_DISTRIBUTION_NAMES)
-    )
+    names = {DISTRIBUTION_NAME, *LEGACY_DISTRIBUTION_NAMES}
+    table = ""
+    for line in text.splitlines():
+        header = re.match(r"^\s*(\[\[?)\s*([^\[\]]*?)\s*\]\]?\s*(#.*)?$", line)
+        if header:
+            table = header.group(2) if header.group(1) == "[" else ""
+            continue
+        if table == "project":
+            found = re.match(r'^name\s*=\s*"([^"]*)"\s*(#.*)?$', line)
+            if found and found.group(1) in names:
+                return True
+    return False
 
 
 def invocation(command: str, *, make_target: Optional[str] = None) -> str:
@@ -126,15 +138,22 @@ def invocation(command: str, *, make_target: Optional[str] = None) -> str:
 
 
 def running_from_checkout() -> bool:
-    """Whether this copy was reached from a working copy rather than an install.
+    """Whether the running ``tradeflow`` package was imported from a working copy.
+
+    Decided by where the package itself lives, never by the working directory: an
+    installed copy run from inside some checkout of this repository is still an
+    installed copy, and telling its user to ``uv sync`` there is wrong. It also means
+    there is no ``Path.cwd()`` on the path of the flatten report, the halt message or
+    the missing-credentials message, which raises when the directory was deleted -
+    in code that runs after money has already moved.
 
     Deliberately separate from :func:`state_root`. *How the software was reached*
-    decides which instructions make sense - ``make demo`` against ``tradeflow demo``.
+    decides which instructions make sense - ``make demo`` against ``quantred demo``.
     *Where state lives* is a safety question with a different answer. Conflating them
     is how a message meant for a contributor reached an installed user, and it would
     now also send a contributor the wrong install command.
     """
-    return _looks_like_checkout(Path.cwd()) or _looks_like_checkout(PROJECT_ROOT)
+    return _looks_like_checkout(PROJECT_ROOT)
 
 
 def state_root() -> Path:

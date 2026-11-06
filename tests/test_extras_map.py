@@ -36,7 +36,12 @@ def _published_extras() -> dict:
 
 def _as_installed_copy(monkeypatch, installed=()):
     monkeypatch.setattr(settings, "running_from_checkout", lambda: False)
+    # Every probe the doctor and the commands use, not only the summary: the rows ask
+    # `installed(name)` one extra at a time, so stubbing the list alone passed exactly
+    # where the SDKs were absent and failed for a contributor who had installed one.
     monkeypatch.setattr(extras, "installed_extras", lambda: sorted(installed))
+    monkeypatch.setattr(extras, "installed", lambda name: name in installed)
+    monkeypatch.setattr(cli, "extras_installed", lambda name: name in installed)
     monkeypatch.setattr(extras, "_pack_distributions", lambda: [])
     monkeypatch.setattr(extras, "_in_uv_tool_env", lambda: False)
     monkeypatch.setattr(extras, "_tool_receipt", lambda: None)
@@ -170,6 +175,29 @@ def test_the_uv_tool_command_restates_what_the_receipt_was_built_from(monkeypatc
     assert "--with-editable /work/packdir" in command
     assert "(detected)" in hint
     assert "re-add any packs" not in hint  # nothing left for the reader to remember
+
+
+def test_the_uv_tool_command_restates_the_exclusions_it_was_built_with(monkeypatch, tmp_path):
+    """A pack that still declares the old engine only installs cleanly because the tool
+    was built with that package excluded. The rebuilt environment loses the exclusion
+    unless the printed command says it, and pasting it would pull the old engine back."""
+    receipt = RECEIPT.replace(
+        "entrypoints = [",
+        'excludes = ["tradeflow-engine"]\nentrypoints = [',
+        1,
+    )
+    (tmp_path / "uv-receipt.toml").write_text(receipt)
+    monkeypatch.setattr(settings, "running_from_checkout", lambda: False)
+    monkeypatch.setattr(sys, "prefix", str(tmp_path))
+    monkeypatch.setattr(extras, "installed_extras", lambda: [])
+    hint = extras.install_hint("mcp")
+    command = next(line for line in hint.splitlines() if "uv tool install" in line)
+    assert f"--excludes {extras.EXCLUDES_FILE}" in command
+    assert "tradeflow-engine" in hint.split("In an activated venv")[0].split(command)[1]
+
+    (tmp_path / "uv-receipt.toml").write_text(RECEIPT)
+    plain = extras.install_hint("mcp")
+    assert "--excludes" not in plain
 
 
 def test_without_a_receipt_the_hint_falls_back_to_naming_the_packs(monkeypatch, tmp_path):

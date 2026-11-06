@@ -2,7 +2,7 @@
 
 The package root deliberately imports nothing. Every subpackage pulls in something
 heavy or optional (pandas, the Alpaca SDK, matplotlib, the MCP SDK), and a root that
-eagerly imported them would make ``tradeflow --help`` pay for capabilities the
+eagerly imported them would make ``quantred --help`` pay for capabilities the
 command is not using — and would make an absent optional extra an import error at
 startup rather than an actionable message at the point of use.
 
@@ -20,5 +20,5 @@ a manual human step.
 """
 
 #: The single source of truth for the version — packaging reads it from here, so a
-#: published artifact and what `tradeflow --version` reports cannot drift apart.
+#: published artifact and what `quantred --version` reports cannot drift apart.
 __version__ = "2.3.0"

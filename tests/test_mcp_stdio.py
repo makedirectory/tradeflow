@@ -69,6 +69,27 @@ def test_a_real_client_can_discover_strategies_and_scanners_over_stdio(child_env
     assert scanner_rows["demo_volume"]["demo"] is True
 
 
+def test_the_server_announces_the_app_version_not_the_sdks(child_env):
+    """`initialize` carries the name and version a client shows beside the server. The
+    SDK fills the version in with its own when the server gives none, so the app was
+    displayed under a number that belongs to a different package."""
+    import tradeflow
+
+    command = default_command()
+
+    async def drive():
+        params = StdioServerParameters(command=command[0], args=command[1:], env=child_env)
+        with anyio.fail_after(60):
+            async with stdio_client(params) as (read, write):
+                async with ClientSession(read, write) as session:
+                    return (await session.initialize()).serverInfo
+
+    info = anyio.run(drive)
+
+    assert info.name == settings.MCP_SERVER_NAME
+    assert info.version == tradeflow.__version__
+
+
 def test_self_test_reports_discovery_and_disclaims_chat_attachment(child_env, capsys):
     args = cli.parse_cli(["mcp", "--self-test"])
 

@@ -5077,10 +5077,7 @@ def cmd_flatten(args) -> None:
             # broker", not "am I flat", and in this exact state it reports no divergence
             # while the whole book is still open. Re-running the flatten is what takes
             # the read again.
-            try:
-                rerun = _invocation("flatten --confirm --reason ...")
-            except OSError:  # pragma: no cover - the working directory was deleted
-                rerun = f"{CLI_NAME} flatten --confirm --reason ..."
+            rerun = _invocation("flatten --confirm --reason ...")
             print(f"\n  Re-read the broker:  {rerun}")
     # Exit non-zero unless a broker read *observed* the book flat. A queued close now
     # fails this, which is the point: a script that treated exit 0 as "flat" was being

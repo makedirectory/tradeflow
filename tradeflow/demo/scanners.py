@@ -7,7 +7,7 @@ pandas/numpy; no TA-Lib.
 **A demonstration, not a screen to trade on.** It reaches the engine through the
 ``tradeflow.scanners`` entry-point group in this project's ``pyproject.toml``, which is
 the same mechanism a private pack uses. Yours belongs in your own package -
-``tradeflow init --example-pack ./my-signals`` copies one you own.
+``quantred init --example-pack ./my-signals`` copies one you own.
 """
 
 from typing import Any, ClassVar, Dict

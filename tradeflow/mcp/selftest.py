@@ -1,6 +1,6 @@
 """Drive the MCP server with the real SDK client, the way a chat client does.
 
-``tradeflow mcp --self-test`` exists so a user can tell "the server starts and
+``quantred mcp --self-test`` exists so a user can tell "the server starts and
 answers" apart from "my chat is connected". It launches a *child* copy of the server
 over stdio, initializes, lists the tools and calls the two discovery tools. Going
 through the SDK client matters: the in-process ``call_tool`` shortcut skips the

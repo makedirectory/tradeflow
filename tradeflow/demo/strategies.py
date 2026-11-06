@@ -2,7 +2,7 @@
 
 **This ships so the demo has something to run and so there is a smallest complete
 strategy to read. It is not an edge, and it is not where your work goes** — that belongs
-in your own package. ``tradeflow init --example-pack ./my-signals`` copies a complete one
+in your own package. ``quantred init --example-pack ./my-signals`` copies a complete one
 you own, with two strategies, a scanner and configs already wired up.
 
 It reaches the engine through the ``tradeflow.strategies`` entry-point group declared in
