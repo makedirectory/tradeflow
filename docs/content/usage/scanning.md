@@ -10,16 +10,14 @@ at a specific research clock. It runs a `ScannerStrategy` over each symbol's
 recent bars and keeps those that produce an actionable scan signal.
 
 ```bash
-make scan
-# or
-uv run python main.py scan --scanner demo_volume --symbols NVDA,META,TSLA,AMD
+tradeflow scan --scanner demo_volume --symbols NVDA,META,TSLA,AMD
 ```
 
 Standalone scans default to wall-clock now. Pin them to a historical clock with
 `--as-of`:
 
 ```bash
-uv run python main.py scan --scanner demo_volume --symbols NVDA,META,TSLA,AMD --as-of 2024-06-01
+tradeflow scan --scanner demo_volume --symbols NVDA,META,TSLA,AMD --as-of 2024-06-01
 ```
 
 Example output:
@@ -47,7 +45,7 @@ moves, the book a deployment gets is not the book that was validated — and no 
 gate would notice, because the gates never see the scan twice.
 
 ```bash
-uv run python main.py scan --scanner demo_volume --drift --as-of 2026-08-22
+tradeflow scan --scanner demo_volume --drift --as-of 2026-08-22
 ```
 
 ```
@@ -85,5 +83,11 @@ that resolved to "now", so a payload never leaves which universe it selected fro
 something to be inferred.
 
 ```bash
-uv run python main.py backtest --scanner none --symbols AAPL,MSFT --start 2024-01-02 --end 2024-04-01
+tradeflow backtest --scanner none --symbols AAPL,MSFT --start 2024-01-02 --end 2024-04-01
 ```
+
+## From a source checkout (contributors)
+
+The commands above are the installed `tradeflow` command. In a checkout, run them as
+`uv run python main.py <command> ...`. The Makefile shortcut for this page is `make scan`. Extras are installed with `uv sync --extra <name>`
+(see [optional extras](extras)).

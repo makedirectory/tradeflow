@@ -5,13 +5,13 @@ title: One-command verdict
 
 # One-command verdict
 
-`python main.py verdict` runs the whole cross-sectional pipeline once — scan →
+`tradeflow verdict` runs the whole cross-sectional pipeline once — scan →
 alphas → portfolio → information — and prints **one** consolidated report ending in
 a single verdict line. It is **read-only**: it proposes a book, it never places an
 order.
 
 ```bash
-python main.py verdict \
+tradeflow verdict \
   --strategy demo_trend \
   --symbols NVDA,AAPL,META,AMD,TSLA,GOOG,MSFT,AMZN \
   --start 2024-01-01 --end 2024-12-31
@@ -139,3 +139,9 @@ as an empty one.
 
 The same composite is available to an agent as the `run_verdict` tool, returning the
 identical structured object — see the [MCP server](../engineering/mcp-server) page.
+
+## From a source checkout (contributors)
+
+The commands above are the installed `tradeflow` command. In a checkout, run them as
+`uv run python main.py <command> ...`. The Makefile shortcut for this page is `make verdict`. Extras are installed with `uv sync --extra <name>`
+(see [optional extras](extras)).

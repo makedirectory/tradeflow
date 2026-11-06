@@ -31,7 +31,7 @@ tradeflow halt VolumeSpikeStrategy --reason "entries look wrong since 14:00"
 Use when something system-wide looks wrong and you want to think before acting.
 
 ```bash
-make halt REASON="feed quality"        # or: tradeflow halt all --reason "..."
+tradeflow halt all --reason "feed quality"
 tradeflow halts                        # what is currently in force
 ```
 
@@ -43,8 +43,7 @@ Use when you do not trust the system, or a strategy is losing in a way you canno
 diagnose quickly.
 
 ```bash
-make flatten REASON="unexplained drawdown"
-# or: tradeflow flatten --confirm --reason "..."
+tradeflow flatten --confirm --reason "unexplained drawdown"
 ```
 
 In this order, deliberately:
@@ -207,3 +206,9 @@ find out on a day you chose, not on the day you need it.
   [stopping a session](live-trading.md#stopping-a-session). One signal is enough,
   and the exit reports what was still open.
 - It does not undo fills. Slippage is real and irreversible.
+
+## From a source checkout (contributors)
+
+The commands above are the installed `tradeflow` command. In a checkout, run them as
+`uv run python main.py <command> ...`. The Makefile shortcut for this page is `make halt`. Extras are installed with `uv sync --extra <name>`
+(see [optional extras](extras)).

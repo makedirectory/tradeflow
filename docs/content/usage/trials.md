@@ -22,7 +22,7 @@ journal.)
 ## `trials list` — what have we tried?
 
 ```bash
-python main.py trials list --strategy demo_trend --min-sharpe 1.0 --sort dsr --limit 20
+tradeflow trials list --strategy demo_trend --min-sharpe 1.0 --sort dsr --limit 20
 ```
 
 ```
@@ -59,7 +59,7 @@ Two rules the listing follows:
 ## `trials show` — what did trial X actually run?
 
 ```bash
-python main.py trials show a1b2c3d4e5f6
+tradeflow trials show a1b2c3d4e5f6
 ```
 
 Prints everything the store knows about one trial: its full params (including the
@@ -123,7 +123,7 @@ and `--re-resolve-universe` will tell you it has no candidates to re-scan.
 ## `trials best` — the honest leaderboard
 
 ```bash
-python main.py trials best --strategy demo_trend
+tradeflow trials best --strategy demo_trend
 ```
 
 ```
@@ -385,7 +385,7 @@ trade table (entries, exits, per-trade P&L, costs, MAE/MFE) with its trial so
 `trials show` can render it.
 
 ```bash
-python main.py backtest --symbols NVDA,AAPL --start 2024-01-01 --end 2024-12-31 --record-trades
+tradeflow backtest --symbols NVDA,AAPL --start 2024-01-01 --end 2024-12-31 --record-trades
 ```
 
 It is **opt-in** on purpose: a long optimization campaign multiplying thousands of
@@ -526,3 +526,9 @@ Retention and pruning are deliberately out of scope — append-only history is t
 point. `trials status` and `trials rebuild` handle index health, and the maintenance
 commands above never delete; see the [walk-forward](walk-forward) page for what the
 store's campaign count feeds.
+
+## From a source checkout (contributors)
+
+The commands above are the installed `tradeflow` command. In a checkout, run them as
+`uv run python main.py <command> ...`. Extras are installed with `uv sync --extra <name>`
+(see [optional extras](extras)).

@@ -208,3 +208,12 @@ def test_the_html_placeholder_escapes_the_hint(monkeypatch):
     rendered = htmlreport._chart(None, "equity curve")
     assert "<b>" not in rendered and "&lt;b&gt;" in rendered
     assert "<pre" in rendered
+
+
+def test_the_extras_page_lists_every_extra():
+    """The guide is where the install hint sends a reader, so an extra it omits is a
+    capability whose recovery command points at a page that never mentions it."""
+    page = (Path(settings.PROJECT_ROOT) / "docs" / "content" / "usage" / "extras.md").read_text()
+    rows = [line for line in page.splitlines() if line.startswith("| `")]
+    listed = {line.split("`")[1] for line in rows}
+    assert set(extras.EXTRAS) <= listed, sorted(set(extras.EXTRAS) - listed)

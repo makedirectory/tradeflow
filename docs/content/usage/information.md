@@ -5,12 +5,15 @@ title: Information report (IC / IR)
 
 # Information report (IC / IR)
 
-`python main.py info` measures whether a strategy has **skill** — its information
+`tradeflow info` measures whether a strategy has **skill** — its information
 coefficient and effective breadth — and reconciles the predicted information ratio
-with the realized one. It is **read-only**: a diagnostic, never a control input.
+with the realized one. It is **read-only**: a diagnostic, never a control input. It
+measures an existing strategy over a window and **calls no model**; the
+LLM-driven proposer loop is a different command, `tradeflow research`
+([agents](agents#research-agent)).
 
 ```bash
-python main.py info \
+tradeflow info \
   --strategy demo_trend \
   --symbols NVDA,AAPL,META,AMD,TSLA,GOOG,MSFT,AMZN \
   --start 2024-01-01 --end 2024-12-31 \
@@ -33,7 +36,8 @@ lucky periods, not skill. **Effective breadth** deflates the name count by how
 correlated the bets are (`ρ̄`); **predicted IR** = `mean_IC · √BR_eff`. The realized
 IR comes with a **standard-error band** — a 1-year window has `SE(IR) ≈ 1`, so almost
 any IR is indistinguishable from zero on a single short window. `--n-trials` reports
-how inflated a "significant" result is once you account for everything you tried.
+how inflated a "significant" result is once you account for everything you tried. It
+describes configurations you have *already* tried; it does not start a search.
 
 ## Options
 
@@ -84,7 +88,7 @@ construction (they sum to the realized active return) and Bayesian-blended for
 a short-sample-honest t-stat.
 
 ```bash
-python main.py info --attribution \
+tradeflow info --attribution \
   --strategy demo_trend --symbols NVDA,AAPL,META,AMD,TSLA,GOOG,MSFT,AMZN \
   --start 2024-01-01 --end 2024-12-31
 ```
@@ -122,7 +126,7 @@ and an unconditional Σ, carries each variant's weights forward, and compares
 realized net IR — not TE-tracking alone.
 
 ```bash
-python main.py info --conditional-ab --conditional ewma \
+tradeflow info --conditional-ab --conditional ewma \
   --strategy demo_trend --symbols NVDA,AAPL,META,AMD,TSLA --start 2024-01-01 --end 2024-12-31
 ```
 
@@ -143,7 +147,7 @@ The equivalent net-of-cost decision for
 vs the aim (`--policy aim`) policy on the same alpha book.
 
 ```bash
-python main.py info --policy-ab --strategy demo_trend \
+tradeflow info --policy-ab --strategy demo_trend \
   --symbols NVDA,AAPL,META,AMD,TSLA --start 2024-01-01 --end 2024-12-31
 ```
 
@@ -174,3 +178,9 @@ for the family (Reality Check) half of this, which needs the
 
 Capacity analysis lives on the [portfolio construction](portfolio) report
 (`capacity_capital`), not here.
+
+## From a source checkout (contributors)
+
+The commands above are the installed `tradeflow` command. In a checkout, run them as
+`uv run python main.py <command> ...`. The Makefile shortcut for this page is `make info`. Extras are installed with `uv sync --extra <name>`
+(see [optional extras](extras)).

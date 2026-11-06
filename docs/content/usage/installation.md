@@ -7,41 +7,58 @@ title: Installation
 
 ## As a command (no clone)
 
+### Fresh install
+
 ```bash
-uv tool install tradeflow-engine     # or: pipx install tradeflow-engine
+uv tool install tradeflow-engine
 tradeflow demo
 ```
+
+In an activated virtual environment: `python -m pip install tradeflow-engine`.
 
 The distribution is **`tradeflow-engine`**; the command and the importable package
 are both `tradeflow`. The bare `tradeflow` name on PyPI belongs to an unrelated
 project (time-series sign simulation) — installing both into one environment would
 collide at import, so pick one.
 
-`pipx install` works the same way. This gives you a `tradeflow` command with every
-verb — `tradeflow demo`, `tradeflow init`, `tradeflow verdict`, `tradeflow mcp` —
-and needs no repository, no keys, and no network for the demo.
+This gives you a `tradeflow` command with every verb — `tradeflow demo`,
+`tradeflow init`, `tradeflow verdict`, `tradeflow mcp` — and needs no repository, no
+keys, and no network for the demo. Next: [first run](first-run).
 
-Optional capabilities stay opt-in extras:
+### Adding a capability later
+
+Optional capabilities are opt-in extras. To choose them at install time:
 
 ```bash
-uv tool install "tradeflow-engine[viz,store,mcp]"
+uv tool install 'tradeflow-engine[viz,store,mcp]'
 ```
+
+Adding one to an installed copy later is *not* additive with `uv tool`: it replaces
+the environment, so list every extra you want. The [optional extras](extras) page has
+the table of what each unlocks and the exact commands; `tradeflow init --check` prints
+them with your current extras filled in.
 
 ### Where state lives
 
-An installed copy has no repository to write into, so the research journal, trial
-store, bar cache, and promoted configs go to `~/.tradeflow`. Run from a checkout,
-they stay in the checkout, exactly as they always have.
+State is the same wherever the software came from: the research journal, trial
+store, bar cache, and promoted configs go to `~/.tradeflow`. A source checkout does
+**not** keep its own state; it uses the same directory, so that a private strategy's
+trial evidence never sits inside a git working tree.
 
-Resolution order: `TRADEFLOW_HOME` if set → the current directory if it is a
-TradeFlow checkout → `~/.tradeflow`.
+Resolution: `TRADEFLOW_HOME` if set, otherwise `~/.tradeflow`. Contributors who want
+state inside their checkout again set `TRADEFLOW_HOME` to it explicitly;
+`tradeflow init --dev-local-state` prints the line to use.
 
 This matters more than it looks. The multiple-testing correction rests on **one**
 journal accumulating every trial, so a campaign split across two roots would deflate
 its Sharpe against half the evidence — and nothing would error. `tradeflow --version`
 and `tradeflow init --check` both print the resolved root, so it is never a mystery.
 
-## From a checkout
+## From a checkout (contributors)
+
+The rest of this page is for working on TradeFlow itself. The Makefile targets and
+`uv run python main.py` below are the checkout forms of the `tradeflow` commands used
+everywhere else in these docs.
 
 ## Prerequisites
 
@@ -84,9 +101,10 @@ docker run --rm -v $(pwd)/.env:/app/.env tradeflow \
     uv run python main.py backtest --symbols NVDA,META --start 2024-01-02 --end 2024-04-01
 ```
 
-## Optional extras
+## Optional extras (checkout)
 
-Two features are opt-in so the base install stays lean:
+The full list and what each unlocks is on the [optional extras](extras) page. In a
+checkout:
 
 ```bash
 make install-optimize     # scikit-learn  -> Bayesian parameter optimization

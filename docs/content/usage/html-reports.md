@@ -10,14 +10,16 @@ attachable, and readable a month later without the context that produced it. It 
 available on the four commands that end in a result worth keeping:
 
 ```bash
-python main.py verdict     --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-31 --html verdict.html
-python main.py backtest    --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-31 --html backtest.html
-python main.py walkforward --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-31 --html wf.html
-python main.py info        --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-31 --html info.html
+tradeflow verdict     --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-31 --html verdict.html
+tradeflow backtest    --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-31 --html backtest.html
+tradeflow walkforward --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-31 --html wf.html
+tradeflow info        --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-31 --html info.html
 ```
 
-It composes with everything else: `--json` and `--html` can both be given, and a
-memoized run renders its reuse warning rather than hiding it.
+`--html` is independent of the other output flags. Of these four commands only
+`verdict` also has `--json PATH` (the structured result object), and there the two can
+both be given; `backtest`, `walkforward` and `info` have `--html` only. A memoized run
+renders its reuse warning in the report rather than hiding it.
 
 ## Self-contained means self-contained
 
@@ -69,10 +71,14 @@ MCP, say — shows the metrics table without the curve.
 Charts need matplotlib (the `viz` extra). Without it the report still renders
 completely in text and each chart slot says how to install it:
 
-```bash
-uv sync --extra viz
-```
+Install the `viz` extra (see [optional extras](extras)).
 
 Charts are rendered at a deliberately modest resolution — an embedded PNG costs
 about 4/3 its own size once base64-encoded, and a report should stay well under a
 few megabytes.
+
+## From a source checkout (contributors)
+
+The commands above are the installed `tradeflow` command. In a checkout, run them as
+`uv run python main.py <command> ...`. Extras are installed with `uv sync --extra <name>`
+(see [optional extras](extras)).

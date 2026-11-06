@@ -32,7 +32,7 @@ free paper keys, your first verdict, and connecting Claude — six steps, and yo
 stop at any of them.
 
 No `uv`? [Install it](https://docs.astral.sh/uv/getting-started/installation/), or
-use `pipx install tradeflow-engine`.
+use `python -m pip install tradeflow-engine` in a virtual environment.
 
 ## What it actually does
 

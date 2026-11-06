@@ -318,10 +318,32 @@ def _flags_given(parser, argv: List[str], command: Optional[str]) -> set:
     return given
 
 
+def _refuse_sibling_command_after_research(parser, argv: List[str]) -> None:
+    """`research <command>` is almost always a mistake about which command was meant.
+
+    `research` takes no positional argument, so a bare word right after it can only be
+    a stray token - and when that word names another top-level command (`research info`)
+    argparse's "unrecognized arguments: info" gives the reader nothing to act on. This
+    says what the command is and how to ask for it. Nothing is reinterpreted or dropped:
+    the invocation is refused, not rewritten.
+    """
+    if len(argv) < 2 or argv[0] != "research" or argv[1].startswith("-"):
+        return
+    commands = parser._subparsers._group_actions[0].choices
+    word = argv[1]
+    if word in commands and word != "research":
+        parser.exit(
+            2,
+            f"tradeflow: error: `research` has no `{word}` subcommand - `{word}` is its own"
+            f" command, and `research` runs the model-driven proposer loop. Try: {_invocation(f'{word} --help')}\n",
+        )
+
+
 def parse_cli(argv: Optional[List[str]] = None):
     """Parse argv and record which flags were typed, for config layering."""
     argv = list(sys.argv[1:]) if argv is None else list(argv)
     parser = build_parser()
+    _refuse_sibling_command_after_research(parser, argv)
     args = parser.parse_args(argv)
     args.flags_given = _flags_given(parser, argv, getattr(args, "command", None))
     return args
@@ -5723,11 +5745,31 @@ class _VersionAction(argparse.Action):
         parser.exit()
 
 
+def _top_level_epilog() -> str:
+    """Where a reader of `--help` learns that extras exist and where first run is.
+
+    Built from the extras map rather than typed out, so an extra added there shows up
+    here; `RawDescriptionHelpFormatter` is set on the top-level parser only so this
+    keeps its line breaks without changing how any subcommand wraps its help.
+    """
+    from tradeflow.utils.extras import EXTRAS
+
+    lines = ["optional extras (install on demand; `init --check` prints the command):"]
+    lines += [f"  {name:<10}{extra.unlocks}" for name, extra in EXTRAS.items()]
+    lines += [
+        f"extras guide: {DOCS_URL}/usage/extras",
+        f"first run:    {_invocation('init')}",
+    ]
+    return "\n".join(lines)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="tradeflow",
         description="TradeFlow — a broker-agnostic trading engine that's refreshingly "
         "honest about how hard making money actually is",
+        epilog=_top_level_epilog(),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     # Version *and* provenance. Someone with both an installed command and a checkout
     # will eventually run one thinking it is the other, and the difference is
@@ -6597,6 +6639,10 @@ def build_parser() -> argparse.ArgumentParser:
     init = subparsers.add_parser(
         "init",
         help="Guided first-run setup: write a valid .env, check it, and say what to try next",
+        description="Guided first-run setup: write a valid .env, check it, and say what to try next. "
+        "`--check --for TASK [--provider NAME]` reports what is ready without writing anything, "
+        "`--probe-model` makes one real request to a model provider, and the extras guide "
+        f"({DOCS_URL}/usage/extras) says how to add a capability that is not installed.",
     )
     init.add_argument(
         "--check",

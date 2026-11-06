@@ -5,13 +5,13 @@ title: Information horizon (decay & cadence)
 
 # Information horizon (decay & cadence)
 
-`python main.py horizon` measures how fast a strategy's alpha **decays** and
+`tradeflow horizon` measures how fast a strategy's alpha **decays** and
 turns that into a recommended rebalance cadence and a current/lagged blend. It
 is **read-only** — a diagnostic over an existing alpha's decay structure, never
 a control input.
 
 ```bash
-python main.py horizon \
+tradeflow horizon \
   --strategy demo_trend \
   --symbols NVDA,AAPL,META,AMD,TSLA,GOOG,MSFT,AMZN \
   --start 2024-01-01 --end 2024-12-31
@@ -63,3 +63,9 @@ why the discount formula needs the confidence band this report now surfaces.
 
 The same computation is available to agents as the read-only MCP tool
 `compute_horizon`.
+
+## From a source checkout (contributors)
+
+The commands above are the installed `tradeflow` command. In a checkout, run them as
+`uv run python main.py <command> ...`. The Makefile shortcut for this page is `make horizon`. Extras are installed with `uv sync --extra <name>`
+(see [optional extras](extras)).

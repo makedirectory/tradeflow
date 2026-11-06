@@ -28,7 +28,7 @@ uv tool install tradeflow-engine
 ```
 
 No `uv`? [Install it first](https://docs.astral.sh/uv/getting-started/installation/),
-or use `pipx install tradeflow-engine`. This gives you a `tradeflow` command.
+or use `python -m pip install tradeflow-engine` in a virtual environment. This gives you a `tradeflow` command.
 
 ```bash
 tradeflow --version

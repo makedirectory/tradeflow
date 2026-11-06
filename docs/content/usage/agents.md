@@ -15,41 +15,34 @@ order path. Two entry points share the same deterministic core:
   hypotheses, validates them out-of-sample, and hands you a shortlist.
 
 Both work on the **research clock** (offline, exploratory). The live order path
-(`python main.py live`) stays deterministic and LLM-free. Neither can place an
+(`tradeflow live`) stays deterministic and LLM-free. Neither can place an
 order — that capability is simply not wired in.
 
 ## MCP server
 
+Needs the `mcp` extra ([optional extras](extras)) and your usual data credentials
+([first run](first-run)). Your MCP client **launches the server itself** from its
+config; starting `tradeflow mcp` in a terminal only proves it starts, and connects
+no chat.
+
 ```bash
-uv sync --extra mcp
-uv run python main.py mcp     # serves over stdio
+claude mcp add tradeflow -- tradeflow mcp      # Claude Code
 ```
 
-Register it with an MCP client:
-
-An installed copy needs no paths:
+Any other client takes the same command in its JSON config:
 
 ```json
 { "mcpServers": { "tradeflow": { "command": "tradeflow", "args": ["mcp"] } } }
 ```
 
-From a checkout, point it at the script instead:
-
-```json
-{ "mcpServers": { "tradeflow": {
-    "command": "uv",
-    "args": ["run", "--extra", "mcp", "python", "main.py", "mcp"],
-    "cwd": "/path/to/tradeflow" } } }
-```
-
-Run `tradeflow mcp` (or the checkout equivalent) once in a terminal first. It needs the
-`mcp` extra and market-data credentials, and without either it exits immediately with
-the reason — which from inside a client looks only like a server that never started.
+Run `tradeflow mcp` once in a terminal first. Without the extra or credentials it
+exits immediately with the reason, which from inside a client looks only like a
+server that never started.
 
 To check that the server starts and answers, without a chat client, run
-`tradeflow mcp --self-test` (checkout: `uv run --extra mcp python main.py mcp --self-test`).
-It lists the tools and calls the discovery tools through the real MCP client. It does not
-connect any chat; your client launches its own copy from its config.
+`tradeflow mcp --self-test`. It lists the tools and calls the discovery tools
+through the real MCP client. `tradeflow init --check --for mcp` reports whether the
+extra is installed.
 
 The agent gets tools for discovery (`list_strategies`, `list_scanners`,
 `get_param_ranges`), analysis (`run_scan`, `run_backtest`, `run_optimization`,
@@ -60,9 +53,13 @@ to `logs/mcp_audit.jsonl`. There is **no** order, live-trading, or
 
 ## Research agent
 
+`tradeflow research` runs the proposer loop and calls a model. It is not the same as
+`tradeflow info`, which measures information diagnostics and calls no model
+([information report](information)).
+
 ```bash
-uv sync --extra ai
-uv run python main.py research \
+# needs the `ai` extra (or `openai`), or a local Ollama server
+tradeflow research \
   --strategy demo_trend --symbols NVDA,AAPL,MSFT \
   --start 2024-01-01 --end 2025-12-31 \
   --goal "improve OOS Sharpe without raising max drawdown" \
@@ -82,16 +79,16 @@ The research agent is provider-agnostic — pick with `--provider`:
 
 | Provider | Extra | Default model | Credential |
 |----------|-------|---------------|------------|
-| `anthropic` (default) | `uv sync --extra ai` | `claude-opus-4-8` | `ANTHROPIC_API_KEY` |
-| `openai` | `uv sync --extra openai` | `gpt-4o` | `OPENAI_API_KEY` |
+| `anthropic` (default) | `ai` | `claude-opus-4-8` | `ANTHROPIC_API_KEY` |
+| `openai` | `openai` | `gpt-4o` | `OPENAI_API_KEY` |
 | `ollama` (local) | none | `llama3.1` | none (local server) |
 
 ```bash
 # Local model, no API key, no cloud calls:
-uv run python main.py research --provider ollama --model llama3.1 ...
+tradeflow research --provider ollama --model llama3.1 ...
 
 # OpenAI:
-uv run python main.py research --provider openai --model gpt-4o ...
+tradeflow research --provider openai --model gpt-4o ...
 ```
 
 ### Setting credentials
@@ -139,3 +136,16 @@ reported once, not sent again, and the session journal stays as it was.
 
 See the engineering wiki's **MCP server** and **Research agent** pages for the
 architecture and guardrails.
+
+## From a source checkout (contributors)
+
+Replace `tradeflow` with `uv run python main.py`, and install an extra with
+`uv sync --extra mcp` (or `ai`, `openai`; `uv sync` removes extras you do not name).
+To register a checkout with an MCP client:
+
+```json
+{ "mcpServers": { "tradeflow": {
+    "command": "uv",
+    "args": ["run", "--extra", "mcp", "python", "main.py", "mcp"],
+    "cwd": "/path/to/tradeflow" } } }
+```

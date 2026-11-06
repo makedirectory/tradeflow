@@ -80,13 +80,21 @@ Either way you'll need free Alpaca **paper-trading** API keys from the
 No clone needed — install the command and run the offline demo:
 
 ```bash
-uv tool install tradeflow-engine        # or: pipx install tradeflow-engine
+uv tool install tradeflow-engine        # or: python -m pip install tradeflow-engine
 tradeflow demo                          # full pipeline on synthetic data, no keys
-tradeflow init                        # add your free Alpaca paper keys when ready
+tradeflow init                          # your free Alpaca paper keys, and optionally a model
+                                        # provider for `research` (skipping it is fine)
+tradeflow init --check                  # what is ready, for which task, and the next step
+tradeflow init --probe-model --provider anthropic   # optional: one tiny billed request
 tradeflow verdict --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-31
+claude mcp add tradeflow -- tradeflow mcp   # connect an MCP client; it launches the server
+tradeflow mcp --self-test               # confirm discovery works without a chat client
 ```
 
-Optional capabilities are extras: `uv tool install "tradeflow-engine[viz,store]"`.
+Optional capabilities are extras (charts, the MCP server, the model SDKs). Adding one
+later with `uv tool` replaces the environment, so list every extra you want — the
+[extras guide](https://tradeflow.mk-dir.com/usage/extras) has the table and the exact
+commands, and `tradeflow init --check` prints them for you.
 
 **→ [Getting started](https://tradeflow.mk-dir.com/usage/getting-started)** walks the
 whole path: install → keys → your first real result → Claude connected. Six steps,
@@ -96,9 +104,8 @@ The distribution is **`tradeflow-engine`** (the bare `tradeflow` on PyPI is an
 unrelated package); the command and the importable package are both `tradeflow`.
 
 State (the research journal, trial store, bar cache, promoted configs) lives in
-`~/.tradeflow` for an installed copy, or in the repo when you run from a checkout.
-`tradeflow --version` prints which copy is running and where its state is; override
-with `TRADEFLOW_HOME`.
+`~/.tradeflow` — for an installed copy and for a checkout alike. `tradeflow --version`
+prints which copy is running and where its state is; override with `TRADEFLOW_HOME`.
 
 ## Quickstart (from a checkout)
 
@@ -306,7 +313,7 @@ derived from it — one source of truth.
 
 `example` is a complete working pack to copy — `tradeflow init
 --example-pack ./my-signals` writes it out. See
-[Your own strategies](https://tradeflow.mk-dir.com/docs/usage/private-strategies)
+[Your own strategies](https://tradeflow.mk-dir.com/usage/private-strategies)
 and [Extending](https://tradeflow.mk-dir.com/engineering/extending).
 
 ### Using it from your own code
@@ -329,6 +336,9 @@ Everything outside `services/` is internal and moves without notice. See
 ### Optional features
 
 Capabilities are optional extras so the base install stays lean:
+
+Installed: see the [extras guide](https://tradeflow.mk-dir.com/usage/extras). In a
+checkout:
 
 ```bash
 make install-optimize     # scikit-learn, for `optimize --method bayesian`

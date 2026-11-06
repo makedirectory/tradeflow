@@ -9,9 +9,7 @@ Live mode warms up the strategy with recent history, subscribes to the Alpaca
 real-time bar stream, and routes signals to the broker as bracket orders.
 
 ```bash
-make live
-# or
-uv run python main.py live --strategy demo_trend --scanner demo_volume --symbols NVDA,META,TSLA
+tradeflow live --strategy demo_trend --scanner demo_volume --symbols NVDA,META,TSLA
 ```
 
 :::warning
@@ -51,9 +49,7 @@ config (`RiskBasedSizer`). Add `--portfolio` to instead size positions by
 across the universe rather than sized per trade:
 
 ```bash
-make live-portfolio
-# or
-uv run python main.py live --scanner demo_volume --symbols NVDA,META,TSLA \
+tradeflow live --scanner demo_volume --symbols NVDA,META,TSLA \
     --portfolio --max-positions 5 --max-weight 0.25
 ```
 
@@ -66,17 +62,18 @@ benchmark (default `SPY`) — higher-beta names get smaller positions, evening o
 risk:
 
 ```bash
-make live-beta
-# or
-uv run python main.py live --scanner demo_volume --symbols NVDA,META,TSLA --beta-sizing --benchmark SPY
+tradeflow live --scanner demo_volume --symbols NVDA,META,TSLA --beta-sizing --benchmark SPY
 ```
 
 ## Managing the account
 
 ```bash
-make cancel-orders      # cancel all open orders
-make close-positions    # liquidate all positions (also cancels orders)
+tradeflow flatten --confirm --reason "end of test"   # halt, cancel all orders, close all positions
 ```
+
+See [stopping](stopping) for the smaller levels. A checkout also has two single-purpose
+helper scripts (`make cancel-orders`, `make close-positions`); the installed command has
+no equivalent for either on its own, so use `flatten` or your broker's dashboard.
 
 The full real-time path is described in **[The Engine](../engineering/engine)** and
 **[Broker Abstraction](../engineering/broker-abstraction)**.
@@ -110,9 +107,9 @@ loudly. A guard quietly eating a third of the feed looks, from the strategy's si
 exactly like a quiet market.
 
 ```bash
-python main.py live --symbols NVDA,AAPL             # guards on
-python main.py live --symbols NVDA --max-bar-return 0.15   # stricter
-python main.py live --symbols NVDA --no-bar-checks         # off (not recommended)
+tradeflow live --symbols NVDA,AAPL             # guards on
+tradeflow live --symbols NVDA --max-bar-return 0.15   # stricter
+tradeflow live --symbols NVDA --no-bar-checks         # off (not recommended)
 ```
 
 ## Position reconciliation
@@ -126,7 +123,7 @@ The live loop now keeps an append-only ledger of **intent** (what was submitted)
 account state on a timer. Check it any time:
 
 ```bash
-python main.py reconcile          # or: reconcile --json
+tradeflow reconcile          # or: reconcile --json
 ```
 
 ```
@@ -901,3 +898,9 @@ tradeflow flatten --confirm --reason "why"       # halt, cancel, close everythin
 
 Halts block entries and never block exits, so pulling the switch can never trap the
 book.
+
+## From a source checkout (contributors)
+
+The commands above are the installed `tradeflow` command. In a checkout, run them as
+`uv run python main.py <command> ...`. The Makefile shortcut for this page is `make live`. Extras are installed with `uv sync --extra <name>`
+(see [optional extras](extras)).

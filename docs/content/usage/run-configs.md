@@ -107,3 +107,9 @@ Configs live under the state root, outside this repository — `~/.tradeflow/con
 default. For a private strategy, version them in the same private repository as the
 strategy itself: the config is a description of your work, and its `provenance` block
 records the search that produced it.
+
+## From a source checkout (contributors)
+
+The commands above are the installed `tradeflow` command. In a checkout, run them as
+`uv run python main.py <command> ...`. Extras are installed with `uv sync --extra <name>`
+(see [optional extras](extras)).

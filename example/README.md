@@ -177,7 +177,7 @@ one if they do.
 
 ## Then read
 
-- [Your own strategies](https://tradeflow.mk-dir.com/docs/usage/private-strategies)
-- [Run configs](https://tradeflow.mk-dir.com/docs/usage/run-configs)
-- [Validation diagnostics](https://tradeflow.mk-dir.com/docs/usage/validation-diagnostics)
-- [Extending](https://tradeflow.mk-dir.com/docs/engineering/extending) — the interface reference
+- [Your own strategies](https://tradeflow.mk-dir.com/usage/private-strategies)
+- [Run configs](https://tradeflow.mk-dir.com/usage/run-configs)
+- [Validation diagnostics](https://tradeflow.mk-dir.com/usage/validation-diagnostics)
+- [Extending](https://tradeflow.mk-dir.com/engineering/extending) — the interface reference

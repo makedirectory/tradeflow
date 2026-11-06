@@ -16,8 +16,6 @@ budget will either spend it carelessly or stop asking, and both are worse than t
 question being free.
 
 ```bash
-make screen
-# or
 tradeflow screen --strategy demo_trend --symbols AAPL,MSFT,NVDA \
     --start 2019-01-01 --end 2023-06-30 \
     --method random --max-evals 60 --max-positions 5
@@ -133,3 +131,9 @@ Three different questions, in order:
 
 Screening is not a cheaper optimize — it is the step before deciding whether an
 optimize is worth its statistical budget at all.
+
+## From a source checkout (contributors)
+
+The commands above are the installed `tradeflow` command. In a checkout, run them as
+`uv run python main.py <command> ...`. The Makefile shortcut for this page is `make screen`. Extras are installed with `uv sync --extra <name>`
+(see [optional extras](extras)).

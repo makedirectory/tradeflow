@@ -181,8 +181,6 @@ this exists to separate out. Nothing is gated on any of it, and the figures are 
 
 ```bash
 tradeflow backtest --config configs/breakout.json --start ... --end ... --causality
-# or
-make causality
 ```
 
 Asks one question about the *mechanism* rather than about the strategy: **could each
@@ -261,3 +259,9 @@ deflated Sharpe deflates against.
 That also means you can run them freely. Exploring the parameter neighbourhood with
 `--no-journal` costs nothing statistically; a walk-forward search costs family budget
 permanently.
+
+## From a source checkout (contributors)
+
+The commands above are the installed `tradeflow` command. In a checkout, run them as
+`uv run python main.py <command> ...`. The Makefile shortcut for this page is `make causality`. Extras are installed with `uv sync --extra <name>`
+(see [optional extras](extras)).
