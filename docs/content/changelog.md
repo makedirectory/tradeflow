@@ -115,6 +115,12 @@ without guessing. The history below keeps the old name as it was written.
 - An HTML backtest report shows the execution-viability check the terminal prints, with
   a warning above the metrics when the book is not executable at its capital. A reused
   result, which does not carry the check, says it was not recorded.
+- A memoized backtest, over the CLI or MCP,
+  now carries `not_recorded` (total cost, execution checks, excursion, trades CSV,
+  resolved config, and so on), `from_request` and `derived` lists, and how to recover
+  the missing fields (`--force` / `force=true`). The HTML Run card shows "not
+  recorded" instead of a blank or a zero, and `low_sample` is derived from the stored
+  trade count. Both surfaces build the payload through one function.
 - A verdict step that fails is reported in the verdict's step list; its traceback is
   logged only at debug level instead of filling the screen above the report.
 - A request that Alpaca refuses for the credentials now says so ("Alpaca rejected these

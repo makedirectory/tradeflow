@@ -281,6 +281,99 @@ def run_scan(
     }
 
 
+#: What a fresh backtest payload carries that the trial store does not keep. The store
+#: holds a handful of headline metrics and an identity block; the rest of the result
+#: exists only in the run that produced it.
+BACKTEST_NOT_RECORDED = (
+    "total_cost",
+    "gross_final_capital",
+    "cost_drag_pct",
+    "execution",
+    "excursion",
+    "executability",
+    "trades_csv",
+    "resolved_config",
+)
+
+
+def memoized_backtest_payload(
+    cached: Mapping[str, Any],
+    *,
+    run_id: str,
+    strategy: str,
+    symbols: Sequence[str],
+    start: datetime,
+    end: datetime,
+    capital: float,
+    gross: bool,
+    benchmark: Optional[str] = None,
+) -> Dict[str, Any]:
+    """A reused backtest as a payload that says what it lacks.
+
+    The trial store keeps the headline metrics and an identity block, not the whole
+    result. Serving that as though it were a fresh payload made every missing field
+    read as zero or blank. This is the one builder both the CLI and the service call,
+    so the two surfaces cannot disagree about what a reused result holds.
+
+    Three kinds of value, kept apart:
+
+    * **recorded** - ``metrics`` as stored, plus ``total_trades`` when the stored
+      metrics carry it;
+    * **from the request** - capital, window, symbols, the gross/net choice and the
+      requested benchmark (``benchmark_requested``: whether it was actually scored
+      against is not recorded). Listed in ``from_request``;
+    * **derived** - ``final_capital_derived`` (from the stored total return) and
+      ``low_sample`` (from the stored trade count, by the metrics code's own
+      threshold). Listed in ``derived``.
+
+    Everything else a fresh run carries is named in ``not_recorded``.
+    """
+    from tradeflow.analytics import reporting
+
+    metrics = json.loads(cached.get("metrics_json") or "{}")
+    not_recorded = list(BACKTEST_NOT_RECORDED)
+    derived: List[str] = []
+
+    total_trades = metrics.get("total_trades")
+    if total_trades is None:
+        not_recorded.append("total_trades")
+        not_recorded.append("low_sample")
+    else:
+        total_trades = int(total_trades)
+        # The metrics code's own comparison and threshold, not a restatement of it.
+        metrics.setdefault("low_sample", bool(total_trades < performance.LOW_SAMPLE_TRADES))
+        derived.append("low_sample")
+
+    final_capital = None
+    if metrics.get("total_return") is not None:
+        final_capital = capital * (1.0 + float(metrics["total_return"]) / 100.0)
+        derived.append("final_capital_derived")
+
+    return {
+        "run_id": run_id,
+        "strategy": strategy,
+        "symbols": list(symbols),
+        "window": {"start": start.isoformat(), "end": end.isoformat()},
+        "initial_capital": capital,
+        "gross": gross,
+        "benchmark_requested": benchmark,
+        "final_capital_derived": final_capital,
+        "total_trades": total_trades,
+        "metrics": _jsonable(metrics),
+        "memoized": True,
+        "trial_id": cached.get("id"),
+        "trial_ts": cached.get("ts"),
+        "from_request": ["initial_capital", "window", "symbols", "gross", "benchmark_requested"],
+        "derived": derived,
+        "not_recorded": not_recorded,
+        "note": (
+            "Served from an identical prior trial, not re-run. Only the stored metrics are "
+            "the original's; fields in `not_recorded` were never kept, which is not the "
+            f"same as zero. {reporting.BACKTEST_RECOVERY_NOTE}"
+        ),
+    }
+
+
 def run_backtest(
     data_client: MarketDataClient,
     strategy: str,
@@ -342,18 +435,17 @@ def run_backtest(
             require_trade_table=record_trades,
         )
         if cached is not None:
-            metrics = json.loads(cached["metrics_json"] or "{}")
-            return {
-                "run_id": run_id,
-                "strategy": strategy,
-                "symbols": list(symbols),
-                "window": {"start": start.isoformat(), "end": end.isoformat()},
-                "memoized": True,
-                "trial_id": cached["id"],
-                "trial_ts": cached["ts"],
-                "note": "Served from an identical prior trial, not re-run. Pass force=True to re-verify.",
-                "metrics": _jsonable(metrics),
-            }
+            return memoized_backtest_payload(
+                cached,
+                run_id=run_id,
+                strategy=strategy,
+                symbols=symbols,
+                start=start,
+                end=end,
+                capital=capital,
+                gross=gross,
+                benchmark=benchmark,
+            )
 
     sizer = build_beta_sizer(data_client, strat, symbols, benchmark, as_of=start) if beta_sizing else None
     cost_model = _build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)

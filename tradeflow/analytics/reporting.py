@@ -248,15 +248,19 @@ def format_verdicts(
 def format_backtest_report(
     metrics: Dict[str, float],
     initial_capital: float,
-    final_capital: float,
+    final_capital: Optional[float],
     title: str = "Backtest Results",
     execution: Optional[Dict[str, Any]] = None,
     legs: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Render metrics as an aligned, fixed-width text block, grouped by section."""
-    lines = [f"=== {title} ===", f"{'Capital':28}${initial_capital:,.2f} -> ${final_capital:,.2f}"]
+    # A reused result may carry no final capital at all; absent is not zero.
+    final = f"${final_capital:,.2f}" if final_capital is not None else "not recorded"
+    lines = [f"=== {title} ===", f"{'Capital':28}${initial_capital:,.2f} -> {final}"]
     if metrics.get("low_sample"):
-        lines.append(f"{'(!) low sample':28}fewer than {30} trades - treat ratios with caution")
+        lines.append(
+            f"{'(!) low sample':28}fewer than {performance.LOW_SAMPLE_TRADES} trades - treat ratios with caution"
+        )
     if not metrics.get("benchmark_available", True):
         lines.append(f"{'(i) no benchmark':28}alpha/beta/information-ratio unavailable")
     elif not metrics.get("treynor_available", True):
@@ -287,6 +291,23 @@ def format_backtest_report(
             lines.extend(section_lines)
     lines.append("=" * (len(title) + 8))
     return "\n".join(lines)
+
+
+#: How to get back what a reused backtest never kept, in both spellings: a reader of the
+#: payload may be on either surface. Here rather than in the service that fills the
+#: payload, because this layer renders it and must not import upward.
+BACKTEST_RECOVERY_NOTE = "Re-run with --force (CLI) or force=true (MCP) to recompute them."
+
+
+def format_not_recorded(payload: Dict[str, Any]) -> str:
+    """One line naming what a reused result never kept, and how to get it back.
+
+    Empty for a fresh result, so a caller can print it unconditionally.
+    """
+    missing = payload.get("not_recorded") or []
+    if not missing:
+        return ""
+    return f"Not recorded for this reused result: {', '.join(missing)}. {BACKTEST_RECOVERY_NOTE}"
 
 
 def log_backtest_report(

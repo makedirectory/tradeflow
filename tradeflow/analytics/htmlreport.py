@@ -612,6 +612,46 @@ def _information_card(information: Optional[Dict[str, Any]]) -> str:
     )
 
 
+NOT_RECORDED = "not recorded"
+
+
+def _recorded(value: Any, spec: str = "{:.4g}", suffix: str = "") -> str:
+    """A number, or the words ``not recorded`` - never a blank, a dash or a zero.
+
+    ``_num`` renders None as a dash, which is fine in a dense table but reads as "no
+    value" beside a suffix (``—%``) and says nothing about *why*. A run card is the
+    place a reader checks capital and cost, so an absent value says so.
+    """
+    if value is None or value == "":
+        return NOT_RECORDED
+    return _num(value, spec) + suffix
+
+
+def _backtest_run_rows(result: Dict[str, Any]) -> List[Tuple[str, str]]:
+    """The Run card rows. A reused result lists what it never kept in ``not_recorded``;
+    a field named there is shown as such even if a stray value sits under its key."""
+    missing = set(result.get("not_recorded") or [])
+
+    def get(key: str) -> Any:
+        return None if key in missing else result.get(key)
+
+    reused = bool(result.get("memoized"))
+    final_label = "Final capital (derived from total return)" if reused else "Final capital"
+    final = result.get("final_capital_derived") if reused else get("final_capital")
+    request = " (as requested)" if reused else ""
+    rows = [
+        ("Initial capital" + request, _recorded(result.get("initial_capital"), "{:,.2f}")),
+        (final_label, _recorded(final, "{:,.2f}")),
+        ("Transaction cost", _recorded(get("total_cost"), "{:,.2f}")),
+        ("Cost drag", _recorded(get("cost_drag_pct"), "{:.2f}", "%")),
+        ("Trades", _recorded(get("total_trades"), "{:,.0f}")),
+    ]
+    if reused:
+        rows.append(("Benchmark" + request, _recorded(result.get("benchmark_requested"))))
+        rows.append(("Not recorded", ", ".join(sorted(missing)) or "nothing"))
+    return rows
+
+
 def _backtest_sections(result: Dict[str, Any], extras: Dict[str, Any]) -> List[str]:
     from tradeflow.analytics import charts
 
@@ -635,20 +675,7 @@ def _backtest_sections(result: Dict[str, Any], extras: Dict[str, Any]) -> List[s
             _table(["Metric", "Value"], [[k, _metric_cell(k, v)] for k, v in sorted(metrics.items())]),
         )
     )
-    out.append(
-        _card(
-            "Run",
-            _kv(
-                [
-                    ("Initial capital", _num(result.get("initial_capital"), "{:,.2f}")),
-                    ("Final capital", _num(result.get("final_capital"), "{:,.2f}")),
-                    ("Transaction cost", _num(result.get("total_cost"), "{:,.2f}")),
-                    ("Cost drag", _num(result.get("cost_drag_pct"), "{:.2f}") + "%"),
-                    ("Trades", result.get("total_trades")),
-                ]
-            ),
-        )
-    )
+    out.append(_card("Run", _kv(_backtest_run_rows(result))))
     return out
 
 

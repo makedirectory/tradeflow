@@ -1,0 +1,137 @@
+"""A reused (memoized) backtest says what it lacks instead of going quiet.
+
+The trial store keeps the headline metrics and an identity block, not the whole
+result. Serving that as though it were a fresh payload left capital, cost and trade
+fields blank or zero with nothing saying they were absent. These tests pin the
+payload, its two builders (CLI and service) and the HTML card that renders it.
+"""
+
+import json
+from datetime import datetime
+
+import pytest
+
+from tests.fakes import FakeMarketData
+from tradeflow import cli as main
+from tradeflow.analytics.htmlreport import render_html
+from tradeflow.analytics.performance import LOW_SAMPLE_TRADES
+from tradeflow.marketdata.client import MarketDataClient
+from tradeflow.services import analysis, audit
+
+SYMBOLS = ["AAA", "BBB"]
+START, END = "2024-01-02", "2024-06-01"
+
+
+@pytest.fixture(autouse=True)
+def _isolated(tmp_path, monkeypatch):
+    monkeypatch.setattr(analysis, "ARTIFACT_DIR", tmp_path / "artifacts")
+    monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", tmp_path / "journal.jsonl")
+
+
+@pytest.fixture
+def client(monkeypatch):
+    c = MarketDataClient(FakeMarketData(SYMBOLS, n=400, freq="1D"))
+    monkeypatch.setattr(main, "build_data_and_broker", lambda **kwargs: (None, c))
+    return c
+
+
+def _service(client, **kw):
+    return analysis.run_backtest(client, "demo_trend", SYMBOLS, main._date(START), main._date(END), **kw)
+
+
+def _cli_payload(monkeypatch, capsys):
+    """Run the CLI backtest and return the dict it hands the HTML writer."""
+    seen = []
+    monkeypatch.setattr(main, "_write_html", lambda args, result, kind, extras=None: seen.append(result))
+    argv = ["backtest", "--strategy", "demo_trend", "--scanner", "none", "--symbols", "AAA,BBB"]
+    args = main.build_parser().parse_args(argv + ["--start", START, "--end", END, "--html", "x.html"])
+    args.func(args)
+    return seen[-1], capsys.readouterr().out
+
+
+def test_a_reused_backtest_names_what_it_lacks_and_keeps_what_the_request_fixes(client):
+    """The failure: the reused payload had a few metrics and nothing said the rest was absent."""
+    fresh = _service(client)
+    assert not fresh.get("memoized")
+    reused = _service(client)
+
+    assert reused["memoized"] is True
+    assert reused["trial_id"] and reused["trial_ts"]
+    for field in ("total_cost", "cost_drag_pct", "executability", "trades_csv", "resolved_config"):
+        assert field in reused["not_recorded"], field
+        assert field not in reused, f"{field} is absent, so it must not appear as a value"
+    assert "force" in reused["note"]
+    # Request-determined values are kept and labelled as the request's.
+    assert reused["initial_capital"] == 100_000.0
+    assert reused["symbols"] == SYMBOLS
+    assert reused["gross"] is False
+    assert reused["benchmark_requested"] == "SPY"
+    assert "benchmark" not in reused  # whether it was scored against is not recorded
+    assert {"initial_capital", "window", "symbols"} <= set(reused["from_request"])
+    json.dumps(reused)
+
+
+def test_low_sample_is_derived_from_the_stored_trade_count_by_the_metrics_threshold(client):
+    reused = (_service(client), _service(client))[1]
+    trades = reused["metrics"]["total_trades"]
+    assert reused["total_trades"] == trades
+    assert reused["metrics"]["low_sample"] is (trades < LOW_SAMPLE_TRADES)
+    assert "low_sample" in reused["derived"]
+    assert reused["final_capital_derived"] == pytest.approx(
+        100_000.0 * (1 + reused["metrics"]["total_return"] / 100)
+    )
+    assert "final_capital" not in reused
+
+
+def test_low_sample_is_not_recorded_when_the_trade_count_was_not_stored():
+    cached = {
+        "id": "t1",
+        "ts": "2024-01-01T00:00:00+00:00",
+        "metrics_json": json.dumps({"sharpe_ratio": 1.0}),
+    }
+    payload = analysis.memoized_backtest_payload(
+        cached,
+        run_id="r",
+        strategy="s",
+        symbols=["A"],
+        start=datetime(2024, 1, 2),
+        end=datetime(2024, 6, 1),
+        capital=1000.0,
+        gross=False,
+    )
+    assert "total_trades" in payload["not_recorded"] and "low_sample" in payload["not_recorded"]
+    assert payload["total_trades"] is None
+    assert payload["final_capital_derived"] is None
+    assert "low_sample" not in payload["metrics"]
+
+
+def test_cli_and_service_build_the_same_reused_payload(client, monkeypatch, capsys):
+    """One trial recorded over the CLI, reused over both surfaces, must read identically."""
+    _cli_payload(monkeypatch, capsys)  # records the trial
+    cli_reused, out = _cli_payload(monkeypatch, capsys)
+    service_reused = _service(client)
+
+    assert cli_reused["memoized"] and service_reused["memoized"]
+    cli_reused.pop("run_id"), service_reused.pop("run_id")
+    assert cli_reused == service_reused
+    assert "Not recorded for this reused result:" in out
+    assert "total_cost" in out and "--force" in out
+
+
+def test_html_run_card_never_renders_a_blank_or_a_zero_for_an_absent_value(client):
+    _service(client)
+    reused = _service(client)
+    html = render_html(reused, "backtest")
+
+    assert "<dt>Transaction cost</dt><dd>not recorded</dd>" in html
+    assert "<dt>Cost drag</dt><dd>not recorded</dd>" in html
+    for bad in ("0.00%", "—%", "<dd></dd>", "<dd>None</dd>", "<dd>0</dd>", "<dd>0.00</dd>"):
+        assert bad not in html, bad
+    assert "(as requested)" in html and "derived from total return" in html
+
+
+def test_html_run_card_escapes_the_not_recorded_names():
+    payload = {"metrics": {}, "memoized": True, "not_recorded": ["<script>x</script>"]}
+    html = render_html(payload, "backtest")
+    assert "<script>x</script>" not in html
+    assert "&lt;script&gt;" in html

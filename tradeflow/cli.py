@@ -607,7 +607,6 @@ def apply_run_config(args):
 # Commands
 # ---------------------------------------------------------------------------- #
 def cmd_backtest(args) -> None:
-    import json
 
     from tradeflow.analytics.reporting import (
         format_backtest_report,
@@ -669,25 +668,31 @@ def cmd_backtest(args) -> None:
                     cached, current_accounting=ACCOUNTING_VERSION, vintage_available=vintage is not None
                 )
             )
-            metrics = json.loads(cached["metrics_json"])
-            final_capital = args.capital * (1.0 + metrics.get("total_return", 0.0) / 100.0)
-            print(format_backtest_report(metrics, args.capital, final_capital, title="Backtest Results"))
-            _write_html(
-                args,
-                {
-                    "strategy": strategy_name,
-                    "symbols": universe,
-                    "window": {"start": args.start.isoformat(), "end": args.end.isoformat()},
-                    "initial_capital": args.capital,
-                    "final_capital": final_capital,
-                    "gross": args.gross,
-                    "metrics": metrics,
-                    "memoized": True,
-                    "trial_id": cached["id"],
-                    "trial_ts": cached["ts"],
-                },
-                "backtest",
+            from tradeflow.analytics.reporting import format_not_recorded
+            from tradeflow.services.analysis import memoized_backtest_payload
+            from tradeflow.services.audit import new_run_id
+
+            payload = memoized_backtest_payload(
+                cached,
+                run_id=new_run_id(),
+                strategy=strategy_name,
+                symbols=universe,
+                start=args.start,
+                end=args.end,
+                capital=args.capital,
+                gross=args.gross,
+                benchmark=args.benchmark,
             )
+            print(
+                format_backtest_report(
+                    payload["metrics"],
+                    args.capital,
+                    payload["final_capital_derived"],
+                    title="Backtest Results",
+                )
+            )
+            print(format_not_recorded(payload))
+            _write_html(args, payload, "backtest")
             return
 
     sizer = None

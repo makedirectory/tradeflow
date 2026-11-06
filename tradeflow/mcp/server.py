@@ -668,6 +668,13 @@ def build_server(data_client=None):
         and they report it as not recorded. A prior identical trial that kept no table
         does not answer a `record_trades=true` request: the backtest is re-run and a new
         trial (with the table) is journaled, counting toward the multiple-testing total.
+
+        A memoized result is NOT the full result: the trial store keeps the headline
+        metrics, not total cost, execution checks, excursion, the trades CSV or the
+        resolved config. It carries `not_recorded` naming every field a fresh run has
+        that this one lacks (absent, not zero), `from_request` for values filled from
+        your request, and `derived` for values computed from stored ones. Pass
+        `force=True` to recompute the missing fields.
         """
         inputs = {
             "strategy": strategy,
