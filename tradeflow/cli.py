@@ -2159,10 +2159,14 @@ def _scaffold_example_pack(destination) -> None:
 
     source = example_pack_source()
     if source is None:
+        # The directory `git clone` creates is the URL's last segment, so it is derived
+        # rather than written out: a renamed repository would otherwise leave a `cp` of
+        # a directory the clone never made.
+        clone_dir = REPOSITORY_URL.rstrip("/").rsplit("/", 1)[-1]
         sys.exit(
             "The example pack is not part of an installed copy; it lives in the source "
             "repository. Fetch it and copy it, then install the copy:\n\n"
-            f"    git clone {REPOSITORY_URL} && cp -R tradeflow/example {shlex.quote(str(destination))}\n\n"
+            f"    git clone {REPOSITORY_URL} && cp -R {clone_dir}/example {shlex.quote(str(destination))}\n\n"
             f"Which install line to use for each way of installing is at "
             f"{DOCS_URL}/usage/private-strategies#start-from-a-working-pack"
         )

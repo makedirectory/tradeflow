@@ -321,3 +321,41 @@ def test_a_receipt_or_entry_point_under_the_old_name_is_this_project():
     for legacy in settings.LEGACY_DISTRIBUTION_NAMES:
         assert settings.is_own_distribution(legacy.upper().replace("-", "_"))
     assert not settings.is_own_distribution("some-pack")
+
+
+def test_the_example_pack_fetch_command_is_the_one_the_docs_show(monkeypatch):
+    """An installed copy has no example pack, so the refusal prints a clone-and-copy
+    command and the private-strategies guide prints it too. Two hand-written copies of
+    one command drift with nothing failing, and a renamed repository would leave a `cp`
+    of a directory the clone never made. The guide's command must be the CLI's, and
+    the directory it copies must be one the repository actually has."""
+    import re
+
+    from tradeflow import cli
+    from tradeflow.services import setup
+
+    monkeypatch.setattr(setup, "example_pack_source", lambda: None)
+    with pytest.raises(SystemExit) as refused:
+        cli._scaffold_example_pack("./my-signals")
+    command = next(line.strip() for line in str(refused.value.code).splitlines() if "git clone" in line)
+
+    guide = (Path(__file__).resolve().parents[1] / "docs/content/usage/private-strategies.md").read_text()
+    assert command in guide
+
+    copied = re.search(r"cp -R (\S+)/(\S+) ", command)
+    assert copied.group(1) == settings.REPOSITORY_URL.rstrip("/").rsplit("/", 1)[-1]
+    assert (Path(__file__).resolve().parents[1] / copied.group(2) / "pyproject.toml").is_file()
+
+
+def test_the_example_pack_fetch_command_follows_a_renamed_repository(monkeypatch):
+    """The copied directory is the one the clone creates, whatever the repository is called."""
+    from tradeflow import cli
+    from tradeflow.services import setup
+
+    monkeypatch.setattr(setup, "example_pack_source", lambda: None)
+    monkeypatch.setattr(cli, "REPOSITORY_URL", "https://example.invalid/acme/renamed")
+    with pytest.raises(SystemExit) as refused:
+        cli._scaffold_example_pack("./my-signals")
+    assert "git clone https://example.invalid/acme/renamed && cp -R renamed/example " in str(
+        refused.value.code
+    )

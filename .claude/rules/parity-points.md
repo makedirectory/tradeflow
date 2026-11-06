@@ -195,6 +195,12 @@ the environment the sdist carries the pack *for*, and the one nothing was lookin
 
 Anchor anything naming repo-root state, and test by building the file list rather than
 reading the manifest — reading it is exactly what missed this.
+
+The other side of the same idea is the copy that does *not* carry the pack: an installed
+copy's refusal prints a clone-and-copy command, and the private-strategies guide prints it
+too. The `cp` path is the directory `git clone` creates, so it is derived from
+`settings.REPOSITORY_URL` rather than written out, and the guide's line is compared with the
+CLI's.
 *Guarded by* `tests/test_packaging.py`.
 
 **Installed copy ↔ checkout** — every instruction printed to a user. `make`, `python
