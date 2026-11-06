@@ -1887,9 +1887,20 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         change any default, and cannot enable live trading. Promotion is a manual
         step by design — the research clock proposes, a person disposes.
 
+        `name` is a plain file name (no directories, no `..`); the file is always written
+        under the configs directory. The config is checked before anything is written: the
+        strategy and scanner must exist, `params` may only name parameters the strategy
+        declares and must construct it, and `position_limits` may only name limits that
+        are enforced. A config that could not run is refused, not saved.
+
         Include the evidence in `provenance` (the walk-forward or verdict run behind
-        the proposal, its trial id, its window and universe), because a config with
-        no recorded reason for existing is a config nobody can safely promote.
+        the proposal, its window and universe), because a config with no recorded
+        reason for existing is a config nobody can safely promote. It accepts only these
+        fields: `method`, `objective`, `windows`, `oos_metrics`, `n_trials`, `seed`,
+        `git_sha`, `timestamp`, `notes`, `accounting`, `campaign`; any other key is
+        refused. There is no trial-id field: put the trial id in `notes`, or pass the
+        `get_campaign_material` block as `campaign`, which carries it.
+
         For a config proposed from a recorded trial, put `get_campaign_material`'s
         block in `provenance.campaign` verbatim rather than summarising it. It carries
         the validation recipe the parameters alone cannot express, and which accounting

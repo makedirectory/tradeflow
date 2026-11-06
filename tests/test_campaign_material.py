@@ -326,19 +326,20 @@ def test_a_config_written_before_campaigns_existed_still_loads(tmp_path):
     assert payload["provenance"].get("campaign", {}) == {}
 
 
-def test_the_mcp_surface_writes_the_same_provenance_schema(tmp_path):
+def test_the_mcp_surface_writes_the_same_provenance_schema(tmp_path, monkeypatch):
     """One format, both surfaces. `configs.save_config` constructs a `Provenance` from
     the dict an agent passes, so a campaign block that the dataclass does not accept
     would fail there while `trials promote` succeeded — two schemas by accident."""
     from tradeflow.services import configs
 
+    monkeypatch.setattr("tradeflow.optimization.config_store.DEFAULT_CONFIG_DIR", tmp_path)
     journal = tmp_path / "journal.jsonl"
     trial_id = _journal_walkforward(journal)
     with _store(journal) as store:
         material = campaign_material(store, trial_id, journal_path=journal)
 
     saved = configs.save_config(
-        str(tmp_path / "agent.json"),
+        "agent.json",
         strategy="demo_trend",
         params={"fast_ema_period": 9},
         provenance={"objective": "sharpe_ratio", "campaign": material},

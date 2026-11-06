@@ -5,10 +5,81 @@ results. Saving a config writes a file a human chooses to use; it **never**
 affects any running process.
 """
 
+import dataclasses
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from tradeflow.optimization import config_store
+
+
+def config_filename(name: Any) -> str:
+    """``name`` as the file it names inside the configs directory, or raise.
+
+    A name is a plain file name and nothing else: this is reachable from an agent, and
+    ``save_config(name="../x")`` wrote outside the configs directory (and a read of an
+    absolute path returned any JSON file on the machine). A directory component of any
+    kind, an absolute path, ``.`` / ``..`` and an empty stem are all refused, so every
+    config lives directly under :data:`~tradeflow.optimization.config_store.DEFAULT_CONFIG_DIR`.
+    """
+    text = name if isinstance(name, str) else ""
+    stem = text[: -len(".json")] if text.endswith(".json") else text
+    plain = (
+        bool(stem.strip())
+        and stem not in (".", "..")
+        and "/" not in text
+        and "\\" not in text
+        and "\0" not in text
+        and Path(text).name == text
+        and not Path(text).is_absolute()
+    )
+    if not plain:
+        raise ValueError(
+            f"Config name {name!r} is not a plain file name. Give a short name such as "
+            "'momentum_v2' - no directories, no '..', no absolute path; it is written under "
+            "the configs directory."
+        )
+    return f"{stem}.json"
+
+
+def _validate_candidate(
+    strategy: str,
+    params: Dict[str, Any],
+    scanner: Optional[str],
+    position_limits: Optional[Dict[str, Any]],
+    provenance: Optional[Dict[str, Any]],
+) -> None:
+    """Refuse a config that could not be run, before anything is written.
+
+    A saved config is what a person later promotes, so one that names a strategy that
+    does not exist, a parameter the strategy does not declare, a value its range check
+    rejects, or a book limit nothing enforces is a file that fails (or worse, runs at
+    the defaults) only when someone relies on it.
+    """
+    from tradeflow.services.registry import resolve_strategy_class, scanner_refusal
+    from tradeflow.strategies.base import build_with_limits, refuse_unknown_limits, refuse_unknown_params
+
+    cls = resolve_strategy_class(strategy)
+    if scanner is not None and (refusal := scanner_refusal(scanner)):
+        raise ValueError(refusal)
+    refuse_unknown_params(cls, params)
+    refuse_unknown_limits(position_limits)
+    # A config states only what it overrides; the run fills in the declared defaults, so
+    # the candidate is built the same way to check that its overrides construct.
+    candidate = {name: spec["default"] for name, spec in cls.PARAM_RANGES.items()}
+    candidate.update({k: v for k, v in (params or {}).items() if not k.startswith("_")})
+    try:
+        build_with_limits(cls, candidate, position_limits)
+    except (ValueError, TypeError, KeyError) as exc:
+        raise ValueError(f"These params do not construct {strategy!r}: {exc}") from exc
+    if isinstance(provenance, dict):
+        accepted = [f.name for f in dataclasses.fields(config_store.Provenance)]
+        unknown = [key for key in provenance if key not in accepted]
+        if unknown:
+            raise ValueError(
+                f"provenance has no field {', '.join(map(repr, unknown))}. Accepted fields: "
+                f"{', '.join(accepted)}. Put a trial id in `notes` or in `campaign` "
+                "(the get_campaign_material block)."
+            )
 
 
 def save_config(
@@ -35,7 +106,8 @@ def save_config(
     Omitted values stay omitted rather than being defaulted, so a config that never knew
     its book is distinguishable from one saved at the class default.
     """
-    filename = name if name.endswith(".json") else f"{name}.json"
+    filename = config_filename(name)
+    _validate_candidate(strategy, params, scanner, position_limits, provenance)
     position_limits = _reconcile_book(position_limits, provenance)
     capital = _reconcile_capital(capital, provenance)
     prov = config_store.Provenance(**provenance) if isinstance(provenance, dict) else provenance
@@ -129,7 +201,10 @@ def _reconcile_book(
 
 def load_config(name: str) -> Dict[str, Any]:
     """Load a previously saved config by name (with or without ``.json``)."""
-    path = _resolve(name)
+    filename = config_filename(name)
+    path = config_store.DEFAULT_CONFIG_DIR / filename
+    if not path.is_file():
+        raise FileNotFoundError(f"No saved config named {name!r}.")
     return config_store.load_config(path)
 
 
@@ -156,11 +231,3 @@ def list_configs(directory: Optional[str] = None) -> List[Dict[str, Any]]:
             }
         )
     return out
-
-
-def _resolve(name: str) -> Path:
-    candidate = Path(name)
-    if candidate.exists():
-        return candidate
-    filename = name if name.endswith(".json") else f"{name}.json"
-    return config_store.DEFAULT_CONFIG_DIR / filename

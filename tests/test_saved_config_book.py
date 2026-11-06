@@ -278,38 +278,37 @@ def test_the_mcp_tool_accepts_nothing_the_config_service_cannot_take():
     assert {"position_limits", "symbols", "capital"} <= names
 
 
-def test_the_config_service_fills_the_book_from_the_campaign_it_was_given():
+def test_the_config_service_fills_the_book_from_the_campaign_it_was_given(tmp_path, monkeypatch):
     """A parameter is not a guarantee. An agent can pass campaign material carrying the
     validated book and still leave `position_limits` unset — writing exactly the config
     this branch exists to prevent, from the surface that was given the right answer."""
-    import tempfile
-
     from tradeflow.services import configs
 
+    monkeypatch.setattr("tradeflow.optimization.config_store.DEFAULT_CONFIG_DIR", tmp_path)
+
     material = {"recipe": {"folded_into_identity": {"_limits": BOOK}}}
-    with tempfile.TemporaryDirectory() as tmp:
-        saved = configs.save_config(
-            f"{tmp}/agent.json",
-            strategy="demo_trend",
-            params=_chosen_params(),
-            provenance={"objective": "sharpe_ratio", "campaign": material},
-        )
-        written = json.loads(open(saved["path"]).read())
+    saved = configs.save_config(
+        "agent.json",
+        strategy="demo_trend",
+        params=_chosen_params(),
+        provenance={"objective": "sharpe_ratio", "campaign": material},
+    )
+    written = json.loads(open(saved["path"]).read())
 
     assert written["position_limits"] == BOOK
 
 
-def test_a_book_that_disagrees_with_its_own_provenance_is_refused():
+def test_a_book_that_disagrees_with_its_own_provenance_is_refused(tmp_path, monkeypatch):
     """One of the two numbers is wrong and nothing here can tell which. A file that
     argues with itself is worse than no file."""
-    import tempfile
-
     from tradeflow.services import configs
 
+    monkeypatch.setattr("tradeflow.optimization.config_store.DEFAULT_CONFIG_DIR", tmp_path)
+
     material = {"recipe": {"folded_into_identity": {"_limits": BOOK}}}
-    with tempfile.TemporaryDirectory() as tmp, pytest.raises(ValueError, match="disagrees"):
+    with pytest.raises(ValueError, match="disagrees"):
         configs.save_config(
-            f"{tmp}/bad.json",
+            "bad.json",
             strategy="demo_trend",
             params=_chosen_params(),
             position_limits={"max_positions": 1},
@@ -317,29 +316,28 @@ def test_a_book_that_disagrees_with_its_own_provenance_is_refused():
         )
 
 
-def test_an_agreeing_book_and_a_campaign_free_config_both_pass_through():
+def test_an_agreeing_book_and_a_campaign_free_config_both_pass_through(tmp_path, monkeypatch):
     """Both directions. The check must accept the book it was drawn to protect, and
     must not invent one where the provenance never knew it."""
-    import tempfile
-
     from tradeflow.services import configs
 
-    material = {"recipe": {"folded_into_identity": {"_limits": BOOK}}}
-    with tempfile.TemporaryDirectory() as tmp:
-        agreeing = configs.save_config(
-            f"{tmp}/ok.json",
-            strategy="demo_trend",
-            params=_chosen_params(),
-            position_limits=dict(BOOK),
-            provenance={"objective": "sharpe_ratio", "campaign": material},
-        )
-        assert json.loads(open(agreeing["path"]).read())["position_limits"] == BOOK
+    monkeypatch.setattr("tradeflow.optimization.config_store.DEFAULT_CONFIG_DIR", tmp_path)
 
-        # No campaign material at all: nothing to reconcile against, nothing invented.
-        plain = configs.save_config(
-            f"{tmp}/plain.json",
-            strategy="demo_trend",
-            params=_chosen_params(),
-            provenance={"objective": "sharpe_ratio"},
-        )
-        assert "position_limits" not in json.loads(open(plain["path"]).read())
+    material = {"recipe": {"folded_into_identity": {"_limits": BOOK}}}
+    agreeing = configs.save_config(
+        "ok.json",
+        strategy="demo_trend",
+        params=_chosen_params(),
+        position_limits=dict(BOOK),
+        provenance={"objective": "sharpe_ratio", "campaign": material},
+    )
+    assert json.loads(open(agreeing["path"]).read())["position_limits"] == BOOK
+
+    # No campaign material at all: nothing to reconcile against, nothing invented.
+    plain = configs.save_config(
+        "plain.json",
+        strategy="demo_trend",
+        params=_chosen_params(),
+        provenance={"objective": "sharpe_ratio"},
+    )
+    assert "position_limits" not in json.loads(open(plain["path"]).read())

@@ -157,6 +157,17 @@ is kept only where the result is genuinely partial: `compare_trials` with two or
 known ids still answers, and lists the rest in `unknown_trial_ids`. The services keep
 their return shapes (the CLI renders them); the raise happens in this module.
 
+**`save_config` and `load_config` take a plain file name.** An agent supplies the name, so
+`services.configs.config_filename` refuses anything with a directory component, `..`, an
+absolute path or an empty stem, and every config is read and written directly under the
+configs directory (a read used to accept any existing path). `save_config` also refuses,
+before writing, a strategy or scanner that is not registered, a parameter the strategy
+does not declare or whose range check fails, and a book limit nothing enforces (the same
+`refuse_unknown_params` / `refuse_unknown_limits` the run paths use). `provenance` accepts
+only the `Provenance` dataclass's fields; an unknown key is refused with the accepted list
+rather than a constructor `TypeError`. There is no trial-id field: the trial id goes in
+`notes`, or in the `campaign` block `get_campaign_material` returns.
+
 ## Descriptions are an interface, not documentation
 
 A human who reads a stale doc can notice it is stale. An agent cannot: it reads a
