@@ -185,7 +185,9 @@ without guessing. The history below keeps the old name as it was written.
   self-test says when credentials came only from your shell.
 - Arguments no run can mean are refused before anything is read or journaled, on both
   surfaces: an unknown `mode`, `method` or `objective` (an unknown objective scored every
-  candidate equally, so the "best" was arbitrary), negative `holdout_days`,
+  candidate equally, so the "best" was arbitrary; the search always maximises, so a
+  lower-is-better objective such as `max_drawdown` picked the worst candidate and is now
+  refused too), negative `holdout_days`,
   `max_evals` below one, a non-positive `capital`, an empty universe, and a parameter or
   position limit the strategy does not have (a misspelt one used to run at the default).
   A backtest that read no bars for any symbol is refused instead of reported as all
