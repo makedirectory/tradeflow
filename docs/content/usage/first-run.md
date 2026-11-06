@@ -32,7 +32,7 @@ quantred demo
 ```
 
 `demo` runs the entire pipeline on synthetic data with no keys and no network, and
-ends in an honest promotion verdict. You do not need `init` to try TradeFlow.
+ends in an honest promotion verdict. You do not need `init` to try QuantRed.
 
 ## 3. `quantred init`
 
@@ -77,7 +77,7 @@ quantred init --check
 ```
 
 ```
-TradeFlow setup check
+QuantRed setup check
 
   state root: ~/.tradeflow
   (journal, trial store, bar cache, and configs all live here)

@@ -16,7 +16,7 @@ fail() { printf '  [FAIL] %s\n' "$1"; FAILED=1; }
 FAILED=0
 
 echo
-echo "TradeFlow compose smoke test"
+echo "QuantRed compose smoke test"
 echo
 
 # 1. The YAML is valid and `up` starts nothing that trades.

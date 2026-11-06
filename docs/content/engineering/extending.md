@@ -102,7 +102,7 @@ Use the pure [indicators](indicators); don't reach for a compiled TA library.
 
 Keep the engine boring and open; keep the signal IP elsewhere. A private package
 can depend on `quantred`, define strategies/scanners in its own modules,
-and expose them with entry points. TradeFlow loads entry points at startup, but
+and expose them with entry points. QuantRed loads entry points at startup, but
 built-in names are reserved, so a private package cannot silently replace
 `demo_trend` or `demo_volume`.
 

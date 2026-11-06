@@ -7,7 +7,7 @@ title: Architecture
 
 ## The mental model: two clocks
 
-Before the layers, the one idea that explains the most: TradeFlow runs on **two
+Before the layers, the one idea that explains the most: QuantRed runs on **two
 clocks**, and they never touch.
 
 ```mermaid

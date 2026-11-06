@@ -1,4 +1,4 @@
-# TradeFlow
+# QuantRed
 
 [![CI](https://github.com/makedirectory/tradeflow/actions/workflows/ci.yml/badge.svg)](https://github.com/makedirectory/tradeflow/actions/workflows/ci.yml)
 [![Docs](https://img.shields.io/badge/docs-tradeflow.mk--dir.com-blue)](https://tradeflow.mk-dir.com/)
@@ -34,7 +34,7 @@ Designed to be easy to try and easy to read:
 
 > ⚠️ Educational software. Trading is risky; use paper trading. No warranty.
 
-![TradeFlow demo — an in-sample equity curve that looks tradeable, beside the walk-forward verdict that refuses to promote it](https://raw.githubusercontent.com/makedirectory/tradeflow/main/docs/static/img/demo.png)
+![QuantRed demo — an in-sample equity curve that looks tradeable, beside the walk-forward verdict that refuses to promote it](https://raw.githubusercontent.com/makedirectory/tradeflow/main/docs/static/img/demo.png)
 
 *`make demo` runs the whole pipeline on synthetic data (no keys, no network) and
 renders this: a strategy that looks profitable in-sample, and the out-of-sample
@@ -43,7 +43,7 @@ for any run — pass `--chart PATH` to `backtest` or `walkforward`.*
 
 ## The mental model: two clocks
 
-The one idea that explains everything else — TradeFlow runs on **two clocks that
+The one idea that explains everything else — QuantRed runs on **two clocks that
 never touch**:
 
 - **Research clock** (offline, slow, exploratory): backtest → optimize →
@@ -103,7 +103,8 @@ the first two with no keys and no network.
 
 The distribution and the command are both **`quantred`**; the importable package is
 still `tradeflow`, and a `tradeflow` command remains as an alias. If you installed the
-older `tradeflow-engine`, uninstall it first: both own the same import package.
+older `tradeflow-engine`, uninstall it first: both own the same import package. The steps are in
+[migrating to QuantRed](https://tradeflow.mk-dir.com/usage/migrating-to-quantred).
 
 State (the research journal, trial store, bar cache, promoted configs) lives in
 `~/.tradeflow` — for an installed copy and for a checkout alike. `quantred --version`
@@ -171,7 +172,7 @@ it's that the **refusal to promote a noise strategy is the product**:
 $ make demo
 
 ======================================================================
-  TradeFlow demo — synthetic data, no API keys, no network
+  QuantRed demo — synthetic data, no API keys, no network
   (a seeded random walk: realistic-looking, no actual edge)
 ======================================================================
 
@@ -198,7 +199,7 @@ $ make demo
    Verdict: NOT promotable
 
    No edge in a random walk → the gates refuse to promote it. That refusal
-   is the product. Point TradeFlow at real data:
+   is the product. Point QuantRed at real data:
      quantred init       add your free Alpaca paper keys
      quantred verdict    then run the whole pipeline on real market data
 ```
@@ -296,7 +297,7 @@ promoted automatically — is what stays constant.
 | `horizon` | Measure alpha decay / half-life; recommend rebalance cadence + current/lagged blend (read-only) |
 | `walkforward` | Out-of-sample validation: optimize in-sample, score out-of-sample across folds, with a sacred holdout and promotion gates |
 | `trials` | Browse the campaign's memory: `list` (filters, sorting, paging), `show` (one trial in full), `best` (a DSR-ranked leaderboard that always shows the family's `n_trials`) — read-only; `archive` retires a whole era by moving the journal and its index aside **together** (a store left beside a fresh journal keeps reporting a trial count for evidence that is gone); `mark-contaminated` quarantines a suspect subset with an appended event — history intact, reason on the record |
-| `mcp` | Serve TradeFlow over MCP so an agent (Claude Code / Desktop) can drive verdict/scan/backtest/optimize/walk-forward/alphas/risk/portfolio/info — read-only, no live trading |
+| `mcp` | Serve QuantRed over MCP so an agent (Claude Code / Desktop) can drive verdict/scan/backtest/optimize/walk-forward/alphas/risk/portfolio/info — read-only, no live trading |
 
 One strategy ships, and it is a demonstration rather than a candidate:
 
@@ -335,7 +336,7 @@ print(result["verdict"]["summary"])
 ```
 
 Everything outside `services/` is internal and moves without notice. See
-[Using TradeFlow as a library](https://tradeflow.mk-dir.com/engineering/embedding).
+[Using QuantRed as a library](https://tradeflow.mk-dir.com/engineering/embedding).
 
 ### Optional features
 
@@ -378,7 +379,7 @@ that the code is untested. Everything ships with offline tests.
 
 > **AI-assisted research without AI-controlled trading.**
 
-`quantred mcp` exposes TradeFlow's deterministic capabilities to any MCP
+`quantred mcp` exposes QuantRed's deterministic capabilities to any MCP
 client (Claude Code / Claude Desktop) as tools: discovery, `run_verdict`,
 `run_scan`, `run_backtest`, `run_optimization`, `run_walk_forward`, the research
 chain (`compute_alphas`, `construct_portfolio`, `compute_information`, ...),
@@ -532,7 +533,7 @@ uv run ruff format --check . # format
 strategy or scanner, an additional broker/data adapter, an LLM provider, docs, or
 just a feature request or suggestion. If you have an idea, open an issue to start
 the conversation; if you have a fix, open a PR. No contribution is too small, and
-feedback on what would make TradeFlow more useful is always appreciated.
+feedback on what would make QuantRed more useful is always appreciated.
 
 And hey — don't be greedy: share your algos, let's make money together. 📈 (Worst
 case, we lose money together, which is basically friendship.)

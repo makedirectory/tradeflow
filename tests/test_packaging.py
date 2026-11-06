@@ -267,7 +267,7 @@ def test_demo_runs_against_an_empty_state_root(tmp_path):
         [sys.executable, "main.py", "demo"], capture_output=True, text=True, timeout=600, env=env
     )
     assert result.returncode == 0, result.stderr[-2000:]
-    assert "TradeFlow demo" in result.stdout
+    assert f"{settings.BRAND} demo" in result.stdout
 
 
 # --- what the source distribution actually carries --------------------------

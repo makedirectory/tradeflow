@@ -10,7 +10,7 @@ make up          # docker compose up -d — MCP + persistent state
 make down        # stop; your trial history survives
 ```
 
-**This is a local development stack, not an easier way to try TradeFlow.** Docker is
+**This is a local development stack, not an easier way to try QuantRed.** Docker is
 itself a prerequisite, so if you just want to run this, [installing the
 command](installation#as-a-command-no-clone) is strictly simpler:
 
@@ -22,7 +22,7 @@ What compose adds is the volume and environment wiring people get wrong by hand,
 long-running MCP server and docs site, and the seam a database service would attach
 to later without changing how anything boots.
 
-Honest framing: TradeFlow is a single-process application with file-backed state, so
+Honest framing: QuantRed is a single-process application with file-backed state, so
 most of the compose file is volumes and named entrypoints rather than service
 orchestration.
 

@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from tradeflow.settings import BRAND
+
 # Palette — kept here so the look is consistent and easy to retune.
 _INK = "#1b1f24"
 _MUTED = "#6b7280"
@@ -368,7 +370,7 @@ def render_demo_summary(
     if seed is not None:
         sub += f"  (seed {seed})"
     fig.suptitle(
-        "TradeFlow demo: honest out-of-sample evaluation",
+        f"{BRAND} demo: honest out-of-sample evaluation",
         fontsize=15,
         fontweight="bold",
         x=0.07,

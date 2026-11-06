@@ -1,4 +1,4 @@
-"""MCP server: a thin adapter exposing TradeFlow's deterministic core as tools, so
+"""MCP server: a thin adapter exposing QuantRed's deterministic core as tools, so
 an agent can do the research and the engine can stay boringly deterministic.
 
 No business logic lives here - every tool calls a function in :mod:`tradeflow.services`
@@ -28,7 +28,7 @@ except ImportError:  # pragma: no cover - only without the extra
 from tradeflow.analytics.series_comparison import MIN_OVERLAP as SERIES_MIN_OVERLAP
 from tradeflow.services import analysis, campaign, configs, glossary, registry
 from tradeflow.services.audit import audit_log, new_run_id
-from tradeflow.settings import MCP_SERVER_NAME
+from tradeflow.settings import BRAND, MCP_SERVER_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -916,7 +916,7 @@ def build_server(data_client=None):
         """Validate draft Strategy source, then run normal walk-forward gates.
 
         This is the bridge from "agent can propose or modify strategy code" to
-        "TradeFlow can validate it" without putting proprietary code in this repo.
+        "QuantRed can validate it" without putting proprietary code in this repo.
         The source is compiled in-memory through the same sandbox as
         `validate_draft_strategy_code`, never registered globally, and never made
         live. Results are regular walk-forward results with a `draft` block carrying
@@ -2048,9 +2048,10 @@ def serve() -> None:
     # After the build, not before: a missing extra or missing credentials stops the
     # server there, and "waiting for a client" from a process about to exit is false.
     logger.info(
-        "TradeFlow MCP server (stdio) is waiting for an MCP client on stdin/stdout. Live "
+        "%s MCP server (stdio) is waiting for an MCP client on stdin/stdout. Live "
         "trading is NOT exposed. Started by hand in a terminal it is attached to no chat: "
         "a client launches its own copy (check the command with `%s`). Ctrl-C stops it.",
+        BRAND,
         invocation("mcp --self-test"),
     )
     _install_stop_handlers()

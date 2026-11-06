@@ -22,7 +22,8 @@ existing scripts and client configs keep working. The project was previously
 distributed as `tradeflow-engine`: that distribution owns the same import package, so
 uninstall it *before* installing `quantred` (`uv tool uninstall tradeflow-engine`, or
 `python -m pip uninstall tradeflow-engine`) rather than installing both into one
-environment.
+environment. The full steps, including what to do if the order was reversed, are in
+[migrating to QuantRed](migrating-to-quantred).
 
 This gives you a `quantred` command with every verb — `quantred demo`,
 `quantred init`, `quantred verdict`, `quantred mcp` — and needs no repository, no
@@ -59,7 +60,7 @@ and `quantred init --check` both print the resolved root, so it is never a myste
 
 ## From a checkout (contributors)
 
-The rest of this page is for working on TradeFlow itself. The Makefile targets and
+The rest of this page is for working on QuantRed itself. The Makefile targets and
 `uv run python main.py` below are the checkout forms of the `quantred` commands used
 everywhere else in these docs.
 

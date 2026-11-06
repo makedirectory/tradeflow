@@ -6,7 +6,7 @@
 # is volume and environment wiring (the part people get wrong by hand) and a seam a
 # database service can attach to later without changing how anyone boots the stack.
 #
-# TradeFlow is a single-process application with file-backed state, so most of what
+# QuantRed is a single-process application with file-backed state, so most of what
 # follows is volumes and named entrypoints rather than service orchestration. Saying
 # so plainly is better than dressing it up.
 #

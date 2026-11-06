@@ -168,3 +168,41 @@ def test_the_mcp_server_name_is_one_definition():
 
     assert server.SERVER_NAME == settings.MCP_SERVER_NAME
     assert list(setup.mcp_client_config()["mcpServers"]) == [settings.MCP_SERVER_NAME]
+
+
+# --- the display brand -------------------------------------------------------------
+
+OLD_BRAND = "Trade" + "Flow"  # spelled in two halves so this file does not trip its own scan
+
+
+def old_brand_in_runtime_strings(root: Path = PACKAGE) -> List[str]:
+    return [
+        f"{path.relative_to(root).as_posix()}:{line}: {text.strip()[:70]!r}"
+        for path in sorted(root.rglob("*.py"))
+        for line, text, _ in _strings(path)
+        if OLD_BRAND in text
+    ]
+
+
+def test_no_runtime_string_names_the_old_brand():
+    problems = old_brand_in_runtime_strings()
+    assert not problems, "runtime strings say the old brand instead of settings.BRAND:\n  " + "\n  ".join(
+        problems
+    )
+
+
+def test_the_brand_scan_sees_the_old_name(tmp_path):
+    (tmp_path / "mod.py").write_text(f'def banner():\n    print("{OLD_BRAND} demo")\n')
+    assert len(old_brand_in_runtime_strings(tmp_path)) == 1
+
+
+def test_a_report_and_the_top_level_help_say_the_brand():
+    """What a user reads, rendered rather than scanned: the report title and footer and
+    the help description are built from settings.BRAND, so renaming it renames all."""
+    from tradeflow.analytics.htmlreport import _footer, _title
+
+    assert settings.BRAND == "QuantRed"
+    assert _title({"strategy": "s"}, "verdict").startswith(settings.BRAND)
+    assert settings.BRAND in _footer()
+    assert OLD_BRAND not in _footer()
+    assert cli.build_parser().description.startswith(settings.BRAND)

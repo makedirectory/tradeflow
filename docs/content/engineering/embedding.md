@@ -1,11 +1,11 @@
 ---
 sidebar_position: 17
-title: Using TradeFlow as a library
+title: Using QuantRed as a library
 ---
 
-# Using TradeFlow as a library
+# Using QuantRed as a library
 
-TradeFlow is primarily a command-line tool, but the layer the CLI and the MCP server
+QuantRed is primarily a command-line tool, but the layer the CLI and the MCP server
 both call is a clean, JSON-returning boundary — and it is usable from your own code.
 
 ```bash
@@ -63,7 +63,7 @@ same rule the MCP server follows.
 
 **State is shared, and that is the point.** Anything that runs a trial writes to the
 research journal, and the campaign's trial count is what the Deflated Sharpe deflates
-against. Embedding TradeFlow in a loop that runs thousands of backtests will — 
+against. Embedding QuantRed in a loop that runs thousands of backtests will — 
 correctly — make every subsequent result harder to clear. Set `TRADEFLOW_HOME` to
 keep a project's campaign separate from your own, or pass `journal=False` /
 `no_journal` where a function offers it if a run genuinely should not count.

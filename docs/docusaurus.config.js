@@ -1,10 +1,10 @@
 // @ts-check
-// Docusaurus site for TradeFlow.
+// Docusaurus site for QuantRed.
 // Docs are served at the site root; there are two sidebars: Usage and Engineering.
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
-  title: 'TradeFlow',
+  title: 'QuantRed',
   tagline: 'A simple, layered, broker-agnostic algorithmic trading engine',
   favicon: 'img/favicon.ico',
 
@@ -58,7 +58,7 @@ const config = {
     /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
     ({
       navbar: {
-        title: 'TradeFlow',
+        title: 'QuantRed',
         items: [
           { type: 'docSidebar', sidebarId: 'usage', position: 'left', label: 'Usage' },
           { type: 'docSidebar', sidebarId: 'engineering', position: 'left', label: 'Engineering' },

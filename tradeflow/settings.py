@@ -48,6 +48,11 @@ LEGACY_DISTRIBUTION_NAMES: Tuple[str, ...] = ("tradeflow-engine",)
 #: command changes.
 CLI_NAME = "quantred"
 
+#: The product's display name, as a reader sees it in banners, report titles and
+#: footers, chart titles and server log lines. Distinct from :data:`CLI_NAME` (what is
+#: typed) and from the import package, which a rebrand does not touch.
+BRAND = "QuantRed"
+
 #: Executables that still launch this copy after :data:`CLI_NAME` changes. Never
 #: printed as an instruction; looked up only where something must *find* a script
 #: that exists on disk (an MCP client config written under an older name).
@@ -80,7 +85,7 @@ def is_own_distribution(name: str) -> bool:
 
 
 def _looks_like_checkout(path: Path) -> bool:
-    """Whether ``path`` is a TradeFlow working copy rather than any old directory.
+    """Whether ``path`` is a QuantRed working copy rather than any old directory.
 
     Matched against :data:`DISTRIBUTION_NAME` so a rename cannot silently break
     detection: getting this wrong sends a developer's journal to ``~/.tradeflow``

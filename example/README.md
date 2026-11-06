@@ -1,6 +1,6 @@
 # example — a private pack you can copy
 
-This is what your own work looks like from TradeFlow's side: a separate package with its
+This is what your own work looks like from QuantRed's side: a separate package with its
 own `pyproject.toml`, registering strategies and a scanner through two entry-point
 groups. The engine imports nothing from here and knows nothing about it beyond the base
 interface.
@@ -55,7 +55,7 @@ name a stable import path while files stay free to move. Everything is written t
 breakout level is shifted by a bar, why the scanner ranks rather than only flags, why
 dispersion is guarded before dividing by it.
 
-**Two strategies on purpose.** A long-only book cannot exercise half of what TradeFlow
+**Two strategies on purpose.** A long-only book cannot exercise half of what QuantRed
 measures. Leg diagnostics, `max_net_exposure`, the directional-tilt derivation and the
 short-borrow side of the cost model only mean anything for a book that trades both
 sides. `pairs_reversion` is there so those surfaces have something to act on.
@@ -160,7 +160,7 @@ quantred reconcile                     # ledger against the broker
 
 ## Where your evidence goes
 
-Nowhere near here. TradeFlow writes its journal, trial store, saved configs and position
+Nowhere near here. QuantRed writes its journal, trial store, saved configs and position
 ledger under one state root — `~/.tradeflow` by default, `TRADEFLOW_HOME` to move it —
 deliberately outside any working tree, so a private strategy's results are not sitting in
 a git repository waiting for an ignore-file mistake.

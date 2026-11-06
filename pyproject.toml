@@ -42,7 +42,7 @@ dependencies = [
 optimize = ["scikit-learn>=1.4"]
 # Constraint-solver portfolio allocation (Google OR-Tools).
 portfolio = ["ortools>=9.8"]
-# Expose TradeFlow to an agent over MCP. Opt-in; base install unchanged.
+# Expose QuantRed to an agent over MCP. Opt-in; base install unchanged.
 # Pinned below 2.0: the SDK's 2.x line removed `mcp.server.fastmcp.FastMCP`, which
 # this server is built on, so an unconstrained `mcp` resolves to a version the
 # server cannot import. Porting to the 2.x API is real work and tracked separately;

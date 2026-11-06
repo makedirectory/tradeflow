@@ -3,7 +3,7 @@
 The pack's second strategy exists because a long-only book cannot demonstrate half the
 platform. Leg diagnostics, `max_net_exposure`, the directional-tilt derivation and the
 short-borrow side of the cost model only mean anything for a book that trades both
-sides — so if you are going to read one example to understand what TradeFlow measures,
+sides — so if you are going to read one example to understand what QuantRed measures,
 read this one alongside the breakout.
 
 The idea is deliberately plain: a name stretched far above its own recent mean is sold,

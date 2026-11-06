@@ -15,7 +15,7 @@ the MCP server, and the research agent run the same code):
     info         information report: IC, breadth, predicted-vs-realized IR
     horizon      measure alpha decay / half-life; recommend cadence + lagged blend
     walkforward  out-of-sample validation with promotion gates
-    mcp          serve TradeFlow to an agent over MCP (read-only)
+    mcp          serve QuantRed to an agent over MCP (read-only)
     research     autonomous, offline research loop -> shortlist of configs
     trials       inspect the trial store: campaign n_trials, recent trials, drift check
     cache        inspect/warm the persistent bar cache (backtest/optimize/walkforward --cache)
@@ -36,7 +36,7 @@ from tradeflow.analytics.series_comparison import MIN_OVERLAP as SERIES_MIN_OVER
 from tradeflow.marketdata.base import MarketDataProvider
 from tradeflow.research.provider_errors import ModelProviderError
 from tradeflow.services.registry import STRATEGIES
-from tradeflow.settings import CLI_NAME, DATA_FEEDS, DOCS_URL, MCP_SERVER_NAME
+from tradeflow.settings import BRAND, CLI_NAME, DATA_FEEDS, DOCS_URL, MCP_SERVER_NAME
 from tradeflow.strategies import signals
 from tradeflow.utils.extras import installed as extras_installed
 from tradeflow.utils.extras import missing_extra_message
@@ -2153,7 +2153,7 @@ def _print_doctor(checks, *, task: str = "data", probe_result=None, provider: Op
     from tradeflow.services import setup
     from tradeflow.settings import state_root
 
-    print("\nTradeFlow setup check\n")
+    print(f"\n{BRAND} setup check\n")
     print(f"  state root: {state_root()}")
     print("  (journal, trial store, bar cache, and configs all live here)\n")
     for check in checks:
@@ -2353,7 +2353,7 @@ def _init_interactive(args, setup) -> None:
     it makes is a service function that a test can drive directly."""
     import getpass
 
-    print("\nTradeFlow setup\n")
+    print(f"\n{BRAND} setup\n")
     state = setup.inspect_env(args.env_path)
 
     ask_for_keys = True
@@ -3929,7 +3929,7 @@ def _print_leaderboard(store, args) -> None:
 
 
 def cmd_mcp(args) -> None:
-    """Serve TradeFlow over MCP (stdio). Opt-in; requires the ``mcp`` extra.
+    """Serve QuantRed over MCP (stdio). Opt-in; requires the ``mcp`` extra.
 
     Live trading is intentionally not exposed: the server builds
     only a data client, so it cannot place orders.
@@ -5394,7 +5394,7 @@ def cmd_demo(args) -> None:
         return anchor - timedelta(days=days), anchor
 
     print("\n" + "=" * 70)
-    print("  TradeFlow demo — synthetic data, no API keys, no network")
+    print(f"  {BRAND} demo — synthetic data, no API keys, no network")
     print("  (a seeded random walk: realistic-looking, no actual edge)")
     print("=" * 70)
 
@@ -5462,7 +5462,7 @@ def cmd_demo(args) -> None:
     # and no .env.example to copy, and telling them to use one is a dead end.
     print(
         "\n   No edge in a random walk → the gates refuse to promote it. That refusal\n"
-        "   is the product. Point TradeFlow at real data:\n"
+        "   is the product. Point QuantRed at real data:\n"
         f"{_next_step_hint()}\n"
     )
 
@@ -5501,7 +5501,7 @@ def cmd_demo_agent(args) -> None:
 
     rule = "=" * 74
     print(f"\n{rule}")
-    print("  TradeFlow demo-agent — AI proposal → sandbox → walk-forward → verdict")
+    print(f"  {BRAND} demo-agent — AI proposal → sandbox → walk-forward → verdict")
     print("  Live Alpaca market data · research clock only · no order path exists")
     print(rule)
 
@@ -5918,7 +5918,7 @@ def _top_level_epilog() -> str:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=CLI_NAME,
-        description="TradeFlow — a broker-agnostic trading engine that's refreshingly "
+        description=f"{BRAND} — a broker-agnostic trading engine that's refreshingly "
         "honest about how hard making money actually is",
         epilog=_top_level_epilog(),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -7436,7 +7436,7 @@ def build_parser() -> argparse.ArgumentParser:
     trials.set_defaults(func=cmd_trials)
 
     mcp = subparsers.add_parser(
-        "mcp", help="Serve TradeFlow over MCP for an agent (opt-in; needs the 'mcp' extra)"
+        "mcp", help="Serve QuantRed over MCP for an agent (opt-in; needs the 'mcp' extra)"
     )
     mcp.add_argument(
         "--self-test",

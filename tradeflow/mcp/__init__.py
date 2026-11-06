@@ -1,4 +1,4 @@
-"""TradeFlow MCP server package.
+"""QuantRed MCP server package.
 
 Opt-in: requires the ``mcp`` extra (``tradeflow init --check`` prints the install command for
 the copy you are running). The ``mcp`` import

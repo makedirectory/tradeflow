@@ -5,7 +5,7 @@ title: Your own strategies
 
 # Your own strategies
 
-**The strategies and scanners that ship with TradeFlow are examples.** One strategy
+**The strategies and scanners that ship with QuantRed are examples.** One strategy
 and one scanner, there to demonstrate what the interface expects and to give the demo
 something to run. They are not the product, and neither is an edge.
 

@@ -1,4 +1,4 @@
-"""TradeFlow — a layered, broker-agnostic algorithmic-trading research engine.
+"""QuantRed — a layered, broker-agnostic algorithmic-trading research engine.
 
 The package root deliberately imports nothing. Every subpackage pulls in something
 heavy or optional (pandas, the Alpaca SDK, matplotlib, the MCP SDK), and a root that

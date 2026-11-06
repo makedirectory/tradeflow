@@ -28,7 +28,7 @@ noise in a particular stretch of history for a real, repeatable edge.
 It's easy to do by accident. Search enough parameter combinations against one
 date range and *something* will look brilliant, purely by luck — the more configs
 you try, the better the best one looks even if none of them has any edge. (This
-is the multiple-testing problem, and it's why TradeFlow also reports a **deflated
+is the multiple-testing problem, and it's why QuantRed also reports a **deflated
 Sharpe** that discounts your result by how many configs you tried.) Optimize and
 report on the *same* window and you've measured how well you fit that window's
 noise, not whether the strategy will work next month.

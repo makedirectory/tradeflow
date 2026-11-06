@@ -1,6 +1,6 @@
-# A complete, working example of a private TradeFlow pack.
+# A complete, working example of a private QuantRed pack.
 #
-# Nothing here is imported by the engine. It reaches TradeFlow the same way your own
+# Nothing here is imported by the engine. It reaches QuantRed the same way your own
 # work will: through the two entry-point groups below. Install it and its strategy and
 # scanner appear in `--strategy`, in the walk-forward search, over MCP, and in the
 # research agent — because they only ever depended on the base interface.
@@ -10,7 +10,7 @@
 [project]
 name = "my-signals"
 version = "0.1.0"
-description = "An example private TradeFlow pack: two strategies, one scanner, two configs."
+description = "An example private QuantRed pack: two strategies, one scanner, two configs."
 requires-python = ">=3.11"
 # Deliberately no dependency on tradeflow-engine. A pack is installed *beside* the
 # engine, not on top of it, and pinning the engine from here would let a pack decide

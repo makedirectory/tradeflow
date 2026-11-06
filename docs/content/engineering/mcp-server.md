@@ -5,7 +5,7 @@ title: MCP server & service core
 
 # MCP server & service core
 
-The MCP server exposes TradeFlow's deterministic capabilities as agent tools
+The MCP server exposes QuantRed's deterministic capabilities as agent tools
 without embedding an LLM in the engine. Intelligence lives outside and *calls in*;
 the live order path is never reachable.
 

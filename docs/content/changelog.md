@@ -5,7 +5,7 @@ title: Changelog
 
 # Changelog
 
-TradeFlow started in June 2023 as a personal project and has been rebuilt more than
+QuantRed (TradeFlow until the rename below) started in June 2023 as a personal project and has been rebuilt more than
 once since. It is not a product, and it has never managed real money — it exists
 partly for the pleasure of building it, and partly to demonstrate something worth
 demonstrating: **the machinery serious quantitative research runs on is buildable by
@@ -25,6 +25,62 @@ and gate thresholds may still change, and it has no production users or live cap
 
 Dates are release dates. Versions before 2.0.0 were never published to a package
 index; they are tagged in the repository.
+
+---
+
+## Unreleased
+
+TradeFlow is now **QuantRed**, and a first session works from install to a result
+without guessing. The history below keeps the old name as it was written.
+
+### Rename
+
+- The distribution is `quantred` (was `tradeflow-engine`) and the main command is
+  `quantred`. The `tradeflow` command remains as an alias; the import package, plugin
+  groups, `TRADEFLOW_HOME` and `~/.tradeflow` are unchanged, so private packs and all
+  recorded history carry over.
+- MCP clients now see the server as `quantred`. Existing entries keep launching.
+- **Upgrading in place:** uninstall `tradeflow-engine` first, then install `quantred`;
+  the other order leaves a broken environment. Steps and recovery are in
+  [migrating to QuantRed](usage/migrating-to-quantred).
+
+### Getting started
+
+- `init --check` says what is ready for which task (demo, data, research, MCP) instead
+  of one pass/fail, names the missing capability and prints the single install command
+  for what you asked about.
+- `init` can set up a model provider for autonomous research and test the connection
+  (`--probe-model`); `.env` is written readable by you only.
+- A new [extras guide](usage/extras) says which optional capability each command needs.
+- Install hints match how you installed (uv tool, virtual environment, checkout),
+  and keep the packs you added with `--with`.
+
+### Verdicts and examples
+
+- A book that cannot be built under its own constraints is reported as **infeasible**
+  with the binding constraint named, not as "needs more data". Too little history is
+  still reported as a data problem.
+- The documented verdict examples use a starter universe that is feasible with its
+  defaults, and a test keeps every documented example that way.
+- The MCP allocation tool exposes the construction knobs that are not gated on
+  evidence, so an agent can state the same book the command line does.
+
+### MCP
+
+- `list_strategies` and `list_scanners` work in a real client; they failed output
+  validation before. `mcp --self-test` now exercises discovery over a real connection.
+- Ctrl-C, closing the client and SIGTERM stop the server promptly with a one-line
+  message; before, the first Ctrl-C could hang and repeated ones could abort with a
+  traceback.
+- The printed client configuration carries `TRADEFLOW_HOME` when you set it, and the
+  self-test says when credentials came only from your shell.
+
+### Model providers
+
+- Provider failures are classified (authentication, credit exhausted, rate limited,
+  model not found, unavailable, unreachable, timeout) and reported in plain words.
+- Rate-limited, unavailable and unreachable calls are retried a bounded number of
+  times; authentication, credit and model errors never are.
 
 ---
 

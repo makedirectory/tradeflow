@@ -1,4 +1,4 @@
-# Working on TradeFlow
+# Working on QuantRed
 
 Topic rules live in `.claude/rules/`; the cycle a change goes through, and the gate it
 has to pass, are in [how a change gets built here](.claude/rules/build-process.md). The

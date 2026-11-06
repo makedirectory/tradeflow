@@ -5,11 +5,11 @@ title: AI agents (MCP & research)
 
 # AI agents (MCP & research)
 
-TradeFlow has an **opt-in** automation layer that lets an AI help tune scanners
+QuantRed has an **opt-in** automation layer that lets an AI help tune scanners
 and strategies and do market analysis — without ever putting a model in the live
 order path. Two entry points share the same deterministic core:
 
-- **`mcp`** — serve TradeFlow's capabilities to any MCP client (Claude Code,
+- **`mcp`** — serve QuantRed's capabilities to any MCP client (Claude Code,
   Claude Desktop) as tools. A human (or another agent) drives.
 - **`research`** — a bounded, self-pacing research loop that proposes
   hypotheses, validates them out-of-sample, and hands you a shortlist.

@@ -4,7 +4,7 @@ sidebar_position: 1
 title: Overview
 ---
 
-# TradeFlow
+# QuantRed
 
 A layered, broker-agnostic algorithmic-trading **research engine** — and an honest
 one, which mostly means it is very good at telling you your brilliant strategy is
@@ -55,7 +55,7 @@ one window, and one cost model, ending in a single verdict with every gate shown
     [PASS] sample_size: 24 vs 12 — too few rebalances to measure an IC with any confidence
 ```
 
-> Beating the market is hard — embarrassingly hard. TradeFlow's real value isn't a
+> Beating the market is hard — embarrassingly hard. QuantRed's real value isn't a
 > money printer; it's a rigorous skeptic that makes it harder to mistake luck for
 > skill. If your strategy survives walk-forward and the deflated Sharpe, *maybe*
 > you've got something. If it doesn't, you just saved yourself some tuition.

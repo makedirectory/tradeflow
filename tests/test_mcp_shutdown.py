@@ -23,6 +23,7 @@ import pytest
 
 pytest.importorskip("mcp", reason="the MCP server needs the 'mcp' extra")
 
+from tradeflow import settings  # noqa: E402
 from tradeflow.mcp.selftest import default_command  # noqa: E402
 
 pytestmark = [
@@ -175,7 +176,7 @@ def test_the_startup_line_says_no_chat_is_attached(tmp_path, monkeypatch):
         if child.poll() is None:
             child.kill()
             child.wait()
-    assert "waiting for an MCP client on stdin/stdout" in stderr
+    assert f"{settings.BRAND} MCP server (stdio) is waiting for an MCP client on stdin/stdout" in stderr
     assert "attached to no chat" in stderr
     assert "mcp --self-test" in stderr
 

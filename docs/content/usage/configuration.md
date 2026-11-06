@@ -14,7 +14,7 @@ separate artefact with its own page: [run configs](run-configs.md).
 :::
 
 :::tip No keys needed to explore
-Want to see TradeFlow work before signing up for anything? Run `quantred demo` — it
+Want to see QuantRed work before signing up for anything? Run `quantred demo` — it
 runs the whole pipeline (backtest + walk-forward) on synthetic data, offline.
 :::
 
