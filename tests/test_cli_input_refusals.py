@@ -210,3 +210,13 @@ def json_load(path):
     import json
 
     return json.loads(path.read_text())
+
+
+def test_the_missing_keys_message_says_what_needs_them_and_the_keyless_route():
+    """The reader has usually just run the keyless demo; the message listed the missing
+    variables and a setup command without saying why this command was different, or
+    that a warmed cache runs without keys."""
+    from tradeflow import settings
+
+    message = settings._missing_credentials_message(["APCA_API_KEY_ID"])
+    assert "market data" in message and "--offline" in message
