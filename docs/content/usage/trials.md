@@ -38,7 +38,7 @@ Showing 20 of 4318 matching trials (use --limit/--offset for more).
 |---|---|
 | `--strategy` / `--kind` | Filter to one strategy, or one kind (`backtest`, `optimize`, `walkforward`, `alpha`, `research`, `verdict`) |
 | `--symbols` | Filter to one universe — matched on the **normalized** universe, so `NVDA,MSFT` and `msft, nvda` find the same trials |
-| `--since` / `--until` | Filter by when the trial was recorded |
+| `--since` / `--until` | Filter by when the trial was recorded. A date is a New York market date and both ends include it: `--until 2026-08-01` includes trials from that evening |
 | `--min-sharpe` | Only trials with a recorded OOS Sharpe at or above this |
 | `--gates-passed` | Only trials recorded as promotable |
 | `--sort date\|sharpe\|dsr` | Sort order (default `date`) |

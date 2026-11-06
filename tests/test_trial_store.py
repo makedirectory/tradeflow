@@ -679,3 +679,76 @@ def test_an_empty_index_with_no_journal_is_a_fresh_store_not_a_broken_one(tmp_pa
     everyone starts, and flagging it would make the check noise."""
     with TrialStore(tmp_path / "trials.db", journal_path=tmp_path / "absent.jsonl") as store:
         assert store.status()["drift"] is False
+
+
+# --- date filters ---------------------------------------------------------------
+def _dated_store(tmp_path):
+    """Three trials stamped the way the journal stamps them: UTC instants with an offset.
+
+    The two late-evening/after-midnight rows straddle the New York day boundary, which is
+    exactly where comparing a UTC string against a New York one lexically goes wrong.
+    """
+    store = TrialStore(tmp_path / "trials.db")
+    stamps = {
+        "morning": "2026-11-06T15:00:00.123456+00:00",  # 10:00 New York, 6 Nov
+        "evening": "2026-11-07T03:00:00.500000+00:00",  # 22:00 New York, 6 Nov
+        "next_day": "2026-11-07T06:00:00.000001+00:00",  # 01:00 New York, 7 Nov
+    }
+    for i, (name, ts) in enumerate(stamps.items()):
+        store.record(
+            id=name,
+            kind="backtest",
+            strategy="s",
+            symbols=["A"],
+            params={"x": i},
+            accounting=ACCOUNTING_VERSION,
+            ts=ts,
+        )
+    return store
+
+
+def test_until_a_date_includes_every_trial_recorded_on_that_market_date(tmp_path):
+    """``--until 2026-11-06`` dropped that day's own trials.
+
+    The bound reached the store as ``2026-11-06T00:00:00-05:00`` and was compared as text
+    against UTC stamps, so it meant "before midnight UTC-ish", not "on or before the 6th".
+    """
+    from tradeflow.utils.timeutils import parse_market_date
+
+    store = _dated_store(tmp_path)
+    ids = {r["id"] for r in store.list_trials(until=parse_market_date("2026-11-06"))}
+    assert ids == {"morning", "evening"}
+    assert store.count_trials(until=parse_market_date("2026-11-06")) == 2
+
+
+def test_since_a_date_starts_at_that_market_date_not_at_utc_midnight(tmp_path):
+    """A trial at 22:00 New York on the 6th sorted after ``2026-11-07T00:00:00-05:00`` as
+    text (its UTC stamp reads the 7th), so ``--since 2026-11-07`` included it."""
+    from tradeflow.utils.timeutils import parse_market_date
+
+    store = _dated_store(tmp_path)
+    ids = {r["id"] for r in store.list_trials(since=parse_market_date("2026-11-07"))}
+    assert ids == {"next_day"}
+
+
+def test_an_explicit_instant_bound_is_an_instant(tmp_path):
+    """Only a bare market date widens to the whole day; a time of day is taken as given."""
+    from tradeflow.utils.timeutils import parse_market_date
+
+    store = _dated_store(tmp_path)
+    ids = {r["id"] for r in store.list_trials(until=parse_market_date("2026-11-06T12:00:00"))}
+    assert ids == {"morning"}
+
+
+def test_a_quarantine_before_a_date_names_exactly_the_trials_recorded_earlier(tmp_path):
+    """``mark-contaminated --before`` compared the same way, so a late-evening trial on the
+    day before the cut-off escaped the quarantine it was meant to be in."""
+    from tradeflow.services.maintenance import select_trials
+    from tradeflow.utils.timeutils import parse_market_date
+
+    journal = tmp_path / "journal.jsonl"
+    store = _dated_store(tmp_path)
+    store.close()
+    (tmp_path / "trials.db").rename(db_path_for_journal(journal))
+    rows = select_trials(journal_path=journal, before=parse_market_date("2026-11-07"))
+    assert {r["id"] for r in rows} == {"morning", "evening"}

@@ -84,15 +84,16 @@ def select_trials(
         if trial_ids:
             rows = [store.get_trial(str(t)) for t in trial_ids]
             return [r for r in rows if r]
-        # `until` rather than a second date comparison here: the store owns one
-        # definition of what a filter means, and a listing that disagreed with the
-        # store's own count of the same filter is the bug that definition prevents.
+        # The store's own `before` rather than a second date comparison here: the store
+        # owns one definition of what a filter means, and a listing that disagreed with
+        # the store's own count of the same filter is the bug that definition prevents.
+        # Not `until`, which includes the whole day it names.
         return store.list_trials(
             strategy=strategy,
             kind=kind,
             accounting=accounting,
             all_accounting=accounting is None,
-            until=before,
+            before=before,
             limit=1_000_000,
         )
 

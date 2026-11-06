@@ -282,6 +282,34 @@ def _iso(value: Any) -> Optional[str]:
     return iso() if callable(iso) else str(value)
 
 
+def _recorded_bound(value: Any, *, whole_day: bool = False) -> str:
+    """A date filter's bound as a UTC instant, comparable with a recorded ``ts``.
+
+    The journal stamps trials in UTC and both surfaces parse a typed date as a New York
+    instant, so the two can only be compared as instants (the query uses SQLite's
+    ``julianday``) — compared as text, ``2026-11-06T00:00:00-05:00`` sorted before
+    every UTC stamp taken that day, and ``--until`` dropped the day it named.
+
+    ``whole_day`` is the inclusive end of a date range: a bound at New York midnight,
+    which is what a bare date parses to, widens to the next market midnight so "on or
+    before the 6th" includes the evening of the 6th. Any other time of day is taken as
+    given. The caller then compares with ``<`` for a widened bound.
+    """
+    from datetime import timedelta
+
+    from tradeflow.utils.timeutils import NEW_YORK, parse_market_date
+
+    instant = parse_market_date(value) if isinstance(value, str) else value
+    if instant.tzinfo is None:
+        instant = NEW_YORK.localize(instant)
+    local = instant.astimezone(NEW_YORK)
+    if whole_day and local.time() == datetime.min.time():
+        # Localize the next calendar date rather than adding 24h: a DST change makes
+        # one market day 23 or 25 hours long.
+        instant = NEW_YORK.localize(datetime.combine(local.date() + timedelta(days=1), datetime.min.time()))
+    return instant.astimezone(timezone.utc).isoformat()
+
+
 def _is_trial_tool(tool: str) -> bool:
     return tool.startswith("trial:") or tool == "research:trial"
 
@@ -1149,6 +1177,7 @@ class TrialStore:
         symbols: Optional[Iterable[Any]] = None,
         since: Optional[Any] = None,
         until: Optional[Any] = None,
+        before: Optional[Any] = None,
         min_sharpe: Optional[float] = None,
         promotable: Optional[bool] = None,
         accounting: Optional[int] = None,
@@ -1179,11 +1208,17 @@ class TrialStore:
             clauses.append("universe_hash = ?")
             args.append(universe_hash(symbols))
         if since is not None:
-            clauses.append("ts >= ?")
-            args.append(_iso(since))
+            clauses.append("julianday(ts) >= julianday(?)")
+            args.append(_recorded_bound(since))
         if until is not None:
-            clauses.append("ts <= ?")
-            args.append(_iso(until))
+            # A bare date means the whole market day; a widened bound is exclusive.
+            bound = _recorded_bound(until, whole_day=True)
+            inclusive = bound == _recorded_bound(until)
+            clauses.append(f"julianday(ts) {'<=' if inclusive else '<'} julianday(?)")
+            args.append(bound)
+        if before is not None:
+            clauses.append("julianday(ts) < julianday(?)")
+            args.append(_recorded_bound(before))
         if min_sharpe is not None:
             clauses.append("oos_sharpe IS NOT NULL AND oos_sharpe >= ?")
             args.append(float(min_sharpe))
