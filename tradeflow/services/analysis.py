@@ -2858,6 +2858,11 @@ def compute_information(
         "run_id": run_id,
         "strategy": strategy,
         "source": source,
+        # The report header reads these; without them it printed "0 names" and a dash
+        # for a run that used a real universe and a benchmark.
+        "symbols": list(symbols),
+        "benchmark": benchmark,
+        "timeframe": timeframe,
         "window": {"start": start.isoformat(), "end": end.isoformat()},
         "horizon_bars": horizon,
         "periods": stats["periods"],

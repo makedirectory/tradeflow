@@ -151,3 +151,65 @@ def test_without_a_benchmark_the_benchmark_checks_are_unevaluated_not_failed():
     assert checks["cost_stress"]["evaluated"] is False
     assert payload["evidence"]["cost_stress"] is None
     assert payload["benchmark"] is None
+
+
+def _header(html: str, label: str) -> str:
+    import re
+
+    match = re.search(rf"<dt>{label}</dt><dd>(.*?)</dd>", html, re.S)
+    assert match, f"no {label} in the header"
+    return match.group(1)
+
+
+def test_the_walk_forward_report_names_what_it_ran_and_carries_the_evidence(monkeypatch, capsys, tmp_path):
+    """The HTML's only verdict used to be the six gates, with a dash for the benchmark
+    and timeframe, so a run whose gates passed and prerequisites failed looked clear."""
+    from tradeflow.analytics.htmlreport import render_html
+
+    cli_evidence, _ = _over_cli(monkeypatch, capsys, html=tmp_path / "wf.html")
+    cli_html = (tmp_path / "wf.html").read_text(encoding="utf-8")
+    mcp_html = render_html(_over_mcp(), "walkforward")
+
+    for html in (cli_html, mcp_html):
+        assert _header(html, "Benchmark") == "SPY"
+        assert _header(html, "Timeframe") == "1Day"
+        assert "Promotion prerequisites" in html
+        assert cli_evidence["evidence_completeness"] in html
+        assert _header(html, "Evidence completeness") == cli_evidence["evidence_completeness"]
+    # Same evidence, same words, whichever surface produced the file.
+    assert _header(cli_html, "Universe") == _header(mcp_html, "Universe")
+
+
+def test_a_promotable_walk_forward_with_unmet_prerequisites_is_not_rendered_as_clear():
+    from tradeflow.analytics.htmlreport import render_html
+
+    payload = {
+        "folds": [],
+        "strategy": "s",
+        "gate_report": {"promotable": True, "checks": {}},
+        "evidence": {
+            "clear": False,
+            "evidence_completeness": "1 of 4 evaluated - NOT clear; 3 unknown",
+            "statistical_verdict": "PASS",
+            "prerequisites": {"checks": {}},
+        },
+    }
+    html = render_html(payload, "walkforward")
+    assert "evidence NOT clear" in html and 'class="verdict pass"' not in html
+    # And the other direction: cleared evidence is allowed to read as clear.
+    payload["evidence"]["clear"] = True
+    assert 'class="verdict pass"' in render_html(payload, "walkforward")
+
+
+def test_the_information_report_header_names_the_run_it_describes():
+    from tests.fakes import FakeMarketData
+    from tradeflow.analytics.htmlreport import render_html
+    from tradeflow.services import analysis
+
+    names = ["S0", "S1", "S2", "S3", "S4", "S5"]
+    client = MarketDataClient(FakeMarketData([*names, "SPY"], n=300, freq="1D"))
+    start, end = pd.Timestamp("2023-06-01").to_pydatetime(), pd.Timestamp("2024-03-01").to_pydatetime()
+    result = analysis.compute_information(client, "demo_trend", names, start, end)
+    html = render_html(result, "info")
+    assert _header(html, "Universe").startswith("6 names")
+    assert _header(html, "Benchmark") == "SPY"

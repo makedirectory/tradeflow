@@ -46,12 +46,14 @@ as prominent banners above every section:
 | `INCOMPLETE — no verdict` | A pipeline step failed; nothing below is safe to act on |
 | Gate failures | Any verdict check or promotion gate that did not pass, named |
 | `NOT PROMOTABLE` | A walk-forward whose promotion gates did not clear |
+| `PROMOTABLE` is the statistical gates only | A walk-forward whose gates passed but whose promotion prerequisites are unmet or unknown; the verdict is not drawn as clear |
 | Leakage probe FAILED | The result is not trustworthy at all |
 | Non-default configuration | An evidence-gated, default-off feature (conditional risk, the aim trading policy, the Black–Litterman posterior) was enabled |
 
 **Then the sections**, per kind: a verdict's five stages and its gate scorecard; a
 backtest's metrics and equity curve; a walk-forward's per-fold table, out-of-sample
-aggregate, and holdout; an information report's IC, breadth, and IR reconciliation.
+aggregate, holdout, and the promotion prerequisites with evidence completeness and
+excess return by fold (the same block the terminal prints); an information report's IC, breadth, and IR reconciliation.
 
 ## It renders, it does not compute
 

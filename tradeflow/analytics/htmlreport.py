@@ -360,6 +360,24 @@ def _warnings_block(result: Dict[str, Any], kind: str) -> str:
             _warning("NOT PROMOTABLE — failed gates: " + ", ".join(sorted(failed_gates)), level="fail")
         )
 
+    if kind == "walkforward":
+        evidence = result.get("evidence")
+        if evidence is None:
+            banners.append(
+                _warning(
+                    "Evidence completeness not computed — promotion prerequisites were not assessed "
+                    "for this result (a reused result keeps no per-fold detail). `promotable` is "
+                    "the statistical gates only.",
+                )
+            )
+        elif gate_report.get("promotable") and not evidence.get("clear"):
+            banners.append(
+                _warning(
+                    "PROMOTABLE is the statistical gates only — evidence completeness: "
+                    f"{evidence.get('evidence_completeness')}. Not clear for paper.",
+                )
+            )
+
     executability = result.get("executability") or {}
     if executability.get("executable") is False:
         failing = [n for n, c in (executability.get("checks") or {}).items() if not c.get("passed")]
@@ -718,17 +736,85 @@ def _execution_card(result: Dict[str, Any]) -> str:
     return _card("Execution viability", body, tone="" if verdict.get("executable") else "fail")
 
 
+def _evidence_card(evidence: Optional[Dict[str, Any]]) -> str:
+    """Promotion prerequisites and evidence completeness, beside the statistical verdict.
+
+    The same block the terminal prints, from the same service output. Absent evidence is
+    said to be absent: a card that silently vanished would read as "nothing to check".
+    """
+    if not evidence:
+        return _card(
+            "Promotion prerequisites",
+            "<p>Not assessed for this result. An unassessed prerequisite is unknown, not passed.</p>",
+            tone="warn",
+        )
+    prereq = evidence.get("prerequisites") or {}
+    rows = []
+    for name, check in (prereq.get("checks") or {}).items():
+        if not check.get("evaluated"):
+            rows.append(
+                [_pill(None), esc(name), "not evaluated", esc(check.get("threshold")), esc(check.get("note"))]
+            )
+            continue
+        rows.append(
+            [
+                _pill(check.get("passed")),
+                esc(name),
+                esc(_num(check.get("value"))),
+                esc(_num(check.get("threshold"))),
+                esc(check.get("note", "")),
+            ]
+        )
+    table = _table(["", "Check", "Value", "Threshold", "Meaning"], rows, raw=True)
+    excess = evidence.get("excess_return_by_fold") or {}
+    values = excess.get("values_pct") or []
+    excess_html = ""
+    if values:
+        excess_html = (
+            "<h3>Excess return by fold (diagnostic)</h3>"
+            + _table(
+                ["Fold", "Excess return"],
+                [[i, f"{v:+.2f}%"] for i, v in enumerate(values)],
+            )
+            + f"<p>Median {excess.get('median_pct'):+.2f}%, spread {excess.get('spread_pp'):.2f}pp; "
+            f"{excess.get('folds_lost')} of {len(values)} folds lost to the benchmark.</p>"
+        )
+    clear = bool(evidence.get("clear"))
+    return _card(
+        "Promotion prerequisites",
+        _kv(
+            [
+                ("Statistical validation", evidence.get("statistical_verdict")),
+                ("Evidence completeness", evidence.get("evidence_completeness")),
+                ("Benchmark", evidence.get("benchmark") or "none"),
+            ]
+        )
+        + table
+        + excess_html
+        + f"<p>{esc(evidence.get('note', ''))}</p>",
+        tone="pass" if clear else "warn",
+    )
+
+
 def _walkforward_sections(result: Dict[str, Any], extras: Dict[str, Any]) -> List[str]:
     from tradeflow.analytics import charts
     from tradeflow.optimization.walk_forward import format_gate_value
 
     gate_report = result.get("gate_report") or {}
     checks = gate_report.get("checks") or {}
+    evidence = result.get("evidence")
+    # Passing the six gates is not a clearance while a prerequisite is unmet or unknown:
+    # the colour and the words both say so rather than leaving it to a later section.
+    if not gate_report.get("promotable"):
+        verdict_class, verdict_text = "fail", "NOT PROMOTABLE"
+    elif evidence and evidence.get("clear"):
+        verdict_class, verdict_text = "pass", "PROMOTABLE — evidence clear"
+    else:
+        verdict_class, verdict_text = "warn", "PROMOTABLE (statistical gates only) — evidence NOT clear"
     out = [
         _card(
             "Verdict",
-            f'<p class="verdict {"pass" if gate_report.get("promotable") else "fail"}">'
-            f"{'PROMOTABLE' if gate_report.get('promotable') else 'NOT PROMOTABLE'}</p>"
+            f'<p class="verdict {verdict_class}">{esc(verdict_text)}</p>'
             + _table(
                 ["", "Gate", "Value", "Threshold", "Computed over"],
                 [
@@ -762,8 +848,9 @@ def _walkforward_sections(result: Dict[str, Any], extras: Dict[str, Any]) -> Lis
                 if checks
                 else ""
             ),
-            tone="pass" if gate_report.get("promotable") else "fail",
+            tone=verdict_class,
         ),
+        _evidence_card(evidence),
         _card(
             "Folds",
             _table(
