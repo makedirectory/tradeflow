@@ -2752,10 +2752,37 @@ def run_verdict(
     result["provenance"] = _verdict_provenance(inputs, cache, n_trials)
 
     if journal:
-        from tradeflow.services.audit import run_context
+        reason = _verdict_not_a_trial(result)
+        result["journaled"] = reason is None
+        if reason is None:
+            from tradeflow.services.audit import run_context
 
-        _journal_verdict(result, strategy, universe, start, end, dedup_params, run_context(capital=capital))
+            _journal_verdict(
+                result, strategy, universe, start, end, dedup_params, run_context(capital=capital)
+            )
+        else:
+            result["not_journaled_reason"] = reason
     return result
+
+
+def _verdict_not_a_trial(result: Dict[str, Any]) -> Optional[str]:
+    """Why this run should not count toward the campaign's trials, or None if it should.
+
+    A trial is a look at the data that the multiple-testing correction has to pay for.
+    An incomplete run whose skill test produced nothing (the information step failed or
+    never ran, typically a cold cache or a dropped connection) was not one: counting it
+    raised the family total for every failed attempt and deflated the next real result
+    against a test nobody saw. An incomplete run that *did* measure skill was a look,
+    whatever else failed, so it still counts — the conservative direction.
+    """
+    verdict = result.get("verdict") or {}
+    if verdict.get("verdict") != "incomplete":
+        return None
+    if (result.get("information") or {}).get("periods"):
+        return None
+    failed = verdict.get("failed_steps") or []
+    what = f"steps failed: {', '.join(failed)}" if failed else "no gate produced a number"
+    return f"skill was never measured ({what}), so this run does not count toward the campaign"
 
 
 def _campaign_trials(strategy: str, symbols: Sequence[str], accounting: int) -> int:

@@ -428,6 +428,43 @@ def test_an_incomplete_run_is_not_served_back_on_the_rerun(_isolated_state, monk
     assert "information" not in (second["verdict"].get("failed_steps") or [])
 
 
+def test_an_incomplete_run_that_measured_nothing_is_not_counted_as_a_trial(_isolated_state, monkeypatch):
+    """An incomplete run whose skill test never ran was journaled anyway, so every
+    failed attempt (a cold cache, a dropped connection) raised the campaign's trial count
+    and deflated the next real result against a test nobody saw."""
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("synthetic information failure")
+
+    monkeypatch.setattr(analysis, "compute_information", boom)
+    result = _run()
+    assert result["verdict"]["verdict"] == "incomplete"
+    assert "trial_id" not in result
+    assert result["journaled"] is False
+    assert "information" in result["not_journaled_reason"]
+    rows = [r for r in _journal_rows(_isolated_state) if r.get("tool", "").startswith("trial:")]
+    assert rows == []
+
+    report = format_verdict_report(result)
+    assert "Not recorded as a trial" in report
+
+
+def test_an_incomplete_run_that_measured_skill_is_still_a_trial(_isolated_state, monkeypatch):
+    """The other direction: a run whose skill test produced numbers was a look at the data,
+    whatever else failed, and the family count has to include it."""
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("synthetic portfolio failure")
+
+    monkeypatch.setattr(analysis, "construct_portfolio", boom)
+    result = _run()
+    assert result["verdict"]["verdict"] == "incomplete"
+    assert (result.get("information") or {}).get("periods")
+    assert result["journaled"] is True
+    rows = [r for r in _journal_rows(_isolated_state) if r.get("tool", "").startswith("trial:")]
+    assert len(rows) == 1
+
+
 def test_force_appends_a_second_trial(_isolated_state):
     _run()
     forced = _run(force=True)

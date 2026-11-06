@@ -1453,7 +1453,8 @@ def build_server(data_client=None):
 
         Read-only research clock: proposes a portfolio, never places an order. Journals
         exactly ONE trial (kind `verdict`), so it counts once toward the campaign's
-        multiple-testing total. An identical prior run is returned from the trial store
+        multiple-testing total - except an `incomplete` run whose skill test measured
+        nothing, which journals none (`journaled: false`, with `not_journaled_reason`). An identical prior run is returned from the trial store
         with `memoized: true` and the original run's timestamp rather than re-run; pass
         `force=true` to re-verify and append a new trial.
         """

@@ -67,6 +67,9 @@ without guessing. The history below keeps the old name as it was written.
 - A verdict that came back **incomplete** (a step failed, for example an offline run
   before the cache was warm) is no longer served back as "reused" when you repeat the
   command after fixing the cause; it runs again. Complete verdicts are reused as before.
+- An incomplete verdict whose skill test never ran no longer counts as a trial, so a
+  failed attempt does not raise the campaign's multiple-testing total. The report says
+  `Not recorded as a trial` and why.
 - `quantred demo` prints its scorecard without the hundred progress lines above it, and
   an offline cache miss names `quantred cache warm`, not a script an installed copy
   does not have.
@@ -75,6 +78,13 @@ without guessing. The history below keeps the old name as it was written.
   gateway's raw HTML page.
 - The MCP allocation tool exposes the construction knobs that are not gated on
   evidence, so an agent can state the same book the command line does.
+
+### Trial history
+
+- `trials list --since/--until` read a date as the New York market date and include
+  the whole of it. Before, `--until` dropped trials recorded on the day it named and
+  `--since` could admit the previous evening's. `trials mark-contaminated --before`
+  had the same fault and could miss a trial recorded the evening before the cut-off.
 
 ### MCP
 
