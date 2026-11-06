@@ -397,9 +397,10 @@ def format_verdict_report(result: Dict[str, Any]) -> str:
         f"cost {_cost_summary(inputs.get('cost'))}",
     ]
     if provenance:
+        uncounted = " (this run not counted)" if provenance.get("this_run_counted") is False else ""
         lines.append(
             f"  provenance: git {provenance.get('git_sha') or 'unknown'} | "
-            f"campaign trials {provenance.get('n_trials', '?')} | "
+            f"campaign trials {provenance.get('n_trials', '?')}{uncounted} | "
             f"bar requests: {_fetch_summary(provenance.get('bar_requests'))}"
         )
 

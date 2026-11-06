@@ -167,7 +167,7 @@ report's `P(any |t|>2 across N campaign trials)` line is computed against.
 An `incomplete` run in which no step measured an IC — the information step failed,
 typically on a cold cache or a dropped connection, and no signal combination was
 measured — records **no** trial, and the report says `Not recorded as a trial` with the
-reason. It looked at nothing, so counting it would make every failed attempt deflate
+reason; its provenance line reads `campaign trials N (this run not counted)`. It looked at nothing, so counting it would make every failed attempt deflate
 the next real result. An incomplete run that did measure an IC (either step) still
 counts, because it was a look at the data whatever else failed. `journaled` in the
 structured result says whether a trial was actually written.

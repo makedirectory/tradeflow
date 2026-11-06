@@ -1385,7 +1385,9 @@ def build_server(data_client=None):
         )
         return _logged("compute_attribution", inputs, result)
 
-    @tool("deflated_sharpe_ratio", "information_ratio", notes=[_JOURNALING_NOTE, _GATED_NOTE])
+    # Not the shared journaling note: "one trial per evaluated config" is wrong here,
+    # where an incomplete run can journal none. The docstring states the whole rule.
+    @tool("deflated_sharpe_ratio", "information_ratio", notes=[_GATED_NOTE])
     def run_verdict(
         strategy: str,
         symbols: List[str],
@@ -1453,10 +1455,11 @@ def build_server(data_client=None):
 
         Read-only research clock: proposes a portfolio, never places an order. Journals
         exactly ONE trial (kind `verdict`), so it counts once toward the campaign's
-        multiple-testing total - except an `incomplete` run whose skill test measured
-        nothing, which journals none (`journaled: false`, with `not_journaled_reason`). An identical prior run is returned from the trial store
-        with `memoized: true` and the original run's timestamp rather than re-run; pass
-        `force=true` to re-verify and append a new trial.
+        multiple-testing total - except an `incomplete` run in which no step measured an
+        IC, which journals none (`journaled: false`, with `not_journaled_reason`) and
+        reports `provenance.n_trials` without itself. An identical prior run is returned
+        from the trial store labeled `memoized: true`, with the original run's timestamp,
+        rather than re-run; pass `force=true` to re-verify and append a new trial.
         """
         # Only what the caller set is forwarded, so an omitted knob keeps the service's
         # own default instead of this surface restating it.

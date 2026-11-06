@@ -127,6 +127,14 @@ def test_non_journaling_tools_do_not_claim_to_journal(built):
         assert "Journals one trial" not in tools[name].description
 
 
+def test_the_verdict_tool_states_its_own_journaling_rule(built):
+    """The shared note said "journals one trial per evaluated config" under a docstring
+    saying an incomplete run journals none; an agent reads both as fact."""
+    description = _tools(built)["run_verdict"].description
+    assert "per evaluated config" not in description
+    assert "journals none" in description
+
+
 def test_tools_exposing_an_evidence_gated_feature_name_the_gate(built):
     tools = _tools(built)
     for name in ("construct_portfolio", "compute_risk", "run_verdict"):

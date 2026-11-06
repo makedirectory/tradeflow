@@ -2753,8 +2753,13 @@ def run_verdict(
     result["verdict"] = _verdict_gates(result)
     result["provenance"] = _verdict_provenance(inputs, cache, n_trials)
 
+    reason = _verdict_not_a_trial(result) if journal else "journaling was off for this run"
+    if reason is not None:
+        # The family count includes the run being made, which is right for a run that is
+        # recorded. One that is not would print a total one higher than the store holds.
+        result["provenance"]["n_trials"] = max(n_trials - 1, 0)
+        result["provenance"]["this_run_counted"] = False
     if journal:
-        reason = _verdict_not_a_trial(result)
         if reason is None:
             from tradeflow.services.audit import run_context
 

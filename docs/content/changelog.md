@@ -69,7 +69,7 @@ without guessing. The history below keeps the old name as it was written.
   command after fixing the cause; it runs again. Complete verdicts are reused as before.
 - An incomplete verdict in which no step measured an IC no longer counts as a trial, so
   a failed attempt does not raise the campaign's multiple-testing total. The report says
-  `Not recorded as a trial` and why.
+  `Not recorded as a trial` and why, and its `campaign trials` count leaves the run out.
 - Deflated and probabilistic Sharpe and PBO print as probabilities with three decimals
   everywhere (terminal, chart, HTML report, `trials list/show/best`), and a very small one
   as `<0.001`. Before, the terminal printed `0.00` (which reads as a probability of zero),
@@ -83,9 +83,11 @@ without guessing. The history below keeps the old name as it was written.
 - An offline cache miss names every missing symbol (the benchmark included) and one
   `cache warm` command with the dates and the `--cache-dir` that cover the request that
   missed. Before, it named only the first symbol and no window, and the rerun failed on
-  the next one. A command that scans first can still miss twice: once for the scan's
-  short lookback, then for its own window. The note about the market-date change appears only where a cache was
-  warmed before it, not on every miss.
+  the next one. When `backtest`, `optimize`, `walkforward` or `screen` cannot even run
+  its scanner from the cache, the one command covers the scan and the run for every
+  candidate, so a single warm is enough; before, it missed on the scan's short lookback
+  and then again on its own window. The note about the market-date change appears only
+  where a cache was warmed before it, not on every miss.
 - A verdict step that fails is reported in the verdict's step list; its traceback is
   logged only at debug level instead of filling the screen above the report.
 - A request that Alpaca refuses for the credentials now says so ("Alpaca rejected these

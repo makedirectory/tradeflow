@@ -449,6 +449,25 @@ def test_an_incomplete_run_that_measured_nothing_is_not_counted_as_a_trial(_isol
     assert "Not recorded as a trial" in report
 
 
+def test_an_unrecorded_run_does_not_count_itself_in_the_campaign_total(_isolated_state, monkeypatch):
+    """The provenance line printed `campaign trials N` with this run counted, then said
+    the run was not recorded: a total one higher than the store held. A recorded run
+    still counts itself, and the next unrecorded one reports exactly what is stored."""
+    first = _run()
+    assert first["journaled"] is True
+    assert first["provenance"]["n_trials"] == 1
+    assert "this_run_counted" not in first["provenance"]
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("synthetic information failure")
+
+    monkeypatch.setattr(analysis, "compute_information", boom)
+    second = _run(force=True)
+    assert second["journaled"] is False
+    assert second["provenance"]["n_trials"] == 1
+    assert "campaign trials 1 (this run not counted)" in format_verdict_report(second)
+
+
 def test_an_incomplete_run_that_measured_skill_is_still_a_trial(_isolated_state, monkeypatch):
     """The other direction: a run whose skill test produced numbers was a look at the data,
     whatever else failed, and the family count has to include it."""
