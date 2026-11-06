@@ -6,7 +6,9 @@ title: Optional extras
 # Optional extras
 
 The base install is lean. Each capability below is an opt-in extra; `init --check`
-reports which are installed and prints the exact command for the ones that are not.
+reports which are installed (an `[ok] extra:` row each) and lists the ones that are not. A
+command that needs a missing extra prints the exact install command, and
+`init --check --for <task>` prints it for that task's needs.
 
 Three names are easy to confuse: the **distribution** you install is
 `quantred`, the **command** you run is `quantred` (`tradeflow` also works, as an alias), and an **extra** is a

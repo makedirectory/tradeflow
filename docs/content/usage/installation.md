@@ -10,11 +10,13 @@ title: Installation
 ### Fresh install
 
 ```bash
-uv tool install quantred
+uv tool install 'quantred[mcp,viz]'
 quantred demo
 ```
 
-In an activated virtual environment: `python -m pip install quantred`.
+In an activated virtual environment: `python -m pip install 'quantred[mcp,viz]'`. The two
+extras are the MCP server and charts in reports; the demo needs neither (`quantred` alone
+works), and the [extras guide](extras) lists the rest.
 
 The distribution and the command are both **`quantred`**; the importable package is
 still `tradeflow`, and a `tradeflow` command is installed alongside as an alias so
@@ -39,8 +41,9 @@ uv tool install 'quantred[viz,store,mcp]'
 
 Adding one to an installed copy later is *not* additive with `uv tool`: it replaces
 the environment, so list every extra you want. The [optional extras](extras) page has
-the table of what each unlocks and the exact commands; `quantred init --check` prints
-them with your current extras filled in.
+the table of what each unlocks and the exact commands. `quantred init --check --for <task>`
+prints the install command for that task with your current extras filled in, and a command
+that needs an extra you lack prints it too.
 
 ### Where state lives
 

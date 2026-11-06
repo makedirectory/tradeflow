@@ -41,14 +41,16 @@ without guessing. The history below keeps the old name as it was written.
   recorded history carry over.
 - MCP clients now see the server as `quantred`. Existing entries keep launching.
 - **Upgrading in place:** uninstall `tradeflow-engine` first, then install `quantred`;
-  the other order leaves a broken environment. Steps and recovery are in
-  [migrating to QuantRed](usage/migrating-to-quantred).
+  the other order leaves a broken environment in a shared virtual environment. A pack
+  that still depends on `tradeflow-engine` needs installing without it. Steps,
+  symptoms and recovery are in [migrating to QuantRed](usage/migrating-to-quantred).
 
 ### Getting started
 
 - `init --check` says what is ready for which task (demo, data, research, MCP) instead
-  of one pass/fail, names the missing capability and prints the single install command
-  for what you asked about.
+  of one pass/fail and names the missing capability. `init --check --for <task>` prints
+  the single install command for that task, and the command that needs an extra prints
+  it when it is missing.
 - `init` can set up a model provider for autonomous research and test the connection
   (`--probe-model`); `.env` is written readable by you only.
 - A new [extras guide](usage/extras) says which optional capability each command needs.
@@ -67,6 +69,7 @@ without guessing. The history below keeps the old name as it was written.
 
 ### MCP
 
+- The server reports the application's version to a client, not the MCP SDK's.
 - A date passed to any MCP tool is read in the exchange's time zone, exactly as the
   CLI reads `--start`/`--end`. Before, the same verdict over the CLI and then over MCP
   was recorded as two trials and the second was not served from the first, which

@@ -42,28 +42,40 @@ new one needs. Uninstall first, then install.
 
 ## If you installed with `uv tool`
 
-List what you have, including the extras you chose and any `--with` packs:
+Before uninstalling anything, list what you have, including the extras you chose and any
+`--with` packs, and run the old doctor:
 
 ```bash
 uv tool list --show-extras --show-with
+tradeflow init --check
 ```
 
-The old entry reads like `tradeflow-engine v2.3.0 [extras: mcp, viz]`. Then swap, using
-the same extras:
+The old entry reads like `tradeflow-engine v2.3.0 [extras: mcp, viz]`, and `init --check`
+shows an `[ok] extra:` row for each extra that is installed. Those are the extras to
+re-add. Then swap:
 
 ```bash
 uv tool uninstall tradeflow-engine
 uv tool install 'quantred[mcp,viz]'
 ```
 
-Add `--with <pack>` (or `--with-editable <path>`) for any extension pack that was listed
-under `--show-with`. Afterwards `quantred --version` and `tradeflow --version` both
+Add `--with <pack>` for any extension pack listed under `--show-with`. A pack that was
+installed from a directory is listed as `name` followed by a `file://` path (for
+example `my-signalsfile:///work/my-signals`); re-add it with `--with-editable
+/work/my-signals`, using the path. If a pack declares a dependency on `tradeflow-engine`,
+see [If you write or use an extension pack](#if-you-write-or-use-an-extension-pack)
+before installing. Afterwards `quantred --version` and `tradeflow --version` both
 print `quantred <version>` and show the same state root as before.
 
 Running the new install first does not damage anything, but does not work either: uv
 builds the new environment, then stops with `error: Executable already exists:
-tradeflow (use --force to overwrite)`, and the old tool keeps running. Uninstall the old
-one and repeat the install.
+tradeflow (use --force to overwrite)`, and the old tool keeps running. **Do not follow
+the `--force` suggestion.** It succeeds and points `tradeflow` at the new tool, but the
+`uv tool uninstall tradeflow-engine` that follows then deletes that `tradeflow` link, so
+the alias stops working while `uv tool list` still shows it under `quantred`. If that
+already happened, uninstall the old tool (if you have not) and re-run
+`uv tool install --force 'quantred[mcp,viz]'` with your extras and packs; that restores
+the link. Otherwise just uninstall the old one and repeat the install.
 
 ## If you installed into a virtual environment
 
@@ -74,20 +86,19 @@ python -m pip uninstall tradeflow-engine
 python -m pip install 'quantred[mcp,viz]'
 ```
 
-Use the extras you had (`python -m pip show tradeflow-engine` does not list them; if
-you do not remember, `quantred init --check` prints the install command for what you
-use). Reinstall editable packs afterwards if you had any.
+Use the extras you had. `python -m pip show tradeflow-engine` does not list them; run
+`tradeflow init --check` **before** uninstalling and read the `[ok] extra:` rows. Reinstall
+editable packs afterwards with `python -m pip install --no-deps -e ./my-pack` (the
+`--no-deps` is explained [below](#if-you-write-or-use-an-extension-pack)).
 
 **If you installed `quantred` first** and then uninstalled the old distribution, the
 environment is left without the engine files (`import tradeflow` fails with `No module
 named tradeflow.cli`) and without the `tradeflow` script. Repair it with
-`--force-reinstall`; that is the form rehearsed (with `uv pip`):
+`--force-reinstall`:
 
 ```bash
 python -m pip install --force-reinstall --no-deps quantred
 ```
-
-(The `python -m pip` spelling of the repair was not run; the `uv pip` equivalent was.)
 
 ## If you work from a checkout
 
@@ -99,16 +110,19 @@ uv pip uninstall tradeflow-engine
 uv run --extra dev --reinstall-package quantred python main.py --version
 ```
 
-The first `uv run` after the rename installs `quantred` beside the old distribution; the
-uninstall removes the old one and, because the two share a script name, the
-`tradeflow` script with it, which the `--reinstall-package` restores. (Rehearsed on this repository's own
-environment; not on a fresh clone.) Do not use
-`uv sync` without `--inexact`: it removes editable packs installed by hand.
+The uninstall removes the old distribution and, because the two share a script name, the
+`tradeflow` script with it; `--reinstall-package` restores the script and installs
+`quantred`. Run in that order the two never coexist. (Rehearsed on a fresh checkout of the
+old revision with an editable pack, then updated to this one: one distribution remained,
+both scripts were present and the pack registered.) Do not use `uv sync` without
+`--inexact`: it removes editable packs installed by hand.
 
 ## MCP clients
 
 An existing client entry whose key and command are `tradeflow` keeps launching, through
-the alias. The server now reports its name as `quantred`, so a client may show it, or
+the alias. An entry whose command is a path *inside* the old tool's environment (for
+example `.../uv/tools/tradeflow-engine/bin/tradeflow`) stops working once you uninstall
+it: run `quantred mcp --self-test` and paste the absolute command it prints. The server now reports its name as `quantred`, so a client may show it, or
 prefix its tools, differently from before.
 
 To line it up, change the key and the command to `quantred`, or print a fresh entry
@@ -116,16 +130,55 @@ with `quantred mcp --self-test`. Agents or prompts that referred to tools by a
 `tradeflow` prefix may need the new one, since a client's prefix usually follows the
 key in its config. How a given client shows the renamed server was not tested.
 
-## If you write an extension pack
+## If you write or use an extension pack
 
-A pack that declares `dependencies = ["tradeflow-engine>=..."]` makes an installer pull
-the old distribution back in beside `quantred`, which is the corruption described
-above. Either drop the dependency (the engine is always present where your pack runs),
-or replace it with `quantred`, or install the pack with `--no-deps`:
+Earlier documentation told pack authors they could depend on `tradeflow-engine`, so packs
+that declare it exist. Installing one makes the installer pull the old distribution in
+beside `quantred`, and the two then share one `tradeflow/` tree. Nothing reports it. You
+notice because:
+
+- `quantred --version` prints `tradeflow <version>`, the old name, and
+- every command starts with `Ignoring duplicate tradeflow.strategies contribution
+  'demo_trend' ...` lines.
+
+(In the rehearsal the files were sometimes the old code and sometimes the new, so
+behaviour is unpredictable.) If you own the pack, change its dependency to `quantred` or
+drop it; the engine is always present where a pack runs. If you cannot edit it, install
+it so the old distribution is kept out:
+
+- **uv tool.** Name the old distribution in a file and exclude it. The command records the
+  exclusion, so it survives later rebuilds of the tool environment:
+
+  ```bash
+  echo tradeflow-engine > excludes.txt
+  uv tool install 'quantred[mcp,viz]' --with-editable ./my-pack --excludes excludes.txt
+  ```
+
+  (Rehearsed with a pack depending on `tradeflow-engine`: a single `quantred`
+  distribution was installed, the pack registered, and uv recorded the exclusion in the
+  tool's receipt. Without `--excludes` the old distribution was installed too.)
+
+- **Virtual environment.** Skip the dependencies when installing the pack:
+
+  ```bash
+  python -m pip install --no-deps -e ./my-pack
+  ```
+
+  Without `--no-deps`, pip installs `tradeflow-engine` over `quantred` without a warning.
+
+**Repair.** If it already happened in a virtual environment, remove the old distribution
+and reinstall the new one over the top:
 
 ```bash
-uv pip install --no-deps -e ./my-pack
+python -m pip uninstall tradeflow-engine
+python -m pip install --force-reinstall --no-deps quantred
 ```
+
+For a `uv tool` install, re-run the `uv tool install --force ... --excludes excludes.txt`
+command above; uv rebuilds the tool environment without the old distribution.
+(Rehearsed for both: `uv tool` with a pack depending on `tradeflow-engine`, and a
+virtual environment with `python -m pip`, where the repair left one `quantred`
+distribution with both scripts present.)
 
 Entry-point groups and imports are unchanged, so nothing else in a pack needs editing.
 

@@ -13,8 +13,18 @@ the next section says how.
 
 ```bash
 quantred init --example-pack ./my-signals   # the destination is yours to name
-cd my-signals && uv pip install -e .
 quantred init --check                       # lists it under "private packs installed"
+```
+
+The command prints the install line for how you installed QuantRed; the forms are:
+
+```bash
+# uv tool: the tool environment is rebuilt, so restate your extras
+uv tool install --force 'quantred[mcp,viz]' --with-editable ./my-signals
+# virtual environment (activated)
+python -m pip install --no-deps -e ./my-signals
+# a checkout of this repository
+uv pip install -e ./my-signals
 ```
 
 ## Make it yours
@@ -30,8 +40,8 @@ Three renames, none of them optional if you plan to keep this:
    type at `--strategy` and `--scanner`. The only rule is that they must not collide
    with a name the engine reserves, and it refuses the pack rather than shadowing one.
 
-Then `uv pip install -e .` again, and `quantred init --check` to confirm they are
-discovered.
+Then install it again with the command above, and `quantred init --check` to confirm they
+are discovered.
 
 ## Layout
 

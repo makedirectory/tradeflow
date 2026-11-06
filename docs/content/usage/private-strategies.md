@@ -24,9 +24,16 @@ There is a complete one in the repository, and `init` will copy it somewhere you
 
 ```bash
 quantred init --example-pack ./my-signals
-cd my-signals && uv pip install -e .
 quantred init --check          # lists it under "private packs installed"
 ```
+
+The command prints the install line for how you installed QuantRed. For a `uv tool`
+install, the tool environment is rebuilt, so restate your extras:
+`uv tool install --force 'quantred[mcp,viz]' --with-editable ./my-signals`. In an
+activated virtual environment: `python -m pip install --no-deps -e ./my-signals`. From a
+checkout of the repository: `uv pip install -e ./my-signals`. (If a pack of yours still
+depends on the old `tradeflow-engine`, see
+[migrating to QuantRed](migrating-to-quantred#if-you-write-or-use-an-extension-pack).)
 
 That gives you a strategy, a scanner, a saved config, a `.gitignore`, and a
 `pyproject.toml` with the entry points already declared — a starting point to edit
@@ -60,7 +67,7 @@ fills, execution, limits and metrics come for free, because they only ever depen
 the base interface.
 
 ```bash
-uv pip install -e ../yourfirm-signals     # or from your private index
+uv pip install -e ../yourfirm-signals     # in a venv or checkout; with uv tool, use --with-editable
 quantred init --check                    # confirms which packs are installed
 ```
 

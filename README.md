@@ -80,7 +80,7 @@ Either way you'll need free Alpaca **paper-trading** API keys from the
 No clone needed — install the command and run the offline demo:
 
 ```bash
-uv tool install 'quantred[mcp]'   # or: python -m pip install 'quantred[mcp]'
+uv tool install 'quantred[mcp,viz]'   # or: python -m pip install 'quantred[mcp,viz]'
 quantred demo                          # full pipeline on synthetic data, no keys
 quantred init                          # your free Alpaca paper keys, and optionally a model
                                         # provider for `research` (skipping it is fine)
@@ -95,7 +95,8 @@ quantred mcp --self-test               # confirm discovery works without a chat 
 Optional capabilities are extras (charts, the MCP server, the model SDKs). Adding one
 later with `uv tool` replaces the environment, so list every extra you want — the
 [extras guide](https://tradeflow.mk-dir.com/usage/extras) has the table and the exact
-commands, and `quantred init --check` prints them for you.
+commands. `quantred init --check --for <task>` prints the one you need for that task, and a
+command that needs a missing extra prints it with your current extras filled in.
 
 **→ [Getting started](https://tradeflow.mk-dir.com/usage/getting-started)** walks the
 whole path: install → keys → your first real result → Claude connected. Six steps,
@@ -115,7 +116,7 @@ prints which copy is running and where its state is; override with `TRADEFLOW_HO
 ```bash
 # 1. Install uv:  https://docs.astral.sh/uv/
 # 2. Install dependencies
-make install                          # uv sync
+make install                          # uv sync --inexact
 
 # 3. See it work — no keys, no network
 make demo                             # full pipeline on synthetic data + verdict

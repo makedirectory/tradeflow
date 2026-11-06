@@ -13,13 +13,13 @@ on its own; you can stop after any of them.
 ## 1. Install
 
 ```bash
-uv tool install 'quantred[mcp]'
+uv tool install 'quantred[mcp,viz]'
 quantred --version
 ```
 
-In an activated virtual environment instead: `python -m pip install 'quantred[mcp]'`. The `mcp`
-extra is what step 5 needs (the client launches the server from this install); leave it off
-if you will not connect a client.
+In an activated virtual environment instead: `python -m pip install 'quantred[mcp,viz]'`. The `mcp`
+extra is what step 5 needs (the client launches the server from this install) and `viz` draws
+charts in HTML reports; leave either off if you will not use it.
 The distribution and the command are both `quantred`. Capabilities such
 as charts, the MCP server and the model SDKs are opt-in extras; see
 [optional extras](extras) for which one unlocks what and how to add one later without

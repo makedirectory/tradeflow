@@ -202,7 +202,11 @@ main.py`, `uv sync`, and `.env.example` do not exist for an installed reader. Us
 `settings.invocation` (`services.setup.invocation` and the CLI's `_invocation` delegate
 to it) rather than a literal — services print instructions too. It lives in `settings`
 because `settings` prints some itself, and the trade clock's flatten report is another;
-neither may import a service.
+neither may import a service. Which copy is running is decided by where the `tradeflow`
+package was imported from, never by the working directory: an installed command run inside
+a clone of this repository is still an installed copy, and reading the cwd put a call that
+raises on a deleted directory into the flatten report.
+*Guarded by* `tests/test_state_root.py`.
 
 The executable's *name* is the same hazard from the other side: `settings.CLI_NAME` is
 the one definition (argparse's `prog`, the version banner, the MCP launch lookup and
@@ -381,7 +385,7 @@ is set (never a credential), and a pass that relied on shell-exported keys says 
 installed-copy-vs-checkout entry names, and it lived in the CLI, so a *service* that
 needed to print an instruction — a config's campaign block naming the command that
 reads its stored trades — had nowhere to get the answer but a second copy. Now
-`services.setup.invocation`, with the CLI delegating.
+`settings.invocation`, with `services.setup.invocation` and the CLI delegating.
 *Guarded by* `tests/test_setup.py`, `tests/test_surface_parity.py`,
 `tests/test_campaign_material.py`.
 
