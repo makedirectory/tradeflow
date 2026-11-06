@@ -2139,6 +2139,12 @@ def draft_code_hash(code: str) -> str:
     return hashlib.sha256(code.encode("utf-8")).hexdigest()[:12]
 
 
+NO_OOS_TRADES_NOTE = (
+    "No out-of-sample trades were made: every aggregate metric below is 0.0 because nothing "
+    "was measured, not because performance was flat, and no gate computed from them is evidence."
+)
+
+
 def walk_forward_payload(
     result,
     *,
@@ -2192,6 +2198,8 @@ def walk_forward_payload(
         "objective": objective,
         "method": method,
         "gross": gross,
+        # Aggregates of zero trades are all 0.0, which reads as a measured flat result.
+        "no_oos_trades_note": NO_OOS_TRADES_NOTE if result.total_oos_trades() == 0 else None,
         "folds": folds,
         "oos_aggregate": _jsonable(result.oos_aggregate),
         "efficiency": result.efficiency,

@@ -250,7 +250,14 @@ class WalkForwardResult:
             "oos_drawdown_vs_is": {
                 "value": oos_dd,
                 "threshold": g["max_dd_ratio"] * is_dd if is_dd else float("inf"),
-                "passed": is_dd == 0.0 or oos_dd <= g["max_dd_ratio"] * is_dd,
+                # With no OOS trades the drawdown is 0.0 because nothing traded, which
+                # would pass any threshold: a gate that passes only for lack of data.
+                "passed": total_trades > 0 and (is_dd == 0.0 or oos_dd <= g["max_dd_ratio"] * is_dd),
+                **(
+                    {"note": "not evaluated - no OOS trades, so there is no drawdown to compare"}
+                    if total_trades == 0
+                    else {}
+                ),
             },
             "min_oos_trades": _check(total_trades, ">=", g["min_oos_trades"]),
             "deflated_sharpe": _check(dsr, ">", g["min_deflated_sharpe"]),

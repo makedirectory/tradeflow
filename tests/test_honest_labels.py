@@ -154,3 +154,62 @@ def test_optimization_payload_says_its_deflated_sharpe_is_not_deflated():
         seed=1,
     )
     assert "NOT deflated" in r["deflation_note"]
+
+
+# --- a gate must not pass only because nothing traded ---------------------------------
+def _result(oos_trades):
+    from datetime import datetime
+
+    from tradeflow.optimization.walk_forward import Fold, FoldResult, WalkForwardResult
+
+    fold = FoldResult(
+        fold=Fold(0, datetime(2024, 1, 1), datetime(2024, 3, 1), datetime(2024, 3, 2), datetime(2024, 5, 1)),
+        is_best_params={},
+        is_metrics={"max_drawdown": 5.0, "sharpe_ratio": 1.0},
+        oos_metrics={"max_drawdown": 2.0 if oos_trades else 0.0, "sharpe_ratio": 0.0},
+        oos_trades=oos_trades,
+        n_trials=1,
+    )
+    return WalkForwardResult(
+        folds=[fold],
+        oos_aggregate={},
+        holdout=None,
+        holdout_params=None,
+        efficiency=0.0,
+        degradation={},
+        n_trials_total=1,
+        objective="sharpe_ratio",
+    )
+
+
+def test_drawdown_gate_does_not_pass_vacuously_with_no_oos_trades():
+    quiet = _result(0).gate_report()["checks"]["oos_drawdown_vs_is"]
+    assert quiet["passed"] is False
+    assert "no OOS trades" in quiet["note"]
+    traded = _result(40).gate_report()["checks"]["oos_drawdown_vs_is"]
+    assert traded["passed"] is True  # the boundary case still passes
+
+
+def test_walk_forward_payload_says_when_nothing_traded_out_of_sample():
+    from datetime import datetime
+
+    from tradeflow.services.analysis import NO_OOS_TRADES_NOTE, walk_forward_payload
+
+    def build(n):
+        return walk_forward_payload(
+            _result(n),
+            run_id="r",
+            strategy="s",
+            symbols=["A"],
+            start=datetime(2024, 1, 1),
+            end=datetime(2024, 6, 1),
+            mode="anchored",
+            objective="sharpe_ratio",
+            method="grid",
+            gross=False,
+            seed=1,
+            gates=None,
+        )
+
+    assert build(0)["no_oos_trades_note"] == NO_OOS_TRADES_NOTE
+    assert build(5)["no_oos_trades_note"] is None
