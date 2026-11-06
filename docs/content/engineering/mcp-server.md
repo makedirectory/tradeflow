@@ -157,6 +157,11 @@ is kept only where the result is genuinely partial: `compare_trials` with two or
 known ids still answers, and lists the rest in `unknown_trial_ids`. The services keep
 their return shapes (the CLI renders them); the raise happens in this module.
 
+**Every result is strict JSON.** JSON has no NaN or infinity, so every tool result passes
+through `mcp.server._json_safe` on its way out, which spells a non-finite number `"nan"`,
+`"inf"` or `"-inf"`. A field that is normally a number can therefore be one of those
+strings; read it as undefined (or unbounded), never as zero.
+
 **`save_config` and `load_config` take a plain file name.** An agent supplies the name, so
 `services.configs.config_filename` refuses anything with a directory component, `..`, an
 absolute path, an empty stem, a `:`, a control character or a Windows device name, and

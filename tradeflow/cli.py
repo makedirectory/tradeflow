@@ -982,14 +982,22 @@ def cmd_allocate(args) -> None:
     from tradeflow.services.sizing import allocate_portfolio
 
     data_client = build_research_data(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
-    scanner = SymbolScanner(data_client, args.scanner)
-    flagged = [symbol for symbol, _ in scanner.scan(args.symbols)]
+    if args.scanner == "none":
+        # Every other command takes `none` to mean "the candidates as given"; this one
+        # handed it to the scanner registry and crashed.
+        flagged, timeframe = list(args.symbols), "1Day"
+    else:
+        scanner = SymbolScanner(data_client, args.scanner)
+        flagged, timeframe = [symbol for symbol, _ in scanner.scan(args.symbols)], scanner.timeframe
     if not flagged:
-        print("No symbols flagged; nothing to allocate.")
+        print(
+            f"The scanner {args.scanner!r} flagged none of {len(args.symbols)} candidate(s); nothing to "
+            "allocate. Pass --scanner none to allocate across the candidates as given."
+        )
         return
 
     allocations = allocate_portfolio(
-        data_client, flagged, scanner.timeframe, args.capital, args.max_positions, args.max_weight
+        data_client, flagged, timeframe, args.capital, args.max_positions, args.max_weight
     )
     if not allocations:
         print("Solver produced no allocation (no positively-scored candidates).")
@@ -1312,6 +1320,13 @@ def cmd_optimize(args) -> None:
     if not result.results.empty:
         result.results.to_csv(args.output, index=False)
         print(f"Full results written to {args.output}")
+    # The MCP payload always said this; the terminal printed a bare "Best" score, which
+    # reads as a result rather than the selection bias it is by construction.
+    print(
+        f"\nIN-SAMPLE: the best of {len(result.results)} configs scored on the data that chose "
+        f"it. Validate out of sample with `{_invocation('walkforward')}`, which deflates across "
+        "every trial. The deflated_sharpe_ratio column is not deflated (one backtest per row)."
+    )
 
 
 def _screen_range(text: str):
@@ -1916,7 +1931,8 @@ def _print_walkforward(result, objective: str) -> None:
         value = format_gate_value(name, check["value"])
         threshold = format_gate_value(name, check["threshold"])
         basis = f" [{check['basis']}]" if check.get("basis") else ""
-        print(f"  [{mark}] {name}: {value} (threshold {threshold}){basis}")
+        note = f" - {check['note']}" if check.get("note") else ""
+        print(f"  [{mark}] {name}: {value} (threshold {threshold}){basis}{note}")
     verdict = "PROMOTABLE" if report["promotable"] else "NOT promotable"
     median_sharpe = result.median_oos("sharpe_ratio")
     print(

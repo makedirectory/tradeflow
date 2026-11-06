@@ -61,6 +61,13 @@ v6 ones. Earlier trials drop out of the default `trials list` (it says how many)
   `deflated_sharpe_ratio` is not deflated.
 - **A walk-forward with no out-of-sample trades** no longer passes the drawdown gate
   vacuously (it fails with a note), and the payload carries `no_oos_trades_note`.
+- **`optimize`** ends with an in-sample warning, as the MCP payload always did: the
+  best of N configs scored on the data that chose it, with a `deflated_sharpe_ratio`
+  column that is not deflated. `allocate --scanner none` allocates across the candidates
+  as given instead of crashing, and a scanner that flags nothing says so.
+- **MCP results are always valid JSON**: non-finite numbers are spelled `"nan"`, `"inf"`
+  or `"-inf"` everywhere; some tools emitted bare `NaN` / `Infinity`, which strict
+  clients cannot parse.
 - **Verdict and alpha output** says how many names a list cut, shows tiny alphas in
   scientific notation instead of `+0.0000`, carries the thin-universe reason in the
   payload (`low_confidence_reason`), and no longer journals a `trial:alpha` for a

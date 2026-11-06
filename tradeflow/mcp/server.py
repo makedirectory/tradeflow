@@ -14,6 +14,7 @@ Run with ``quantred mcp`` when installed, or ``python main.py mcp`` from a check
 
 import contextlib
 import logging
+import math
 import sys
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -375,7 +376,7 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         run_id = result.get("run_id") if isinstance(result, dict) else None
         _SESSION["tool_calls"] += 1
         audit_log(tool, inputs, run_id=run_id or new_run_id(), result_summary=_summary(result))
-        return result
+        return _json_safe(result)
 
     def tool(*metric_keys: str, notes: Optional[List[str]] = None):
         """Register a tool whose description is *composed*, not hand-written twice.
@@ -2219,6 +2220,25 @@ def serve(*, offline: bool = False, cache_dir=None) -> None:
         if not _client_gone(exc):
             raise
         stop_now("client disconnected", 0)
+
+
+def _json_safe(value: Any) -> Any:
+    """``value`` with every non-finite float spelled ``"nan"``, ``"inf"`` or ``"-inf"``.
+
+    JSON has no NaN or infinity. Some services already spelled them as strings and the
+    rest reached the wire as bare ``NaN`` / ``Infinity``, which a strict client refuses to
+    parse, so one payload could carry ``"nan"`` in one field and an unparseable ``NaN``
+    in the next. One convention, applied once at the boundary every tool returns through.
+    """
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, float) and not math.isfinite(value):
+        return "nan" if math.isnan(value) else ("inf" if value > 0 else "-inf")
+    if type(value).__module__ == "numpy" and hasattr(value, "item"):
+        return _json_safe(value.item())
+    return value
 
 
 def _assert_no_trading_client(data_client) -> None:

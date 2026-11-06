@@ -529,3 +529,68 @@ def test_a_verdict_refused_by_the_allocation_preflight_records_no_trial(tmp_path
     assert result["verdict"]["verdict"] == "infeasible"
     assert result["journaled"] is False and "infeasible" in result["not_journaled_reason"]
     assert not journal.exists() or not journal.read_text().strip()
+
+
+# --- found by the tools recon -------------------------------------------------------
+
+
+def test_allocate_takes_scanner_none_as_every_other_command_does(monkeypatch, capsys):
+    """`allocate --scanner none` handed `none` to the scanner registry and crashed with a
+    traceback; everywhere else it means the candidates as given."""
+    from tests.fakes import FakeMarketData
+    from tradeflow.marketdata.client import MarketDataClient
+
+    client = MarketDataClient(FakeMarketData(["AAA", "BBB", "CCC", "DDD"], n=400, freq="1D"))
+    monkeypatch.setattr(cli, "build_research_data", lambda **kw: client)
+    args = cli.parse_cli(["allocate", "--scanner", "none", "--symbols", "AAA,BBB,CCC,DDD"])
+    args.func(args)
+    out = capsys.readouterr().out
+    assert "Unknown scanner" not in out and ("SYMBOL" in out or "no allocation" in out)
+
+
+def test_optimize_says_its_best_is_in_sample(monkeypatch, capsys, tmp_path):
+    """The MCP payload always said IN-SAMPLE; the terminal printed a bare "Best" score."""
+    from tests.fakes import FakeMarketData
+    from tradeflow.marketdata.client import MarketDataClient
+    from tradeflow.services import audit
+
+    monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", tmp_path / "journal.jsonl")
+    client = MarketDataClient(FakeMarketData(["AAA", "BBB"], n=400, freq="1D"))
+    monkeypatch.setattr(cli, "build_research_data", lambda **kw: client)
+    argv = [
+        "optimize",
+        "--strategy",
+        "demo_trend",
+        "--scanner",
+        "none",
+        "--symbols",
+        "AAA,BBB",
+        "--max-evals",
+        "2",
+    ]
+    args = cli.parse_cli(
+        argv + ["--start", "2024-01-02", "--end", "2024-12-01", "--output", str(tmp_path / "o.csv")]
+    )
+    args.func(args)
+    out = capsys.readouterr().out
+    assert "IN-SAMPLE" in out and "walkforward" in out and "not deflated" in out
+
+
+def test_the_terminal_prints_a_gates_note(capsys):
+    """The no-out-of-sample-trades note reached the payload and the HTML but the
+    terminal's gate list dropped it, so a failed gate gave no reason there."""
+    from tests.fakes import FakeMarketData
+    from tradeflow.marketdata.client import MarketDataClient
+    from tradeflow.optimization.walk_forward import WalkForwardValidator
+    from tradeflow.services.registry import resolve_strategy_class
+
+    client = MarketDataClient(FakeMarketData(["AAA", "BBB"], n=500, freq="1D"))
+    validator = WalkForwardValidator(resolve_strategy_class("demo_trend"), client)
+    result = validator.run(
+        ["AAA", "BBB"], cli._date("2023-01-02"), cli._date("2024-06-01"), n_folds=2, max_evals=2
+    )
+    report = result.gate_report()
+    report["checks"]["oos_drawdown_vs_is"]["note"] = "not evaluated - no OOS trades"
+    result.gate_report = lambda *a, **k: report
+    cli._print_walkforward(result, "sharpe_ratio")
+    assert "- not evaluated - no OOS trades" in capsys.readouterr().out
