@@ -519,10 +519,15 @@ def _load_strategy_from_config(path: str):
     """
     from tradeflow.optimization.config_store import load_config
     from tradeflow.services.registry import resolve_strategy_class
+    from tradeflow.strategies.base import refuse_unknown_limits, refuse_unknown_params
 
     payload = load_config(path)
     strategy_name = payload["strategy"]
     cls = resolve_strategy_class(strategy_name)
+    # What the docstring promised and the constructor never did: a key the strategy
+    # does not declare was passed through and the run used the default instead.
+    refuse_unknown_params(cls, payload.get("params"))
+    refuse_unknown_limits(payload.get("position_limits"))
     strategy = cls(dict(payload.get("params") or {}))
     return strategy, strategy_name, payload.get("scanner")
 

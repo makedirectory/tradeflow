@@ -93,6 +93,43 @@ DEFAULT_POSITION_LIMITS: Dict[str, Any] = {
 }
 
 
+def _did_you_mean(name: str, known) -> str:
+    import difflib
+
+    close = difflib.get_close_matches(name, list(known), n=1)
+    return f" (did you mean {close[0]!r}?)" if close else ""
+
+
+def refuse_unknown_params(strategy_class, params: Optional[Dict[str, Any]]) -> None:
+    """Refuse a parameter name the strategy does not declare.
+
+    ``Strategy.__init__`` range-checks declared parameters and passes any other key
+    straight through, so ``{"fast_emaperiod": 9}`` ran at the defaults and was even
+    served the defaults' memoized result, with nothing saying the override reached
+    nothing. ``position_limits`` (the book) and ``_``-prefixed identity keys are not
+    parameters and are let through.
+    """
+    declared = strategy_class.PARAM_RANGES
+    unknown = [
+        name
+        for name in (params or {})
+        if name not in declared and name != "position_limits" and not name.startswith("_")
+    ]
+    if unknown:
+        named = "; ".join(f"{name!r}{_did_you_mean(name, declared)}" for name in unknown)
+        raise ValueError(
+            f"{strategy_class.__name__} has no parameter {named}. Its parameters: {', '.join(sorted(declared))}."
+        )
+
+
+def refuse_unknown_limits(limits: Optional[Dict[str, Any]]) -> None:
+    """Refuse a book limit nothing enforces - a typo'd cap is no cap at all."""
+    unknown = [name for name in (limits or {}) if name not in DEFAULT_POSITION_LIMITS]
+    if unknown:
+        named = "; ".join(f"{name!r}{_did_you_mean(name, DEFAULT_POSITION_LIMITS)}" for name in unknown)
+        raise ValueError(f"No position limit {named}. Limits: {', '.join(DEFAULT_POSITION_LIMITS)}.")
+
+
 def resolve_book(
     strategy_class: "type[Strategy]", overrides: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:

@@ -45,7 +45,7 @@ from tradeflow.optimization.walk_forward import WalkForwardValidator
 from tradeflow.services.audit import new_run_id
 from tradeflow.services.registry import resolve_strategy_class, scanner_refusal
 from tradeflow.settings import state_root
-from tradeflow.strategies.base import build_with_limits
+from tradeflow.strategies.base import build_with_limits, refuse_unknown_limits
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +62,11 @@ _BLEND_COST_CEILING = 0.02
 
 def _strategy(strategy_name: str, config: Optional[Dict[str, Any]] = None):
     """Instantiate a strategy from defaults, overlaid with ``config`` overrides."""
+    from tradeflow.strategies.base import refuse_unknown_params
+
     cls = resolve_strategy_class(strategy_name)
+    refuse_unknown_params(cls, config)
+    refuse_unknown_limits((config or {}).get("position_limits"))
     params = {name: spec["default"] for name, spec in cls.PARAM_RANGES.items() if "default" in spec}
     if config:
         params.update(config)
@@ -956,6 +960,7 @@ def run_screen(
     the same count of positive points scattered at random, and it can point off the
     edge of the searched space, which a best-point report never does.
     """
+    refuse_unknown_limits(position_limits)
     _refuse_unusable_window(start, end)
     from tradeflow.analytics import screening
     from tradeflow.optimization.param_space import ParameterSpace
@@ -1076,6 +1081,7 @@ def confirm_screen_point(
     record. A separate journaling path here would be a second definition of what a
     trial is.
     """
+    refuse_unknown_limits(position_limits)
     config = dict(params)
     if position_limits:
         config["position_limits"] = dict(position_limits)
@@ -1133,6 +1139,7 @@ def run_causality_probes(
     The overall verdict is ``incomplete`` whenever any probe had nothing to examine.
     A run that never traded has not been cleared by a probe about trading.
     """
+    refuse_unknown_limits(position_limits)
     from tradeflow.optimization.causality import run_causality_probes as _probe_suite
 
     run_id = new_run_id()
@@ -1265,6 +1272,7 @@ def run_walk_forward(
     per-fold progress stays readable. Journaling is unaffected: this process still
     records exactly one validated trial when the whole run finishes.
     """
+    refuse_unknown_limits(position_limits)
     _refuse_unusable_window(start, end)
     from tradeflow.optimization.config_store import current_git_sha
     from tradeflow.services.audit import journal_trial

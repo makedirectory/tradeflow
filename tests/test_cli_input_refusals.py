@@ -255,3 +255,48 @@ def test_a_flag_nobody_has_gets_no_sibling_hint(capsys):
 def test_a_nested_subcommand_reports_its_own_usage(capsys):
     err = _parse_refusal(capsys, "trials", "show", "abcd1234", "--bogus")
     assert err.startswith(f"usage: {CLI_NAME} trials show ")
+
+
+# --- names a strategy or a book does not have --------------------------------------
+
+
+def test_a_misspelt_parameter_is_refused_not_run_at_the_default(tmp_path, monkeypatch):
+    """`config={"fast_emaperiod": 9}` ran at the defaults and was served the defaults'
+    memoized trial, with nothing saying the override reached nothing."""
+    from tests.fakes import FakeMarketData
+    from tradeflow.marketdata.client import MarketDataClient
+    from tradeflow.services import analysis, audit
+
+    monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", tmp_path / "journal.jsonl")
+    client = MarketDataClient(FakeMarketData(["AAA"], n=300, freq="1D"))
+    start, end = cli._date("2024-01-02"), cli._date("2024-06-01")
+    with pytest.raises(ValueError, match=r"'fast_emaperiod' \(did you mean 'fast_ema_period'\?\)"):
+        analysis.run_backtest(client, "demo_trend", ["AAA"], start, end, config={"fast_emaperiod": 9})
+    with pytest.raises(ValueError, match=r"'max_positoins' \(did you mean 'max_positions'\?\)"):
+        analysis.run_walk_forward(
+            client, "demo_trend", ["AAA"], start, end, position_limits={"max_positoins": 3}
+        )
+    assert not (tmp_path / "journal.jsonl").exists()
+
+
+def test_a_declared_parameter_and_a_real_limit_are_accepted():
+    """The other direction, including the keys that are not parameters."""
+    from tradeflow.services.registry import resolve_strategy_class
+    from tradeflow.strategies.base import refuse_unknown_limits, refuse_unknown_params
+
+    cls = resolve_strategy_class("demo_trend")
+    refuse_unknown_params(cls, {"fast_ema_period": 9, "position_limits": {}, "_cost": {}})
+    refuse_unknown_limits({"max_positions": 3, "min_notional": 5.0})
+
+
+def test_a_saved_config_with_a_stale_parameter_is_refused(tmp_path):
+    """The loader's docstring said unrecognised params raise; the constructor let them
+    through, so a config naming a since-renamed parameter traded the default."""
+    import json
+
+    path = tmp_path / "c.json"
+    path.write_text(json.dumps({"strategy": "demo_trend", "params": {"fast_emaperiod": 9}}))
+    args = cli.parse_cli(["backtest", "--config", str(path)])
+    with pytest.raises(SystemExit) as exited:
+        cli.apply_run_config(args)
+    assert "has no parameter 'fast_emaperiod'" in str(exited.value.code)
