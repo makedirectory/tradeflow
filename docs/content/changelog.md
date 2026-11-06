@@ -183,6 +183,19 @@ without guessing. The history below keeps the old name as it was written.
   traceback.
 - The printed client configuration carries `TRADEFLOW_HOME` when you set it, and the
   self-test says when credentials came only from your shell.
+- Arguments no run can mean are refused before anything is read or journaled, on both
+  surfaces: an unknown `mode`, `method` or `objective` (an unknown objective scored every
+  candidate equally, so the "best" was arbitrary), negative `holdout_days`,
+  `max_evals` below one, a non-positive `capital`, an empty universe, and a parameter or
+  position limit the strategy does not have (a misspelt one used to run at the default).
+  A backtest that read no bars for any symbol is refused instead of reported as all
+  zeros. Each of these used to cost a journaled trial.
+- Walk-forward gates say what they are computed over (median across folds, total
+  across folds, or the stitched out-of-sample aggregate), so a gate value no longer
+  looks like it contradicts the aggregate metric of the same name.
+- Calmar and Sterling ratios are negative for a losing run; they took the magnitude of
+  the whole ratio, so a loss read as a reward. Values already stored for losing runs
+  carry the old sign. Neither ratio feeds a gate or a leaderboard.
 
 ### Model providers
 
