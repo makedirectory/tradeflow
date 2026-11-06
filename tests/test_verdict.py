@@ -646,3 +646,28 @@ def test_a_passing_gate_does_not_print_the_failure_that_did_not_happen():
     failing = next(line for line in lines if "ic_tstat" in line)
     assert "FAIL" in failing and "not distinguishable from luck" in failing
     assert "1.78 vs 0.62" in rendered  # values still shown on a pass
+
+
+def test_too_little_history_is_a_data_problem_not_an_infeasible_book():
+    """Forty bars cannot estimate a covariance matrix: the solve reports itself
+    infeasible with no binding constraint. That is what more dates fix, so the verdict
+    must not claim they cannot, and information must still be attempted."""
+    names = [f"SYM{i:02d}" for i in range(12)]
+    client = MarketDataClient(FakeMarketData([*names, "SPY"], n=40, freq="1D"))
+
+    result = analysis.run_verdict(client, "demo_trend", names, START, END, scanner="none")
+
+    verdict = result["verdict"]
+    assert verdict["verdict"] != "infeasible"
+    assert "More dates will not change this" not in verdict["summary"]
+    assert "portfolio_feasible" not in verdict["checks"]
+    assert result["steps"]["information"]["status"] != "skipped"
+    assert "The constraints, not the data" not in format_verdict_report(result)
+
+
+def test_a_solve_with_no_named_constraint_is_not_constraint_infeasible():
+    assert analysis._book_blocked_by_constraints({"feasible": False, "note": "Insufficient data"}) is False
+    assert analysis._book_blocked_by_constraints({"feasible": False, "binding_constraint": "x"}) is True
+    assert analysis._book_blocked_by_constraints({"feasible": False, "preflight": True}) is True
+    assert analysis._book_blocked_by_constraints({"feasible": True, "binding_constraint": "x"}) is False
+    assert analysis._book_blocked_by_constraints(None) is False

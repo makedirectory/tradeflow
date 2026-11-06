@@ -2713,7 +2713,7 @@ def run_verdict(
         #    store rather than from a caller's guess.
         n_trials = _campaign_trials(strategy, universe, ACCOUNTING_VERSION)
         portfolio_step = steps.get("portfolio", {}).get("status")
-        if portfolio_step == "ok" and not (result["portfolio"] or {}).get("feasible"):
+        if portfolio_step == "ok" and _book_blocked_by_constraints(result["portfolio"]):
             # Alphas can drop names, so the caps can pass the preflight and the solve
             # still fail. Measuring information for a book that cannot exist would only
             # produce a "needs more data" that no amount of data would resolve.
@@ -2808,6 +2808,22 @@ def _verdict_provenance(inputs: Dict[str, Any], cache, n_trials: int) -> Dict[st
     }
 
 
+def _book_blocked_by_constraints(pf: Optional[Dict[str, Any]]) -> bool:
+    """True only when the portfolio step says *the constraints* left no book.
+
+    An infeasible solve is two different things. One names a binding constraint (or the
+    preflight refused the caps): more dates cannot help, and the verdict is
+    ``infeasible``. The other is "insufficient data for alphas and/or a covariance
+    matrix" - too little history to estimate a book at all - which carries no
+    constraint and is exactly what more dates fix. Calling that ``infeasible`` tells a
+    user whose only problem is a short window that data cannot help.
+    """
+    pf = pf or {}
+    if pf.get("feasible"):
+        return False
+    return bool(pf.get("binding_constraint") or pf.get("preflight"))
+
+
 def _verdict_gates(result: Dict[str, Any]) -> Dict[str, Any]:
     """Assemble the verdict from the gates the steps already computed.
 
@@ -2864,12 +2880,13 @@ def _verdict_gates(result: Dict[str, Any]) -> Dict[str, Any]:
             "passed": float(net or 0.0) > 0.0,
             "note": "expected active return after the cost of trading into the book",
         }
-    elif pf.get("preflight") or ("portfolio" in steps and steps["portfolio"].get("status") == "ok"):
+    elif _book_blocked_by_constraints(pf):
         checks["portfolio_feasible"] = {
             "value": False,
             "threshold": True,
             "passed": False,
-            "note": pf.get("binding_constraint") or "no feasible portfolio at these constraints",
+            "note": pf.get("binding_constraint")
+            or "the preflight found no book that satisfies these constraints",
         }
 
     if failed:
