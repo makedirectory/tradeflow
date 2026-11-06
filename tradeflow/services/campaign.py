@@ -68,7 +68,14 @@ def campaign_material(store, trial_id: str, *, journal_path: Optional[Any] = Non
 
     material: Dict[str, Any] = {"available": False, "reason": "", "trial_id": trial_id}
 
-    row = store.row_for(trial_id)
+    from tradeflow.store.trials import AmbiguousTrialId
+
+    try:
+        resolved = store.resolve_id(trial_id)
+    except AmbiguousTrialId as exc:
+        material["reason"] = str(exc)
+        return material
+    row = store.row_for(resolved) if resolved else None
     if row is None:
         material["not_indexed"] = True
         material["reason"] = (
@@ -78,6 +85,7 @@ def campaign_material(store, trial_id: str, *, journal_path: Optional[Any] = Non
         )
         return material
 
+    trial_id = material["trial_id"] = resolved
     # `audit_log` flattens a trial's extra fields onto the record rather than nesting
     # them under a key, so `dedup_params`, `returns` and `trades` sit at the top level
     # beside `inputs`. Printed once rather than inferred from the writer's signature:

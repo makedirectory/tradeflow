@@ -1628,7 +1628,13 @@ def build_server(data_client=None):
         with _trial_store() as store:
             if store is None:
                 return _logged("get_trial", {"trial_id": trial_id}, {"error": _NO_STORE})
-            trial = store.get_trial(trial_id)
+            from tradeflow.store.trials import AmbiguousTrialId
+
+            try:
+                resolved = store.resolve_id(trial_id)
+            except AmbiguousTrialId as exc:
+                return _logged("get_trial", {"trial_id": trial_id}, {"error": str(exc)})
+            trial = store.get_trial(resolved) if resolved else None
             if trial is None:
                 return _logged(
                     "get_trial",

@@ -3869,6 +3869,8 @@ def _promote_trial(store, args) -> None:
     from tradeflow.services.audit import universe_for_trial
     from tradeflow.services.campaign import campaign_material
 
+    # Everything below prints and records the full id, never the prefix that was typed.
+    args.trial_id = _resolve_trial_ref(store, args.trial_id)
     trial = store.get_trial(args.trial_id)
     if trial is None:
         sys.exit(f"No trial with id {args.trial_id!r}. Try `trials list` to see what is recorded.")
@@ -4000,12 +4002,26 @@ def _print_promotion_campaign(material: Dict[str, Any]) -> None:
         )
 
 
+def _resolve_trial_ref(store, ref: str) -> str:
+    """A typed trial id or unique prefix as the full id, or ``ref`` when it names none.
+
+    Ambiguity exits with the candidates listed; the caller's own "no such trial" message
+    handles the unmatched case.
+    """
+    from tradeflow.store.trials import AmbiguousTrialId
+
+    try:
+        return store.resolve_id(ref) or ref
+    except AmbiguousTrialId as exc:
+        sys.exit(str(exc))
+
+
 def _print_trial_detail(store, args) -> None:
     import json
 
     from tradeflow.analytics.reporting import format_trial_detail, format_trial_trades
 
-    trial = store.get_trial(args.trial_id)
+    trial = store.get_trial(_resolve_trial_ref(store, args.trial_id))
     if trial is None:
         sys.exit(f"No trial with id {args.trial_id!r}. Try `trials list` to see what is recorded.")
     if args.json:
@@ -7560,7 +7576,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=None,
         metavar="TRIAL_ID",
-        help="Quarantine this trial. Repeatable. Wins over the filters below",
+        help="Quarantine this trial (a unique id prefix of 4+ characters works). Repeatable. Wins over the filters below",
     )
     t_quarantine.add_argument("--strategy", default=None)
     t_quarantine.add_argument("--kind", default=None)
@@ -7653,7 +7669,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Write a portable config from a validated trial, without re-running it",
     )
     _add_db_flag(t_promote)
-    t_promote.add_argument("trial_id", help="The trial id (see `trials list`)")
+    t_promote.add_argument(
+        "trial_id", help="The trial id, or a unique prefix of at least 4 characters (see `trials list`)"
+    )
     t_promote.add_argument(
         "--journal",
         default=None,
@@ -7677,7 +7695,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     t_show = trials_sub.add_parser("show", help="Everything the store knows about one trial")
     _add_db_flag(t_show)
-    t_show.add_argument("trial_id", help="The trial id (see `trials list`)")
+    t_show.add_argument(
+        "trial_id", help="The trial id, or a unique prefix of at least 4 characters (see `trials list`)"
+    )
     t_show.add_argument("--json", action="store_true", help="Emit JSON instead of a report")
     t_show.add_argument(
         "--trades-limit",
@@ -7692,7 +7712,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Exit-reason P&L, win/loss, holding period and excursion for one recorded trial",
     )
     _add_db_flag(t_analyze)
-    t_analyze.add_argument("trial_id", help="The trial id (see `trials list`)")
+    t_analyze.add_argument(
+        "trial_id", help="The trial id, or a unique prefix of at least 4 characters (see `trials list`)"
+    )
     t_analyze.add_argument("--json", action="store_true", help="Emit the report as JSON")
     t_analyze.add_argument(
         "--allow-partial",
@@ -7708,7 +7730,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Correlate the recorded return series of two or more trials — are they one result?",
     )
     _add_db_flag(t_compare)
-    t_compare.add_argument("trial_ids", nargs="+", help="Two or more trial ids (see `trials list`)")
+    t_compare.add_argument(
+        "trial_ids", nargs="+", help="Two or more trial ids or unique prefixes (see `trials list`)"
+    )
     t_compare.add_argument(
         "--min-overlap",
         dest="min_overlap",
@@ -7733,7 +7757,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="What validated a trial: its recipe, its evidence, and what is still recoverable",
     )
     _add_db_flag(t_campaign)
-    t_campaign.add_argument("trial_id", help="The trial id (see `trials list`)")
+    t_campaign.add_argument(
+        "trial_id", help="The trial id, or a unique prefix of at least 4 characters (see `trials list`)"
+    )
     t_campaign.add_argument(
         "--journal", default=None, help="Journal path (default: logs/research_journal.jsonl)"
     )

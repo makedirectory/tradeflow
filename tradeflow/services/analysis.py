@@ -555,14 +555,20 @@ def analyze_trial(store, trial_id: str, *, allow_partial: bool = False) -> Dict[
     — a fourth way of opening the trial store is the last thing this codebase needs.
     """
     from tradeflow.analytics.trade_analytics import trade_analytics
+    from tradeflow.store.trials import AmbiguousTrialId
 
-    row = store.row_for(trial_id)
+    try:
+        resolved = store.resolve_id(trial_id)
+    except AmbiguousTrialId as exc:
+        return {"error": f"{exc}", "trial_id": trial_id}
+    row = store.row_for(resolved) if resolved else None
     if row is None:
         return {
             # No pointer to a listing here: the CLI and the MCP server each name their own.
             "error": f"No trial with id {trial_id!r}.",
             "trial_id": trial_id,
         }
+    trial_id = resolved
     report = trade_analytics(store.trades_for(trial_id), allow_partial=allow_partial)
     report.update(
         {
@@ -601,10 +607,16 @@ def compare_trials(
         return {"error": COMPARE_NEEDS_TWO, "trial_ids": list(trial_ids)}
     entries: List[Dict[str, Any]] = []
     unknown: List[str] = []
-    for trial_id in trial_ids:
-        row = store.row_for(trial_id)
+    from tradeflow.store.trials import AmbiguousTrialId
+
+    for typed in trial_ids:
+        try:
+            trial_id = store.resolve_id(typed)
+        except AmbiguousTrialId as exc:
+            return {"error": f"{exc}", "trial_ids": list(trial_ids)}
+        row = store.row_for(trial_id) if trial_id else None
         if row is None:
-            unknown.append(trial_id)
+            unknown.append(typed)
             continue
         series = store.returns_for(trial_id) or {}
         entries.append(

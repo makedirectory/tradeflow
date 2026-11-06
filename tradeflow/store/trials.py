@@ -393,6 +393,24 @@ class TrialStoreRebuildRefused(RuntimeError):
     """
 
 
+#: Shortest id prefix accepted in place of a full id. Shorter than this matches too much
+#: to be a deliberate reference.
+MIN_ID_PREFIX = 4
+
+
+class AmbiguousTrialId(ValueError):
+    """A trial-id prefix that more than one recorded trial carries."""
+
+    def __init__(self, ref: str, candidates: List[str]):
+        self.ref = ref
+        self.candidates = candidates[:5]
+        more = " (and more)" if len(candidates) > 5 else ""
+        super().__init__(
+            f"trial id prefix {ref!r} is ambiguous; it matches {', '.join(self.candidates)}{more}. "
+            "Give more characters."
+        )
+
+
 class TrialStore:
     """A SQLite index over the research journal. Derived; safe to delete."""
 
@@ -1285,6 +1303,30 @@ class TrialStore:
         listing can say "20 of 4,318" rather than implying it showed everything."""
         where, args = self._filter_sql(**filters)
         return int(self._conn.execute(f"SELECT COUNT(*) FROM trials {where}", args).fetchone()[0])
+
+    def resolve_id(self, ref: str) -> Optional[str]:
+        """The full id a user-typed reference names, or ``None`` if it names nothing.
+
+        An exact id always wins. Otherwise a prefix of at least ``MIN_ID_PREFIX``
+        characters resolves when exactly one trial carries it; two or more raise
+        :class:`AmbiguousTrialId` listing the candidates, because silently picking one
+        would act on a trial the reader did not mean. Every surface that takes a trial
+        id resolves through here, so they cannot disagree about what a prefix means.
+        """
+        ref = str(ref).strip()
+        if self._conn.execute("SELECT 1 FROM trials WHERE id = ?", (ref,)).fetchone():
+            return ref
+        if len(ref) < MIN_ID_PREFIX:
+            return None
+        # substr rather than LIKE: ids are free text, and a "%" or "_" typed by the
+        # reader must not act as a wildcard.
+        rows = self._conn.execute(
+            "SELECT id FROM trials WHERE substr(id, 1, ?) = ? ORDER BY id LIMIT 6",
+            (len(ref), ref),
+        ).fetchall()
+        if len(rows) > 1:
+            raise AmbiguousTrialId(ref, [r[0] for r in rows])
+        return rows[0][0] if rows else None
 
     def get_trial(self, trial_id: str) -> Optional[Dict[str, Any]]:
         """Everything the store knows about one trial, or ``None`` if there is no

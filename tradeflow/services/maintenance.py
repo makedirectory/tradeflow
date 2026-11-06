@@ -63,6 +63,16 @@ def _resolve_journal(journal_path: Optional[Any]) -> Path:
     return Path(journal_path) if journal_path else audit.default_trial_journal()
 
 
+def resolve_trial_ids(typed: Iterable[str], journal_path: Optional[Any] = None) -> Dict[str, Optional[str]]:
+    """Each typed id (or unique prefix) to the full id it names, ``None`` where it names none.
+
+    Raises ``AmbiguousTrialId`` (a ``ValueError``) for a prefix more than one trial carries.
+    """
+    journal = _resolve_journal(journal_path)
+    with TrialStore(db_path_for_journal(journal), journal_path=journal) as store:
+        return {t: store.resolve_id(t) for t in typed}
+
+
 def select_trials(
     *,
     journal_path: Optional[Any] = None,
@@ -127,9 +137,11 @@ def mark_contaminated(
         raise ValueError("A quarantine needs a reason: an unexplained one cannot be judged later")
 
     journal = _resolve_journal(journal_path)
+    typed = [str(t) for t in (trial_ids or [])]
+    resolved = resolve_trial_ids(typed, journal) if typed else {}
     selected = select_trials(
         journal_path=journal,
-        trial_ids=trial_ids,
+        trial_ids=[full for full in resolved.values() if full] if typed else None,
         strategy=strategy,
         kind=kind,
         accounting=accounting,
@@ -137,8 +149,7 @@ def mark_contaminated(
     )
     # An id somebody typed is a claim that the trial exists; a filter matching nothing is
     # an answer. Only the first is a typo signal, so only it is reported back.
-    found = {r["id"] for r in selected}
-    payload_unmatched = [str(t) for t in (trial_ids or []) if str(t) not in found]
+    payload_unmatched = [t for t in typed if not resolved.get(t)]
     already = [r for r in selected if r.get("contaminated_at")]
     fresh = [r for r in selected if not r.get("contaminated_at")]
     ids = [r["id"] for r in fresh]
