@@ -7,6 +7,7 @@ ran. These pin that both signals take the same path.
 """
 
 import asyncio
+import logging
 import os
 import signal
 import sys
@@ -392,3 +393,67 @@ def test_a_non_runtime_error_is_not_swallowed(_restore_unraisablehook):
     boom = ValueError("no running event loop")  # right words, wrong type
 
     assert _hook_for(boom, _restore_unraisablehook) == [boom]
+
+
+# -- the exit itself must not be stoppable by the log it flushes ---------------------
+
+
+class _BrokenHandler(logging.Handler):
+    """A handler whose flush raises, as a stream caught mid-write by the signal does."""
+
+    def emit(self, record):
+        pass
+
+    def flush(self):
+        raise RuntimeError("reentrant call inside <_io.BufferedWriter name='<stderr>'>")
+
+
+@pytest.fixture
+def broken_handler():
+    handler = _BrokenHandler()
+    logging.getLogger().addHandler(handler)
+    yield handler
+    logging.getLogger().removeHandler(handler)
+
+
+def test_exit_now_exits_even_when_a_log_handler_cannot_flush(forced, broken_handler):
+    from tradeflow.utils.streaming import exit_now
+
+    exit_now(7)
+
+    assert forced == [7]
+
+
+def test_a_forced_stop_exits_even_when_a_log_handler_cannot_flush(forced, broken_handler):
+    for stop in _stop():
+        stop.request(signal.SIGTERM)
+        stop.request(signal.SIGTERM)
+
+    assert forced == [130]
+
+
+def test_exit_now_does_not_wait_forever_on_a_handler_whose_lock_is_held(forced, monkeypatch):
+    import threading
+
+    from tradeflow.utils import streaming
+
+    release = threading.Event()
+
+    class Stuck(logging.Handler):
+        def emit(self, record):
+            pass
+
+        def flush(self):
+            release.wait(30)
+
+    monkeypatch.setattr(streaming, "EXIT_FLUSH_TIMEOUT", 0.2)
+    handler = Stuck()
+    logging.getLogger().addHandler(handler)
+    try:
+        started = time.monotonic()
+        streaming.exit_now(3)
+        assert time.monotonic() - started < 5
+        assert forced == [3]
+    finally:
+        release.set()
+        logging.getLogger().removeHandler(handler)

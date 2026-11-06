@@ -112,11 +112,51 @@ def exit_now(code: int) -> None:
     keeping must already be on disk - this flushes what is buffered *here*, not what a
     caller forgot to write.
     """
-    logging.shutdown()
-    for stream in (sys.stdout, sys.stderr):
-        with contextlib.suppress(Exception):
-            stream.flush()
+    _flush_best_effort()
     _exit_process(code)
+
+
+#: How long :func:`exit_now` waits for buffered output before leaving anyway.
+EXIT_FLUSH_TIMEOUT = 2.0
+
+
+def _flush_best_effort() -> None:
+    """Flush every log handler and the std streams; never raise, never wait forever.
+
+    Each flush is guarded on its own, so one handler that raises (a stream caught
+    mid-write by the very signal that started the exit raises ``RuntimeError:
+    reentrant call``) cannot stop the rest or the exit that follows. It runs on a
+    daemon thread with a bounded join because a handler's flush takes that handler's
+    lock, and the stopped main thread may be holding it: waiting for it would turn
+    "a stop signal always ends the process" into "usually". Handlers are flushed, not
+    closed - the process is about to end, and closing is what ``logging.shutdown``
+    would re-raise from.
+    """
+
+    def work() -> None:
+        loggers = [logging.getLogger()]
+        with contextlib.suppress(Exception):
+            loggers += [
+                lg
+                for lg in list(logging.Logger.manager.loggerDict.values())
+                if isinstance(lg, logging.Logger)
+            ]
+        seen = set()
+        for lg in loggers:
+            for handler in list(lg.handlers):
+                if id(handler) in seen:
+                    continue
+                seen.add(id(handler))
+                with contextlib.suppress(Exception):
+                    handler.flush()
+        for stream in (sys.stdout, sys.stderr):
+            with contextlib.suppress(Exception):
+                stream.flush()
+
+    with contextlib.suppress(Exception):
+        flusher = threading.Thread(target=work, name="exit-flush", daemon=True)
+        flusher.start()
+        flusher.join(EXIT_FLUSH_TIMEOUT)
 
 
 class _Abandoned(Exception):

@@ -197,3 +197,31 @@ def test_a_client_that_vanishes_does_not_leave_a_traceback(server):
     assert code == 0
     _assert_clean(stderr)
     assert "client disconnected" in stderr
+
+
+def test_the_stop_path_exits_even_when_a_log_handler_cannot_flush(monkeypatch):
+    """In-process: ``stop_now`` ignores stop signals first, so a flush that raised
+    before the exit would leave a process nothing but SIGKILL could end."""
+    import logging
+
+    from tradeflow.mcp import server as mcp_server
+    from tradeflow.utils import streaming
+
+    class Broken(logging.Handler):
+        def emit(self, record):
+            pass
+
+        def flush(self):
+            raise RuntimeError("reentrant call")
+
+    exited = []
+    monkeypatch.setattr(streaming, "_exit_process", exited.append)
+    monkeypatch.setattr("signal.signal", lambda *a, **k: None)
+    handler = Broken()
+    logging.getLogger().addHandler(handler)
+    try:
+        mcp_server.stop_now("interrupted", 130)
+    finally:
+        logging.getLogger().removeHandler(handler)
+
+    assert exited == [130]
