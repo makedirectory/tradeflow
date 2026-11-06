@@ -10,6 +10,7 @@ import contextlib
 import hashlib
 import json
 import logging
+from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
@@ -3616,6 +3617,23 @@ def _journal_verdict(
         logger.warning("Verdict artifact could not be written; a rerun will recompute", exc_info=True)
 
 
+def _attribution_failure_note(periods: int, sampled: int, skipped: Counter) -> str:
+    """Say why attribution produced fewer than the 5 periods it needs.
+
+    Blaming "insufficient history" for every failure sent a user with 19 months of
+    data to look for more data when the real cause was a six-name universe.
+    """
+    head = f"Attribution needs >= 5 usable rebalances; {periods} of {sampled} sampled produced a period."
+    if not skipped:
+        if sampled < 5:
+            return (
+                head + f" The window is too short to sample 5 rebalances at this horizon ({sampled} sampled)."
+            )
+        return head
+    reasons = "; ".join(f"{n} x {why}" for why, n in skipped.most_common())
+    return f"{head} Skipped: {reasons}."
+
+
 def compute_attribution(
     data_client: MarketDataClient,
     strategy: str,
@@ -3728,6 +3746,7 @@ def compute_attribution(
     series: Dict[str, List[float]] = {name: [] for name in component_names}
     r_active_series, r_bench_series, beta_a_series, psi2_series, bench_vol_series = [], [], [], [], []
     gross_series: List[float] = []  # the paper book's gross per rebalance, for the level scale
+    skipped: Counter = Counter()  # why a sampled rebalance produced no period
 
     for j in points:
         t, t_fwd = window[j], window[j + horizon]
@@ -3735,12 +3754,14 @@ def compute_attribution(
         bars_t = {s: f for s, f in bars_t.items() if len(f) >= 2}
         bench_t = bench.loc[bench.index <= t]
         if len(bars_t) < 3 or bench_t.empty:
+            skipped["fewer than 3 names with history (or no benchmark bars) as of the rebalance"] += 1
             continue
 
         matrix = _build_covariance(
             risk_model, bars_t, bench_t, periods_per_year, min_obs, conditional, conditional_lambda
         )
         if matrix is None or len(matrix.symbols) < 3:
+            skipped["covariance not buildable on fewer than 3 names (too few overlapping bars)"] += 1
             continue
         # Trailing realized benchmark vol as of t (causal — no forward data) — the
         # regime label the predicted-vs-realized TE split buckets by.
@@ -3753,17 +3774,20 @@ def compute_attribution(
         raw_bench_w = load_benchmark_weights(benchmark_holdings, matrix.symbols)
         w_bench, _coverage = restrict_and_renormalize(raw_bench_w, matrix.symbols)
         if not w_bench:
+            skipped["no benchmark weights for the names with a covariance"] += 1
             continue
         beta_per_name = matrix.implied_beta(w_bench)
 
         alpha = _alpha_cross_section(universe_bars, bench, scorer, periods_per_year, t, ctx)
         z = alpha - alpha.mean()
         if z.std() == 0 or z.dropna().empty:
+            skipped["alpha cross-section had no spread (all scores equal or missing)"] += 1
             continue
         w_active = z / z.std()
 
         risk_x = build_factor_exposures(bars_t, bench_t, factors=risk_names)
         if risk_x.empty:
+            skipped["no factor exposures could be built"] += 1
             continue
 
         signal_cols = {own_signal_col: z}
@@ -3771,16 +3795,19 @@ def compute_attribution(
             signal_cols[name] = _signal_cross_section(bars_t, sc)
         signal_x = pd.DataFrame(signal_cols).dropna(how="any")
         if signal_x.empty:
+            skipped["no name had every signal column"] += 1
             continue
 
         r_raw = _forward_raw_return(universe_bars, t, t_fwd)
         bench_close = bench["close"]
         if t not in bench_close.index or t_fwd not in bench_close.index:
+            skipped["rebalance date missing from the benchmark series"] += 1
             continue
         r_bench = float(bench_close.loc[t_fwd] / bench_close.loc[t] - 1.0)
 
         result = attr.attribute_period(w_active, risk_x, r_raw, beta_per_name, r_bench, signal_x=signal_x)
         if result is None:
+            skipped["period regression was degenerate (attribute_period returned nothing)"] += 1
             continue
 
         series["systematic"].append(result.systematic)
@@ -3824,8 +3851,9 @@ def compute_attribution(
             "run_id": run_id,
             "strategy": strategy,
             "periods": periods,
-            "note": "Insufficient overlapping history for attribution (need >= 5 rebalances "
-            "with a buildable Σ, benchmark weights, and factor exposures).",
+            "rebalances_sampled": len(points),
+            "skipped_periods": dict(skipped),
+            "note": _attribution_failure_note(periods, len(points), skipped),
         }
 
     # T_eff-honest T0: the risk model's own min_obs, converted from

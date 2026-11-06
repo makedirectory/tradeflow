@@ -3021,8 +3021,6 @@ def cmd_info(args) -> None:
     """
     tuned = apply_run_config(args)
 
-    from tradeflow.services.analysis import compute_information
-
     data_client = build_research_data(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
 
     if getattr(args, "scaling_ab", False):
@@ -3034,9 +3032,17 @@ def cmd_info(args) -> None:
     if getattr(args, "policy_ab", False):
         _print_policy_ab(data_client, args)
         return
+    # --attribution adds to the IC report rather than replacing it: when attribution
+    # cannot be built the user still needs the IC report, and when it can, the IC
+    # report is what its t-stats are read against.
+    _print_information_report(args, tuned, data_client)
     if getattr(args, "attribution", False):
         _print_attribution_report(data_client, args)
-        return
+
+
+def _print_information_report(args, tuned, data_client) -> None:
+    """The IC / breadth / predicted-vs-realized IR report (`info`)."""
+    from tradeflow.services.analysis import compute_information
 
     r = compute_information(
         data_client,
@@ -3482,13 +3488,14 @@ def _maybe_print_attribution_verdict(
     """A compact attribution verdict appended to backtest/walk-forward output once
     there's enough history to trust it (the verdict line belongs
     on every backtest with >= 1 year of history, not gated behind a separate
-    `info --attribution` call). Silently skipped below a year or on insufficient data."""
+    `info --attribution` call). Skipped below a year; when it cannot be built it says why."""
     if (end - start).days < 365:
         return
     from tradeflow.services.analysis import compute_attribution
 
     r = compute_attribution(data_client, strategy, symbols, start, end, benchmark=benchmark, n_points=16)
     if not r.get("periods"):
+        print(f"\nAttribution verdict: not produced - {r.get('note', 'no periods')}")
         return
     print(
         f"\nAttribution verdict: IR {r['total_active_ir']:+.2f} ± {r['total_active_ir_se']:.2f} "
