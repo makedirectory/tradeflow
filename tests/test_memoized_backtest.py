@@ -135,3 +135,21 @@ def test_html_run_card_escapes_the_not_recorded_names():
     html = render_html(payload, "backtest")
     assert "<script>x</script>" not in html
     assert "&lt;script&gt;" in html
+
+
+def test_asking_the_cli_for_a_trade_table_is_not_answered_by_a_memo_without_one(client, monkeypatch, capsys):
+    """`--record-trades` over an identical trial that kept no table was served from the
+    memo, so nothing was recorded and the reader was told nothing was missing. The service
+    gained this rule with its own test; this is the CLI side of the same rule."""
+    from tradeflow.store.trials import TrialStore, db_path_for_journal
+
+    _cli_payload(monkeypatch, capsys)
+    argv = ["backtest", "--strategy", "demo_trend", "--scanner", "none", "--symbols", "AAA,BBB"]
+    args = main.build_parser().parse_args(argv + ["--start", START, "--end", END, "--record-trades"])
+    args.func(args)
+
+    journal = audit.DEFAULT_TRIAL_JOURNAL
+    with TrialStore(db_path_for_journal(journal), journal_path=journal) as store:
+        rows = store.list_trials(kind="backtest", limit=10, all_accounting=True)
+        assert len(rows) == 2
+        assert any(store.get_trial(r["id"]).get("trades") for r in rows)
