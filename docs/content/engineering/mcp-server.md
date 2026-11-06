@@ -81,6 +81,27 @@ package using the `tradeflow.strategies` or `tradeflow.scanners` entry-point gro
 the MCP server will discover it at startup and the normal named-strategy tools will
 work.
 
+### Stopping
+
+`serve()` owns the process's stop signals (`signal.signal`, not a loop handler: tool
+functions are synchronous and run on the loop's thread, so a loop callback would wait
+for the call in progress). The first SIGINT/SIGTERM ignores further ones, prints what
+stopping did (calls handled this session, where the journal is, that a request in
+progress was abandoned) and leaves through `utils.streaming.exit_now`, which flushes
+logging and the std streams and skips interpreter finalization.
+
+That last part is forced by the dependency, not chosen for tidiness: the SDK's stdio
+transport reads `sys.stdin.buffer` through `anyio.wrap_file`, i.e. a worker thread
+blocked in `read(2)` that cannot be cancelled or woken (closing the stream needs the
+buffer lock that read holds). Without the handler, one interrupt left `anyio.run`
+waiting forever, and interrupts during the resulting finalization aborted the
+interpreter with a fatal error about that lock - reproduced on 3.12 and 3.14 with a pipe
+and a pseudo-terminal as stdin. Leaving early is safe because the journal append closes
+its file and the trial index commits per write, so nothing finished is buffered. EOF
+(a client closing stdin) is untouched and returns normally; a client that vanishes
+mid-write surfaces as a broken pipe and is reported as a disconnect.
+`tests/test_mcp_shutdown.py` runs the real server through each of these.
+
 ### Pointing a client at it
 
 An installed copy needs no paths:

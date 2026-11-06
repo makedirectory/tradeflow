@@ -57,6 +57,25 @@ persistence (`save_config`, `load_config`, `list_configs`). Every call is logged
 to `logs/mcp_audit.jsonl`. There is **no** order, live-trading, or
 `PAPER_TRADE`-toggling tool — that absence is the safety model.
 
+### Stopping the server
+
+A server a client launched is the client's to stop: it closes the server's input and
+the server exits with status 0. A server you started by hand in a terminal stops on
+**one** Ctrl-C (or `SIGTERM`); further Ctrl-C presses during the stop are ignored.
+It exits with status 130 (143 for `SIGTERM`) and says what that did:
+
+```text
+MCP server stopped (interrupted). It handled 0 tool call(s) this session; trials
+already journaled are kept in <state root>/logs/research_journal.jsonl. A request in
+progress, if any, was not completed.
+```
+
+Every tool call appends to the journal before it returns, so stopping loses nothing
+that finished; only a request still running is abandoned. The server leaves without
+the interpreter's usual shutdown on purpose: the MCP SDK reads input on a thread that
+cannot be woken, and waiting for it is what used to hang a single Ctrl-C and abort
+the interpreter on a repeated one.
+
 ## Research agent
 
 `tradeflow research` runs the proposer loop and calls a model. It is not the same as

@@ -205,6 +205,9 @@ find out on a day you chose, not on the day you need it.
 - It does not stop the engine process. `Ctrl-C` or `SIGTERM` does that — see
   [stopping a session](live-trading.md#stopping-a-session). One signal is enough,
   and the exit reports what was still open.
+- It does not stop a terminal-launched MCP server beyond a single Ctrl-C, which
+  needs no halt: that server has no order path. See
+  [stopping the server](agents#stopping-the-server).
 - It does not undo fills. Slippage is real and irreversible.
 
 ## From a source checkout (contributors)

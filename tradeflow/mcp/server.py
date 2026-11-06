@@ -14,6 +14,7 @@ Run with ``tradeflow mcp`` when installed, or ``python main.py mcp`` from a chec
 
 import contextlib
 import logging
+import sys
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -306,6 +307,7 @@ def build_server(data_client=None):
 
     def _logged(tool: str, inputs: Dict[str, Any], result: Any) -> Any:
         run_id = result.get("run_id") if isinstance(result, dict) else None
+        _SESSION["tool_calls"] += 1
         audit_log(tool, inputs, run_id=run_id or new_run_id(), result_summary=_summary(result))
         return result
 
@@ -1941,10 +1943,93 @@ def _unknown_argument_message(name: str, unknown, declared) -> str:
     return "\n".join(lines)
 
 
+#: What this process has done, for the line it prints when it stops. A plain dict
+#: mutated in place: the count is read from a signal handler, which must not take a lock.
+_SESSION: Dict[str, int] = {"tool_calls": 0}
+
+
+def _client_gone(exc: BaseException) -> bool:
+    """True when every leaf of ``exc`` is the client's pipe having closed under us.
+
+    A client that exits without closing stdin first surfaces as a ``BrokenPipeError``
+    inside an exception group from the SDK's task group. That is a disconnect, not a
+    crash, and it should not print a traceback to someone who just closed a chat.
+    """
+    leaves = getattr(exc, "exceptions", None)
+    if leaves is not None:
+        return bool(leaves) and all(_client_gone(leaf) for leaf in leaves)
+    return isinstance(exc, (BrokenPipeError, ConnectionResetError))
+
+
+def _stop_line(why: str) -> str:
+    """The one line printed when the server stops, saying what that did and did not do.
+
+    Not the CLI's generic interrupt text, which says no trial was recorded - true of a
+    command interrupted part-way, false of a server that may have journaled trials all
+    session. Every tool call here appends to the journal before it returns, so work
+    already done is on disk and only a request in progress is lost.
+    """
+    from tradeflow.services.audit import default_trial_journal
+
+    n = _SESSION["tool_calls"]
+    return (
+        f"MCP server stopped ({why}). It handled {n} tool call(s) this session; trials "
+        f"already journaled are kept in {default_trial_journal()}. A request in progress, "
+        "if any, was not completed."
+    )
+
+
+def stop_now(why: str, code: int) -> None:
+    """Say what stopping did, then leave without interpreter finalization.
+
+    ``os._exit`` is deliberate, not tidy-minded: the SDK reads stdin on a worker thread
+    blocked in ``read(2)`` that nothing can cancel or wake, so ``anyio.run`` never
+    returns after an interrupt and, once it is forced out, finalization joins that
+    thread - hanging, or aborting the interpreter if interrupted again. Leaving
+    directly is the only exit that is bounded. Repeats are ignored first so a second
+    Ctrl-C cannot re-enter this.
+    """
+    import signal
+
+    from tradeflow.utils import streaming
+
+    for sig in streaming.STOP_SIGNALS:
+        try:
+            signal.signal(sig, signal.SIG_IGN)
+        except (ValueError, OSError):
+            pass
+    try:
+        sys.stderr.write(_stop_line(why) + "\n")
+    except Exception:  # noqa: BLE001 - a closed stderr must not stop the exit
+        pass
+    streaming.exit_now(code)
+
+
+def _install_stop_handlers() -> None:
+    """Route SIGINT/SIGTERM to :func:`stop_now` instead of the loop.
+
+    ``signal.signal``, not an event-loop handler: tool functions here are synchronous
+    and run on the loop's own thread, so a loop callback would not fire until the call
+    in progress returned. A no-op off the main thread, where signals cannot be set.
+    """
+    import signal
+    import threading
+
+    if threading.current_thread() is not threading.main_thread():
+        return
+    from tradeflow.utils import streaming
+
+    for sig in streaming.STOP_SIGNALS:
+        code = 128 + int(sig)
+        name = "interrupted" if sig == signal.SIGINT else "terminated"
+        signal.signal(sig, lambda _n, _f, _name=name, _code=code: stop_now(_name, _code))
+
+
 def serve() -> None:
     """Build the server and run it over stdio (what Claude Desktop/Code launch)."""
     # Said at startup, not on request: an agent driving these tools cannot see
     # where its evidence is landing, and every journaled trial is permanent.
+    from tradeflow.services.setup import invocation
     from tradeflow.settings import git_worktree_containing, state_root
 
     root = state_root()
@@ -1958,8 +2043,23 @@ def serve() -> None:
             worktree,
         )
 
-    logger.info("Starting TradeFlow MCP server (stdio). Live trading is NOT exposed.")
-    build_server().run()
+    logger.info(
+        "TradeFlow MCP server (stdio) is waiting for an MCP client on stdin/stdout. Live "
+        "trading is NOT exposed. Started by hand in a terminal it is attached to no chat: "
+        "a client launches its own copy (check the command with `%s`). Ctrl-C stops it.",
+        invocation("mcp --self-test"),
+    )
+    server = build_server()
+    _install_stop_handlers()
+    try:
+        server.run()
+    except KeyboardInterrupt:
+        # Only reachable where the handlers could not be installed (not the main thread).
+        stop_now("interrupted", 130)
+    except BaseException as exc:  # noqa: BLE001 - classified, and re-raised unless a disconnect
+        if not _client_gone(exc):
+            raise
+        stop_now("client disconnected", 0)
 
 
 def _assert_no_trading_client(data_client) -> None:

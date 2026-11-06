@@ -102,6 +102,23 @@ STOP_SIGNALS = (signal.SIGINT, signal.SIGTERM)
 _exit_process = os._exit
 
 
+def exit_now(code: int) -> None:
+    """Leave the process now: flush the log and both std streams, skip finalization.
+
+    For a process whose main thread is done but which cannot finalize: interpreter
+    exit joins non-daemon threads, and one blocked in a read on stdin can never be
+    woken (closing the stream needs the very lock that read holds), so a normal exit
+    hangs and a second interrupt during it aborts the interpreter. Everything worth
+    keeping must already be on disk - this flushes what is buffered *here*, not what a
+    caller forgot to write.
+    """
+    logging.shutdown()
+    for stream in (sys.stdout, sys.stderr):
+        with contextlib.suppress(Exception):
+            stream.flush()
+    _exit_process(code)
+
+
 class _Abandoned(Exception):
     """The stopped session outlasted its teardown budget and was left behind."""
 
@@ -148,10 +165,7 @@ class _Stop:
         keeps the process alive with no way left to interrupt it.
         """
         logger.error("%s", reason)
-        for stream in (sys.stdout, sys.stderr):
-            with contextlib.suppress(Exception):
-                stream.flush()
-        _exit_process(code)
+        exit_now(code)
 
     def arm_watchdog(self) -> None:
         """A last resort that does not depend on the event loop being alive.
