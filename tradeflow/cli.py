@@ -1834,6 +1834,10 @@ def _print_promotion_prerequisites(data_client, args, result, universe, bootstra
             args.end,
             config=dict(chosen),
             capital=args.capital,
+            # The walk-forward's own benchmark, or none: the stress judges Sharpe and
+            # return, and the service's SPY default fetched a symbol nobody asked for -
+            # offline, a miss that degraded every stressed run with a warning.
+            benchmark=getattr(args, "benchmark", None),
             commission_bps=args.commission_bps,
             impact_eta=args.impact_eta,
             borrow_bps=args.borrow_bps,

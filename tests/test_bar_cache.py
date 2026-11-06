@@ -601,3 +601,30 @@ def test_warm_reports_already_cached_on_second_call(tmp_path):
 
     second = cached.warm(["AAA"], "1Day", start, end)
     assert second["AAA"]["already_cached"] is True
+
+
+def test_a_walk_forward_without_a_benchmark_does_not_stress_against_one(tmp_path, monkeypatch, caplog):
+    """The cost stress after a walk-forward fell back to the service's SPY default, so a
+    run that asked for no benchmark fetched one anyway; offline, each stressed run then
+    logged that SPY was unavailable after a warm that had covered everything asked for."""
+    import logging
+
+    cache_dir = tmp_path / "bars"
+    argv = [
+        "walkforward",
+        "--strategy",
+        "demo_trend",
+        "--scanner",
+        "none",
+        "--folds",
+        "2",
+        "--max-evals",
+        "2",
+        *_WINDOW,
+    ]
+    first = _offline_command(monkeypatch, cache_dir, argv)
+    assert "SPY" not in first.missing
+    _warm_from(first, cache_dir, symbols=[*SYMBOLS, "SPY"])
+    with caplog.at_level(logging.WARNING):
+        assert _offline_command(monkeypatch, cache_dir, argv) is None
+    assert "Benchmark SPY unavailable" not in caplog.text
