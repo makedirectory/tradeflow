@@ -228,9 +228,10 @@ def test_the_stop_path_exits_even_when_a_log_handler_cannot_flush(monkeypatch):
     assert exited == [130]
 
 
-def test_a_server_that_cannot_start_does_not_claim_to_be_waiting(tmp_path, monkeypatch):
-    """The waiting line is printed once the build succeeded: a process that is about to
-    exit for missing credentials is waiting for nothing."""
+def test_a_keyless_server_starts_and_says_it_is_waiting(tmp_path, monkeypatch):
+    """Missing credentials used to stop the server before it answered, so it did not claim
+    to be waiting. Bars are built lazily now: a keyless server really is waiting for a
+    client, serves the tools that need no market data, and ends cleanly when stdin closes."""
     monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
     monkeypatch.setenv("APCA_API_KEY_ID", "")
     monkeypatch.setenv("APCA_API_SECRET_KEY", "")
@@ -244,9 +245,9 @@ def test_a_server_that_cannot_start_does_not_claim_to_be_waiting(tmp_path, monke
         if child.poll() is None:
             child.kill()
             child.wait()
-    assert child.returncode != 0
-    assert "Missing" in stderr or "credentials" in stderr.lower()
-    assert "waiting for an MCP client" not in stderr
+    assert child.returncode == 0
+    assert "Missing" not in stderr
+    assert "waiting for an MCP client" in stderr
 
 
 def test_the_stop_line_counts_the_tool_calls_the_session_handled(server):
