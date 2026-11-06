@@ -187,15 +187,15 @@ $ make demo
 2) Walk-forward validation of 'demo_trend' (the honest scorecard)
    Optimize in-sample, score out-of-sample across folds, then gate it.
 
-   OOS Sharpe (median): -0.26   efficiency (OOS/IS): -0.17   OOS trades: 25
+   OOS Sharpe (median): -0.27   efficiency (OOS/IS): -0.19   OOS trades: 25
 
    Promotion gates:
-     [FAIL] oos_sharpe:                  -0.26  (threshold 1.20)
+     [FAIL] oos_sharpe:                  -0.27  (threshold 1.20)
      [FAIL] oos_profit_factor:            0.74  (threshold 1.30)
-     [FAIL] walk_forward_efficiency:     -0.17  (threshold 0.40)
-     [PASS] oos_drawdown_vs_is:          10.59  (threshold 13.94)
+     [FAIL] walk_forward_efficiency:     -0.19  (threshold 0.40)
+     [PASS] oos_drawdown_vs_is:         10.59%  (threshold 15.41%)
      [FAIL] min_oos_trades:                 25  (threshold 100)
-     [FAIL] deflated_sharpe:              0.00  (threshold 0.50)
+     [FAIL] deflated_sharpe:            <0.001  (threshold 0.500)
 
    Verdict: NOT promotable
 
@@ -242,9 +242,9 @@ $ make demo-agent
        [PASS] oos_sharpe                     1.39   threshold 1.00
        [PASS] oos_profit_factor              1.92   threshold 1.30
        [PASS] walk_forward_efficiency        0.76   threshold 0.40
-       [FAIL] oos_drawdown_vs_is             0.18   threshold 0.09
+       [FAIL] oos_drawdown_vs_is           18.40%   threshold 13.50%
        [FAIL] min_oos_trades                   52   threshold 100
-       [PASS] deflated_sharpe                0.58   threshold 0.50
+       [PASS] deflated_sharpe               0.580   threshold 0.500
      Verdict     NOT promotable — discarded
 ```
 
