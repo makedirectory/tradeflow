@@ -470,6 +470,7 @@ def _service_params(fn):
         ("construct_portfolio", "construct_portfolio"),
         ("compute_alphas", "compute_alphas"),
         ("compute_attribution", "compute_attribution"),
+        ("run_verdict", "run_verdict"),
     ],
 )
 def test_every_service_knob_is_exposed_or_deliberately_deferred(built, tool_name, service_name):
@@ -489,7 +490,8 @@ def test_every_service_knob_is_exposed_or_deliberately_deferred(built, tool_name
 
     exposed = _tool_params(built, tool_name)
     service = _service_params(getattr(analysis, service_name))
-    unreachable = service - exposed - set(mcp_server.DEFERRED_PARAMS)
+    withheld = set(mcp_server.WITHHELD_PARAMS.get(tool_name, {}))
+    unreachable = service - exposed - set(mcp_server.DEFERRED_PARAMS) - withheld
 
     assert not unreachable, (
         f"{tool_name} cannot set {sorted(unreachable)}.\n"
@@ -535,7 +537,9 @@ def test_the_deferred_knobs_are_absent_from_every_registered_tool(built):
 
     for tool in asyncio.run(built.list_tools()):
         params = set((tool.inputSchema.get("properties") or {}).keys())
-        leaked = params & set(mcp_server.DEFERRED_PARAMS)
+        leaked = params & (
+            set(mcp_server.DEFERRED_PARAMS) | set(mcp_server.WITHHELD_PARAMS.get(tool.name, {}))
+        )
         assert not leaked, f"{tool.name} exposes deferred knob(s) {sorted(leaked)}"
 
 
@@ -943,3 +947,70 @@ def test_the_refusal_says_the_call_did_not_run(built):
 
     assert "Refused rather than ignored" in message
     assert "believing it was applied" in message
+
+
+# --- run_verdict: the allocation knobs an infeasible verdict tells the caller to change ---
+def test_a_verdict_knob_actually_reaches_the_service(monkeypatch):
+    """An infeasible verdict names `max_weight`/`max_names` as the way out. A parameter
+    in the schema that the forwarding dict drops would leave an agent re-running the same
+    infeasible book and being told, each time, to change a knob it already changed."""
+    from tradeflow.services import analysis
+
+    seen = {}
+    monkeypatch.setattr(analysis, "run_verdict", lambda *a, **k: seen.update(k) or {"ok": True})
+    built = mcp_server.build_server(
+        data_client=MarketDataClient(FakeMarketData([*SYMBOLS, "SPY"], n=200, freq="1D"))
+    )
+
+    asyncio.run(
+        built.call_tool(
+            "run_verdict",
+            {
+                "strategy": "demo_trend",
+                "symbols": SYMBOLS,
+                "start": "2024-01-02",
+                "end": "2025-06-01",
+                "max_weight": 0.5,
+                "max_names": 4,
+                "lookback_days": 200,
+                "neutralize_factors": ["market"],
+                "participation_cap": 0.05,
+                "n_points": 12,
+            },
+        )
+    )
+
+    assert seen["max_weight"] == 0.5
+    assert seen["max_names"] == 4
+    assert seen["lookback_days"] == 200
+    assert seen["neutralize_factors"] == ["market"]
+    assert seen["participation_cap"] == 0.05
+    assert seen["n_points"] == 12
+
+
+def test_an_omitted_verdict_knob_is_not_forwarded_at_all(monkeypatch):
+    from tradeflow.services import analysis
+
+    seen = {}
+    monkeypatch.setattr(analysis, "run_verdict", lambda *a, **k: seen.update(k) or {"ok": True})
+    built = mcp_server.build_server(
+        data_client=MarketDataClient(FakeMarketData([*SYMBOLS, "SPY"], n=200, freq="1D"))
+    )
+
+    asyncio.run(
+        built.call_tool(
+            "run_verdict",
+            {"strategy": "demo_trend", "symbols": SYMBOLS, "start": "2024-01-02", "end": "2025-06-01"},
+        )
+    )
+
+    for absent in ("max_weight", "max_names", "lookback_days", "neutralize_factors", "participation_cap"):
+        assert absent not in seen, f"{absent} was forwarded despite not being set"
+    assert "n_points" not in seen
+
+
+def test_the_verdict_description_names_the_infeasible_verdict_and_its_recovery(built):
+    description = _tools(built)["run_verdict"].description
+    assert "infeasible" in description
+    assert "max_weight" in description
+    assert "more dates" in description.lower()

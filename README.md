@@ -86,7 +86,8 @@ tradeflow init                          # your free Alpaca paper keys, and optio
                                         # provider for `research` (skipping it is fine)
 tradeflow init --check                  # what is ready, for which task, and the next step
 tradeflow init --probe-model --provider anthropic   # optional: one tiny billed request
-tradeflow verdict --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-31
+tradeflow verdict --scanner none --symbols AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,JPM,XOM,UNH,COST,WMT \
+    --start 2024-01-01 --end 2024-12-31
 claude mcp add tradeflow -- tradeflow mcp   # connect an MCP client; it launches the server
 tradeflow mcp --self-test               # confirm discovery works without a chat client
 ```

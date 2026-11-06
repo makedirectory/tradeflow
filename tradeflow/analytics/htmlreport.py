@@ -317,6 +317,14 @@ def _warnings_block(result: Dict[str, Any], kind: str) -> str:
                 level="fail",
             )
         )
+    if verdict.get("verdict") == "infeasible":
+        banners.append(
+            _warning(
+                "INFEASIBLE — no book satisfies the constraints. More dates will not change this; "
+                "widen the universe or change the caps explicitly.",
+                level="fail",
+            )
+        )
     failed = [name for name, c in (verdict.get("checks") or {}).items() if not c.get("passed")]
     if failed:
         banners.append(_warning("Gate failures: " + ", ".join(sorted(failed)), level="fail"))
@@ -394,6 +402,7 @@ def _verdict_sections(result: Dict[str, Any], extras: Dict[str, Any]) -> List[st
         "needs more data": "warn",
         "mixed": "warn",
         "incomplete": "fail",
+        "infeasible": "fail",
     }.get(verdict.get("verdict"), "warn")
     out.append(
         _card(

@@ -80,6 +80,27 @@ class PortfolioResult:
     unconstrained_weights: Dict[str, float] = field(default_factory=dict)
 
 
+def long_only_cap_shortfall(n_names: int, max_weight: float, max_names: Optional[int]) -> Optional[str]:
+    """``None`` if a fully invested long-only book can be funded under these caps,
+    otherwise the binding-constraint text.
+
+    A fully invested book needs weights summing to 1, and at most
+    ``min(max_names or n_names, n_names)`` names may each carry at most ``max_weight``.
+    This is the **necessary** condition only: it cannot see a solve that fails for
+    some other reason (a singular risk matrix, a benchmark-relative constraint), so
+    ``None`` means "the caps alone do not rule it out", not "a book exists".
+
+    One definition on purpose: the optimizer refuses with this text, and the verdict
+    preflight asks the same question before spending the expensive steps on a book
+    that could never be funded. Two copies would let the preflight and the solver
+    disagree about the same universe.
+    """
+    k_cap = min(max_names or n_names, n_names)
+    if k_cap * max_weight < 1.0 - 1e-9:
+        return f"max_weight*{k_cap} < 1 (cardinality/weight cap can't fund the book)"
+    return None
+
+
 class MeanVarianceOptimizer:
     """Maximize ``αᵀw − λ·wᵀΣw − cost(w − w₀)`` over long-only, box, budgeted weights."""
 
@@ -187,13 +208,9 @@ class MeanVarianceOptimizer:
 
         if book == "long_only":
             # Cardinality + box can make the budget unreachable: name the binding bound.
-            k_cap = min(self.max_names or n, n)
-            if k_cap * self.max_weight < 1.0 - 1e-9:
-                return PortfolioResult(
-                    weights={},
-                    feasible=False,
-                    binding_constraint=f"max_weight*{k_cap} < 1 (cardinality/weight cap can't fund the book)",
-                )
+            shortfall = long_only_cap_shortfall(n, self.max_weight, self.max_names)
+            if shortfall is not None:
+                return PortfolioResult(weights={}, feasible=False, binding_constraint=shortfall)
 
         sigma_inv = np.linalg.inv(sigma)
 

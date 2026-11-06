@@ -101,8 +101,15 @@ optional extras are installed — and writes nothing.
 ## 4. Your first real result
 
 ```bash
-tradeflow verdict --symbols NVDA,AAPL,META,AMD,TSLA --start 2024-01-01 --end 2024-12-31
+tradeflow verdict --scanner none --symbols AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,JPM,XOM,UNH,COST,WMT \
+    --start 2024-01-01 --end 2024-12-31
 ```
+
+Twelve names and no scanner is deliberate: a long-only book capped at 25% per name
+needs at least four names to be fully invested, and a scanner may flag fewer than
+that, in which case the verdict is `infeasible` (see
+[reading the verdict](verdict#an-infeasible-book)). The list is a usability example —
+well-known, liquid names — not a validated universe.
 
 One command runs the whole cross-sectional pipeline — scan, alphas, portfolio
 construction, information analysis — over one universe, one window, and one cost
@@ -123,7 +130,8 @@ value and its threshold, so you can see exactly which part failed:
 Want it as a file you can keep or share?
 
 ```bash
-tradeflow verdict --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-31 --html result.html
+tradeflow verdict --scanner none --symbols AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,JPM,XOM,UNH,COST,WMT \
+    --start 2024-01-01 --end 2024-12-31 --html result.html
 ```
 
 That writes one self-contained page — charts embedded, no external requests when
@@ -157,8 +165,8 @@ Restart the client and ask it something:
 
 > *What has this campaign already tried, and what was the best result?*
 >
-> *Run a verdict on NVDA, AAPL and META for 2024 and tell me honestly whether there's
-> an edge.*
+> *Run a verdict on twelve large US stocks for 2024, with no scanner, and tell me
+> honestly whether there's an edge.*
 >
 > *Explain what the deflated Sharpe ratio is correcting for.*
 

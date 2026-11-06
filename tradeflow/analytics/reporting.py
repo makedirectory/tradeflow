@@ -581,6 +581,11 @@ def _verdict_banner_lines(result: Dict[str, Any]) -> list:
         lines.append(f"    [{'PASS' if passed else 'FAIL'}] {name}: {detail}{note}")
     if verdict.get("verdict") == "incomplete":
         lines.append("    No verdict is offered for a partial run — do not act on the sections above.")
+    if verdict.get("verdict") == "infeasible":
+        lines.append(
+            "    The constraints, not the data, are what failed: change the universe or the caps "
+            "(--max-weight, --max-names) yourself - nothing was relaxed for you."
+        )
     lines.append("")
     return lines
 

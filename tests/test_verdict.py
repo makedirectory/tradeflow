@@ -148,6 +148,7 @@ def test_verdict_vocabulary_is_one_of_the_house_terms():
         "not promotable",
         "needs more data",
         "mixed",
+        "infeasible",
         "incomplete",
     }
 
@@ -222,6 +223,168 @@ def test_low_sample_reads_as_needs_more_data():
     # A spectacular IC over three rebalances is not a promotion, whatever it says.
     assert gates["verdict"] == "needs more data"
     assert gates["promotable"] is False
+
+
+# --- an unfundable book -------------------------------------------------------
+THREE = ["AAA", "BBB", "CCC"]
+
+
+def _run_three(**kwargs):
+    """Three names at the default 25% cap: three of them can carry at most 75%."""
+    client = MarketDataClient(FakeMarketData([*THREE, "SPY"], n=600, freq="1D"))
+    return analysis.run_verdict(client, "demo_trend", THREE, START, END, scanner="none", **kwargs)
+
+
+def test_an_infeasible_book_is_the_headline_not_more_data():
+    result = _run_three()
+
+    assert result["verdict"]["verdict"] == "infeasible"
+    assert result["verdict"]["promotable"] is False
+    assert "max_weight*3 < 1" in result["verdict"]["summary"]
+    assert "More dates will not change this" in result["verdict"]["summary"]
+    assert result["steps"]["information"]["status"] == "skipped"
+    assert result["portfolio"]["feasible"] is False
+    assert result["portfolio"]["binding_constraint"].startswith("max_weight*3")
+    report = format_verdict_report(result)
+    assert "VERDICT: infeasible" in report
+    assert "needs more data" not in report
+
+
+def test_the_preflight_does_not_run_the_expensive_steps(monkeypatch):
+    def boom(*args, **kwargs):
+        raise AssertionError("an unfundable book must not reach this step")
+
+    for name in ("compute_alphas", "compute_combined_alphas", "construct_portfolio", "compute_information"):
+        monkeypatch.setattr(analysis, name, boom)
+
+    result = _run_three(signals=["demo_trend", "demo_trend"])
+
+    assert result["verdict"]["verdict"] == "infeasible"
+    for step in ("alphas", "combination", "portfolio", "information"):
+        assert result["steps"][step]["status"] == "skipped"
+        assert "allocation preflight" in result["steps"][step]["reason"]
+    # Skipped is not failed: an infeasible run is a complete answer, not a partial one.
+    assert result["verdict"]["failed_steps"] == []
+
+
+def test_a_feasible_book_with_no_observations_still_needs_more_data():
+    """The boundary twin: four names at 25% can be fully invested, so a verdict that
+    measured nothing is a data problem and must still say so."""
+    names = [*THREE, "DDD"]
+    client = MarketDataClient(FakeMarketData([*names, "SPY"], n=600, freq="1D"))
+    gates = analysis._verdict_gates(
+        {
+            "steps": {"portfolio": {"status": "ok"}, "information": {"status": "ok"}},
+            "information": {"periods": 0},
+            "portfolio": {"feasible": True, "diagnostics": {"expected_active_return_net": 0.05}},
+        }
+    )
+    assert gates["verdict"] == "needs more data"
+
+    result = analysis.run_verdict(client, "demo_trend", names, START, END, scanner="none")
+    assert result["portfolio"]["feasible"] is True
+    assert result["verdict"]["verdict"] != "infeasible"
+
+
+def test_caps_are_never_relaxed():
+    result = _run_three()
+    assert result["inputs"]["max_weight"] == 0.25
+    assert result["inputs"]["max_names"] is None
+
+    wide = _run_three(max_weight=0.5, force=True)
+    assert wide["inputs"]["max_weight"] == 0.5
+    assert wide["verdict"]["verdict"] != "infeasible"
+    assert wide["portfolio"]["feasible"] is True
+
+
+def test_a_book_that_fails_after_the_preflight_is_still_infeasible(monkeypatch):
+    """Alphas can drop names, so the caps can pass the preflight and the solve fail.
+    The headline must not depend on which of the two caught it."""
+
+    def refuses(*args, **kwargs):
+        return {"feasible": False, "binding_constraint": "synthetic solver refusal", "weights": {}}
+
+    monkeypatch.setattr(analysis, "construct_portfolio", refuses)
+    monkeypatch.setattr(
+        analysis, "compute_information", lambda *a, **k: pytest.fail("information must be skipped")
+    )
+
+    result = _run()
+
+    assert result["verdict"]["verdict"] == "infeasible"
+    assert "synthetic solver refusal" in result["verdict"]["summary"]
+    assert result["steps"]["information"]["status"] == "skipped"
+
+
+def test_the_cap_check_has_one_definition():
+    """The optimizer and the verdict preflight must agree on every (n, w, k), so build
+    the verdict both ways and compare against the optimizer rather than asserting each."""
+    import numpy as np
+
+    from tradeflow.alphas.base import Alpha
+    from tradeflow.portfolio.optimizer import MeanVarianceOptimizer, long_only_cap_shortfall
+    from tradeflow.risk.base import RiskMatrix
+
+    for n in (1, 3, 4, 5, 8):
+        for weight in (0.1, 0.25, 0.34, 0.5, 1.0):
+            for k in (None, 1, 2, 4, 20):
+                symbols = [f"S{i}" for i in range(n)]
+                optimizer = MeanVarianceOptimizer(max_weight=weight, max_names=k)
+                alphas = [
+                    Alpha(sym, 0.01 * (i + 1), START, residual_vol=0.2, ic=0.03, raw_z=1.0)
+                    for i, sym in enumerate(symbols)
+                ]
+                risk = RiskMatrix(symbols=symbols, sigma=np.eye(n) * 0.04)
+                result = optimizer.optimize(alphas, risk, target_te=0.04)
+                shortfall = long_only_cap_shortfall(n, weight, k)
+                if shortfall is not None:
+                    assert result.feasible is False
+                    assert result.binding_constraint == shortfall
+                else:
+                    assert result.binding_constraint is None or "max_weight*" not in result.binding_constraint
+
+
+def test_the_starter_shape_is_feasible_and_measured():
+    """The documented first example: about a dozen names and no scanner. Three names
+    could not fund a book; this shape can, and it measures rebalances."""
+    names = [f"SYM{i:02d}" for i in range(12)]
+    client = MarketDataClient(FakeMarketData([*names, "SPY"], n=600, freq="1D"))
+
+    result = analysis.run_verdict(client, "demo_trend", names, START, END, scanner="none")
+
+    assert result["portfolio"]["feasible"] is True
+    assert "ic_tstat" in result["verdict"]["checks"]
+    assert result["verdict"]["verdict"] not in {"infeasible", "needs more data", "incomplete"}
+
+
+def test_a_participation_cap_is_part_of_the_runs_identity():
+    """The cap is now settable from both surfaces and prices the book's trading cost,
+    so two runs differing only in it must not be served as one memoized trial."""
+    first = _run()
+    second = _run(participation_cap=0.05)
+
+    assert second["memoized"] is False
+    assert second["inputs"]["participation_cap"] == 0.05
+    assert first["inputs"]["participation_cap"] == 0.10
+
+
+def test_a_real_infeasible_result_renders_in_every_reader():
+    """The renderers were written for a run whose sections all exist. An infeasible one
+    has no alphas and no information, and must still render rather than crash."""
+    from tradeflow.analytics.htmlreport import render_html
+
+    result = _run_three()
+    document = render_html(json.loads(json.dumps(result)), "verdict")
+    assert "INFEASIBLE" in document
+    assert "VERDICT: infeasible" in format_verdict_report(result)
+
+
+def test_an_infeasible_run_is_journaled_once_with_its_verdict(_isolated_state):
+    _run_three()
+    rows = [r for r in _journal_rows(_isolated_state) if r.get("tool", "").startswith("trial:")]
+    assert len(rows) == 1
+    assert rows[0]["verdict"] == "infeasible"
+    assert rows[0]["promotable"] is False
 
 
 # --- journaling and memoization ---------------------------------------------

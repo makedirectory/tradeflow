@@ -716,3 +716,143 @@ def test_a_promoted_config_finds_the_recipe_in_a_redirected_journal(tmp_path, mo
     recipe = json.loads(out.read_text())["provenance"]["campaign"]["recipe"]
     assert recipe["available"] is True
     assert recipe["validation"]["train_days"] == 252
+
+
+# --- verdict: an infeasible answer is only useful if both surfaces can act on it ---------
+def _verdict_parser():
+    from tradeflow.cli import build_parser
+
+    return next(
+        parser
+        for action in build_parser()._subparsers._group_actions
+        for name, parser in action.choices.items()
+        if name == "verdict"
+    )
+
+
+#: Flags that are transport-shaped rather than run-shaped, each with the reason it has no
+#: counterpart. Kept to input/output plumbing: a knob a run is configured with never
+#: belongs here, because this table is the loophole in the test that reads it.
+_VERDICT_CLI_ONLY = {
+    "json": "where the CLI writes its structured result; MCP returns the object itself",
+    "html": "MCP renders through the separate render_report tool",
+    "cache": "how the CLI got its bars",
+    "offline": "how the CLI got its bars",
+    "cache_dir": "how the CLI got its bars",
+    "config": "the CLI's saved-config layering; an agent passes the values themselves",
+    "re_resolve_universe": "part of the same saved-config layering: it re-derives --symbols from a config",
+    "no_journal": "withheld on MCP on purpose - see mcp.server.WITHHELD_PARAMS",
+}
+#: Two spellings that reach the same service argument.
+_VERDICT_RENAMED = {"combine": "signals"}
+
+
+def test_every_verdict_flag_the_cli_takes_has_an_mcp_counterpart():
+    """Enumerated from the parser, so a recovery knob added to one surface and not the
+    other fails here. An `infeasible` verdict tells the caller to change a cap; a surface
+    that cannot is a dead end that looks like an answer."""
+    dests = {a.dest for a in _verdict_parser()._actions} - {"help", "func"} - set(_VERDICT_CLI_ONLY)
+    mcp_names = _parameter_names(_mcp_signature("run_verdict"))
+
+    missing = {_VERDICT_RENAMED.get(dest, dest) for dest in dests} - mcp_names
+    assert missing == set(), f"MCP run_verdict is missing {sorted(missing)}"
+
+
+def test_every_verdict_exclusion_has_a_reason_and_names_a_real_flag():
+    dests = {a.dest for a in _verdict_parser()._actions}
+    assert set(_VERDICT_CLI_ONLY) - dests == set(), "an exclusion names a flag the CLI no longer has"
+    assert all(reason.strip() for reason in _VERDICT_CLI_ONLY.values())
+
+
+def test_the_verdict_defaults_are_the_services_on_both_surfaces():
+    """Identical construction is not parity if the callers reach it with different
+    arguments. The CLI states its defaults literally, so read them against the service's
+    own signature rather than restating them here."""
+    import inspect
+
+    from tradeflow.services import analysis
+
+    service = inspect.signature(analysis.run_verdict).parameters
+    cli_defaults = {a.dest: a.default for a in _verdict_parser()._actions}
+    for knob in (
+        "max_weight",
+        "max_names",
+        "lookback_days",
+        "participation_cap",
+        "n_points",
+        "target_te",
+        "horizon",
+        "risk_model",
+        "commission_bps",
+        "impact_eta",
+        "borrow_bps",
+    ):
+        assert cli_defaults[knob] == service[knob].default, knob
+
+
+def test_cli_and_mcp_agree_on_an_infeasible_verdict(monkeypatch, tmp_path):
+    """The same three-name book over both surfaces: one verdict, one binding constraint,
+    and the same caps recorded in the result's inputs."""
+    import asyncio
+    import json
+
+    pytest.importorskip("mcp", reason="the MCP surface needs the 'mcp' extra")
+    from tests.fakes import FakeMarketData
+    from tradeflow import cli as main
+    from tradeflow.marketdata.client import MarketDataClient
+    from tradeflow.mcp import server as mcp_server
+    from tradeflow.services import analysis, audit
+
+    monkeypatch.setattr(analysis, "ARTIFACT_DIR", tmp_path / "artifacts")
+    monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", tmp_path / "journal.jsonl")
+    monkeypatch.setattr(audit, "DEFAULT_AUDIT_PATH", tmp_path / "audit.jsonl")
+    names = ["AAA", "BBB", "CCC"]
+    client = MarketDataClient(FakeMarketData([*names, "SPY"], n=600, freq="1D"))
+    monkeypatch.setattr(main, "build_data_and_broker", lambda **kwargs: (None, client))
+
+    out = tmp_path / "cli.json"
+    args = main.build_parser().parse_args(
+        [
+            "verdict",
+            "--scanner",
+            "none",
+            "--symbols",
+            ",".join(names),
+            "--start",
+            "2024-01-02",
+            "--end",
+            "2025-06-01",
+            "--no-journal",
+            "--json",
+            str(out),
+        ]
+    )
+    args.func(args)
+    cli_result = json.loads(out.read_text())
+
+    built = mcp_server.build_server(data_client=client)
+    content = asyncio.run(
+        built.call_tool(
+            "run_verdict",
+            {
+                "strategy": "demo_trend",
+                "symbols": names,
+                "start": "2024-01-02",
+                "end": "2025-06-01",
+                "scanner": "none",
+            },
+        )
+    )
+    if isinstance(content, tuple):
+        content = content[0]
+    mcp_result = json.loads(content[0].text)
+
+    assert cli_result["verdict"]["verdict"] == mcp_result["verdict"]["verdict"] == "infeasible"
+    assert cli_result["verdict"]["summary"] == mcp_result["verdict"]["summary"]
+    assert cli_result["portfolio"]["binding_constraint"] == mcp_result["portfolio"]["binding_constraint"]
+    for key in ("max_weight", "max_names", "lookback_days", "n_points", "participation_cap", "capital"):
+        assert cli_result["inputs"][key] == mcp_result["inputs"][key], key
+    # Dates, not instants: the CLI parses a date in the exchange zone and the MCP tool
+    # naively, which is a difference that predates and is separate from this check.
+    for edge in ("start", "end"):
+        assert cli_result["inputs"]["window"][edge][:10] == mcp_result["inputs"]["window"][edge][:10]

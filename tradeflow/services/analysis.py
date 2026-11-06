@@ -2498,6 +2498,14 @@ def run_verdict(
     compute (the IC t-stat and its band, the sanity ceiling, expected active return
     net of cost), never from a fresh heuristic invented for the summary.
 
+    A book the caps cannot fund is not a data problem. The cap check the optimizer
+    itself makes runs right after the universe is resolved; when it fails the later
+    steps are skipped (reported as skipped, with the reason) and the verdict is
+    ``infeasible`` with the binding constraint - ahead of ``needs more data``, which
+    would wrongly suggest that more dates could help. The caps are never relaxed on
+    the caller's behalf: the way out is a wider universe or an explicit change to
+    ``max_weight`` / ``max_names``.
+
     The whole composite journals as **one** trial (kind ``verdict``), not one per
     step - five journal rows per run would inflate a campaign's multiple-testing
     total five-fold. An identical prior run is served from the trial store instead
@@ -2509,6 +2517,7 @@ def run_verdict(
     """
     from tradeflow.engine.backtest import ACCOUNTING_VERSION
     from tradeflow.marketdata.session import session_client
+    from tradeflow.portfolio.optimizer import long_only_cap_shortfall
 
     run_id = new_run_id()
     signal_list = [s for s in (signals or []) if s]
@@ -2525,6 +2534,11 @@ def run_verdict(
         "horizon": horizon,
         "risk_model": risk_model,
         "target_te": target_te,
+        "max_weight": max_weight,
+        "max_names": max_names,
+        "lookback_days": lookback_days,
+        "n_points": n_points,
+        "participation_cap": participation_cap,
         "neutralize_factors": list(neutralize_factors),
         "cost": _cost_key(gross, commission_bps, impact_eta, borrow_bps),
     }
@@ -2547,6 +2561,7 @@ def run_verdict(
             "max_weight": max_weight,
             "max_names": max_names,
             "lookback_days": lookback_days,
+            "participation_cap": participation_cap,
             "neutralize_factors": sorted(neutralize_factors),
             "capital": capital,
         },
@@ -2612,92 +2627,121 @@ def run_verdict(
     result["scan"] = scan
     inputs["universe"] = universe
 
-    # 2. The forecast: one signal refined, or several combined.
-    result["alphas"] = _step(
-        "alphas",
-        lambda: compute_alphas(
-            client,
-            strategy,
-            universe,
-            end,
-            config=config,
-            source=source,
-            scanner=scanner,
-            benchmark=benchmark,
-            neutralize_factors=neutralize_factors,
-            lookback_days=lookback_days,
-            timeframe=timeframe,
-        ),
-    )
-    if len(signal_list) > 1:
-        result["combination"] = _step(
-            "combination",
-            lambda: compute_combined_alphas(
+    # 1b. Can the caps fund a long-only book from this universe at all? Answering that
+    #     now saves the expensive steps, and - more to the point - tells the user the
+    #     binding constraint instead of letting an unfundable book surface later as a
+    #     bare "no measurable rebalances", which more dates cannot fix. The caps are
+    #     reported, never relaxed. ``construct_portfolio`` builds a long-only book by
+    #     default and this run passes no other.
+    shortfall = long_only_cap_shortfall(len(universe), max_weight, max_names)
+    if shortfall is not None:
+        reason = f"allocation preflight: {shortfall}"
+        for name in ("alphas", "portfolio", "information"):
+            steps[name] = {"status": "skipped", "reason": reason}
+        steps["combination"] = (
+            {"status": "skipped", "reason": reason}
+            if len(signal_list) > 1
+            else {"status": "skipped", "reason": "one signal — nothing to combine"}
+        )
+        result["portfolio"] = {"feasible": False, "binding_constraint": shortfall, "preflight": True}
+        n_trials = _campaign_trials(strategy, universe, ACCOUNTING_VERSION)
+    else:
+        # 2. The forecast: one signal refined, or several combined.
+        result["alphas"] = _step(
+            "alphas",
+            lambda: compute_alphas(
                 client,
-                list(signal_list),
+                strategy,
                 universe,
                 end,
+                config=config,
+                source=source,
+                scanner=scanner,
                 benchmark=benchmark,
                 neutralize_factors=neutralize_factors,
                 lookback_days=lookback_days,
                 timeframe=timeframe,
-                horizon=horizon,
             ),
         )
-    else:
-        steps["combination"] = {"status": "skipped", "reason": "one signal — nothing to combine"}
+        if len(signal_list) > 1:
+            result["combination"] = _step(
+                "combination",
+                lambda: compute_combined_alphas(
+                    client,
+                    list(signal_list),
+                    universe,
+                    end,
+                    benchmark=benchmark,
+                    neutralize_factors=neutralize_factors,
+                    lookback_days=lookback_days,
+                    timeframe=timeframe,
+                    horizon=horizon,
+                ),
+            )
+        else:
+            steps["combination"] = {"status": "skipped", "reason": "one signal — nothing to combine"}
 
-    # 3. The proposed book, priced with the same cost model as everything else.
-    result["portfolio"] = _step(
-        "portfolio",
-        lambda: construct_portfolio(
-            client,
-            strategy,
-            universe,
-            end,
-            source=source,
-            scanner=scanner,
-            target_te=target_te,
-            max_weight=max_weight,
-            max_names=max_names,
-            benchmark=benchmark,
-            neutralize_factors=neutralize_factors,
-            risk_model=risk_model,
-            lookback_days=lookback_days,
-            timeframe=timeframe,
-            capital=capital,
-            cost_aware=not gross,
-            commission_bps=commission_bps,
-            impact_eta=impact_eta,
-            participation_cap=participation_cap,
-            borrow_bps=borrow_bps,
-        ),
-    )
+        # 3. The proposed book, priced with the same cost model as everything else.
+        result["portfolio"] = _step(
+            "portfolio",
+            lambda: construct_portfolio(
+                client,
+                strategy,
+                universe,
+                end,
+                source=source,
+                scanner=scanner,
+                target_te=target_te,
+                max_weight=max_weight,
+                max_names=max_names,
+                benchmark=benchmark,
+                neutralize_factors=neutralize_factors,
+                risk_model=risk_model,
+                lookback_days=lookback_days,
+                timeframe=timeframe,
+                capital=capital,
+                cost_aware=not gross,
+                commission_bps=commission_bps,
+                impact_eta=impact_eta,
+                participation_cap=participation_cap,
+                borrow_bps=borrow_bps,
+            ),
+        )
 
-    # 4. Is the forecast information or luck? The campaign's own trial count is what
-    #    makes the multiple-testing guardrail mean anything, so it comes from the
-    #    store rather than from a caller's guess.
-    n_trials = _campaign_trials(strategy, universe, ACCOUNTING_VERSION)
-    result["information"] = _step(
-        "information",
-        lambda: compute_information(
-            client,
-            strategy,
-            universe,
-            start,
-            end,
-            config=config,
-            source=source,
-            scanner=scanner,
-            benchmark=benchmark,
-            neutralize_factors=neutralize_factors,
-            horizon=horizon,
-            n_points=n_points,
-            n_trials=n_trials,
-            timeframe=timeframe,
-            risk_model=risk_model,
-        ),
-    )
+        # 4. Is the forecast information or luck? The campaign's own trial count is what
+        #    makes the multiple-testing guardrail mean anything, so it comes from the
+        #    store rather than from a caller's guess.
+        n_trials = _campaign_trials(strategy, universe, ACCOUNTING_VERSION)
+        portfolio_step = steps.get("portfolio", {}).get("status")
+        if portfolio_step == "ok" and not (result["portfolio"] or {}).get("feasible"):
+            # Alphas can drop names, so the caps can pass the preflight and the solve
+            # still fail. Measuring information for a book that cannot exist would only
+            # produce a "needs more data" that no amount of data would resolve.
+            steps["information"] = {
+                "status": "skipped",
+                "reason": "no feasible book at these constraints — information not measured",
+            }
+        else:
+            result["information"] = _step(
+                "information",
+                lambda: compute_information(
+                    client,
+                    strategy,
+                    universe,
+                    start,
+                    end,
+                    config=config,
+                    source=source,
+                    scanner=scanner,
+                    benchmark=benchmark,
+                    neutralize_factors=neutralize_factors,
+                    horizon=horizon,
+                    n_points=n_points,
+                    n_trials=n_trials,
+                    timeframe=timeframe,
+                    risk_model=risk_model,
+                ),
+            )
 
     result["verdict"] = _verdict_gates(result)
     result["provenance"] = _verdict_provenance(inputs, cache, n_trials)
@@ -2817,7 +2861,7 @@ def _verdict_gates(result: Dict[str, Any]) -> Dict[str, Any]:
             "passed": float(net or 0.0) > 0.0,
             "note": "expected active return after the cost of trading into the book",
         }
-    elif "portfolio" in steps and steps["portfolio"].get("status") == "ok":
+    elif pf.get("preflight") or ("portfolio" in steps and steps["portfolio"].get("status") == "ok"):
         checks["portfolio_feasible"] = {
             "value": False,
             "threshold": True,
@@ -2833,6 +2877,24 @@ def _verdict_gates(result: Dict[str, Any]) -> Dict[str, Any]:
             "promotable": None,
             "summary": "incomplete — no verdict (steps failed: " + ", ".join(sorted(failed)) + ")",
             "failed_steps": sorted(failed),
+            "checks": checks,
+        }
+    if "portfolio_feasible" in checks:
+        # No book can be funded at these constraints. This outranks "needs more data":
+        # the information step could not have measured anything useful for a book that
+        # does not exist, and a reader told to add dates would add them for nothing.
+        # Only a change of universe or an explicit change of caps can help, and this
+        # function never makes that change on the caller's behalf.
+        constraint = checks["portfolio_feasible"]["note"]
+        return {
+            "verdict": "infeasible",
+            "promotable": False,
+            "summary": (
+                f"infeasible — no book satisfies the constraints: {constraint}. "
+                "More dates will not change this; widen the universe or raise "
+                "max_weight/max_names explicitly."
+            ),
+            "failed_steps": [],
             "checks": checks,
         }
     if not checks:

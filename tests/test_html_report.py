@@ -204,6 +204,33 @@ def test_an_incomplete_run_says_so_before_anything_else():
     assert "Do not act on the sections below" in document
 
 
+def test_an_infeasible_verdict_renders_as_a_failure_banner():
+    result = _verdict_result()
+    result["portfolio"] = {"feasible": False, "binding_constraint": "max_weight*3 < 1", "preflight": True}
+    result["alphas"] = None
+    result["information"] = None
+    result["verdict"] = {
+        "verdict": "infeasible",
+        "promotable": False,
+        "summary": "infeasible — no book satisfies the constraints: max_weight*3 < 1.",
+        "failed_steps": [],
+        "checks": {
+            "portfolio_feasible": {
+                "value": False,
+                "threshold": True,
+                "passed": False,
+                "note": "max_weight*3 < 1",
+            }
+        },
+    }
+    document = render_html(result, "verdict")
+
+    assert "INFEASIBLE" in document
+    assert "More dates will not change this" in document
+    assert 'class="verdict fail"' in document
+    assert document.index("INFEASIBLE") < document.index("Portfolio")
+
+
 def test_a_default_off_feature_being_enabled_is_banner_worthy():
     result = _verdict_result()
     result["portfolio"]["conditional"] = "ewma"

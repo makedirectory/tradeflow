@@ -173,9 +173,18 @@ With keys in place, `verdict` runs the whole cross-sectional pipeline once and e
 in one consolidated verdict:
 
 ```bash
-tradeflow verdict --strategy demo_trend --symbols NVDA,AAPL,META,AMD,TSLA,GOOG,MSFT,AMZN \
+tradeflow verdict --strategy demo_trend --scanner none \
+    --symbols AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,JPM,XOM,UNH,COST,WMT \
     --start 2024-01-01 --end 2024-12-31
 ```
+
+This starter is shaped to be feasible with its defaults: twelve liquid, well-known
+names and no scanner, so the book can be fully invested under the 25% per-name cap
+and there are enough names to measure rebalances. It is a usability example, not a
+validated universe, and the verdict it prints says nothing about whether the signal
+works. Three names at the same cap cannot fund a book, and the verdict then says
+`infeasible` rather than asking for more data - see
+[an infeasible book](verdict#an-infeasible-book).
 
 Read the result top to bottom: the last line is the verdict, and the block above it
 says which stage limited the book. [One-command verdict](verdict) walks through a

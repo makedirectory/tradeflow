@@ -116,3 +116,36 @@ def test_primary_examples_are_installed_user_commands(page):
             continue
         assert not first.startswith(CHECKOUT_PREFIXES), f"{page.name} leads with a checkout command: {first}"
         return
+
+
+def _documented_verdict_commands():
+    pages = PAGES + sorted((ROOT / "docs" / "content").glob("*.md"))
+    for page in dict.fromkeys(pages):
+        for line in _commands(page):
+            if line.split()[1:2] == ["verdict"]:
+                yield page, line
+
+
+VERDICT_CASES = list(_documented_verdict_commands())
+
+
+@pytest.mark.parametrize("page,line", VERDICT_CASES, ids=[f"{p.name}:{ln[:60]}" for p, ln in VERDICT_CASES])
+def test_documented_verdict_examples_can_fund_a_long_only_book(page, line):
+    """A first example that cannot be funded teaches the wrong lesson: three names at
+    the default weight cap read as "needs more data" for a long time. Every documented
+    verdict must pass the same cap check the verdict itself makes, using the real
+    parser's defaults for whatever the command leaves out."""
+    from tradeflow.portfolio.optimizer import long_only_cap_shortfall
+
+    tokens = _tokens(line)
+    if tokens is None:
+        pytest.skip("placeholder or marked as expected to fail")
+    args = cli.build_parser().parse_args(tokens[1:])
+
+    shortfall = long_only_cap_shortfall(len(args.symbols), args.max_weight, args.max_names)
+    assert shortfall is None, f"{page.name}: `{line}` cannot be funded - {shortfall}"
+
+
+def test_the_verdict_docs_guard_found_commands():
+    """Guard the guard: a scan that finds no verdict example passes forever."""
+    assert len(VERDICT_CASES) >= 2

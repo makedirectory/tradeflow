@@ -10,7 +10,8 @@ attachable, and readable a month later without the context that produced it. It 
 available on the four commands that end in a result worth keeping:
 
 ```bash
-tradeflow verdict     --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-31 --html verdict.html
+tradeflow verdict     --scanner none --symbols AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,JPM,XOM,UNH,COST,WMT \
+    --start 2024-01-01 --end 2024-12-31 --html verdict.html
 tradeflow backtest    --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-31 --html backtest.html
 tradeflow walkforward --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-31 --html wf.html
 tradeflow info        --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-31 --html info.html

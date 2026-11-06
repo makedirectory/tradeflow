@@ -2413,6 +2413,8 @@ def cmd_verdict(args) -> None:
         neutralize_factors=args.neutralize_factors,
         risk_model=args.risk_model,
         lookback_days=args.lookback_days,
+        n_points=args.n_points,
+        participation_cap=args.participation_cap,
         gross=args.gross,
         commission_bps=args.commission_bps,
         impact_eta=args.impact_eta,
@@ -6745,6 +6747,20 @@ def build_parser() -> argparse.ArgumentParser:
     verdict.add_argument("--max-weight", dest="max_weight", type=float, default=0.25)
     verdict.add_argument(
         "--max-names", dest="max_names", type=int, default=None, help="Cardinality cap on the book"
+    )
+    verdict.add_argument(
+        "--participation-cap",
+        dest="participation_cap",
+        type=float,
+        default=0.10,
+        help="Largest fraction of a name's daily volume the book may trade into",
+    )
+    verdict.add_argument(
+        "--n-points",
+        dest="n_points",
+        type=int,
+        default=24,
+        help="Rebalance dates sampled by the information step",
     )
     _add_neutralize_factors_flag(verdict)
     _add_cost_flags(verdict)

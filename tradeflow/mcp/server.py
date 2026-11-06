@@ -129,6 +129,22 @@ DEFERRED_PARAMS = {
     "decay_lookback_days": "evidence-gated: only feeds the aim policy's decay estimate",
 }
 
+#: Service parameters withheld for a reason that is not an evidence gate, kept apart so
+#: ``DEFERRED_PARAMS`` stays exactly the evidence-gated list its own test pins.
+#:
+#: Keyed by tool, because the answer is per tool: ``run_verdict``'s ``journal`` is the
+#: CLI's ``--no-journal``, and it is withheld there because the multiple-testing
+#: correction counts attempts - an agent able to run unrecorded verdicts could try as
+#: many variants as it liked without the campaign's total ever noticing. (The draft
+#: walk-forward does expose its own ``journal``, for smoke tests that must not consume a
+#: test; that is a decision about that tool, not a precedent for this one.)
+WITHHELD_PARAMS = {
+    "run_verdict": {
+        "journal": "every verdict run over this surface is recorded, so the campaign's "
+        "multiple-testing count stays honest",
+    },
+}
+
 #: Deliberately CLI-only, and not an oversight. Quarantining evidence and retiring an
 #: era are operator decisions about a campaign's record, not run configuration: one
 #: changes what every later leaderboard and memo reports, the other moves a user's files.
@@ -1378,6 +1394,12 @@ def build_server(data_client=None):
         impact_eta: float = 0.3,
         borrow_bps: float = 50.0,
         force: bool = False,
+        max_weight: Optional[float] = None,
+        max_names: Optional[int] = None,
+        lookback_days: Optional[int] = None,
+        neutralize_factors: Optional[List[str]] = None,
+        participation_cap: Optional[float] = None,
+        n_points: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Run the whole cross-sectional pipeline once and return one composite answer.
 
@@ -1391,12 +1413,26 @@ def build_server(data_client=None):
 
         Returns `{schema, inputs, steps, scan, alphas, combination, portfolio,
         information, verdict, provenance}`. `verdict.verdict` is one of promotable /
-        not promotable / needs more data / mixed / incomplete, assembled from the gates
+        not promotable / needs more data / mixed / infeasible / incomplete, assembled from the gates
         the steps themselves computed (IC t-stat vs 2, realized IR vs its own standard
         error, the sanity ceiling, expected active return net of cost) - every check is
         in `verdict.checks` with its value and threshold. A run where any step failed
         is `incomplete` and carries NO verdict, whatever the completed sections say:
         do not act on a partial run's weights.
+
+        `infeasible` means the caps cannot fund a fully invested long-only book from
+        this universe (for example three names at the default 0.25 `max_weight`): the
+        binding constraint is in `verdict.summary` and in `portfolio.binding_constraint`,
+        the later steps are reported as skipped, and more dates will not help. Nothing
+        is relaxed for you. Recover by passing a wider `symbols` list, a larger
+        `max_weight`, or a larger `max_names` explicitly, and read the result's
+        `inputs` to confirm which caps were applied.
+
+        The allocation knobs (`max_weight`, `max_names`, `lookback_days`,
+        `neutralize_factors`, `participation_cap`, `n_points`) are the CLI's own; leave
+        one out and the service's default applies. `max_weight` defaults to 0.25,
+        `lookback_days` to 365, `participation_cap` to 0.10 and `n_points` to 24. The
+        evidence-gated construction knobs are deliberately not offered here.
 
         This answers "what does the pipeline say about this universe as of `end`" -
         a forecast and a proposed book. The scanner is resolved at `end`, not at
@@ -1410,7 +1446,18 @@ def build_server(data_client=None):
         with `memoized: true` and the original run's timestamp rather than re-run; pass
         `force=true` to re-verify and append a new trial.
         """
-        inputs = {"strategy": strategy, "symbols": symbols, "start": start, "end": end}
+        # Only what the caller set is forwarded, so an omitted knob keeps the service's
+        # own default instead of this surface restating it.
+        optional = {
+            "max_weight": max_weight,
+            "max_names": max_names,
+            "lookback_days": lookback_days,
+            "neutralize_factors": neutralize_factors,
+            "participation_cap": participation_cap,
+            "n_points": n_points,
+        }
+        optional = {k: v for k, v in optional.items() if v is not None}
+        inputs = {"strategy": strategy, "symbols": symbols, "start": start, "end": end, **optional}
         result = analysis.run_verdict(
             dc,
             strategy,
@@ -1431,6 +1478,7 @@ def build_server(data_client=None):
             impact_eta=impact_eta,
             borrow_bps=borrow_bps,
             force=force,
+            **optional,
         )
         return _logged("run_verdict", inputs, result)
 
@@ -1878,7 +1926,7 @@ def _unknown_argument_message(name: str, unknown, declared) -> str:
 
     lines = [f"{name} does not accept: {', '.join(unknown)}."]
     for argument in unknown:
-        reason = DEFERRED_PARAMS.get(argument)
+        reason = DEFERRED_PARAMS.get(argument) or WITHHELD_PARAMS.get(name, {}).get(argument)
         if reason:
             lines.append(f"  {argument}: withheld from this surface — {reason}.")
             continue

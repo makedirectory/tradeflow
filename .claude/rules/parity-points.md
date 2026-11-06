@@ -128,6 +128,20 @@ further test follows both all the way to the service argument. A rename may only
 that two surfaces reach the same argument — never excuse a knob one surface lacks.
 *Guarded by* `tests/test_surface_parity.py`.
 
+**Verdict knobs across CLI and MCP** — `verdict` / `run_verdict`. An `infeasible`
+verdict tells the caller to widen the universe or change `max_weight` / `max_names`;
+the MCP tool took none of the allocation knobs, so an agent was handed an answer it had
+no way to act on. Enumerated from the parser, as `screen` is: every flag needs a
+counterpart in the tool's signature or an entry in the exclusion table with a reason
+(transport plumbing only). `journal` is the one service parameter withheld on purpose —
+`mcp.server.WITHHELD_PARAMS`, per tool, so it stays distinct from the evidence-gated
+`DEFERRED_PARAMS`. Both surfaces forward a knob only when it was set, and the CLI's
+defaults are compared against the service signature. The cap check itself is one
+function, `portfolio.optimizer.long_only_cap_shortfall`, called by the optimizer and by
+the verdict preflight.
+*Guarded by* `tests/test_surface_parity.py`, `tests/test_mcp_surface.py`,
+`tests/test_verdict.py`.
+
 **Config ↔ what actually got validated** — *converged*. A config's `position_limits` is
 not a tunable param, so anything reconstructing a strategy from params alone drops it. A
 config asking for eight positions was walk-forward validated at one. Every sweep over a

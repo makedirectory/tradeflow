@@ -46,12 +46,12 @@ Same image, same state, different verb — arguments pass straight through:
 
 ```bash
 docker compose run --rm demo
-docker compose run --rm verdict --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-31
+docker compose run --rm verdict --scanner none --symbols AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,JPM,XOM,UNH,COST,WMT --start 2024-01-01 --end 2024-12-31
 docker compose run --rm backtest --symbols NVDA --start 2024-01-01 --end 2024-06-01
 docker compose run --rm trials best
 ```
 
-Or via the Makefile: `make compose-run CMD="verdict --symbols NVDA"`.
+Or via the Makefile: `make compose-run CMD="verdict --scanner none"`.
 
 The documentation site runs under its own profile:
 

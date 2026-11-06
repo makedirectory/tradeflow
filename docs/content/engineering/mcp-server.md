@@ -58,7 +58,10 @@ JSON. The exposed surface:
 - Research: `compute_alphas`, `combine_alphas`, `compute_risk`,
   `construct_portfolio`, `compute_information`, `compute_horizon`,
   `run_verdict` (the whole pipeline as one call — see
-  [One-command verdict](../usage/verdict.md))
+  [One-command verdict](../usage/verdict.md); it takes the allocation knobs
+  `max_weight`, `max_names`, `lookback_days`, `neutralize_factors`,
+  `participation_cap` and `n_points`, so an `infeasible` verdict can be answered with an
+  explicit change to the universe or the caps)
 - Draft code: `validate_draft_strategy_code`, `validate_draft_scanner_code`,
   `run_draft_walk_forward`
 - Artifact: `render_report` (a result dict → one self-contained HTML document, the

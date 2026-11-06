@@ -65,8 +65,8 @@ replace them, and it is not a historical simulation.
 
 ## Reading the verdict line
 
-The verdict is one of `promotable`, `not promotable`, `needs more data`, `mixed`, or
-`incomplete`, and every check behind it is printed with its value and threshold —
+The verdict is one of `promotable`, `not promotable`, `needs more data`, `mixed`,
+`infeasible`, or `incomplete`, and every check behind it is printed with its value and threshold —
 passes included. Nothing is averaged: when checks disagree the answer is `mixed` and
 you are shown which side each one fell on.
 
@@ -88,6 +88,39 @@ Two results are deliberately not a pass:
   sampleable rebalances) reads as `needs more data`, never as a partial pass on the
   strength of the portfolio alone.
 
+## An infeasible book
+
+A long-only book that is fully invested needs enough names to carry the whole
+portfolio under the per-name cap: `max_names × max_weight` (or the universe size, if
+smaller) must reach 1. At the default 25% cap that is four names. When it does not,
+no amount of data can help, so the verdict says so first and does not ask for more
+dates:
+
+```
+  Steps:
+    - scan: skipped — no scanner — candidates used as-is
+    - alphas: skipped — allocation preflight: max_weight*3 < 1 (cardinality/weight cap can't fund the book)
+    - combination: skipped — one signal — nothing to combine
+    - portfolio: skipped — allocation preflight: max_weight*3 < 1 (cardinality/weight cap can't fund the book)
+    - information: skipped — allocation preflight: max_weight*3 < 1 (cardinality/weight cap can't fund the book)
+
+  Portfolio: NOT FEASIBLE — max_weight*3 < 1 (cardinality/weight cap can't fund the book)
+
+  VERDICT: infeasible — no book satisfies the constraints: max_weight*3 < 1 (cardinality/weight cap can't fund the book). More dates will not change this; widen the universe or raise max_weight/max_names explicitly.
+    [FAIL] portfolio_feasible: False vs True — max_weight*3 < 1 (cardinality/weight cap can't fund the book)
+    The constraints, not the data, are what failed: change the universe or the caps (--max-weight, --max-names) yourself - nothing was relaxed for you.
+```
+
+The check runs right after the universe is resolved - after the scanner, so a scanner
+that flags only a few of your candidates is the usual cause - and the alphas,
+portfolio and information steps are reported as skipped. The caps are never relaxed
+for you; the way out is a wider `--symbols` list, `--scanner none`, or an explicit
+`--max-weight` / `--max-names`. It is a necessary check only: a universe that passes
+it can still fail to solve, and that failure is reported as `infeasible` too.
+
+The documented starter (twelve names, no scanner) passes. It is a usability example,
+not a validated universe.
+
 ## Options
 
 | Flag | Default | Meaning |
@@ -104,6 +137,9 @@ Two results are deliberately not a pass:
 | `--risk-model` | `shrinkage` | Covariance model (`shrinkage` / `sample` / `factor`) |
 | `--target-te` / `--max-weight` / `--max-names` | `0.04` / `0.25` / — | Portfolio constraints |
 | `--capital` | `100000` | Sizes the impact term and the holdings table |
+| `--lookback-days` | `365` | History used to fit the covariance and the alphas |
+| `--participation-cap` | `0.10` | Largest fraction of a name's daily volume the book may trade into |
+| `--n-points` | `24` | Rebalance dates sampled by the information step |
 | `--neutralize-factors` | — | Regress the listed risk-model exposures out of the alphas |
 | `--gross` / `--commission-bps` / `--impact-eta` / `--borrow-bps` | net, `1.0` / `0.3` / `50.0` | The one cost model every step prices with |
 | `--cache` / `--offline` / `--cache-dir` | off | Serve bars from the local [bar cache](configuration) |
@@ -139,6 +175,10 @@ as an empty one.
 
 The same composite is available to an agent as the `run_verdict` tool, returning the
 identical structured object — see the [MCP server](../engineering/mcp-server) page.
+The tool takes the same allocation knobs (`max_weight`, `max_names`, `lookback_days`,
+`neutralize_factors`, `participation_cap`, `n_points`), so an agent that is told its
+book is `infeasible` can widen the universe or change a cap explicitly. Omitted, each
+keeps the service's default.
 
 ## From a source checkout (contributors)
 

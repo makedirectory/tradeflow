@@ -41,7 +41,8 @@ cost-aware portfolio, and — the part that matters — tells you whether any of
 distinguishable from luck.
 
 ```bash
-tradeflow verdict --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-31
+tradeflow verdict --scanner none --symbols AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,JPM,XOM,UNH,COST,WMT \
+    --start 2024-01-01 --end 2024-12-31
 ```
 
 One command runs scan → alphas → portfolio → information analysis over one universe,
