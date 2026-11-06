@@ -183,6 +183,17 @@ without guessing. The history below keeps the old name as it was written.
   traceback.
 - The printed client configuration carries `TRADEFLOW_HOME` when you set it, and the
   self-test says when credentials came only from your shell.
+- The server starts without broker keys: catalogue and trial-history tools work, and a
+  tool that needs bars says keys are missing and how to add them, where a client used to
+  see only "Connection closed". `mcp --offline` serves from the local bar cache with no
+  keys; the self-test and the printed client configuration carry it.
+- Bad input to the trial and config tools (an unknown or ambiguous trial id, fewer than
+  two trials to compare, an unknown config name) is a tool error naming the tool to use,
+  instead of a successful response carrying an `error` field.
+- `save_config` and `load_config` take a plain name and stay inside the configs
+  directory (a name like `../x` wrote outside it). `save_config` checks the strategy,
+  scanner, parameters and limits before writing, so a config that could not run is
+  never saved; an unknown provenance field lists the accepted ones.
 - Arguments no run can mean are refused before anything is read or journaled, on both
   surfaces: an unknown `mode`, `method` or `objective` (an unknown objective scored every
   candidate equally, so the "best" was arbitrary; the search always maximises, so a
