@@ -327,16 +327,27 @@ def _refuse_sibling_command_after_research(parser, argv: List[str]) -> None:
     says what the command is and how to ask for it. Nothing is reinterpreted or dropped:
     the invocation is refused, not rewritten.
     """
-    if len(argv) < 2 or argv[0] != "research" or argv[1].startswith("-"):
+    if len(argv) < 2 or argv[0] != "research":
         return
     commands = parser._subparsers._group_actions[0].choices
-    word = argv[1]
-    if word in commands and word != "research":
-        parser.exit(
-            2,
-            f"{CLI_NAME}: error: `research` has no `{word}` subcommand - `{word}` is its own"
-            f" command, and `research` runs the model-driven proposer loop. Try: {_invocation(f'{word} --help')}\n",
-        )
+    research = commands["research"]
+    takes_value = {opt: action.nargs != 0 for action in research._actions for opt in action.option_strings}
+    # The first bare word, wherever it sits among the options: `research --goal x info` is
+    # the same mistake as `research info`. A word after an option that takes a value is that
+    # value (`--goal info` is a goal), so it is skipped rather than mistaken for a command.
+    tokens = iter(argv[1:])
+    for token in tokens:
+        if token.startswith("-"):
+            if "=" not in token and takes_value.get(token, False):
+                next(tokens, None)
+            continue
+        if token in commands and token != "research":
+            parser.exit(
+                2,
+                f"{CLI_NAME}: error: `research` has no `{token}` subcommand - `{token}` is its own"
+                f" command, and `research` runs the model-driven proposer loop. Try: {_invocation(f'{token} --help')}\n",
+            )
+        return
 
 
 def parse_cli(argv: Optional[List[str]] = None):
@@ -2025,19 +2036,32 @@ def cmd_init(args) -> None:
     _refuse_inert_init_flags(args)
     if args.check or getattr(args, "probe_model", False):
         result = None
+        blocker = None
         if args.probe_model:
             # Validated before anything is printed: a report that ends in "needs
             # --provider" has already told the reader a lot that did not apply.
             if args.provider is None:
                 sys.exit("--probe-model needs --provider (anthropic, openai or ollama).")
-            billed = " (may be billed)" if args.provider != "ollama" else ""
-            print(f"\nProbing {args.provider}: one request, one token, no retries{billed}...")
-            result = setup.probe_model(args.provider, args.model)
-        _print_doctor(
-            setup.run_checks(provider=args.provider, probe=result),
-            task=args.task,
-            probe_result=result,
-        )
+            blocker = setup.probe_blocker(args.provider)
+            if blocker:
+                print(
+                    f"\nNot probing {args.provider}: {blocker}. No request was sent, so nothing was billed."
+                )
+            else:
+                billed = " (may be billed)" if args.provider != "ollama" else ""
+                print(f"\nProbing {args.provider}: one request, one token, no retries{billed}...")
+                result = setup.probe_model(args.provider, args.model)
+        try:
+            _print_doctor(
+                setup.run_checks(provider=args.provider, probe=result),
+                task=args.task,
+                probe_result=result,
+                provider=args.provider,
+            )
+        finally:
+            if args.probe_model and blocker:
+                # Asked to confirm a provider answers, and it could not be asked.
+                raise SystemExit(1)
         return
     if args.non_interactive:
         _init_non_interactive(args, setup)
@@ -2118,7 +2142,7 @@ _STATUS_LABELS = {
 }
 
 
-def _print_doctor(checks, *, task: str = "data", probe_result=None) -> None:
+def _print_doctor(checks, *, task: str = "data", probe_result=None, provider: Optional[str] = None) -> None:
     """Every check with its status, then what each task can and cannot do.
 
     A doctor reports the whole picture rather than stopping at the first problem.
@@ -2154,14 +2178,22 @@ def _print_doctor(checks, *, task: str = "data", probe_result=None) -> None:
         unverified = f" [not verified: {', '.join(info['unverified'])}]" if info["unverified"] else ""
         print(f"  {mark}{name}{why}{unverified}")
 
-    absent = setup.missing_extras(checks)
-    if absent:
+    needed, also = setup.scoped_missing_extras(checks, task, provider)
+    if needed:
         # One command for all of them: each form of the command replaces the whole
-        # environment, so running one per extra would leave only the last one's.
+        # environment, so running one per extra would leave only the last one's. Scoped
+        # to what the asked-about task needs, so it does not install the rest.
         from tradeflow.utils.extras import install_hint
 
-        print(f"\n  Missing extras ({', '.join(absent)}) - one command adds them all:")
-        print(install_hint(*absent))
+        print(f"\n  Missing extras for '{task}' ({', '.join(needed)}) - one command adds them:")
+        print(install_hint(*needed))
+    if also:
+        from tradeflow.settings import DOCS_URL
+
+        print(
+            f"\n  Also not installed (optional): {', '.join(also)} - what each unlocks and "
+            f"how to add it: {DOCS_URL}/usage/extras"
+        )
 
     probe_failed = False
     if probe_result is not None:

@@ -1424,18 +1424,18 @@ def build_server(data_client=None):
         do not act on a partial run's weights.
 
         `infeasible` means the caps cannot fund a fully invested long-only book from
-        this universe (for example three names at the default 0.25 `max_weight`): the
+        this universe (for example three names under the default `max_weight`): the
         binding constraint is in `verdict.summary` and in `portfolio.binding_constraint`,
         the later steps are reported as skipped, and more dates will not help. Nothing
         is relaxed for you. Recover by passing a wider `symbols` list, a larger
         `max_weight`, or a larger `max_names` explicitly, and read the result's
-        `inputs` to confirm which caps were applied.
+        `inputs` to confirm which caps were applied. A history too short to estimate a
+        book at all names no constraint and is `needs more data`, not `infeasible`.
 
         The allocation knobs (`max_weight`, `max_names`, `lookback_days`,
         `neutralize_factors`, `participation_cap`, `n_points`) are the CLI's own; leave
-        one out and the service's default applies. `max_weight` defaults to 0.25,
-        `lookback_days` to 365, `participation_cap` to 0.10 and `n_points` to 24. The
-        evidence-gated construction knobs are deliberately not offered here.
+        one out and the service's default applies; the result's `inputs` block reports
+        the value each one took. The evidence-gated construction knobs are deliberately not offered here.
 
         This answers "what does the pipeline say about this universe as of `end`" -
         a forecast and a proposed book. The scanner is resolved at `end`, not at

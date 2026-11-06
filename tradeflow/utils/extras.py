@@ -184,9 +184,12 @@ def _uv_tool_command(wanted: List[str], extra_flags: Tuple[str, ...] = ()):
         command = " ".join([command, *_with_flags(requirements), *extra_flags])
     else:
         packs = _pack_distributions()
-        note = (
-            f"(re-add any packs you installed with --with: {', '.join(packs) if packs else 'none detected'})"
-        )
+        # Silent when nothing was detected outside a uv tool environment: "re-add your
+        # --with packs" is advice about a mechanism that venv does not have.
+        if packs:
+            note = f"(re-add any packs you installed with --with: {', '.join(packs)})"
+        elif _in_uv_tool_env():
+            note = "(re-add any packs you installed with --with: none detected)"
     return command, receipt, note
 
 

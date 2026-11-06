@@ -1024,6 +1024,7 @@ def test_probe_model_without_a_provider_fails_before_the_report_prints(capsys):
 
 
 def test_the_probe_line_says_billed_only_for_a_provider_that_bills(monkeypatch, capsys):
+    monkeypatch.setattr(setup, "probe_blocker", lambda provider, environ=None: None)
     monkeypatch.setattr(
         setup, "probe_model", lambda provider, model=None: setup.ProbeResult(provider, "m", "ok", "fine")
     )
@@ -1093,3 +1094,29 @@ def test_a_row_that_gates_only_another_task_is_not_labelled_blocked(monkeypatch,
     assert "[optional]" in mcp_line and "[blocked]" in key_line
     # Names line up whatever the label's width.
     assert mcp_line.index("extra: mcp") == key_line.index("APCA_API_KEY_ID")
+
+
+def test_a_probe_that_cannot_be_sent_says_no_request_was_sent(monkeypatch, capsys):
+    """With the SDK missing there is no request to bill or to classify: the old output
+    announced a billed request and then reported a missing package as a provider's
+    "unknown" answer."""
+    monkeypatch.setattr(setup, "_state_checks", lambda: [])
+    monkeypatch.setattr("tradeflow.utils.extras.installed", lambda name: False)
+    monkeypatch.setattr(
+        setup, "probe_model", lambda *a, **k: pytest.fail("a request was attempted without the SDK")
+    )
+    with pytest.raises(SystemExit) as caught:
+        _init(["--probe-model", "--provider", "anthropic", "--for", "research"])
+    out = capsys.readouterr().out
+    assert caught.value.code == 1
+    assert "No request was sent" in out
+    assert "may be billed" not in out and "unknown" not in out
+    assert "extra: ai" in out
+    assert "Missing extras for 'research' (ai)" in out
+
+
+def test_a_probe_without_a_key_is_not_sent_either(monkeypatch, tmp_path):
+    monkeypatch.setattr("tradeflow.utils.extras.installed", lambda name: True)
+    monkeypatch.setattr(setup, "ENV_PATH", tmp_path / "absent.env")
+    assert "ANTHROPIC_API_KEY is not set" in setup.probe_blocker("anthropic", environ={})
+    assert setup.probe_blocker("ollama", environ={}) is None

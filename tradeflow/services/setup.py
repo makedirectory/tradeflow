@@ -618,9 +618,28 @@ def _model_checks(
 
 
 def missing_extras(checks: List[Check]) -> List[str]:
-    """Every extra some row reports absent, once each and sorted - the input to the one
-    install command the doctor prints (see :attr:`Check.installs`)."""
+    """Every extra some row reports absent, once each and sorted (see :attr:`Check.installs`)."""
     return sorted({name for c in checks if c.status != "ready" for name in c.installs})
+
+
+def scoped_missing_extras(
+    checks: List[Check], task: str, provider: Optional[str] = None
+) -> Tuple[List[str], List[str]]:
+    """``(needed, also)``: the absent extras the asked-about task needs, and the rest.
+
+    The doctor prints one install command, and printing it for *every* absent extra
+    installs a constraint solver, a machine-learning library and the other vendor's SDK
+    for someone who asked whether anthropic research is ready. ``needed`` is what the
+    selected task cannot run without, plus the selected provider's SDK extra; ``also`` is
+    everything else that is absent, listed but not folded into the command.
+    """
+    absent = missing_extras(checks)
+    needed = {name for c in checks if c.status != "ready" and task in c.needed_for for name in c.installs}
+    if provider in _PROVIDER_REQUIREMENTS:
+        extra = _PROVIDER_REQUIREMENTS[provider][0]
+        if extra in absent:
+            needed.add(extra)
+    return sorted(needed), [name for name in absent if name not in needed]
 
 
 def _probed_row(label: str, probe: "ProbeResult", detail: str, gate: FrozenSet[str]) -> Check:
@@ -669,6 +688,27 @@ class ProbeResult:
     @property
     def ok(self) -> bool:
         return self.category == "ok"
+
+
+def probe_blocker(provider: str, environ: Optional[Dict[str, str]] = None) -> Optional[str]:
+    """Why a probe cannot be sent at all, or ``None`` when it can.
+
+    A missing SDK or key is a known condition, not a provider's answer: reporting it as
+    a probe result ("unknown") after announcing a billed request says a request was made
+    when none could be. Checked first, so the caller can say plainly that nothing was sent.
+    """
+    from tradeflow.utils import extras
+
+    requirement = _PROVIDER_REQUIREMENTS.get(provider.lower())
+    if requirement is None:  # ollama: no SDK, no key
+        return None
+    extra, key_name = requirement
+    if not extras.installed(extra):
+        return f"the SDK for {provider} is not installed (extra: {extra})"
+    state = inspect_env(environ=environ)
+    if is_placeholder(state.resolved(key_name)):
+        return f"{key_name} is not set"
+    return None
 
 
 def probe_model(provider: str, model: Optional[str] = None, *, client=None) -> ProbeResult:

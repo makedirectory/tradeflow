@@ -111,6 +111,9 @@ def test_packs_installed_with_with_are_named_so_they_can_be_re_added(monkeypatch
     hint = extras.install_hint("viz")
     assert "re-add any packs you installed with --with: acme-signals" in hint
     monkeypatch.setattr(extras, "_pack_distributions", lambda: [])
+    # Outside a uv tool environment there is no --with to re-add; the line would be noise.
+    assert "none detected" not in extras.install_hint("viz")
+    monkeypatch.setattr(extras, "_in_uv_tool_env", lambda: True)
     assert "none detected" in extras.install_hint("viz")
 
 
@@ -281,26 +284,45 @@ def tomllib_loads(text):
     return pytest.importorskip("tomllib").loads(text)
 
 
-def test_the_doctor_prints_one_install_command_not_one_per_extra(monkeypatch, capsys, tmp_path):
-    """Each `uv tool install --force` replaces the environment, so two of them leave
-    only the second's extras. One command over everything missing is the only safe
-    thing to print - and the ai extra, reported by two rows, appears once."""
-    from tradeflow.services import setup
-
-    _as_installed_copy(monkeypatch, installed={"viz", "mcp"})
+def _doctor_output(argv, monkeypatch, capsys, tmp_path, installed):
+    _as_installed_copy(monkeypatch, installed=installed)
     monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
-    args = cli.parse_cli(["init", "--check"])
+    args = cli.parse_cli(argv)
     try:
         args.func(args)
-    except SystemExit:  # not ready for `data` when no keys resolve; the report printed either way
+    except SystemExit:  # not ready when no keys resolve; the report printed either way
         pass
-    out = capsys.readouterr().out
+    return capsys.readouterr().out
+
+
+def test_the_doctor_prints_one_install_command_scoped_to_what_was_asked(monkeypatch, capsys, tmp_path):
+    """Each `uv tool install --force` replaces the environment, so two of them leave
+    only the second's extras: one command. And it carries what the asked-about task and
+    provider need - not a solver, a learning library and the other vendor's SDK for
+    someone who asked about anthropic research. The ai extra, reported by two rows,
+    appears once."""
+    out = _doctor_output(
+        ["init", "--check", "--for", "research", "--provider", "anthropic"],
+        monkeypatch,
+        capsys,
+        tmp_path,
+        {"viz", "mcp"},
+    )
     assert out.count("uv tool install --force") == 1, out
     command = next(line for line in out.splitlines() if "uv tool install --force" in line)
-    for name in setup.missing_extras(setup.run_checks(tmp_path / ".env", environ={})):
-        assert name in command
+    assert "ai" in command.split("[")[1].split("]")[0].split(",")
     for name in ("mcp", "viz"):  # already installed: kept, not dropped
         assert name in command
+    for name in ("openai", "optimize", "portfolio"):
+        assert name not in command, command
+    # The rest is named on one line instead of folded into the command.
+    assert "Also not installed (optional)" in out and "openai" in out.split("Also not installed")[1]
+
+
+def test_a_task_with_no_missing_extra_gets_no_install_command(monkeypatch, capsys, tmp_path):
+    out = _doctor_output(["init", "--check"], monkeypatch, capsys, tmp_path, {"viz", "mcp"})
+    assert "uv tool install --force" not in out
+    assert "Also not installed (optional)" in out
 
 
 def test_the_extras_page_lists_every_extra():

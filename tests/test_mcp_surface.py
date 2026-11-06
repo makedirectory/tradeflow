@@ -147,6 +147,22 @@ def test_metric_vocabulary_comes_from_the_glossary_not_a_restatement(built):
     assert "get_metrics_glossary" in description
 
 
+def test_run_verdict_description_does_not_restate_the_services_defaults(built):
+    """A default written into a description is a second definition no test compares: it
+    is stale the day the service changes, and an agent acts on it as fact."""
+    import inspect
+
+    from tradeflow.services import analysis
+
+    description = _tools(built)["run_verdict"].description
+    params = inspect.signature(analysis.run_verdict).parameters
+    for name in ("max_weight", "lookback_days", "participation_cap", "n_points"):
+        default = params[name].default
+        assert f"`{name}` defaults to {default}" not in description
+        assert f"{name}` to {default}" not in description
+    assert "defaults to" not in description.split("allocation knobs")[1]
+
+
 def test_the_leaderboard_tool_warns_in_its_own_description(built):
     description = _tools(built)["best_trials"].description
     assert "selection bias" in description
