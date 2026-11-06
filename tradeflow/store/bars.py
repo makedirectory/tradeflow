@@ -62,12 +62,12 @@ CREATE INDEX IF NOT EXISTS idx_fetches_symbol ON fetches(symbol, timeframe);
 """
 
 
-#: Printed beside an offline cache miss on a symbol that *was* warmed before, while the
-#: date-contract change washes through; a cold cache has no old coverage to explain. A
-#: bare date now means that market date in New York, so coverage recorded when a naive
-#: date was read as UTC sits a few hours short of what the same command asks for today. The window is genuinely uncached under the new reading - the fix is
-#: a re-warm, not a tolerance - and saying so turns an unexplained miss on data the
-#: user knows they have into provenance.
+#: Printed beside an offline cache miss that includes the gap the date-contract
+#: change leaves. A bare date now means that market date in New York, so coverage
+#: recorded when a naive date was read as UTC stops a few hours short of what the same
+#: command asks for today. The window is genuinely uncached under the new reading - the
+#: fix is a re-warm, not a tolerance - and saying so turns an unexplained miss on data
+#: the user knows they have into provenance.
 DATE_CONTRACT_NOTICE = (
     "Note: a bare date now means that market date in America/New_York, not UTC midnight. "
     "Coverage recorded under the older naive-date reading is a few hours short of the same "
@@ -89,7 +89,7 @@ class CacheMiss(RuntimeError):
         missing: Dict[str, List[Tuple[pd.Timestamp, pd.Timestamp]]],
         timeframe: str,
         *,
-        previously_warmed: bool = False,
+        date_shortfall: bool = False,
         cache_dir: Optional[Path] = None,
         why: Optional[str] = None,
     ):
@@ -97,7 +97,7 @@ class CacheMiss(RuntimeError):
 
         self.missing = missing
         self.timeframe = timeframe
-        self.previously_warmed = previously_warmed
+        self.date_shortfall = date_shortfall
         self.cache_dir = cache_dir
         symbols = list(missing)
         first = min(s for gaps in missing.values() for s, _ in gaps)
@@ -116,9 +116,29 @@ class CacheMiss(RuntimeError):
         )
         if why:
             message += f"\n{why}"
-        if previously_warmed:
+        if date_shortfall:
             message += f"\n{DATE_CONTRACT_NOTICE}"
         super().__init__(message)
+
+
+def _is_date_shortfall(gap: Tuple[pd.Timestamp, pd.Timestamp]) -> bool:
+    """Whether a gap is the sliver the date-contract change left, rather than real absence.
+
+    A bound recorded under the old naive-date reading stopped at UTC midnight, where the
+    same date now means New York midnight, so the gap runs exactly from one to the other
+    on one date. The note used to fire for any symbol with any coverage, so warming one
+    month and asking for another explained a re-warm that had nothing to do with dates.
+    """
+    from tradeflow.utils.timeutils import NEW_YORK
+
+    start, end = (_to_utc(t) for t in gap)
+    local_end = end.tz_convert(NEW_YORK)
+    return (
+        start == start.normalize()
+        and local_end == local_end.normalize()
+        and local_end.date() == start.date()
+        and start < end
+    )
 
 
 def combine_misses(misses: List[CacheMiss]) -> List[CacheMiss]:
@@ -141,7 +161,7 @@ def combine_misses(misses: List[CacheMiss]) -> List[CacheMiss]:
             CacheMiss(
                 missing,
                 timeframe,
-                previously_warmed=any(m.previously_warmed for m in group),
+                date_shortfall=any(m.date_shortfall for m in group),
                 cache_dir=group[0].cache_dir,
             )
         )
@@ -512,8 +532,8 @@ class CachedMarketData(MarketDataProvider):
         # One timeframe per miss: a warm command takes one, so a command reading two
         # would need two rounds whatever the message said.
         for tf, missing in by_timeframe.items():
-            warmed = any(self.coverage.covered_intervals(s, tf) for s in missing)
-            raise CacheMiss(missing, tf, previously_warmed=warmed, cache_dir=self.cache_dir, why=why)
+            shortfall = any(_is_date_shortfall(gap) for gaps in missing.values() for gap in gaps)
+            raise CacheMiss(missing, tf, date_shortfall=shortfall, cache_dir=self.cache_dir, why=why)
 
     def _merge_write(self, symbol: str, timeframe: str, new_frames: List[pd.DataFrame]) -> None:
         """Read the symbol's full existing history, merge in the newly-fetched

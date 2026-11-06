@@ -90,7 +90,9 @@ without guessing. The history below keeps the old name as it was written.
   window: `walkforward` also reads an indicator warmup before `--start` and its
   `--benchmark`, and `backtest` its `--benchmark` (which offline used to drop alpha and
   beta with only a warning); a cold miss now asks for those too. The note about the
-  market-date change appears only where a cache was warmed before it, not on every miss.
+  market-date change appears only for the few-hour gap that change leaves (coverage
+  recorded through UTC midnight, asked for through New York midnight), not on every miss
+  or on any symbol that happens to have some coverage.
   An offline `verdict` whose steps miss prints one warm command covering every step,
   instead of one per step with a different window each.
 - A verdict step that fails is reported in the verdict's step list; its traceback is

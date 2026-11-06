@@ -388,24 +388,40 @@ def test_a_miss_in_the_default_cache_directory_does_not_name_it(tmp_path, monkey
     assert "--cache-dir" not in str(miss.value)
 
 
-def test_the_date_note_appears_only_where_a_cache_was_warmed_before(tmp_path):
-    """The note explains coverage recorded under the old date reading. A cold cache has
-    none, yet the note was printed beside every miss — six times in one verdict."""
+def test_the_date_note_appears_only_for_the_gap_the_date_change_left(tmp_path):
+    """The note explains coverage recorded under the old date reading, which stops at UTC
+    midnight where the same date now means New York midnight. It was printed beside every
+    miss — six times in one verdict — and then beside any miss on a symbol with any
+    coverage at all, so warming one month and asking for another blamed the dates."""
     from tradeflow.store.bars import DATE_CONTRACT_NOTICE
+    from tradeflow.utils.timeutils import parse_market_date
 
-    cached, upstream = _cache(tmp_path, offline=True)
-    start, end = _full_window(upstream)
+    start, end = parse_market_date("2024-03-01"), parse_market_date("2024-06-03")
+
+    cached, _ = _cache(tmp_path, offline=True)
     with pytest.raises(CacheMiss) as cold:
         cached.get_bars(["AAA"], "1Day", start, end)
     assert DATE_CONTRACT_NOTICE not in str(cold.value)
+    cached.close()
 
     online, _ = _cache(tmp_path)
     online.get_bars(["AAA"], "1Day", start, start + (end - start) / 2)
     online.close()
     partly, _ = _cache(tmp_path, offline=True)
-    with pytest.raises(CacheMiss) as short:
+    with pytest.raises(CacheMiss) as unrelated:
         partly.get_bars(["AAA"], "1Day", start, end)
-    assert DATE_CONTRACT_NOTICE in str(short.value)
+    assert DATE_CONTRACT_NOTICE not in str(unrelated.value)
+    partly.close()
+
+    # Recorded as the old reading did: through UTC midnight of the end date.
+    old_end = datetime(2024, 6, 3, tzinfo=timezone.utc)
+    online, _ = _cache(tmp_path)
+    online.get_bars(["BBB"], "1Day", start, old_end)
+    online.close()
+    shortfall, _ = _cache(tmp_path, offline=True)
+    with pytest.raises(CacheMiss) as sliver:
+        shortfall.get_bars(["BBB"], "1Day", start, end)
+    assert DATE_CONTRACT_NOTICE in str(sliver.value)
 
 
 def test_offline_serves_warm_cache_with_zero_upstream_calls(tmp_path):
