@@ -39,7 +39,7 @@ import logging
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from tradeflow.settings import state_root, trial_journal_path
 
@@ -1187,6 +1187,8 @@ class TrialStore:
         promotable: Optional[bool] = None,
         accounting: Optional[int] = None,
         all_accounting: bool = False,
+        exclude_kinds: Sequence[str] = (),
+        exclude_contaminated: bool = False,
     ) -> tuple:
         """The shared ``WHERE`` clause behind listing, counting, and ranking.
 
@@ -1233,6 +1235,11 @@ class TrialStore:
         if accounting is not None:
             clauses.append("accounting = ?")
             args.append(int(accounting))
+        if exclude_kinds:
+            clauses.append(f"(kind IS NULL OR kind NOT IN ({', '.join('?' for _ in exclude_kinds)}))")
+            args.extend(exclude_kinds)
+        if exclude_contaminated:
+            clauses.append("contaminated_at IS NULL")
         return (f"WHERE {' AND '.join(clauses)}" if clauses else ""), args
 
     def list_trials(
@@ -1381,22 +1388,22 @@ class TrialStore:
         """
         if rank_by not in ("dsr", "sharpe"):
             raise ValueError(f"rank_by must be 'dsr' or 'sharpe', got {rank_by!r}")
-        # Over-fetch, then drop the in-sample kinds, so excluding them does not
-        # silently shorten the board.
-        candidates = self.list_trials(
-            sort=rank_by, limit=limit * 8 if not include_in_sample else limit, **filters
+        # Both exclusions in the query, and both counts over every matching row. They
+        # used to be applied to an over-fetched page, so a store full of backtests could
+        # return an empty board that still had a validated row to show, and report only
+        # the exclusions that happened to fall inside the page.
+        kinds = () if include_in_sample else IN_SAMPLE_KINDS
+        rows = self.list_trials(
+            sort=rank_by, limit=limit, exclude_kinds=kinds, exclude_contaminated=True, **filters
         )
-        excluded = 0
-        if not include_in_sample:
-            kept = [r for r in candidates if r.get("kind") not in IN_SAMPLE_KINDS]
-            excluded = len(candidates) - len(kept)
-            candidates = kept
+        eligible = self.count_trials(exclude_kinds=kinds, **filters)
+        excluded = self.count_trials(**filters) - eligible
         # Quarantined rows are never ranked, and the count is reported rather than
         # dropped silently - a leaderboard that quietly omits rows is a leaderboard
         # whose length is a claim about the campaign that nobody can check.
-        uncontaminated = [r for r in candidates if not r.get("contaminated_at")]
-        contaminated_excluded = len(candidates) - len(uncontaminated)
-        rows = uncontaminated[:limit]
+        contaminated_excluded = eligible - self.count_trials(
+            exclude_kinds=kinds, exclude_contaminated=True, **filters
+        )
         for row in rows:
             row["family_n_trials"] = (
                 self.family_count_by_hash(row["strategy"], row["universe_hash"], row["accounting"])

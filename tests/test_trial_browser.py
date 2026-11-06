@@ -489,6 +489,19 @@ def test_a_plain_backtest_is_not_ranked_as_validated_evidence(store):
     assert "never validated out of sample" in format_leaderboard(opted_in)
 
 
+def test_a_store_full_of_backtests_still_ranks_its_validated_row(store):
+    """Found in review: the exclusion was applied to an over-fetched page, so with plain
+    backtests now excluded, twenty of them and one walk-forward ranked by raw Sharpe gave
+    an empty board and reported 16 exclusions instead of 20."""
+    for i in range(20):
+        _record(store, f"bt{i}", kind="backtest", oos_sharpe=5.0 + i, deflated_sharpe=None)
+    _record(store, "wf", kind="walkforward", oos_sharpe=1.1, deflated_sharpe=0.6)
+
+    board = store.best(accounting=ACCOUNTING, rank_by="sharpe", limit=2)
+    assert [r["id"] for r in board["rows"]] == ["wf"]
+    assert board["in_sample_excluded"] == 20
+
+
 def test_the_header_names_the_population_not_just_the_sort_key(store):
     """ "Top 3 by deflated Sharpe" still reads as "the best of everything I have run"
     unless it says what it ranked over."""
