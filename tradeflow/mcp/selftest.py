@@ -13,7 +13,6 @@ Importable only with the ``mcp`` extra; the CLI imports it lazily.
 from __future__ import annotations
 
 import os
-import sys
 import tempfile
 import time
 from typing import Any, Dict, List, Optional
