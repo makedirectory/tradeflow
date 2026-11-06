@@ -283,6 +283,11 @@ def test_nothing_recommends_uv_tool_inject():
 # --- the surface a user reaches ------------------------------------------------
 def _every_module_missing(monkeypatch):
     for module in ("sklearn", "ortools", "matplotlib", "anthropic", "openai", "mcp"):
+        # An already-imported submodule is found in sys.modules before its parent is
+        # consulted, so blocking only the parent passes or fails depending on which
+        # other test file happened to import `sklearn.gaussian_process` first.
+        for loaded in [name for name in sys.modules if name.startswith(module + ".")]:
+            monkeypatch.delitem(sys.modules, loaded)
         monkeypatch.setitem(sys.modules, module, None)
 
 

@@ -31,9 +31,12 @@ def journal(tmp_path, monkeypatch):
 
     path = tmp_path / "logs" / "research_journal.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
+    # The attributes first: `DEFAULT_JOURNAL_PATH` is computed on access, so patching it
+    # after the environment changed saves *this test's* path as the value to restore, and
+    # every later test then sees a journal path inside a directory that is long gone.
     monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", path)
     monkeypatch.setattr(trials_module, "DEFAULT_JOURNAL_PATH", path)
+    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
     return path
 
 
