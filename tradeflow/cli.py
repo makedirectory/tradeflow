@@ -6747,8 +6747,15 @@ def build_parser() -> argparse.ArgumentParser:
     execution.set_defaults(func=cmd_execution_report)
 
     scan = subparsers.add_parser("scan", help="Run the universe scanner only")
-    scan.add_argument("--scanner", type=_scanner, default="demo_volume")
-    scan.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
+    scan.add_argument(
+        "--scanner", type=_scanner, default="demo_volume", help="Which scanner to run (default: %(default)s)"
+    )
+    scan.add_argument(
+        "--symbols",
+        type=_symbols,
+        default=DEFAULT_UNIVERSE,
+        help="Comma-separated candidate symbols (default: the built-in demonstration universe)",
+    )
     scan.add_argument(
         "--drift",
         action="store_true",
@@ -7272,11 +7279,21 @@ def build_parser() -> argparse.ArgumentParser:
         "alphas",
         help="Rank a universe by continuous alpha (residual-return forecast) — read-only",
     )
-    alphas.add_argument("--strategy", choices=STRATEGIES, default="demo_trend")
+    alphas.add_argument(
+        "--strategy",
+        choices=STRATEGIES,
+        default="demo_trend",
+        help="Which strategy supplies the alpha (default: %(default)s)",
+    )
     alphas.add_argument(
         "--scanner", type=_scanner, default="demo_volume", help="Scanner used as the --source score metric"
     )
-    alphas.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
+    alphas.add_argument(
+        "--symbols",
+        type=_symbols,
+        default=DEFAULT_UNIVERSE,
+        help="Comma-separated symbols to rank (default: the built-in demonstration universe)",
+    )
     alphas.add_argument(
         "--as-of", dest="as_of", type=_date, default=_now(), help="Rebalance date (YYYY-MM-DD)"
     )
@@ -7649,10 +7666,14 @@ def build_parser() -> argparse.ArgumentParser:
             "--sort",
             choices=["date", "sharpe", "dsr"],
             default="date",
-            help="Sort order; unrecorded metrics sort last, never as zero",
+            help="Sort order; unrecorded metrics sort last, never as zero (default: %(default)s)",
         )
-        p.add_argument("--limit", type=int, default=20)
-        p.add_argument("--offset", type=int, default=0, help="Skip this many rows (paging)")
+        p.add_argument(
+            "--limit", type=int, default=20, help="Show at most this many rows (default: %(default)s)"
+        )
+        p.add_argument(
+            "--offset", type=int, default=0, help="Skip this many rows, for paging (default: %(default)s)"
+        )
 
     t_list = trials_sub.add_parser(
         "list", help="List trials with filters, sorting, and paging — the campaign's memory"
@@ -7785,7 +7806,9 @@ def build_parser() -> argparse.ArgumentParser:
         "sample — an 'optimize' row is best-of-N by construction, so its rank measures "
         "selection rather than skill, and a plain backtest is one pass over its window",
     )
-    t_best.add_argument("--limit", type=int, default=10)
+    t_best.add_argument(
+        "--limit", type=int, default=10, help="Show at most this many rows (default: %(default)s)"
+    )
     t_best.add_argument("--offset", type=int, default=0, help=argparse.SUPPRESS)
 
     trials.set_defaults(func=cmd_trials)
