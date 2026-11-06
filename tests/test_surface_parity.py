@@ -289,6 +289,7 @@ def test_no_mcp_description_sends_an_installed_reader_to_a_checkout():
     import re
 
     from tradeflow.mcp import server as mcp_server
+    from tradeflow.settings import CLI_NAME
 
     # Backticked commands only — prose like "make validated code available" is not an
     # instruction, and a matcher that cannot tell them apart teaches people to ignore it.
@@ -298,7 +299,7 @@ def test_no_mcp_description_sends_an_installed_reader_to_a_checkout():
         line_start = source.rfind("\n", 0, match.start()) + 1
         line_end = source.find("\n", match.end())
         line = source[line_start:line_end]
-        assert "tradeflow " in line, f"checkout-only instruction with no installed form: {line.strip()}"
+        assert f"{CLI_NAME} " in line, f"checkout-only instruction with no installed form: {line.strip()}"
     assert invocations or True  # the assertion above is the check; this documents intent
 
 
