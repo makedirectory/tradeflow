@@ -19,7 +19,7 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,24 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 #: has one of those, and mistaking someone else's for ours would put our journal in
 #: their repository.
 DISTRIBUTION_NAME = "tradeflow-engine"
+
+#: The executable a reader types. The one definition of the command's name: argparse's
+#: ``prog``, the version banner, the MCP launch command and every printed instruction
+#: read it, so renaming the executable is this line and not a hunt through the
+#: package. Deliberately separate from the import package (``tradeflow``), the
+#: entry-point groups and :data:`DISTRIBUTION_NAME`, none of which a rename of the
+#: command changes.
+CLI_NAME = "tradeflow"
+
+#: Executables that still launch this copy after :data:`CLI_NAME` changes. Never
+#: printed as an instruction; looked up only where something must *find* a script
+#: that exists on disk (an MCP client config written under an older name).
+LEGACY_CLI_NAMES: Tuple[str, ...] = ()
+
+#: The name this copy's MCP server reports to a client, and the key its client
+#: configuration is written under. One definition for the server, the printed JSON
+#: and the ``claude mcp add`` line.
+MCP_SERVER_NAME = "tradeflow"
 
 #: The documentation root. Pages are served from the site root (there is no ``/docs/``
 #: prefix), so a link built from this constant and a page path is a page that exists.
@@ -59,6 +77,23 @@ def _looks_like_checkout(path: Path) -> bool:
         return f'name = "{DISTRIBUTION_NAME}"' in manifest.read_text()
     except OSError:
         return False
+
+
+def invocation(command: str, *, make_target: Optional[str] = None) -> str:
+    """How to run ``command`` on the copy that is actually running.
+
+    An installed copy has no ``main.py`` and no Makefile, so "python main.py verdict"
+    and "make demo" send the reader looking for files that were never there.
+
+    Lives in ``settings`` because it is not a CLI concern and is needed below the
+    services: a service that tells a reader how to fetch something, and this module's
+    own missing-credentials message, need the same answer. A second copy of this
+    decision is how one surface starts printing instructions another knows are wrong.
+    ``services.setup.invocation`` and the CLI's ``_invocation`` delegate here.
+    """
+    if not running_from_checkout():
+        return f"{CLI_NAME} {command}"
+    return f"make {make_target}" if make_target else f"python main.py {command}"
 
 
 def running_from_checkout() -> bool:
@@ -380,8 +415,8 @@ def _missing_credentials_message(missing: list) -> str:
     else:
         lines += [
             "",
-            "  tradeflow init            guided setup — writes " + str(setup_path),
-            "  tradeflow demo            no keys needed — the full pipeline on synthetic data",
+            f"  {invocation('init'):<25} guided setup — writes " + str(setup_path),
+            f"  {invocation('demo'):<25} no keys needed — the full pipeline on synthetic data",
         ]
     lines += [
         "",

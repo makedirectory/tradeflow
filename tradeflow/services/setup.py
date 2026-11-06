@@ -70,20 +70,14 @@ _BASE_KEYS = ("APCA_API_KEY_ID", "APCA_API_SECRET_KEY", "PAPER_TRADE")
 def invocation(command: str, *, make_target: Optional[str] = None) -> str:
     """How to run ``command`` on the copy that is actually running.
 
-    An installed copy has no ``main.py`` and no Makefile, so "python main.py verdict"
-    and "make demo" send the reader looking for files that were never there.
-
-    Lives here rather than in the CLI because it is not a CLI concern: a service that
-    tells a reader how to fetch something — a config's campaign block naming the
-    command that reads its stored trades, say — needs the same answer, and a second
-    copy of this decision is how one surface starts printing instructions the other
-    knows are wrong.
+    Delegates to :func:`tradeflow.settings.invocation`, which is the definition: it
+    moved down a layer because ``settings`` itself prints instructions and cannot
+    import a service. This name stays so services and the guard tests keep one
+    import path.
     """
-    from tradeflow.settings import running_from_checkout
+    from tradeflow.settings import invocation as _invocation
 
-    if not running_from_checkout():
-        return f"tradeflow {command}"
-    return f"make {make_target}" if make_target else f"python main.py {command}"
+    return _invocation(command, make_target=make_target)
 
 
 def mcp_launch_command() -> List[str]:
@@ -95,30 +89,33 @@ def mcp_launch_command() -> List[str]:
     everything here is absolute. A self-test that passed on a different command than the
     one a reader was told to configure would be reporting on something nobody uses.
 
-    * **Installed:** the ``tradeflow`` script that sits next to the running interpreter
+    * **Installed:** the :data:`~tradeflow.settings.CLI_NAME` script that sits next to the running interpreter
       (a tool environment's own ``bin``), else ``python -m tradeflow.cli mcp``.
     * **Checkout:** this interpreter and the absolute ``main.py``, which needs neither
       ``uv`` on the client's PATH nor a ``cwd``.
     """
     import sys
 
-    from tradeflow.settings import PROJECT_ROOT, _looks_like_checkout
+    from tradeflow.settings import CLI_NAME, LEGACY_CLI_NAMES, PROJECT_ROOT, _looks_like_checkout
 
     python = Path(sys.executable)
     main = PROJECT_ROOT / "main.py"
     if _looks_like_checkout(PROJECT_ROOT) and main.is_file():
         return [str(python), str(main), "mcp"]
-    for name in ("tradeflow", "tradeflow.exe"):
-        script = python.parent / name
-        if script.is_file():
-            return [str(script), "mcp"]
+    for name in (CLI_NAME, *LEGACY_CLI_NAMES):
+        for filename in (name, f"{name}.exe"):
+            script = python.parent / filename
+            if script.is_file():
+                return [str(script), "mcp"]
     return [str(python), "-m", "tradeflow.cli", "mcp"]
 
 
 def mcp_client_config() -> Dict[str, Any]:
     """The ``mcpServers`` block for :func:`mcp_launch_command`, ready to paste."""
+    from tradeflow.settings import MCP_SERVER_NAME
+
     command = mcp_launch_command()
-    return {"mcpServers": {"tradeflow": {"command": command[0], "args": command[1:]}}}
+    return {"mcpServers": {MCP_SERVER_NAME: {"command": command[0], "args": command[1:]}}}
 
 
 def is_placeholder(value: Optional[str]) -> bool:

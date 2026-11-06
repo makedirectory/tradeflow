@@ -10,6 +10,7 @@ from datetime import datetime
 
 import pytest
 
+from tradeflow import settings
 from tradeflow.services import setup
 
 REAL_KEY = "PKTESTKEYID0000001"
@@ -356,7 +357,7 @@ def test_an_installed_copy_is_told_to_use_its_command(tmp_path, monkeypatch, cap
     args = main.build_parser().parse_args(["init", "--env-path", str(tmp_path / ".env")])
     args.func(args)
 
-    assert "tradeflow demo" in capsys.readouterr().out
+    assert f"{settings.CLI_NAME} demo" in capsys.readouterr().out
 
 
 def test_cli_interactive_writes_keys_and_confirms_paper_trading(tmp_path, monkeypatch, capsys):

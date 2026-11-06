@@ -28,10 +28,11 @@ except ImportError:  # pragma: no cover - only without the extra
 from tradeflow.analytics.series_comparison import MIN_OVERLAP as SERIES_MIN_OVERLAP
 from tradeflow.services import analysis, campaign, configs, glossary, registry
 from tradeflow.services.audit import audit_log, new_run_id
+from tradeflow.settings import MCP_SERVER_NAME
 
 logger = logging.getLogger(__name__)
 
-SERVER_NAME = "tradeflow"
+SERVER_NAME = MCP_SERVER_NAME
 
 #: The complete, intended tool surface (used by tests to assert the wall).
 EXPOSED_TOOLS = (

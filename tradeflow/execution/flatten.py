@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional
 from tradeflow.brokers.base import Broker
 from tradeflow.brokers.errors import BrokerError
 from tradeflow.execution.halt import ALL, HaltState
+from tradeflow.settings import invocation
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +130,7 @@ class FlattenReport:
         if self.complete:
             lines.append("\nFlat, and confirmed by a broker read at the time above: no")
             lines.append("positions and no resting orders. The engine cannot re-enter while")
-            lines.append("the halt stands; `tradeflow resume all` when you are ready.")
+            lines.append(f"the halt stands; `{invocation('resume all')}` when you are ready.")
         elif self.observed == PENDING:
             # The case that used to read as success. Say what is true and no more. It
             # must NOT promise a fill: a symbol refused for being halted, non-tradable

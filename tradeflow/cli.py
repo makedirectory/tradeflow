@@ -36,7 +36,7 @@ from tradeflow.analytics.series_comparison import MIN_OVERLAP as SERIES_MIN_OVER
 from tradeflow.marketdata.base import MarketDataProvider
 from tradeflow.research.provider_errors import ModelProviderError
 from tradeflow.services.registry import STRATEGIES
-from tradeflow.settings import DATA_FEEDS, DOCS_URL
+from tradeflow.settings import CLI_NAME, DATA_FEEDS, DOCS_URL, MCP_SERVER_NAME
 from tradeflow.strategies import signals
 from tradeflow.utils.extras import installed as extras_installed
 from tradeflow.utils.extras import missing_extra_message
@@ -334,7 +334,7 @@ def _refuse_sibling_command_after_research(parser, argv: List[str]) -> None:
     if word in commands and word != "research":
         parser.exit(
             2,
-            f"tradeflow: error: `research` has no `{word}` subcommand - `{word}` is its own"
+            f"{CLI_NAME}: error: `research` has no `{word}` subcommand - `{word}` is its own"
             f" command, and `research` runs the model-driven proposer loop. Try: {_invocation(f'{word} --help')}\n",
         )
 
@@ -2076,8 +2076,8 @@ def _scaffold_example_pack(destination) -> None:
     from tradeflow.utils.extras import pack_install_hint
 
     print(f"    {pack_install_hint(str(target))}")
-    print("    tradeflow init --check          # lists it under 'private packs installed'")
-    print(f"    tradeflow backtest --config {target / 'configs' / 'breakout.json'} \\")
+    print(f"    {_invocation('init --check')}          # lists it under 'private packs installed'")
+    print(f"    {_invocation('backtest')} --config {target / 'configs' / 'breakout.json'} \\")
     print("        --start 2024-01-02 --end 2025-01-02\n")
     print(
         "  Nothing in it is imported by the engine. It registers through the two\n"
@@ -2469,7 +2469,7 @@ def _mcp_client_block() -> str:
 
     config = json.dumps(setup.mcp_client_config(), indent=2)
     indented = "\n".join(f"    {line}" for line in config.splitlines())
-    claude = f"claude mcp add tradeflow -- {shlex.join(setup.mcp_launch_command())}"
+    claude = f"claude mcp add {MCP_SERVER_NAME} -- {shlex.join(setup.mcp_launch_command())}"
     return f"{indented}\n\n  Claude Code, instead of editing a file:\n    {claude}"
 
 
@@ -4967,7 +4967,7 @@ def cmd_halt(args) -> None:
     halt = HaltState().set(args.reason, actor="cli", scope=args.scope)
     print(f"Halted. {halt}")
     print("New entries are refused while this stands. Exits are still allowed.")
-    print(f"Lift it with:  tradeflow resume {args.scope}")
+    print(f"Lift it with:  {_invocation(f'resume {args.scope}')}")
 
 
 def cmd_resume(args) -> None:
@@ -5036,7 +5036,7 @@ def cmd_flatten(args) -> None:
             try:
                 rerun = _invocation("flatten --confirm --reason ...")
             except OSError:  # pragma: no cover - the working directory was deleted
-                rerun = "tradeflow flatten --confirm --reason ..."
+                rerun = f"{CLI_NAME} flatten --confirm --reason ..."
             print(f"\n  Re-read the broker:  {rerun}")
     # Exit non-zero unless a broker read *observed* the book flat. A queued close now
     # fails this, which is the point: a script that treated exit 0 as "flat" was being
@@ -5816,8 +5816,8 @@ def _next_step_hint() -> str:
             "     make backtest    then run it on real market data"
         )
     return (
-        "     tradeflow init       add your free Alpaca paper keys\n"
-        "     tradeflow verdict    then run the whole pipeline on real market data"
+        f"     {_invocation('init'):<20} add your free Alpaca paper keys\n"
+        f"     {_invocation('verdict'):<20} then run the whole pipeline on real market data"
     )
 
 
@@ -5831,7 +5831,7 @@ def _version_banner() -> str:
     # resolve a stale or entirely different distribution that happens to share a
     # name.
     return (
-        f"tradeflow {tradeflow.__version__}\n"
+        f"{CLI_NAME} {tradeflow.__version__}\n"
         f"  running from : {Path(tradeflow.__file__).parent}\n"
         f"  state root   : {state_root()}"
     )
@@ -5873,7 +5873,7 @@ def _top_level_epilog() -> str:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="tradeflow",
+        prog=CLI_NAME,
         description="TradeFlow — a broker-agnostic trading engine that's refreshingly "
         "honest about how hard making money actually is",
         epilog=_top_level_epilog(),

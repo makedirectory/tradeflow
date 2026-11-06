@@ -2789,6 +2789,9 @@ def code_version() -> str:
         return sha
     from tradeflow import __version__
 
+    # Names the engine's code - the import package - not the executable, so this stays
+    # `tradeflow` when the command is renamed; provenance stamped on either side of
+    # that change then compares as the same code.
     return f"tradeflow {__version__}"
 
 

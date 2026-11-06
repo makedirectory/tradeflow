@@ -17,6 +17,7 @@ from datetime import datetime
 import pandas as pd
 import pytest
 
+from tradeflow import settings
 from tradeflow.analytics.reporting import format_campaign_material
 from tradeflow.engine.backtest import ACCOUNTING_VERSION
 from tradeflow.services.analysis import walk_forward_recipe
@@ -256,8 +257,8 @@ def test_the_artifact_command_matches_how_this_copy_is_actually_run(tmp_path, mo
     monkeypatch.setattr("tradeflow.settings.running_from_checkout", lambda: False)
     with _store(journal) as store:
         installed = campaign_material(store, trial_id, journal_path=journal)
-    assert installed[METADATA]["artifacts"][0]["read_with"].startswith("tradeflow ")
-    assert setup.invocation("trials show x") == "tradeflow trials show x"
+    assert installed[METADATA]["artifacts"][0]["read_with"].startswith(f"{settings.CLI_NAME} ")
+    assert setup.invocation("trials show x") == f"{settings.CLI_NAME} trials show x"
 
     monkeypatch.setattr("tradeflow.settings.running_from_checkout", lambda: True)
     with _store(journal) as store:

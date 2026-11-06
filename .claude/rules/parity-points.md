@@ -181,8 +181,18 @@ reading the manifest — reading it is exactly what missed this.
 
 **Installed copy ↔ checkout** — every instruction printed to a user. `make`, `python
 main.py`, `uv sync`, and `.env.example` do not exist for an installed reader. Use
-`services.setup.invocation` (the CLI's `_invocation` delegates to it) rather than a
-literal — services print instructions too.
+`settings.invocation` (`services.setup.invocation` and the CLI's `_invocation` delegate
+to it) rather than a literal — services print instructions too. It lives in `settings`
+because `settings` prints some itself, and the trade clock's flatten report is another;
+neither may import a service.
+
+The executable's *name* is the same hazard from the other side: `settings.CLI_NAME` is
+the one definition (argparse's `prog`, the version banner, the MCP launch lookup and
+every instruction read it) and `settings.MCP_SERVER_NAME` is the server's. A literal
+`tradeflow <verb>` in a string is a place a rename leaves behind with no signal, since
+the old name keeps working. `code_version()` is the one deliberate exception: it names
+the engine's code, not the command. `tests/test_cli_name.py` scans every string literal
+in the package against an explicit, justified allowlist.
 
 The same goes for *install and recovery* text: it has one definition,
 `utils.extras.install_hint`, and `cli._missing_extra_message` was its second copy (five

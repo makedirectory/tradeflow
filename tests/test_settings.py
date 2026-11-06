@@ -82,7 +82,7 @@ def test_an_installed_copy_is_never_told_to_use_files_it_does_not_have(monkeypat
     exist — two dead ends, and no mention of the command that actually fixes it."""
     message = _missing_message(monkeypatch, tmp_path, checkout=False)
 
-    assert "tradeflow init" in message
+    assert f"{settings.CLI_NAME} init" in message
     assert ".env.example" not in message
     assert "make " not in message
     assert str(tmp_path / ".env") in message  # says exactly where the file goes
