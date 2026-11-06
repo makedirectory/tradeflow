@@ -350,6 +350,15 @@ by accident rather than by decision.
 *Guarded by* `tests/test_campaign_material.py`, which writes a config over each surface
 and reads the same block back, and checks a pre-campaign config still loads.
 
+**The environment the self-test ran in ↔ the environment a client launches** — the
+launch *command* is one definition (`services.setup.mcp_launch_command`); the
+*environment* is a second half of the same idea. The self-test child inherits the whole
+shell, a desktop client inherits none of it, so a pass could mean "works with
+`TRADEFLOW_HOME` and exported keys" while the client journals to the default root or
+cannot authenticate. `mcp_client_config` therefore carries `TRADEFLOW_HOME` whenever it
+is set (never a credential), and a pass that relied on shell-exported keys says so.
+*Guarded by* `tests/test_mcp_stdio.py`.
+
 **How to invoke this copy** — *converged*. `cli._invocation` was the helper the
 installed-copy-vs-checkout entry names, and it lived in the CLI, so a *service* that
 needed to print an instruction — a config's campaign block naming the command that

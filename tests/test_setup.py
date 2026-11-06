@@ -924,7 +924,8 @@ def test_an_installed_launch_command_uses_the_script_beside_the_interpreter(monk
     assert setup.mcp_launch_command() == [str(bindir / "python"), "-m", "tradeflow.cli", "mcp"]
 
 
-def test_a_checkout_launch_command_names_main_py_by_absolute_path():
+def test_a_checkout_launch_command_names_main_py_by_absolute_path(monkeypatch):
+    monkeypatch.delenv("TRADEFLOW_HOME", raising=False)
     from pathlib import Path
 
     from tradeflow import settings

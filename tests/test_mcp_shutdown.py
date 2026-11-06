@@ -225,3 +225,51 @@ def test_the_stop_path_exits_even_when_a_log_handler_cannot_flush(monkeypatch):
         logging.getLogger().removeHandler(handler)
 
     assert exited == [130]
+
+
+def test_a_server_that_cannot_start_does_not_claim_to_be_waiting(tmp_path, monkeypatch):
+    """The waiting line is printed once the build succeeded: a process that is about to
+    exit for missing credentials is waiting for nothing."""
+    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
+    monkeypatch.setenv("APCA_API_KEY_ID", "")
+    monkeypatch.setenv("APCA_API_SECRET_KEY", "")
+    child = subprocess.Popen(
+        default_command(), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
+    try:
+        child.stdin.close()
+        _, stderr = _finish(child, bound=60)
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait()
+    assert child.returncode != 0
+    assert "Missing" in stderr or "credentials" in stderr.lower()
+    assert "waiting for an MCP client" not in stderr
+
+
+def test_the_stop_line_counts_the_tool_calls_the_session_handled(server):
+    """The count is the one number a person reads to learn whether anything ran."""
+    server.stdin.write(
+        (json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n").encode()
+    )
+    for i in (2, 3):
+        request = {
+            "jsonrpc": "2.0",
+            "id": i,
+            "method": "tools/call",
+            "params": {"name": "list_strategies", "arguments": {}},
+        }
+        server.stdin.write((json.dumps(request) + "\n").encode())
+    server.stdin.flush()
+    seen = b""
+    deadline = time.monotonic() + 30
+    while not all(f'"id":{n}' in seen.decode(errors="replace").replace(" ", "") for n in (2, 3)):
+        assert time.monotonic() < deadline, "tool calls were never answered"
+        if select.select([server.stdout], [], [], 0.5)[0]:
+            seen += os.read(server.stdout.fileno(), 65536)
+    server.send_signal(signal.SIGINT)
+
+    _, stderr = _finish(server)
+
+    assert "handled 2 tool call(s)" in stderr

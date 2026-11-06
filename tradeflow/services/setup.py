@@ -110,12 +110,44 @@ def mcp_launch_command() -> List[str]:
     return [str(python), "-m", "tradeflow.cli", "mcp"]
 
 
+def mcp_client_env() -> Dict[str, str]:
+    """The environment a client must pass for its server to use *this* state root.
+
+    ``TRADEFLOW_HOME`` only, and only when it is set: a desktop client does not inherit
+    the shell that exported it, so without this a self-test run from that shell passes
+    while the client's server journals to the default root - splitting the campaign's
+    journal, which deflates the multiple-testing correction against half its evidence
+    with nothing erroring. Credentials are never listed: they belong in the ``.env``
+    the server reads itself, not in a client config file.
+    """
+    home = os.environ.get("TRADEFLOW_HOME")
+    return {"TRADEFLOW_HOME": str(Path(home).expanduser().resolve())} if home else {}
+
+
+def credentials_only_in_shell(state: Optional["EnvState"] = None) -> List[str]:
+    """Credential keys the shell exports that the ``.env`` does not supply.
+
+    A client launches the server without the shell's exports, so these are exactly the
+    keys a passing self-test cannot vouch for.
+    """
+    state = state or inspect_env()
+    return [
+        k
+        for k in CREDENTIAL_KEYS
+        if not is_placeholder(state.from_environment.get(k)) and is_placeholder(state.values.get(k))
+    ]
+
+
 def mcp_client_config() -> Dict[str, Any]:
     """The ``mcpServers`` block for :func:`mcp_launch_command`, ready to paste."""
     from tradeflow.settings import MCP_SERVER_NAME
 
     command = mcp_launch_command()
-    return {"mcpServers": {MCP_SERVER_NAME: {"command": command[0], "args": command[1:]}}}
+    entry: Dict[str, Any] = {"command": command[0], "args": command[1:]}
+    env = mcp_client_env()
+    if env:
+        entry["env"] = env
+    return {"mcpServers": {MCP_SERVER_NAME: entry}}
 
 
 def is_placeholder(value: Optional[str]) -> bool:

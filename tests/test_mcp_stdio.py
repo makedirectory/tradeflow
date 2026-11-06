@@ -112,7 +112,8 @@ def test_self_test_fails_when_the_builtin_demo_entries_are_missing(child_env, mo
     assert "did not list the built-in demo entries" in capsys.readouterr().out
 
 
-def test_init_tells_a_reader_to_configure_the_command_the_self_test_runs(capsys):
+def test_init_tells_a_reader_to_configure_the_command_the_self_test_runs(capsys, monkeypatch):
+    monkeypatch.delenv("TRADEFLOW_HOME", raising=False)
     """Two definitions of "the server command" - one validated, one printed - is how a
     check passes on something no client was ever told to launch. The printed JSON and
     the Claude Code line are read back and compared with the command under test."""
@@ -150,3 +151,40 @@ def test_self_test_names_the_step_and_exits_nonzero_when_the_server_cannot_start
     assert "FAILED at step 'initialize'" in out
     assert "boom: no credentials" in out
     assert DISCLAIMER in out
+
+
+def test_the_printed_client_config_carries_a_non_default_state_root_and_never_keys(
+    tmp_path, monkeypatch, capsys
+):
+    """A desktop client does not inherit the shell that exported TRADEFLOW_HOME, so a
+    config without it journals somewhere else than the root the self-test just used."""
+    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
+    monkeypatch.setenv("APCA_API_KEY_ID", "PKDUMMYDUMMYDUMMY")
+    cli._print_next_steps()
+    out = capsys.readouterr().out
+    block = out[out.index("{") : out.rindex("}") + 1]
+    server = json.loads(block)["mcpServers"][settings.MCP_SERVER_NAME]
+    assert server["env"] == {"TRADEFLOW_HOME": str(tmp_path.resolve())}
+    assert "PKDUMMY" not in out
+    assert f"--env TRADEFLOW_HOME={shlex.quote(str(tmp_path.resolve()))} {settings.MCP_SERVER_NAME} --" in out
+
+
+def test_a_default_state_root_adds_no_env_block(monkeypatch):
+    from tradeflow.services import setup
+
+    monkeypatch.delenv("TRADEFLOW_HOME", raising=False)
+    assert "env" not in setup.mcp_client_config()["mcpServers"][settings.MCP_SERVER_NAME]
+
+
+def test_self_test_says_so_when_credentials_came_only_from_the_shell(
+    child_env, tmp_path, monkeypatch, capsys
+):
+    """The child inherits the shell's exports; a client launching it would not."""
+    from tradeflow.services import setup
+
+    monkeypatch.setattr(setup, "ENV_PATH", tmp_path / "absent.env")
+    args = cli.parse_cli(["mcp", "--self-test"])
+    args.func(args)
+    out = capsys.readouterr().out
+    assert "self-test passed" in out
+    assert "APCA_API_KEY_ID" in out and "not the .env" in out

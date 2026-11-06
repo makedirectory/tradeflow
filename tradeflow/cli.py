@@ -2469,7 +2469,8 @@ def _mcp_client_block() -> str:
 
     config = json.dumps(setup.mcp_client_config(), indent=2)
     indented = "\n".join(f"    {line}" for line in config.splitlines())
-    claude = f"claude mcp add {MCP_SERVER_NAME} -- {shlex.join(setup.mcp_launch_command())}"
+    env_flags = "".join(f"--env {k}={shlex.quote(v)} " for k, v in setup.mcp_client_env().items())
+    claude = f"claude mcp add {env_flags}{MCP_SERVER_NAME} -- {shlex.join(setup.mcp_launch_command())}"
     return f"{indented}\n\n  Claude Code, instead of editing a file:\n    {claude}"
 
 
@@ -3940,6 +3941,16 @@ def _run_mcp_self_test() -> None:
         print(
             f"\nTo use this command from a client, add it to the client's configuration:\n\n{_mcp_client_block()}\n"
         )
+        from tradeflow.services import setup
+
+        shell_only = setup.credentials_only_in_shell()
+        if shell_only:
+            print(
+                f"Note: {', '.join(shell_only)} came from this shell's environment, not the .env "
+                "the server reads. A client launches the server without your shell's exports, so "
+                "this pass does not show it would find them: put them in the .env "
+                f"({setup.ENV_PATH}) - `{_invocation('init')}` writes it.\n"
+            )
         print(DISCLAIMER)
         return
     print(f"MCP self-test FAILED at step '{out['step']}' after {out['elapsed']:.1f}s: {out['error']}")

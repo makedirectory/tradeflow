@@ -2044,13 +2044,15 @@ def serve() -> None:
             worktree,
         )
 
+    server = build_server()
+    # After the build, not before: a missing extra or missing credentials stops the
+    # server there, and "waiting for a client" from a process about to exit is false.
     logger.info(
         "TradeFlow MCP server (stdio) is waiting for an MCP client on stdin/stdout. Live "
         "trading is NOT exposed. Started by hand in a terminal it is attached to no chat: "
         "a client launches its own copy (check the command with `%s`). Ctrl-C stops it.",
         invocation("mcp --self-test"),
     )
-    server = build_server()
     _install_stop_handlers()
     try:
         server.run()
