@@ -80,7 +80,7 @@ def invocation(command: str, *, make_target: Optional[str] = None) -> str:
     return _invocation(command, make_target=make_target)
 
 
-def mcp_launch_command() -> List[str]:
+def mcp_launch_command(*, offline: bool = False, cache_dir: Optional[Any] = None) -> List[str]:
     """The command an MCP client should run to start *this* copy's server.
 
     One definition for three readers: ``mcp --self-test`` runs it, ``init`` prints it,
@@ -93,21 +93,32 @@ def mcp_launch_command() -> List[str]:
       (a tool environment's own ``bin``), else ``python -m tradeflow.cli mcp``.
     * **Checkout:** this interpreter and the absolute ``main.py``, which needs neither
       ``uv`` on the client's PATH nor a ``cwd``.
+
+    ``offline`` appends ``--offline`` (and ``--cache-dir``, made absolute because a
+    client has no working directory to resolve it against): the server then reads only
+    the bar cache and needs no keys. It is part of the one command so the self-test and
+    the printed config cannot check one server and tell a reader to launch another.
     """
     import sys
 
     from tradeflow.settings import CLI_NAME, LEGACY_CLI_NAMES, PROJECT_ROOT, _looks_like_checkout
 
+    flags: List[str] = []
+    if offline:
+        flags.append("--offline")
+    if cache_dir is not None:
+        flags += ["--cache-dir", str(Path(cache_dir).expanduser().resolve())]
+
     python = Path(sys.executable)
     main = PROJECT_ROOT / "main.py"
     if _looks_like_checkout(PROJECT_ROOT) and main.is_file():
-        return [str(python), str(main), "mcp"]
+        return [str(python), str(main), "mcp", *flags]
     for name in (CLI_NAME, *LEGACY_CLI_NAMES):
         for filename in (name, f"{name}.exe"):
             script = python.parent / filename
             if script.is_file():
-                return [str(script), "mcp"]
-    return [str(python), "-m", "tradeflow.cli", "mcp"]
+                return [str(script), "mcp", *flags]
+    return [str(python), "-m", "tradeflow.cli", "mcp", *flags]
 
 
 def mcp_client_env() -> Dict[str, str]:
@@ -138,11 +149,11 @@ def credentials_only_in_shell(state: Optional["EnvState"] = None) -> List[str]:
     ]
 
 
-def mcp_client_config() -> Dict[str, Any]:
+def mcp_client_config(*, offline: bool = False, cache_dir: Optional[Any] = None) -> Dict[str, Any]:
     """The ``mcpServers`` block for :func:`mcp_launch_command`, ready to paste."""
     from tradeflow.settings import MCP_SERVER_NAME
 
-    command = mcp_launch_command()
+    command = mcp_launch_command(offline=offline, cache_dir=cache_dir)
     entry: Dict[str, Any] = {"command": command[0], "args": command[1:]}
     env = mcp_client_env()
     if env:

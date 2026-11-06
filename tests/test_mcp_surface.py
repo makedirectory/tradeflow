@@ -778,10 +778,10 @@ def test_every_documented_connection_recipe_covers_both_kinds_of_copy():
 
 
 def test_the_prerequisites_are_stated_where_a_client_is_registered():
-    """Both prerequisites fail the same way from a client — the server exits before
-    answering, and the client shows only that it would not start. Verified by
-    handshaking an installed copy with no credentials: the pipe closes before the first
-    response. So the pages that tell someone to register it have to say so."""
+    """A missing extra makes the server exit before answering, and the client shows only
+    that it would not start. Credentials used to fail the same way and no longer do (the
+    data client is built lazily), but the page that tells someone to register it still
+    has to say what each one costs."""
     import pathlib
 
     guide = pathlib.Path("docs/content/engineering/mcp-server.md").read_text().lower()

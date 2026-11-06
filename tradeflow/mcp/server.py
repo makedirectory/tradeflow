@@ -291,20 +291,53 @@ class ScannerEntry(TypedDict):
     demo: bool
 
 
-def build_server(data_client=None):
+def _keys_missing_message() -> str:
+    """What a tool that needs bars says when the server has no keys to fetch them with.
+
+    Spelled for the copy that is running, and aimed at a person at a terminal: the agent
+    cannot fix this itself, and a client that only shows "Connection closed" (which is
+    what a server dying at startup used to look like) says nothing at all.
+    """
+    from tradeflow.settings import invocation
+
+    return (
+        "This tool needs market data and the server has no broker keys, so it cannot fetch "
+        f"bars. Add them from a terminal with `{invocation('init')}` and restart the server, "
+        f"or start it with `{invocation('mcp --offline')}` to read only the local bar cache, "
+        "which needs no keys. Catalogue and trial-history tools work without keys."
+    )
+
+
+def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
     """Construct the FastMCP server with all read/analyze/propose tools registered.
 
-    ``data_client`` may be injected (offline tests); otherwise a data-only Alpaca
-    client is built. Importing ``mcp`` is deferred to here so the package and the
-    rest of the CLI never require the extra.
+    ``data_client`` may be injected (offline tests); otherwise a data-only client is
+    built **lazily**, on the first tool that needs bars. Building it here made a server
+    with no keys exit at startup, which a client reports only as a closed connection - and
+    took the catalogue and trial-history tools, which need no market data, down with it.
+    ``offline`` builds the keyless, cache-only client instead. Either way the server holds
+    only a data client, never a broker. Importing ``mcp`` is deferred to here so the
+    package and the rest of the CLI never require the extra.
     """
     from mcp.server.fastmcp import FastMCP
 
-    if data_client is None:
-        from tradeflow.services.data import build_data_client
+    if data_client is not None:
+        _assert_no_trading_client(data_client)
+    held: List[Any] = [data_client]
 
-        data_client = build_data_client()
-    _assert_no_trading_client(data_client)
+    def _data():
+        """The data client, built on first use. A failed build is retried, not cached."""
+        if held[0] is None:
+            from tradeflow.services.data import build_data_client
+            from tradeflow.settings import SettingsError
+
+            try:
+                client = build_data_client(offline=offline, cache_dir=cache_dir)
+            except SettingsError as exc:
+                raise RuntimeError(_keys_missing_message()) from exc
+            _assert_no_trading_client(client)
+            held[0] = client
+        return held[0]
 
     server = FastMCP(SERVER_NAME)
     # FastMCP takes no version, so a client would display this app as the SDK's own
@@ -312,7 +345,6 @@ def build_server(data_client=None):
     import tradeflow
 
     server._mcp_server.version = tradeflow.__version__
-    dc = data_client
 
     def _logged(tool: str, inputs: Dict[str, Any], result: Any) -> Any:
         run_id = result.get("run_id") if isinstance(result, dict) else None
@@ -406,7 +438,7 @@ def build_server(data_client=None):
         return _logged(
             "run_scan",
             inputs,
-            analysis.run_scan(dc, scanner, symbols, config, as_of=_parse_date(as_of) if as_of else None),
+            analysis.run_scan(_data(), scanner, symbols, config, as_of=_parse_date(as_of) if as_of else None),
         )
 
     @tool(notes=[NON_JOURNALING_NOTE])
@@ -458,7 +490,7 @@ def build_server(data_client=None):
             "sample": sample,
         }
         result = analysis.run_causality_probes(
-            dc,
+            _data(),
             strategy,
             symbols,
             _parse_date(start),
@@ -537,7 +569,7 @@ def build_server(data_client=None):
             "param_ranges": param_ranges,
         }
         result = analysis.run_screen(
-            dc,
+            _data(),
             strategy,
             symbols,
             _parse_date(start),
@@ -595,7 +627,7 @@ def build_server(data_client=None):
             "force": force,
         }
         result = analysis.confirm_screen_point(
-            dc,
+            _data(),
             strategy,
             symbols,
             _parse_date(start),
@@ -690,7 +722,7 @@ def build_server(data_client=None):
             **({"record_trades": True} if record_trades else {}),
         }
         result = analysis.run_backtest(
-            dc,
+            _data(),
             strategy,
             symbols,
             _parse_date(start),
@@ -748,7 +780,7 @@ def build_server(data_client=None):
             "force": force,
         }
         result = analysis.run_optimization(
-            dc,
+            _data(),
             strategy,
             symbols,
             _parse_date(start),
@@ -848,7 +880,7 @@ def build_server(data_client=None):
             **({"record_trades": True} if record_trades else {}),
         }
         result = analysis.run_walk_forward(
-            dc,
+            _data(),
             strategy,
             symbols,
             _parse_date(start),
@@ -986,7 +1018,7 @@ def build_server(data_client=None):
             "force": force,
         }
         result = analysis.run_draft_walk_forward(
-            dc,
+            _data(),
             code,
             symbols,
             _parse_date(start),
@@ -1057,7 +1089,7 @@ def build_server(data_client=None):
             "scaling": scaling,
         }
         result = analysis.compute_alphas(
-            dc,
+            _data(),
             strategy,
             symbols,
             _parse_date(as_of),
@@ -1102,7 +1134,7 @@ def build_server(data_client=None):
         """
         inputs = {"signals": signals, "symbols": symbols, "as_of": as_of, "neutralize": neutralize}
         result = analysis.compute_combined_alphas(
-            dc,
+            _data(),
             signals,
             symbols,
             _parse_date(as_of),
@@ -1134,7 +1166,7 @@ def build_server(data_client=None):
         """
         inputs = {"strategy": strategy, "symbols": symbols, "start": start, "end": end}
         result = analysis.compute_horizon(
-            dc,
+            _data(),
             strategy,
             symbols,
             _parse_date(start),
@@ -1170,7 +1202,12 @@ def build_server(data_client=None):
             "lookback_days": lookback_days,
         }
         result = analysis.compute_risk(
-            dc, symbols, _parse_date(as_of), model=model, timeframe=timeframe, lookback_days=lookback_days
+            _data(),
+            symbols,
+            _parse_date(as_of),
+            model=model,
+            timeframe=timeframe,
+            lookback_days=lookback_days,
         )
         return _logged("compute_risk", inputs, result)
 
@@ -1276,7 +1313,7 @@ def build_server(data_client=None):
             **{k: v for k, v in optional.items() if v is not None},
         }
         result = analysis.construct_portfolio(
-            dc,
+            _data(),
             strategy,
             symbols,
             _parse_date(as_of),
@@ -1312,7 +1349,7 @@ def build_server(data_client=None):
         """
         inputs = {"strategy": strategy, "symbols": symbols, "start": start, "end": end, "n_trials": n_trials}
         result = analysis.compute_information(
-            dc,
+            _data(),
             strategy,
             symbols,
             _parse_date(start),
@@ -1397,7 +1434,7 @@ def build_server(data_client=None):
             **{k: v for k, v in optional.items() if v is not None},
         }
         result = analysis.compute_attribution(
-            dc,
+            _data(),
             strategy,
             symbols,
             _parse_date(start),
@@ -1503,7 +1540,7 @@ def build_server(data_client=None):
         optional = {k: v for k, v in optional.items() if v is not None}
         inputs = {"strategy": strategy, "symbols": symbols, "start": start, "end": end, **optional}
         result = analysis.run_verdict(
-            dc,
+            _data(),
             strategy,
             symbols,
             _parse_date(start),
@@ -1824,7 +1861,7 @@ def build_server(data_client=None):
         """
         inputs = {"symbols": symbols, "timeframe": timeframe, "lookback_days": lookback_days}
         return _logged(
-            "summarize_bars", inputs, analysis.summarize_bars(dc, symbols, timeframe, lookback_days)
+            "summarize_bars", inputs, analysis.summarize_bars(_data(), symbols, timeframe, lookback_days)
         )
 
     # ---------------- Propose (writes a file, never live state) ---------------- #
@@ -2078,8 +2115,12 @@ def _install_stop_handlers() -> None:
         signal.signal(sig, lambda _n, _f, _name=name, _code=code: stop_now(_name, _code))
 
 
-def serve() -> None:
-    """Build the server and run it over stdio (what Claude Desktop/Code launch)."""
+def serve(*, offline: bool = False, cache_dir=None) -> None:
+    """Build the server and run it over stdio (what Claude Desktop/Code launch).
+
+    Starts without broker keys: bars are fetched lazily, so a keyless server still
+    answers the catalogue and trial-history tools. ``offline`` reads only the bar cache.
+    """
     # Said at startup, not on request: an agent driving these tools cannot see
     # where its evidence is landing, and every journaled trial is permanent.
     from tradeflow.services.setup import invocation
@@ -2096,9 +2137,9 @@ def serve() -> None:
             worktree,
         )
 
-    server = build_server()
-    # After the build, not before: a missing extra or missing credentials stops the
-    # server there, and "waiting for a client" from a process about to exit is false.
+    server = build_server(offline=offline, cache_dir=cache_dir)
+    # After the build, not before: a missing extra stops the server there, and "waiting
+    # for a client" from a process about to exit is false.
     logger.info(
         "%s MCP server (stdio) is waiting for an MCP client on stdin/stdout. Live "
         "trading is NOT exposed. Started by hand in a terminal it is attached to no chat: "

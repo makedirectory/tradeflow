@@ -393,7 +393,11 @@ shell, a desktop client inherits none of it, so a pass could mean "works with
 `TRADEFLOW_HOME` and exported keys" while the client journals to the default root or
 cannot authenticate. `mcp_client_config` therefore carries `TRADEFLOW_HOME` whenever it
 is set (never a credential), and a pass that relied on shell-exported keys says so.
-*Guarded by* `tests/test_mcp_stdio.py`.
+The launch command also carries `--offline` and `--cache-dir` when asked
+(`mcp_launch_command(offline=..., cache_dir=...)`): a keyless, cache-only server checked
+by the self-test and the one printed for a client are the same command. A shell-keys note
+is skipped for it, since nothing there needs keys.
+*Guarded by* `tests/test_mcp_stdio.py`, `tests/test_mcp_keyless.py`.
 
 **How to invoke this copy** — *converged*. `cli._invocation` was the helper the
 installed-copy-vs-checkout entry names, and it lived in the CLI, so a *service* that

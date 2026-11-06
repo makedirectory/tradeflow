@@ -20,8 +20,9 @@ order — that capability is simply not wired in.
 
 ## MCP server
 
-Needs the `mcp` extra ([optional extras](extras)) and your usual data credentials
-([first run](first-run)). Your MCP client **launches the server itself** from its
+Needs the `mcp` extra ([optional extras](extras)). Your usual data credentials
+([first run](first-run)) are needed only by the tools that fetch bars; the server
+starts without them. Your MCP client **launches the server itself** from its
 config; starting `quantred mcp` in a terminal only proves it starts, and connects
 no chat.
 
@@ -50,9 +51,17 @@ The self-test child does inherit your shell, so when it passes on keys that came
 exported variables it says so rather than letting that read as proof the client will find
 them.
 
-Run `quantred mcp` once in a terminal first. Without the extra or credentials it
-exits immediately with the reason, which from inside a client looks only like a
-server that never started.
+Run `quantred mcp` once in a terminal first. Without the extra it exits immediately
+with the reason, which from inside a client looks only like a server that never started.
+
+**Without keys.** The server still starts. The catalogue and trial-history tools
+(`list_strategies`, `list_scanners`, `get_param_ranges`, `list_trials`, `get_trial`,
+the glossary and so on) answer, and a tool that needs bars is refused with a message
+saying the keys are missing and how to add them from a terminal (`quantred init`). To
+serve from bars you already cached, with no keys at all, launch it as
+`quantred mcp --offline` (optionally `--cache-dir DIR`): a request outside the cache is
+refused with the `cache warm` command that fills it. `quantred mcp --self-test --offline`
+checks, and prints a client block for, exactly that command.
 
 To check that the server starts and answers, without a chat client, run
 `quantred mcp --self-test`. It lists the tools and calls the discovery tools

@@ -2721,7 +2721,7 @@ def _print_next_steps() -> None:
     )
 
 
-def _mcp_client_block() -> str:
+def _mcp_client_block(offline: bool = False, cache_dir: Optional[Any] = None) -> str:
     """The launch command as a ready-to-paste client config, and the Claude Code form.
 
     Both come from ``setup.mcp_launch_command`` - the command ``mcp --self-test`` runs -
@@ -2732,10 +2732,11 @@ def _mcp_client_block() -> str:
 
     from tradeflow.services import setup
 
-    config = json.dumps(setup.mcp_client_config(), indent=2)
+    config = json.dumps(setup.mcp_client_config(offline=offline, cache_dir=cache_dir), indent=2)
     indented = "\n".join(f"    {line}" for line in config.splitlines())
     env_flags = "".join(f"--env {k}={shlex.quote(v)} " for k, v in setup.mcp_client_env().items())
-    claude = f"claude mcp add {env_flags}{MCP_SERVER_NAME} -- {shlex.join(setup.mcp_launch_command())}"
+    launch = shlex.join(setup.mcp_launch_command(offline=offline, cache_dir=cache_dir))
+    claude = f"claude mcp add {env_flags}{MCP_SERVER_NAME} -- {launch}"
     return f"{indented}\n\n  Claude Code, instead of editing a file:\n    {claude}"
 
 
@@ -4225,8 +4226,10 @@ def cmd_mcp(args) -> None:
     Live trading is intentionally not exposed: the server builds
     only a data client, so it cannot place orders.
     """
+    offline = bool(getattr(args, "offline", False))
+    cache_dir = getattr(args, "cache_dir", None)
     if getattr(args, "self_test", False):
-        _run_mcp_self_test()
+        _run_mcp_self_test(offline=offline, cache_dir=cache_dir)
         return
     # The guard has to wrap `serve()`, not just the import above it. The server
     # module imports fine without the extra — it pulls in the MCP SDK lazily, inside
@@ -4236,12 +4239,12 @@ def cmd_mcp(args) -> None:
     try:
         from tradeflow.mcp.server import serve
 
-        serve()
+        serve(offline=offline, cache_dir=cache_dir)
     except ImportError:
         sys.exit(missing_extra_message("The MCP server", "mcp"))
 
 
-def _run_mcp_self_test() -> None:
+def _run_mcp_self_test(offline: bool = False, cache_dir: Optional[Any] = None) -> None:
     """Render ``run_self_test``; exit 0 when discovery worked, 1 naming the step if not."""
     import shlex
 
@@ -4250,7 +4253,7 @@ def _run_mcp_self_test() -> None:
     except ImportError:
         sys.exit(missing_extra_message("The MCP server", "mcp"))
 
-    out = run_self_test()
+    out = run_self_test(offline=offline, cache_dir=cache_dir)
     if out["ok"]:
         rows = {k: out[k] for k in ("list_strategies", "list_scanners")}
         for label, key in (("strategies", "list_strategies"), ("scanners", "list_scanners")):
@@ -4262,11 +4265,12 @@ def _run_mcp_self_test() -> None:
         print(f"  tools:      {len(out['tools'])}")
         print(f"  discovery:  {rows['list_strategies']}; {rows['list_scanners']}")
         print(
-            f"\nTo use this command from a client, add it to the client's configuration:\n\n{_mcp_client_block()}\n"
+            f"\nTo use this command from a client, add it to the client's configuration:\n\n{_mcp_client_block(offline, cache_dir)}\n"
         )
         from tradeflow.services import setup
 
-        shell_only = setup.credentials_only_in_shell()
+        # An offline server needs no keys, so there is nothing the shell could be hiding.
+        shell_only = [] if offline else setup.credentials_only_in_shell()
         if shell_only:
             print(
                 f"Note: {', '.join(shell_only)} came from this shell's environment, not the .env "
@@ -7900,6 +7904,17 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Start a child copy of the server, list its tools and call the discovery "
         "tools through the real MCP client, then exit. Connects no chat.",
+    )
+    mcp.add_argument(
+        "--offline",
+        action="store_true",
+        help="Serve from the local bar cache only: no network and no broker keys needed. A tool "
+        "that asks for bars outside the cache is refused with the command that warms them. Without "
+        "it the server still starts keyless - the catalogue and trial-history tools work - and a "
+        "tool needing bars says the keys are missing.",
+    )
+    mcp.add_argument(
+        "--cache-dir", dest="cache_dir", default=None, help="Bar cache directory (default: cache/bars)"
     )
     mcp.set_defaults(func=cmd_mcp)
 

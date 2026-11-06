@@ -5,8 +5,8 @@ client performs, so a tool whose declared return type disagreed with its rows pa
 every test while failing for everyone who connected. These tests spawn the server as
 a child process and talk to it the way a chat client does.
 
-The registry tools make no network call, so the dummy credentials below (needed only
-because the server builds a data client at startup) never leave the machine.
+The registry tools make no network call, so the dummy credentials below never leave the
+machine (the server needs none to start; they let the bar tools build a client).
 """
 
 import json
@@ -209,3 +209,60 @@ def test_self_test_says_so_when_credentials_came_only_from_the_shell(
     out = capsys.readouterr().out
     assert "self-test passed" in out
     assert "APCA_API_KEY_ID" in out and "not the .env" in out
+
+
+@pytest.fixture
+def keyless_env(tmp_path, monkeypatch):
+    """A child with no credentials anywhere: not in the environment, not in the .env."""
+    import os
+
+    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
+    monkeypatch.delenv("APCA_API_KEY_ID", raising=False)
+    monkeypatch.delenv("APCA_API_SECRET_KEY", raising=False)
+    return dict(os.environ)
+
+
+def _drive_keyless(command, env):
+    async def drive():
+        params = StdioServerParameters(command=command[0], args=command[1:], env=env)
+        with anyio.fail_after(60):
+            async with stdio_client(params) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    listed = await session.list_tools()
+                    strategies = await session.call_tool("list_strategies")
+                    bars = await session.call_tool("summarize_bars", {"symbols": ["AAA"]})
+        return listed, strategies, bars
+
+    return anyio.run(drive)
+
+
+def test_a_keyless_server_over_stdio_lists_tools_and_answers_the_catalogue(keyless_env):
+    """With no keys the process used to exit before `initialize`, which a client shows as
+    "Connection closed". A bar tool now fails with the reason, and the catalogue works."""
+    listed, strategies, bars = _drive_keyless(default_command(), keyless_env)
+
+    assert any(t.name == "list_strategies" for t in listed.tools)
+    assert not strategies.isError and strategies.structuredContent["result"]
+    assert bars.isError
+    text = " ".join(c.text for c in bars.content)
+    assert "no broker keys" in text and settings.invocation("init") in text
+
+
+def test_an_offline_server_over_stdio_needs_no_keys_and_a_miss_names_the_warm_command(keyless_env, tmp_path):
+    command = default_command(offline=True, cache_dir=tmp_path / "bars")
+    _, strategies, bars = _drive_keyless(command, keyless_env)
+
+    assert not strategies.isError
+    assert bars.isError
+    text = " ".join(c.text for c in bars.content)
+    assert "cache warm" in text and "no broker keys" not in text
+
+
+def test_self_test_offline_passes_with_no_keys_and_checks_the_offline_command(keyless_env, capsys):
+    args = cli.parse_cli(["mcp", "--self-test", "--offline"])
+    args.func(args)
+    out = capsys.readouterr().out
+    assert "self-test passed" in out
+    assert shlex.join(default_command(offline=True)) in out
+    assert "--offline" in out.split("Claude Code")[1]

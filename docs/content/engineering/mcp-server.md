@@ -117,14 +117,18 @@ From a checkout, the equivalent is the script it wraps:
   "args": ["run", "--project", "/path/to/tradeflow", "python", "main.py", "mcp"]}}}
 ```
 
-**Two prerequisites, and both fail the same way from a client.** The server needs the
-`mcp` extra and a working set of market-data credentials, and without either it prints
-its reason and exits immediately — which a human running it reads and acts on, but an
-MCP client generally shows as nothing more than a server that would not start. Verified
-by handshaking against an installed copy: with no credentials the client sees the pipe
-close before the first response. So run `quantred mcp` once in a terminal before
-registering it, and `quantred init` if it asks for keys; a tool list that never appears
-is almost always one of these two rather than a client-side problem.
+**One prerequisite, and a lazy second.** The server needs the `mcp` extra; without it
+the command prints its reason and exits, which a client shows as a server that would not start. Market-data credentials are *not* a startup requirement: the data client is built
+on the first tool that needs bars (`build_server(data_client=None)` holds a builder, not a
+client), so a keyless server still lists its tools and answers the catalogue and
+trial-history tools. A bar tool then raises a tool error saying the keys are missing and
+to run `init` from a terminal; a failed build is not remembered, so the next call retries.
+The server holds only a data client either way, so the read-only wall is unchanged.
+`quantred mcp --offline [--cache-dir DIR]` builds the cache-only client
+(`build_data_client(offline=True)`) instead: no keys, no network, and a request outside the
+cache is a `CacheMiss` naming the warm command. The flags are part of the one launch
+command (`services.setup.mcp_launch_command`), so the self-test and the printed client
+config carry them together.
 
 **Checking discovery without a chat.** `quantred mcp --self-test` launches a child copy
 of the server over stdio (the interpreter running the CLI, so an installed copy and a

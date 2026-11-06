@@ -31,7 +31,7 @@ DISCLAIMER = (
 DISCOVERY_TOOLS = ("list_strategies", "list_scanners")
 
 
-def default_command() -> List[str]:
+def default_command(*, offline: bool = False, cache_dir: Optional[Any] = None) -> List[str]:
     """The server command for *this* copy - the one ``init`` tells a reader to configure.
 
     Delegates to the setup service so the check and the instruction cannot name two
@@ -39,7 +39,7 @@ def default_command() -> List[str]:
     """
     from tradeflow.services.setup import mcp_launch_command
 
-    return mcp_launch_command()
+    return mcp_launch_command(offline=offline, cache_dir=cache_dir)
 
 
 def _rows(result: Any) -> List[Dict[str, Any]]:
@@ -81,6 +81,8 @@ def run_self_test(
     *,
     timeout: float = 60,
     env: Optional[Dict[str, str]] = None,
+    offline: bool = False,
+    cache_dir: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """Run the discovery check; never raises for a server-side failure.
 
@@ -93,7 +95,12 @@ def run_self_test(
     ``env`` defaults to a copy of the caller's environment - the SDK would otherwise
     hand the child a minimal one, losing ``TRADEFLOW_HOME`` and credentials.
     """
-    command = list(command) if command else default_command()
+    if command:
+        command = list(command)
+    elif offline or cache_dir is not None:
+        command = default_command(offline=offline, cache_dir=cache_dir)
+    else:
+        command = default_command()
     child_env = dict(os.environ if env is None else env)
     started = time.monotonic()
     report: Dict[str, Any] = {"step": "start"}
