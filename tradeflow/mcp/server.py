@@ -851,6 +851,7 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         benchmark: Optional[str] = None,
         position_limits: Optional[Dict[str, Any]] = None,
         record_trades: bool = False,
+        cost_stress: Optional[str] = "all",
     ) -> Dict[str, Any]:
         """Honest out-of-sample evaluation across folds - your advancement criterion.
 
@@ -864,10 +865,22 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         disable) — gross validation systematically promotes turnover the
         strategy could not afford live.
 
-        `benchmark` is a symbol to measure against (e.g. "SPY"). Without it every
-        fold reports `benchmark_available: false`, information ratio 0 and no betas,
-        so any benchmark-relative promotion prerequisite is left unevaluated rather
-        than failed. `position_limits` is the book the config says it will trade
+        `promotable` is the statistical gates ONLY and does not mean clear for paper.
+        The `evidence` block beside it is what the CLI prints as "Promotion
+        prerequisites" and "Evidence completeness": cost stress, family bootstrap
+        (not run over this tool, so it stays unevaluated), and benchmark-relative
+        information ratio and excess return, each pass/fail/unevaluated, plus excess
+        return per fold and `evidence.clear`. Read `evidence.evidence_completeness`
+        before acting on `promotable`; an unevaluated check is unknown, not passed.
+        A memoized answer keeps no per-fold detail, so its `evidence` is null.
+        `cost_stress` ("all"/"turnover"/"borrow", null to skip) re-runs the chosen
+        config at worse costs, unjournaled, and is on by default as in the CLI.
+
+        `benchmark` is a symbol to measure against (e.g. "SPY"). Without it the
+        benchmark-relative prerequisites are left unevaluated rather than failed.
+        It is scored per fold and aggregated as a median: `oos_aggregate`
+        (concatenated trades) deliberately carries no benchmark figures, so its
+        `benchmark_available: false` is not a missing benchmark. `position_limits` is the book the config says it will trade
         (e.g. {"max_positions": 8}); without it the validation runs at whatever the
         strategy class declares, which is not what would be deployed.
 
@@ -903,6 +916,7 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
             "benchmark": benchmark,
             "position_limits": position_limits,
             **({"record_trades": True} if record_trades else {}),
+            **({"cost_stress": cost_stress} if cost_stress != "all" else {}),
         }
         result = analysis.run_walk_forward(
             _data(),
@@ -928,6 +942,7 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
             benchmark=benchmark,
             position_limits=position_limits,
             **({"record_trades": True} if record_trades else {}),
+            **({"cost_stress": cost_stress} if cost_stress != "all" else {}),
         )
         return _logged("run_walk_forward", inputs, result)
 

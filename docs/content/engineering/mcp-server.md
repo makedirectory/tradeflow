@@ -283,6 +283,12 @@ live is a manual human step outside MCP.
 
 `run_optimization` results are explicitly labeled in-sample and tell the caller to
 validate with `run_walk_forward`. `run_walk_forward` returns the promotion-gate
-verdict as its advancement criterion. The glossary spells out the deflated-Sharpe
+verdict as its advancement criterion, and an `evidence` block beside it: the same
+promotion prerequisites, evidence completeness and per-fold excess return the CLI
+prints, from one service function (`walk_forward_evidence`) that both surfaces call.
+`promotable` is the statistical gates only; an agent reads `evidence.clear` and
+`evidence.evidence_completeness` before acting on it, and an unevaluated check is
+unknown rather than passed. A memoized answer keeps no per-fold detail, so its
+`evidence` is null. The glossary spells out the deflated-Sharpe
 / multiple-testing trap. These keep an agent from optimizing and then trusting the
 in-sample Sharpe.

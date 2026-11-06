@@ -195,6 +195,15 @@ v6 ones. Earlier trials drop out of the default `trials list` (it says how many)
   traceback.
 - The printed client configuration carries `TRADEFLOW_HOME` when you set it, and the
   self-test says when credentials came only from your shell.
+- `run_walk_forward` returns the same promotion prerequisites, evidence completeness and
+  per-fold excess return the CLI prints, in an `evidence` block beside `gate_report`,
+  and echoes the `benchmark`. Before, an agent saw `promotable` with no sign that
+  prerequisites existed or had failed. `promotable` is the statistical gates only;
+  `evidence.clear` is the one to read. The tool takes `cost_stress` (on by default, as
+  on the CLI); the family bootstrap is not run over MCP and stays unevaluated.
+  `oos_aggregate` still carries no benchmark figures by design: the benchmark is scored
+  per fold. The walk-forward and information HTML reports name the benchmark, timeframe
+  and universe in their header and carry the prerequisites.
 - The server starts without broker keys: catalogue and trial-history tools work, and a
   tool that needs bars says keys are missing and how to add them, where a client used to
   see only "Connection closed". `mcp --offline` serves from the local bar cache with no

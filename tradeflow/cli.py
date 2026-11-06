@@ -1674,27 +1674,6 @@ def cmd_walkforward(args) -> None:
         )
     _print_walkforward(result, args.objective)
 
-    if getattr(args, "html", None):
-        from tradeflow.services.analysis import walk_forward_payload
-        from tradeflow.services.audit import new_run_id
-
-        _write_html(
-            args,
-            walk_forward_payload(
-                result,
-                run_id=new_run_id(),
-                strategy=args.strategy,
-                symbols=universe,
-                start=args.start,
-                end=args.end,
-                mode=args.mode,
-                objective=args.objective,
-                method=args.method,
-                gross=args.gross,
-            ),
-            "walkforward",
-        )
-
     if not args.no_journal and result.folds:
         from tradeflow.services.analysis import trades_payload
         from tradeflow.services.audit import journal_trial, probe_verdicts
@@ -1745,8 +1724,33 @@ def cmd_walkforward(args) -> None:
         )
         _print_bootstrap_skill(bootstrap_report)
 
+    evidence = None
     if result.folds:
-        _print_promotion_prerequisites(data_client, args, result, universe, bootstrap_report)
+        evidence = _print_promotion_prerequisites(data_client, args, result, universe, bootstrap_report)
+
+    if getattr(args, "html", None):
+        from tradeflow.services.analysis import walk_forward_payload
+        from tradeflow.services.audit import new_run_id
+
+        _write_html(
+            args,
+            walk_forward_payload(
+                result,
+                run_id=new_run_id(),
+                strategy=args.strategy,
+                symbols=universe,
+                start=args.start,
+                end=args.end,
+                mode=args.mode,
+                objective=args.objective,
+                method=args.method,
+                gross=args.gross,
+                benchmark=getattr(args, "benchmark", None),
+                timeframe=timeframe,
+                evidence=evidence,
+            ),
+            "walkforward",
+        )
 
     if getattr(args, "chart", None):
         from tradeflow.analytics.charts import render_walkforward_chart
@@ -1919,59 +1923,36 @@ def _print_walkforward(result, objective: str) -> None:
     )
 
 
-def _print_promotion_prerequisites(data_client, args, result, universe, bootstrap_report) -> None:
-    """What a candidate should clear before paper, beside `promotable` rather than in it.
+def _print_promotion_prerequisites(data_client, args, result, universe, bootstrap_report) -> Dict[str, Any]:
+    """Render what a candidate should clear before paper, beside `promotable` rather than in it.
 
-    `promotable` stays statistical and keeps meaning for every trial already recorded.
-    These ask the questions that come after: does the edge survive worse cost
-    assumptions, and does it still look like skill once the whole family is priced in?
-
-    Computed here because the family test needs this trial already journaled, which
-    happens above - `gate_report` runs before that and structurally cannot see it.
+    The computation is `services.analysis.walk_forward_evidence`, which the MCP tool
+    returns too; this only prints it, and hands it back so `--html` shows the same
+    block rather than a second computation.
     """
-    from tradeflow.analytics.performance import promotion_prerequisites
-    from tradeflow.services.analysis import run_cost_stress
+    from tradeflow.services.analysis import walk_forward_evidence
 
-    stress = None
-    if getattr(args, "cost_stress", None):
-        chosen = result.holdout_params or result.folds[-1].is_best_params
-        stress = run_cost_stress(
-            data_client,
-            args.strategy,
-            universe,
-            args.start,
-            args.end,
-            config=dict(chosen),
-            capital=args.capital,
-            # The walk-forward's own benchmark, or none: the stress judges Sharpe and
-            # return, and the service's SPY default fetched a symbol nobody asked for -
-            # offline, a miss that degraded every stressed run with a warning.
-            benchmark=getattr(args, "benchmark", None),
-            commission_bps=args.commission_bps,
-            impact_eta=args.impact_eta,
-            borrow_bps=args.borrow_bps,
-            axis=args.cost_stress,
-        )
-
-    benchmark_ir = None
-    if getattr(args, "benchmark", None) and any(
-        fold.oos_metrics.get("benchmark_available") for fold in result.folds
-    ):
-        benchmark_ir = result.median_oos("information_ratio")
-
-    benchmark_excess = result.median_oos_excess_return() if benchmark_ir is not None else None
-
-    prereq = promotion_prerequisites(
-        cost_stress=stress,
+    evidence = walk_forward_evidence(
+        result,
+        data_client,
+        strategy=args.strategy,
+        symbols=universe,
+        start=args.start,
+        end=args.end,
+        capital=args.capital,
+        benchmark=getattr(args, "benchmark", None),
+        cost_stress=getattr(args, "cost_stress", None),
+        commission_bps=args.commission_bps,
+        impact_eta=args.impact_eta,
+        borrow_bps=args.borrow_bps,
         bootstrap=bootstrap_report,
-        benchmark_ir=benchmark_ir,
-        benchmark_excess_pct=benchmark_excess,
     )
+    prereq = evidence["prerequisites"]
     _print_fold_disagreement(result)
     _print_leg_stability(result)
     _print_walkforward_verdicts(result, prereq)
     if not prereq["evaluated"] and prereq["checks"]["family_bootstrap"]["n_used"] == 0:
-        return  # nothing to say: no input was produced by this run
+        return evidence  # nothing to say: no input was produced by this run
 
     print("\n=== Promotion prerequisites (separate from `promotable`) ===")
     for name, check in prereq["checks"].items():
@@ -1992,6 +1973,7 @@ def _print_promotion_prerequisites(data_client, args, result, universe, bootstra
     print(f"  Prerequisites: {done} of {total} evaluated - {verdict}{tail}")
     if unknown:
         print("  An unevaluated check is not a passed one - what is unknown stays unknown.")
+    return evidence
 
 
 def _print_fold_disagreement(result) -> None:
@@ -2059,17 +2041,9 @@ def _print_walkforward_verdicts(result, prereq) -> None:
     """Statistical validation and evidence completeness. Execution is not measurable
     here - it is a property of a book at a capital, which a backtest reports."""
     from tradeflow.analytics.reporting import format_verdicts
+    from tradeflow.services.analysis import evidence_verdicts
 
-    gates = result.gate_report()
-    failed = [name for name, check in gates["checks"].items() if not check.get("passed")]
-    statistical = "PASS" if gates["promotable"] else f"FAIL - {', '.join(failed)}"
-
-    done, total = prereq["evaluated"], prereq["total"]
-    unknown = total - done
-    ready = {None: "nothing assessed", True: "clear so far" if unknown else "clear", False: "NOT clear"}[
-        prereq["ready"]
-    ]
-    evidence = f"{done} of {total} evaluated - {ready}" + (f"; {unknown} unknown" if unknown else "")
+    statistical, evidence = evidence_verdicts(result.gate_report(), prereq)
     print("\n".join(format_verdicts(statistical=statistical, evidence=evidence)))
 
 

@@ -179,6 +179,14 @@ Two further questions come *after* a candidate clears those, and are reported be
   produced per-fold IRs of `[0.13, -1.25, 2.10]` for a median of `+0.13`, and a single
   figure over the stitched curve would have hidden that spread entirely.
 
+Over MCP, `run_walk_forward` returns the same block as `evidence` beside `gate_report`
+(prerequisites, evidence completeness, excess return by fold, and `clear`). Cost stress
+runs by default there too; the family bootstrap does not run over MCP and stays
+unevaluated, so `evidence.clear` is false until it is. `oos_aggregate` is a
+concatenation of trades and carries no benchmark figures on either surface: the
+benchmark is scored per fold, so its `benchmark_available: false` is not a missing
+benchmark.
+
 **An unevaluated check is not a passed one.** A cost curve nobody ran and a family too
 thin to test are both *unknown*, and `ready` always travels with the count of what was
 actually evaluated — a clear verdict over one of two checks is not a clearance.

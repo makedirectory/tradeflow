@@ -1324,6 +1324,7 @@ def run_walk_forward(
     benchmark: Optional[str] = None,
     position_limits: Optional[Dict[str, Any]] = None,
     record_trades: bool = False,
+    cost_stress: Optional[str] = "all",
 ) -> Dict[str, Any]:
     """Honest evaluation: optimize IS, score OOS across folds, gate the verdict.
 
@@ -1349,6 +1350,12 @@ def run_walk_forward(
     is the worst way for a gate not to run. Without the second, a config asking for
     eight positions is validated at whatever the strategy class declares, so the
     validated book and the deployed one are different books.
+
+    The payload's ``evidence`` block is the CLI's "Promotion prerequisites" and
+    "Evidence completeness" (:func:`walk_forward_evidence`): ``promotable`` alone is the
+    statistical gates and never means clear for paper. ``cost_stress`` (default
+    ``"all"``, the CLI's default; ``None`` skips it) re-runs the chosen config at worse
+    costs.
 
     ``record_trades=True`` stores the out-of-sample trade table with the validated trial
     (the CLI's ``--record-trades``). An identical prior validation that kept no table does
@@ -1497,6 +1504,26 @@ def run_walk_forward(
             context=run_context(capital=capital, probes=probe_verdicts(gate_report)),
         )
 
+    timeframe = str(cls.create_with_defaults().config.get("timeframe", "1Day"))
+    evidence = (
+        walk_forward_evidence(
+            result,
+            data_client,
+            strategy=strategy,
+            symbols=symbols,
+            start=start,
+            end=end,
+            capital=capital,
+            benchmark=benchmark,
+            cost_stress=cost_stress,
+            commission_bps=commission_bps,
+            impact_eta=impact_eta,
+            borrow_bps=borrow_bps,
+            gates=gates,
+        )
+        if result.folds
+        else None
+    )
     return walk_forward_payload(
         result,
         run_id=run_id,
@@ -1510,6 +1537,9 @@ def run_walk_forward(
         gross=gross,
         seed=seed,
         gates=gates,
+        benchmark=benchmark,
+        timeframe=timeframe,
+        evidence=evidence,
     )
 
 
@@ -2111,12 +2141,20 @@ def walk_forward_payload(
     gross: bool,
     seed: Optional[int] = None,
     gates: Optional[Dict[str, float]] = None,
+    benchmark: Optional[str] = None,
+    timeframe: Optional[str] = None,
+    evidence: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """A ``WalkForwardResult`` as the JSON-serializable dict every surface consumes.
 
     The counterpart to :func:`backtest_payload`, and for the same reason: the CLI
     runs the validator directly and the service returns a dict, so a renderer that
     wants "the walk-forward result" has to get the identical object either way.
+
+    ``benchmark`` and ``timeframe`` are echoed so a report header names what the run
+    was scored against instead of printing a dash. ``evidence`` is
+    :func:`walk_forward_evidence`'s answer, carried beside ``gate_report`` so a
+    consumer cannot read ``promotable`` without the prerequisites that qualify it.
     """
     folds = [
         {
@@ -2157,7 +2195,123 @@ def walk_forward_payload(
         "pbo": result.pbo,
         "monte_carlo": _jsonable(result.monte_carlo) if result.monte_carlo else None,
         "seed": seed,
+        "benchmark": benchmark,
+        "timeframe": timeframe,
+        # None only when the evidence was not computed (a memoized answer keeps no
+        # per-fold detail); a consumer must read that as unknown, never as clear.
+        "evidence": _jsonable(evidence) if evidence is not None else None,
     }
+
+
+def walk_forward_evidence(
+    result,
+    data_client: Optional[MarketDataClient],
+    *,
+    strategy: str,
+    symbols: Sequence[str],
+    start: datetime,
+    end: datetime,
+    capital: float,
+    benchmark: Optional[str] = None,
+    cost_stress: Optional[str] = "all",
+    commission_bps: float = 1.0,
+    impact_eta: float = 0.3,
+    borrow_bps: float = 50.0,
+    bootstrap: Optional[Dict[str, Any]] = None,
+    gates: Optional[Dict[str, float]] = None,
+) -> Dict[str, Any]:
+    """What a candidate should clear before paper, beside ``promotable`` rather than in it.
+
+    The one definition both surfaces call: the CLI renders it and the MCP tool returns
+    it. ``promotable`` stays statistical; these ask what comes after - does the edge
+    survive worse costs, does it beat the benchmark fold by fold, and does it still look
+    like skill with the whole family priced in. Computed after the trial is journaled,
+    because the family test needs this trial already recorded and ``gate_report`` runs
+    before that.
+
+    ``cost_stress`` is the axis (``"all"``/``"turnover"``/``"borrow"``) or ``None`` to
+    skip the re-runs. A skipped input leaves its check *unevaluated*, never passed.
+    """
+    from tradeflow.analytics.performance import promotion_prerequisites
+
+    stress = None
+    if cost_stress and data_client is not None and result.folds:
+        chosen = result.holdout_params or result.folds[-1].is_best_params
+        stress = run_cost_stress(
+            data_client,
+            strategy,
+            list(symbols),
+            start,
+            end,
+            config=dict(chosen),
+            capital=capital,
+            # The walk-forward's own benchmark, or none: the stress judges Sharpe and
+            # return, and the service's SPY default fetched a symbol nobody asked for.
+            benchmark=benchmark,
+            commission_bps=commission_bps,
+            impact_eta=impact_eta,
+            borrow_bps=borrow_bps,
+            axis=cost_stress,
+        )
+
+    scored = [bool(f.oos_metrics.get("benchmark_available")) for f in result.folds]
+    benchmark_ir = result.median_oos("information_ratio") if benchmark and any(scored) else None
+    benchmark_excess = result.median_oos_excess_return() if benchmark_ir is not None else None
+
+    prereq = promotion_prerequisites(
+        cost_stress=stress,
+        bootstrap=bootstrap,
+        benchmark_ir=benchmark_ir,
+        benchmark_excess_pct=benchmark_excess,
+    )
+    excess = result.excess_return_by_fold()
+    gate_report = result.gate_report(gates)
+    statistical, completeness = evidence_verdicts(gate_report, prereq)
+    return {
+        "benchmark": benchmark,
+        "benchmark_scored_folds": sum(scored),
+        "n_folds": len(scored),
+        "prerequisites": prereq,
+        "cost_stress": (
+            {
+                "axis": stress["axis"],
+                "survives_to_multiple": stress["survives_to_multiple"],
+                "points": stress["points"],
+            }
+            if stress
+            else None
+        ),
+        "excess_return_by_fold": {
+            "values_pct": excess,
+            "median_pct": float(np.median(excess)) if excess else None,
+            "spread_pp": (max(excess) - min(excess)) if excess else None,
+            "folds_lost": sum(1 for v in excess if v < 0),
+        },
+        "statistical_verdict": statistical,
+        "evidence_completeness": completeness,
+        "clear": bool(
+            gate_report["promotable"] and prereq["ready"] is True and prereq["evaluated"] == prereq["total"]
+        ),
+        "note": (
+            "`promotable` is the statistical gates only. It does not mean the candidate is "
+            "clear for paper: read `prerequisites` and `evidence_completeness` beside it. "
+            "An unevaluated check is unknown, not passed. `oos_aggregate` is a concatenation "
+            "of trades and carries no benchmark figures by design; the benchmark is scored "
+            "per fold (`benchmark_scored_folds`) and aggregated as a median."
+        ),
+    }
+
+
+def evidence_verdicts(gate_report: Dict[str, Any], prereq: Dict[str, Any]) -> Tuple[str, str]:
+    """The statistical verdict and the evidence-completeness verdict, in the words every surface shows."""
+    failed = [name for name, check in gate_report["checks"].items() if not check.get("passed")]
+    statistical = "PASS" if gate_report["promotable"] else f"FAIL - {', '.join(failed)}"
+    done, total = prereq["evaluated"], prereq["total"]
+    unknown = total - done
+    ready = {None: "nothing assessed", True: "clear so far" if unknown else "clear", False: "NOT clear"}[
+        prereq["ready"]
+    ]
+    return statistical, f"{done} of {total} evaluated - {ready}" + (f"; {unknown} unknown" if unknown else "")
 
 
 def compute_bootstrap_skill(
