@@ -238,6 +238,10 @@ def _trial_store():
         yield store
 
 
+#: Said after every refusal of an unknown trial id, so the agent has a next step.
+_USE_LIST_TRIALS = "Use list_trials to see which trial ids are recorded."
+
+
 #: Appended where a tool accepts `workers`. Parallelism is a throughput choice, and
 #: an agent should know it changes nothing else about the answer.
 _WORKERS_NOTE = (
@@ -1670,14 +1674,10 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
             try:
                 resolved = store.resolve_id(trial_id)
             except AmbiguousTrialId as exc:
-                return _logged("get_trial", {"trial_id": trial_id}, {"error": str(exc)})
+                raise ValueError(f"{exc} {_USE_LIST_TRIALS}") from exc
             trial = store.get_trial(resolved) if resolved else None
             if trial is None:
-                return _logged(
-                    "get_trial",
-                    {"trial_id": trial_id},
-                    {"error": f"No trial with id {trial_id!r}. Use list_trials to see what exists."},
-                )
+                raise ValueError(f"No trial with id {trial_id!r}. {_USE_LIST_TRIALS}")
             return _logged("get_trial", {"trial_id": trial_id}, trial)
 
     @tool()
@@ -1707,7 +1707,7 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
                 return _logged("analyze_trial", inputs, {"error": _NO_STORE})
             report = analysis.analyze_trial(store, trial_id, allow_partial=allow_partial)
             if report.get("error"):
-                report["error"] += " Use list_trials to see what is recorded."
+                raise ValueError(f"{report['error']} {_USE_LIST_TRIALS}")
             return _logged("analyze_trial", inputs, report)
 
     @tool()
@@ -1749,16 +1749,21 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         with _trial_store() as store:
             if store is None:
                 return _logged("compare_trials", inputs, {"error": _NO_STORE})
-            return _logged(
-                "compare_trials",
-                inputs,
-                analysis.compare_trials(
-                    store,
-                    trial_ids,
-                    min_overlap=min_overlap,
-                    across_accounting=across_accounting,
-                ),
+            report = analysis.compare_trials(
+                store,
+                trial_ids,
+                min_overlap=min_overlap,
+                across_accounting=across_accounting,
             )
+            if report.get("error"):
+                raise ValueError(f"{report['error'].rstrip('.')}. {_USE_LIST_TRIALS}")
+            unknown = report.get("unknown_trial_ids") or []
+            if len(trial_ids) - len(unknown) < 2:
+                raise ValueError(
+                    f"Fewer than two of these trials are recorded (unknown: {', '.join(map(repr, unknown))}). "
+                    f"{_USE_LIST_TRIALS}"
+                )
+            return _logged("compare_trials", inputs, report)
 
     @tool()
     def get_campaign_material(trial_id: str) -> Dict[str, Any]:
@@ -1786,11 +1791,10 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         with _trial_store() as store:
             if store is None:
                 return _logged("get_campaign_material", {"trial_id": trial_id}, {"error": _NO_STORE})
-            return _logged(
-                "get_campaign_material",
-                {"trial_id": trial_id},
-                campaign.campaign_material(store, trial_id),
-            )
+            material = campaign.campaign_material(store, trial_id)
+            if not material.get("available"):
+                raise ValueError(f"{material.get('reason') or 'No such trial.'} {_USE_LIST_TRIALS}")
+            return _logged("get_campaign_material", {"trial_id": trial_id}, material)
 
     @tool("deflated_sharpe_ratio", "sharpe_ratio")
     def best_trials(
@@ -1886,7 +1890,6 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         Include the evidence in `provenance` (the walk-forward or verdict run behind
         the proposal, its trial id, its window and universe), because a config with
         no recorded reason for existing is a config nobody can safely promote.
-
         For a config proposed from a recorded trial, put `get_campaign_material`'s
         block in `provenance.campaign` verbatim rather than summarising it. It carries
         the validation recipe the parameters alone cannot express, and which accounting
@@ -1926,7 +1929,13 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         and loading it changes no behavior anywhere. Use it to check what a past
         proposal actually contained before re-testing or superseding it. Read-only.
         """
-        return _logged("load_config", {"name": name}, configs.load_config(name))
+        try:
+            loaded = configs.load_config(name)
+        except FileNotFoundError:
+            raise ValueError(
+                f"No saved config named {name!r}. Use list_configs to see what exists."
+            ) from None
+        return _logged("load_config", {"name": name}, loaded)
 
     @tool()
     def list_configs() -> List[Dict[str, Any]]:

@@ -148,6 +148,15 @@ roots** (`~/.tradeflow` vs. the checkout), so an agent and a human should be poi
 at the same one — or `TRADEFLOW_HOME` set explicitly — if they are meant to share a
 campaign's trial history.
 
+**Bad input is a tool error.** An unknown trial id (`get_trial`, `analyze_trial`,
+`get_campaign_material`), fewer than two known ids for `compare_trials`, and an unknown
+config name for `load_config` all raise, so the client sees `isError` and the message
+names the tool to use next (`list_trials`, `list_configs`). They used to come back as an
+ordinary result holding an `error` field, which a client reads as success. A payload field
+is kept only where the result is genuinely partial: `compare_trials` with two or more
+known ids still answers, and lists the rest in `unknown_trial_ids`. The services keep
+their return shapes (the CLI renders them); the raise happens in this module.
+
 ## Descriptions are an interface, not documentation
 
 A human who reads a stale doc can notice it is stale. An agent cannot: it reads a

@@ -333,9 +333,10 @@ def test_get_trial_reports_companions_as_null_not_zero(built, _isolated_state):
     assert trial["returns"] is None and trial["weights"] is None and trial["trades"] is None
 
 
-def test_get_trial_on_an_unknown_id_explains_rather_than_crashes(built, _isolated_state):
+def test_get_trial_on_an_unknown_id_is_a_tool_error_that_explains(built, _isolated_state):
     _seed_store(_isolated_state)
-    assert "No trial with id" in _call(built, "get_trial", trial_id="nope")["error"]
+    with pytest.raises(Exception, match="No trial with id.*list_trials"):
+        _call(built, "get_trial", trial_id="nope")
 
 
 def test_the_leaderboard_rules_survive_serialization(built, _isolated_state):
