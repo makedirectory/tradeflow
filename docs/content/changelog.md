@@ -70,6 +70,9 @@ without guessing. The history below keeps the old name as it was written.
 - `quantred demo` prints its scorecard without the hundred progress lines above it, and
   an offline cache miss names `quantred cache warm`, not a script an installed copy
   does not have.
+- A request that Alpaca refuses for the credentials now says so ("Alpaca rejected these
+  credentials", where the keys come from, and `quantred init`) in place of printing the
+  gateway's raw HTML page.
 - The MCP allocation tool exposes the construction knobs that are not gated on
   evidence, so an agent can state the same book the command line does.
 

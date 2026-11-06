@@ -74,6 +74,19 @@ def test_a_vendor_error_is_classified_by_what_the_caller_should_do(message, stat
     assert isinstance(classify_error(_APIErrorish(message, status)), expected)
 
 
+def test_a_rejected_key_is_said_to_be_the_key_and_says_what_to_do():
+    """The gateway answers a bad key with a bare HTML page; that page used to be the
+    entire error, with no mention of credentials."""
+    html = "<html>\n<head><title>401 Authorization Required</title></head>\n</html>"
+    error = classify_error(_APIErrorish(html, 401))
+    assert isinstance(error, AuthenticationError)
+    assert "rejected these credentials (HTTP 401)" in str(error)
+    assert "Paper Account" in str(error) and " init`" in str(error)
+    assert "<html" not in str(error)
+    # Plain text from the vendor is kept, since it may be the only specific thing said.
+    assert "forbidden." in str(classify_error(_APIErrorish("forbidden.", 403)))
+
+
 def test_a_connection_failure_is_unavailability_not_rejection():
     assert isinstance(classify_error(ConnectionError("refused")), BrokerUnavailableError)
 

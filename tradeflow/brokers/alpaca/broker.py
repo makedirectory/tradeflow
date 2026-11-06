@@ -59,6 +59,24 @@ _SIDE_TO_ALPACA = {OrderSide.BUY: AlpacaOrderSide.BUY, OrderSide.SELL: AlpacaOrd
 _DUPLICATE_MARKERS = ("already exist", "must be unique", "duplicate")
 
 
+def _rejected_credentials(status: int, message: str) -> str:
+    """What a user should read when the venue refuses their keys.
+
+    The market-data gateway answers a bad key with a bare HTML page, and that page was
+    the whole of the error a verdict printed - three times - without ever saying the
+    keys were the problem. The vendor's text is kept only when it is plain text.
+    """
+    from tradeflow.settings import invocation
+
+    detail = message.strip()
+    detail = f": {detail}" if detail and not detail.startswith("<") and len(detail) <= 200 else ""
+    return (
+        f"Alpaca rejected these credentials (HTTP {status}{detail}). Check that the key and "
+        "secret came from the Paper Account section - paper and live keys differ - "
+        f"then run `{invocation('init')}`."
+    )
+
+
 def classify_error(exc: Exception) -> BrokerError:
     """Map a vendor exception onto the vendor-neutral hierarchy.
 
@@ -90,7 +108,7 @@ def classify_error(exc: Exception) -> BrokerError:
     if "client_order_id" in lowered and any(m in lowered for m in _DUPLICATE_MARKERS):
         return DuplicateOrderError(message)
     if status in (401, 403):
-        return AuthenticationError(message)
+        return AuthenticationError(_rejected_credentials(status, message))
     if status == 429:
         return RateLimitedError(message)
     if status is not None and status >= 500:
