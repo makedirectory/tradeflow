@@ -147,6 +147,16 @@ def _num(value: Any, spec: str = "{:.4g}") -> str:
         return str(value)
 
 
+def _metric_cell(name: str, value: Any) -> str:
+    """One metric by name: probabilities through the shared unit table, so this report
+    and the terminal print the same text for a deflated Sharpe; everything else as-is."""
+    from tradeflow.optimization.walk_forward import PROBABILITY_METRICS, format_gate_value
+
+    if value is not None and name in PROBABILITY_METRICS:
+        return format_gate_value(name, value)
+    return _num(value)
+
+
 def _pct(value: Any, spec: str = "{:+.2%}") -> str:
     return _num(value, spec)
 
@@ -602,7 +612,7 @@ def _backtest_sections(result: Dict[str, Any], extras: Dict[str, Any]) -> List[s
     out.append(
         _card(
             "Metrics",
-            _table(["Metric", "Value"], [[k, _num(v)] for k, v in sorted(metrics.items())]),
+            _table(["Metric", "Value"], [[k, _metric_cell(k, v)] for k, v in sorted(metrics.items())]),
         )
     )
     out.append(
@@ -691,7 +701,7 @@ def _walkforward_sections(result: Dict[str, Any], extras: Dict[str, Any]) -> Lis
             "Out-of-sample aggregate",
             _table(
                 ["Metric", "Value"],
-                [[k, _num(v)] for k, v in sorted((result.get("oos_aggregate") or {}).items())],
+                [[k, _metric_cell(k, v)] for k, v in sorted((result.get("oos_aggregate") or {}).items())],
             ),
         ),
     ]

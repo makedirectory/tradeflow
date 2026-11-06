@@ -295,10 +295,12 @@ def _recorded_bound(value: Any, *, whole_day: bool = False) -> str:
     before the 6th" includes the evening of the 6th. Any other time of day is taken as
     given. The caller then compares with ``<`` for a widened bound.
     """
-    from datetime import timedelta
+    from datetime import date, timedelta
 
     from tradeflow.utils.timeutils import NEW_YORK, parse_market_date
 
+    if isinstance(value, date) and not isinstance(value, datetime):
+        value = datetime.combine(value, datetime.min.time())  # a bare date, as typed
     instant = parse_market_date(value) if isinstance(value, str) else value
     if instant.tzinfo is None:
         instant = NEW_YORK.localize(instant)

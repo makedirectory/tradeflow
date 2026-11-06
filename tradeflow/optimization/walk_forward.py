@@ -303,7 +303,15 @@ _GATE_VALUE_KINDS = {
     "deflated_sharpe_ratio": "probability",
     "probabilistic_sharpe_ratio": "probability",
     "pbo": "probability",
+    # Verdict gates the chart renders beside the terminal's `.4g`: an expected active
+    # return of 0.0035 is a pass that two decimals print as 0.00.
+    "net_of_cost_alpha": "fine",
+    "sample_size": "count",
+    "portfolio_feasible": "flag",
 }
+
+#: Every name measured as a probability, for renderers that walk a whole metrics dict.
+PROBABILITY_METRICS = frozenset(k for k, v in _GATE_VALUE_KINDS.items() if v == "probability")
 
 
 def format_gate_value(gate_name: str, value: Any) -> str:
@@ -332,12 +340,17 @@ def format_gate_value(gate_name: str, value: Any) -> str:
         return "unbounded" if number > 0 else str(number)
     if kind == "count":
         return f"{int(round(number))}"
-    if kind == "probability" and 0.0 < number < 0.005:
-        # Two decimals would print 0.00, which reads as "certainly zero", and the chart
-        # printed the same value as 4.4e-04 — one number, two answers. Say it is small.
-        return "<0.01"
-    if kind == "probability" and 0.995 <= number < 1.0:
-        return ">0.99"
+    if kind == "fine":
+        return f"{number:.4g}"
+    if kind == "probability":
+        # Three decimals so a failing 0.496 does not print as the 0.5 gate it missed.
+        # Below that, "0.000" reads as "certainly zero" and the chart once printed the
+        # same value as 4.4e-04 — one number, two answers. Say it is small.
+        if 0.0 < number < 0.0005:
+            return "<0.001"
+        if 0.9995 <= number < 1.0:
+            return ">0.999"
+        return f"{number:.3f}"
     return f"{number:.2f}"
 
 

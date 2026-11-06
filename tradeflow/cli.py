@@ -1696,7 +1696,7 @@ def _print_walkforward(result, objective: str) -> None:
             f"CAGR {result.holdout.get('cagr', 0):.2f}%  trades {result.holdout.get('total_trades', 0)}"
         )
     if result.pbo is not None:
-        print(f"\nPBO (prob. of backtest overfitting): {result.pbo:.2f}")
+        print(f"\nPBO (prob. of backtest overfitting): {format_gate_value('pbo', result.pbo)}")
     if result.monte_carlo:
         mc = result.monte_carlo
         print(

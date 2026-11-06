@@ -659,28 +659,35 @@ def test_every_gate_a_report_produces_can_be_rendered():
 def test_a_tiny_deflated_sharpe_is_small_not_zero_and_reads_alike_everywhere():
     """A deflated Sharpe of 0.0004 printed ``0.00`` in the terminal (a probability of
     exactly zero, which it is not) and ``4.4e-04`` in the chart beside it — one number,
-    two answers. Both now go through the one unit table."""
+    two answers. Review then found the trial browser (``0.000``) and the HTML report
+    (``0.0004``) still on their own formats. Every renderer goes through one unit table."""
     pytest.importorskip("matplotlib")
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    from tradeflow.analytics import charts
-    from tradeflow.analytics.reporting import format_backtest_report
+    from tradeflow.analytics import charts, htmlreport
+    from tradeflow.analytics.reporting import (
+        format_backtest_report,
+        format_trial_detail,
+        format_trials_table,
+    )
     from tradeflow.cli import _dsr_text
     from tradeflow.optimization.walk_forward import format_gate_value
 
-    assert format_gate_value("deflated_sharpe", 4.4e-4) == "<0.01"
-    assert format_gate_value("deflated_sharpe", 0.9991) == ">0.99"
+    assert format_gate_value("deflated_sharpe", 4.4e-4) == "<0.001"
+    assert format_gate_value("deflated_sharpe", 0.9996) == ">0.999"
+    # A failing value must not print as the gate it missed.
+    assert format_gate_value("deflated_sharpe", 0.496) == "0.496"
     # The boundaries stay numbers: an exact zero is zero, and 0.5 is the gate itself.
-    assert format_gate_value("deflated_sharpe", 0.0) == "0.00"
-    assert format_gate_value("deflated_sharpe", 0.5) == "0.50"
-    assert format_gate_value("deflated_sharpe", 1.0) == "1.00"
+    assert format_gate_value("deflated_sharpe", 0.0) == "0.000"
+    assert format_gate_value("deflated_sharpe", 0.5) == "0.500"
+    assert format_gate_value("deflated_sharpe", 1.0) == "1.000"
     # A Sharpe is not a probability and keeps its plain format.
     assert format_gate_value("oos_sharpe", 0.0004) == "0.00"
 
-    assert _dsr_text(4.4e-4) == "<0.01"
+    assert _dsr_text(4.4e-4) == "<0.001"
     assert _dsr_text(None) == "—"  # unrecorded, never a probability of zero
 
     checks = {"deflated_sharpe": {"value": 4.4e-4, "threshold": 0.5, "passed": False}}
@@ -692,9 +699,38 @@ def test_a_tiny_deflated_sharpe_is_small_not_zero_and_reads_alike_everywhere():
         texts = [t.get_text() for t in ax.texts]
     finally:
         plt.close(fig)
-    assert "<0.01 / 0.50" in texts
+    assert "<0.001 / 0.500" in texts
 
     report = format_backtest_report(
         {"deflated_sharpe_ratio": 4.4e-4, "deflation_applied": True}, 1000.0, 1000.0
     )
-    assert "<0.01" in report
+    assert "<0.001" in report
+
+    row = {"id": "t1", "kind": "walkforward", "strategy": "s", "oos_sharpe": 1.0, "deflated_sharpe": 4.4e-4}
+    assert "<0.001" in format_trials_table([row])
+    assert "<0.001" in format_trial_detail({**row, "params": {}, "accounting": 1})
+    assert htmlreport._metric_cell("deflated_sharpe_ratio", 4.4e-4) == "<0.001"
+    assert htmlreport._metric_cell("sharpe_ratio", 1.23456) == "1.235"
+
+
+def test_verdict_gates_keep_their_precision_on_the_chart():
+    """Found in review: routing the chart through the unit table printed every unlisted gate
+    with two decimals, so a passing expected return of 0.0035 read ``0.00 / 0.00`` and a
+    sample size read ``24.00``, while the terminal printed ``0.0035`` and ``24``."""
+    from tradeflow.optimization.walk_forward import format_gate_value
+
+    assert format_gate_value("net_of_cost_alpha", 0.0035) == "0.0035"
+    assert format_gate_value("net_of_cost_alpha", 0.0) == "0"
+    assert format_gate_value("sample_size", 24) == "24"
+    assert format_gate_value("portfolio_feasible", False) == "no"
+
+
+def test_the_trial_listing_shows_recorded_time_in_the_zone_the_filter_reads():
+    """Found in review: ``--until 2026-11-06`` correctly returned a trial recorded at 22:00
+    New York, and the listing printed its UTC text, ``2026-11-07T03:00:00`` — a row that
+    looked like a filter bug."""
+    from tradeflow.analytics.reporting import format_trials_table
+
+    listing = format_trials_table([{"id": "t1", "kind": "backtest", "ts": "2026-11-07T03:00:00.5+00:00"}])
+    assert "2026-11-06 22:00:00 EST" in listing
+    assert "2026-11-07" not in listing

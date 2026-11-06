@@ -70,10 +70,11 @@ without guessing. The history below keeps the old name as it was written.
 - An incomplete verdict in which no step measured an IC no longer counts as a trial, so
   a failed attempt does not raise the campaign's multiple-testing total. The report says
   `Not recorded as a trial` and why.
-- A very small deflated or probabilistic Sharpe prints `<0.01` in the terminal, the
-  chart and the HTML report alike. Before, the terminal printed `0.00` (which reads as a
-  probability of zero) and the chart `4.4e-04`. An unrecorded deflated Sharpe on a
-  reused walk-forward prints `—`, not `0.000`.
+- Deflated and probabilistic Sharpe and PBO print as probabilities with three decimals
+  everywhere (terminal, chart, HTML report, `trials list/show/best`), and a very small one
+  as `<0.001`. Before, the terminal printed `0.00` (which reads as a probability of zero),
+  the chart `4.4e-04`, and a failing 0.496 printed the same as the 0.5 gate. An
+  unrecorded deflated Sharpe on a reused walk-forward prints `—`, not `0.000`.
 - `quantred demo` prints its scorecard without the hundred progress lines above it, and
   an offline cache miss names `quantred cache warm`, not a script an installed copy
   does not have.
@@ -97,6 +98,8 @@ without guessing. The history below keeps the old name as it was written.
   the whole of it. Before, `--until` dropped trials recorded on the day it named and
   `--since` could admit the previous evening's. `trials mark-contaminated --before`
   had the same fault and could miss a trial recorded the evening before the cut-off.
+- `trials list` and `trials show` print when a trial was recorded in New York time, the
+  zone the date filters read, instead of its UTC text.
 
 ### MCP
 

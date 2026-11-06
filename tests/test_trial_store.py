@@ -752,3 +752,24 @@ def test_a_quarantine_before_a_date_names_exactly_the_trials_recorded_earlier(tm
     (tmp_path / "trials.db").rename(db_path_for_journal(journal))
     rows = select_trials(journal_path=journal, before=parse_market_date("2026-11-07"))
     assert {r["id"] for r in rows} == {"morning", "evening"}
+
+
+@pytest.mark.parametrize(
+    "day, next_midnight_utc",
+    [
+        ("2026-11-01", "2026-11-02T05:00:00+00:00"),  # 25-hour day: clocks fall back
+        ("2026-03-08", "2026-03-09T04:00:00+00:00"),  # 23-hour day: clocks spring forward
+        ("2026-06-15", "2026-06-16T04:00:00+00:00"),
+    ],
+)
+def test_a_whole_day_bound_ends_at_the_next_new_york_midnight_across_dst(day, next_midnight_utc):
+    """Adding 24 hours to an aware midnight lands an hour off on the two DST days, which
+    would drop (or admit) an hour of trials at the edge of ``--until``."""
+    from datetime import date
+
+    from tradeflow.store.trials import _recorded_bound
+    from tradeflow.utils.timeutils import parse_market_date
+
+    assert _recorded_bound(parse_market_date(day), whole_day=True) == next_midnight_utc
+    # A plain date object means the same bare date (the public API accepted one before).
+    assert _recorded_bound(date.fromisoformat(day), whole_day=True) == next_midnight_utc

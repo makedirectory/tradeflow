@@ -84,9 +84,6 @@ _SECTIONS = [
     ),
 ]
 
-#: Rows that are probabilities, rendered through the shared unit table so a tiny value
-#: says ``<0.01`` here exactly as it does in the walk-forward report and its chart.
-_PROBABILITY_ROWS = frozenset({"probabilistic_sharpe_ratio", "deflated_sharpe_ratio"})
 
 # Flat view for backward compatibility / simple consumers.
 _ROWS = [row for _, rows in _SECTIONS for row in rows]
@@ -278,10 +275,8 @@ def format_backtest_report(
                 # One trial deflates against nothing, so the row says what it is rather
                 # than borrowing the name of a correction that was not applied.
                 label = "  Sharpe (undeflated)"
-            if key in metrics and key in _PROBABILITY_ROWS:
-                from tradeflow.optimization.walk_forward import format_gate_value
-
-                section_lines.append(f"{label:28}{format_gate_value(key, metrics[key])}")
+            if key in metrics and _is_probability(key):
+                section_lines.append(f"{label:28}{_prob_cell(metrics[key], key)}")
             elif key in metrics:
                 value = fmt.format(metrics[key]) if metrics[key] != float("inf") else "inf"
                 section_lines.append(f"{label:28}{value}")
@@ -618,6 +613,41 @@ def _num(value: Any) -> str:
 NOT_RECORDED = "—"
 
 
+def _is_probability(key: str) -> bool:
+    from tradeflow.optimization.walk_forward import PROBABILITY_METRICS
+
+    return key in PROBABILITY_METRICS
+
+
+def _prob_cell(value: Any, key: str = "deflated_sharpe") -> str:
+    """A probability cell through the shared unit table, so the trial browser says what the
+    walk-forward and its chart say about the same trial — never ``0.000`` for a small one."""
+    if value is None:
+        return NOT_RECORDED
+    from tradeflow.optimization.walk_forward import format_gate_value
+
+    return format_gate_value(key, value)
+
+
+def _local_ts(value: Any) -> str:
+    """A recorded UTC instant as New York wall time, the zone the date filters read.
+
+    Shown as the stored UTC text, a trial at 22:00 New York on the 6th read as the 7th
+    and looked like a row ``--until <the 6th>`` should not have returned.
+    """
+    if not value:
+        return NOT_RECORDED
+    from tradeflow.utils.timeutils import NEW_YORK
+
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return str(value)[:19]
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(NEW_YORK).strftime("%Y-%m-%d %H:%M:%S %Z")
+
+
 def _cell(value: Any, spec: str = "{:.3f}") -> str:
     """A metric cell, or :data:`NOT_RECORDED` when there is genuinely nothing stored."""
     if value is None:
@@ -652,8 +682,8 @@ def format_trials_table(rows: List[Dict[str, Any]], *, total: Optional[int] = No
         lines.append(
             f"{str(r.get('id', ''))[:14]:14}{str(r.get('kind', ''))[:12]:12}"
             f"{str(r.get('strategy') or '')[:16]:16}"
-            f"{_cell(r.get('oos_sharpe')):>9}{_cell(r.get('deflated_sharpe')):>8}"
-            f"{promo:>7}{r.get('accounting', ''):>6}  {(r.get('ts') or '')[:19]}"
+            f"{_cell(r.get('oos_sharpe')):>9}{_prob_cell(r.get('deflated_sharpe')):>8}"
+            f"{promo:>7}{r.get('accounting', ''):>6}  {_local_ts(r.get('ts'))}"
         )
     if total is not None and total > len(rows):
         lines.append(f"\nShowing {len(rows)} of {total} matching trials (use --limit/--offset for more).")
@@ -741,7 +771,7 @@ def format_trial_detail(trial: Dict[str, Any]) -> str:
     lines = [
         "",
         f"=== Trial {trial.get('id')} ({trial.get('kind')}) ===",
-        f"  recorded : {trial.get('ts') or NOT_RECORDED}",
+        f"  recorded : {_local_ts(trial.get('ts'))}",
         f"  strategy : {trial.get('strategy') or NOT_RECORDED}",
         f"  window   : {(trial.get('window_start') or NOT_RECORDED)[:19]} → "
         f"{(trial.get('window_end') or NOT_RECORDED)[:19]}",
@@ -766,7 +796,8 @@ def format_trial_detail(trial: Dict[str, Any]) -> str:
         ("Efficiency", "efficiency", "{:.3f}"),
         ("OOS trades", "oos_trades", "{:.0f}"),
     ):
-        lines.append(f"    {label:<18}{_cell(trial.get(key), spec)}")
+        value = _prob_cell(trial.get(key), key) if _is_probability(key) else _cell(trial.get(key), spec)
+        lines.append(f"    {label:<18}{value}")
     promo = trial.get("promotable")
     lines.append(f"    {'Promotable':<18}{NOT_RECORDED if promo is None else ('yes' if promo else 'no')}")
 
@@ -794,7 +825,7 @@ def format_trial_detail(trial: Dict[str, Any]) -> str:
     if reused:
         lines.append(f"  Reused by {len(reused)} later trial(s) with the same identity:")
         for row in reused:
-            lines.append(f"    {row['id']}  {(row.get('ts') or '')[:19]}  ({row.get('kind')})")
+            lines.append(f"    {row['id']}  {_local_ts(row.get('ts'))}  ({row.get('kind')})")
     else:
         lines.append("  Not reused by any later trial.")
     lines.append("")
@@ -827,11 +858,11 @@ def format_trial_analysis(report: Dict[str, Any]) -> str:
     lines = ["", f"=== Trades of {report.get('trial_id')} ({report.get('kind')}) ==="]
     lines.append(
         f"  strategy {report.get('strategy') or NOT_RECORDED} | accounting "
-        f"v{report.get('accounting')} | recorded {(report.get('recorded_at') or '')[:19]}"
+        f"v{report.get('accounting')} | recorded {_local_ts(report.get('recorded_at'))}"
     )
     if report.get("contaminated_at"):
         lines.append(
-            f"  QUARANTINED {str(report['contaminated_at'])[:19]} — "
+            f"  QUARANTINED {_local_ts(report['contaminated_at'])} — "
             f"{report.get('contamination_reason') or 'no reason recorded'}"
         )
     source = report.get("source") or {}
@@ -1237,7 +1268,7 @@ def format_campaign_material(material: Dict[str, Any]) -> str:
 
     lines.append("")
     lines.append("  METADATA — about the record, not about the strategy.")
-    lines.append(f"    {'recorded':<16}{str(metadata.get('recorded_at'))[:19]}")
+    lines.append(f"    {'recorded':<16}{_local_ts(metadata.get('recorded_at'))}")
     lines.append(f"    {'git':<16}{metadata.get('git_sha') or NOT_RECORDED}")
     # Named alongside the sha because both answer "what would it take to reproduce
     # this", and because an omitted line reads as nothing to say rather than as nothing
@@ -1282,7 +1313,7 @@ def format_leaderboard(board: Dict[str, Any]) -> str:
         lines.append(
             f"    {i:<3}{str(r.get('id', ''))[:14]:14}{str(r.get('kind') or '')[:12]:12}"
             f"{str(r.get('strategy') or '')[:16]:16}"
-            f"{_cell(r.get('deflated_sharpe')):>8}{_cell(r.get('oos_sharpe')):>9}"
+            f"{_prob_cell(r.get('deflated_sharpe')):>8}{_cell(r.get('oos_sharpe')):>9}"
             f"{(NOT_RECORDED if family is None else family):>17}"
         )
     lines.append("")

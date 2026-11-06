@@ -1551,7 +1551,10 @@ def build_server(data_client=None):
         trial without buying information.
 
         `symbols` matches on the normalized universe, so order and case never change
-        what is found. `sort` is date/sharpe/dsr; a trial with no recorded metric
+        what is found. `since`/`until` take a date (a New York market date) or an ISO
+        datetime; both ends include the dates they name, so `until="2026-11-06"` includes
+        that evening. Each row's `ts` is the UTC instant it was recorded. `sort` is
+        date/sharpe/dsr; a trial with no recorded metric
         sorts last rather than as a zero. Returns `{rows, total}` — `total` is how
         many matched, which is usually more than were returned.
 
