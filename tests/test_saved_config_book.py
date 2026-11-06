@@ -63,6 +63,8 @@ def _journal_walkforward(journal, limits=None):
             seed=42,
             cost_key={},
             strategy_class=STRATEGIES["demo_trend"],
+            capital=100_000.0,
+            benchmark=None,
             limit_overrides=BOOK if limits is None else limits,
         ),
         path=journal,

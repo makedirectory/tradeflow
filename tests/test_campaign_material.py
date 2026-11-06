@@ -39,6 +39,8 @@ RECIPE_ARGS = dict(
     seed=42,
     cost_key={"commission_bps": 1.0},
     strategy_class=STRATEGIES["demo_trend"],
+    capital=100_000.0,
+    benchmark=None,
     limit_overrides={"max_positions": 8},
 )
 

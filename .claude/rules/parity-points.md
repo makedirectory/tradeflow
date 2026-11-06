@@ -48,7 +48,8 @@ surface has to be found by the other. The CLI additionally folds a bar-cache vin
 A backtest's run shape - capital, benchmark, beta sizing, take-profit margin - is one
 definition, `services.analysis.backtest_run_key`, which both call. It was missing from the
 key entirely, so a run at $100,000 answered a request at $4,000; adding it changed every
-backtest's identity, so their memos miss once.
+backtest's identity, so their memos miss once. `walk_forward_recipe` takes capital and
+benchmark as required arguments for the same reason.
 *Guarded by* `tests/test_surface_parity.py`.
 
 **A request's window ↔ the surface that parsed it** — *converged*. The CLI read

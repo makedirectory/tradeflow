@@ -151,6 +151,8 @@ def walk_forward_recipe(
     seed: int,
     cost_key: Dict[str, Any],
     strategy_class: Any,
+    capital: float,
+    benchmark: Optional[str],
     limit_overrides: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """A walk-forward's memoization key: the *validation recipe*, not the params.
@@ -176,6 +178,12 @@ def walk_forward_recipe(
     This changes the identity of every walk-forward that previously omitted ``_limits``,
     so their memos miss once. That is intended: recomputing is cheaper than serving a
     one-position result to an eight-position question.
+
+    **Capital and benchmark are part of the recipe**, and required so no caller can leave
+    them out. They were absent, so a validation at $100,000 answered one at $4,000 -
+    where whole-share rounding and minimum notionals make it a different book - and one
+    with no benchmark answered one whose benchmark-relative prerequisites need one. Their
+    addition changed every walk-forward's identity, so those memos miss once too.
     """
     from tradeflow.strategies.base import resolve_book
 
@@ -193,6 +201,7 @@ def walk_forward_recipe(
         "seed": seed,
         "_cost": cost_key,
         **limits_key(limits),
+        "_run": {"capital": float(capital), "benchmark": benchmark or None},
     }
 
 
@@ -1247,6 +1256,8 @@ def run_walk_forward(
         seed=seed,
         cost_key=cost_key,
         strategy_class=cls,
+        capital=capital,
+        benchmark=benchmark,
         limit_overrides=position_limits,
     )
 
@@ -1785,6 +1796,9 @@ def run_draft_walk_forward(
             seed=seed,
             cost_key=cost_key,
             strategy_class=cls,
+            # The draft path takes no benchmark.
+            capital=capital,
+            benchmark=None,
             # The draft path takes no book override, so the resolved book is the
             # drafted class's own — which is exactly what it validates at, and now
             # what its identity records.

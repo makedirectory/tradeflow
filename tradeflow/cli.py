@@ -227,6 +227,8 @@ def _walkforward_recipe(args, vintage: Optional[str] = None) -> Dict[str, Any]:
         seed=args.seed,
         cost_key=_cost_key(args, vintage),
         strategy_class=STRATEGIES[args.strategy],
+        capital=args.capital,
+        benchmark=getattr(args, "benchmark", None),
         limit_overrides=getattr(args, "config_position_limits", None),
     )
 

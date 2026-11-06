@@ -374,6 +374,8 @@ def _wf_service_key(limits=None, **overrides):
         seed=42,
         cost_key=service_cost_key(False, 1.0, 0.3, 50.0),
         strategy_class=STRATEGIES["demo_trend"],
+        capital=_service_default("capital"),
+        benchmark=_service_default("benchmark"),
         limit_overrides=limits,
     )
     return walk_forward_recipe(**{**kwargs, **overrides})
@@ -401,6 +403,16 @@ def test_the_two_surfaces_agree_on_a_default_walk_forward():
     over the other. A miss is not free: it journals a fresh trial and permanently
     raises the deflation bar for that family."""
     assert _wf_cli_key(["walkforward"]) == _wf_service_key()
+
+
+def test_the_two_surfaces_agree_on_a_walk_forward_s_capital_and_benchmark():
+    """Found in review: neither was in the recipe, so a validation at $100,000 answered
+    one at $4,000, and one with no benchmark answered one whose prerequisites need it."""
+    argv = ["walkforward", "--capital", "4000", "--benchmark", "QQQ"]
+
+    assert _wf_cli_key(argv) == _wf_service_key(capital=4000.0, benchmark="QQQ")
+    assert _wf_cli_key(["walkforward", "--capital", "4000"]) != _wf_cli_key(["walkforward"])
+    assert _wf_cli_key(["walkforward", "--benchmark", "QQQ"]) != _wf_cli_key(["walkforward"])
 
 
 def test_the_default_fold_count_is_one_value_across_every_surface():
@@ -731,6 +743,8 @@ def test_a_promoted_config_finds_the_recipe_in_a_redirected_journal(tmp_path, mo
             seed=42,
             cost_key={},
             strategy_class=STRATEGIES["demo_trend"],
+            capital=100_000.0,
+            benchmark=None,
             limit_overrides=None,
         ),
         path=journal,
