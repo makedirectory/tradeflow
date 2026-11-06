@@ -3628,6 +3628,9 @@ def cmd_mcp(args) -> None:
     Live trading is intentionally not exposed: the server builds
     only a data client, so it cannot place orders.
     """
+    if getattr(args, "self_test", False):
+        _run_mcp_self_test()
+        return
     # The guard has to wrap `serve()`, not just the import above it. The server
     # module imports fine without the extra — it pulls in the MCP SDK lazily, inside
     # build_server — so guarding only the import let the real failure escape as a
@@ -3639,6 +3642,32 @@ def cmd_mcp(args) -> None:
         serve()
     except ImportError:
         sys.exit(_missing_extra_message("mcp", "The MCP server"))
+
+
+def _run_mcp_self_test() -> None:
+    """Render ``run_self_test``; exit 0 when discovery worked, 1 naming the step if not."""
+    try:
+        from tradeflow.mcp.selftest import DISCLAIMER, run_self_test
+    except ImportError:
+        sys.exit(_missing_extra_message("mcp", "The MCP server"))
+
+    out = run_self_test()
+    if out["ok"]:
+        rows = {k: out[k] for k in ("list_strategies", "list_scanners")}
+        for label, key in (("strategies", "list_strategies"), ("scanners", "list_scanners")):
+            demo = sum(1 for r in rows[key] if r.get("demo"))
+            rows[key] = f"{len(rows[key])} {label} ({demo} demo, {len(rows[key]) - demo} installed)"
+        print(f"MCP self-test passed in {out['elapsed']:.1f}s")
+        print(f"  tools:      {len(out['tools'])}")
+        print(f"  discovery:  {rows['list_strategies']}; {rows['list_scanners']}")
+        print(DISCLAIMER)
+        return
+    print(f"MCP self-test FAILED at step '{out['step']}' after {out['elapsed']:.1f}s: {out['error']}")
+    if out.get("server_stderr"):
+        print("What the server printed before it stopped:")
+        print("    " + out["server_stderr"].replace("\n", "\n    "))
+    print(DISCLAIMER)
+    sys.exit(1)
 
 
 def _missing_extra_message(extra: str, what: str) -> str:
@@ -7035,6 +7064,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     mcp = subparsers.add_parser(
         "mcp", help="Serve TradeFlow over MCP for an agent (opt-in; needs the 'mcp' extra)"
+    )
+    mcp.add_argument(
+        "--self-test",
+        action="store_true",
+        help="Start a child copy of the server, list its tools and call the discovery "
+        "tools through the real MCP client, then exit. Connects no chat.",
     )
     mcp.set_defaults(func=cmd_mcp)
 

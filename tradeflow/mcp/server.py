@@ -17,6 +17,13 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+try:
+    # pydantic (hence every install with the 'mcp' extra) needs this TypedDict on
+    # Python < 3.12; the module must still import without the extra.
+    from typing_extensions import TypedDict
+except ImportError:  # pragma: no cover - only without the extra
+    from typing import TypedDict
+
 from tradeflow.analytics.series_comparison import MIN_OVERLAP as SERIES_MIN_OVERLAP
 from tradeflow.services import analysis, campaign, configs, glossary, registry
 from tradeflow.services.audit import audit_log, new_run_id
@@ -244,6 +251,25 @@ def _describe(doc: Optional[str], *metric_keys: str, notes: Optional[List[str]] 
     return "\n\n".join(p for p in parts if p)
 
 
+class StrategyEntry(TypedDict):
+    """One row of ``list_strategies``; declared so a client can validate it."""
+
+    name: str
+    description: str
+    #: None means the class declares no timeframe - absent, not an empty string.
+    timeframe: Optional[str]
+    #: Shipped demonstration scaffolding, not a validated strategy.
+    demo: bool
+
+
+class ScannerEntry(TypedDict):
+    """One row of ``list_scanners``."""
+
+    name: str
+    description: str
+    demo: bool
+
+
 def build_server(data_client=None):
     """Construct the FastMCP server with all read/analyze/propose tools registered.
 
@@ -262,7 +288,7 @@ def build_server(data_client=None):
     server = FastMCP(SERVER_NAME)
     dc = data_client
 
-    def _logged(tool: str, inputs: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any]:
+    def _logged(tool: str, inputs: Dict[str, Any], result: Any) -> Any:
         run_id = result.get("run_id") if isinstance(result, dict) else None
         audit_log(tool, inputs, run_id=run_id or new_run_id(), result_summary=_summary(result))
         return result
@@ -284,9 +310,11 @@ def build_server(data_client=None):
 
     # ---------------- Discovery (safe) ---------------- #
     @tool()
-    def list_strategies() -> List[Dict[str, str]]:
-        """List the trading strategies this engine can run: name, what each one
-        measures, and the bar timeframe it is designed for.
+    def list_strategies() -> List[StrategyEntry]:
+        """List the trading strategies this engine can run. Each row has `name`, a
+        one-line `description`, `timeframe` (the bar timeframe it is designed for, or null
+        when the class declares none) and `demo` (true for shipped demonstration
+        scaffolding, which shows how the pieces fit and is not a validated strategy).
 
         Start here. A strategy is a `bar -> score` policy: each defines one continuous
         conviction score, and both the discrete BUY/SELL/HOLD signal and the continuous
@@ -296,8 +324,10 @@ def build_server(data_client=None):
         return _logged("list_strategies", {}, registry.list_strategies())
 
     @tool()
-    def list_scanners() -> List[Dict[str, str]]:
-        """List the universe scanners: name and what each one selects for.
+    def list_scanners() -> List[ScannerEntry]:
+        """List the universe scanners. Each row has `name`, a one-line `description` of
+        what it selects for, and `demo` (true for shipped demonstration scaffolding, not
+        a validated scanner).
 
         A scanner narrows a candidate symbol list to the names worth analyzing on a
         given day; the `name` values are what every other tool's `scanner` argument

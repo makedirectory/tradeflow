@@ -92,7 +92,7 @@ def list_strategies() -> List[Dict[str, Any]]:
         {
             "name": name,
             "description": _first_line(cls.__doc__),
-            "timeframe": getattr(cls, "TIMEFRAME", ""),
+            "timeframe": getattr(cls, "TIMEFRAME", None) or None,
             "demo": is_demo(cls),
         }
         for name, cls in STRATEGIES.items()

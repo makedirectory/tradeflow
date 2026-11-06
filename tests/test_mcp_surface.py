@@ -65,6 +65,28 @@ def test_the_registered_surface_is_exactly_the_declared_one(built):
     assert set(_tools(built)) == set(EXPOSED_TOOLS)
 
 
+def test_discovery_tools_declare_a_boolean_demo_field(built):
+    """The declared output schema must match the rows, or a validating client rejects them.
+
+    The rows used to be declared as string-to-string maps while `demo` is a boolean.
+    The in-process `call_tool` never validates against the schema, so this reads the
+    schema itself.
+    """
+    tools = _tools(built)
+
+    def row_props(name):
+        schema = tools[name].outputSchema
+        items = schema["properties"]["result"]["items"]
+        if "$ref" in items:
+            items = schema["$defs"][items["$ref"].rsplit("/", 1)[-1]]
+        return items["properties"]
+
+    for name in ("list_strategies", "list_scanners"):
+        assert row_props(name)["demo"]["type"] == "boolean"
+    timeframe = row_props("list_strategies")["timeframe"]
+    assert {"type": "null"} in timeframe["anyOf"]
+
+
 def test_the_read_only_wall_still_holds(built):
     registered = set(_tools(built))
     assert not (registered & FORBIDDEN_TOOLS)

@@ -46,6 +46,11 @@ Run `tradeflow mcp` (or the checkout equivalent) once in a terminal first. It ne
 `mcp` extra and market-data credentials, and without either it exits immediately with
 the reason — which from inside a client looks only like a server that never started.
 
+To check that the server starts and answers, without a chat client, run
+`tradeflow mcp --self-test` (checkout: `uv run --extra mcp python main.py mcp --self-test`).
+It lists the tools and calls the discovery tools through the real MCP client. It does not
+connect any chat; your client launches its own copy from its config.
+
 The agent gets tools for discovery (`list_strategies`, `list_scanners`,
 `get_param_ranges`), analysis (`run_scan`, `run_backtest`, `run_optimization`,
 `run_walk_forward`, `summarize_bars`, `get_metrics_glossary`), and config

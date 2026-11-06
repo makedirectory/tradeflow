@@ -102,6 +102,19 @@ close before the first response. So run `tradeflow mcp` once in a terminal befor
 registering it, and `tradeflow init` if it asks for keys; a tool list that never appears
 is almost always one of these two rather than a client-side problem.
 
+**Checking discovery without a chat.** `tradeflow mcp --self-test` launches a child copy
+of the server over stdio (the interpreter running the CLI, so an installed copy and a
+checkout behave alike), initializes with the real MCP SDK client, lists the tools and
+calls `list_strategies` and `list_scanners`. It prints the tool count and how many
+strategies and scanners are demo versus installed, exits 0 when that worked and 1 naming
+the step that failed, with whatever the child printed on stderr. It goes through the SDK
+client on purpose: the in-process `call_tool` skips the output-schema validation a real
+client performs, which is how a mistyped discovery row once passed every test. It does
+**not** connect anything to a chat; your MCP client launches its own copy from its
+config, and the command says so on every run. The discovery rows are typed
+(`StrategyEntry`, `ScannerEntry`): `demo` is a boolean and a strategy that declares no
+timeframe reports `timeframe: null`, not an empty string.
+
 Both reach the same `tradeflow.cli:main`. Note that they resolve **different state
 roots** (`~/.tradeflow` vs. the checkout), so an agent and a human should be pointed
 at the same one — or `TRADEFLOW_HOME` set explicitly — if they are meant to share a
