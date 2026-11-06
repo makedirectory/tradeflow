@@ -968,3 +968,38 @@ def test_no_mcp_tool_reads_a_date_by_itself():
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
     } & {"fromisoformat", "strptime"}
     assert readers == set()
+
+
+def test_every_mcp_date_parameter_reaches_the_service_only_through_parse_date():
+    """The guard above looks for two spellings of a parser; this one follows the
+    parameters. Any tool argument named like a date may be tested for presence, echoed
+    into the audit inputs, or handed to `_parse_date` - and nothing else, so a tool that
+    wrapped it in `pd.Timestamp(...)` (a fourth reading) fails here."""
+    import ast
+    import inspect
+
+    pytest.importorskip("mcp", reason="the MCP surface needs the 'mcp' extra")
+    from tradeflow.mcp import server as mcp_server
+
+    date_names = {"start", "end", "as_of", "scan_as_of", "since", "until"}
+    tree = ast.parse(inspect.getsource(mcp_server))
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    checked, offenders = 0, []
+    for fn in (n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name != "_parse_date"):
+        params = {a.arg for a in fn.args.args + fn.args.kwonlyargs} & date_names
+        for node in ast.walk(fn):
+            if not (isinstance(node, ast.Name) and node.id in params and isinstance(node.ctx, ast.Load)):
+                continue
+            parent = parents[node]
+            checked += 1
+            through_parser = (
+                isinstance(parent, ast.Call)
+                and isinstance(parent.func, ast.Name)
+                and parent.func.id == "_parse_date"
+            )
+            presence_test = isinstance(parent, ast.IfExp) and parent.test is node
+            echoed = isinstance(parent, ast.Dict)
+            if not (through_parser or presence_test or echoed):
+                offenders.append(f"{fn.name}:{node.lineno} {node.id}")
+    assert checked >= 25, "the walk stopped finding the date parameters"
+    assert offenders == [], offenders

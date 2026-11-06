@@ -101,6 +101,12 @@ def test_a_similarly_named_project_is_not_a_checkout(tmp_path):
     assert settings._looks_like_checkout(_manifest_dir(tmp_path, settings.DISTRIBUTION_NAME, "  # ours"))
 
 
+@pytest.mark.parametrize("spelling", ['  name = "{n}"', "name = '{n}'", 'name="{n}"'])
+def test_other_valid_spellings_of_the_name_line_still_count(tmp_path, spelling):
+    (tmp_path / "pyproject.toml").write_text(f"[project]\n{spelling.format(n=settings.DISTRIBUTION_NAME)}\n")
+    assert settings._looks_like_checkout(tmp_path)
+
+
 def test_the_wheel_installs_both_executables(tmp_path):
     """Read from the built artifact, not from pyproject.toml: the declaration is not
     what an installer reads."""

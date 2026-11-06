@@ -116,8 +116,9 @@ def _looks_like_checkout(path: Path) -> bool:
             table = header.group(2) if header.group(1) == "[" else ""
             continue
         if table == "project":
-            found = re.match(r'^name\s*=\s*"([^"]*)"\s*(#.*)?$', line)
-            if found and found.group(1) in names:
+            # Valid TOML allows indentation and single quotes; both are still the name.
+            found = re.match(r"""^\s*name\s*=\s*(["'])([^"']*)\1\s*(#.*)?$""", line)
+            if found and found.group(2) in names:
                 return True
     return False
 
