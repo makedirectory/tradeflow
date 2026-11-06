@@ -78,9 +78,10 @@ without guessing. The history below keeps the old name as it was written.
   an offline cache miss names `quantred cache warm`, not a script an installed copy
   does not have.
 - An offline cache miss names every missing symbol (the benchmark included) and one
-  `cache warm` command with the dates that cover the request, so running it once is
-  enough. Before, it named only the first symbol and no window, and the rerun failed on
-  the next one. The note about the market-date change appears only where a cache was
+  `cache warm` command with the dates and the `--cache-dir` that cover the request that
+  missed. Before, it named only the first symbol and no window, and the rerun failed on
+  the next one. A command that scans first can still miss twice: once for the scan's
+  short lookback, then for its own window. The note about the market-date change appears only where a cache was
   warmed before it, not on every miss.
 - A verdict step that fails is reported in the verdict's step list; its traceback is
   logged only at debug level instead of filling the screen above the report.

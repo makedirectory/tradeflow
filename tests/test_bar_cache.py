@@ -189,6 +189,41 @@ def test_one_miss_names_every_missing_symbol_and_a_warm_command_that_fixes_it(tm
     assert set(again.get_bars(SYMBOLS, "1Day", start, end)) == set(SYMBOLS)
 
 
+def test_the_vintage_stamp_miss_also_names_every_symbol(tmp_path):
+    """Found in review: only get_bars checked every symbol first. Backtest, optimize and
+    walkforward stamp the vintage before reading bars, and that path still stopped at the
+    first symbol — the defect the consolidated miss was meant to remove."""
+    cached, upstream = _cache(tmp_path, offline=True)
+    start, end = _full_window(upstream)
+    with pytest.raises(CacheMiss) as miss:
+        cached.vintage_stamp(SYMBOLS, "1Day", start, end)
+    assert f"--symbols {','.join(SYMBOLS)} " in str(miss.value)
+
+
+def test_a_miss_in_a_custom_cache_directory_warms_that_directory(tmp_path):
+    """Found in review: the warm command dropped --cache-dir, so a run against its own
+    cache directory was told to fill the default one and missed again on the rerun."""
+    custom = tmp_path / "elsewhere bars"
+    cached = CachedMarketData(WindowedFakeProvider(SYMBOLS), cache_dir=custom, offline=True)
+    start, end = _full_window(cached.upstream)
+    with pytest.raises(CacheMiss) as miss:
+        cached.get_bars(["AAA"], "1Day", start, end)
+    assert f"--cache-dir '{custom}'" in str(miss.value)
+
+
+def test_a_miss_in_the_default_cache_directory_does_not_name_it(tmp_path, monkeypatch):
+    """The other direction: the default needs no flag, and naming the path would put a
+    machine-specific directory into a command meant to be copied."""
+    from tradeflow.store import bars
+
+    monkeypatch.setattr(bars, "DEFAULT_CACHE_ROOT", tmp_path / "bars")
+    cached, upstream = _cache(tmp_path, offline=True)
+    start, end = _full_window(upstream)
+    with pytest.raises(CacheMiss) as miss:
+        cached.get_bars(["AAA"], "1Day", start, end)
+    assert "--cache-dir" not in str(miss.value)
+
+
 def test_the_date_note_appears_only_where_a_cache_was_warmed_before(tmp_path):
     """The note explains coverage recorded under the old date reading. A cold cache has
     none, yet the note was printed beside every miss — six times in one verdict."""

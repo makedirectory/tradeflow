@@ -63,9 +63,9 @@ CREATE INDEX IF NOT EXISTS idx_fetches_symbol ON fetches(symbol, timeframe);
 
 
 #: Printed beside an offline cache miss on a symbol that *was* warmed before, while the
-#: date-contract change washes through. A cold cache has no old coverage to explain. A bare date now means that market date in New York, so coverage recorded
-#: when a naive date was read as UTC sits a few hours short of what the same command
-#: asks for today. The window is genuinely uncached under the new reading - the fix is
+#: date-contract change washes through; a cold cache has no old coverage to explain. A
+#: bare date now means that market date in New York, so coverage recorded when a naive
+#: date was read as UTC sits a few hours short of what the same command asks for today. The window is genuinely uncached under the new reading - the fix is
 #: a re-warm, not a tolerance - and saying so turns an unexplained miss on data the
 #: user knows they have into provenance.
 DATE_CONTRACT_NOTICE = (
@@ -90,7 +90,10 @@ class CacheMiss(RuntimeError):
         timeframe: str,
         *,
         previously_warmed: bool = False,
+        cache_dir: Optional[Path] = None,
     ):
+        import shlex
+
         self.missing = missing
         self.timeframe = timeframe
         symbols = list(missing)
@@ -98,9 +101,12 @@ class CacheMiss(RuntimeError):
         last = max(e for gaps in missing.values() for _, e in gaps)
         start_day, end_day = _warm_window(first, last)
         shown = ", ".join(symbols[:8]) + (f" +{len(symbols) - 8} more" if len(symbols) > 8 else "")
-        command = invocation(
-            f"cache warm --symbols {','.join(symbols)} --timeframe {timeframe} --start {start_day} --end {end_day}"
-        )
+        warm = f"cache warm --symbols {','.join(symbols)} --timeframe {timeframe} --start {start_day} --end {end_day}"
+        # A run against its own cache directory has to warm that one; the default would
+        # fill a cache the rerun never reads, and it would miss again.
+        if cache_dir is not None and Path(cache_dir) != DEFAULT_CACHE_ROOT:
+            warm += f" --cache-dir {shlex.quote(str(cache_dir))}"
+        command = invocation(warm)
         message = (
             f"--offline: no cached {timeframe} bars for {shown} between {start_day} and {end_day}. "
             f"Run `{command}` first."
@@ -444,7 +450,7 @@ class CachedMarketData(MarketDataProvider):
         missing = {s: g for s in symbols if (g := self.coverage.gaps(s, timeframe, start, end))}
         if missing:
             warmed = any(self.coverage.covered_intervals(s, timeframe) for s in missing)
-            raise CacheMiss(missing, timeframe, previously_warmed=warmed)
+            raise CacheMiss(missing, timeframe, previously_warmed=warmed, cache_dir=self.cache_dir)
 
     def _merge_write(self, symbol: str, timeframe: str, new_frames: List[pd.DataFrame]) -> None:
         """Read the symbol's full existing history, merge in the newly-fetched
@@ -482,6 +488,10 @@ class CachedMarketData(MarketDataProvider):
         tf_obj = _as_timeframe(timeframe)
         tf = str(tf_obj)
         start_ts, end_ts = _to_utc(start), _to_utc(end)
+        if self.offline:
+            # Up front, as in get_bars: backtest, optimize and walkforward stamp the
+            # vintage before reading any bars, so this is where their miss is raised.
+            self._refuse_uncached(list(dict.fromkeys(symbols)), tf, start_ts, end_ts)
         for symbol in dict.fromkeys(symbols):
             self._fill_gaps(symbol, tf_obj, start_ts, end_ts)
         return self.coverage.vintage(symbols, tf, start_ts, end_ts)
