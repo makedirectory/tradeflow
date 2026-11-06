@@ -41,7 +41,7 @@ def _record(store, trial_id, **kwargs):
         "symbols": ["AAA", "BBB"],
         "params": {"fast": 5},
         "accounting": ACCOUNTING,
-        "ts": "2025-01-01T00:00:00",
+        "ts": "2025-01-01T15:00:00+00:00",  # as the journal stamps: UTC, with its offset
         "window_start": "2024-01-02T00:00:00",
         "window_end": "2024-12-31T00:00:00",
     }
@@ -51,14 +51,14 @@ def _record(store, trial_id, **kwargs):
 
 
 def _populate(store):
-    _record(store, "t1", ts="2025-01-01T00:00:00", oos_sharpe=0.4, deflated_sharpe=0.1, promotable=False)
-    _record(store, "t2", ts="2025-02-01T00:00:00", oos_sharpe=2.1, deflated_sharpe=0.2, promotable=True)
-    _record(store, "t3", ts="2025-03-01T00:00:00", oos_sharpe=1.5, deflated_sharpe=0.9, promotable=True)
+    _record(store, "t1", ts="2025-01-01T15:00:00+00:00", oos_sharpe=0.4, deflated_sharpe=0.1, promotable=False)
+    _record(store, "t2", ts="2025-02-01T15:00:00+00:00", oos_sharpe=2.1, deflated_sharpe=0.2, promotable=True)
+    _record(store, "t3", ts="2025-03-01T15:00:00+00:00", oos_sharpe=1.5, deflated_sharpe=0.9, promotable=True)
     # A different family, and a kind with no Sharpe at all.
     _record(
         store,
         "t4",
-        ts="2025-04-01T00:00:00",
+        ts="2025-04-01T15:00:00+00:00",
         strategy="another_strategy",
         symbols=["CCC"],
         oos_sharpe=3.0,
@@ -67,7 +67,7 @@ def _populate(store):
     _record(
         store,
         "t5",
-        ts="2025-05-01T00:00:00",
+        ts="2025-05-01T15:00:00+00:00",
         kind="alpha",
         params={"fast": 9},
         oos_sharpe=None,
