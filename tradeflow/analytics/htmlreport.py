@@ -730,13 +730,14 @@ def _walkforward_sections(result: Dict[str, Any], extras: Dict[str, Any]) -> Lis
             f'<p class="verdict {"pass" if gate_report.get("promotable") else "fail"}">'
             f"{'PROMOTABLE' if gate_report.get('promotable') else 'NOT PROMOTABLE'}</p>"
             + _table(
-                ["", "Gate", "Value", "Threshold"],
+                ["", "Gate", "Value", "Threshold", "Computed over"],
                 [
                     [
                         _pill(c.get("passed")),
                         esc(n),
                         esc(format_gate_value(n, c.get("value"))),
                         esc(format_gate_value(n, c.get("threshold"))),
+                        esc(c.get("basis", "")),
                     ]
                     for n, c in sorted(checks.items())
                 ],

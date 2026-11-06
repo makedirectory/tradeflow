@@ -255,6 +255,14 @@ class WalkForwardResult:
             "deflated_sharpe": _check(dsr, ">", g["min_deflated_sharpe"]),
         }
 
+        # What each gate's number is computed over. The fold-median gates sit beside a
+        # stitched out-of-sample aggregate carrying the same metric names, and the two
+        # differ most when the folds disagree; unlabelled, a gate value of 0.21 next to
+        # an aggregate Sharpe of 0.20 read as a rounding error or a bug.
+        for name, basis in _GATE_BASIS.items():
+            if name in checks:
+                checks[name]["basis"] = basis
+
         sensitivity = self.diagnostics.get("parameter_sensitivity")
         if sensitivity is not None:
             loss = sensitivity.get("max_sharpe_loss", 0.0)
@@ -269,6 +277,17 @@ class WalkForwardResult:
 
         promotable = all(c["passed"] for c in checks.values())
         return {"promotable": promotable, "checks": checks}
+
+
+#: What a gate's value is computed over, carried on the check for every renderer.
+_GATE_BASIS = {
+    "oos_sharpe": "median across folds",
+    "oos_profit_factor": "median across folds",
+    "walk_forward_efficiency": "median across folds",
+    "oos_drawdown_vs_is": "median across folds",
+    "min_oos_trades": "total across folds",
+    "deflated_sharpe": "stitched out-of-sample aggregate",
+}
 
 
 def _check(value: float, op: str, threshold: float) -> Dict[str, Any]:
