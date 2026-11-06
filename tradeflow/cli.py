@@ -380,6 +380,46 @@ def _refuse_sibling_command_after_research(parser, argv: List[str]) -> None:
         return
 
 
+def _refuse_unrecognized(parser, args, extras: List[str]) -> None:
+    """Refuse leftover arguments as the *subcommand* that met them, not the top level.
+
+    ``parse_args`` reports leftovers through the root parser, so a stray flag on
+    ``optimize`` printed the root usage line and ``quantred: error:`` - the reader was
+    shown a map of the whole tool for a mistake about one command's flags. The parser
+    that actually met the argument is the one whose usage helps. When the flag exists
+    on a sibling command (``--range`` belongs to ``screen``) that is said in one line,
+    since "unrecognized" alone sends the reader to guess whether it was a typo.
+    """
+    # The innermost parser the user got to: `trials show` before `trials`.
+    chosen, path = parser, []
+    while True:
+        action = next((a for a in chosen._actions if isinstance(a, argparse._SubParsersAction)), None)
+        picked = getattr(args, action.dest, None) if action is not None else None
+        if picked is None or picked not in action.choices:
+            break
+        chosen = action.choices[picked]
+        path.append(picked)
+
+    message = f"unrecognized arguments: {' '.join(extras)}"
+    if path:
+        hints = []
+        for token in extras:
+            if not token.startswith("-"):
+                continue
+            flag = token.split("=", 1)[0]
+            owners = [
+                name
+                for name, sibling in parser._subparsers._group_actions[0].choices.items()
+                if name != path[0] and flag in sibling._option_string_actions
+            ]
+            if owners:
+                shown = ", ".join(f"`{o}`" for o in owners)
+                hints.append(f"{flag} is an option of {shown}, not of `{' '.join(path)}`")
+        if hints:
+            message += ". " + "; ".join(hints)
+    chosen.error(message)
+
+
 def parse_cli(argv: Optional[List[str]] = None):
     """Parse argv and record which flags were typed, for config layering."""
     argv = list(sys.argv[1:]) if argv is None else list(argv)
@@ -390,7 +430,9 @@ def parse_cli(argv: Optional[List[str]] = None):
         parser.print_help()
         sys.exit(0)
     _refuse_sibling_command_after_research(parser, argv)
-    args = parser.parse_args(argv)
+    args, extras = parser.parse_known_args(argv)
+    if extras:
+        _refuse_unrecognized(parser, args, extras)
     _refuse_unusable_window(args)
     args.flags_given = _flags_given(parser, argv, getattr(args, "command", None))
     return args

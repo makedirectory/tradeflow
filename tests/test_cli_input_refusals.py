@@ -220,3 +220,38 @@ def test_the_missing_keys_message_says_what_needs_them_and_the_keyless_route():
 
     message = settings._missing_credentials_message(["APCA_API_KEY_ID"])
     assert "market data" in message and "--offline" in message
+
+
+def _parse_refusal(capsys, *argv):
+    from tradeflow.cli import parse_cli
+
+    with pytest.raises(SystemExit) as stop:
+        parse_cli(list(argv))
+    assert stop.value.code == 2
+    return capsys.readouterr().err
+
+
+def test_a_stray_flag_is_refused_with_the_subcommands_own_usage(capsys):
+    """`optimize --range` printed the root usage line and `quantred: error:`, a map of the
+    whole tool for a mistake about one command's flags."""
+    err = _parse_refusal(capsys, "optimize", "--strategy", "demo_trend", "--range", "fast_ema_period=5:10:1")
+    assert err.startswith(f"usage: {CLI_NAME} optimize ")
+    assert f"{CLI_NAME} optimize: error: unrecognized arguments: --range" in err
+
+
+def test_a_flag_that_belongs_to_a_sibling_command_names_it(capsys):
+    """`--range` exists on `screen`; saying so beats leaving the reader to guess a typo."""
+    err = _parse_refusal(capsys, "optimize", "--range", "fast_ema_period=5:10:1")
+    assert "--range is an option of `screen`, not of `optimize`" in err
+
+
+def test_a_flag_nobody_has_gets_no_sibling_hint(capsys):
+    """The hint must not fire for a genuine typo, or it names a command at random."""
+    err = _parse_refusal(capsys, "optimize", "--no-such-flag")
+    assert "unrecognized arguments: --no-such-flag" in err
+    assert "is an option of" not in err
+
+
+def test_a_nested_subcommand_reports_its_own_usage(capsys):
+    err = _parse_refusal(capsys, "trials", "show", "abcd1234", "--bogus")
+    assert err.startswith(f"usage: {CLI_NAME} trials show ")
