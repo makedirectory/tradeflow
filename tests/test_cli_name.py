@@ -9,7 +9,9 @@ literals rather than a list somebody remembered.
 
 from __future__ import annotations
 
+import argparse
 import ast
+import logging
 import re
 from pathlib import Path
 from typing import Iterator, List, Tuple
@@ -206,3 +208,18 @@ def test_a_report_and_the_top_level_help_say_the_brand():
     assert settings.BRAND in _footer()
     assert OLD_BRAND not in _footer()
     assert cli.build_parser().description.startswith(settings.BRAND)
+
+
+def test_the_demo_does_not_bury_its_scorecard_in_progress_logging(caplog, capsys):
+    """A new user's first command used to print a hundred INFO lines before the
+    result; warnings still show, and the engine's log level is put back."""
+    engine_log = logging.getLogger("tradeflow")
+    before = engine_log.level
+    caplog.set_level(logging.INFO)
+
+    cli.cmd_demo(argparse.Namespace(seed=7, chart=None, html=None))
+
+    noisy = [r for r in caplog.records if r.name.startswith("tradeflow") and r.levelno < logging.WARNING]
+    assert noisy == []
+    assert "Verdict:" in capsys.readouterr().out
+    assert engine_log.level == before

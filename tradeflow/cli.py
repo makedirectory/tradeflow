@@ -5366,6 +5366,25 @@ def _print_execution_report(report, show_orders: bool = False) -> None:
 
 
 def cmd_demo(args) -> None:
+    """Run the demo with the engine's progress logging held to warnings.
+
+    The walk-forward fetches and evaluates dozens of times, and each step logs at INFO:
+    the first thing a new user's first command printed was a hundred lines of
+    "Fetched bars" above the scorecard it exists to show. Warnings still come through,
+    and the level is put back, so nothing else in the process is quieted.
+    """
+    import logging
+
+    engine_log = logging.getLogger(__name__.partition(".")[0])  # the import package
+    previous = engine_log.level
+    engine_log.setLevel(logging.WARNING)
+    try:
+        _run_demo(args)
+    finally:
+        engine_log.setLevel(previous)
+
+
+def _run_demo(args) -> None:
     """Run the whole pipeline on synthetic data - no Alpaca keys, no network.
 
     The point isn't the numbers; it's the *shape* of the workflow. We backtest
