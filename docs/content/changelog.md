@@ -91,6 +91,8 @@ without guessing. The history below keeps the old name as it was written.
   `--benchmark`, and `backtest` its `--benchmark` (which offline used to drop alpha and
   beta with only a warning); a cold miss now asks for those too. The note about the
   market-date change appears only where a cache was warmed before it, not on every miss.
+  An offline `verdict` whose steps miss prints one warm command covering every step,
+  instead of one per step with a different window each.
 - A verdict step that fails is reported in the verdict's step list; its traceback is
   logged only at debug level instead of filling the screen above the report.
 - A request that Alpaca refuses for the credentials now says so ("Alpaca rejected these

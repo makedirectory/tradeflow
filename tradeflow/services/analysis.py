@@ -2602,11 +2602,25 @@ def run_verdict(
     }
     steps: Dict[str, Any] = result["steps"]
 
+    cache_misses: List[Any] = []
+
     def _step(name: str, fn):
         """Run one step, recording its outcome. A failure is reported, not raised -
         a 30-second pipeline must not lose four completed sections to the fifth."""
+        from tradeflow.store.bars import CacheMiss
+
         try:
             value = fn()
+        except CacheMiss as exc:
+            # Each step misses with its own window; the report prints one warm command
+            # covering all of them rather than one per step.
+            cache_misses.append(exc)
+            steps[name] = {
+                "status": "failed",
+                "error": "CacheMiss: no cached bars for this step",
+                "cache_miss": True,
+            }
+            return None
         except Exception as exc:  # noqa: BLE001 - any step failure is data, not a crash
             # The report names the step and its error; the traceback is for debugging.
             # At WARNING it printed a screen of stack above the line saying what to do.
@@ -2752,6 +2766,10 @@ def run_verdict(
 
     result["verdict"] = _verdict_gates(result)
     result["provenance"] = _verdict_provenance(inputs, cache, n_trials)
+    if cache_misses:
+        from tradeflow.store.bars import combine_misses
+
+        result["cache_miss"] = [str(miss) for miss in combine_misses(cache_misses)]
 
     reason = _verdict_not_a_trial(result) if journal else "journaling was off for this run"
     if reason is not None:

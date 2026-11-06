@@ -477,6 +477,8 @@ def _verdict_step_lines(result: Dict[str, Any]) -> list:
         detail = state.get("error") or state.get("reason") or ""
         marker = "(!)" if state.get("status") == "failed" else "  -"
         lines.append(f"  {marker} {name}: {state.get('status')}{f' — {detail}' if detail else ''}")
+    for miss in result.get("cache_miss") or []:
+        lines.append(f"  Fix the cache first: {miss}")
     return lines
 
 

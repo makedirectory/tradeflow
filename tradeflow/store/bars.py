@@ -97,6 +97,8 @@ class CacheMiss(RuntimeError):
 
         self.missing = missing
         self.timeframe = timeframe
+        self.previously_warmed = previously_warmed
+        self.cache_dir = cache_dir
         symbols = list(missing)
         first = min(s for gaps in missing.values() for s, _ in gaps)
         last = max(e for gaps in missing.values() for _, e in gaps)
@@ -117,6 +119,33 @@ class CacheMiss(RuntimeError):
         if previously_warmed:
             message += f"\n{DATE_CONTRACT_NOTICE}"
         super().__init__(message)
+
+
+def combine_misses(misses: List[CacheMiss]) -> List[CacheMiss]:
+    """One miss per timeframe covering every miss given, for a run that caught several.
+
+    A verdict runs its steps independently, so each one missed with its own window and
+    printed its own warm command; the reader had to work out that only the widest
+    sufficed. The combined miss names every symbol and the union of the windows.
+    """
+    by_timeframe: Dict[str, List[CacheMiss]] = {}
+    for miss in misses:
+        by_timeframe.setdefault(miss.timeframe, []).append(miss)
+    combined = []
+    for timeframe, group in by_timeframe.items():
+        missing: Dict[str, List[Tuple[pd.Timestamp, pd.Timestamp]]] = {}
+        for miss in group:
+            for symbol, gaps in miss.missing.items():
+                missing.setdefault(symbol, []).extend(gaps)
+        combined.append(
+            CacheMiss(
+                missing,
+                timeframe,
+                previously_warmed=any(m.previously_warmed for m in group),
+                cache_dir=group[0].cache_dir,
+            )
+        )
+    return combined
 
 
 def _warm_window(first: pd.Timestamp, last: pd.Timestamp) -> Tuple[str, str]:

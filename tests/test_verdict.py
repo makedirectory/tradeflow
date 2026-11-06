@@ -797,3 +797,45 @@ def test_a_solve_with_no_named_constraint_is_not_constraint_infeasible():
     assert analysis._book_blocked_by_constraints({"feasible": False, "preflight": True}) is True
     assert analysis._book_blocked_by_constraints({"feasible": True, "binding_constraint": "x"}) is False
     assert analysis._book_blocked_by_constraints(None) is False
+
+
+# --- offline cache misses ----------------------------------------------------
+def test_an_offline_verdict_prints_one_warm_command_that_fixes_every_step(tmp_path):
+    """Every step missed with its own window and printed its own warm command, each one
+    different; only the widest was enough, and the reader had to work out which. The
+    report now prints one command, and running it gets every step past the cache."""
+    pytest.importorskip("pyarrow")
+    import re
+
+    from tradeflow.store.bars import CachedMarketData
+    from tradeflow.utils.timeutils import parse_market_date
+
+    cache_dir = tmp_path / "bars"
+
+    def offline_run():
+        cached = CachedMarketData(_provider(), cache_dir=cache_dir, offline=True)
+        try:
+            return _run(MarketDataClient(cached), scanner="demo_volume", journal=False)
+        finally:
+            cached.close()
+
+    first = offline_run()
+    missed = [name for name, s in first["steps"].items() if s.get("cache_miss")]
+    assert len(missed) > 1
+    report = format_verdict_report(first)
+    assert report.count("cache warm") == 1
+
+    command = re.search(r"`[^`]*cache warm ([^`]*)`", report).group(1)
+    flags = dict(re.findall(r"--([\w-]+) (\S+)", command))
+    online = CachedMarketData(_provider(), cache_dir=cache_dir)
+    online.warm(
+        flags["symbols"].split(","),
+        flags["timeframe"],
+        parse_market_date(flags["start"]),
+        parse_market_date(flags["end"]),
+    )
+    online.close()
+
+    second = offline_run()
+    assert not [name for name, s in second["steps"].items() if s.get("cache_miss")]
+    assert "cache_miss" not in second
