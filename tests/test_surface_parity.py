@@ -1058,3 +1058,34 @@ def test_every_mcp_date_parameter_reaches_the_service_only_through_parse_date():
                 offenders.append(f"{fn.name}:{node.lineno} {node.id}")
     assert checked >= 25, "the walk stopped finding the date parameters"
     assert offenders == [], offenders
+
+
+def test_the_cli_memo_lookup_is_the_service_lookup(monkeypatch):
+    """The two were identical copies, so a filter added to one - `require_trade_table`
+    was added to both by hand - would have left a trial findable over one surface only.
+    The CLI now forwards every argument to the service's lookup."""
+    from tradeflow import cli
+    from tradeflow.services import analysis
+
+    seen = []
+    monkeypatch.setattr(analysis, "_find_cached_trial", lambda *a, **k: seen.append((a, k)) or {"id": "t"})
+    found = cli._find_cached_trial("s", {"p": 1}, ["A"], "start", "end", 7, require_trade_table=True)
+
+    assert found == {"id": "t"}
+    assert seen == [
+        (("s", {"p": 1}, ["A"], "start", "end", 7), {"require_trades": False, "require_trade_table": True})
+    ]
+
+
+@pytest.mark.parametrize("workers", [1, 4])
+def test_the_cli_worker_data_spec_is_the_service_rule(workers, tmp_path, capsys):
+    """Parallel runs build their data clients from this spec on both surfaces; the CLI
+    kept its own copy, which handed workers the cache directory in a different type."""
+    from argparse import Namespace
+
+    from tradeflow import cli
+    from tradeflow.services import analysis
+
+    args = Namespace(workers=workers, cache=False, offline=False, cache_dir=tmp_path)
+    assert cli._worker_data_spec(args) == analysis._worker_data_spec(workers, tmp_path, False)
+    assert ("implies the bar cache" in capsys.readouterr().out) is (workers > 1)

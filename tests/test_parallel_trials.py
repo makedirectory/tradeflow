@@ -206,15 +206,18 @@ def test_a_request_is_picklable_with_nothing_live_inside_it():
 def test_a_cost_model_round_trips_through_its_spec():
     """Two descriptions of one cost model would drift, and the drift would show up
     as a parallel run pricing trades differently from the sequential one."""
-    from tradeflow.costs import ParametricCostModel
+    from tradeflow.services.analysis import _build_cost_model as service_build
 
-    original = ParametricCostModel(commission_bps=2.5, impact_eta=0.4, annual_borrow_bps=75.0)
+    # Built the way the service builds the sequential run's model, and compared on
+    # every field a worker rebuilds from - not a hand-picked few.
+    original = service_build(
+        gross=False, commission_bps=2.5, impact_eta=0.4, participation_cap=0.07, borrow_bps=75.0
+    )
     rebuilt = parallel._build_cost_model(parallel.cost_spec(original))
 
-    assert rebuilt.commission_rate == pytest.approx(original.commission_rate)
-    assert rebuilt.impact_eta == pytest.approx(original.impact_eta)
-    assert rebuilt.annual_borrow_rate == pytest.approx(original.annual_borrow_rate)
-    assert parallel.cost_spec(None) is None
+    assert parallel.cost_spec(rebuilt) == pytest.approx(parallel.cost_spec(original))
+    assert vars(rebuilt) == pytest.approx(vars(original))
+    assert parallel.cost_spec(service_build(True, 2.5, 0.4, 0.07, 75.0)) is None
 
 
 # --- determinism vs the sequential path -------------------------------------

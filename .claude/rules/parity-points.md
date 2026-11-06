@@ -411,9 +411,13 @@ differ under a redirected journal, which is every test in the suite.
 *Guarded by* `tests/test_surface_parity.py`, which opens all three under a redirect and
 compares the paths they reach, rather than three tests that each pass.
 
-Still parallel and **unguarded**: `cli._find_cached_trial` / `services._find_cached_trial`,
-`cli._worker_data_spec` / `services._worker_data_spec`, `parallel._build_cost_model` /
-`services._build_cost_model`. Each is a candidate for delegation.
+**The memo lookup and the worker data spec** — *converged*. `cli._find_cached_trial` and
+`cli._worker_data_spec` were identical copies of the service's; both now delegate (the
+CLI keeps only its line saying workers implied the cache). `parallel._build_cost_model`
+is not a copy but the far end of a round trip - a worker rebuilds the model from
+`cost_spec` - so it is guarded by comparing every field of a service-built model with
+its rebuild.
+*Guarded by* `tests/test_surface_parity.py`, `tests/test_parallel_trials.py`.
 
 ## Finding a new one
 

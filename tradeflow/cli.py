@@ -276,25 +276,23 @@ def _find_cached_trial(
     require_trades: bool = False,
     require_trade_table: bool = False,
 ) -> Optional[Dict[str, Any]]:
-    """Look up an exact prior trial via the trial store; ``None`` if none exists
-    (including when the store itself is unavailable - see :func:`_open_trial_store`).
-    """
-    from tradeflow.optimization.config_store import current_git_sha
+    """Look up an exact prior trial; ``None`` if none exists or the store is unavailable.
 
-    with _open_trial_store() as store:
-        if store is None:
-            return None
-        return store.find(
-            strategy=strategy,
-            params=params,
-            symbols=symbols,
-            window_start=start,
-            window_end=end,
-            accounting=accounting,
-            require_trades=require_trades,
-            require_trade_table=require_trade_table,
-            git_sha=current_git_sha(),
-        )
+    Delegates to the service's lookup, which the MCP server reaches too: a trial
+    recorded over one surface is found by the other only while both ask identically.
+    """
+    from tradeflow.services.analysis import _find_cached_trial as find
+
+    return find(
+        strategy,
+        params,
+        symbols,
+        start,
+        end,
+        accounting,
+        require_trades=require_trades,
+        require_trade_table=require_trade_table,
+    )
 
 
 def _write_html(args, result: Dict[str, Any], kind: str, extras: Optional[Dict[str, Any]] = None) -> None:
@@ -1103,20 +1101,13 @@ def _print_longshort_report(report, args) -> None:
 
 def _worker_data_spec(args):
     """How worker processes should build their own data clients, or ``None`` for a
-    sequential run.
+    sequential run - the service's rule, plus a line saying the cache was implied."""
+    from tradeflow.services.analysis import _worker_data_spec as data_spec
 
-    Parallel execution is cache-backed by construction: a live data client cannot be
-    pickled to a spawned worker, and N workers independently fetching identical bars
-    is strictly worse than one warmed local cache. Asking for workers therefore opts
-    into the bar cache whether or not `--cache` was passed, and says so.
-    """
-    from tradeflow.optimization.parallel import DataSpec, resolve_workers
-
-    if resolve_workers(getattr(args, "workers", None)) <= 1:
-        return None
-    if not args.cache and not args.offline:
+    spec = data_spec(getattr(args, "workers", None), args.cache_dir, args.offline)
+    if spec is not None and not args.cache and not args.offline:
         print("--workers implies the bar cache (workers read local Parquet, not the API).")
-    return DataSpec(kind="cache", cache_dir=args.cache_dir, offline=args.offline)
+    return spec
 
 
 def cmd_optimize(args) -> None:
