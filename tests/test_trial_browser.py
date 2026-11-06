@@ -36,7 +36,8 @@ def store(tmp_path):
 def _record(store, trial_id, **kwargs):
     defaults = {
         "id": trial_id,
-        "kind": "backtest",
+        # A kind the leaderboard ranks by default; a plain backtest is not one.
+        "kind": "walkforward",
         "strategy": "demo_trend",
         "symbols": ["AAA", "BBB"],
         "params": {"fast": 5},
@@ -472,10 +473,26 @@ def test_in_sample_kinds_are_excluded_from_the_leaderboard_by_default(store):
     assert board["in_sample_included"] is False
 
 
+def test_a_plain_backtest_is_not_ranked_as_validated_evidence(store):
+    """A backtest stored its full-window Sharpe as `oos_sharpe` and was ranked beside
+    walk-forwards under "validated runs only", so a novice read one pass over a window
+    as out-of-sample evidence. It is shown only when asked for, and labelled then."""
+    _record(store, "bt", kind="backtest", oos_sharpe=2.0, deflated_sharpe=0.9)
+    _record(store, "wf", kind="walkforward", oos_sharpe=1.1, deflated_sharpe=0.6)
+
+    board = store.best(accounting=ACCOUNTING)
+    assert [r["id"] for r in board["rows"]] == ["wf"]
+    assert board["in_sample_excluded"] == 1
+
+    opted_in = store.best(accounting=ACCOUNTING, include_in_sample=True)
+    assert [r["id"] for r in opted_in["rows"]] == ["bt", "wf"]
+    assert "never validated out of sample" in format_leaderboard(opted_in)
+
+
 def test_the_header_names_the_population_not_just_the_sort_key(store):
     """ "Top 3 by deflated Sharpe" still reads as "the best of everything I have run"
     unless it says what it ranked over."""
-    _record(store, "real", kind="backtest", oos_sharpe=1.1, deflated_sharpe=0.6)
+    _record(store, "real", kind="walkforward", oos_sharpe=1.1, deflated_sharpe=0.6)
     assert "validated runs only" in format_leaderboard(store.best(accounting=ACCOUNTING))
     assert "validated runs only" not in format_leaderboard(
         store.best(accounting=ACCOUNTING, include_in_sample=True)
@@ -484,14 +501,14 @@ def test_the_header_names_the_population_not_just_the_sort_key(store):
 
 def test_the_exclusion_is_reported_rather_than_silent(store):
     _record(store, "opt", kind="optimize", oos_sharpe=9.9, deflated_sharpe=1.0)
-    _record(store, "real", kind="backtest", oos_sharpe=1.1, deflated_sharpe=0.6)
+    _record(store, "real", kind="walkforward", oos_sharpe=1.1, deflated_sharpe=0.6)
     rendered = format_leaderboard(store.best(accounting=ACCOUNTING))
     assert "1 in-sample row(s) excluded" in rendered
 
 
 def test_opting_in_ranks_them_but_says_what_that_means(store):
     _record(store, "opt", kind="optimize", oos_sharpe=9.9, deflated_sharpe=1.0)
-    _record(store, "real", kind="backtest", oos_sharpe=1.1, deflated_sharpe=0.6)
+    _record(store, "real", kind="walkforward", oos_sharpe=1.1, deflated_sharpe=0.6)
 
     board = store.best(accounting=ACCOUNTING, include_in_sample=True)
     assert board["rows"][0]["id"] == "opt"
@@ -504,11 +521,11 @@ def test_excluding_in_sample_rows_does_not_shorten_the_board(store):
     for i in range(12):
         _record(store, f"opt{i}", kind="optimize", oos_sharpe=9.0, deflated_sharpe=0.99)
     for i in range(5):
-        _record(store, f"real{i}", kind="backtest", oos_sharpe=1.0 + i, deflated_sharpe=0.5 + i / 100)
+        _record(store, f"real{i}", kind="walkforward", oos_sharpe=1.0 + i, deflated_sharpe=0.5 + i / 100)
 
     board = store.best(accounting=ACCOUNTING, limit=5)
     assert len(board["rows"]) == 5
-    assert all(r["kind"] == "backtest" for r in board["rows"])
+    assert all(r["kind"] == "walkforward" for r in board["rows"])
 
 
 def test_the_rendered_leaderboard_names_each_row_s_kind(store):

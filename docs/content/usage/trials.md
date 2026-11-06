@@ -148,7 +148,9 @@ worse coming from our own tooling, which lends it authority. So:
 - Ranking is by **deflated** Sharpe by default.
 - **In-sample rows are excluded.** An `optimize` row is the winner of a search —
   best-of-N by construction — so ranking one ranks the selection bias rather than
-  any skill. `--include-in-sample` opts back in and says plainly what that means;
+  any skill. A plain `backtest` is excluded too: it is one pass over its window, never
+  split into a part it was fitted on and a part it was judged on, so its Sharpe is
+  description rather than out-of-sample evidence. `--include-in-sample` opts back in and says plainly what that means;
   either way the count of excluded rows is reported, so the exclusion is never
   silent.
 - **Every row names its kind**, because a validated walk-forward and a search's

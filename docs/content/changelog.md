@@ -95,6 +95,10 @@ without guessing. The history below keeps the old name as it was written.
   or on any symbol that happens to have some coverage.
   An offline `verdict` whose steps miss prints one warm command covering every step,
   instead of one per step with a different window each.
+- `trials best` / `best_trials` no longer rank a plain backtest by default. It is one pass
+  over its window, never validated out of sample, yet it was ranked under "validated runs
+  only" with its full-window Sharpe in the out-of-sample column. `--include-in-sample`
+  shows it, labelled.
 - An HTML backtest report shows the execution-viability check the terminal prints, with
   a warning above the metrics when the book is not executable at its capital. A reused
   result, which does not carry the check, says it was not recorded.

@@ -1741,9 +1741,11 @@ def build_server(data_client=None):
         `n_trials`, and why `rank_by="sharpe"` returns a caveat saying in as many
         words that the ordering does not correct for how many configs were tried.
 
-        In-sample kinds (`optimize`, `alpha`) are excluded by default: an `optimize`
-        row is the winner of a search, best-of-N by construction, so ranking one
-        ranks the selection bias rather than any skill. `include_in_sample=true`
+        In-sample kinds (`optimize`, `alpha`, `backtest`) are excluded by default: an
+        `optimize` row is the winner of a search, best-of-N by construction, so ranking
+        one ranks the selection bias rather than any skill, and a plain `backtest` is one
+        pass over its window, never validated out of sample (its `oos_sharpe` is the
+        full-window Sharpe). `include_in_sample=true`
         opts back in, and `in_sample_excluded` reports how many were dropped.
 
         Returns `{rank_by, rows, max_family_n_trials, in_sample_included,

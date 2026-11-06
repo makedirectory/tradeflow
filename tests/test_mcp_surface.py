@@ -308,7 +308,7 @@ def _seed_store(tmp_path):
         for i, (sharpe, dsr) in enumerate([(0.4, 0.1), (2.1, 0.2), (1.5, 0.9)], start=1):
             store.record(
                 id=f"t{i}",
-                kind="backtest",
+                kind="walkforward",
                 strategy="demo_trend",
                 symbols=SYMBOLS,
                 params={"fast": i},

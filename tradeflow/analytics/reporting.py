@@ -1325,12 +1325,13 @@ def format_leaderboard(board: Dict[str, Any]) -> str:
     if board.get("in_sample_included"):
         lines.append(
             "  (!) IN-SAMPLE rows included. An 'optimize' row is the winner of a search — "
-            "best-of-N by construction — so its rank measures selection, not skill."
+            "best-of-N by construction — so its rank measures selection, not skill; a "
+            "'backtest' row is one pass over its window, never validated out of sample."
         )
     elif board.get("in_sample_excluded"):
         lines.append(
-            f"  {board['in_sample_excluded']} in-sample row(s) excluded (search candidates, "
-            "not track records). Pass --include-in-sample to see them."
+            f"  {board['in_sample_excluded']} in-sample row(s) excluded (search candidates and "
+            "plain backtests, not validated out of sample). Pass --include-in-sample to see them."
         )
     lines.append(f"  {board.get('caveat', '')}")
     if board.get("max_family_n_trials", 0) >= 50:

@@ -193,8 +193,11 @@ _EXCLUDED_FROM_FAMILY_COUNT = ("alpha",)
 #: evaluation stack exists to correct for, not a result that survived anything. A
 #: leaderboard topped by them presents the artifact as the finding, which is exactly
 #: what this view is supposed to prevent. ``alpha`` rows are forecasts with no track
-#: record at all.
-IN_SAMPLE_KINDS = ("optimize", "alpha")
+#: record at all. A ``backtest`` row is one pass over the window it was given, never
+#: split into a part it was fitted on and a part it was judged on, so its full-window
+#: Sharpe is description, not out-of-sample evidence - whatever column it is stored in.
+#: Ranked beside walk-forwards under "validated runs only", a novice read it as one.
+IN_SAMPLE_KINDS = ("optimize", "alpha", "backtest")
 #: The journal event that quarantines a suspect subset of trials. Append-only, like
 #: everything else the journal holds: the trials it names stay exactly as they were
 #: recorded, and this says what was later learned about them.
@@ -1364,9 +1367,10 @@ class TrialStore:
         project exists to fight; doing it inside our own tooling would be worse
         than doing it by hand, because the tool would lend it authority.
 
-        **In-sample kinds are excluded by default** (see :data:`IN_SAMPLE_KINDS`).
+        **Unvalidated kinds are excluded by default** (see :data:`IN_SAMPLE_KINDS`).
         An ``optimize`` row is the winner of a search — best-of-N by construction —
-        so ranking one is ranking the selection bias itself. ``include_in_sample``
+        so ranking one is ranking the selection bias itself, and a plain backtest was
+        never validated out of sample at all. ``include_in_sample``
         opts back in, and the payload records how many rows were dropped so the
         exclusion is visible rather than silent.
 

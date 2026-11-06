@@ -7499,9 +7499,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--include-in-sample",
         dest="include_in_sample",
         action="store_true",
-        help="Also rank in-sample rows (optimize/alpha). They are search candidates, not "
-        "track records — an 'optimize' row is best-of-N by construction, so its rank "
-        "measures selection rather than skill",
+        help="Also rank in-sample rows (optimize/alpha/backtest). None was validated out of "
+        "sample — an 'optimize' row is best-of-N by construction, so its rank measures "
+        "selection rather than skill, and a plain backtest is one pass over its window",
     )
     t_best.add_argument("--limit", type=int, default=10)
     t_best.add_argument("--offset", type=int, default=0, help=argparse.SUPPRESS)
