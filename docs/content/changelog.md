@@ -149,7 +149,8 @@ without guessing. The history below keeps the old name as it was written.
   it with --record-trades" to an agent that had no way to pass it. A prior identical trial
   that kept no table no longer answers a request for one, on either surface: the run is
   repeated and a new trial recorded, instead of reporting success and leaving the caller
-  without the table.
+  without the table. That trial counts toward the multiple-testing total; for a
+  walk-forward it adds the whole inner search again, so ask on the first run.
 
 ### MCP
 

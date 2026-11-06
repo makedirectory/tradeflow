@@ -165,3 +165,24 @@ def test_a_backtest_at_another_capital_is_not_served_the_first_ones_result(clien
     assert not other.get("memoized")
     assert other["initial_capital"] == 4_000.0
     assert _service(client, capital=4_000.0)["memoized"] is True
+
+
+def test_asking_a_cli_walk_forward_for_its_trade_table_is_not_answered_by_a_memo_without_one(
+    client, monkeypatch, capsys
+):
+    """The walk-forward half of the rule above: without it, deleting the CLI walk-forward's
+    require_trade_table passed the whole suite."""
+    from tradeflow.store.trials import TrialStore, db_path_for_journal
+
+    base = ["walkforward", "--strategy", "demo_trend", "--scanner", "none", "--symbols", "AAA,BBB"]
+    base += ["--start", "2024-01-02", "--end", "2024-12-31", "--folds", "2", "--max-evals", "2"]
+    for extra in ([], ["--record-trades"]):
+        args = main.build_parser().parse_args(base + extra)
+        args.func(args)
+    capsys.readouterr()
+
+    journal = audit.DEFAULT_TRIAL_JOURNAL
+    with TrialStore(db_path_for_journal(journal), journal_path=journal) as store:
+        rows = store.list_trials(kind="walkforward", limit=10, all_accounting=True)
+        assert len(rows) == 2
+        assert any(store.get_trial(r["id"]).get("trades") for r in rows)

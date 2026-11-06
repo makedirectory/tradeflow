@@ -400,9 +400,12 @@ Over MCP the same opt-in is `record_trades=true` on `run_backtest` and
 `run_walk_forward`; `analyze_trial` and `compare_trials` then read the table.
 
 Asking for the table is not answered by a memo that has none: if an identical prior
-trial exists without a stored table, the run is repeated and a new trial recorded
-(it counts toward the multiple-testing total). An identical prior trial that did store
-one is still served.
+trial exists without a stored table, the run is repeated and a new trial recorded.
+That trial counts toward the multiple-testing total like any other: a backtest adds one,
+and a walk-forward adds every configuration its inner search evaluated, so asking a
+large validation for its table after the fact raises the deflation bar for its whole
+family. Pass `--record-trades` on the first run you intend to open again. An identical
+prior trial that did store one is still served.
 
 Persistence follows the same journal-first pattern as the return series and the
 proposed book: the journal is the source of truth, and `trials rebuild`

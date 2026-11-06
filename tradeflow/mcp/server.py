@@ -823,7 +823,9 @@ def build_server(data_client=None):
         trial, which `analyze_trial` and `compare_trials` read; without it the trial
         keeps no table. A prior identical validation that kept no table does not
         answer a `record_trades=true` request: the validation is re-run and a new trial
-        (with the table) is journaled, counting toward the multiple-testing total.
+        (with the table) is journaled, adding every configuration its inner search
+        evaluates to the family's multiple-testing total - as large a cost as the first
+        validation. Ask for the table on the first run you mean to analyze.
         """
         inputs = {
             "strategy": strategy,

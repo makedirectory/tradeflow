@@ -6186,7 +6186,9 @@ def build_parser() -> argparse.ArgumentParser:
             "--record-trades",
             dest="record_trades",
             action="store_true",
-            help="Persist this run's trade table with its trial, so `trials show` can render it",
+            help="Persist this run's trade table with its trial, so `trials show` can render it. "
+            "An identical earlier run without one is re-run and recorded again, which counts "
+            "toward the multiple-testing total (a walk-forward: its whole inner search)",
         )
 
     def add_html_flag(p) -> None:
