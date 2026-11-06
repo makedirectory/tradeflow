@@ -95,6 +95,9 @@ without guessing. The history below keeps the old name as it was written.
   or on any symbol that happens to have some coverage.
   An offline `verdict` whose steps miss prints one warm command covering every step,
   instead of one per step with a different window each.
+- An HTML backtest report shows the execution-viability check the terminal prints, with
+  a warning above the metrics when the book is not executable at its capital. A reused
+  result, which does not carry the check, says it was not recorded.
 - A verdict step that fails is reported in the verdict's step list; its traceback is
   logged only at debug level instead of filling the screen above the report.
 - A request that Alpaca refuses for the credentials now says so ("Alpaca rejected these

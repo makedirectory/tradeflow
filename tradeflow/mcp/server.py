@@ -1510,9 +1510,10 @@ def build_server(data_client=None):
         Returns `{kind, html, bytes}`. The document embeds its CSS and charts, so
         opening it issues no network requests at all — it is safe to save, attach, or
         forward. Provenance (window, universe, cost model, git SHA, campaign
-        n_trials) is a mandatory header, and memoized results, gate failures, a failed
-        leakage probe, and any enabled evidence-gated feature render as warnings above
-        the sections rather than as footnotes.
+        n_trials) is a mandatory header, and memoized results, gate failures, a backtest
+        that is not executable at its capital, a failed leakage probe, and any enabled
+        evidence-gated feature render as warnings above the sections rather than as
+        footnotes.
 
         This computes nothing: it is the same renderer the CLI's `--html` flag uses,
         over the same object. Charts need the plotting extra on the server; without it

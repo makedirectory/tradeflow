@@ -351,6 +351,16 @@ def _warnings_block(result: Dict[str, Any], kind: str) -> str:
             _warning("NOT PROMOTABLE — failed gates: " + ", ".join(sorted(failed_gates)), level="fail")
         )
 
+    executability = result.get("executability") or {}
+    if executability.get("executable") is False:
+        failing = [n for n, c in (executability.get("checks") or {}).items() if not c.get("passed")]
+        banners.append(
+            _warning(
+                "NOT EXECUTABLE at this capital — failed checks: " + ", ".join(sorted(failing)),
+                level="fail",
+            )
+        )
+
     if result.get("low_sample"):
         banners.append(_warning("Low sample — too few rebalances to measure an IC with confidence."))
     if result.get("sanity_ceiling_breached"):
@@ -609,6 +619,7 @@ def _backtest_sections(result: Dict[str, Any], extras: Dict[str, Any]) -> List[s
                 ),
             )
         )
+    out.append(_execution_card(result))
     out.append(
         _card(
             "Metrics",
@@ -630,6 +641,42 @@ def _backtest_sections(result: Dict[str, Any], extras: Dict[str, Any]) -> List[s
         )
     )
     return out
+
+
+def _execution_card(result: Dict[str, Any]) -> str:
+    """Whether the book that traded resembles the one asked for, check by check.
+
+    The terminal printed this and the report did not, so a forwarded report of a book
+    that could not be traded at its capital read as clean. A result that does not carry
+    the check (a reused one) says so rather than leaving the card out.
+    """
+    from tradeflow.analytics.performance import format_execution_value
+
+    verdict = result.get("executability")
+    if verdict is None:
+        return _card(
+            "Execution viability",
+            '<p class="empty">Not recorded for this result. Re-run with --force to assess '
+            "whether this book can be traded at this capital.</p>",
+        )
+    if verdict.get("executable") is None:
+        return _card(
+            "Execution viability", _kv([("Not assessed", verdict.get("reason") or "nothing to judge")])
+        )
+    rows = [
+        [
+            esc(name),
+            esc(format_execution_value(name, check.get("value"))),
+            esc(format_execution_value(name, check.get("threshold"))),
+            _pill(check.get("passed")),
+            esc(check.get("note") or ""),
+        ]
+        for name, check in (verdict.get("checks") or {}).items()
+    ]
+    body = _table(["Check", "Value", "Threshold", "Result", "What it means"], rows, raw=True)
+    if not verdict.get("executable"):
+        body = _warning("Not the book that was validated — see the failing check.", level="fail") + body
+    return _card("Execution viability", body, tone="" if verdict.get("executable") else "fail")
 
 
 def _walkforward_sections(result: Dict[str, Any], extras: Dict[str, Any]) -> List[str]:

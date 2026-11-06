@@ -335,3 +335,52 @@ def test_write_html_writes_the_document_it_rendered(tmp_path):
     written = write_html(_verdict_result(), "verdict", str(path))
     assert written == str(path)
     assert path.read_text(encoding="utf-8") == render_html(_verdict_result(), "verdict")
+
+
+def test_a_backtest_report_carries_the_execution_check_the_terminal_prints(tmp_path, monkeypatch):
+    """The terminal printed an execution failure and the HTML report of the same run did
+    not, so a forwarded report of a book that cannot be traded at its capital read as
+    clean. Driven through the real service payload: the demo book holds one position,
+    which fails `book_breadth`."""
+    from datetime import datetime
+
+    from tests.fakes import FakeMarketData
+    from tradeflow.marketdata.client import MarketDataClient
+    from tradeflow.services import analysis
+
+    monkeypatch.setattr(analysis, "ARTIFACT_DIR", tmp_path / "artifacts")
+    client = MarketDataClient(FakeMarketData(["AAA", "BBB", "CCC", "SPY"], n=400, freq="1D"))
+    result = analysis.run_backtest(
+        client,
+        "demo_trend",
+        ["AAA", "BBB", "CCC"],
+        datetime(2024, 1, 2),
+        datetime(2025, 1, 31),
+        journal=False,
+    )
+    assert result["executability"]["executable"] is False
+
+    document = render_html(result, "backtest")
+    assert "NOT EXECUTABLE at this capital — failed checks: book_breadth" in document
+    assert document.index("NOT EXECUTABLE") < document.index("Metrics")
+    assert "Execution viability" in document
+    assert "the book holds at most 1 of 3 candidates" in document
+
+
+def test_a_reused_backtest_report_says_the_execution_check_was_not_recorded():
+    """A reused result does not carry the check; leaving the card out reads as nothing to
+    report, which is the clean reading the check exists to prevent."""
+    result = {
+        "strategy": "demo_trend",
+        "symbols": ["AAA"],
+        "window": {"start": "2024-01-02T00:00:00", "end": "2024-12-31T00:00:00"},
+        "initial_capital": 100_000.0,
+        "final_capital": 101_000.0,
+        "metrics": {"sharpe_ratio": 0.4},
+        "memoized": True,
+        "trial_id": "t-1",
+        "trial_ts": "2024-01-01T00:00:00+00:00",
+    }
+    document = render_html(result, "backtest")
+    assert "Execution viability" in document
+    assert "Not recorded for this result" in document
