@@ -287,6 +287,37 @@ def test_a_checkout_is_detected_from_anywhere_it_is_run(monkeypatch, tmp_path):
     assert settings.invocation("demo") == "python main.py demo"
 
 
+@pytest.mark.parametrize("started", ["/venv/bin/{cli}", "/venv/bin/{cli}.exe", "/venv/bin/tradeflow"])
+def test_a_checkout_started_as_the_installed_command_is_told_that_command(started, monkeypatch, tmp_path):
+    """A checkout's environment carries the installed command too, and someone who typed
+    it was told `python main.py cache warm ...`, which fails outside the repository root.
+    The instruction now echoes how the process started; the alias is answered with the
+    current name."""
+    from tradeflow import cli
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", [started.format(cli=settings.CLI_NAME), "verdict"])
+
+    assert running_from_checkout() is True
+    assert settings.invocation("demo") == f"{settings.CLI_NAME} demo"
+    assert settings.invocation("init", make_target="init") == f"{settings.CLI_NAME} init"
+    assert "make " not in settings._missing_credentials_message(["APCA_API_KEY_ID"])
+    assert "make " not in cli._next_step_hint()
+
+
+@pytest.mark.parametrize("started", ["main.py", "/repo/main.py"])
+def test_a_checkout_started_through_the_shim_keeps_make_and_main_py(started, monkeypatch):
+    """The other direction: `python main.py` and every make target start here."""
+    from tradeflow import cli
+
+    monkeypatch.setattr(sys, "argv", [started, "verdict"])
+
+    assert settings.invocation("demo") == "python main.py demo"
+    assert settings.invocation("init", make_target="init") == "make init"
+    assert "make init" in settings._missing_credentials_message(["APCA_API_KEY_ID"])
+    assert "make init" in cli._next_step_hint()
+
+
 def test_messages_still_render_when_the_working_directory_is_gone(monkeypatch, tmp_path):
     """The flatten report, the halt line and the missing-credentials message all name a
     command, and naming it used to read the working directory - which raises once it

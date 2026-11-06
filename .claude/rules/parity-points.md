@@ -216,7 +216,10 @@ because `settings` prints some itself, and the trade clock's flatten report is a
 neither may import a service. Which copy is running is decided by where the `tradeflow`
 package was imported from, never by the working directory: an installed command run inside
 a clone of this repository is still an installed copy, and reading the cwd put a call that
-raises on a deleted directory into the flatten report.
+raises on a deleted directory into the flatten report. Within a checkout, the spelling
+echoes how the process started (`settings.started_from_checkout_shim`): a checkout's
+environment carries the installed command too, and someone who typed it was told
+`python main.py ...`, which fails outside the repository root.
 *Guarded by* `tests/test_state_root.py`.
 
 The executable's *name* is the same hazard from the other side: `settings.CLI_NAME` is

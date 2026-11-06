@@ -18,6 +18,7 @@ does this credential come from?"
 import logging
 import os
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Tuple
@@ -135,9 +136,25 @@ def invocation(command: str, *, make_target: Optional[str] = None) -> str:
     decision is how one surface starts printing instructions another knows are wrong.
     ``services.setup.invocation`` and the CLI's ``_invocation`` delegate here.
     """
-    if not running_from_checkout():
+    if not started_from_checkout_shim():
         return f"{CLI_NAME} {command}"
     return f"make {make_target}" if make_target else f"python main.py {command}"
+
+
+def started_from_checkout_shim() -> bool:
+    """Whether this process was started the contributor's way - ``python main.py`` or a
+    ``make`` target - from a working copy, so ``make``/``main.py`` instructions fit.
+
+    A checkout's virtual environment also carries the installed command, and someone
+    who typed it was told to run ``python main.py cache warm``, which fails anywhere
+    but the repository root. So the instruction echoes how the process was started:
+    the installed command's name when that is what ran, the shim otherwise. Anything
+    unrecognised (a test runner, ``python -c``) keeps the checkout's own spelling.
+    """
+    if not running_from_checkout():
+        return False
+    started = Path(sys.argv[0]).stem if sys.argv and sys.argv[0] else ""
+    return started not in (CLI_NAME, *LEGACY_CLI_NAMES)
 
 
 def running_from_checkout() -> bool:
@@ -457,7 +474,7 @@ def _missing_credentials_message(missing: list) -> str:
     setup_path = state_root() / ".env"
     lines = ["Missing Alpaca credentials: " + ", ".join(missing) + "."]
 
-    if running_from_checkout():
+    if started_from_checkout_shim():
         lines += [
             "",
             "  make init                 guided setup (or copy .env.example to .env)",

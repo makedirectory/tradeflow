@@ -6115,9 +6115,9 @@ def _next_step_hint() -> str:
     An installed copy has no Makefile and no `.env.example` to copy, so pointing at
     either is a dead end for exactly the user this path exists to serve.
     """
-    from tradeflow.settings import running_from_checkout
+    from tradeflow.settings import started_from_checkout_shim
 
-    if running_from_checkout():
+    if started_from_checkout_shim():
         return (
             "     make init        add your free Alpaca paper keys (or see .env.example)\n"
             "     make backtest    then run it on real market data"
