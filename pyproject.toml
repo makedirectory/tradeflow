@@ -48,7 +48,10 @@ portfolio = ["ortools>=9.8"]
 # server cannot import. Porting to the 2.x API is real work and tracked separately;
 # until then the constraint is what makes `quantred[mcp]` actually install a
 # working server.
-mcp = ["mcp>=1.10,<2"]
+# The 1.22 floor is where the SDK imports under current pydantic; earlier 1.x releases
+# fail with an ImportError on `eval_type_backport` whenever something else holds `mcp`
+# down while pydantic resolves to a recent version.
+mcp = ["mcp>=1.22,<2"]
 # Autonomous research agent with Claude as the default proposer. Opt-in.
 ai = ["anthropic>=0.40"]
 # Use OpenAI models as the research proposer instead of Claude. Opt-in.
@@ -67,7 +70,7 @@ dev = [
     "pyarrow>=14", "polars>=1.25", "duckdb>=1.0",
     # The MCP SDK is in dev so CI resolves it the same way a user does, rather than
     # only ever seeing whatever the lockfile happens to hold.
-    "mcp>=1.10,<2",
+    "mcp>=1.22,<2",
     # The build backend, in dev so a test can build the sdist's real file list rather
     # than assert something about the exclude patterns. Asserting the config is what
     # let an unanchored `configs` ship an example pack with no configs in it.

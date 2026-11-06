@@ -368,10 +368,11 @@ def test_the_declared_mcp_constraint_excludes_the_incompatible_major():
 
     manifest = tomllib.loads(Path("pyproject.toml").read_text())
     constraint = manifest["project"]["optional-dependencies"]["mcp"]
-    assert constraint == ["mcp>=1.10,<2"], constraint
-    # `structuredContent` / `outputSchema` first exist in 1.10: below it the discovery
-    # self-test would have nothing to validate, and the dev extra must agree with it.
-    assert "mcp>=1.10,<2" in manifest["project"]["optional-dependencies"]["dev"]
+    assert constraint == ["mcp>=1.22,<2"], constraint
+    # `structuredContent` / `outputSchema` first exist in 1.10, but releases below 1.22 do
+    # not import under current pydantic, so the floor is where a server can start. The dev
+    # extra must agree with it.
+    assert "mcp>=1.22,<2" in manifest["project"]["optional-dependencies"]["dev"]
 
 
 def test_the_installed_sdk_satisfies_that_constraint():
