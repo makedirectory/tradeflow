@@ -1026,8 +1026,10 @@ def test_the_probe_line_says_billed_only_for_a_provider_that_bills(monkeypatch, 
         setup, "probe_model", lambda provider, model=None: setup.ProbeResult(provider, "m", "ok", "fine")
     )
     for provider, billed in (("anthropic", True), ("ollama", False)):
-        with pytest.raises(SystemExit):  # keys absent in the test home: not ready for `data`
+        try:
             _init(["--probe-model", "--provider", provider])
+        except SystemExit:  # not ready for `data` when no keys resolve; either way the report printed
+            pass
         out = capsys.readouterr().out
         assert ("may be billed" in out) is billed, provider
 

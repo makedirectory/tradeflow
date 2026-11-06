@@ -290,8 +290,10 @@ def test_the_doctor_prints_one_install_command_not_one_per_extra(monkeypatch, ca
     _as_installed_copy(monkeypatch, installed={"viz", "mcp"})
     monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
     args = cli.parse_cli(["init", "--check"])
-    with pytest.raises(SystemExit):  # no credentials in this home: not ready for `data`
+    try:
         args.func(args)
+    except SystemExit:  # not ready for `data` when no keys resolve; the report printed either way
+        pass
     out = capsys.readouterr().out
     assert out.count("uv tool install --force") == 1, out
     command = next(line for line in out.splitlines() if "uv tool install --force" in line)
