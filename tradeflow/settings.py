@@ -66,6 +66,8 @@ MCP_SERVER_NAME = "quantred"
 #: The documentation root. Pages are served from the site root (there is no ``/docs/``
 #: prefix), so a link built from this constant and a page path is a page that exists.
 DOCS_URL = "https://tradeflow.mk-dir.com"
+#: Where the source lives: the one place an installed copy can get the example pack.
+REPOSITORY_URL = "https://github.com/makedirectory/tradeflow"
 
 #: The entry-point groups an installed pack registers strategies and scanners under.
 #: Here, at the bottom layer, because both the registry that loads them and the

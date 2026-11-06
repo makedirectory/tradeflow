@@ -36,7 +36,7 @@ from tradeflow.analytics.series_comparison import MIN_OVERLAP as SERIES_MIN_OVER
 from tradeflow.marketdata.base import MarketDataProvider
 from tradeflow.research.provider_errors import ModelProviderError
 from tradeflow.services.registry import STRATEGIES
-from tradeflow.settings import BRAND, CLI_NAME, DATA_FEEDS, DOCS_URL, MCP_SERVER_NAME
+from tradeflow.settings import BRAND, CLI_NAME, DATA_FEEDS, DOCS_URL, MCP_SERVER_NAME, REPOSITORY_URL
 from tradeflow.strategies import signals
 from tradeflow.utils.extras import installed as extras_installed
 from tradeflow.utils.extras import missing_extra_message
@@ -2077,6 +2077,7 @@ def _scaffold_example_pack(destination) -> None:
     a read-only sample, and requiring a network call to start would put a fetch between
     someone and the one command meant to get them going.
     """
+    import shlex
     import shutil
 
     from tradeflow.services.setup import example_pack_source
@@ -2084,9 +2085,11 @@ def _scaffold_example_pack(destination) -> None:
     source = example_pack_source()
     if source is None:
         sys.exit(
-            "The example pack is not part of this installation. It ships in the source "
-            "repository under example; clone it, or read the private-strategies "
-            f"guide at {DOCS_URL}/usage/private-strategies"
+            "The example pack is not part of an installed copy; it lives in the source "
+            "repository. Fetch it and copy it, then install the copy:\n\n"
+            f"    git clone {REPOSITORY_URL} && cp -R tradeflow/example {shlex.quote(str(destination))}\n\n"
+            f"Which install line to use for each way of installing is at "
+            f"{DOCS_URL}/usage/private-strategies#start-from-a-working-pack"
         )
     target = Path(destination).expanduser()
     if target.exists() and any(target.iterdir()):
@@ -2099,7 +2102,7 @@ def _scaffold_example_pack(destination) -> None:
     print("  Install it, and its strategy and scanner appear everywhere a built-in does:\n")
     from tradeflow.utils.extras import pack_install_hint
 
-    print(f"    {pack_install_hint(str(target))}")
+    print("\n".join(f"    {line}" for line in pack_install_hint(str(target)).splitlines()))
     print(f"    {_invocation('init --check')}          # lists it under 'private packs installed'")
     print(f"    {_invocation('backtest')} --config {target / 'configs' / 'breakout.json'} \\")
     print("        --start 2024-01-02 --end 2025-01-02\n")

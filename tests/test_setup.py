@@ -894,6 +894,10 @@ def test_the_private_strategies_link_has_no_docs_prefix(tmp_path, monkeypatch):
     message = str(exc.value)
     assert f"{DOCS_URL}/usage/private-strategies" in message
     assert "/docs/usage" not in message
+    # The refusal is the whole answer: what to run, not a link to a page that says to
+    # run the command that was just refused.
+    assert "git clone https://github.com/" in message and "cp -R" in message
+    assert str(tmp_path / "pack") in message
 
 
 # --- the MCP launch command ---------------------------------------------------

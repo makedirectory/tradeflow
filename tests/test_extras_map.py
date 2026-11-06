@@ -193,7 +193,14 @@ def test_the_uv_tool_command_restates_the_exclusions_it_was_built_with(monkeypat
     hint = extras.install_hint("mcp")
     command = next(line for line in hint.splitlines() if "uv tool install" in line)
     assert f"--excludes {extras.EXCLUDES_FILE}" in command
-    assert "tradeflow-engine" in hint.split("In an activated venv")[0].split(command)[1]
+    # The file the flag names is created by the same pasted line, so it runs from any
+    # directory; actually run that part and read the file back.
+    import subprocess
+
+    create = command[command.index("printf") :].split(" && ")[0].strip()
+    subprocess.run(create, shell=True, check=True, cwd=tmp_path)
+    assert (tmp_path / extras.EXCLUDES_FILE).read_text() == "tradeflow-engine\n"
+    assert " && uv tool install" in command
 
     (tmp_path / "uv-receipt.toml").write_text(RECEIPT)
     plain = extras.install_hint("mcp")
@@ -211,19 +218,37 @@ def test_without_a_receipt_the_hint_falls_back_to_naming_the_packs(monkeypatch, 
 def test_a_pack_install_command_is_additive(monkeypatch, tmp_path):
     (tmp_path / "uv-receipt.toml").write_text(RECEIPT)
     monkeypatch.setattr(settings, "running_from_checkout", lambda: True)
-    assert extras.pack_install_hint("/p") == "uv pip install -e /p"
+    checkout = extras.pack_install_hint("/p")
+    assert checkout.splitlines()[0] == "uv pip install -e /p"
+    assert "--no-deps" in checkout and "old tradeflow-engine" in checkout
     monkeypatch.setattr(settings, "running_from_checkout", lambda: False)
     monkeypatch.setattr(sys, "prefix", str(tmp_path))
     command = extras.pack_install_hint("/p")
     assert "--with-editable /p" in command and "--with tqdm" in command
 
 
-def test_the_pack_install_fallback_keeps_pip_from_pulling_in_the_old_distribution(monkeypatch, tmp_path):
+def test_the_pack_install_fallback_says_when_not_to_skip_dependencies(monkeypatch, tmp_path):
     """With no receipt the command is a plain pip one, and pip resolves a pack's
-    dependency on the old distribution name by installing it over this one."""
+    dependency on the old distribution name by installing it over this one. The cure is
+    in the pack; --no-deps is for one that cannot be edited, and the hint says it also
+    skips the pack's other dependencies."""
     monkeypatch.setattr(settings, "running_from_checkout", lambda: False)
     monkeypatch.setattr(sys, "prefix", str(tmp_path))  # no receipt here
-    assert extras.pack_install_hint("/p") == "python -m pip install --no-deps -e /p"
+    lines = extras.pack_install_hint("/p").splitlines()
+    assert lines[0] == "python -m pip install -e /p"
+    note = " ".join(lines[1:])
+    assert "--no-deps" in note and "cannot edit" in note and "other dependencies" in note
+    assert "change that to quantred" in note
+
+
+def test_the_uv_tool_pack_command_creates_the_exclusions_it_names(monkeypatch, tmp_path):
+    receipt = RECEIPT.replace("entrypoints = [", 'excludes = ["tradeflow-engine"]\nentrypoints = [', 1)
+    (tmp_path / "uv-receipt.toml").write_text(receipt)
+    monkeypatch.setattr(settings, "running_from_checkout", lambda: False)
+    monkeypatch.setattr(sys, "prefix", str(tmp_path))
+    command = extras.pack_install_hint("/p")
+    assert command.startswith("printf ") and "> excludes.txt && uv tool install" in command
+    assert "--with-editable /p" in command and "--excludes excludes.txt" in command
 
 
 def test_installed_hint_never_names_an_interpreter_path(monkeypatch):

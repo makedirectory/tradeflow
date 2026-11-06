@@ -188,13 +188,16 @@ def _uv_tool_command(wanted: List[str], extra_flags: Tuple[str, ...] = ()):
     if receipt is not None:
         excludes = [str(name) for name in ((receipt.get("tool") or {}).get("excludes") or [])]
         flags = [*_with_flags(requirements), *extra_flags]
+        prefix = ""
         if excludes:
             # Restated for the same reason as the extras: the tool environment is rebuilt,
             # and a pack that still declares the old engine would otherwise bring it
-            # straight back beside this one. uv takes exclusions from a file, not inline.
+            # straight back beside this one. uv takes exclusions from a file, not inline,
+            # so the command creates the file first - pasted from any directory it runs.
             flags.append(f"--excludes {EXCLUDES_FILE}")
-            note = f"({EXCLUDES_FILE} holds one line per excluded package: {', '.join(excludes)})"
-        command = " ".join([command, *flags])
+            names = " ".join(_quote(name) for name in excludes)
+            prefix = f"printf '%s\\n' {names} > {EXCLUDES_FILE} && "
+        command = prefix + " ".join([command, *flags])
     else:
         packs = _pack_distributions()
         # Silent when nothing was detected outside a uv tool environment: "re-add your
@@ -206,22 +209,36 @@ def _uv_tool_command(wanted: List[str], extra_flags: Tuple[str, ...] = ()):
     return command, receipt, note
 
 
+#: Said under a pack install command: the pack's own dependency on the old distribution
+#: name is what pulls it in over this one, and the cure belongs in the pack.
+_OLD_ENGINE_NOTE = (
+    "If the pack declares a dependency on the old tradeflow-engine, change that to {dist}. "
+    "Only for a pack you cannot edit, {skip}; that also skips the pack's other dependencies."
+)
+
+
 def pack_install_hint(path: str) -> str:
     """How to install a pack from a directory, without removing anything already there.
 
     A checkout installs it into its own environment (additive). A ``uv tool`` copy has
-    to rebuild the tool environment, so the command carries everything it already had.
+    to rebuild the tool environment, so the command carries everything it already had
+    (including the exclusion of the old engine, created first so the line runs anywhere).
+    Elsewhere it is pip, and either of those is followed by what to do about a pack that
+    still depends on the old distribution name.
     """
-    from tradeflow.settings import running_from_checkout
+    from tradeflow.settings import DISTRIBUTION_NAME, running_from_checkout
 
+    quoted = shlex.quote(path)
     if running_from_checkout():
-        return f"uv pip install -e {shlex.quote(path)}"
-    command, receipt, note = _uv_tool_command([], (f"--with-editable {shlex.quote(path)}",))
-    if receipt is None:
-        # --no-deps: a pack written against the old distribution name would otherwise
-        # pull it in over this one (see the migration page).
-        return f"python -m pip install --no-deps -e {shlex.quote(path)}"
-    return command
+        command = f"uv pip install -e {quoted}"
+        skip = "add --no-deps"
+    else:
+        command, receipt, note = _uv_tool_command([], (f"--with-editable {quoted}",))
+        if receipt is not None:
+            return command
+        command = f"python -m pip install -e {quoted}"
+        skip = "add --no-deps"
+    return f"{command}\n({_OLD_ENGINE_NOTE.format(dist=DISTRIBUTION_NAME, skip=skip)})"
 
 
 def install_hint(*extras: str) -> str:
