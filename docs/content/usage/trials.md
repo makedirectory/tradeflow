@@ -73,7 +73,7 @@ alongside it —
   Stored alongside this trial:
     return series : 361 periods, 2024-01-27 → 2025-01-21
     proposed book : 4 names, with factor exposures
-    trade table   : — (not recorded — pass --record-trades on the run)
+    trade table   : — (not recorded — re-run with --record-trades, or record_trades=true over MCP)
 
   Reused by 2 later trial(s) with the same identity:
     c3d4e5f6a1b2  2025-04-02T08:11:40  (backtest)
@@ -396,6 +396,14 @@ it for the runs you intend to open again. Without the flag, the trial row is
 identical to what it would otherwise have been, and `show` reports the trade table
 as *not recorded* — never as zero trades.
 
+Over MCP the same opt-in is `record_trades=true` on `run_backtest` and
+`run_walk_forward`; `analyze_trial` and `compare_trials` then read the table.
+
+Asking for the table is not answered by a memo that has none: if an identical prior
+trial exists without a stored table, the run is repeated and a new trial recorded
+(it counts toward the multiple-testing total). An identical prior trial that did store
+one is still served.
+
 Persistence follows the same journal-first pattern as the return series and the
 proposed book: the journal is the source of truth, and `trials rebuild`
 reconstructs the table from it alone.
@@ -407,7 +415,7 @@ A trade table has four states and they never render alike:
 
 | What `trials show` prints | What it means |
 | --- | --- |
-| `— (not recorded — pass --record-trades on the run)` | The run did not opt in. Nothing is known about its trades |
+| `— (not recorded — re-run with --record-trades, or record_trades=true over MCP)` | The run did not opt in. Nothing is known about its trades |
 | `0 trades` | It opted in and made none |
 | `1,204 trades` | All of them |
 | `5,000 of 18,432 trades — TRUNCATED at the storage cap…` | A prefix. Any total over these rows is short by the rest |

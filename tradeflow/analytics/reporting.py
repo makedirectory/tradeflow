@@ -977,7 +977,7 @@ def describe_trade_table_source(source: Dict[str, Any]) -> str:
     completeness = source.get("completeness")
     stored, total = source.get("rows_stored"), source.get("total_rows")
     if not source.get("recorded"):
-        return f"{NOT_RECORDED} (not recorded — pass --record-trades on the run)"
+        return f"{NOT_RECORDED} (not recorded — re-run with --record-trades, or record_trades=true over MCP)"
     if completeness == "capped":
         return (
             f"{stored:,} of {total:,} trades — TRUNCATED at the storage cap, so any "

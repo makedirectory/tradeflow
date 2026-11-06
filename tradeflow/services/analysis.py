@@ -238,6 +238,7 @@ def _find_cached_trial(
     end,
     accounting: int,
     require_trades: bool = False,
+    require_trade_table: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """Same lookup CLI's ``main._find_cached_trial`` does, so a trial run over
     MCP and one run over the CLI dedup against each other identically."""
@@ -254,6 +255,7 @@ def _find_cached_trial(
             window_end=end,
             accounting=accounting,
             require_trades=require_trades,
+            require_trade_table=require_trade_table,
             git_sha=current_git_sha(),
         )
 
@@ -297,6 +299,7 @@ def run_backtest(
     borrow_bps: float = 50.0,
     force: bool = False,
     journal: bool = True,
+    record_trades: bool = False,
 ) -> Dict[str, Any]:
     """Backtest a strategy; return the full metrics dict + a path to the trades CSV.
 
@@ -310,6 +313,12 @@ def run_backtest(
     same Deflated Sharpe honesty as the CLI. Before running, an exact prior trial
     is served instead (labeled ``memoized``) unless ``force=True``, which re-runs
     and appends a new trial rather than overwriting.
+
+    ``record_trades=True`` stores the full trade table with the journaled trial (what the
+    CLI's ``--record-trades`` does), which ``analyze_trial`` and ``compare_trials`` read.
+    A prior identical trial that kept no table does not answer such a request - the run
+    is repeated and a new trial recorded, because serving it would leave the caller
+    without the table it asked for. Ignored when ``journal=False``: nothing is stored.
     """
     from tradeflow.services.sizing import build_beta_sizer
 
@@ -323,7 +332,14 @@ def run_backtest(
 
     if not force:
         cached = _find_cached_trial(
-            strategy, dedup_params, symbols, start, end, ACCOUNTING_VERSION, require_trades=True
+            strategy,
+            dedup_params,
+            symbols,
+            start,
+            end,
+            ACCOUNTING_VERSION,
+            require_trades=True,
+            require_trade_table=record_trades,
         )
         if cached is not None:
             metrics = json.loads(cached["metrics_json"] or "{}")
@@ -365,6 +381,8 @@ def run_backtest(
             end=end,
             params=dedup_params,
             metrics=result.metrics,
+            # Same helper and journal field the CLI fills, so the store indexes it alike.
+            trades=trades_payload(result.trades) if record_trades else None,
             # Same builder the CLI adapter calls, so a trial recorded over MCP and one
             # recorded over the CLI describe their context in one vocabulary.
             context=run_context(capital=capital),
@@ -1052,6 +1070,7 @@ def run_walk_forward(
     offline: bool = False,
     benchmark: Optional[str] = None,
     position_limits: Optional[Dict[str, Any]] = None,
+    record_trades: bool = False,
 ) -> Dict[str, Any]:
     """Honest evaluation: optimize IS, score OOS across folds, gate the verdict.
 
@@ -1077,6 +1096,10 @@ def run_walk_forward(
     is the worst way for a gate not to run. Without the second, a config asking for
     eight positions is validated at whatever the strategy class declares, so the
     validated book and the deployed one are different books.
+
+    ``record_trades=True`` stores the out-of-sample trade table with the validated trial
+    (the CLI's ``--record-trades``). An identical prior validation that kept no table does
+    not answer such a request: the validation is repeated and a new trial recorded.
 
     ``workers`` parallelizes each fold's in-sample candidate search — folds
     themselves stay sequential, since the candidates are where the work is and the
@@ -1122,6 +1145,7 @@ def run_walk_forward(
                 window_end=end,
                 accounting=ACCOUNTING_VERSION,
                 git_sha=current_git_sha(),
+                require_trade_table=record_trades,
             )
             if cached is not None:
                 metrics = json.loads(cached["metrics_json"] or "{}")
@@ -1199,6 +1223,7 @@ def run_walk_forward(
                 "efficiency": result.median_efficiency(),
             },
             returns=result.oos_returns,
+            trades=trades_payload(result.oos_trade_table) if record_trades else None,
             dedup_params=recipe,
             # The draft path takes no cache arguments, so it records none - absent
             # rather than a policy it cannot know.

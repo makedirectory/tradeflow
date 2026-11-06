@@ -131,6 +131,12 @@ without guessing. The history below keeps the old name as it was written.
   had the same fault and could miss a trial recorded the evening before the cut-off.
 - `trials list` and `trials show` print when a trial was recorded in New York time, the
   zone the date filters read, instead of its UTC text.
+- Trade tables can be recorded over MCP: `run_backtest` and `run_walk_forward` take
+  `record_trades`, the counterpart of `--record-trades`. `analyze_trial` answered "re-run
+  it with --record-trades" to an agent that had no way to pass it. A prior identical trial
+  that kept no table no longer answers a request for one, on either surface: the run is
+  repeated and a new trial recorded, instead of reporting success and leaving the caller
+  without the table.
 
 ### MCP
 

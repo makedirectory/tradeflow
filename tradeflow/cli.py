@@ -266,6 +266,7 @@ def _find_cached_trial(
     end: Any,
     accounting: int,
     require_trades: bool = False,
+    require_trade_table: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """Look up an exact prior trial via the trial store; ``None`` if none exists
     (including when the store itself is unavailable - see :func:`_open_trial_store`).
@@ -283,6 +284,7 @@ def _find_cached_trial(
             window_end=end,
             accounting=accounting,
             require_trades=require_trades,
+            require_trade_table=require_trade_table,
             git_sha=current_git_sha(),
         )
 
@@ -658,6 +660,8 @@ def cmd_backtest(args) -> None:
             args.end,
             ACCOUNTING_VERSION,
             require_trades=True,
+            # Asking to keep the trade table is not answered by a memo that has none.
+            require_trade_table=bool(args.record_trades),
         )
         if cached is not None:
             print(
@@ -1485,6 +1489,7 @@ def cmd_walkforward(args) -> None:
                 window_end=args.end,
                 accounting=ACCOUNTING_VERSION,
                 git_sha=current_git_sha(),
+                require_trade_table=bool(args.record_trades),
             )
             if cached is not None:
                 print(

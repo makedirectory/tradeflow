@@ -1072,3 +1072,123 @@ def test_the_verdict_description_names_the_infeasible_verdict_and_its_recovery(b
     assert "infeasible" in description
     assert "max_weight" in description
     assert "more dates" in description.lower()
+
+
+# --- record_trades over MCP --------------------------------------------------
+def _dates():
+    return {"start": START.strftime("%Y-%m-%d"), "end": END.strftime("%Y-%m-%d")}
+
+
+def _latest_trial_id(kind):
+    with audit.open_trial_store() as store:
+        rows = store.query(kind=kind, limit=1)
+        return rows[0]["id"], store.trades_for(rows[0]["id"])
+
+
+def test_a_backtest_records_no_trade_table_unless_asked(built):
+    """The default must stay opt-in (a campaign's worth of tables is storage nobody asked
+    for), and the answer an agent then gets from `analyze_trial` must name the argument
+    it can actually pass over this surface, not a CLI flag it has no way to use."""
+    _call(built, "run_backtest", strategy="demo_trend", symbols=SYMBOLS, **_dates())
+    trial_id, table = _latest_trial_id("backtest")
+
+    assert table is None
+    report = _call(built, "analyze_trial", trial_id=trial_id)
+    assert report["status"] == "unavailable"
+    assert "record_trades=true" in report["reason"]
+
+
+def test_a_backtest_run_with_record_trades_stores_a_table_analyze_trial_reads(built):
+    """Before this, an agent told to re-run with the CLI flag had no argument to pass:
+    the MCP tool journaled every trial without a table."""
+    _call(built, "run_backtest", strategy="demo_trend", symbols=SYMBOLS, record_trades=True, **_dates())
+    trial_id, table = _latest_trial_id("backtest")
+
+    assert table is not None and table["rows"]
+    report = _call(built, "analyze_trial", trial_id=trial_id)
+    assert report["status"] == "complete"
+
+
+def test_the_stored_table_is_the_one_the_cli_helper_builds(built):
+    """Same serialization as the CLI: the table is `trades_payload` of the run's trades,
+    so the row count recorded is the run's own trade count."""
+    result = _call(
+        built, "run_backtest", strategy="demo_trend", symbols=SYMBOLS, record_trades=True, **_dates()
+    )
+    _, table = _latest_trial_id("backtest")
+
+    assert table["total_rows"] == result["total_trades"] == len(table["rows"])
+    assert table["truncated"] is False
+
+
+def test_asking_for_trades_is_not_answered_by_a_memo_that_has_none(built):
+    """A trial with no table used to stand in for a request that wanted one: the call
+    reported success (`memoized`) and the caller was exactly where it started."""
+    _call(built, "run_backtest", strategy="demo_trend", symbols=SYMBOLS, **_dates())
+    first_id, first_table = _latest_trial_id("backtest")
+    assert first_table is None
+
+    second = _call(
+        built, "run_backtest", strategy="demo_trend", symbols=SYMBOLS, record_trades=True, **_dates()
+    )
+    second_id, second_table = _latest_trial_id("backtest")
+    assert not second.get("memoized")
+    assert second_id != first_id and second_table is not None
+
+    # Both directions: a trial that kept its table is still served, and a plain request
+    # is still memoized.
+    third = _call(
+        built, "run_backtest", strategy="demo_trend", symbols=SYMBOLS, record_trades=True, **_dates()
+    )
+    assert third["memoized"] is True and third["trial_id"] == second_id
+    plain = _call(built, "run_backtest", strategy="demo_trend", symbols=SYMBOLS, **_dates())
+    assert plain["memoized"] is True
+
+
+def test_a_walk_forward_run_with_record_trades_stores_its_oos_table(built):
+    kwargs = dict(strategy="demo_trend", symbols=SYMBOLS, n_folds=2, max_evals=2, **_dates())
+    _call(built, "run_walk_forward", **kwargs)
+    first_id, first_table = _latest_trial_id("walkforward")
+    assert first_table is None
+
+    again = _call(built, "run_walk_forward", record_trades=True, **kwargs)
+    second_id, table = _latest_trial_id("walkforward")
+    assert not again.get("memoized")
+    assert second_id != first_id and table is not None
+
+    served = _call(built, "run_walk_forward", record_trades=True, **kwargs)
+    assert served["memoized"] is True and served["trial_id"] == second_id
+
+
+@pytest.mark.parametrize("tool", ["run_backtest", "run_walk_forward"])
+def test_record_trades_is_forwarded_only_when_set(built, monkeypatch, tool):
+    """An omitted knob is not forwarded: restating the default here would be a second
+    definition of it. Set, it must reach the service."""
+    seen = []
+    monkeypatch.setattr(analysis, tool, lambda *a, **k: seen.append(k) or {})
+    base = dict(strategy="demo_trend", symbols=SYMBOLS, **_dates())
+
+    _call(built, tool, **base)
+    _call(built, tool, record_trades=True, **base)
+
+    assert "record_trades" not in seen[0]
+    assert seen[1]["record_trades"] is True
+
+
+@pytest.mark.parametrize("command,tool", [("backtest", "run_backtest"), ("walkforward", "run_walk_forward")])
+def test_the_cli_record_trades_flag_has_an_mcp_parameter_and_service_argument(command, tool):
+    import inspect
+
+    from tradeflow.cli import build_parser
+
+    parser = next(
+        p
+        for action in build_parser()._subparsers._group_actions
+        for name, p in action.choices.items()
+        if name == command
+    )
+    assert "record_trades" in {a.dest for a in parser._actions}
+    assert "record_trades" in inspect.signature(getattr(analysis, tool)).parameters
+    source = inspect.getsource(mcp_server)
+    begin = source.index(f"def {tool}(")
+    assert "record_trades:" in source[begin : source.index(") -> Dict[str, Any]:", begin)]

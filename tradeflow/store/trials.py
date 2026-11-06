@@ -1070,6 +1070,7 @@ class TrialStore:
         accounting: Optional[int] = None,
         git_sha: Optional[str] = None,
         require_trades: bool = False,
+        require_trade_table: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """The most recent stored trial matching this exact
         ``(strategy, params, universe, window[, accounting])``, or ``None``.
@@ -1085,6 +1086,9 @@ class TrialStore:
         record time) or equal to it - a *known* mismatch means the strategy's
         math may have changed since, so it's treated as no match at all (the
         conservative reading of "a fixed bug looking already tested and fine").
+
+        ``require_trade_table`` restricts the match to trials that stored a trade
+        table, for a caller that is asking for one.
         """
         try:
             ph = params_hash(params)
@@ -1121,6 +1125,12 @@ class TrialStore:
                 # real answer. Falling back to a fresh run is always safe; serving an
                 # empty one never is.
                 clauses.append("IFNULL(oos_trades, 0) > 0")
+            if require_trade_table:
+                # A caller that asked for the trade table cannot be answered by a trial
+                # that did not keep one: serving it would report success and leave the
+                # caller exactly where it started. Distinct from ``require_trades``,
+                # which asks whether the run traded at all.
+                clauses.append("id IN (SELECT trial_id FROM trial_trades)")
             # A quarantined trial is never served as a memo. Whatever it recorded is
             # under suspicion, and standing in for a fresh run is the one thing a
             # suspect number must not be allowed to do - a fresh run is always safe.

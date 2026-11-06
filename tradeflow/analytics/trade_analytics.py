@@ -304,7 +304,8 @@ def trade_analytics(table: Optional[Dict[str, Any]], *, allow_partial: bool = Fa
 
     if table is None:
         result["reason"] = (
-            "no trade table was recorded for this trial — re-run it with --record-trades. "
+            "no trade table was recorded for this trial — re-run it with trades recorded "
+            "(`--record-trades` on the CLI, `record_trades=true` over MCP). "
             "This is not the same as a run that made no trades"
         )
         return result

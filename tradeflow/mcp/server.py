@@ -631,6 +631,7 @@ def build_server(data_client=None):
         gross: bool = False,
         take_profit_margin_bps: float = 0.0,
         force: bool = False,
+        record_trades: bool = False,
     ) -> Dict[str, Any]:
         """Backtest `strategy` on `symbols` over [start, end] (YYYY-MM-DD).
 
@@ -661,6 +662,12 @@ def build_server(data_client=None):
         unless `force=True`, which re-runs and appends a new trial rather than
         overwriting the memoized one. Memoization is scoped to the engine's accounting
         version, so results from an older engine are never served to a newer one.
+
+        `record_trades=true` stores the full trade table with the journaled trial, which
+        `analyze_trial` and `compare_trials` read; without it the trial keeps no table
+        and they report it as not recorded. A prior identical trial that kept no table
+        does not answer a `record_trades=true` request: the backtest is re-run and a new
+        trial (with the table) is journaled, counting toward the multiple-testing total.
         """
         inputs = {
             "strategy": strategy,
@@ -673,6 +680,7 @@ def build_server(data_client=None):
             "gross": gross,
             "take_profit_margin_bps": take_profit_margin_bps,
             "force": force,
+            **({"record_trades": True} if record_trades else {}),
         }
         result = analysis.run_backtest(
             dc,
@@ -687,6 +695,7 @@ def build_server(data_client=None):
             gross=gross,
             take_profit_margin_bps=take_profit_margin_bps,
             force=force,
+            **({"record_trades": True} if record_trades else {}),
         )
         return _logged("run_backtest", inputs, result)
 
@@ -777,6 +786,7 @@ def build_server(data_client=None):
         workers: int = 1,
         benchmark: Optional[str] = None,
         position_limits: Optional[Dict[str, Any]] = None,
+        record_trades: bool = False,
     ) -> Dict[str, Any]:
         """Honest out-of-sample evaluation across folds - your advancement criterion.
 
@@ -801,6 +811,12 @@ def build_server(data_client=None):
         validation (same recipe: mode/folds/method/objective/max_evals/seed/cost/
         book over the same window) is served instead (result has `memoized: true`)
         unless `force=True`.
+
+        `record_trades=true` stores the out-of-sample trade table with the validated
+        trial, which `analyze_trial` and `compare_trials` read; without it the trial
+        keeps no table. A prior identical validation that kept no table does not
+        answer a `record_trades=true` request: the validation is re-run and a new trial
+        (with the table) is journaled, counting toward the multiple-testing total.
         """
         inputs = {
             "strategy": strategy,
@@ -820,6 +836,7 @@ def build_server(data_client=None):
             "force": force,
             "benchmark": benchmark,
             "position_limits": position_limits,
+            **({"record_trades": True} if record_trades else {}),
         }
         result = analysis.run_walk_forward(
             dc,
@@ -844,6 +861,7 @@ def build_server(data_client=None):
             workers=workers,
             benchmark=benchmark,
             position_limits=position_limits,
+            **({"record_trades": True} if record_trades else {}),
         )
         return _logged("run_walk_forward", inputs, result)
 
@@ -1617,8 +1635,8 @@ def build_server(data_client=None):
 
         Read `status` before any number. `complete` means the figures cover every trade
         the run made. `unavailable` means there are none and `reason` says why — most
-        often that the run did not pass `--record-trades`, which is NOT the same as a
-        run that made no trades. `truncated` appears only with `allow_partial=true`,
+        often that the run did not record trades (`record_trades=true` on `run_backtest` or
+        `run_walk_forward`), which is NOT the same as a run that made no trades. `truncated` appears only with `allow_partial=true`,
         and then every count and total is a partial and must be reported as one.
 
         A trade table capped at the storage ceiling is refused by default rather than
