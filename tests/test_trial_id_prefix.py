@@ -104,10 +104,13 @@ def test_cli_and_mcp_resolve_the_same_prefix_the_same_way(journal, monkeypatch, 
         assert json.loads(capsys.readouterr().out)["id"] == expected
         assert call("get_trial", trial_id=prefix)["id"] == expected
 
-    mcp_error = call("get_trial", trial_id="aaaa")["error"]
+    with pytest.raises(Exception) as refused:
+        call("get_trial", trial_id="aaaa")
+    mcp_error = str(refused.value)
     with pytest.raises(SystemExit) as stop:
         _cli(monkeypatch, journal, "trials", "show", "aaaa")
-    assert str(stop.value) == mcp_error
+    # The tool adds its own next step (list_trials) after the shared refusal.
+    assert str(stop.value) in mcp_error
     assert "ambiguous" in mcp_error and AA in mcp_error and AB in mcp_error
 
 

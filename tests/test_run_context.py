@@ -360,18 +360,19 @@ def test_the_rendered_campaign_shows_every_context_fact_and_its_status():
     assert "paper week two" in printed  # so do notes
 
 
-def test_capital_cannot_contradict_the_campaign_it_was_given():
+def test_capital_cannot_contradict_the_campaign_it_was_given(tmp_path, monkeypatch):
     """R2. `_reconcile_book` guarded the book and nothing else, so a caller could hand
     over campaign material recording 250,000 and write a config saying 1. Guarding one
     runnable field and not the next leaves the same contradiction one column over."""
-    import tempfile
 
     from tradeflow.services import configs
 
+    monkeypatch.setattr("tradeflow.optimization.config_store.DEFAULT_CONFIG_DIR", tmp_path)
+
     material = {"recipe": {"context": {"capital": {"recorded": True, "value": 250_000.0}}}}
-    with tempfile.TemporaryDirectory() as tmp, pytest.raises(ValueError, match="disagrees"):
+    with pytest.raises(ValueError, match="disagrees"):
         configs.save_config(
-            f"{tmp}/bad.json",
+            "bad.json",
             strategy="demo_trend",
             params={"fast_ema_period": 9},
             capital=1.0,
@@ -379,50 +380,50 @@ def test_capital_cannot_contradict_the_campaign_it_was_given():
         )
 
 
-def test_an_omitted_capital_is_filled_from_the_campaign_and_an_agreeing_one_passes():
+def test_an_omitted_capital_is_filled_from_the_campaign_and_an_agreeing_one_passes(tmp_path, monkeypatch):
     """R2, both directions. The guard must fill what the caller left out and accept the
     value it was drawn to protect — a guard that only refuses is indistinguishable from
     one that refuses everything."""
-    import tempfile
 
     from tradeflow.services import configs
+
+    monkeypatch.setattr("tradeflow.optimization.config_store.DEFAULT_CONFIG_DIR", tmp_path)
 
     material = {"recipe": {"context": {"capital": {"recorded": True, "value": 250_000.0}}}}
-    with tempfile.TemporaryDirectory() as tmp:
-        filled = configs.save_config(
-            f"{tmp}/filled.json",
-            strategy="demo_trend",
-            params={"fast_ema_period": 9},
-            provenance={"campaign": material},
-        )
-        assert json.loads(open(filled["path"]).read())["capital"] == pytest.approx(250_000.0)
+    filled = configs.save_config(
+        "filled.json",
+        strategy="demo_trend",
+        params={"fast_ema_period": 9},
+        provenance={"campaign": material},
+    )
+    assert json.loads(open(filled["path"]).read())["capital"] == pytest.approx(250_000.0)
 
-        agreeing = configs.save_config(
-            f"{tmp}/ok.json",
-            strategy="demo_trend",
-            params={"fast_ema_period": 9},
-            capital=250_000.0,
-            provenance={"campaign": material},
-        )
-        assert json.loads(open(agreeing["path"]).read())["capital"] == pytest.approx(250_000.0)
+    agreeing = configs.save_config(
+        "ok.json",
+        strategy="demo_trend",
+        params={"fast_ema_period": 9},
+        capital=250_000.0,
+        provenance={"campaign": material},
+    )
+    assert json.loads(open(agreeing["path"]).read())["capital"] == pytest.approx(250_000.0)
 
 
-def test_a_campaign_with_no_recorded_capital_leaves_the_callers_value_alone():
+def test_a_campaign_with_no_recorded_capital_leaves_the_callers_value_alone(tmp_path, monkeypatch):
     """R2, the absent case. Nothing to reconcile against means nothing is invented and
     nothing is refused."""
-    import tempfile
 
     from tradeflow.services import configs
 
-    with tempfile.TemporaryDirectory() as tmp:
-        saved = configs.save_config(
-            f"{tmp}/plain.json",
-            strategy="demo_trend",
-            params={"fast_ema_period": 9},
-            capital=7.0,
-            provenance={"campaign": {"recipe": {"context": {}}}},
-        )
-        assert json.loads(open(saved["path"]).read())["capital"] == pytest.approx(7.0)
+    monkeypatch.setattr("tradeflow.optimization.config_store.DEFAULT_CONFIG_DIR", tmp_path)
+
+    saved = configs.save_config(
+        "plain.json",
+        strategy="demo_trend",
+        params={"fast_ema_period": 9},
+        capital=7.0,
+        provenance={"campaign": {"recipe": {"context": {}}}},
+    )
+    assert json.loads(open(saved["path"]).read())["capital"] == pytest.approx(7.0)
 
 
 def test_campaign_material_reads_back_the_universe_it_claims_to(tmp_path):

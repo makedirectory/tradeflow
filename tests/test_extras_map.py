@@ -338,7 +338,7 @@ def test_no_missing_dependency_message_sends_an_installed_reader_to_a_checkout(m
 
     import tradeflow.mcp.server as server
 
-    def no_sdk():
+    def no_sdk(**_):
         raise ImportError("No module named 'mcp'")
 
     monkeypatch.setattr(server, "serve", no_sdk)
