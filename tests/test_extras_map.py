@@ -139,6 +139,18 @@ def test_a_checkout_hint_adds_without_removing(monkeypatch):
     assert "uv tool" not in hint
 
 
+def _has_tomllib() -> bool:
+    try:
+        import tomllib  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+#: The product reads a uv receipt with tomllib and, by design, falls back to advice
+#: without it (Python 3.10), so a test of what it reads from a receipt cannot run there.
+_needs_tomllib = pytest.mark.skipif(not _has_tomllib(), reason="tomllib is Python 3.11+")
+
 # The receipt `uv tool install --with ... --with-editable ...` really wrote (uv 0.13),
 # paths shortened. Asserting against the real shape, not one imagined for the test.
 RECEIPT = """
@@ -159,6 +171,7 @@ find-links = ["file:///wheels"]
 """
 
 
+@_needs_tomllib
 def test_the_uv_tool_command_restates_what_the_receipt_was_built_from(monkeypatch, tmp_path):
     """The command replaces the environment, so every extra and every `--with` package
     has to be in it - named in a parenthetical, the reader loses them on copy-paste."""
@@ -177,6 +190,7 @@ def test_the_uv_tool_command_restates_what_the_receipt_was_built_from(monkeypatc
     assert "re-add any packs" not in hint  # nothing left for the reader to remember
 
 
+@_needs_tomllib
 def test_the_uv_tool_command_restates_the_exclusions_it_was_built_with(monkeypatch, tmp_path):
     """A pack that still declares the old engine only installs cleanly because the tool
     was built with that package excluded. The rebuilt environment loses the exclusion
@@ -215,6 +229,7 @@ def test_without_a_receipt_the_hint_falls_back_to_naming_the_packs(monkeypatch, 
     assert "re-add any packs you installed with --with: acme-signals" in extras.install_hint("viz")
 
 
+@_needs_tomllib
 def test_a_pack_install_command_is_additive(monkeypatch, tmp_path):
     (tmp_path / "uv-receipt.toml").write_text(RECEIPT)
     monkeypatch.setattr(settings, "running_from_checkout", lambda: True)
@@ -241,6 +256,7 @@ def test_the_pack_install_fallback_says_when_not_to_skip_dependencies(monkeypatc
     assert "change that to quantred" in note
 
 
+@_needs_tomllib
 def test_the_uv_tool_pack_command_creates_the_exclusions_it_names(monkeypatch, tmp_path):
     receipt = RECEIPT.replace("entrypoints = [", 'excludes = ["tradeflow-engine"]\nentrypoints = [', 1)
     (tmp_path / "uv-receipt.toml").write_text(receipt)

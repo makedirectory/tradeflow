@@ -40,7 +40,7 @@ def test_the_checkout_shim_and_the_installed_command_are_the_same_code():
 def test_the_declared_entry_point_matches_reality():
     """A console script that names a function nobody kept is only discovered at
     install time, by a user."""
-    import tomllib
+    tomllib = pytest.importorskip("tomllib")  # 3.11+; the package still supports 3.10
 
     manifest = tomllib.loads(Path("pyproject.toml").read_text())
     scripts = manifest["project"]["scripts"]
@@ -71,7 +71,7 @@ def test_the_repo_itself_is_recognized_as_a_checkout(monkeypatch):
 def test_the_distribution_name_matches_what_is_packaged():
     """Checkout detection reads this out of pyproject.toml; if the two disagree,
     every state path silently relocates."""
-    import tomllib
+    tomllib = pytest.importorskip("tomllib")  # 3.11+; the package still supports 3.10
 
     manifest = tomllib.loads(Path("pyproject.toml").read_text())
     assert manifest["project"]["name"] == settings.DISTRIBUTION_NAME
@@ -139,7 +139,7 @@ def test_the_wheel_installs_both_executables(tmp_path):
 
 def test_the_version_has_exactly_one_source():
     """A packaged version and a printed version that can disagree will."""
-    import tomllib
+    tomllib = pytest.importorskip("tomllib")  # 3.11+; the package still supports 3.10
 
     import tradeflow
 
