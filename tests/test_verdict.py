@@ -468,6 +468,38 @@ def test_an_unrecorded_run_does_not_count_itself_in_the_campaign_total(_isolated
     assert "campaign trials 1 (this run not counted)" in format_verdict_report(second)
 
 
+def test_a_complete_unjournaled_run_reports_one_trial_count(_isolated_state):
+    """Found in review: lowering the count for every unjournaled run made a complete
+    `journal=False` verdict print `campaign trials 0` above a skill test deflated across 1.
+    One report, one family, one count."""
+    import re
+
+    report = format_verdict_report(_run(journal=False))
+    header = re.search(r"campaign trials (\d+)", report).group(1)
+    deflated = re.search(r"across (\d+) campaign trials", report).group(1)
+    assert header == deflated
+
+
+def test_an_unrecorded_runs_count_reads_alike_in_the_terminal_and_the_html(_isolated_state, monkeypatch):
+    """The HTML header printed a real zero as "—" and never said the run was not counted,
+    while the terminal said `0 (this run not counted)`. An unreadable store is unknown,
+    not zero."""
+    from tradeflow.analytics.htmlreport import render_html
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("synthetic information failure")
+
+    monkeypatch.setattr(analysis, "compute_information", boom)
+    result = _run()
+    assert "campaign trials 0 (this run not counted)" in format_verdict_report(result)
+    assert "0 (this run not counted)" in render_html(result, "verdict")
+
+    monkeypatch.setattr(analysis, "_family_count", lambda *a, **k: None)
+    unknown = _run(force=True)
+    assert unknown["provenance"]["n_trials"] is None
+    assert "campaign trials unavailable (this run not counted)" in format_verdict_report(unknown)
+
+
 def test_an_incomplete_run_that_measured_skill_is_still_a_trial(_isolated_state, monkeypatch):
     """The other direction: a run whose skill test produced numbers was a look at the data,
     whatever else failed, and the family count has to include it."""

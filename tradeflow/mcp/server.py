@@ -1457,7 +1457,9 @@ def build_server(data_client=None):
         exactly ONE trial (kind `verdict`), so it counts once toward the campaign's
         multiple-testing total - except an `incomplete` run in which no step measured an
         IC, which journals none (`journaled: false`, with `not_journaled_reason`) and
-        reports `provenance.n_trials` without itself. An identical prior run is returned
+        reports `provenance.n_trials` without itself (`null` when the store could not
+        say). A step that failed for lack of cached bars says so, and `cache_miss` holds
+        one warm command covering every such step. An identical prior run is returned
         from the trial store labeled `memoized: true`, with the original run's timestamp,
         rather than re-run; pass `force=true` to re-verify and append a new trial.
         """

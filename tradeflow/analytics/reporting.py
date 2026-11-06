@@ -397,10 +397,9 @@ def format_verdict_report(result: Dict[str, Any]) -> str:
         f"cost {_cost_summary(inputs.get('cost'))}",
     ]
     if provenance:
-        uncounted = " (this run not counted)" if provenance.get("this_run_counted") is False else ""
         lines.append(
             f"  provenance: git {provenance.get('git_sha') or 'unknown'} | "
-            f"campaign trials {provenance.get('n_trials', '?')}{uncounted} | "
+            f"campaign trials {campaign_trials_text(provenance)} | "
             f"bar requests: {_fetch_summary(provenance.get('bar_requests'))}"
         )
 
@@ -411,6 +410,19 @@ def format_verdict_report(result: Dict[str, Any]) -> str:
     lines.extend(_verdict_information_lines(result))
     lines.extend(_verdict_banner_lines(result))
     return "\n".join(lines)
+
+
+def campaign_trials_text(provenance: Dict[str, Any]) -> str:
+    """A verdict's campaign trial count as printed, on every surface that prints it.
+
+    A run that was not recorded reports the family without itself, and says so; a count
+    the store could not supply reads as unavailable rather than as zero.
+    """
+    if "n_trials" not in provenance:
+        return "?"
+    count = provenance["n_trials"]
+    text = "unavailable" if count is None else str(count)
+    return text + (" (this run not counted)" if provenance.get("this_run_counted") is False else "")
 
 
 def _short_date(value: Optional[str]) -> str:

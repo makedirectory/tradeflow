@@ -277,13 +277,22 @@ def _provenance_block(result: Dict[str, Any], kind: str) -> str:
         # the packaged version is the honest answer to "what made this".
         ("Code version", provenance.get("git_sha") or _code_version()),
         ("Generated", provenance.get("generated_at") or datetime.now(timezone.utc).isoformat()),
-        ("Campaign trials", provenance.get("n_trials") or result.get("n_trials") or "—"),
+        ("Campaign trials", _campaign_trials(provenance, result)),
     ]
     if result.get("run_id"):
         pairs.append(("Run id", result["run_id"]))
     if result.get("trial_id"):
         pairs.append(("Trial id", result["trial_id"]))
     return _card("Provenance", _kv(pairs))
+
+
+def _campaign_trials(provenance: Dict[str, Any], result: Dict[str, Any]) -> str:
+    """The terminal's rendering, so a real zero is not "—" and an unrecorded run says so."""
+    from tradeflow.analytics.reporting import campaign_trials_text
+
+    if "n_trials" in provenance:
+        return campaign_trials_text(provenance)
+    return "—" if result.get("n_trials") is None else str(result["n_trials"])
 
 
 def _code_version() -> str:
@@ -656,8 +665,9 @@ def _execution_card(result: Dict[str, Any]) -> str:
     if verdict is None:
         return _card(
             "Execution viability",
-            '<p class="empty">Not recorded for this result. Re-run with --force to assess '
-            "whether this book can be traded at this capital.</p>",
+            '<p class="empty">Not recorded for this result. Re-run it with force (the '
+            "<code>--force</code> flag, or <code>force=true</code> over MCP) to assess whether "
+            "this book can be traded at this capital.</p>",
         )
     if verdict.get("executable") is None:
         return _card(

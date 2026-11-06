@@ -2771,13 +2771,15 @@ def run_verdict(
 
         result["cache_miss"] = [str(miss) for miss in combine_misses(cache_misses)]
 
-    reason = _verdict_not_a_trial(result) if journal else "journaling was off for this run"
-    if reason is not None:
-        # The family count includes the run being made, which is right for a run that is
-        # recorded. One that is not would print a total one higher than the store holds.
-        result["provenance"]["n_trials"] = max(n_trials - 1, 0)
-        result["provenance"]["this_run_counted"] = False
     if journal:
+        reason = _verdict_not_a_trial(result)
+        if reason is not None:
+            # The family count includes the run being made, which is right for a run that
+            # is recorded. This one is not, and it measured no IC, so nothing in the report
+            # was deflated against the higher count. A store that cannot be read leaves
+            # the count unknown, which is not a count of zero.
+            result["provenance"]["n_trials"] = _family_count(strategy, universe, ACCOUNTING_VERSION)
+            result["provenance"]["this_run_counted"] = False
         if reason is None:
             from tradeflow.services.audit import run_context
 
@@ -2818,6 +2820,19 @@ def _verdict_not_a_trial(result: Dict[str, Any]) -> Optional[str]:
     return f"no step measured an IC ({what}), so this run does not count toward the campaign"
 
 
+def _family_count(strategy: str, symbols: Sequence[str], accounting: int) -> Optional[int]:
+    """How many trials this ``(strategy, universe)`` family has recorded, or ``None``
+    when the store cannot say."""
+    with _open_trial_store() as store:
+        if store is None:
+            return None
+        try:
+            return int(store.family_count(strategy, symbols, accounting))
+        except Exception:  # noqa: BLE001 - a passive store never breaks its caller
+            logger.warning("Campaign trial count unavailable", exc_info=True)
+            return None
+
+
 def _campaign_trials(strategy: str, symbols: Sequence[str], accounting: int) -> int:
     """How many trials this ``(strategy, universe)`` family has already seen, plus
     the one about to run.
@@ -2828,14 +2843,8 @@ def _campaign_trials(strategy: str, symbols: Sequence[str], accounting: int) -> 
     unavailable: the guardrail degrades to "this is the only trial I can see",
     which is what it would have said before a store existed.
     """
-    with _open_trial_store() as store:
-        if store is None:
-            return 1
-        try:
-            return int(store.family_count(strategy, symbols, accounting)) + 1
-        except Exception:  # noqa: BLE001 - a passive store never breaks its caller
-            logger.warning("Campaign trial count unavailable; using 1", exc_info=True)
-            return 1
+    recorded = _family_count(strategy, symbols, accounting)
+    return 1 if recorded is None else recorded + 1
 
 
 def code_version() -> str:
