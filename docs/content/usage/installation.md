@@ -82,7 +82,7 @@ The `Makefile` targets run through **uv**; the **Docker** path uses
 ## Option A — local with uv
 
 ```bash
-make install        # == uv sync
+make install        # == uv sync --inexact
 ```
 
 `uv` reads `pyproject.toml`, creates a virtual environment, and installs the
@@ -117,7 +117,7 @@ make install-portfolio    # Google OR-Tools -> portfolio allocation
 Or install everything used by the test suite:
 
 ```bash
-uv sync --extra dev
+uv sync --inexact --extra dev
 ```
 
 ## Verify

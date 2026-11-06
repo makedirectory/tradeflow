@@ -80,7 +80,7 @@ Either way you'll need free Alpaca **paper-trading** API keys from the
 No clone needed — install the command and run the offline demo:
 
 ```bash
-uv tool install quantred        # or: python -m pip install quantred
+uv tool install 'quantred[mcp]'   # or: python -m pip install 'quantred[mcp]'
 quantred demo                          # full pipeline on synthetic data, no keys
 quantred init                          # your free Alpaca paper keys, and optionally a model
                                         # provider for `research` (skipping it is fine)
@@ -378,13 +378,13 @@ that the code is untested. Everything ships with offline tests.
 
 > **AI-assisted research without AI-controlled trading.**
 
-`python main.py mcp` exposes TradeFlow's deterministic capabilities to any MCP
+`quantred mcp` exposes TradeFlow's deterministic capabilities to any MCP
 client (Claude Code / Claude Desktop) as tools: discovery, `run_verdict`,
 `run_scan`, `run_backtest`, `run_optimization`, `run_walk_forward`, the research
 chain (`compute_alphas`, `construct_portfolio`, `compute_information`, ...),
 `render_report`, read-only trial-store access (`list_trials`, `get_trial`,
 `best_trials`), `get_metrics_glossary`, and `save_config`/`load_config`/
-`list_configs`. Every call is logged to `logs/mcp_audit.jsonl` for replay.
+`list_configs`. Every call is appended to the audit log (`logs/mcp_audit.jsonl` under the state root) for replay.
 
 **The safety model is structural.** The server constructs only a *data* client —
 no trading client, no broker — so it is incapable of placing an order. There is
@@ -393,7 +393,9 @@ config to live is a manual human step outside MCP. The capability simply isn't
 wired in, so it can't be prompt-injected around. The agent works on the
 *research clock* (offline, exploratory); the live order path stays LLM-free.
 
-Register it with a client. Installed (`uv tool install --force "quantred[mcp]"`):
+Register it with a client. The server needs the `mcp` extra, which the quickstart above
+installs; on a copy that lacks it, `quantred init --check --for mcp` prints the one command
+that adds it and keeps your other extras and packs:
 
 ```bash
 claude mcp add quantred -- quantred mcp     # Claude Code
@@ -414,13 +416,14 @@ absolute `main.py`:
     "args": ["/path/to/tradeflow/main.py", "mcp"] } } }
 ```
 
-Note the two resolve **different state roots** (`~/.tradeflow` vs. the checkout), so
-point an agent and yourself at the same one — or set `TRADEFLOW_HOME` — if they
-should share a campaign's history.
+An installed copy and a checkout share one state root, `~/.tradeflow`, unless
+`TRADEFLOW_HOME` is set, so an agent and you see the same campaign history. If you set
+`TRADEFLOW_HOME`, the config block printed by `init` carries it too; a desktop client does
+not inherit your shell's exports.
 
 ## Research agent (optional)
 
-`python main.py research` runs a bounded, offline loop that proposes hypotheses,
+`quantred research` runs a bounded, offline loop that proposes hypotheses,
 validates them out-of-sample with walk-forward, and writes a shortlist of
 provenance-stamped candidate configs to `configs/` for a human to review. It never
 promotes anything to live trading.
@@ -429,21 +432,26 @@ The proposer is **provider-agnostic** — choose with `--provider`:
 
 | Provider | Install | Default model | Credential |
 |----------|---------|---------------|------------|
-| `anthropic` (default) | `uv sync --inexact --extra ai` | `claude-opus-4-8` | `ANTHROPIC_API_KEY` |
-| `openai` | `uv sync --inexact --extra openai` | `gpt-4o` | `OPENAI_API_KEY` |
+| `anthropic` (default) | extra `ai` | `claude-opus-4-8` | `ANTHROPIC_API_KEY` |
+| `openai` | extra `openai` | `gpt-4o` | `OPENAI_API_KEY` |
 | `ollama` (local) | none | `llama3.1` | none |
 
-Set the credential in `.env` (alongside your Alpaca keys — see `.env.example`)
-or as the standard environment variable. Ollama runs locally and needs no key.
+`quantred init --check --for research --provider anthropic` prints the exact command that
+adds the extra to your copy. Set the credential in `.env` (alongside your Alpaca keys; `quantred init`
+writes it) or as the standard environment variable. Ollama runs locally and needs no key.
 
 ```bash
-uv run python main.py research --provider ollama --model llama3.1 \
+quantred research --provider ollama --model llama3.1 \
   --symbols NVDA,AAPL --start 2024-01-01 --end 2025-12-31 \
   --goal "improve OOS Sharpe without raising max drawdown" --holdout-days 60
 ```
 
 See the [docs](https://tradeflow.mk-dir.com/) (Usage → *AI agents*) for the full
 tool surface, guardrails, and provider setup.
+
+*Contributors, from a checkout:* the same commands run as `python main.py mcp` and
+`python main.py research`, and extras are added with `uv sync --inexact --extra ai`
+(`--inexact` keeps the dev tools and any editable pack).
 
 ## Architecture
 

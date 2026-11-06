@@ -41,6 +41,15 @@ prints this same block with the **absolute** command for your copy, ready to pas
 `quantred mcp --self-test` runs exactly that command (and prints the block again when
 it passes), so what passes is what you configure.
 
+**What the client does not inherit.** A desktop client launches the server without your
+shell's exports. If you set `TRADEFLOW_HOME`, the printed block carries it in an `env`
+entry (and the `claude mcp add` line in `--env`), because without it the client's server
+would journal to the default state root and split your campaign's history. Credentials are
+never printed there: put them in the `.env` the server reads (`quantred init` writes it).
+The self-test child does inherit your shell, so when it passes on keys that came only from
+exported variables it says so rather than letting that read as proof the client will find
+them.
+
 Run `quantred mcp` once in a terminal first. Without the extra or credentials it
 exits immediately with the reason, which from inside a client looks only like a
 server that never started.
@@ -70,8 +79,8 @@ already journaled are kept in <state root>/logs/research_journal.jsonl. A reques
 progress, if any, was not completed.
 ```
 
-Every tool call appends to the journal before it returns, so stopping loses nothing
-that finished; only a request still running is abandoned. The server leaves without
+Every tool call is appended to the audit log, and every tool that produces a trial
+journals it before it returns, so stopping loses nothing that finished; only a request still running is abandoned. The server leaves without
 the interpreter's usual shutdown on purpose: the MCP SDK reads input on a thread that
 cannot be woken, and waiting for it is what used to hang a single Ctrl-C and abort
 the interpreter on a repeated one.

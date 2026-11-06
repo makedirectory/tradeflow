@@ -24,11 +24,13 @@ You need a terminal. Steps 1–2 need nothing else — no keys, no account, no n
 ## 1. Install it
 
 ```bash
-uv tool install quantred
+uv tool install 'quantred[mcp,viz]'
 ```
 
 No `uv`? [Install it first](https://docs.astral.sh/uv/getting-started/installation/),
-or use `python -m pip install quantred` in a virtual environment. This gives you a `quantred` command.
+or use `python -m pip install 'quantred[mcp,viz]'` in a virtual environment. The two extras
+are the MCP server (step 5) and charts in HTML reports (step 4); the demo needs neither, and
+[optional extras](extras) has the rest. This gives you a `quantred` command.
 
 ```bash
 quantred --version
@@ -140,11 +142,19 @@ opened.
 
 ## 5. Connect Claude
 
+The server needs the `mcp` extra, which step 1 installed. On a copy that lacks it,
+`quantred init --check --for mcp` prints the one command that adds it and keeps the extras
+and packs you already have (a bare `uv tool install --force "quantred[mcp]"` would drop them).
+
+Check the server starts and answers discovery, then register it with your MCP client:
+
 ```bash
-uv tool install --force "quantred[mcp]"
+quantred mcp --self-test
 ```
 
-Then register the server with your MCP client.
+It prints the exact block below with the **absolute** command for your copy (and the
+`TRADEFLOW_HOME` it needs, when you set one). Use that block rather than typing the bare
+command: a desktop client often has a smaller `PATH` than your terminal.
 
 **Claude Code:**
 
@@ -152,7 +162,8 @@ Then register the server with your MCP client.
 claude mcp add quantred -- quantred mcp
 ```
 
-**Claude Desktop** — add to `claude_desktop_config.json`:
+**Claude Desktop** — add to `claude_desktop_config.json` (paste what `--self-test` printed;
+the bare command is shown here for shape):
 
 ```json
 {

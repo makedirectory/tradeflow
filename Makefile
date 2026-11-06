@@ -42,13 +42,13 @@ check:  ## Diagnose the current setup (no writes, no network)
 	$(PY) init --check
 
 install:  ## Create the uv environment and install dependencies
-	uv sync
+	uv sync --inexact
 
 install-optimize:  ## Install with the optional Bayesian-optimization extra
-	uv sync --extra optimize
+	uv sync --inexact --extra optimize
 
 install-portfolio:  ## Install with the optional OR-Tools portfolio extra
-	uv sync --extra portfolio
+	uv sync --inexact --extra portfolio
 
 # --- preconfigured trading combos ------------------------------------------
 verdict:  ## The whole pipeline in one command: scan -> alphas -> portfolio -> information

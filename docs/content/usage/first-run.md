@@ -13,11 +13,13 @@ on its own; you can stop after any of them.
 ## 1. Install
 
 ```bash
-uv tool install quantred
+uv tool install 'quantred[mcp]'
 quantred --version
 ```
 
-In an activated virtual environment instead: `python -m pip install quantred`.
+In an activated virtual environment instead: `python -m pip install 'quantred[mcp]'`. The `mcp`
+extra is what step 5 needs (the client launches the server from this install); leave it off
+if you will not connect a client.
 The distribution and the command are both `quantred`. Capabilities such
 as charts, the MCP server and the model SDKs are opt-in extras; see
 [optional extras](extras) for which one unlocks what and how to add one later without
@@ -91,17 +93,15 @@ TradeFlow setup check
   [ok]       state directory        ~/.tradeflow/logs is writable
   [ok]       extra: mcp             installed - the MCP server for AI clients
   [optional] extra: viz             not installed - charts in `--chart` and in HTML reports
-  [--]       model: ollama          endpoint http://localhost:11434 (reachability not checked; run with --probe-model)
-  [blocked]  model provider         no provider is set up for `research`
+  [--]       model: ollama          default endpoint http://localhost:11434 (reachability not checked; run with --probe-model)
+  [optional] model provider         no provider is set up for `research`
 
   ready for:  demo
   blocked for: data (APCA_API_KEY_ID, APCA_API_SECRET_KEY)
   blocked for: research (APCA_API_KEY_ID, APCA_API_SECRET_KEY, model provider)
   blocked for: mcp (APCA_API_KEY_ID, APCA_API_SECRET_KEY)
 
-  Missing extras (viz) - one command adds them all:
-    With uv tool: uv tool install --force 'quantred[mcp,viz]==2.3.0'
-    In an activated venv: python -m pip install 'quantred[viz]==2.3.0'
+  Also not installed (optional): viz - what each unlocks and how to add it: https://tradeflow.mk-dir.com/usage/extras
 ```
 
 That is a trimmed example from a machine with no keys; your rows will differ (the
@@ -121,7 +121,10 @@ Each row has one of five states, and the summary says what each *task* can do:
 | `[FAIL]` | a broken state, such as a state directory you may not write to |
 
 `--for {demo,data,research,mcp}` picks the task the exit code answers for (default
-`data`). A backtest is not blocked by a missing model key; a missing optional extra
+`data`), and scopes the install command: when an extra that task needs is absent (plus
+the `--provider`'s SDK extra), the report ends with **one** command that adds exactly those
+and keeps what you already have; the other absent extras are listed on one line, not
+installed for you. A backtest is not blocked by a missing model key; a missing optional extra
 never fails anything; a `[FAIL]` row fails every task. `--provider
 {anthropic,openai,ollama}` checks that provider's SDK and key for `research`:
 
@@ -144,7 +147,9 @@ quantred init --probe-model --provider anthropic --for research
 the agent backtests with, plus a provider); without it the check defaults to `data`,
 which ignores the provider. Either way the probe itself runs first and its result is
 folded into the provider's row, so the table and the line beneath it agree. A failed
-probe always exits non-zero.
+probe always exits non-zero. If the provider's SDK extra or key is missing the probe is
+**not sent**: the output says so ("No request was sent"), nothing is billed, and the
+exit code is still non-zero.
 
 Makes **one** request of one token, with no retries, and names the outcome: `auth`,
 `quota` (an empty balance), `rate_limited`, `unavailable` (the provider is overloaded
@@ -202,8 +207,8 @@ works. Three names at the same cap cannot fund a book, and the verdict then says
 `infeasible` rather than asking for more data - see
 [an infeasible book](verdict#an-infeasible-book).
 
-Read the result top to bottom: the last line is the verdict, and the block above it
-says which stage limited the book. [One-command verdict](verdict) walks through a
+Read the result top to bottom: the `VERDICT` line is the headline, the check lines under it
+say which gates passed or failed, and the blocks above it say which stage limited the book. [One-command verdict](verdict) walks through a
 full report line by line.
 
 ## 7. Only then, autonomous research
