@@ -82,7 +82,7 @@ def resolve_universe(
     candidates: List[str],
     as_of: Optional[datetime] = None,
     *,
-    then_reads: Optional[Tuple[str, datetime, datetime]] = None,
+    then_reads: Optional[Tuple[List[str], Any, datetime, datetime]] = None,
 ) -> List[str]:
     """Filter ``candidates`` through the scanner, falling back to them if none flag.
 
@@ -91,6 +91,10 @@ def resolve_universe(
     from tradeflow.services.data import resolve_universe as _resolve
 
     return _resolve(data_client, scanner_name, candidates, as_of=as_of, then_reads=then_reads)
+
+
+def _and_benchmark(symbols: List[str], benchmark: Optional[str]) -> List[str]:
+    return list(dict.fromkeys([*symbols, *([benchmark] if benchmark else [])]))
 
 
 def build_cost_model(args):
@@ -604,6 +608,7 @@ def cmd_backtest(args) -> None:
         log_backtest_report,
     )
     from tradeflow.engine.backtest import ACCOUNTING_VERSION, BacktestEngine
+    from tradeflow.services.data import refuse_uncached_together
     from tradeflow.services.sizing import build_beta_sizer
 
     tuned = apply_run_config(args)
@@ -614,12 +619,21 @@ def cmd_backtest(args) -> None:
     _apply_limit_overrides(args, strategy)
 
     _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
+    timeframe = strategy.config["timeframe"]
     universe = resolve_universe(
         data_client,
         args.scanner,
         args.symbols,
         as_of=args.scan_as_of or args.end,
-        then_reads=(strategy.config["timeframe"], args.start, args.end),
+        then_reads=(_and_benchmark(args.symbols, args.benchmark), timeframe, args.start, args.end),
+    )
+    # The engine reads the benchmark on its own, and offline a missing one only degrades
+    # the run, so it is asked for only in a miss the universe raises anyway.
+    refuse_uncached_together(
+        data_client,
+        (universe, timeframe, args.start, args.end),
+        [(_and_benchmark(universe, args.benchmark), timeframe, args.start, args.end)],
+        why=f"The backtest also reads the benchmark {args.benchmark}; the command covers it too.",
     )
 
     # Computed once, up front: it warms the cache as a side effect (when
@@ -1081,7 +1095,7 @@ def cmd_optimize(args) -> None:
         args.scanner,
         args.symbols,
         as_of=args.scan_as_of or args.end,
-        then_reads=(timeframe, args.start, args.end),
+        then_reads=(args.symbols, timeframe, args.start, args.end),
     )
     vintage = _vintage_stamp(data_client, universe, timeframe, args.start, args.end)
     # Workers, when asked for, read bars from the local cache rather than the API —
@@ -1315,7 +1329,7 @@ def cmd_screen(args) -> None:
         args.scanner,
         args.symbols,
         as_of=args.scan_as_of or args.end,
-        then_reads=(timeframe, args.start, args.end),
+        then_reads=(args.symbols, timeframe, args.start, args.end),
     )
     limits = _screen_limits(args)
     try:
@@ -1418,6 +1432,7 @@ def cmd_walkforward(args) -> None:
     from tradeflow.engine.backtest import ACCOUNTING_VERSION
     from tradeflow.optimization.config_store import build_provenance, current_git_sha, save_config
     from tradeflow.optimization.walk_forward import WalkForwardValidator
+    from tradeflow.services.data import refuse_uncached_together
 
     # A config is the *output* of a walk-forward, so re-validating one had to be done
     # by expanding it back onto the command line by hand - which is exactly where a
@@ -1426,12 +1441,26 @@ def cmd_walkforward(args) -> None:
 
     _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
     timeframe = _strategy_from(args, tuned).config["timeframe"]
+    # The validation reads a warmup before --start, and the benchmark, in one fetch that
+    # comes after the vintage stamp and the memo lookup. Asking for that read in the
+    # first miss is what lets one warm fix the command.
+    reader = WalkForwardValidator(
+        STRATEGIES[args.strategy], data_client, benchmark=getattr(args, "benchmark", None)
+    )
     universe = resolve_universe(
         data_client,
         args.scanner,
         args.symbols,
         as_of=args.scan_as_of or args.end,
-        then_reads=(timeframe, args.start, args.end),
+        then_reads=reader.prefetch_read(args.symbols, args.start, args.end, args.embargo_days),
+    )
+    refuse_uncached_together(
+        data_client,
+        (universe, timeframe, args.start, args.end),
+        [reader.prefetch_read(universe, args.start, args.end, args.embargo_days)],
+        why="The walk-forward also reads an indicator warmup before --start"
+        + (f" and the benchmark {reader.benchmark}" if reader.benchmark else "")
+        + "; the command covers that too.",
     )
     vintage = _vintage_stamp(data_client, universe, timeframe, args.start, args.end)
 

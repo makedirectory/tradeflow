@@ -189,7 +189,7 @@ def test_one_miss_names_every_missing_symbol_and_a_warm_command_that_fixes_it(tm
     assert set(again.get_bars(SYMBOLS, "1Day", start, end)) == set(SYMBOLS)
 
 
-def _warm_from(miss, cache_dir):
+def _warm_from(miss, cache_dir, symbols=SYMBOLS):
     """Run the warm command a miss printed, the way a user would."""
     import re
 
@@ -197,7 +197,7 @@ def _warm_from(miss, cache_dir):
 
     command = re.search(r"`[^`]*cache warm ([^`]*)`", str(miss)).group(1)
     flags = dict(re.findall(r"--(\w+) (\S+)", command))
-    online = CachedMarketData(WindowedFakeProvider(SYMBOLS), cache_dir=cache_dir)
+    online = CachedMarketData(WindowedFakeProvider(symbols), cache_dir=cache_dir)
     online.warm(
         flags["symbols"].split(","),
         flags["timeframe"],
@@ -226,7 +226,11 @@ def test_a_scan_first_command_needs_one_warm_not_two(tmp_path):
     cached, _ = _cache(tmp_path, offline=True)
     with pytest.raises(CacheMiss) as miss:
         resolve_universe(
-            MarketDataClient(cached), "demo_volume", SYMBOLS, as_of=end, then_reads=("1Day", start, end)
+            MarketDataClient(cached),
+            "demo_volume",
+            SYMBOLS,
+            as_of=end,
+            then_reads=(SYMBOLS, "1Day", start, end),
         )
     assert "every candidate" in str(miss.value)
     cached.close()
@@ -236,7 +240,7 @@ def test_a_scan_first_command_needs_one_warm_not_two(tmp_path):
 
     again = CachedMarketData(WindowedFakeProvider(SYMBOLS), cache_dir=tmp_path / "bars", offline=True)
     universe = resolve_universe(
-        MarketDataClient(again), "demo_volume", SYMBOLS, as_of=end, then_reads=("1Day", start, end)
+        MarketDataClient(again), "demo_volume", SYMBOLS, as_of=end, then_reads=(SYMBOLS, "1Day", start, end)
     )
     assert again.vintage_stamp(universe, "1Day", start, end) is not None
 
@@ -256,8 +260,97 @@ def test_a_runnable_scan_is_not_widened_to_every_candidate(tmp_path):
 
     cached = CachedMarketData(WindowedFakeProvider(SYMBOLS), cache_dir=tmp_path / "bars", offline=True)
     resolve_universe(
-        MarketDataClient(cached), "demo_volume", SYMBOLS, as_of=end, then_reads=("1Day", start, end)
+        MarketDataClient(cached), "demo_volume", SYMBOLS, as_of=end, then_reads=(SYMBOLS, "1Day", start, end)
     )
+
+
+def _offline_command(monkeypatch, cache_dir, argv):
+    """Run a CLI command offline against a cache dir, returning its miss or None."""
+    from tradeflow import cli
+    from tradeflow.marketdata.client import MarketDataClient
+
+    cached = CachedMarketData(WindowedFakeProvider([*SYMBOLS, "SPY"]), cache_dir=cache_dir, offline=True)
+    monkeypatch.setattr(cli, "build_data_and_broker", lambda **kw: (None, MarketDataClient(cached)))
+    args = cli.build_parser().parse_args(argv)
+    try:
+        getattr(cli, f"cmd_{argv[0]}")(args)
+    except CacheMiss as miss:
+        return miss
+    finally:
+        cached.close()
+    return None
+
+
+_WINDOW = [
+    "--symbols",
+    ",".join(SYMBOLS),
+    "--start",
+    "2024-03-01",
+    "--end",
+    "2024-12-31",
+    "--offline",
+    "--force",
+]
+
+
+@pytest.mark.parametrize("scanner", ["none", "demo_volume"])
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["walkforward", "--strategy", "demo_trend", "--benchmark", "SPY", "--folds", "2", "--max-evals", "2"],
+        ["walkforward", "--strategy", "demo_trend", "--folds", "2", "--max-evals", "2"],
+        ["backtest", "--strategy", "demo_trend"],
+    ],
+    ids=["walkforward-benchmark", "walkforward", "backtest"],
+)
+def test_one_warm_fixes_an_offline_command_that_reads_beyond_its_window(tmp_path, monkeypatch, argv, scanner):
+    """A walk-forward reads an indicator warmup before --start, and its benchmark, in a
+    fetch that comes after the up-front check of [start, end]: warming the first printed
+    command left that read uncached, so the rerun missed again. A backtest's benchmark was
+    a quieter version: offline it degraded the run to no alpha or beta. The first miss
+    now covers every read, so the printed command is enough."""
+    cache_dir = tmp_path / "bars"
+    argv = [*argv, "--scanner", scanner, *_WINDOW]
+    first = _offline_command(monkeypatch, cache_dir, argv)
+    assert first is not None
+    if "walkforward" not in argv or "--benchmark" in argv:
+        assert "SPY" in first.missing
+    _warm_from(first, cache_dir, symbols=[*SYMBOLS, "SPY"])
+    assert _offline_command(monkeypatch, cache_dir, argv) is None
+
+
+def test_a_cached_window_is_not_widened_for_reads_that_may_not_happen(tmp_path, monkeypatch):
+    """With [start, end] cached the run may be a memo that reads nothing more, so the up-front
+    check asks for nothing extra; the validation's own fetch names what it lacks."""
+    from tradeflow.utils.timeutils import parse_market_date
+
+    online, _ = _cache(tmp_path)
+    online.warm(SYMBOLS, "1Day", parse_market_date("2024-03-01"), parse_market_date("2024-12-31"))
+    online.close()
+    argv = [
+        "walkforward",
+        "--strategy",
+        "demo_trend",
+        "--scanner",
+        "none",
+        "--folds",
+        "2",
+        "--max-evals",
+        "2",
+        *_WINDOW,
+    ]
+    miss = _offline_command(monkeypatch, tmp_path / "bars", argv)
+    assert miss is not None and "warmup" not in str(miss)
+    assert "--start 2024-03-01" not in str(miss)
+
+
+def test_the_explanation_appears_only_when_a_read_widened_the_miss(tmp_path, monkeypatch):
+    """With no benchmark the backtest's second read is its first, and the line saying the
+    miss also covers "the benchmark None" described a read that added nothing."""
+    argv = ["backtest", "--strategy", "demo_trend", "--scanner", "none", "--benchmark", "", *_WINDOW]
+    miss = _offline_command(monkeypatch, tmp_path / "bars", argv)
+    assert miss is not None
+    assert "benchmark" not in str(miss)
 
 
 def test_the_vintage_stamp_miss_also_names_every_symbol(tmp_path):

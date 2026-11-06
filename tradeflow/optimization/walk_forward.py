@@ -28,7 +28,7 @@ import logging
 import math
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Type
+from typing import Any, Dict, List, Optional, Tuple, Type
 
 import numpy as np
 import pandas as pd
@@ -601,8 +601,7 @@ class WalkForwardValidator:
         warmup_days = embargo  # warmup buffer == embargo, by construction >= lookback
 
         # Prefetch the whole window once (plus warmup) and slice per fold.
-        fetch_start = start - timedelta(days=warmup_days)
-        frames = self.data_client.get_bars(self._with_benchmark(symbols), self.timeframe, fetch_start, end)
+        frames = self.data_client.get_bars(*self.prefetch_read(symbols, start, end, embargo))
         sliced = MarketDataClient(PrefetchedProvider(frames))
 
         all_trial_sharpes: List[float] = []
@@ -727,9 +726,7 @@ class WalkForwardValidator:
             holdout_days=0,
         )
         warmup_days = embargo
-        frames = self.data_client.get_bars(
-            self._with_benchmark(symbols), self.timeframe, start - timedelta(days=warmup_days), end
-        )
+        frames = self.data_client.get_bars(*self.prefetch_read(symbols, start, end, embargo))
         sliced = MarketDataClient(PrefetchedProvider(frames))
 
         fold_results: List[FoldResult] = []
@@ -791,10 +788,7 @@ class WalkForwardValidator:
         cls = strategy_class or self.strategy_class
         warmup_days = embargo_days if embargo_days is not None else self.default_embargo_days()
         frames = self.data_client.get_bars(
-            self._with_benchmark(symbols),
-            self.timeframe,
-            window_start - timedelta(days=warmup_days),
-            window_end,
+            *self.prefetch_read(symbols, window_start, window_end, warmup_days)
         )
         sliced = MarketDataClient(PrefetchedProvider(frames))
         metrics, _, _ = self._oos_backtest(
@@ -851,6 +845,18 @@ class WalkForwardValidator:
             benchmark_returns=result.benchmark_returns,
         )
         return metrics, oos_trades, result.legs
+
+    def prefetch_read(
+        self, symbols: List[str], start: datetime, end: datetime, embargo_days: Optional[int] = None
+    ) -> Tuple[List[str], Timeframe, datetime, datetime]:
+        """The one fetch a validation over ``[start, end]`` makes, as ``get_bars`` arguments.
+
+        The universe and the benchmark, from a warmup before ``start`` equal to the
+        embargo (the strategy's lookback by default). Public so an offline preflight
+        can ask the cache about exactly the read the run will make.
+        """
+        warmup = embargo_days if embargo_days is not None else self.default_embargo_days()
+        return self._with_benchmark(symbols), self.timeframe, start - timedelta(days=warmup), end
 
     def _with_benchmark(self, symbols):
         """The universe plus the benchmark, which the folds fetch through a *prefetched*

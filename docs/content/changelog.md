@@ -86,8 +86,11 @@ without guessing. The history below keeps the old name as it was written.
   the next one. When `backtest`, `optimize`, `walkforward` or `screen` cannot even run
   its scanner from the cache, the one command covers the scan and the run for every
   candidate, so a single warm is enough; before, it missed on the scan's short lookback
-  and then again on its own window. The note about the market-date change appears only
-  where a cache was warmed before it, not on every miss.
+  and then again on its own window. The same goes for reads past the request's own
+  window: `walkforward` also reads an indicator warmup before `--start` and its
+  `--benchmark`, and `backtest` its `--benchmark` (which offline used to drop alpha and
+  beta with only a warning); a cold miss now asks for those too. The note about the
+  market-date change appears only where a cache was warmed before it, not on every miss.
 - A verdict step that fails is reported in the verdict's step list; its traceback is
   logged only at debug level instead of filling the screen above the report.
 - A request that Alpaca refuses for the credentials now says so ("Alpaca rejected these

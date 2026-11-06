@@ -48,20 +48,24 @@ def build_data_client(
     return MarketDataClient(provider)
 
 
+#: ``(symbols, timeframe, start, end)``: the arguments of one ``get_bars`` call.
+BarRead = Tuple[List[str], Any, datetime, datetime]
+
+
 def resolve_universe(
     data_client: MarketDataClient,
     scanner_name: Optional[str],
     candidates: List[str],
     as_of: Optional[datetime] = None,
     *,
-    then_reads: Optional[Tuple[str, datetime, datetime]] = None,
+    then_reads: Optional[BarRead] = None,
 ) -> List[str]:
     """Filter ``candidates`` through a scanner, falling back to them if none flag.
 
-    ``then_reads`` is the ``(timeframe, start, end)`` the caller reads next for the
-    universe this returns. Offline, when the scan itself cannot run from the cache, it
-    widens the miss to cover that read too, so one warm fixes the command rather than
-    one for the scan and a second for the run.
+    ``then_reads`` is the read the caller makes next, written as if the scanner kept
+    every candidate. Offline, when the scan itself cannot run from the cache, the miss
+    covers that read too, so one warm fixes the command rather than one for the scan
+    and a second for the run.
     """
     if not scanner_name or scanner_name == "none":
         return candidates
@@ -70,7 +74,16 @@ def resolve_universe(
 
     scanner = SymbolScanner(data_client, scanner_name)
     if then_reads is not None:
-        _refuse_unscannable(data_client, scanner, candidates, as_of, then_reads)
+        scan_tf, scan_start, scan_end = scanner.scan_window(as_of)
+        refuse_uncached_together(
+            data_client,
+            (candidates, scan_tf, scan_start, scan_end),
+            [then_reads],
+            why=(
+                "The scanner picks the universe from these bars, so which names the run keeps "
+                "is not known yet; the command covers the scan and the run for every candidate."
+            ),
+        )
     flagged = scanner.scan(candidates, as_of=as_of)
     universe = [symbol for symbol, _ in flagged]
     if not universe:
@@ -80,37 +93,34 @@ def resolve_universe(
     return universe
 
 
-def _refuse_unscannable(
-    data_client: MarketDataClient,
-    scanner: Any,
-    candidates: List[str],
-    as_of: Optional[datetime],
-    then_reads: Tuple[str, datetime, datetime],
+def refuse_uncached_together(
+    data_client: MarketDataClient, first: BarRead, rest: List[BarRead], *, why: Optional[str] = None
 ) -> None:
-    """Offline, raise one miss for the scan and the run when the scan cannot run.
+    """Offline, when ``first`` cannot be served from the cache, raise one miss for it and ``rest``.
 
-    Only when the scan window is short: if the scan can run, the universe it picks is
-    checked on its own afterwards, and asking for every candidate over the run window
-    would warm names the scanner then drops.
+    A command that reads in stages otherwise learns of each stage only after warming
+    the one before, a rerun per stage. Nothing is raised while ``first`` is cached,
+    because whether the later reads happen at all can turn on it — a scan picks the
+    names, a memoized result reads nothing more — and asking for them then would warm
+    data the run may never touch; their own read refuses if it comes to that. ``why``
+    is printed only when ``rest`` widened the miss.
     """
+    from tradeflow.marketdata.timeframe import Timeframe
     from tradeflow.store.bars import CachedMarketData
 
     provider = getattr(data_client, "provider", None)
     if not isinstance(provider, CachedMarketData) or not provider.offline:
         return
-    scan_tf, scan_start, scan_end = scanner.scan_window(as_of)
-    if provider.is_cached(candidates, scan_tf, scan_start, scan_end):
+    if provider.is_cached(*first):
         return
-    timeframe, start, end = then_reads
-    reads = [(candidates, scan_tf, scan_start, scan_end)]
-    if str(timeframe) == str(scan_tf):
-        reads.append((candidates, timeframe, start, end))
-    provider.refuse_uncached_reads(
-        reads,
-        why=(
-            "The scanner picks the universe from these bars, so which names the run keeps "
-            "is not known yet; the window covers the scan and the run for every candidate."
-        )
-        if len(reads) > 1
-        else None,
-    )
+
+    def key(timeframe: Any) -> str:
+        return str(Timeframe.parse(timeframe) if isinstance(timeframe, str) else timeframe)
+
+    def adds(read: BarRead) -> bool:
+        symbols, _, start, end = read
+        return bool(set(symbols) - set(first[0])) or start < first[2] or end > first[3]
+
+    # A warm command takes one timeframe, so a read on another is left to its own miss.
+    widened = [r for r in rest if key(r[1]) == key(first[1]) and adds(r) and not provider.is_cached(*r)]
+    provider.refuse_uncached_reads([first, *widened], why=why if widened else None)
