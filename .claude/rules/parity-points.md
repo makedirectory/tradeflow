@@ -47,6 +47,24 @@ two implementations that must produce the same shape, because a trial recorded o
 surface has to be found by the other. The CLI additionally folds a bar-cache vintage.
 *Guarded by* `tests/test_surface_parity.py`.
 
+**A request's window ↔ the surface that parsed it** — *converged*. The CLI read
+`--start/--end` as exchange-zone instants and the MCP tool's own `_parse_date` left them
+naive. The window's *text* is part of a trial's dedup identity, so one identical request
+over the two surfaces journaled two trials (`...T00:00:00-05:00` against `...T00:00:00`):
+the multiple-testing family count inflated by one for every cross-surface repeat, and the
+memoized answer was never served to the other surface. Now one definition,
+`utils.timeutils.parse_market_date`, which `cli._date` and `mcp.server._parse_date`
+delegate to; it applies to every MCP tool that takes a date, not only `run_verdict`. The
+CLI's aware form is canonical because it is what recorded history already carries, so
+CLI-recorded trials keep their identity. **MCP-recorded trials of the old naive form will
+miss memo once**; replay is unaffected, since a rebuild reads each journal line's own
+recorded window. `ACCOUNTING_VERSION` is not bumped: what the engine computes given a window is
+unchanged; only how an MCP date is read moved, from a naive value (read as UTC by the bar
+store, as New York by the scanner) to the exchange-zone instant the CLI always used.
+*Guarded by* `tests/test_surface_parity.py`, which compares the two parsers on one set of
+spellings, runs the same verdict over both surfaces against one journal and requires a
+single trial, and scans the MCP module for any tool reading a date itself.
+
 **A walk-forward's memoization recipe** — *converged*. It was three copies of one dict
 (CLI, service, draft-service). `limits_key` was folded into `run_backtest`'s key and into
 none of them, so two configs differing only in `max_positions` hashed alike and the

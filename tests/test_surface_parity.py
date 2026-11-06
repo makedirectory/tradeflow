@@ -852,7 +852,118 @@ def test_cli_and_mcp_agree_on_an_infeasible_verdict(monkeypatch, tmp_path):
     assert cli_result["portfolio"]["binding_constraint"] == mcp_result["portfolio"]["binding_constraint"]
     for key in ("max_weight", "max_names", "lookback_days", "n_points", "participation_cap", "capital"):
         assert cli_result["inputs"][key] == mcp_result["inputs"][key], key
-    # Dates, not instants: the CLI parses a date in the exchange zone and the MCP tool
-    # naively, which is a difference that predates and is separate from this check.
-    for edge in ("start", "end"):
-        assert cli_result["inputs"]["window"][edge][:10] == mcp_result["inputs"]["window"][edge][:10]
+    # The window text is the dedup identity, so it is compared whole: not its date part.
+    assert cli_result["inputs"]["window"] == mcp_result["inputs"]["window"]
+
+
+# --- dates: one reading of a window, whichever surface asked -----------------------------
+_DATE_SPELLINGS = [
+    "2024-01-02",
+    "2024-01-02T00:00:00",
+    "2024-01-02T15:30:00",
+    "2024-01-02T20:30:00Z",
+    "2024-01-02T15:30:00-05:00",
+    "2024-07-01",  # daylight time: a different offset from the winter dates above
+]
+
+
+@pytest.mark.parametrize("spelling", _DATE_SPELLINGS)
+def test_a_date_means_the_same_instant_and_the_same_text_over_both_surfaces(spelling):
+    """Compare the parsers, not their outputs one at a time: the window's *text* is
+    what a recorded trial is found by, so an equal instant with a different zone
+    still splits the identity."""
+    pytest.importorskip("mcp", reason="the MCP surface needs the 'mcp' extra")
+    from tradeflow import cli as main
+    from tradeflow.mcp import server as mcp_server
+
+    cli_value, mcp_value = main._date(spelling), mcp_server._parse_date(spelling)
+
+    assert cli_value.isoformat() == mcp_value.isoformat()
+    assert cli_value.tzinfo is not None and mcp_value.tzinfo is not None
+
+
+def test_the_same_verdict_over_both_surfaces_is_one_journaled_trial(monkeypatch, tmp_path):
+    """A verdict run over the CLI and then over MCP is one experiment, not two.
+
+    The CLI read `--start/--end` as exchange-zone instants and the MCP tool as naive
+    ones, so the window text differed, the dedup identity differed, and the second
+    surface journaled a fresh trial instead of finding the first: the campaign's
+    multiple-testing count inflated by one for every cross-surface repeat, and the
+    memoized answer was never served.
+    """
+    import asyncio
+    import json
+
+    pytest.importorskip("mcp", reason="the MCP surface needs the 'mcp' extra")
+    from tests.fakes import FakeMarketData
+    from tradeflow import cli as main
+    from tradeflow.marketdata.client import MarketDataClient
+    from tradeflow.mcp import server as mcp_server
+    from tradeflow.services import analysis, audit
+
+    journal = tmp_path / "journal.jsonl"
+    monkeypatch.setattr(analysis, "ARTIFACT_DIR", tmp_path / "artifacts")
+    monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", journal)
+    monkeypatch.setattr(audit, "DEFAULT_AUDIT_PATH", tmp_path / "audit.jsonl")
+    names = [f"SYM{i:02d}" for i in range(12)]
+    client = MarketDataClient(FakeMarketData([*names, "SPY"], n=600, freq="1D"))
+    monkeypatch.setattr(main, "build_data_and_broker", lambda **kwargs: (None, client))
+
+    args = main.build_parser().parse_args(
+        [
+            "verdict",
+            "--scanner",
+            "none",
+            "--symbols",
+            ",".join(names),
+            "--start",
+            "2024-01-02",
+            "--end",
+            "2025-06-01",
+        ]
+    )
+    args.func(args)
+
+    built = mcp_server.build_server(data_client=client)
+    content = asyncio.run(
+        built.call_tool(
+            "run_verdict",
+            {
+                "strategy": "demo_trend",
+                "symbols": names,
+                "start": "2024-01-02",
+                "end": "2025-06-01",
+                "scanner": "none",
+            },
+        )
+    )
+    if isinstance(content, tuple):
+        content = content[0]
+    mcp_result = json.loads(content[0].text)
+
+    trials = [
+        json.loads(line)
+        for line in journal.read_text().splitlines()
+        if line.strip() and json.loads(line).get("tool", "").startswith("trial:")
+    ]
+    windows = [(t.get("inputs") or {}).get("window") for t in trials]
+    assert len(trials) == 1, windows
+    assert mcp_result["memoized"] is True
+
+
+def test_no_mcp_tool_reads_a_date_by_itself():
+    """Every tool argument that is a date goes through `_parse_date`, which delegates.
+    A tool parsing its own would be a third reading, invisible to the comparison above."""
+    import ast
+    import inspect
+
+    pytest.importorskip("mcp", reason="the MCP surface needs the 'mcp' extra")
+    from tradeflow.mcp import server as mcp_server
+
+    tree = ast.parse(inspect.getsource(mcp_server))
+    readers = {
+        node.func.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    } & {"fromisoformat", "strptime"}
+    assert readers == set()

@@ -41,7 +41,7 @@ from tradeflow.strategies import signals
 from tradeflow.utils.extras import installed as extras_installed
 from tradeflow.utils.extras import missing_extra_message
 from tradeflow.utils.logging_config import setup_logging
-from tradeflow.utils.timeutils import NEW_YORK
+from tradeflow.utils.timeutils import NEW_YORK, parse_market_date
 
 logger = logging.getLogger(__name__)
 
@@ -5812,29 +5812,11 @@ def _add_cache_flags(parser) -> None:
 def _date(value: str) -> datetime:
     """Parse a date or ISO datetime into a New York instant.
 
-    **One date contract.** ``2026-08-22`` means that market date in the exchange's own
-    zone, everywhere in this program. That is a domain decision: someone typing a date
-    at a trading tool means the session, not UTC midnight.
-
-    Leaving the value naive and letting each consumer localize it is what produced the
-    bug this replaced. ``cache warm --end 2026-08-22`` recorded coverage through
-    00:00Z (the store reads a naive datetime as UTC) while ``scan --as-of 2026-08-22``
-    asked for 04:00Z (the scanner reads one as New York), so a cache holding exactly
-    the right daily bar reported a four-hour hole and refused an offline run whose
-    data was complete. Two readings of one string is a semantic fork; it surfaced in
-    the cache first and would have surfaced next in reports, or in live/backtest
-    parity.
-
-    Returning an *aware* value is what stops the contract re-forking: a naive datetime
-    carries no zone to disagree about because it carries no zone at all.
+    Delegates to :func:`tradeflow.utils.timeutils.parse_market_date`, the one
+    definition shared with the MCP server. The contract and the reason for it are
+    documented there.
     """
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        parsed = datetime.strptime(value, "%Y-%m-%d")
-    if parsed.tzinfo is None:
-        return NEW_YORK.localize(parsed)
-    return parsed.astimezone(NEW_YORK)
+    return parse_market_date(value)
 
 
 def _now() -> datetime:

@@ -29,6 +29,7 @@ from tradeflow.analytics.series_comparison import MIN_OVERLAP as SERIES_MIN_OVER
 from tradeflow.services import analysis, campaign, configs, glossary, registry
 from tradeflow.services.audit import audit_log, new_run_id
 from tradeflow.settings import BRAND, MCP_SERVER_NAME
+from tradeflow.utils.timeutils import parse_market_date
 
 logger = logging.getLogger(__name__)
 
@@ -189,11 +190,13 @@ FORBIDDEN_TOOLS = frozenset(
 
 
 def _parse_date(value: str) -> datetime:
-    """Parse an ISO date/datetime string from a tool argument."""
-    try:
-        return datetime.fromisoformat(value)
-    except ValueError:
-        return datetime.strptime(value, "%Y-%m-%d")
+    """Parse an ISO date/datetime string from a tool argument.
+
+    The CLI's own reading (``utils.timeutils.parse_market_date``): an exchange-zone
+    instant, so a request means the same window, and the same recorded trial, over
+    either surface.
+    """
+    return parse_market_date(value)
 
 
 #: Appended to every journaling tool's description. One sentence, one place: an

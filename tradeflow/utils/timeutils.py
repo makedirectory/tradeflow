@@ -4,6 +4,8 @@ US equity sessions are reasoned about in America/New_York, so all market-data
 timestamps are normalized to that zone in one place.
 """
 
+from datetime import datetime
+
 import pandas as pd
 import pytz
 
@@ -46,3 +48,36 @@ def match_index_tz(timestamp, index: pd.Index):
         return ts.tz_convert(None) if ts.tz is not None else ts
     ts = ts.tz_localize("UTC") if ts.tz is None else ts
     return ts.tz_convert(index_tz)
+
+
+def parse_market_date(value: str) -> datetime:
+    """Parse a date or ISO datetime into a New York instant.
+
+    **One date contract.** ``2026-08-22`` means that market date in the exchange's own
+    zone, everywhere in this program and over every surface. That is a domain decision:
+    someone typing a date at a trading tool means the session, not UTC midnight.
+
+    Leaving the value naive and letting each consumer localize it is what produced the
+    bug this replaced. ``cache warm --end 2026-08-22`` recorded coverage through
+    00:00Z (the store reads a naive datetime as UTC) while ``scan --as-of 2026-08-22``
+    asked for 04:00Z (the scanner reads one as New York), so a cache holding exactly
+    the right daily bar reported a four-hour hole and refused an offline run whose
+    data was complete. Two readings of one string is a semantic fork; it surfaced in
+    the cache first and would have surfaced next in reports, or in live/backtest
+    parity.
+
+    Returning an *aware* value is what stops the contract re-forking: a naive datetime
+    carries no zone to disagree about because it carries no zone at all.
+
+    The CLI and the MCP server both call this. They used to parse separately — the MCP
+    tool left the value naive — and the window's text is part of a trial's dedup
+    identity, so one request over the two surfaces journaled two trials and never found
+    the other's memoized answer.
+    """
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        parsed = datetime.strptime(value, "%Y-%m-%d")
+    if parsed.tzinfo is None:
+        return NEW_YORK.localize(parsed)
+    return parsed.astimezone(NEW_YORK)

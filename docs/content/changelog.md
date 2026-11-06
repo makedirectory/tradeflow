@@ -67,6 +67,11 @@ without guessing. The history below keeps the old name as it was written.
 
 ### MCP
 
+- A date passed to any MCP tool is read in the exchange's time zone, exactly as the
+  CLI reads `--start`/`--end`. Before, the same verdict over the CLI and then over MCP
+  was recorded as two trials and the second was not served from the first, which
+  counted one experiment twice toward the multiple-testing total. MCP-recorded trials
+  from before this change will be re-run once rather than found.
 - `list_strategies` and `list_scanners` work in a real client; they failed output
   validation before. `mcp --self-test` now exercises discovery over a real connection.
 - Ctrl-C, closing the client and SIGTERM stop the server promptly with a one-line
