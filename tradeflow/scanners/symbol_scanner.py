@@ -134,6 +134,11 @@ class SymbolScanner:
         logger.info("Scanner flagged %d/%d symbols", len(flagged), len(symbols))
         return flagged
 
+    def scan_window(self, as_of: Optional[datetime] = None) -> Tuple[str, datetime, datetime]:
+        """The ``(timeframe, start, end)`` a default :meth:`scan` at ``as_of`` reads."""
+        start, end = self._scan_window(self.timeframe, as_of=as_of)
+        return self.timeframe, start, end
+
     def _scan_window(self, timeframe: str, as_of: Optional[datetime] = None) -> Tuple[datetime, datetime]:
         """A lookback window large enough for the scanner's indicators."""
         tf = Timeframe.parse(timeframe)

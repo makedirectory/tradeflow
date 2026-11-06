@@ -91,6 +91,7 @@ class CacheMiss(RuntimeError):
         *,
         previously_warmed: bool = False,
         cache_dir: Optional[Path] = None,
+        why: Optional[str] = None,
     ):
         import shlex
 
@@ -111,6 +112,8 @@ class CacheMiss(RuntimeError):
             f"--offline: no cached {timeframe} bars for {shown} between {start_day} and {end_day}. "
             f"Run `{command}` first."
         )
+        if why:
+            message += f"\n{why}"
         if previously_warmed:
             message += f"\n{DATE_CONTRACT_NOTICE}"
         super().__init__(message)
@@ -447,10 +450,41 @@ class CachedMarketData(MarketDataProvider):
         self, symbols: List[str], timeframe: str, start: pd.Timestamp, end: pd.Timestamp
     ) -> None:
         """Raise one :class:`CacheMiss` naming every symbol with a gap, before any is read."""
-        missing = {s: g for s in symbols if (g := self.coverage.gaps(s, timeframe, start, end))}
-        if missing:
-            warmed = any(self.coverage.covered_intervals(s, timeframe) for s in missing)
-            raise CacheMiss(missing, timeframe, previously_warmed=warmed, cache_dir=self.cache_dir)
+        self.refuse_uncached_reads([(symbols, timeframe, start, end)])
+
+    def is_cached(self, symbols: List[str], timeframe: TimeframeLike, start: datetime, end: datetime) -> bool:
+        """Whether every one of ``symbols`` is covered over ``[start, end]``."""
+        tf = str(_as_timeframe(timeframe))
+        start_ts, end_ts = _to_utc(start), _to_utc(end)
+        return not any(self.coverage.gaps(s, tf, start_ts, end_ts) for s in dict.fromkeys(symbols))
+
+    def refuse_uncached_reads(
+        self,
+        reads: List[Tuple[List[str], TimeframeLike, datetime, datetime]],
+        *,
+        why: Optional[str] = None,
+    ) -> None:
+        """Raise one :class:`CacheMiss` over several reads a command will make, offline.
+
+        Each read is ``(symbols, timeframe, start, end)``. Reads of one timeframe share a
+        miss, so a command that reads two windows is told about both at once rather than
+        one per rerun. ``why`` is a line saying why the miss asks for what it does.
+        """
+        if not self.offline:
+            return
+        by_timeframe: Dict[str, Dict[str, List[Tuple[pd.Timestamp, pd.Timestamp]]]] = {}
+        for symbols, timeframe, start, end in reads:
+            tf = str(_as_timeframe(timeframe))
+            start_ts, end_ts = _to_utc(start), _to_utc(end)
+            for symbol in dict.fromkeys(symbols):
+                gaps = self.coverage.gaps(symbol, tf, start_ts, end_ts)
+                if gaps:
+                    by_timeframe.setdefault(tf, {}).setdefault(symbol, []).extend(gaps)
+        # One timeframe per miss: a warm command takes one, so a command reading two
+        # would need two rounds whatever the message said.
+        for tf, missing in by_timeframe.items():
+            warmed = any(self.coverage.covered_intervals(s, tf) for s in missing)
+            raise CacheMiss(missing, tf, previously_warmed=warmed, cache_dir=self.cache_dir, why=why)
 
     def _merge_write(self, symbol: str, timeframe: str, new_frames: List[pd.DataFrame]) -> None:
         """Read the symbol's full existing history, merge in the newly-fetched

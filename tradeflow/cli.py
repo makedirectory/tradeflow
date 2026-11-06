@@ -30,7 +30,7 @@ import logging
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from tradeflow.analytics.series_comparison import MIN_OVERLAP as SERIES_MIN_OVERLAP
 from tradeflow.marketdata.base import MarketDataProvider
@@ -77,7 +77,12 @@ def build_data_and_broker(
 
 
 def resolve_universe(
-    data_client, scanner_name: Optional[str], candidates: List[str], as_of: Optional[datetime] = None
+    data_client,
+    scanner_name: Optional[str],
+    candidates: List[str],
+    as_of: Optional[datetime] = None,
+    *,
+    then_reads: Optional[Tuple[str, datetime, datetime]] = None,
 ) -> List[str]:
     """Filter ``candidates`` through the scanner, falling back to them if none flag.
 
@@ -85,7 +90,7 @@ def resolve_universe(
     """
     from tradeflow.services.data import resolve_universe as _resolve
 
-    return _resolve(data_client, scanner_name, candidates, as_of=as_of)
+    return _resolve(data_client, scanner_name, candidates, as_of=as_of, then_reads=then_reads)
 
 
 def build_cost_model(args):
@@ -609,7 +614,13 @@ def cmd_backtest(args) -> None:
     _apply_limit_overrides(args, strategy)
 
     _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
-    universe = resolve_universe(data_client, args.scanner, args.symbols, as_of=args.scan_as_of or args.end)
+    universe = resolve_universe(
+        data_client,
+        args.scanner,
+        args.symbols,
+        as_of=args.scan_as_of or args.end,
+        then_reads=(strategy.config["timeframe"], args.start, args.end),
+    )
 
     # Computed once, up front: it warms the cache as a side effect (when
     # cache-backed) and must match exactly between the lookup below and the
@@ -1064,8 +1075,14 @@ def cmd_optimize(args) -> None:
     from tradeflow.optimization.optimizer import ParameterOptimizer
 
     _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
-    universe = resolve_universe(data_client, args.scanner, args.symbols, as_of=args.scan_as_of or args.end)
     timeframe = STRATEGIES[args.strategy].create_with_defaults().config["timeframe"]
+    universe = resolve_universe(
+        data_client,
+        args.scanner,
+        args.symbols,
+        as_of=args.scan_as_of or args.end,
+        then_reads=(timeframe, args.start, args.end),
+    )
     vintage = _vintage_stamp(data_client, universe, timeframe, args.start, args.end)
     # Workers, when asked for, read bars from the local cache rather than the API —
     # warmed once here, before dispatch, so N cold workers cannot stampede the vendor
@@ -1292,7 +1309,14 @@ def cmd_screen(args) -> None:
     from tradeflow.services import analysis
 
     _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
-    universe = resolve_universe(data_client, args.scanner, args.symbols, as_of=args.scan_as_of or args.end)
+    timeframe = STRATEGIES[args.strategy].create_with_defaults().config.get("timeframe", "1Day")
+    universe = resolve_universe(
+        data_client,
+        args.scanner,
+        args.symbols,
+        as_of=args.scan_as_of or args.end,
+        then_reads=(timeframe, args.start, args.end),
+    )
     limits = _screen_limits(args)
     try:
         report = analysis.run_screen(
@@ -1401,8 +1425,14 @@ def cmd_walkforward(args) -> None:
     tuned = apply_run_config(args)
 
     _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
-    universe = resolve_universe(data_client, args.scanner, args.symbols, as_of=args.scan_as_of or args.end)
     timeframe = _strategy_from(args, tuned).config["timeframe"]
+    universe = resolve_universe(
+        data_client,
+        args.scanner,
+        args.symbols,
+        as_of=args.scan_as_of or args.end,
+        then_reads=(timeframe, args.start, args.end),
+    )
     vintage = _vintage_stamp(data_client, universe, timeframe, args.start, args.end)
 
     # Top-level memoization key: the *validation recipe*, not the chosen params —

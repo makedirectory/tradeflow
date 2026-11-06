@@ -189,6 +189,77 @@ def test_one_miss_names_every_missing_symbol_and_a_warm_command_that_fixes_it(tm
     assert set(again.get_bars(SYMBOLS, "1Day", start, end)) == set(SYMBOLS)
 
 
+def _warm_from(miss, cache_dir):
+    """Run the warm command a miss printed, the way a user would."""
+    import re
+
+    from tradeflow.utils.timeutils import parse_market_date
+
+    command = re.search(r"`[^`]*cache warm ([^`]*)`", str(miss)).group(1)
+    flags = dict(re.findall(r"--(\w+) (\S+)", command))
+    online = CachedMarketData(WindowedFakeProvider(SYMBOLS), cache_dir=cache_dir)
+    online.warm(
+        flags["symbols"].split(","),
+        flags["timeframe"],
+        parse_market_date(flags["start"]),
+        parse_market_date(flags["end"]),
+    )
+    online.close()
+    return flags
+
+
+def _run_window():
+    from tradeflow.utils.timeutils import parse_market_date
+
+    return parse_market_date("2024-03-01"), parse_market_date("2024-12-31")
+
+
+def test_a_scan_first_command_needs_one_warm_not_two(tmp_path):
+    """A command that scans first missed on the scan's short lookback, and only once that
+    was warmed did it miss again on its own window: two rounds for one command. When the
+    scan cannot run, the miss covers the scan and the run for every candidate, so running
+    the printed command once is enough for both reads."""
+    from tradeflow.marketdata.client import MarketDataClient
+    from tradeflow.services.data import resolve_universe
+
+    start, end = _run_window()
+    cached, _ = _cache(tmp_path, offline=True)
+    with pytest.raises(CacheMiss) as miss:
+        resolve_universe(
+            MarketDataClient(cached), "demo_volume", SYMBOLS, as_of=end, then_reads=("1Day", start, end)
+        )
+    assert "every candidate" in str(miss.value)
+    cached.close()
+
+    flags = _warm_from(miss.value, tmp_path / "bars")
+    assert flags["symbols"].split(",") == SYMBOLS
+
+    again = CachedMarketData(WindowedFakeProvider(SYMBOLS), cache_dir=tmp_path / "bars", offline=True)
+    universe = resolve_universe(
+        MarketDataClient(again), "demo_volume", SYMBOLS, as_of=end, then_reads=("1Day", start, end)
+    )
+    assert again.vintage_stamp(universe, "1Day", start, end) is not None
+
+
+def test_a_runnable_scan_is_not_widened_to_every_candidate(tmp_path):
+    """Once the scan can run, the names it keeps are checked on their own: asking for every
+    candidate over the run window would warm names the scanner then drops."""
+    from tradeflow.marketdata.client import MarketDataClient
+    from tradeflow.scanners.symbol_scanner import SymbolScanner
+    from tradeflow.services.data import resolve_universe
+
+    start, end = _run_window()
+    online, _ = _cache(tmp_path)
+    scan_tf, scan_start, scan_end = SymbolScanner(MarketDataClient(online), "demo_volume").scan_window(end)
+    online.warm(SYMBOLS, scan_tf, scan_start, scan_end)
+    online.close()
+
+    cached = CachedMarketData(WindowedFakeProvider(SYMBOLS), cache_dir=tmp_path / "bars", offline=True)
+    resolve_universe(
+        MarketDataClient(cached), "demo_volume", SYMBOLS, as_of=end, then_reads=("1Day", start, end)
+    )
+
+
 def test_the_vintage_stamp_miss_also_names_every_symbol(tmp_path):
     """Found in review: only get_bars checked every symbol first. Backtest, optimize and
     walkforward stamp the vintage before reading bars, and that path still stopped at the
