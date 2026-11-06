@@ -4,7 +4,7 @@ US equity sessions are reasoned about in America/New_York, so all market-data
 timestamps are normalized to that zone in one place.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 import pandas as pd
@@ -117,3 +117,26 @@ def window_refusal(start: datetime, end: datetime, now: Optional[datetime] = Non
     if start >= now:
         return f"the window starts in the future ({_day(start)}); there are no bars for it yet."
     return None
+
+
+def shift_days(moment, days: int):
+    """``moment`` moved by whole calendar days, keeping its wall-clock time in its zone.
+
+    ``aware + timedelta`` keeps a pytz value's original UTC offset, so New York midnight
+    in January plus 150 days came out as ``00:00-05:00`` in June - 01:00 New York, an
+    hour past midnight. Every walk-forward boundary from March to November sat there,
+    and a window starting on a day then skipped that day's bar (daily bars are stamped
+    at New York midnight). pandas shifts the instant instead, with the same hour of
+    drift. A boundary is a market date, so the shift is done on the wall clock and the
+    zone reapplied. ``zoneinfo`` values already behave this way and are left to it.
+    """
+    if isinstance(moment, pd.Timestamp):
+        if moment.tzinfo is None:
+            return moment + pd.Timedelta(days=days)
+        return (moment.tz_localize(None) + pd.Timedelta(days=days)).tz_localize(moment.tz)
+    if moment.tzinfo is None:
+        return moment + timedelta(days=days)
+    zone = getattr(moment.tzinfo, "zone", None)
+    if zone:
+        return pytz.timezone(zone).localize(moment.replace(tzinfo=None) + timedelta(days=days))
+    return moment + timedelta(days=days)

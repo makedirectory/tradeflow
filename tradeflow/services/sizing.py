@@ -9,7 +9,7 @@ domain logic any more than the MCP server does.
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 from tradeflow.execution.sizing import BetaSizer, PortfolioWeightSizer
@@ -17,6 +17,7 @@ from tradeflow.indicators.indicators import calculate_beta
 from tradeflow.marketdata.client import MarketDataClient
 from tradeflow.portfolio.allocator import Candidate
 from tradeflow.strategies.base import Strategy
+from tradeflow.utils.timeutils import shift_days
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ def score_candidates(
     ``live``.
     """
     end = datetime.now()
-    bars = data_client.get_bars(symbols, timeframe, end - timedelta(days=lookback_days), end)
+    bars = data_client.get_bars(symbols, timeframe, shift_days(end, -lookback_days), end)
     candidates: List[Candidate] = []
     for symbol in symbols:
         frame = bars.get(symbol)
@@ -107,7 +108,7 @@ def beta_read(
     :func:`compute_betas` will make, rather than restating its window.
     """
     end = as_of or datetime.now()
-    return [benchmark, *symbols], "1Day", end - timedelta(days=lookback_days), end
+    return [benchmark, *symbols], "1Day", shift_days(end, -lookback_days), end
 
 
 def compute_betas(

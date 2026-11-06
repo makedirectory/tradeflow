@@ -15,7 +15,7 @@ currency. Requires the ``store`` extra (``pyarrow``).
 """
 
 import shutil
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional, Sequence
 
@@ -23,6 +23,7 @@ import pandas as pd
 
 from tradeflow.marketdata.client import TimeframeLike
 from tradeflow.marketdata.timeframe import Timeframe
+from tradeflow.utils.timeutils import shift_days
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     import polars as pl
@@ -133,9 +134,15 @@ class ParquetBarStore:
     @staticmethod
     def _window(as_of: datetime, lookback_days: int) -> tuple:
         """Normalize ``as_of`` to UTC and return the ``(start, end]`` window."""
-        end = pd.Timestamp(as_of)
-        end = end.tz_localize("UTC") if end.tzinfo is None else end.tz_convert("UTC")
-        return end - timedelta(days=lookback_days), end
+        moment = pd.Timestamp(as_of)
+        # Shift in the value's own zone first: in UTC, a New York midnight minus N days
+        # crosses DST and lands an hour off the boundary.
+        start = shift_days(moment, -lookback_days)
+
+        def utc(t):
+            return t.tz_localize("UTC") if t.tzinfo is None else t.tz_convert("UTC")
+
+        return utc(start), utc(moment)
 
     def _year_files(self, sdir: Path, lo_year: Optional[int], hi_year: Optional[int]) -> List[str]:
         """``part.parquet`` paths in ``sdir``'s ``year=`` partitions within ``[lo, hi]``."""

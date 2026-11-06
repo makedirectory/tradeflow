@@ -207,7 +207,7 @@ showing a default.
     universe        8 symbol(s): AAA, BBB, CCC, DDD, EEE, FFF, GGG, HHH
     considered      31 candidate(s) before the scan
 
-  EVIDENCE — what was measured, under accounting v5. Valid only there.
+  EVIDENCE — what was measured, under accounting v6. Valid only there.
     sharpe_ratio    1.12
     total_trades    88
     promotable      yes
@@ -283,7 +283,7 @@ existed load unchanged and read as *not materialised from a campaign*.
 Promotion also warns at promotion time, rather than only when the file is later loaded:
 
 ```
-  WARNING: this trial was measured under accounting v3 and this engine is v5. The recipe still
+  WARNING: this trial was measured under accounting v3 and this engine is v6. The recipe still
   applies; the recorded metrics do not, and must not be compared with a fresh run.
 ```
 
@@ -302,7 +302,7 @@ one recorded run — the questions that otherwise mean opening SQLite.
 
 ```
 === Trades of a1b2c3d4e5f6 (backtest) ===
-  strategy demo_trend | accounting v5 | recorded 2026-03-01T09:14:22
+  strategy demo_trend | accounting v6 | recorded 2026-03-01T09:14:22
   table    : 40 trades
 
   Overall:
@@ -490,8 +490,8 @@ bump changes what the engine computes, so every stored metric was measured with 
 different instrument; that is not a subset and no annotation fixes it.
 
 ```bash
-quantred trials archive --reason "accounting v5 invalidated v4 metrics" --label pre-v5 --dry-run
-quantred trials archive --reason "accounting v5 invalidated v4 metrics" --label pre-v5
+quantred trials archive --reason "accounting v6 invalidated v5 walk-forwards" --label pre-v6 --dry-run
+quantred trials archive --reason "accounting v6 invalidated v5 walk-forwards" --label pre-v6
 quantred trials archives     # what has been retired, and why
 ```
 

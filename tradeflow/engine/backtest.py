@@ -66,7 +66,7 @@ logger = logging.getLogger(__name__)
 #:   it. Every number recorded under 1-3 overstates what a deployment could achieve; a
 #:   v4 result is not comparable with them and the store keeps the two apart.
 #:
-#: * **5** — the current model. The book is marked at a bar's *open* for the decisions
+#: * **5** — the book is marked at a bar's *open* for the decisions
 #:   that transact at it, and at its close for the equity curve. Through v4 positions
 #:   were marked to the bar's close before entries were considered, and the exposure
 #:   caps (`max_total_risk`, `max_gross_exposure`, `max_net_exposure`) are tested
@@ -83,8 +83,17 @@ logger = logging.getLogger(__name__)
 #:   systematically, unlike the mark-to-market change at v2, and rescaling a threshold
 #:   without a measured shift to justify it is gate-fitting.
 #:
+#: * **6** — the current model. Window boundaries derived by adding days to a market
+#:   date - walk-forward folds, the holdout, warmup starts, scanner and beta lookbacks,
+#:   the research agent's holdout - stay at New York midnight across daylight saving.
+#:   Through v5 the arithmetic kept the January offset, so from March to November every
+#:   such boundary sat at 01:00 New York; a window starting on a day skipped that day's
+#:   bar, an out-of-sample fold began one bar late and a lookback lost its first bar.
+#:   No look-ahead (the in-sample/out-of-sample gap only grew by a day), but the
+#:   windows were not the ones requested, so a v5 walk-forward is not comparable.
+#:
 #: Records written before this field existed carry no version; absence means 1.
-ACCOUNTING_VERSION = 5
+ACCOUNTING_VERSION = 6
 
 
 class BacktestError(RuntimeError):

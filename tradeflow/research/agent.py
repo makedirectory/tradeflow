@@ -27,7 +27,7 @@ Guardrails enforced here in code (not by prompt):
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from statistics import median
 from typing import Any, Callable, Dict, List, Optional, Type
 
@@ -43,6 +43,7 @@ from tradeflow.services.audit import audit_log, new_run_id
 from tradeflow.services.registry import resolve_strategy_class
 from tradeflow.store.trials import TrialStore, db_path_for_journal
 from tradeflow.strategies.base import Strategy
+from tradeflow.utils.timeutils import shift_days
 
 logger = logging.getLogger(__name__)
 
@@ -175,7 +176,7 @@ class ResearchAgent:
     def run(self, symbols: List[str], start: datetime, end: datetime) -> ResearchResult:
         cfg = self.config
         # Reserve the sacred holdout up front; the search never sees it (guardrail).
-        research_end = end - timedelta(days=cfg.holdout_days)
+        research_end = shift_days(end, -cfg.holdout_days)
         holdout_window = {"start": research_end.isoformat(), "end": end.isoformat()}
         if research_end <= start:
             raise ValueError("holdout_days leaves no research window; widen the date range")

@@ -7,14 +7,14 @@ keeping with the no-compiled-deps goal.
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Type
 
 from tradeflow.data.scan import slice_to_as_of
 from tradeflow.marketdata.client import MarketDataClient
 from tradeflow.marketdata.timeframe import Timeframe
 from tradeflow.scanners.base import ScannerStrategy
-from tradeflow.utils.timeutils import NEW_YORK
+from tradeflow.utils.timeutils import NEW_YORK, shift_days
 
 logger = logging.getLogger(__name__)
 
@@ -145,4 +145,4 @@ class SymbolScanner:
         required = self.strategy.required_data_points()
         days = max(required * tf.amount * _LOOKBACK_DAY_BUFFER, 30)
         end = resolve_scan_clock(as_of)
-        return end - timedelta(days=days), end
+        return shift_days(end, -days), end

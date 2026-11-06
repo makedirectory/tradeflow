@@ -27,7 +27,7 @@ Key correctness properties:
 import logging
 import math
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Type
 
 import numpy as np
@@ -42,6 +42,7 @@ from tradeflow.marketdata.client import MarketDataClient
 from tradeflow.marketdata.timeframe import Timeframe
 from tradeflow.optimization.optimizer import ParameterOptimizer
 from tradeflow.strategies.base import Strategy, build_with_limits
+from tradeflow.utils.timeutils import shift_days
 
 logger = logging.getLogger(__name__)
 
@@ -512,7 +513,7 @@ class WalkForwardValidator:
         holdout = None
         region_end = end
         if holdout_days > 0:
-            holdout_start = end - timedelta(days=holdout_days)
+            holdout_start = shift_days(end, -holdout_days)
             holdout = (holdout_start, end)
             region_end = holdout_start
 
@@ -528,16 +529,16 @@ class WalkForwardValidator:
 
         folds: List[Fold] = []
         index = 0
-        is_end = start + timedelta(days=train_days)
+        is_end = shift_days(start, train_days)
         while True:
-            is_start = start if mode == "anchored" else is_end - timedelta(days=train_days)
-            oos_start = is_end + timedelta(days=embargo)
-            oos_end = oos_start + timedelta(days=test_days)
+            is_start = start if mode == "anchored" else shift_days(is_end, -train_days)
+            oos_start = shift_days(is_end, embargo)
+            oos_end = shift_days(oos_start, test_days)
             if oos_end > region_end:
                 break
             folds.append(Fold(index, is_start, is_end, oos_start, oos_end))
             index += 1
-            is_end = is_end + timedelta(days=test_days)
+            is_end = shift_days(is_end, test_days)
 
         if not folds:
             raise ValueError("No folds generated; widen the window or reduce train/test/embargo")
@@ -845,7 +846,7 @@ class WalkForwardValidator:
         included. Reconstructing one from a filtered trade list (the fallback in
         :meth:`_metrics_for_trades`) can only see realized P&L at exit.
         """
-        fetch_start = oos_start - timedelta(days=warmup_days)
+        fetch_start = shift_days(oos_start, -warmup_days)
         result = BacktestEngine(strategy, client, cost_model=self.cost_model).run(
             symbols,
             fetch_start,
@@ -892,7 +893,7 @@ class WalkForwardValidator:
         can ask the cache about exactly the read the run will make.
         """
         warmup = embargo_days if embargo_days is not None else self.default_embargo_days()
-        return self._with_benchmark(symbols), self.timeframe, start - timedelta(days=warmup), end
+        return self._with_benchmark(symbols), self.timeframe, shift_days(start, -warmup), end
 
     def _with_benchmark(self, symbols):
         """The universe plus the benchmark, which the folds fetch through a *prefetched*

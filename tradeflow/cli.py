@@ -41,7 +41,7 @@ from tradeflow.strategies import signals
 from tradeflow.utils.extras import installed as extras_installed
 from tradeflow.utils.extras import missing_extra_message
 from tradeflow.utils.logging_config import setup_logging
-from tradeflow.utils.timeutils import NEW_YORK, parse_market_date
+from tradeflow.utils.timeutils import NEW_YORK, parse_market_date, shift_days
 
 logger = logging.getLogger(__name__)
 
@@ -3004,12 +3004,11 @@ def cmd_risk(args) -> None:
 def _print_conditional_evidence_gate(data_client, args) -> None:
     """The MZ/QLIKE evidence gate (`risk --evaluate-conditional`) — the report
     that decides whether conditioning is worth turning on."""
-    from datetime import timedelta
 
     from tradeflow.services.analysis import evaluate_conditional_risk
 
     end = args.as_of
-    start = end - timedelta(days=args.lookback_days)
+    start = shift_days(end, -args.lookback_days)
     r = evaluate_conditional_risk(
         data_client,
         args.symbols,
@@ -5716,7 +5715,7 @@ def _run_demo(args) -> None:
         """A window wide enough for the timeframe (intraday needs fewer days)."""
         unit = Timeframe.parse(timeframe).unit
         days = 60 if unit in ("min", "hour") else 730
-        return anchor - timedelta(days=days), anchor
+        return shift_days(anchor, -days), anchor
 
     print("\n" + "=" * 70)
     print(f"  {BRAND} demo — synthetic data, no API keys, no network")

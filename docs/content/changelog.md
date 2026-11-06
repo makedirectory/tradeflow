@@ -33,6 +33,18 @@ index; they are tagged in the repository.
 TradeFlow is now **QuantRed**, and a first session works from install to a result
 without guessing. The history below keeps the old name as it was written.
 
+### Accounting v6
+
+`ACCOUNTING_VERSION` is **6**. Window boundaries computed by adding days to a market
+date - walk-forward folds, the holdout, warmup starts, scanner and beta lookbacks, the
+research agent's holdout - kept January's offset, so from March to November they sat at
+01:00 New York instead of midnight. Daily bars are stamped at midnight, so a window
+starting on a summer day skipped that day's bar: every such out-of-sample fold began a
+bar late. There was no look-ahead (the gap between in-sample and out-of-sample only grew),
+but the windows were not the ones asked for, so v5 walk-forwards are not comparable with
+v6 ones. Earlier trials drop out of the default `trials list` (it says how many);
+`trials archive` retires the era.
+
 ### Rename
 
 - The distribution is `quantred` (was `tradeflow-engine`) and the main command is

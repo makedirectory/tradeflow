@@ -47,6 +47,7 @@ from tradeflow.services.registry import resolve_strategy_class, scanner_refusal
 from tradeflow.settings import state_root
 from tradeflow.strategies.base import build_with_limits, refuse_unknown_limits
 from tradeflow.utils.errors import RunRefused, no_bars_refusal
+from tradeflow.utils.timeutils import shift_days
 
 logger = logging.getLogger(__name__)
 
@@ -1633,7 +1634,7 @@ def run_scanner_drift(
 
     comparisons: List[Dict[str, Any]] = []
     for offset in offsets_days:
-        when = as_of + timedelta(days=offset)
+        when = shift_days(as_of, offset)
         other = {symbol for symbol, _ in _scan_at(data_client, scanner, symbols, config, when)}
         comparisons.append(
             {

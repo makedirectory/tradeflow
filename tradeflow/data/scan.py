@@ -12,12 +12,13 @@ out-of-core Arrow/Polars/DuckDB source would implement, so growing the storage
 tier is a new adapter behind this interface, not a rewrite of the layers above.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, List, Protocol, runtime_checkable
 
 import pandas as pd
 
 from tradeflow.marketdata.client import MarketDataClient, TimeframeLike
+from tradeflow.utils.timeutils import shift_days
 
 
 @runtime_checkable
@@ -47,7 +48,7 @@ class ClientBarSource:
         # Fetch with end == as_of (defends leakage for real feeds), then slice
         # defensively (synthetic/fake feeds ignore the window, so the slice is the
         # real guard). De-dup the universe so a benchmark listed twice is fetched once.
-        start = as_of - timedelta(days=lookback_days)
+        start = shift_days(as_of, -lookback_days)
         raw = self._client.get_bars(list(dict.fromkeys(universe)), timeframe, start, as_of)
         out: Dict[str, pd.DataFrame] = {}
         for symbol, frame in raw.items():
