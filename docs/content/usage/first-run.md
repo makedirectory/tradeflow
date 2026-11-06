@@ -44,21 +44,50 @@ make check         # or: python main.py init --check
 ```
 TradeFlow setup check
 
-  [ok]   env file               /path/to/.env exists
-  [ok]   APCA_API_KEY_ID        PKD2…B7Q3
-  [FAIL] APCA_API_SECRET_KEY    (placeholder) — no command that touches the market will run
-  [ok]   PAPER_TRADE            true — orders go to the paper account
-  [ok]   state directory        logs is writable
-  [FAIL] extra: viz             not installed — charts in --chart and in HTML reports: uv sync --extra viz
+  [ok] version               tradeflow-engine 2.3.0
+  [ok] env file              /path/to/.env exists
+  [ok] APCA_API_KEY_ID       PKD2…B7Q3
+  [blocked] APCA_API_SECRET_KEY (placeholder) — no command that touches the market will run
+        -> run `init` to enter it, or export it as an environment variable
+  [ok] state directory       logs is writable
+  [optional] extra: viz      not installed — charts in --chart and in HTML reports
+  [blocked] model provider   no provider is set up for `research`
+
+  ready for:  demo
+  blocked for: data (APCA_API_SECRET_KEY)
+  blocked for: research (APCA_API_SECRET_KEY, model provider)
 ```
 
 It is a doctor, not a linter: every check is evaluated and reported independently,
 because the second and third problems are exactly what you want to know about. It
 **writes nothing** and makes no network call, so it is safe to run any time.
 
-Only the essentials fail the run (exit code 1) — a missing optional extra is
-reported with the exact `uv sync --extra …` command and nothing more. The wizard
-configures; you install.
+Each row has one of five states, and the summary says what each *task* can do:
+
+| Label | Meaning |
+|-------|---------|
+| `[ok]` | verified locally |
+| `[blocked]` | a task needs it and it is missing; the row names the next action |
+| `[optional]` | an extra or provider you have not asked for |
+| `[--]` | needs the network or was not requested (Ollama reachability) |
+| `[FAIL]` | a broken state, such as a state directory you may not write to |
+
+`--for {demo,data,research,mcp}` picks the task the exit code answers for (default
+`data`). A backtest is not blocked by a missing model key; a missing optional extra
+never fails anything; a `[FAIL]` row fails every task. `--provider
+{anthropic,openai,ollama}` checks that provider's SDK and key for `research`.
+
+### Is the model actually reachable? `--probe-model`
+
+```bash
+tradeflow init --probe-model --provider anthropic
+```
+
+Makes **one** request of one token, with no retries, and names the outcome: `auth`,
+`quota` (the detail says whether it is exhausted credit or a rate limit),
+`entitlement`, `unreachable`, `timeout`, `model_not_found`. It may be billed by the
+provider, so it is never part of a plain `--check`, and it is not available over MCP.
+`--model` probes a model other than the research default.
 
 The "state directory" check is worth understanding: a session that cannot write its
 journal silently loses its own trial history, which corrupts every multiple-testing

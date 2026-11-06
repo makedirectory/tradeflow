@@ -225,6 +225,63 @@ def get_credential(name: str, default: Optional[str] = None) -> Optional[str]:
     return os.environ.get(name) or default
 
 
+#: Ollama's default local endpoint.
+DEFAULT_OLLAMA_URL = "http://localhost:11434"
+DEFAULT_OLLAMA_TIMEOUT = 120.0
+
+
+def normalize_ollama_url(url: str) -> str:
+    """The server root, whether the user gave it bare or as a full chat/generate URL.
+
+    People copy the URL from the API reference, which names the endpoint, and the client
+    appends the endpoint itself - so ``.../api/chat`` would otherwise become
+    ``.../api/chat/api/chat`` and fail as a 404 that reads like a missing model.
+    """
+    cleaned = url.strip().rstrip("/")
+    for suffix in ("/api/chat", "/api/generate"):
+        if cleaned.endswith(suffix):
+            cleaned = cleaned[: -len(suffix)]
+            break
+    return cleaned.rstrip("/")
+
+
+def ollama_base_url() -> str:
+    """``OLLAMA_BASE_URL`` (environment / ``.env``), normalised; no network."""
+    return normalize_ollama_url(get_credential("OLLAMA_BASE_URL", DEFAULT_OLLAMA_URL) or DEFAULT_OLLAMA_URL)
+
+
+def ollama_timeout() -> float:
+    """``OLLAMA_TIMEOUT`` in seconds. A slow local GPU can need minutes per response."""
+    raw = get_credential("OLLAMA_TIMEOUT")
+    if raw is None or not raw.strip():
+        return DEFAULT_OLLAMA_TIMEOUT
+    try:
+        value = float(raw)
+    except ValueError:
+        value = float("nan")
+    if not value > 0 or value == float("inf"):
+        raise SettingsError(f"OLLAMA_TIMEOUT must be a positive number of seconds, got {raw!r}.")
+    return value
+
+
+def ollama_num_ctx() -> Optional[int]:
+    """``OLLAMA_NUM_CTX``: the context length to request, or ``None`` to send nothing.
+
+    Never inferred - a model's own default is the right behaviour until someone with a
+    memory-constrained machine says otherwise.
+    """
+    raw = get_credential("OLLAMA_NUM_CTX")
+    if raw is None or not raw.strip():
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value <= 0:
+        raise SettingsError(f"OLLAMA_NUM_CTX must be a positive whole number of tokens, got {raw!r}.")
+    return value
+
+
 def _parse_bool(value: object, default: bool = True) -> bool:
     if isinstance(value, bool):
         return value

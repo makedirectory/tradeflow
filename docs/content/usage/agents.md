@@ -118,6 +118,24 @@ export OLLAMA_BASE_URL=http://localhost:11434   # optional
 
 Ollama needs no key — just run a model locally (`ollama run llama3.1`) and the
 agent talks to its HTTP API at `OLLAMA_BASE_URL` (default `http://localhost:11434`).
+Three settings tune it for a remote or slow machine:
+
+| Setting | Default | Meaning |
+|---------|---------|---------|
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Server root. A full `.../api/chat` URL is accepted and trimmed |
+| `OLLAMA_TIMEOUT` | `120` | Seconds to wait for one response; raise it for a slow GPU |
+| `OLLAMA_NUM_CTX` | not sent | Context length to request; the model's own default applies when unset |
+
+The per-response generation cap is the research loop's own token limit, not an
+Ollama setting.
+
+### When the provider says no
+
+Run `tradeflow init --check --provider <name> --for research` to see what is missing
+locally, and add `--probe-model` to make one real request. If a provider fails
+*during* a session, `research` stops with the category (`auth`, `quota`, `timeout`, ...)
+and exits non-zero. Provider SDK retries are turned off: an exhausted balance is
+reported once, not sent again, and the session journal stays as it was.
 
 See the engineering wiki's **MCP server** and **Research agent** pages for the
 architecture and guardrails.

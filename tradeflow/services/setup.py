@@ -20,9 +20,14 @@ import shutil
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, FrozenSet, List, Literal, Optional, Tuple
 
-from tradeflow.settings import _PLACEHOLDERS, ENV_PATH
+from tradeflow.research.provider_errors import (
+    ModelProviderError,
+    ProbeCategory,
+    classify_provider_error,
+)
+from tradeflow.settings import _PLACEHOLDERS, DISTRIBUTION_NAME, ENV_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -292,40 +297,80 @@ def _looks_like_auth_failure(exc: Exception) -> bool:
 # --------------------------------------------------------------------------- #
 # Doctor mode
 # --------------------------------------------------------------------------- #
-@dataclass
+#: ``ready`` verified locally; ``blocked`` required by some task and missing;
+#: ``optional_missing`` not needed by any task the reader asked about;
+#: ``not_checked`` needs the network or was not requested; ``failed`` the check found a
+#: broken state (an unwritable directory, live trading switched on).
+Status = Literal["ready", "blocked", "optional_missing", "not_checked", "failed"]
+
+#: What a reader is trying to do. ``demo`` runs on synthetic data and needs nothing.
+TASKS = ("demo", "data", "research", "mcp")
+
+PROVIDERS = ("anthropic", "openai", "ollama")
+
+#: provider -> (extra that carries its SDK, credential name); ollama has neither.
+_PROVIDER_REQUIREMENTS = {
+    "anthropic": ("ai", "ANTHROPIC_API_KEY"),
+    "openai": ("openai", "OPENAI_API_KEY"),
+}
+
+
+@dataclass(frozen=True)
 class Check:
     name: str
-    passed: bool
+    status: Status
     detail: str
+    next_action: Optional[str] = None
+    #: Tasks this row gates; empty means informational.
+    needed_for: FrozenSet[str] = frozenset()
+
+    @property
+    def passed(self) -> bool:
+        return self.status == "ready"
 
 
-def run_checks(path: Optional[Any] = None, environ: Optional[Dict[str, str]] = None) -> List[Check]:
+def run_checks(
+    path: Optional[Any] = None,
+    environ: Optional[Dict[str, str]] = None,
+    *,
+    provider: Optional[str] = None,
+) -> List[Check]:
     """Diagnose the current setup: one row per check, all of them evaluated.
 
-    A doctor, not a linter — it reports every check independently rather than
+    A doctor, not a linter - it reports every check independently rather than
     stopping at the first miss, because the second and third problems are exactly
     what someone running a diagnostic wants to know about. It writes nothing and
-    makes no network call; credential *validity* needs a request and is a separate,
-    explicit step.
+    makes no network call; credential *validity* and model reachability need a
+    request and are separate, explicit steps.
+
+    Each row says which tasks it gates, so :func:`readiness` can answer "can I run a
+    backtest?" without a missing model key getting a vote.
     """
+    import tradeflow
+
     state = inspect_env(path, environ)
     checks = [
+        Check("version", "ready", f"{DISTRIBUTION_NAME} {tradeflow.__version__}"),
         Check(
             "env file",
-            state.exists,
-            f"{state.path} exists" if state.exists else f"{state.path} not found — run `init` to create it",
-        )
+            "ready" if state.exists else "optional_missing",
+            f"{state.path} exists" if state.exists else f"{state.path} not found",
+            None if state.exists else "run `init` to create it, or export the keys as environment variables",
+        ),
     ]
     for key in CREDENTIAL_KEYS:
         value = state.resolved(key)
         source = " (from the environment)" if key in state.from_environment else ""
+        filled = not is_placeholder(value)
         checks.append(
             Check(
                 key,
-                not is_placeholder(value),
+                "ready" if filled else "blocked",
                 f"{mask(value)}{source}"
-                if not is_placeholder(value)
-                else f"{mask(value)} — no command that touches the market will run",
+                if filled
+                else f"{mask(value)} - no command that touches the market will run",
+                None if filled else "run `init` to enter it, or export it as an environment variable",
+                frozenset({"data", "research", "mcp"}),
             )
         )
     paper = state.resolved("PAPER_TRADE")
@@ -333,16 +378,158 @@ def run_checks(path: Optional[Any] = None, environ: Optional[Dict[str, str]] = N
     checks.append(
         Check(
             "PAPER_TRADE",
-            paper_on,
-            "true — orders go to the paper account"
+            "ready" if paper_on else "failed",
+            "true - orders go to the paper account"
             if paper_on
-            else "FALSE — live trading is enabled and orders would use real money",
+            else "FALSE - live trading is enabled and orders would use real money",
+            None if paper_on else "set PAPER_TRADE=true unless live trading is deliberate",
         )
     )
     checks.append(_writable_check())
     checks.extend(_state_checks())
     checks.extend(_extras_checks())
+    checks.extend(_model_checks(state, environ, provider))
     return checks
+
+
+def _model_checks(state: EnvState, environ: Optional[Dict[str, str]], provider: Optional[str]) -> List[Check]:
+    """One row per model provider, from local facts only: SDK importable, key present,
+    endpoint configured. Nothing here opens a connection.
+
+    The *selected* provider (``--provider``) gates ``research``; unselected ones are
+    informational. With nothing selected a single ``model provider`` row gates research
+    on there being at least one provider that is verifiably usable - Ollama's
+    reachability cannot be known without a request, so it never counts as ready by
+    itself.
+    """
+    from tradeflow.settings import SettingsError, ollama_base_url
+    from tradeflow.utils import extras
+
+    env = os.environ if environ is None else environ
+
+    def resolved(key: str) -> Optional[str]:
+        return env.get(key) or state.values.get(key)
+
+    rows: List[Check] = []
+    ready_providers: List[str] = []
+    for name in PROVIDERS:
+        selected = provider == name
+        gate = frozenset({"research"}) if selected else frozenset()
+        label = f"model: {name}"
+        if name == "ollama":
+            try:
+                endpoint = ollama_base_url()
+            except SettingsError as exc:
+                rows.append(Check(label, "failed", str(exc), "fix the setting named above", gate))
+                continue
+            rows.append(
+                Check(
+                    label,
+                    "not_checked",
+                    f"endpoint {endpoint} (reachability not checked; run with --probe-model)",
+                    None,
+                    gate,
+                )
+            )
+            continue
+        extra, key_name = _PROVIDER_REQUIREMENTS[name]
+        sdk_ok = extras.installed(extra)
+        key = resolved(key_name)
+        key_ok = not is_placeholder(key)
+        if sdk_ok and key_ok:
+            ready_providers.append(name)
+            rows.append(Check(label, "ready", f"SDK installed; {key_name} {mask(key)}", None, gate))
+            continue
+        missing = []
+        actions = []
+        if not sdk_ok:
+            missing.append(f"the '{extra}' extra (SDK not installed)")
+            actions.append(extras.install_hint(extra))
+        if not key_ok:
+            missing.append(key_name)
+            actions.append(f"set {key_name} in the environment or in .env")
+        status: Status = "blocked" if selected else "optional_missing"
+        rows.append(Check(label, status, "missing " + " and ".join(missing), "\n".join(actions), gate))
+
+    if provider is None:
+        usable = bool(ready_providers)
+        rows.append(
+            Check(
+                "model provider",
+                "ready" if usable else "blocked",
+                f"{', '.join(ready_providers)} usable for research"
+                if usable
+                else "no provider is set up for `research` (Ollama is not verified without --probe-model)",
+                None
+                if usable
+                else "install an SDK extra and set its key, or name a local model with --provider ollama",
+                frozenset({"research"}),
+            )
+        )
+    return rows
+
+
+def readiness(checks: List[Check]) -> Dict[str, Dict[str, Any]]:
+    """Per task: whether it can run, which rows stop it, and which rows are unverified.
+
+    ``not_checked`` rows never block - the check could not know - but they are listed so
+    "ready" is not read as "confirmed".
+    """
+    out: Dict[str, Dict[str, Any]] = {}
+    for task in TASKS:
+        gating = [c for c in checks if task in c.needed_for]
+        blocking = [c.name for c in gating if c.status in ("blocked", "failed", "optional_missing")]
+        unverified = [c.name for c in gating if c.status == "not_checked"]
+        out[task] = {"ready": not blocking, "blocking": blocking, "unverified": unverified}
+    return out
+
+
+def doctor_ok(checks: List[Check], task: str) -> bool:
+    """Whether the check passes for ``task``: it is ready and no row is broken."""
+    return readiness(checks)[task]["ready"] and not any(c.status == "failed" for c in checks)
+
+
+# --------------------------------------------------------------------------- #
+# Opt-in model probe
+# --------------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class ProbeResult:
+    provider: str
+    model: str
+    category: ProbeCategory
+    detail: str
+
+    @property
+    def ok(self) -> bool:
+        return self.category == "ok"
+
+
+def probe_model(provider: str, model: Optional[str] = None, *, client=None) -> ProbeResult:
+    """One real request, one token, no retries: does this provider answer for this model?
+
+    Opt-in because it can be billed. Exactly one call is made even on failure; the
+    clients are built with SDK retries off, so a credit error is not sent three times.
+    ``client`` lets a test supply the call; production builds the same client the
+    research loop uses, so the probe tests the path research will take.
+    """
+    from tradeflow.research.llm import DEFAULT_MODELS, build_llm_client
+
+    key = provider.lower()
+    if key not in PROVIDERS:
+        raise ValueError(f"Unknown provider {provider!r}. Choose from {list(PROVIDERS)}.")
+    chosen = model or DEFAULT_MODELS[key]
+    try:
+        llm = client or build_llm_client(key, chosen)
+        llm.complete("Reply with one word.", "ping", max_tokens=1)
+    except ModelProviderError as exc:
+        return ProbeResult(key, chosen, exc.category, exc.detail)
+    except ImportError:
+        extra = _PROVIDER_REQUIREMENTS.get(key, ("",))[0]
+        return ProbeResult(key, chosen, "unknown", f"the SDK for {key} is not installed (extra: {extra})")
+    except Exception as exc:  # noqa: BLE001 - a raw exception from an injected client
+        category, detail = classify_provider_error(exc)
+        return ProbeResult(key, chosen, category, detail)
+    return ProbeResult(key, chosen, "ok", "the provider answered one request")
 
 
 def _state_checks() -> List[Check]:
@@ -362,16 +549,18 @@ def _state_checks() -> List[Check]:
 
     root = state_root()
     checks = [
-        Check("state root", True, f"{root}{' (TRADEFLOW_HOME)' if os.environ.get('TRADEFLOW_HOME') else ''}"),
-        Check("research journal", True, str(trial_journal_path())),
-        Check("position ledger", True, str(default_ledger_path())),
+        Check(
+            "state root", "ready", f"{root}{' (TRADEFLOW_HOME)' if os.environ.get('TRADEFLOW_HOME') else ''}"
+        ),
+        Check("research journal", "ready", str(trial_journal_path())),
+        Check("position ledger", "ready", str(default_ledger_path())),
     ]
 
     worktree = git_worktree_containing(root)
     checks.append(
         Check(
             "state outside version control",
-            worktree is None,
+            "ready" if worktree is None else "failed",
             "not inside a git working tree"
             if worktree is None
             else (
@@ -379,6 +568,7 @@ def _state_checks() -> List[Check]:
                 "recorded here is one ignore-file edit from disclosure, and `git clean "
                 "-xd` would delete it, live position ledger included"
             ),
+            None if worktree is None else "set TRADEFLOW_HOME to a directory outside the working tree",
         )
     )
 
@@ -390,16 +580,17 @@ def _state_checks() -> List[Check]:
         checks.append(
             Check(
                 "earlier state found",
-                False,
+                "failed",
                 f"{orphaned / 'logs'} holds trials from when a checkout was its own "
                 f"state root. It is no longer being read. To keep using it: "
                 f"TRADEFLOW_HOME={orphaned}",
+                f"export TRADEFLOW_HOME={orphaned} to keep using it",
             )
         )
 
     packs = _installed_packs()
     if packs:
-        checks.append(Check("private packs installed", True, ", ".join(packs)))
+        checks.append(Check("private packs installed", "ready", ", ".join(packs)))
     return checks
 
 
@@ -451,9 +642,23 @@ def _writable_check() -> Check:
         probe = directory / ".write-probe"
         probe.write_text("")
         probe.unlink()
+    except PermissionError as exc:
+        # A host permission boundary, not a credentials problem: the fix is a different
+        # directory or different ownership, and no key will change it.
+        return Check(
+            "state directory",
+            "failed",
+            f"permission denied writing {directory}: {exc.strerror}",
+            "point TRADEFLOW_HOME at a directory you can write to, or fix its ownership",
+        )
     except OSError as exc:
-        return Check("state directory", False, f"{directory} is not writable ({exc.strerror})")
-    return Check("state directory", True, f"{directory} is writable")
+        return Check(
+            "state directory",
+            "failed",
+            f"cannot write {directory}: {exc.strerror}",
+            "point TRADEFLOW_HOME at a directory you can write to",
+        )
+    return Check("state directory", "ready", f"{directory} is writable")
 
 
 def _extras_checks() -> List[Check]:
@@ -467,14 +672,19 @@ def _extras_checks() -> List[Check]:
 
     checks = []
     for name, extra in extras.EXTRAS.items():
-        present = extras.installed(name)
+        if extras.installed(name):
+            checks.append(Check(f"extra: {name}", "ready", f"installed - {extra.unlocks}"))
+            continue
+        # An extra is `blocked` only where some task cannot run without it. Everything
+        # else is optional: absent is a fact about what is unlocked, not a failure.
+        gated = frozenset(extra.required_for)
         checks.append(
             Check(
                 f"extra: {name}",
-                present,
-                f"installed - {extra.unlocks}"
-                if present
-                else f"not installed - {extra.unlocks}:\n{extras.install_hint(name)}",
+                "blocked" if gated else "optional_missing",
+                f"not installed - {extra.unlocks}",
+                extras.install_hint(name),
+                gated,
             )
         )
     return checks

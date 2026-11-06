@@ -34,6 +34,7 @@ from typing import Any, Dict, List, Optional
 
 from tradeflow.analytics.series_comparison import MIN_OVERLAP as SERIES_MIN_OVERLAP
 from tradeflow.marketdata.base import MarketDataProvider
+from tradeflow.research.provider_errors import ModelProviderError
 from tradeflow.services.registry import STRATEGIES
 from tradeflow.settings import DATA_FEEDS
 from tradeflow.strategies import signals
@@ -1898,7 +1899,15 @@ def cmd_research(args) -> None:
     )
     proposer = build_proposer(args.provider, args.model, allow_code_gen=args.allow_code_gen)
     agent = ResearchAgent(args.strategy, data_client, proposer, cfg, seed=args.seed)
-    result = agent.run(universe, args.start, args.end)
+    try:
+        result = agent.run(universe, args.start, args.end)
+    except ModelProviderError as exc:
+        # Left as the journal already records it: inventing an outcome event for a
+        # session the provider cut short would be a claim nobody measured.
+        lines = [f"model provider {exc.provider}: {exc.category} \u2014 {exc.detail}"]
+        if exc.category == "quota":
+            lines.append("No retry was attempted; check the provider account's billing.")
+        sys.exit("\n".join(lines))
 
     print(f"\n=== Research session {agent.session_id} ===")
     print(
@@ -1969,8 +1978,14 @@ def cmd_init(args) -> None:
     if getattr(args, "dev_local_state", False):
         _print_dev_local_state()
         return
-    if args.check:
-        _print_doctor(setup.run_checks())
+    if args.check or getattr(args, "probe_model", False):
+        _print_doctor(
+            setup.run_checks(provider=args.provider),
+            task=args.task,
+            provider=args.provider,
+            probe=args.probe_model,
+            model=args.model,
+        )
         return
     if args.non_interactive:
         _init_non_interactive(args, setup)
@@ -2040,26 +2055,61 @@ def _print_dev_local_state() -> None:
     )
 
 
-def _print_doctor(checks) -> None:
-    """Every check, pass or fail, with an exit code that reflects the essentials.
+_STATUS_LABELS = {
+    "ready": "ok",
+    "blocked": "blocked",
+    "optional_missing": "optional",
+    "not_checked": "--",
+    "failed": "FAIL",
+}
 
-    A doctor reports the whole picture rather than stopping at the first problem —
-    but a missing credential is not the same as a missing optional extra, so only
-    the former fails the run.
+
+def _print_doctor(checks, *, task: str = "data", provider=None, probe: bool = False, model=None) -> None:
+    """Every check with its status, then what each task can and cannot do.
+
+    A doctor reports the whole picture rather than stopping at the first problem.
+    The exit code answers the question the reader asked (``--for``): a missing model
+    key does not fail a backtest check, and a missing optional extra never fails
+    anything. A broken state (unwritable directory) fails regardless of task.
     """
+    from tradeflow.services import setup
     from tradeflow.settings import state_root
 
     print("\nTradeFlow setup check\n")
     print(f"  state root: {state_root()}")
     print("  (journal, trial store, bar cache, and configs all live here)\n")
     for check in checks:
-        print(f"  [{'ok' if check.passed else 'FAIL'}] {check.name:<22} {check.detail}")
-    essential = [c for c in checks if not c.passed and not c.name.startswith("extra:")]
-    if essential:
-        print(f"\n{len(essential)} problem(s) to fix. Run `{_invocation('init')}` for the guided setup.")
+        label = _STATUS_LABELS[check.status]
+        print(f"  [{label}] {check.name:<22} {check.detail}")
+        if check.next_action:
+            for line in check.next_action.splitlines():
+                print(
+                    f"        -> {line.strip()}" if not line.startswith("    ") else f"        {line.strip()}"
+                )
+    ready = setup.readiness(checks)
+    print()
+    for name in setup.TASKS:
+        info = ready[name]
+        mark = "ready for:  " if info["ready"] else "blocked for: "
+        why = "" if info["ready"] else f" ({', '.join(info['blocking'])})"
+        unverified = f" [not verified: {', '.join(info['unverified'])}]" if info["unverified"] else ""
+        print(f"  {mark}{name}{why}{unverified}")
+
+    probe_failed = False
+    if probe:
+        if provider is None:
+            sys.exit("--probe-model needs --provider (anthropic, openai or ollama).")
+        print(f"\n  Probing {provider}: one request, one token, no retries (may be billed)...")
+        result = setup.probe_model(provider, model)
+        mark = "ok" if result.ok else "FAIL"
+        print(f"  [{mark}] {result.provider} / {result.model}  {result.category}: {result.detail}")
+        probe_failed = not result.ok
+
+    if not setup.doctor_ok(checks, task) or probe_failed:
+        print(f"\nNot ready for '{task}'. Run `{_invocation('init')}` for the guided setup.")
         raise SystemExit(1)
     print(
-        f"\nSetup looks good. `{_invocation('demo', make_target='demo')}` needs nothing; "
+        f"\nReady for '{task}'. `{_invocation('demo', make_target='demo')}` needs nothing; "
         f"`{_invocation('verdict')}` needs the keys above."
     )
 
@@ -6449,6 +6499,32 @@ def build_parser() -> argparse.ArgumentParser:
         "--check",
         action="store_true",
         help="Diagnose the current setup and exit — writes nothing, makes no network call",
+    )
+    init.add_argument(
+        "--for",
+        dest="task",
+        choices=("demo", "data", "research", "mcp"),
+        default="data",
+        help="The task to check readiness for; the exit code reflects it (default: data - "
+        "market-data commands, which need the Alpaca keys)",
+    )
+    init.add_argument(
+        "--provider",
+        choices=("anthropic", "openai", "ollama"),
+        default=None,
+        help="The model provider to check for `research` (SDK and key; no network)",
+    )
+    init.add_argument(
+        "--probe-model",
+        dest="probe_model",
+        action="store_true",
+        help="Make one small request to --provider's model (implies --check). This may be "
+        "billed by the provider; it is never retried",
+    )
+    init.add_argument(
+        "--model",
+        default=None,
+        help="The model --probe-model asks (default: the provider's research default)",
     )
     init.add_argument(
         "--non-interactive",

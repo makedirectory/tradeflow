@@ -248,7 +248,8 @@ def test_a_missing_extra_reports_the_exact_install_command(tmp_path):
         if not row.passed:
             # Which command is right depends on the copy running the test; either way
             # the row names the extra and carries a runnable instruction.
-            assert "uv sync --extra" in row.detail or "uv tool install --force" in row.detail
+            action = row.next_action or ""
+            assert "uv sync --extra" in action or "uv tool install --force" in action
 
 
 def test_the_doctor_never_prints_a_raw_credential(tmp_path):
@@ -262,13 +263,17 @@ def test_cli_check_exits_non_zero_when_credentials_are_missing(tmp_path, monkeyp
     from tradeflow import cli as main
 
     monkeypatch.setattr(
-        setup, "run_checks", lambda *a, **k: [setup.Check("APCA_API_KEY_ID", False, "missing")]
+        setup,
+        "run_checks",
+        lambda *a, **k: [
+            setup.Check("APCA_API_KEY_ID", "blocked", "missing", needed_for=frozenset({"data"}))
+        ],
     )
     args = main.build_parser().parse_args(["init", "--check"])
     with pytest.raises(SystemExit) as exc:
         args.func(args)
     assert exc.value.code == 1
-    assert "FAIL" in capsys.readouterr().out
+    assert "[blocked]" in capsys.readouterr().out
 
 
 def test_cli_check_ignores_missing_optional_extras(tmp_path, monkeypatch, capsys):
@@ -278,11 +283,13 @@ def test_cli_check_ignores_missing_optional_extras(tmp_path, monkeypatch, capsys
     monkeypatch.setattr(
         setup,
         "run_checks",
-        lambda *a, **k: [setup.Check("extra: viz", False, "not installed — uv sync --extra viz")],
+        lambda *a, **k: [
+            setup.Check("extra: viz", "optional_missing", "not installed — uv sync --extra viz")
+        ],
     )
     args = main.build_parser().parse_args(["init", "--check"])
     args.func(args)
-    assert "Setup looks good" in capsys.readouterr().out
+    assert "Ready for 'data'" in capsys.readouterr().out
 
 
 def test_cli_non_interactive_builds_the_env_from_the_environment(tmp_path, monkeypatch, capsys):
@@ -435,3 +442,190 @@ def test_a_written_settings_value_is_not_masked_in_the_confirmation(tmp_path):
     result = setup.write_env({"PAPER_TRADE": "true", "APCA_API_SECRET_KEY": REAL_SECRET}, tmp_path / ".env")
     assert result["updated"]["PAPER_TRADE"] == "true"
     assert REAL_SECRET not in str(result)
+
+
+# --- readiness per task -------------------------------------------------------
+from tradeflow.utils import extras as _extras  # noqa: E402
+
+GOOD_ENV = f"APCA_API_KEY_ID={REAL_KEY}\nAPCA_API_SECRET_KEY={REAL_SECRET}\n"
+MODEL_KEY = "sk-test-model-key-0123456789"
+
+
+def _present(monkeypatch, *, sdks=()):
+    """Pretend exactly these extras are installed (all others absent)."""
+    monkeypatch.setattr(_extras, "installed", lambda name: name in sdks)
+
+
+def _status(checks, name):
+    return next(c for c in checks if c.name == name)
+
+
+@pytest.mark.parametrize(
+    "keys, sdks, provider, ready, blocked",
+    [
+        # data-only: keys, no SDKs
+        (True, (), None, {"demo", "data"}, {"research", "mcp"}),
+        # selected provider without its SDK
+        (True, ("mcp",), "anthropic", {"demo", "data", "mcp"}, {"research"}),
+        # SDK present, no key
+        (True, ("ai", "mcp"), "anthropic", {"demo", "data", "mcp"}, {"research"}),
+        # SDK and key both there
+        (True, ("ai", "mcp"), "ollama", {"demo", "data", "mcp", "research"}, set()),
+        # no market keys: only the demo runs
+        (False, ("ai", "mcp"), "ollama", {"demo"}, {"data", "mcp", "research"}),
+    ],
+)
+def test_readiness_is_computed_per_task(tmp_path, monkeypatch, keys, sdks, provider, ready, blocked):
+    _present(monkeypatch, sdks=sdks)
+    for name in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    path = _write(tmp_path, GOOD_ENV if keys else "")
+    result = setup.readiness(setup.run_checks(path, environ={}, provider=provider))
+    assert {t for t, v in result.items() if v["ready"]} == ready
+    assert {t for t, v in result.items() if not v["ready"]} == blocked
+
+
+def test_a_selected_provider_names_what_is_missing(tmp_path, monkeypatch):
+    _present(monkeypatch, sdks=())
+    checks = setup.run_checks(_write(tmp_path, GOOD_ENV), environ={}, provider="anthropic")
+    row = _status(checks, "model: anthropic")
+    assert row.status == "blocked"
+    assert "'ai' extra" in row.detail and "ANTHROPIC_API_KEY" in row.detail
+
+    _present(monkeypatch, sdks=("ai",))
+    row = _status(
+        setup.run_checks(_write(tmp_path, GOOD_ENV), environ={}, provider="anthropic"), "model: anthropic"
+    )
+    assert row.status == "blocked" and "ANTHROPIC_API_KEY" in row.detail and "extra" not in row.detail
+
+
+def test_a_ready_provider_masks_its_key(tmp_path, monkeypatch):
+    _present(monkeypatch, sdks=("ai",))
+    checks = setup.run_checks(
+        _write(tmp_path, GOOD_ENV), environ={"ANTHROPIC_API_KEY": MODEL_KEY}, provider="anthropic"
+    )
+    row = _status(checks, "model: anthropic")
+    assert row.status == "ready" and MODEL_KEY not in row.detail
+
+
+def test_with_nothing_selected_any_ready_provider_makes_research_ready(tmp_path, monkeypatch):
+    _present(monkeypatch, sdks=("openai",))
+    checks = setup.run_checks(
+        _write(tmp_path, GOOD_ENV), environ={"OPENAI_API_KEY": MODEL_KEY}, provider=None
+    )
+    assert setup.readiness(checks)["research"]["ready"]
+    # ...and an unselected, unconfigured provider is optional, not blocked.
+    assert _status(checks, "model: anthropic").status == "optional_missing"
+
+
+def test_ollama_is_unverified_until_probed(tmp_path, monkeypatch):
+    _present(monkeypatch, sdks=())
+    checks = setup.run_checks(_write(tmp_path, GOOD_ENV), environ={}, provider=None)
+    assert _status(checks, "model: ollama").status == "not_checked"
+    assert not setup.readiness(checks)["research"]["ready"]
+    chosen = setup.readiness(setup.run_checks(_write(tmp_path, GOOD_ENV), environ={}, provider="ollama"))
+    assert chosen["research"]["ready"] and chosen["research"]["unverified"] == ["model: ollama"]
+
+
+def test_optional_extras_missing_are_optional_and_exit_zero(tmp_path, monkeypatch):
+    _present(monkeypatch, sdks=("mcp",))
+    _stub_state(monkeypatch)
+    checks = setup.run_checks(_write(tmp_path, GOOD_ENV), environ={})
+    for name in ("store", "viz", "optimize", "portfolio", "ai", "openai"):
+        assert _status(checks, f"extra: {name}").status == "optional_missing"
+    assert setup.doctor_ok(checks, "data")
+
+
+def test_an_unwritable_state_root_is_a_permission_failure_not_a_credential_one(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    def deny(self, *a, **k):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(Path, "write_text", deny)
+    row = _status(setup.run_checks(tmp_path / "absent.env", environ={}), "state directory")
+    assert row.status == "failed"
+    assert "permission denied writing" in row.detail
+    assert "credential" not in (row.detail + (row.next_action or "")).lower()
+    assert "TRADEFLOW_HOME" in row.next_action
+
+
+def _run_init(monkeypatch, capsys, *argv):
+    from tradeflow import cli as main
+
+    args = main.build_parser().parse_args(["init", *argv])
+    code = 0
+    try:
+        args.func(args)
+    except SystemExit as exc:
+        code = exc.code
+    return code, capsys.readouterr().out
+
+
+@pytest.fixture
+def keyed_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("APCA_API_KEY_ID", REAL_KEY)
+    monkeypatch.setenv("APCA_API_SECRET_KEY", REAL_SECRET)
+    for name in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_an_optional_extra_is_never_printed_as_fail(monkeypatch, capsys, keyed_env):
+    _present(monkeypatch, sdks=())
+    _, out = _run_init(monkeypatch, capsys, "--check")
+    extra_lines = [line for line in out.splitlines() if "extra:" in line]
+    assert extra_lines
+    assert not any("[FAIL]" in line for line in extra_lines)
+    assert any("[optional]" in line for line in extra_lines)
+
+
+def test_a_missing_model_does_not_block_a_backtest(monkeypatch, capsys, keyed_env):
+    _present(monkeypatch, sdks=())
+    _stub_state(monkeypatch)
+    code, out = _run_init(monkeypatch, capsys, "--check", "--for", "data")
+    assert code == 0
+    assert "ready for:  data" in out and "blocked for: research" in out
+
+
+def test_research_is_blocked_without_any_provider(monkeypatch, capsys, keyed_env):
+    _present(monkeypatch, sdks=())
+    _stub_state(monkeypatch)
+    code, out = _run_init(monkeypatch, capsys, "--check", "--for", "research")
+    assert code == 1
+    assert "model provider" in out
+
+
+def _stub_state(monkeypatch):
+    """Keep developer-machine state warnings (a checkout's earlier journal) out of the
+    exit-code assertions: they are real rows, but not what these tests are about."""
+    monkeypatch.setattr(setup, "_state_checks", lambda: [])
+
+
+def test_a_plain_check_makes_no_network_call(monkeypatch, capsys, keyed_env):
+    def boom(*a, **k):
+        raise AssertionError("network used by a plain check")
+
+    monkeypatch.setattr("urllib.request.urlopen", boom)
+    monkeypatch.setattr("socket.create_connection", boom)
+    import tradeflow.research.llm as llm_mod
+
+    monkeypatch.setattr(llm_mod, "build_llm_client", boom)
+    _stub_state(monkeypatch)
+    code, _ = _run_init(monkeypatch, capsys, "--check", "--provider", "ollama")
+    assert code == 0
+
+
+def test_probe_model_needs_a_provider_and_exits_non_zero_on_a_failed_probe(monkeypatch, capsys, keyed_env):
+    _stub_state(monkeypatch)
+    code, _ = _run_init(monkeypatch, capsys, "--probe-model")
+    assert code != 0
+
+    monkeypatch.setattr(
+        setup, "probe_model", lambda p, m=None, **k: setup.ProbeResult(p, "m", "auth", "rejected")
+    )
+    code, out = _run_init(monkeypatch, capsys, "--probe-model", "--provider", "ollama")
+    assert code == 1 and "[FAIL] ollama / m  auth: rejected" in out
+
+    monkeypatch.setattr(setup, "probe_model", lambda p, m=None, **k: setup.ProbeResult(p, "m", "ok", "fine"))
+    code, out = _run_init(monkeypatch, capsys, "--probe-model", "--provider", "ollama")
+    assert code == 0 and "[ok] ollama / m  ok" in out
