@@ -887,7 +887,10 @@ def test_one_trial_reports_an_undeflated_sharpe_by_that_name():
 
     assert alone["deflation_applied"] is False
     assert campaign["deflation_applied"] is True
-    assert "Sharpe (undeflated)" in format_backtest_report(alone, 100.0, 103.0, title="t")
+    rendered = format_backtest_report(alone, 100.0, 103.0, title="t")
+    assert "PSR, undeflated (1 trial)" in rendered
+    # The value is a probability; a label reading "Sharpe" had it taken for a Sharpe ratio.
+    assert "Sharpe (undeflated)" not in rendered
     assert "Deflated Sharpe" in format_backtest_report(campaign, 100.0, 103.0, title="t")
 
 

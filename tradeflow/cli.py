@@ -1644,11 +1644,15 @@ def _print_cached_walkforward(row: Dict[str, Any]) -> None:
     """The reduced report served for a memoized walk-forward: the OOS aggregate
     and verdict the trial store denormalized, not the full per-fold table (that
     detail isn't persisted). Re-run with --force for it."""
+    from tradeflow.analytics.reporting import _cell
+
     print("\n=== Walk-Forward Validation (cached — per-fold detail not stored) ===")
+    # `_cell` renders an unrecorded field as unrecorded; `or 0` printed a trial that
+    # never stored a Sharpe as one that scored 0.000.
     print(
-        f"  OOS Sharpe {row.get('oos_sharpe') or 0:.3f}  MaxDD {row.get('oos_max_dd') or 0:.2f}%  "
-        f"PF {row.get('oos_profit_factor') or 0:.2f}  DSR {_dsr_text(row.get('deflated_sharpe'))}  "
-        f"trades {row.get('oos_trades') or 0}"
+        f"  OOS Sharpe {_cell(row.get('oos_sharpe'))}  MaxDD {_cell(row.get('oos_max_dd'), '{:.2f}%')}  "
+        f"PF {_cell(row.get('oos_profit_factor'), '{:.2f}')}  DSR {_dsr_text(row.get('deflated_sharpe'))}  "
+        f"trades {_cell(row.get('oos_trades'), '{:.0f}')}"
     )
     efficiency = row.get("efficiency")
     n_trials = row.get("n_trials_in_session")

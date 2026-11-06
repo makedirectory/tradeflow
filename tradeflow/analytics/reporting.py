@@ -274,7 +274,9 @@ def format_backtest_report(
             if key == "deflated_sharpe_ratio" and undeflated:
                 # One trial deflates against nothing, so the row says what it is rather
                 # than borrowing the name of a correction that was not applied.
-                label = "  Sharpe (undeflated)"
+                # Named for what the number is - a probability, not a Sharpe ratio, which
+                # the earlier "Sharpe (undeflated)" read as.
+                label = "  PSR, undeflated (1 trial)"
             if key in metrics and _is_probability(key):
                 section_lines.append(f"{label:28}{_prob_cell(metrics[key], key)}")
             elif key in metrics:

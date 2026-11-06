@@ -74,7 +74,9 @@ without guessing. The history below keeps the old name as it was written.
   everywhere (terminal, chart, HTML report, `trials list/show/best`), and a very small one
   as `<0.001`. Before, the terminal printed `0.00` (which reads as a probability of zero),
   the chart `4.4e-04`, and a failing 0.496 printed the same as the 0.5 gate. An
-  unrecorded deflated Sharpe on a reused walk-forward prints `—`, not `0.000`.
+  unrecorded metric on a reused walk-forward prints `—`, not `0`. A one-trial backtest
+  labels its undeflated value `PSR, undeflated (1 trial)` - it is a probability, not the
+  Sharpe ratio the old `Sharpe (undeflated)` label suggested.
 - `quantred demo` prints its scorecard without the hundred progress lines above it, and
   an offline cache miss names `quantred cache warm`, not a script an installed copy
   does not have.

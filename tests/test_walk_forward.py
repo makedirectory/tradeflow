@@ -734,3 +734,16 @@ def test_the_trial_listing_shows_recorded_time_in_the_zone_the_filter_reads():
     listing = format_trials_table([{"id": "t1", "kind": "backtest", "ts": "2026-11-07T03:00:00.5+00:00"}])
     assert "2026-11-06 22:00:00 EST" in listing
     assert "2026-11-07" not in listing
+
+
+def test_a_reused_walk_forward_shows_unrecorded_metrics_as_unrecorded(capsys):
+    """The reused line printed `or 0` for every field, so a trial that never stored a Sharpe
+    read as one that scored 0.000 — absent rendered as zero."""
+    from tradeflow.cli import _print_cached_walkforward
+
+    _print_cached_walkforward(
+        {"oos_sharpe": None, "oos_max_dd": None, "oos_profit_factor": None, "oos_trades": None}
+    )
+    line = capsys.readouterr().out.splitlines()[2]
+    assert "OOS Sharpe —" in line and "trades —" in line
+    assert "0.000" not in line and "0.00%" not in line
