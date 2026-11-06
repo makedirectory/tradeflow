@@ -103,3 +103,54 @@ def test_info_attribution_prints_the_ic_report_and_the_attribution_failure(monke
     out = capsys.readouterr().out
     assert "Information report" in out
     assert out.index("Information report") < out.index("ATTRIBUTION-SECTION")
+
+
+# --- deflated Sharpe: do not call it deflated when no deflation was applied ----------
+def test_html_metrics_label_an_undeflated_sharpe_and_carry_units():
+    from tradeflow.analytics.htmlreport import _backtest_sections
+
+    metrics = {
+        "deflated_sharpe_ratio": 0.537,
+        "deflation_applied": False,
+        "total_return": 0.2274,
+        "total_trades": 12,
+        "max_drawdown": 3.5,
+    }
+    html_out = "".join(_backtest_sections({"metrics": metrics}, {}))
+    assert "PSR, undeflated" in html_out
+    assert "0.227%" in html_out or "0.23%" in html_out
+    assert "3.50%" in html_out
+    metrics["deflation_applied"] = True
+    html_out = "".join(_backtest_sections({"metrics": metrics}, {}))
+    assert "PSR, undeflated" not in html_out
+
+
+def test_every_percent_metric_the_terminal_prints_has_a_declared_unit():
+    from tradeflow.analytics import reporting
+    from tradeflow.optimization.walk_forward import UNIT_DECLARED
+
+    pct_keys = [k for k, _label, fmt in reporting._ROWS if fmt.endswith("%")]
+    assert pct_keys
+    assert set(pct_keys) <= UNIT_DECLARED
+
+
+def test_optimization_payload_says_its_deflated_sharpe_is_not_deflated():
+    from datetime import datetime
+
+    from tests.fakes import DictMarketData
+    from tradeflow.marketdata.client import MarketDataClient
+    from tradeflow.services import analysis
+
+    syms = ["S0", "S1", "S2"]
+    data = {s: make_ohlcv(n=300, seed=i, freq="1D") for i, s in enumerate([*syms, "SPY"])}
+    r = analysis.run_optimization(
+        MarketDataClient(DictMarketData(data)),
+        "demo_trend",
+        syms,
+        datetime(2023, 1, 1),
+        datetime(2024, 12, 31),
+        method="random",
+        max_evals=3,
+        seed=1,
+    )
+    assert "NOT deflated" in r["deflation_note"]

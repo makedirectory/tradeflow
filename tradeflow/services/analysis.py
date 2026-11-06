@@ -819,6 +819,16 @@ def _worker_data_spec(workers: Optional[int], cache_dir: Optional[Any], offline:
     return DataSpec(kind="cache", cache_dir=str(cache_dir) if cache_dir else None, offline=offline)
 
 
+#: Each optimization row is one backtest scored alone, so its ``deflated_sharpe_ratio``
+#: is the probabilistic Sharpe under another name; the search itself is the selection
+#: bias and no row corrects for it.
+DEFLATION_NOTE_OPTIMIZATION = (
+    "deflated_sharpe_ratio on these rows is NOT deflated: each row is a single backtest, so it "
+    "equals probabilistic_sharpe_ratio (deflation_applied is false). The best of N rows is the "
+    "selection bias; validate with run_walk_forward, which deflates across all trials."
+)
+
+
 def run_optimization(
     data_client: MarketDataClient,
     strategy: str,
@@ -963,6 +973,7 @@ def run_optimization(
         "results_csv": results_csv,
         "seed": seed,
         "gross": gross,
+        "deflation_note": DEFLATION_NOTE_OPTIMIZATION,
         "note": "IN-SAMPLE. Selecting the best of many configs inflates these. "
         "Validate out-of-sample with run_walk_forward (it applies the Deflated Sharpe).",
     }

@@ -331,7 +331,37 @@ _GATE_VALUE_KINDS = {
     "net_of_cost_alpha": "fine",
     "sample_size": "count",
     "portfolio_feasible": "flag",
+    # Backtest metrics stored in percent units (the terminal prints each with a "%").
+    "total_return": "percent",
+    "buy_hold_return": "percent",
+    "benchmark_buy_hold_return": "percent",
+    "cagr": "percent",
+    "annualized_volatility": "percent",
+    "max_drawdown": "percent",
+    "var_95": "percent",
+    "var_99": "percent",
+    "cvar_95": "percent",
+    "exposure": "percent",
+    "win_rate": "percent",
+    "mae_pct": "percent",
+    "mfe_pct": "percent",
+    "downside_deviation": "percent",
+    "best_period": "percent",
+    "worst_period": "percent",
+    "avg_win": "money",
+    "avg_loss": "money",
+    "largest_win": "money",
+    "largest_loss": "money",
+    "expectancy": "money",
+    "max_drawdown_duration": "days",
+    "avg_trade_duration": "hours",
+    "max_consecutive_wins": "count",
+    "max_consecutive_losses": "count",
+    "deflation_applied": "flag",
 }
+
+#: Every name with a declared unit, for renderers that walk a whole metrics dict.
+UNIT_DECLARED = frozenset(_GATE_VALUE_KINDS)
 
 #: Every name measured as a probability, for renderers that walk a whole metrics dict.
 PROBABILITY_METRICS = frozenset(k for k, v in _GATE_VALUE_KINDS.items() if v == "probability")
@@ -367,6 +397,12 @@ def format_gate_value(gate_name: str, value: Any) -> str:
         return f"{number:.4g}"
     if kind == "percent":
         return f"{number:.2f}%"
+    if kind == "money":
+        return f"-${abs(number):,.2f}" if number < 0 else f"${number:,.2f}"
+    if kind == "days":
+        return f"{number:.0f} days"
+    if kind == "hours":
+        return f"{number:.2f} h"
     if kind == "probability":
         # Three decimals so a failing 0.496 does not print as the 0.5 gate it missed.
         # Below that, "0.000" reads as "certainly zero" and the chart once printed the

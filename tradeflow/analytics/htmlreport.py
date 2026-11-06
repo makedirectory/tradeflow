@@ -150,13 +150,26 @@ def _num(value: Any, spec: str = "{:.4g}") -> str:
 
 
 def _metric_cell(name: str, value: Any) -> str:
-    """One metric by name: probabilities through the shared unit table, so this report
-    and the terminal print the same text for a deflated Sharpe; everything else as-is."""
-    from tradeflow.optimization.walk_forward import PROBABILITY_METRICS, format_gate_value
+    """One metric by name, through the shared unit table so a percent shows its ``%``,
+    a probability its three decimals and a flag yes/no - the same text the terminal
+    prints. A metric with no declared unit is a ratio and keeps the generic format."""
+    from tradeflow.optimization.walk_forward import UNIT_DECLARED, format_gate_value
 
-    if value is not None and name in PROBABILITY_METRICS:
+    if value is not None and name in UNIT_DECLARED:
         return format_gate_value(name, value)
     return _num(value)
+
+
+def _metric_label(name: str, metrics: Dict[str, Any]) -> str:
+    """The row label for a metric: an undeflated 'deflated' Sharpe says what it is.
+
+    ``deflation_applied`` is false for a single trial, where the value is the
+    probabilistic Sharpe under another name. The stored key is unchanged; only the
+    label is.
+    """
+    if name == "deflated_sharpe_ratio" and metrics.get("deflation_applied") is False:
+        return "PSR, undeflated (1 trial) [deflated_sharpe_ratio]"
+    return name
 
 
 def _pct(value: Any, spec: str = "{:+.2%}") -> str:
@@ -694,7 +707,10 @@ def _backtest_sections(result: Dict[str, Any], extras: Dict[str, Any]) -> List[s
     out.append(
         _card(
             "Metrics",
-            _table(["Metric", "Value"], [[k, _metric_cell(k, v)] for k, v in sorted(metrics.items())]),
+            _table(
+                ["Metric", "Value"],
+                [[_metric_label(k, metrics), _metric_cell(k, v)] for k, v in sorted(metrics.items())],
+            ),
         )
     )
     out.append(_card("Run", _kv(_backtest_run_rows(result))))
