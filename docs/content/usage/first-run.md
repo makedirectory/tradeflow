@@ -59,8 +59,9 @@ exists, and only then find out whether the keys work.
 5. **Asks whether to set up a model provider for `research`**: `none` (the default),
    `anthropic`, `openai` or `ollama`. Skipping is fine; only the autonomous research
    agent uses a model, and you can redo this step any time. For a hosted provider it
-   asks for the key (hidden); for Ollama it asks for the endpoint, a response timeout
-   and an optional context length, validating each. It never makes a request to the
+   asks for the key (hidden); for Ollama it asks for the endpoint, a response timeout,
+   an optional context length and the model name to probe (validating each; the name is
+   only used to print the probe command, since `research` takes `--model`). It never makes a request to the
    provider on its own, and if the provider's SDK extra is missing it prints the
    command that installs it, plus the exact `--probe-model` command (see below).
 6. **Offers a first cache warm** (a small universe, about a year of daily bars) so
@@ -79,25 +80,28 @@ TradeFlow setup check
   state root: ~/.tradeflow
   (journal, trial store, bar cache, and configs all live here)
 
-  [ok] version                tradeflow-engine 2.3.0
-  [optional] env file         ~/.tradeflow/.env not found
+  [ok]       version                tradeflow-engine 2.3.0
+  [optional] env file               ~/.tradeflow/.env not found
         -> run `init` to create it, or export the keys as environment variables
-  [blocked] APCA_API_KEY_ID        (not set) - no command that touches the market will run
+  [blocked]  APCA_API_KEY_ID        (not set) - no command that touches the market will run
         -> run `init` to enter it, or export it as an environment variable
-  [blocked] APCA_API_SECRET_KEY    (not set) - no command that touches the market will run
+  [blocked]  APCA_API_SECRET_KEY    (not set) - no command that touches the market will run
         -> run `init` to enter it, or export it as an environment variable
-  [ok] PAPER_TRADE            true - orders go to the paper account
-  [ok] state directory        ~/.tradeflow/logs is writable
-  [ok] extra: mcp             installed - the MCP server for AI clients
+  [ok]       PAPER_TRADE            true - orders go to the paper account
+  [ok]       state directory        ~/.tradeflow/logs is writable
+  [ok]       extra: mcp             installed - the MCP server for AI clients
   [optional] extra: viz             not installed - charts in `--chart` and in HTML reports
-        uv tool install --force 'tradeflow-engine[mcp,viz]==2.3.0'
-  [--] model: ollama          endpoint http://localhost:11434 (reachability not checked; run with --probe-model)
-  [blocked] model provider         no provider is set up for `research`
+  [--]       model: ollama          endpoint http://localhost:11434 (reachability not checked; run with --probe-model)
+  [blocked]  model provider         no provider is set up for `research`
 
   ready for:  demo
   blocked for: data (APCA_API_KEY_ID, APCA_API_SECRET_KEY)
   blocked for: research (APCA_API_KEY_ID, APCA_API_SECRET_KEY, model provider)
   blocked for: mcp (APCA_API_KEY_ID, APCA_API_SECRET_KEY)
+
+  Missing extras (viz) - one command adds them all:
+    With uv tool: uv tool install --force 'tradeflow-engine[mcp,viz]==2.3.0'
+    In an activated venv: python -m pip install 'tradeflow-engine[viz]==2.3.0'
 ```
 
 That is a trimmed example from a machine with no keys; your rows will differ (the
@@ -113,7 +117,7 @@ Each row has one of five states, and the summary says what each *task* can do:
 | `[ok]` | verified locally |
 | `[blocked]` | a task needs it and it is missing; the row names the next action |
 | `[optional]` | an extra or provider you have not asked for |
-| `[--]` | needs the network or was not requested (Ollama reachability) |
+| `[--]` | needs the network or was not requested (Ollama reachability). A configured Ollama endpoint is listed as *unverified* for `research`, not blocking, until `--probe-model` has run; after it the row shows the probe's result |
 | `[FAIL]` | a broken state, such as a state directory you may not write to |
 
 `--for {demo,data,research,mcp}` picks the task the exit code answers for (default
@@ -133,8 +137,14 @@ correction after it. Better to learn that before the first run.
 ### Is the model actually reachable? `--probe-model`
 
 ```bash
-tradeflow init --probe-model --provider anthropic
+tradeflow init --probe-model --provider anthropic --for research
 ```
+
+`--for research` makes the exit code answer for the research task (the market-data keys
+the agent backtests with, plus a provider); without it the check defaults to `data`,
+which ignores the provider. Either way the probe itself runs first and its result is
+folded into the provider's row, so the table and the line beneath it agree. A failed
+probe always exits non-zero.
 
 Makes **one** request of one token, with no retries, and names the outcome: `auth`,
 `quota` (an empty balance), `rate_limited`, `unavailable` (the provider is overloaded
@@ -219,9 +229,23 @@ APCA_API_KEY_ID=... APCA_API_SECRET_KEY=... tradeflow init --non-interactive
 ```
 
 Builds the `.env` purely from environment variables, with no prompts and no retry
-loop — for scripts, containers, and any shell where `getpass` has no TTY. The model
-settings are read the same way when set: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
-`OLLAMA_BASE_URL`, `OLLAMA_TIMEOUT`, `OLLAMA_NUM_CTX`.
+loop — for scripts, containers, and any shell where `getpass` has no TTY. The Alpaca keys
+and `PAPER_TRADE` are copied when set.
+
+**Model settings are copied only for the provider you name with `--provider`**, and only
+that provider's variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `OLLAMA_BASE_URL` /
+`OLLAMA_TIMEOUT` / `OLLAMA_NUM_CTX`):
+
+```bash
+ANTHROPIC_API_KEY=... tradeflow init --non-interactive --provider anthropic
+```
+
+Without `--provider`, model variables in the environment are left alone and named in the
+output as not copied. Those keys are often exported for unrelated tools, and a billable
+key should not land in a project file because the shell happened to hold it.
+
+`--provider`, `--for` and `--model` are refused where the mode would discard them (for
+example `--provider` with the interactive wizard) rather than ignored.
 
 ## What it will not do
 
@@ -241,6 +265,9 @@ Rewrites are careful about that:
   `APCA_API_KEY_ID` / `APCA_API_SECRET_KEY` / `PAPER_TRADE` and the model settings
   above survive byte for byte unless you answer them.
 - **A backup is written first**, to `.env.bak`, before any modification.
+- **Both files are owner-only (`0600`).** The file can hold API keys that bill; it is
+  created private rather than tightened afterwards, and the backup is restricted too,
+  whatever mode your original had.
 - **The write is atomic** — a temp file and a rename, so an interruption leaves
   either the old file or the new one, never a torn one that would read as
   half-configured credentials.

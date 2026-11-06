@@ -81,9 +81,10 @@ model. A key is read hidden and an existing one is never blanked; for Ollama it 
 for the endpoint, a response timeout and an optional context length. It does not test
 the connection for you - it prints the `init --check --for research --provider <name>
 --probe-model` command to run when you are ready (a hosted provider bills one tiny
-request). With `--non-interactive` the same choices come from `ANTHROPIC_API_KEY`,
-`OPENAI_API_KEY`, `OLLAMA_BASE_URL`, `OLLAMA_TIMEOUT` and `OLLAMA_NUM_CTX` in the
-environment.
+request). With `--non-interactive --provider <name>` the same choices come from that
+provider's variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `OLLAMA_BASE_URL`,
+`OLLAMA_TIMEOUT` and `OLLAMA_NUM_CTX`) in the environment; without `--provider`, model
+variables are not copied.
 
 The closing steps also say how an MCP client attaches: the client launches
 `tradeflow mcp` itself over stdio, so you add it to the client's configuration rather

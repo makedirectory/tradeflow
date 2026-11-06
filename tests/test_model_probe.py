@@ -114,7 +114,9 @@ def test_wording_is_the_fallback_when_nothing_structured_settles_it():
     )
     assert classify_provider_error(credit)[0] == "quota"
     # ... but a bare mention of "billing" is not evidence of an empty balance.
-    assert classify_provider_error(_StatusError(429, None, "slow down; billing page: ..."))[0] == "rate_limited"
+    assert (
+        classify_provider_error(_StatusError(429, None, "slow down; billing page: ..."))[0] == "rate_limited"
+    )
     other = _StatusError(400, {"message": "max_tokens must be positive"}, type="invalid_request_error")
     assert classify_provider_error(other)[0] == "unknown"
 

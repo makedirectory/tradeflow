@@ -20,14 +20,14 @@ import shutil
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, FrozenSet, List, Literal, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, FrozenSet, List, Literal, Optional, Tuple
 
-from tradeflow.research.provider_errors import (
-    ModelProviderError,
-    ProbeCategory,
-    classify_provider_error,
-)
 from tradeflow.settings import _PLACEHOLDERS, DISTRIBUTION_NAME, ENV_PATH
+
+if TYPE_CHECKING:  # pragma: no cover
+    # Typing only: importing the research package at runtime pulls in the backtest engine,
+    # numpy and pandas for a module the doctor imports on every `init`.
+    from tradeflow.research.provider_errors import ProbeCategory
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +51,9 @@ SECRET_KEYS = ("APCA_API_KEY_ID", "APCA_API_SECRET_KEY", "ANTHROPIC_API_KEY", "O
 
 #: The model providers ``init`` can set up, and the extra each hosted one needs.
 MODEL_PROVIDERS = ("anthropic", "openai", "ollama")
+
+#: The ``.env`` / environment names that mean "an Ollama endpoint was set up".
+_OLLAMA_KEYS = ("OLLAMA_BASE_URL", "OLLAMA_TIMEOUT", "OLLAMA_NUM_CTX")
 PROVIDER_EXTRA = {"anthropic": "ai", "openai": "openai"}
 PROVIDER_KEYS = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}
 
@@ -247,6 +250,7 @@ def write_env(updates: Dict[str, str], path: Optional[Any] = None, *, backup: bo
     if backup and env_path.exists():
         backup_path = env_path.with_suffix(env_path.suffix + ".bak")
         shutil.copy2(env_path, backup_path)
+        _owner_only(backup_path)  # a copy of the same secrets, whatever mode the original had
 
     remaining = dict(updates)
     out_lines: List[str] = []
@@ -261,7 +265,12 @@ def write_env(updates: Dict[str, str], path: Optional[Any] = None, *, backup: bo
         out_lines.extend(f"{key}={value}" for key, value in remaining.items())
 
     temp_path = env_path.with_name(env_path.name + ".tmp")
-    temp_path.write_text("\n".join(out_lines) + "\n")
+    # Created owner-only, not chmod'd afterwards: the file holds API keys that can be
+    # billed, and a window where it exists world-readable is still a disclosure.
+    fd = os.open(temp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as handle:
+        handle.write("\n".join(out_lines) + "\n")
+    _owner_only(temp_path)  # O_CREAT's mode is ignored for a leftover temp file that already exists
     try:
         os.replace(temp_path, env_path)
     except OSError:
@@ -276,6 +285,14 @@ def write_env(updates: Dict[str, str], path: Optional[Any] = None, *, backup: bo
         # Same rule as EnvState.summary: mask credentials, show plain settings.
         "updated": {key: (mask(value) if key in SECRET_KEYS else value) for key, value in updates.items()},
     }
+
+
+def _owner_only(path: Path) -> None:
+    """Restrict ``path`` to its owner (a no-op where the platform has no such mode)."""
+    try:
+        os.chmod(path, 0o600)
+    except OSError:  # pragma: no cover - e.g. a filesystem without POSIX modes
+        pass
 
 
 # --------------------------------------------------------------------------- #
@@ -396,6 +413,7 @@ def run_checks(
     environ: Optional[Dict[str, str]] = None,
     *,
     provider: Optional[str] = None,
+    probe: Optional["ProbeResult"] = None,
 ) -> List[Check]:
     """Diagnose the current setup: one row per check, all of them evaluated.
 
@@ -450,19 +468,25 @@ def run_checks(
     checks.append(_writable_check())
     checks.extend(_state_checks())
     checks.extend(_extras_checks())
-    checks.extend(_model_checks(state, environ, provider))
+    checks.extend(_model_checks(state, environ, provider, probe))
     return checks
 
 
-def _model_checks(state: EnvState, environ: Optional[Dict[str, str]], provider: Optional[str]) -> List[Check]:
+def _model_checks(
+    state: EnvState,
+    environ: Optional[Dict[str, str]],
+    provider: Optional[str],
+    probe: Optional["ProbeResult"] = None,
+) -> List[Check]:
     """One row per model provider, from local facts only: SDK importable, key present,
     endpoint configured. Nothing here opens a connection.
 
     The *selected* provider (``--provider``) gates ``research``; unselected ones are
     informational. With nothing selected a single ``model provider`` row gates research
-    on there being at least one provider that is verifiably usable - Ollama's
-    reachability cannot be known without a request, so it never counts as ready by
-    itself.
+    on there being at least one provider that is usable. Ollama's reachability cannot be
+    known without a request, so a configured one is *unverified* (listed, not blocking)
+    until a probe has run; ``probe`` is that result, folded into the selected provider's
+    row so the table agrees with the line printed beneath it.
     """
     from tradeflow.settings import SettingsError, ollama_base_url
     from tradeflow.utils import extras
@@ -474,6 +498,7 @@ def _model_checks(state: EnvState, environ: Optional[Dict[str, str]], provider: 
 
     rows: List[Check] = []
     ready_providers: List[str] = []
+    ollama_configured: Optional[str] = None
     for name in PROVIDERS:
         selected = provider == name
         gate = frozenset({"research"}) if selected else frozenset()
@@ -484,11 +509,18 @@ def _model_checks(state: EnvState, environ: Optional[Dict[str, str]], provider: 
             except SettingsError as exc:
                 rows.append(Check(label, "failed", str(exc), "fix the setting named above", gate))
                 continue
+            configured = any(resolved(k) for k in _OLLAMA_KEYS)
+            if configured:
+                ollama_configured = endpoint
+            if probe is not None and probe.provider == name:
+                rows.append(_probed_row(label, probe, f"endpoint {endpoint}", gate))
+                continue
             rows.append(
                 Check(
                     label,
                     "not_checked",
-                    f"endpoint {endpoint} (reachability not checked; run with --probe-model)",
+                    f"{'configured at' if configured else 'default endpoint'} {endpoint} "
+                    "(reachability not checked; run with --probe-model)",
                     None,
                     gate,
                 )
@@ -500,7 +532,11 @@ def _model_checks(state: EnvState, environ: Optional[Dict[str, str]], provider: 
         key_ok = not is_placeholder(key)
         if sdk_ok and key_ok:
             ready_providers.append(name)
-            rows.append(Check(label, "ready", f"SDK installed; {key_name} {mask(key)}", None, gate))
+            detail = f"SDK installed; {key_name} {mask(key)}"
+            if probe is not None and probe.provider == name:
+                rows.append(_probed_row(label, probe, detail, gate))
+                continue
+            rows.append(Check(label, "ready", detail, None, gate))
             continue
         missing = []
         actions = []
@@ -523,19 +559,32 @@ def _model_checks(state: EnvState, environ: Optional[Dict[str, str]], provider: 
 
     if provider is None:
         usable = bool(ready_providers)
-        rows.append(
-            Check(
+        if usable:
+            row = Check(
                 "model provider",
-                "ready" if usable else "blocked",
-                f"{', '.join(ready_providers)} usable for research"
-                if usable
-                else "no provider is set up for `research` (Ollama is not verified without --probe-model)",
-                None
-                if usable
-                else "install an SDK extra and set its key, or name a local model with --provider ollama",
+                "ready",
+                f"{', '.join(ready_providers)} usable for research",
+                None,
                 frozenset({"research"}),
             )
-        )
+        elif ollama_configured:
+            row = Check(
+                "model provider",
+                "not_checked",
+                f"ollama configured at {ollama_configured}; unverified - reachability needs a request",
+                "add --provider ollama --probe-model to confirm it answers",
+                frozenset({"research"}),
+            )
+        else:
+            row = Check(
+                "model provider",
+                "blocked",
+                "no provider is set up for `research`",
+                "install an SDK extra and set its key, or configure a local model with `init` "
+                "(then confirm it with --provider ollama --probe-model)",
+                frozenset({"research"}),
+            )
+        rows.append(row)
     return rows
 
 
@@ -543,6 +592,19 @@ def missing_extras(checks: List[Check]) -> List[str]:
     """Every extra some row reports absent, once each and sorted - the input to the one
     install command the doctor prints (see :attr:`Check.installs`)."""
     return sorted({name for c in checks if c.status != "ready" for name in c.installs})
+
+
+def _probed_row(label: str, probe: "ProbeResult", detail: str, gate: FrozenSet[str]) -> Check:
+    """A provider row after a probe: the probe's verdict replaces "not checked"."""
+    if probe.ok:
+        return Check(label, "ready", f"{detail}; answered one request ({probe.model})", None, gate)
+    return Check(
+        label,
+        "blocked" if gate else "failed",
+        f"{detail}; probe failed: {probe.category}",
+        probe.detail,
+        gate,
+    )
 
 
 def readiness(checks: List[Check]) -> Dict[str, Dict[str, Any]]:
@@ -572,7 +634,7 @@ def doctor_ok(checks: List[Check], task: str) -> bool:
 class ProbeResult:
     provider: str
     model: str
-    category: ProbeCategory
+    category: "ProbeCategory"
     detail: str
 
     @property
@@ -589,6 +651,7 @@ def probe_model(provider: str, model: Optional[str] = None, *, client=None) -> P
     research loop uses, so the probe tests the path research will take.
     """
     from tradeflow.research.llm import DEFAULT_MODELS, build_llm_client
+    from tradeflow.research.provider_errors import ModelProviderError, classify_provider_error
 
     key = provider.lower()
     if key not in PROVIDERS:
@@ -657,7 +720,9 @@ def _state_checks() -> List[Check]:
         checks.append(
             Check(
                 "earlier state found",
-                "failed",
+                # Informational: nothing is broken, state simply lives elsewhere now. A
+                # [FAIL] here exited non-zero even for `--for demo`, which needs no state.
+                "not_checked",
                 f"{orphaned / 'logs'} holds trials from when a checkout was its own "
                 f"state root. It is no longer being read. To keep using it: "
                 f"TRADEFLOW_HOME={orphaned}",

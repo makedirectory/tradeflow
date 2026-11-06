@@ -85,7 +85,7 @@ tradeflow demo                          # full pipeline on synthetic data, no ke
 tradeflow init                          # your free Alpaca paper keys, and optionally a model
                                         # provider for `research` (skipping it is fine)
 tradeflow init --check                  # what is ready, for which task, and the next step
-tradeflow init --probe-model --provider anthropic   # optional: one tiny billed request
+tradeflow init --probe-model --provider anthropic --for research   # optional: one tiny billed request
 tradeflow verdict --scanner none --symbols AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,JPM,XOM,UNH,COST,WMT \
     --start 2024-01-01 --end 2024-12-31
 claude mcp add tradeflow -- tradeflow mcp   # connect an MCP client; it launches the server

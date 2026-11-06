@@ -700,7 +700,7 @@ def test_init_writes_an_ollama_endpoint_timeout_and_context(wizard):
         [
             "",
         ],
-        ["ollama", "http://gpu-box:11434/api/chat", "300", "8192"],
+        ["ollama", "http://gpu-box:11434/api/chat", "300", "8192", ""],
     )
     written = path.read_text()
     # The endpoint is stored as the server root, the way the settings reader sees it.
@@ -709,7 +709,7 @@ def test_init_writes_an_ollama_endpoint_timeout_and_context(wizard):
 
 
 def test_init_reprompts_on_a_bad_ollama_value_instead_of_writing_it(wizard, capsys):
-    path = wizard([""], ["ollama", "", "soon", "60", ""])
+    path = wizard([""], ["ollama", "", "soon", "60", "", ""])
     written = path.read_text()
     assert "OLLAMA_TIMEOUT=60" in written and "soon" not in written
     assert "OLLAMA_TIMEOUT must be a positive number" in capsys.readouterr().out
@@ -730,7 +730,7 @@ def test_init_does_not_blank_a_model_key_when_the_key_prompt_is_left_empty(wizar
 def test_init_never_probes_the_model_on_its_own(wizard):
     # The fixture's probe_model raises if called; choosing each provider must not.
     wizard(["", MODEL_SECRET], ["openai"])
-    wizard([""], ["ollama", "", "", ""])
+    wizard([""], ["ollama", "", "", "", ""])
 
 
 def test_init_names_the_missing_sdk_for_a_hosted_provider(wizard, monkeypatch, capsys):
@@ -786,7 +786,9 @@ def test_non_interactive_init_accepts_only_a_model_key(tmp_path, monkeypatch, ca
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("OPENAI_API_KEY", MODEL_SECRET)
     path = tmp_path / ".env"
-    args = main.build_parser().parse_args(["init", "--non-interactive", "--env-path", str(path)])
+    args = main.build_parser().parse_args(
+        ["init", "--non-interactive", "--provider", "openai", "--env-path", str(path)]
+    )
     args.func(args)
 
     assert path.read_text() == f"OPENAI_API_KEY={MODEL_SECRET}\n"
@@ -804,9 +806,54 @@ def test_non_interactive_init_reads_the_ollama_settings(tmp_path, monkeypatch):
     monkeypatch.setenv("OLLAMA_TIMEOUT", "240")
     monkeypatch.setenv("OLLAMA_NUM_CTX", "4096")
     path = tmp_path / ".env"
-    args = main.build_parser().parse_args(["init", "--non-interactive", "--env-path", str(path)])
+    args = main.build_parser().parse_args(
+        ["init", "--non-interactive", "--provider", "ollama", "--env-path", str(path)]
+    )
     args.func(args)
     assert path.read_text() == "OLLAMA_BASE_URL=http://box:11434\nOLLAMA_TIMEOUT=240\nOLLAMA_NUM_CTX=4096\n"
+
+
+def test_non_interactive_init_copies_model_keys_only_for_the_named_provider(tmp_path, monkeypatch, capsys):
+    """Model keys are very often exported for unrelated tools. Copying whatever the shell
+    holds put billable keys into a project file nobody asked for."""
+    from tradeflow import cli as main
+
+    for name in ("APCA_API_KEY_ID", "APCA_API_SECRET_KEY", "PAPER_TRADE", *MODEL_ENV):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("APCA_API_KEY_ID", "PKEXAMPLEKEYID123456")
+    monkeypatch.setenv("APCA_API_SECRET_KEY", "examplesecretexamplesecretexamplesecret1")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", MODEL_SECRET)
+    monkeypatch.setenv("OPENAI_API_KEY", MODEL_SECRET + "2")
+    path = tmp_path / ".env"
+    args = main.build_parser().parse_args(["init", "--non-interactive", "--env-path", str(path)])
+    args.func(args)
+    written = path.read_text()
+    assert "ANTHROPIC_API_KEY" not in written and "OPENAI_API_KEY" not in written
+    assert "ANTHROPIC_API_KEY" in capsys.readouterr().out  # said, by name, that it was left out
+
+    path2 = tmp_path / "second.env"
+    args = main.build_parser().parse_args(
+        ["init", "--non-interactive", "--provider", "anthropic", "--env-path", str(path2)]
+    )
+    args.func(args)
+    written = path2.read_text()
+    assert f"ANTHROPIC_API_KEY={MODEL_SECRET}" in written and "OPENAI_API_KEY" not in written
+
+
+def test_non_interactive_with_only_model_variables_and_no_provider_writes_nothing(
+    tmp_path, monkeypatch, capsys
+):
+    from tradeflow import cli as main
+
+    for name in ("APCA_API_KEY_ID", "APCA_API_SECRET_KEY", "PAPER_TRADE", *MODEL_ENV):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", MODEL_SECRET)
+    path = tmp_path / ".env"
+    args = main.build_parser().parse_args(["init", "--non-interactive", "--env-path", str(path)])
+    with pytest.raises(SystemExit) as caught:
+        args.func(args)
+    assert "--provider" in str(caught.value) and "OPENAI_API_KEY" in str(caught.value)
+    assert not path.exists()
 
 
 def test_non_interactive_init_refuses_a_bad_model_setting_without_writing(tmp_path, monkeypatch):
@@ -816,7 +863,9 @@ def test_non_interactive_init_refuses_a_bad_model_setting_without_writing(tmp_pa
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("OLLAMA_TIMEOUT", "never")
     path = tmp_path / ".env"
-    args = main.build_parser().parse_args(["init", "--non-interactive", "--env-path", str(path)])
+    args = main.build_parser().parse_args(
+        ["init", "--non-interactive", "--provider", "ollama", "--env-path", str(path)]
+    )
     with pytest.raises(SystemExit, match="OLLAMA_TIMEOUT"):
         args.func(args)
     assert not path.exists()
@@ -884,3 +933,159 @@ def test_a_checkout_launch_command_names_main_py_by_absolute_path():
     assert setup.mcp_client_config() == {
         "mcpServers": {"tradeflow": {"command": command[0], "args": command[1:]}}
     }
+
+
+# --- the .env holds billable keys ---------------------------------------------
+@pytest.mark.skipif(__import__("os").name == "nt", reason="POSIX file modes")
+def test_the_env_file_and_its_backup_are_owner_only(tmp_path):
+    import os
+    import stat
+
+    path = tmp_path / ".env"
+    path.write_text("APCA_API_KEY_ID=x\n")
+    os.chmod(path, 0o644)  # how most editors and `cp` leave it
+    result = setup.write_env({"ANTHROPIC_API_KEY": MODEL_SECRET}, path)
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(os.stat(result["backup"]).st_mode) == 0o600
+    assert not (tmp_path / ".env.tmp").exists()
+    # A fresh file is private from the moment it exists, not after a chmod.
+    fresh = tmp_path / "fresh.env"
+    setup.write_env({"ANTHROPIC_API_KEY": MODEL_SECRET}, fresh)
+    assert stat.S_IMODE(fresh.stat().st_mode) == 0o600
+
+
+# --- a configured Ollama is a set-up provider ----------------------------------
+def _model_row(checks, name="model provider"):
+    return next(c for c in checks if c.name == name)
+
+
+def test_an_ollama_endpoint_the_wizard_wrote_is_unverified_not_absent(tmp_path, monkeypatch):
+    """`init` writes OLLAMA_*; the next `--check --for research` called that "no provider
+    is set up", contradicting the file it had just written."""
+    for name in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr("tradeflow.utils.extras.installed", lambda extra: False)
+    path = _write(tmp_path, "OLLAMA_BASE_URL=http://gpu-box:11434\n")
+    checks = setup.run_checks(path, environ={})
+    row = _model_row(checks)
+    assert row.status == "not_checked"
+    assert "ollama configured" in row.detail and "unverified" in row.detail
+    assert "model provider" in setup.readiness(checks)["research"]["unverified"]
+    assert "model provider" not in setup.readiness(checks)["research"]["blocking"]
+
+    bare = setup.run_checks(tmp_path / "none.env", environ={})
+    assert _model_row(bare).status == "blocked"
+
+
+def test_a_probe_result_replaces_not_checked_in_the_provider_row(tmp_path):
+    ok = setup.ProbeResult("ollama", "llama3.1", "ok", "the provider answered one request")
+    checks = setup.run_checks(tmp_path / ".env", environ={}, provider="ollama", probe=ok)
+    row = _model_row(checks, "model: ollama")
+    assert row.status == "ready" and "answered" in row.detail
+    assert "model: ollama" not in setup.readiness(checks)["research"]["unverified"]
+
+    bad = setup.ProbeResult("ollama", "llama3.1", "unreachable", "nothing answered at http://x")
+    checks = setup.run_checks(tmp_path / ".env", environ={}, provider="ollama", probe=bad)
+    row = _model_row(checks, "model: ollama")
+    assert row.status == "blocked" and "unreachable" in row.detail
+    assert "model: ollama" in setup.readiness(checks)["research"]["blocking"]
+
+
+# --- init's flags and its probe line --------------------------------------------
+def _init(argv):
+    from tradeflow import cli as main
+
+    args = main.parse_cli(["init", *argv])
+    args.func(args)
+
+
+@pytest.mark.parametrize(
+    "argv, fragment",
+    [
+        (["--provider", "anthropic"], "--provider only applies"),
+        (["--for", "research"], "--for only applies"),
+        (["--model", "m"], "--model only applies"),
+    ],
+)
+def test_an_init_flag_the_mode_would_discard_is_refused_before_anything_runs(argv, fragment, monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda *a, **k: pytest.fail("the wizard must not start"))
+    with pytest.raises(SystemExit) as caught:
+        _init(argv)
+    assert fragment in str(caught.value)
+
+
+def test_probe_model_without_a_provider_fails_before_the_report_prints(capsys):
+    with pytest.raises(SystemExit) as caught:
+        _init(["--probe-model"])
+    assert "--probe-model needs --provider" in str(caught.value)
+    assert "setup check" not in capsys.readouterr().out
+
+
+def test_the_probe_line_says_billed_only_for_a_provider_that_bills(monkeypatch, capsys):
+    monkeypatch.setattr(
+        setup, "probe_model", lambda provider, model=None: setup.ProbeResult(provider, "m", "ok", "fine")
+    )
+    for provider, billed in (("anthropic", True), ("ollama", False)):
+        with pytest.raises(SystemExit):  # keys absent in the test home: not ready for `data`
+            _init(["--probe-model", "--provider", provider])
+        out = capsys.readouterr().out
+        assert ("may be billed" in out) is billed, provider
+
+
+def test_the_printed_ollama_probe_command_names_the_chosen_model(capsys):
+    from tradeflow import cli as main
+
+    main._print_provider_followup(setup, "ollama", model="qwen2.5:7b")
+    out = capsys.readouterr().out
+    assert "--provider ollama --probe-model --model qwen2.5:7b" in out
+    main._print_provider_followup(setup, "ollama")
+    assert "--model" not in capsys.readouterr().out
+
+
+def test_the_wizard_passes_a_named_ollama_model_to_the_probe_command(wizard, capsys):
+    wizard([""], ["ollama", "", "", "", "qwen2.5:7b"])
+    assert "--provider ollama --probe-model --model qwen2.5:7b" in capsys.readouterr().out
+
+
+def test_importing_the_setup_service_does_not_load_the_research_package():
+    """The research package is the agent, its proposer and the provider SDK shims; the
+    doctor needs none of it to say whether a key is set. (numpy still arrives through
+    `tradeflow.services.__init__`, which is outside this module.)"""
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, tradeflow.services.setup; "
+        "bad = [m for m in ('tradeflow.research', 'tradeflow.research.agent') if m in sys.modules]; "
+        "print(bad); sys.exit(1 if bad else 0)"
+    )
+    done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert done.returncode == 0, done.stdout + done.stderr
+
+
+# --- what the doctor labels, and what exits non-zero ---------------------------
+def test_earlier_checkout_state_is_a_notice_not_a_failure(tmp_path, monkeypatch):
+    """It exited non-zero even for `--for demo`, which needs no state at all."""
+    monkeypatch.setattr("tradeflow.settings.orphaned_checkout_state", lambda: tmp_path)
+    checks = setup.run_checks(tmp_path / ".env", environ={})
+    row = next(c for c in checks if c.name == "earlier state found")
+    assert row.status == "not_checked" and row.next_action
+    assert setup.doctor_ok(checks, "demo")
+
+
+def test_a_row_that_gates_only_another_task_is_not_labelled_blocked(monkeypatch, capsys):
+    from tradeflow import cli as main
+
+    rows = [
+        setup.Check("extra: mcp", "blocked", "not installed", needed_for=frozenset({"mcp"})),
+        setup.Check("APCA_API_KEY_ID", "blocked", "missing", needed_for=frozenset({"data"})),
+    ]
+    monkeypatch.setattr(setup, "run_checks", lambda *a, **k: rows)
+    with pytest.raises(SystemExit):
+        main.parse_cli(["init", "--check"]).func(main.parse_cli(["init", "--check"]))
+    out = capsys.readouterr().out.splitlines()
+    mcp_line = next(line for line in out if "extra: mcp" in line)
+    key_line = next(line for line in out if "APCA_API_KEY_ID" in line)
+    assert "[optional]" in mcp_line and "[blocked]" in key_line
+    # Names line up whatever the label's width.
+    assert mcp_line.index("extra: mcp") == key_line.index("APCA_API_KEY_ID")

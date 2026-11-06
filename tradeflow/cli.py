@@ -1986,6 +1986,26 @@ def _journal_alpha(args, strategy_label: str, source: str, result: dict) -> None
     )
 
 
+def _refuse_inert_init_flags(args) -> None:
+    """Refuse an `init` flag that the chosen mode would discard.
+
+    Same rule as :func:`_refuse_inert_flags`: a typed flag that reaches nothing leaves
+    the reader believing it applied. Here the wizard would otherwise run as if
+    `--provider anthropic` had not been said.
+    """
+    given = getattr(args, "flags_given", set())
+    checking = args.check or args.probe_model
+    if "task" in given and not checking:
+        sys.exit("--for only applies to --check / --probe-model, which report readiness for a task.")
+    if "provider" in given and not (checking or args.non_interactive):
+        sys.exit(
+            "--provider only applies to --check, --probe-model or --non-interactive; the interactive "
+            "wizard asks which provider itself."
+        )
+    if "model" in given and not (args.probe_model or args.non_interactive):
+        sys.exit("--model only applies to --probe-model: it names the model the probe asks.")
+
+
 def cmd_init(args) -> None:
     """Guided first-run setup: write a valid `.env`, check it, and say what to try.
 
@@ -2002,13 +2022,21 @@ def cmd_init(args) -> None:
     if getattr(args, "dev_local_state", False):
         _print_dev_local_state()
         return
+    _refuse_inert_init_flags(args)
     if args.check or getattr(args, "probe_model", False):
+        result = None
+        if args.probe_model:
+            # Validated before anything is printed: a report that ends in "needs
+            # --provider" has already told the reader a lot that did not apply.
+            if args.provider is None:
+                sys.exit("--probe-model needs --provider (anthropic, openai or ollama).")
+            billed = " (may be billed)" if args.provider != "ollama" else ""
+            print(f"\nProbing {args.provider}: one request, one token, no retries{billed}...")
+            result = setup.probe_model(args.provider, args.model)
         _print_doctor(
-            setup.run_checks(provider=args.provider),
+            setup.run_checks(provider=args.provider, probe=result),
             task=args.task,
-            provider=args.provider,
-            probe=args.probe_model,
-            model=args.model,
+            probe_result=result,
         )
         return
     if args.non_interactive:
@@ -2090,7 +2118,7 @@ _STATUS_LABELS = {
 }
 
 
-def _print_doctor(checks, *, task: str = "data", provider=None, probe: bool = False, model=None) -> None:
+def _print_doctor(checks, *, task: str = "data", probe_result=None) -> None:
     """Every check with its status, then what each task can and cannot do.
 
     A doctor reports the whole picture rather than stopping at the first problem.
@@ -2105,8 +2133,13 @@ def _print_doctor(checks, *, task: str = "data", provider=None, probe: bool = Fa
     print(f"  state root: {state_root()}")
     print("  (journal, trial store, bar cache, and configs all live here)\n")
     for check in checks:
-        label = _STATUS_LABELS[check.status]
-        print(f"  [{label}] {check.name:<22} {check.detail}")
+        # A row that gates only other tasks is not "blocked" for the one asked about; the
+        # per-task summary below still lists it where it does block.
+        status = check.status
+        if status == "blocked" and check.needed_for and task not in check.needed_for:
+            status = "optional_missing"
+        label = f"[{_STATUS_LABELS[status]}]"
+        print(f"  {label:<10} {check.name:<22} {check.detail}")
         if check.next_action:
             for line in check.next_action.splitlines():
                 print(
@@ -2131,14 +2164,13 @@ def _print_doctor(checks, *, task: str = "data", provider=None, probe: bool = Fa
         print(install_hint(*absent))
 
     probe_failed = False
-    if probe:
-        if provider is None:
-            sys.exit("--probe-model needs --provider (anthropic, openai or ollama).")
-        print(f"\n  Probing {provider}: one request, one token, no retries (may be billed)...")
-        result = setup.probe_model(provider, model)
-        mark = "ok" if result.ok else "FAIL"
-        print(f"  [{mark}] {result.provider} / {result.model}  {result.category}: {result.detail}")
-        probe_failed = not result.ok
+    if probe_result is not None:
+        mark = "ok" if probe_result.ok else "FAIL"
+        print(
+            f"\n  [{mark}] {probe_result.provider} / {probe_result.model}  "
+            f"{probe_result.category}: {probe_result.detail}"
+        )
+        probe_failed = not probe_result.ok
 
     if not setup.doctor_ok(checks, task) or probe_failed:
         print(f"\nNot ready for '{task}'. Run `{_invocation('init')}` for the guided setup.")
@@ -2152,39 +2184,57 @@ def _print_doctor(checks, *, task: str = "data", provider=None, probe: bool = Fa
 def _init_non_interactive(args, setup) -> None:
     """Build a `.env` purely from environment variables — no prompts, no retries.
 
-    Covers the same choices as the wizard: market-data keys, paper trading, and a model
-    provider (an API key, or an Ollama endpoint with its timeout and context length).
+    Market-data keys and `PAPER_TRADE` are copied when set. **Model settings are copied
+    only for the provider named with `--provider`**, and only that provider's variables:
+    `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` are very often exported for unrelated tools,
+    and a billable key landing in a project file because the shell happened to hold it is
+    not something a script asked for.
     """
     import os
 
     env = os.environ
+    provider = args.provider
+    model_names = {
+        "anthropic": ("ANTHROPIC_API_KEY",),
+        "openai": ("OPENAI_API_KEY",),
+        "ollama": ("OLLAMA_BASE_URL", "OLLAMA_TIMEOUT", "OLLAMA_NUM_CTX"),
+    }
     try:
         updates = setup.build_updates(
             key=env.get("APCA_API_KEY_ID"),
             secret=env.get("APCA_API_SECRET_KEY"),
             paper_trade=None if "PAPER_TRADE" not in env else env["PAPER_TRADE"] != "false",
-            anthropic_key=env.get("ANTHROPIC_API_KEY"),
-            openai_key=env.get("OPENAI_API_KEY"),
-            ollama_base_url=env.get("OLLAMA_BASE_URL"),
-            ollama_timeout=env.get("OLLAMA_TIMEOUT"),
-            ollama_num_ctx=env.get("OLLAMA_NUM_CTX"),
+            anthropic_key=env.get("ANTHROPIC_API_KEY") if provider == "anthropic" else None,
+            openai_key=env.get("OPENAI_API_KEY") if provider == "openai" else None,
+            ollama_base_url=env.get("OLLAMA_BASE_URL") if provider == "ollama" else None,
+            ollama_timeout=env.get("OLLAMA_TIMEOUT") if provider == "ollama" else None,
+            ollama_num_ctx=env.get("OLLAMA_NUM_CTX") if provider == "ollama" else None,
         )
     except ValueError as exc:
         raise SystemExit(f"Nothing written: {exc}")
+    skipped = [
+        name for other, names in model_names.items() if other != provider for name in names if env.get(name)
+    ]
     if not updates:
-        raise SystemExit(
-            "Nothing to write: set APCA_API_KEY_ID / APCA_API_SECRET_KEY, or a model setting "
-            "(ANTHROPIC_API_KEY, OPENAI_API_KEY, OLLAMA_BASE_URL, OLLAMA_TIMEOUT, OLLAMA_NUM_CTX), "
-            "in the environment first."
+        hint = (
+            "Nothing to write: set APCA_API_KEY_ID / APCA_API_SECRET_KEY in the environment first, "
+            "or name a model provider with --provider (anthropic, openai or ollama) and set its "
+            "variables."
         )
+        if skipped:
+            hint += f"\n  Not copied without --provider: {', '.join(skipped)}."
+        raise SystemExit(hint)
     result = setup.write_env(updates, args.env_path)
     print(f"Wrote {result['path']}: {', '.join(f'{k}={v}' for k, v in result['updated'].items())}")
     if result["backup"]:
         print(f"Previous file backed up to {result['backup']}")
-    for provider in setup.MODEL_PROVIDERS:
-        owned = [setup.PROVIDER_KEYS[provider]] if provider in setup.PROVIDER_KEYS else None
-        if any(k in updates for k in owned) if owned else any(k.startswith("OLLAMA_") for k in updates):
-            _print_provider_followup(setup, provider)
+    if skipped:
+        print(
+            f"Not copied (no matching --provider): {', '.join(skipped)}. "
+            "Model settings are written only for the provider you name."
+        )
+    if provider:
+        _print_provider_followup(setup, provider, model=args.model)
 
 
 def _prompt_model_provider(setup, args) -> Dict[str, str]:
@@ -2239,18 +2289,31 @@ def _prompt_model_provider(setup, args) -> Dict[str, str]:
                 continue
             answers[param] = value
             break
+    # Not a setting that is stored (the model is chosen per run), only the name to put in
+    # the probe command that is printed afterwards.
+    named = input("  Ollama model to probe, as `ollama list` names it [blank = the default]: ").strip()
+    if named:
+        answers["ollama_model"] = named
     return answers
 
 
-def _print_provider_followup(setup, provider: str) -> None:
+def _print_provider_followup(setup, provider: str, model: Optional[str] = None) -> None:
     """What to do next for a provider that was just configured: the missing extra if
-    there is one, and the exact probe command - which is never run for the reader."""
+    there is one, and the exact probe command - which is never run for the reader.
+
+    ``model`` is added to the command when one was chosen: Ollama has no single default
+    that everyone has pulled, and a probe of the wrong name reports `model_not_found`
+    from the very command this printed.
+    """
     needed = setup.PROVIDER_EXTRA.get(provider)
     if needed and not extras_installed(needed):
         print(f"\n{missing_extra_message(f'The {provider} provider', needed)}")
-    probe = _invocation(f"init --check --for research --provider {provider} --probe-model")
+    flag = f" --model {model}" if model else ""
+    probe = _invocation(f"init --check --for research --provider {provider} --probe-model{flag}")
     cost = "makes one real request that may be billed" if provider != "ollama" else "makes one real request"
     print(f"\nNothing has been tested yet. To confirm the connection ({cost}):\n  {probe}")
+    if provider == "ollama" and model:
+        print(f"  (`research` takes the same name: --model {model})")
 
 
 def _init_interactive(args, setup) -> None:
@@ -2300,6 +2363,7 @@ def _init_interactive(args, setup) -> None:
                 paper = not _typed_confirmation("ENABLE LIVE")
 
     model_answers = _prompt_model_provider(setup, args)
+    chosen_model = model_answers.pop("ollama_model", None)
     try:
         updates = setup.build_updates(key, secret, paper, **model_answers)
     except ValueError as exc:
@@ -2321,7 +2385,7 @@ def _init_interactive(args, setup) -> None:
 
     for provider in setup.MODEL_PROVIDERS:
         if any(k.startswith(provider) for k in model_answers):
-            _print_provider_followup(setup, provider)
+            _print_provider_followup(setup, provider, model=chosen_model if provider == "ollama" else None)
 
     _print_next_steps()
 
