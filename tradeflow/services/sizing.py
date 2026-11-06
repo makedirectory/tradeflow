@@ -10,7 +10,7 @@ domain logic any more than the MCP server does.
 
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from tradeflow.execution.sizing import BetaSizer, PortfolioWeightSizer
 from tradeflow.indicators.indicators import calculate_beta
@@ -92,11 +92,29 @@ def build_portfolio_weight_sizer(
     return sizer
 
 
+BETA_LOOKBACK_DAYS = 90
+
+
+def beta_read(
+    symbols: List[str],
+    benchmark: str = "SPY",
+    lookback_days: int = BETA_LOOKBACK_DAYS,
+    as_of: Optional[datetime] = None,
+) -> Tuple[List[str], str, datetime, datetime]:
+    """The one fetch beta sizing makes, as ``get_bars`` arguments.
+
+    Public so an offline preflight asks the cache about exactly the read
+    :func:`compute_betas` will make, rather than restating its window.
+    """
+    end = as_of or datetime.now()
+    return [benchmark, *symbols], "1Day", end - timedelta(days=lookback_days), end
+
+
 def compute_betas(
     data_client: MarketDataClient,
     symbols: List[str],
     benchmark: str = "SPY",
-    lookback_days: int = 90,
+    lookback_days: int = BETA_LOOKBACK_DAYS,
     as_of: Optional[datetime] = None,
 ) -> Dict[str, float]:
     """Beta of each symbol vs a benchmark over a trailing daily window.
@@ -105,8 +123,7 @@ def compute_betas(
     backtest window (no look-ahead). Returns ``{}`` if the benchmark is missing,
     which leaves :class:`BetaSizer` to fall back to neutral betas.
     """
-    end = as_of or datetime.now()
-    bars = data_client.get_bars([benchmark, *symbols], "1Day", end - timedelta(days=lookback_days), end)
+    bars = data_client.get_bars(*beta_read(symbols, benchmark, lookback_days, as_of))
     benchmark_bars = bars.get(benchmark)
     if benchmark_bars is None or benchmark_bars.empty:
         logger.warning("No %s data; beta sizing will fall back to neutral beta", benchmark)

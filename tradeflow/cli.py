@@ -615,7 +615,7 @@ def cmd_backtest(args) -> None:
     )
     from tradeflow.engine.backtest import ACCOUNTING_VERSION, BacktestEngine
     from tradeflow.services.data import refuse_uncached_together
-    from tradeflow.services.sizing import build_beta_sizer
+    from tradeflow.services.sizing import beta_read, build_beta_sizer
 
     tuned = apply_run_config(args)
     strategy_name = args.strategy
@@ -626,20 +626,33 @@ def cmd_backtest(args) -> None:
 
     _, data_client = build_data_and_broker(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
     timeframe = strategy.config["timeframe"]
+
+    def later_reads(names):
+        """Reads the run makes after its own window, for ``names``, given the flags."""
+        reads = [(_and_benchmark(names, args.benchmark), timeframe, args.start, args.end)]
+        if args.beta_sizing:
+            # A trailing lookback before --start, read after the memo lookup, so a rerun
+            # after warming only the run's window would miss again.
+            reads.append(beta_read(names, args.benchmark, as_of=args.start))
+        return reads
+
     universe = resolve_universe(
         data_client,
         args.scanner,
         args.symbols,
         as_of=args.scan_as_of or args.end,
-        then_reads=(_and_benchmark(args.symbols, args.benchmark), timeframe, args.start, args.end),
+        then_reads=later_reads(args.symbols),
     )
     # The engine reads the benchmark on its own, and offline a missing one only degrades
     # the run, so it is asked for only in a miss the universe raises anyway.
+    why = f"The backtest also reads the benchmark {args.benchmark}; the command covers it too."
+    if args.beta_sizing:
+        why = (
+            f"The backtest also reads the benchmark {args.benchmark}, and --beta-sizing reads a "
+            "lookback before --start; the command covers them too."
+        )
     refuse_uncached_together(
-        data_client,
-        (universe, timeframe, args.start, args.end),
-        [(_and_benchmark(universe, args.benchmark), timeframe, args.start, args.end)],
-        why=f"The backtest also reads the benchmark {args.benchmark}; the command covers it too.",
+        data_client, (universe, timeframe, args.start, args.end), later_reads(universe), why=why
     )
 
     # Computed once, up front: it warms the cache as a side effect (when

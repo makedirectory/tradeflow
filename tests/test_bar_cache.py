@@ -322,10 +322,11 @@ _WINDOW = [
         ["walkforward", "--strategy", "demo_trend", "--benchmark", "SPY", "--folds", "2", "--max-evals", "2"],
         ["walkforward", "--strategy", "demo_trend", "--folds", "2", "--max-evals", "2"],
         ["backtest", "--strategy", "demo_trend"],
+        ["backtest", "--strategy", "demo_trend", "--beta-sizing"],
         ["optimize", "--strategy", "demo_trend", "--max-evals", "2"],
         ["screen", "--strategy", "demo_trend", "--max-evals", "2"],
     ],
-    ids=["walkforward-benchmark", "walkforward", "backtest", "optimize", "screen"],
+    ids=["walkforward-benchmark", "walkforward", "backtest", "backtest-beta-sizing", "optimize", "screen"],
 )
 def test_one_warm_fixes_an_offline_command_that_reads_beyond_its_window(tmp_path, monkeypatch, argv, scanner):
     """A walk-forward reads an indicator warmup before --start, and its benchmark, in a
@@ -341,6 +342,24 @@ def test_one_warm_fixes_an_offline_command_that_reads_beyond_its_window(tmp_path
         assert "SPY" in first.missing
     _warm_from(first, cache_dir, symbols=[*SYMBOLS, "SPY"])
     assert _offline_command(monkeypatch, cache_dir, argv) is None
+
+
+def test_beta_sizing_lookback_joins_the_first_miss_and_only_with_the_flag(tmp_path, monkeypatch):
+    """--beta-sizing reads a trailing window before --start, after the memo lookup, so the
+    first printed command covered only [start, end] and the rerun missed again. The miss
+    now reaches back by the sizer's own lookback; without the flag it asks for nothing
+    extra."""
+    from tradeflow.services.sizing import beta_read
+
+    plain = ["backtest", "--strategy", "demo_trend", "--scanner", "none", *_WINDOW]
+    miss = _offline_command(monkeypatch, tmp_path / "plain", plain)
+    assert miss is not None and "--start 2024-03-01" in str(miss) and "--beta-sizing" not in str(miss)
+
+    _, _, lookback_start, _ = beta_read(SYMBOLS, as_of=_run_window()[0])
+    miss = _offline_command(monkeypatch, tmp_path / "beta", [*plain, "--beta-sizing"])
+    assert miss is not None
+    assert f"--start {lookback_start:%Y-%m-%d}" in str(miss)
+    assert "--beta-sizing reads a lookback" in str(miss)
 
 
 def test_a_cached_window_is_not_widened_for_reads_that_may_not_happen(tmp_path, monkeypatch):
