@@ -596,6 +596,7 @@ def probe_model(provider: str, model: Optional[str] = None, *, client=None) -> P
     chosen = model or DEFAULT_MODELS[key]
     try:
         llm = client or build_llm_client(key, chosen)
+        llm.max_retries = 0  # single-shot, however the client is configured for research
         llm.complete("Reply with one word.", "ping", max_tokens=1)
     except ModelProviderError as exc:
         return ProbeResult(key, chosen, exc.category, exc.detail)

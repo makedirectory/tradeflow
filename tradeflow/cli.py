@@ -1929,6 +1929,8 @@ def cmd_research(args) -> None:
         lines = [f"model provider {exc.provider}: {exc.category} \u2014 {exc.detail}"]
         if exc.category == "quota":
             lines.append("No retry was attempted; check the provider account's billing.")
+        elif exc.category in ("rate_limited", "unavailable"):
+            lines.append("Retried a few times with a short wait before stopping; try again later.")
         sys.exit("\n".join(lines))
 
     print(f"\n=== Research session {agent.session_id} ===")

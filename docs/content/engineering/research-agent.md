@@ -82,6 +82,44 @@ backend. Credentials resolve through the shared settings chain — environment /
 (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`; `OLLAMA_BASE_URL` for the local server).
 `FixedProposer` replays a fixed list for deterministic offline tests.
 
+### The `LLMClient` contract and provider failures
+
+`LLMClient.complete` is concrete; a backend implements `_complete` (the bare provider
+call: one request, no error translation, no retry). Overriding `complete` instead no
+longer instantiates, so every provider gets the same failure policy.
+
+- **`ModelProviderError`** (`research/provider_errors.py`) is what the loop sees. It
+  carries `provider`, a `category` and a printable `detail` and **never the vendor's own
+  message**, which can echo request parameters and so the key. Categories: `auth`,
+  `quota` (an empty balance), `rate_limited`, `unavailable` (5xx, Anthropic's 529
+  `overloaded_error`), `entitlement`, `unreachable`, `timeout`, `model_not_found`,
+  `unknown`. `cmd_research` turns it into one line and a non-zero exit; the journal is
+  left as it was.
+- **Classification** reads structured fields first (`code` / `type` from the SDK error
+  and its body: `insufficient_quota` against `rate_limit_exceeded`, Anthropic's
+  `billing_error`, `rate_limit_error`, `overloaded_error`), then the HTTP status, and
+  consults message wording only for a 400/429 that nothing structured explained
+  (Anthropic reports an empty balance as a plain 400). It recognises errors by shape and
+  imports no SDK. It is checked against the real `anthropic` and `openai` error classes,
+  not just fakes.
+- **Only vendor and network exceptions are translated** (`is_provider_exception`: an
+  HTTP status on the exception, an SDK `API*Error`, `urllib`/socket/`http.client`
+  failures). A `KeyError` reading a reply, or any other bug here, propagates with its
+  traceback instead of being reported as the provider's fault. A missing SDK
+  (`ImportError`) also passes through.
+- **Retry policy.** The SDK clients are built with `max_retries=0` and the wrapper owns
+  the policy: up to `max_retries` (default 2) retries, after 1s then 3s (or the
+  provider's `Retry-After`, unless it asks for more than 30s, in which case it stops),
+  for `rate_limited`, `unavailable` and `unreachable` only. An empty balance, a bad key,
+  a forbidden or missing model are never re-sent, and neither is a `timeout` (waiting the
+  same long time again is not a fix). The readiness probe sets `max_retries = 0`: it is
+  one request, always.
+- **Ollama settings.** `OLLAMA_BASE_URL` (a full `.../api/chat` URL is trimmed),
+  `OLLAMA_TIMEOUT` (seconds for one response, default 120; a slow GPU needs more) and
+  `OLLAMA_NUM_CTX` (context length, sent only when set), all validated in `settings.py`
+  and by the `init` wizard with the same parsers. A reply that is not JSON is reported as
+  `unavailable` at that endpoint.
+
 A "tune" proposal fixes specific parameter values and is validated as a
 fixed-config walk-forward (`WalkForwardValidator.evaluate_config`), counting as one
 trial toward the session's multiple-testing total. A "code" proposal (behind

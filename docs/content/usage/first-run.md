@@ -137,10 +137,14 @@ tradeflow init --probe-model --provider anthropic
 ```
 
 Makes **one** request of one token, with no retries, and names the outcome: `auth`,
-`quota` (the detail says whether it is exhausted credit or a rate limit),
-`entitlement`, `unreachable`, `timeout`, `model_not_found`. It may be billed by the
-provider, so it is never part of a plain `--check`, and it is not available over MCP.
-`--model` probes a model other than the research default.
+`quota` (an empty balance), `rate_limited`, `unavailable` (the provider is overloaded
+or failing), `entitlement`, `unreachable`, `timeout`, `model_not_found`. A hosted
+provider may bill it, so it is never part of a plain `--check`, and it is not available
+over MCP. `--model` probes a model other than the research default.
+
+`research` itself retries a transient `rate_limited`, `unavailable` or `unreachable`
+failure twice with a short wait; it never re-sends an empty balance, a bad key or a
+missing model.
 
 ## 5. Connect an MCP client
 

@@ -19,10 +19,25 @@ FAKE_KEY = "sk-test-0123456789abcdefSECRET"
 
 
 class _StatusError(Exception):
-    def __init__(self, status_code, body=None, message="request failed"):
+    """What both SDKs' status errors carry: status_code, body (the inner error dict),
+    and the ``code`` / ``type`` they lift out of it - captured from real
+    ``anthropic`` and ``openai`` errors raised through a mock transport."""
+
+    def __init__(
+        self, status_code, body=None, message="request failed", *, code=None, type=None, headers=None
+    ):
         super().__init__(message)
         self.status_code = status_code
         self.body = body
+        self.code = code
+        self.type = type
+        if headers is not None:
+
+            class _Response:
+                pass
+
+            self.response = _Response()
+            self.response.headers = headers
 
 
 class APITimeoutError(Exception):
@@ -40,7 +55,11 @@ class APIConnectionError(Exception):
         (_StatusError(401), "auth"),
         (_StatusError(403), "entitlement"),
         (_StatusError(404), "model_not_found"),
-        (_StatusError(429), "quota"),
+        (_StatusError(429), "rate_limited"),
+        (_StatusError(402, type="billing_error"), "quota"),
+        (_StatusError(529, type="overloaded_error"), "unavailable"),
+        (_StatusError(500, type="api_error"), "unavailable"),
+        (_StatusError(503, type="server_error"), "unavailable"),
         (APITimeoutError("t"), "timeout"),
         (APIConnectionError("c"), "unreachable"),
         (TimeoutError(), "timeout"),
@@ -58,9 +77,46 @@ def test_a_credit_exhausted_429_is_distinguished_from_a_plain_rate_limit():
     plain = _StatusError(429, {"error": {"type": "rate_limit_exceeded"}}, "slow down")
     assert classify_provider_error(credit)[0] == "quota"
     assert "credit exhausted" in classify_provider_error(credit)[1]
-    assert classify_provider_error(plain)[0] == "quota"
+    assert classify_provider_error(plain)[0] == "rate_limited"
     assert "rate limited" in classify_provider_error(plain)[1]
     assert "credit" not in classify_provider_error(plain)[1]
+
+
+def test_a_structured_code_outranks_wording_that_mentions_billing():
+    """A rate-limit reply can link the billing page; that is still "wait", not "pay".
+    The old classifier searched the message for "billing" and called it exhausted credit
+    - reproduced through the real openai and anthropic SDKs."""
+    openai_rate = _StatusError(
+        429,
+        {"message": "Rate limit reached - see platform billing settings", "code": "rate_limit_exceeded"},
+        "Rate limit reached - see account/billing",
+        code="rate_limit_exceeded",
+        type="requests",
+    )
+    anthropic_rate = _StatusError(
+        429,
+        {"type": "rate_limit_error", "message": "billing"},
+        "see Plans & Billing",
+        type="rate_limit_error",
+    )
+    assert classify_provider_error(openai_rate)[0] == "rate_limited"
+    assert classify_provider_error(anthropic_rate)[0] == "rate_limited"
+    openai_credit = _StatusError(429, {}, "quota", code="insufficient_quota", type="insufficient_quota")
+    assert classify_provider_error(openai_credit)[0] == "quota"
+
+
+def test_wording_is_the_fallback_when_nothing_structured_settles_it():
+    """Anthropic reports an empty balance as a plain 400 `invalid_request_error`."""
+    credit = _StatusError(
+        400,
+        {"type": "invalid_request_error", "message": "Your credit balance is too low to access the API."},
+        type="invalid_request_error",
+    )
+    assert classify_provider_error(credit)[0] == "quota"
+    # ... but a bare mention of "billing" is not evidence of an empty balance.
+    assert classify_provider_error(_StatusError(429, None, "slow down; billing page: ..."))[0] == "rate_limited"
+    other = _StatusError(400, {"message": "max_tokens must be positive"}, type="invalid_request_error")
+    assert classify_provider_error(other)[0] == "unknown"
 
 
 def test_a_detail_never_repeats_the_exception_text():
@@ -254,7 +310,11 @@ def _run_research_with(monkeypatch, error):
     return sdk, caught.value
 
 
-def test_a_credit_exhausted_429_is_quota_and_is_not_retried(monkeypatch):
+def test_a_credit_exhausted_429_is_quota_and_the_wrapper_does_not_retry_it(monkeypatch):
+    """The SDK ctor test below covers "the SDK does not retry"; this one covers the
+    wrapper's own retry loop, which would send a credit error `max_retries` more times
+    if `quota` were ever counted transient."""
+    monkeypatch.setattr(llm, "_sleep", lambda seconds: None)
     error = _StatusError(429, {"error": {"type": "insufficient_quota", "code": "credit_balance_exhausted"}})
     sdk, exit_ = _run_research_with(monkeypatch, error)
     assert sdk.calls == 1
@@ -265,8 +325,129 @@ def test_a_credit_exhausted_429_is_quota_and_is_not_retried(monkeypatch):
 
 
 def test_a_plain_rate_limit_is_not_called_a_billing_problem_by_the_research_path(monkeypatch):
-    _, exit_ = _run_research_with(monkeypatch, _StatusError(429, {"error": {"type": "rate_limit_exceeded"}}))
+    monkeypatch.setattr(llm, "_sleep", lambda seconds: None)
+    sdk, exit_ = _run_research_with(
+        monkeypatch, _StatusError(429, {"error": {"type": "rate_limit_exceeded"}})
+    )
     assert "rate limited" in str(exit_.code)
+    assert "billing" not in str(exit_.code)
+    assert sdk.calls == 1 + llm.LLMClient.max_retries  # retried, then gave up with the sentence
+
+
+# --- the wrapper's retry policy ---------------------------------------------
+class _Scripted(llm.LLMClient):
+    """Fails with each scripted error in turn, then answers."""
+
+    provider = "scripted"
+    model = "m"
+
+    def __init__(self, *errors):
+        self.errors = list(errors)
+        self.calls = 0
+
+    def _complete(self, system, user, max_tokens):
+        self.calls += 1
+        if self.errors:
+            raise self.errors.pop(0)
+        return LLMResponse("done", 1)
+
+
+@pytest.fixture
+def waits(monkeypatch):
+    recorded = []
+    monkeypatch.setattr(llm, "_sleep", recorded.append)
+    return recorded
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        _StatusError(529, type="overloaded_error"),
+        _StatusError(500),
+        _StatusError(429, type="rate_limit_error"),
+    ],
+)
+def test_a_transient_failure_is_retried_and_then_succeeds(error, waits):
+    client = _Scripted(error, error)
+    assert client.complete("s", "u").text == "done"
+    assert client.calls == 3
+    assert waits == list(llm.RETRY_DELAYS)
+
+
+def test_a_transient_failure_that_persists_stops_after_the_bounded_retries(waits):
+    client = _Scripted(*[_StatusError(529, type="overloaded_error")] * 10)
+    with pytest.raises(ModelProviderError) as caught:
+        client.complete("s", "u")
+    assert caught.value.category == "unavailable"
+    assert client.calls == 1 + client.max_retries and len(waits) == client.max_retries
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        _StatusError(429, type="insufficient_quota", code="insufficient_quota"),
+        _StatusError(402, type="billing_error"),
+        _StatusError(401),
+        _StatusError(403),
+        _StatusError(404),
+        APITimeoutError("t"),
+    ],
+)
+def test_credit_auth_entitlement_missing_model_and_timeouts_are_never_retried(error, waits):
+    client = _Scripted(error, error)
+    with pytest.raises(ModelProviderError):
+        client.complete("s", "u")
+    assert client.calls == 1 and waits == []
+
+
+def test_a_single_shot_client_never_retries(waits):
+    client = _Scripted(_StatusError(529, type="overloaded_error"))
+    client.max_retries = 0
+    with pytest.raises(ModelProviderError):
+        client.complete("s", "u")
+    assert client.calls == 1 and waits == []
+
+
+def test_the_probe_is_single_shot_even_for_a_transient_failure(waits):
+    client = _Scripted(*[_StatusError(529, type="overloaded_error")] * 5)
+    result = setup.probe_model("openai", client=client)
+    assert result.category == "unavailable"
+    assert client.calls == 1 and waits == []
+
+
+def test_the_providers_retry_after_is_honoured_but_not_a_long_one(waits):
+    advised = _StatusError(429, type="rate_limit_error", headers={"retry-after": "7"})
+    client = _Scripted(advised)
+    client.complete("s", "u")
+    assert waits == [7.0]
+    long = _StatusError(429, type="rate_limit_error", headers={"retry-after": "600"})
+    client = _Scripted(long)
+    with pytest.raises(ModelProviderError):
+        client.complete("s", "u")
+    assert client.calls == 1
+
+
+@pytest.mark.parametrize("bug", [KeyError("choices"), AttributeError("no text"), ValueError("bad")])
+def test_a_local_bug_propagates_with_its_traceback_instead_of_blaming_the_provider(bug, waits):
+    client = _Scripted(bug)
+    with pytest.raises(type(bug)) as caught:
+        client.complete("s", "u")
+    assert not isinstance(caught.value, ModelProviderError)
+    assert client.calls == 1
+
+
+def test_a_reply_that_is_not_json_is_the_endpoints_fault(monkeypatch):
+    class _Html(_Resp):
+        def __init__(self):
+            super().__init__(None)
+
+        def read(self):
+            return b"<html>bad gateway</html>"
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: _Html())
+    with pytest.raises(ModelProviderError) as caught:
+        OllamaClient("m", base_url="http://127.0.0.1:11500").complete("s", "u")
+    assert caught.value.category == "unavailable"
 
 
 def test_the_sdk_clients_are_built_with_retries_off(monkeypatch):

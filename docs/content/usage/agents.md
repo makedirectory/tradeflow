@@ -136,9 +136,11 @@ Ollama setting.
 
 Run `tradeflow init --check --provider <name> --for research` to see what is missing
 locally, and add `--probe-model` to make one real request. If a provider fails
-*during* a session, `research` stops with the category (`auth`, `quota`, `timeout`, ...)
-and exits non-zero. Provider SDK retries are turned off: an exhausted balance is
-reported once, not sent again, and the session journal stays as it was.
+*during* a session, `research` stops with the category (`auth`, `quota`, `rate_limited`,
+`unavailable`, `timeout`, ...) and exits non-zero. A transient one (`rate_limited`,
+`unavailable`, `unreachable`) is retried twice with a short wait first. An exhausted
+balance, a bad key or a missing model is reported once and never sent again, and the
+session journal stays as it was.
 
 See the engineering wiki's **MCP server** and **Research agent** pages for the
 architecture and guardrails.

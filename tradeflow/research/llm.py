@@ -14,11 +14,19 @@ Each SDK is imported lazily inside its client, so the base install needs none of
 them and an unused provider never has to be installed.
 """
 
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Tuple
 
-from tradeflow.research.provider_errors import ModelProviderError, as_provider_error
+from tradeflow.research.provider_errors import (
+    RETRYABLE,
+    ModelProviderError,
+    as_provider_error,
+    classify_provider_error,
+    is_provider_exception,
+    retry_after_seconds,
+)
 from tradeflow.settings import (
     get_credential,
     normalize_ollama_url,
@@ -35,6 +43,19 @@ DEFAULT_MODELS = {
 }
 
 
+#: Seconds to wait before each retry of a transient failure - two retries, then give up.
+RETRY_DELAYS: Tuple[float, ...] = (1.0, 3.0)
+
+#: A provider asking for longer than this to be left alone is not waited out: stopping
+#: with the sentence beats a research session that sits silent for minutes.
+MAX_RETRY_WAIT = 30.0
+
+
+def _sleep(seconds: float) -> None:
+    """Indirection so a test can run the retry policy without waiting."""
+    time.sleep(seconds)
+
+
 @dataclass
 class LLMResponse:
     """A completion plus its token cost (for the research token budget)."""
@@ -44,26 +65,63 @@ class LLMResponse:
 
 
 class LLMClient(ABC):
-    """Minimal text-completion contract shared by every provider."""
+    """Minimal text-completion contract shared by every provider.
+
+    Subclasses implement :meth:`_complete` (the bare provider call); :meth:`complete`
+    is concrete and owns the failure policy, so every provider gets the same one.
+    """
 
     model: str
 
     provider: str = "unknown"
 
+    #: Retries of a transient failure (see :data:`RETRYABLE`), not counting the first
+    #: request. Zero means one request, always - the readiness probe sets it so.
+    max_retries: int = len(RETRY_DELAYS)
+
     def complete(self, system: str, user: str, max_tokens: int = 1024) -> LLMResponse:
         """Return the model's completion for a system + user prompt.
 
-        A provider failure is re-raised as :class:`ModelProviderError` naming what
-        happened (auth, quota, timeout, ...) so the research loop can stop with a
-        sentence instead of a vendor traceback. A missing SDK is not a provider failure
-        and passes through.
+        A vendor or network failure is re-raised as :class:`ModelProviderError` naming
+        what happened (auth, quota, timeout, ...) so the research loop can stop with a
+        sentence instead of a vendor traceback. Transient ones - rate limited,
+        unavailable, unreachable - are retried up to :attr:`max_retries` times with a
+        short backoff (the provider's ``Retry-After`` when it gives one); an empty
+        balance, a bad key, a forbidden or missing model never are, because sending the
+        request again cannot change the answer.
+
+        Only vendor/network exceptions are translated. A missing SDK is not a provider
+        failure, and a bug in this code (a ``KeyError`` reading a reply) is not the
+        provider's - both propagate with their traceback.
         """
-        try:
-            return self._complete(system, user, max_tokens)
-        except (ModelProviderError, ImportError):
-            raise
-        except Exception as exc:  # noqa: BLE001 - vendor exception types are their own
-            raise as_provider_error(self.provider, exc, detail=self._detail_for(exc)) from exc
+        attempt = 0
+        while True:
+            try:
+                return self._complete(system, user, max_tokens)
+            except (ModelProviderError, ImportError):
+                raise
+            except Exception as exc:  # noqa: BLE001 - narrowed immediately below
+                if not is_provider_exception(exc):
+                    raise
+                category, _ = classify_provider_error(exc)
+                delay = self._retry_delay(attempt, category, exc)
+                if delay is None:
+                    raise as_provider_error(self.provider, exc, detail=self._detail_for(exc)) from exc
+                attempt += 1
+                _sleep(delay)
+
+    def _retry_delay(self, attempt: int, category: str, exc: BaseException) -> Optional[float]:
+        """Seconds to wait before retry number ``attempt + 1``, or ``None`` to give up."""
+        if category not in RETRYABLE or attempt >= self.max_retries:
+            return None
+        delays = RETRY_DELAYS or (0.0,)
+        wait = delays[min(attempt, len(delays) - 1)]
+        advised = retry_after_seconds(exc)
+        if advised is not None:
+            if advised > MAX_RETRY_WAIT:
+                return None
+            wait = max(wait, advised)
+        return wait
 
     def _detail_for(self, exc: BaseException):
         """Hook for a client that knows more than the classifier (e.g. its endpoint)."""
@@ -71,7 +129,7 @@ class LLMClient(ABC):
 
     @abstractmethod
     def _complete(self, system: str, user: str, max_tokens: int) -> LLMResponse:
-        """The provider call itself."""
+        """The provider call itself: one request, no error translation, no retry."""
 
 
 class AnthropicClient(LLMClient):
@@ -92,9 +150,8 @@ class AnthropicClient(LLMClient):
             import anthropic  # lazy: only needed when actually calling Claude
 
             key = get_credential("ANTHROPIC_API_KEY")
-            # No SDK retries: a credit error must surface once, not be re-sent (the SDK
-            # default retries 429s), and the session's trial budget should not hide
-            # repeated requests.
+            # SDK retries off: this module owns the policy (:meth:`LLMClient.complete`),
+            # which never re-sends a credit error - the SDK default retries every 429.
             self._client = (
                 anthropic.Anthropic(api_key=key, max_retries=0) if key else anthropic.Anthropic(max_retries=0)
             )
@@ -172,8 +229,6 @@ class OllamaClient(LLMClient):
         self.num_ctx = num_ctx if num_ctx is not None else ollama_num_ctx()
 
     def _detail_for(self, exc: BaseException):
-        from tradeflow.research.provider_errors import classify_provider_error
-
         category, _ = classify_provider_error(exc)
         if category == "unreachable":
             return f"nothing answered at {self.base_url}"
@@ -205,7 +260,17 @@ class OllamaClient(LLMClient):
             headers={"Content-Type": "application/json"},
         )
         with urllib.request.urlopen(request, timeout=self.timeout) as response:  # noqa: S310 - local URL
-            data = json.loads(response.read().decode("utf-8"))
+            raw = response.read().decode("utf-8")
+        try:
+            data = json.loads(raw)
+        except ValueError as exc:
+            # A proxy's HTML page or a half-started server: the endpoint's fault, and
+            # worth saying so rather than showing a JSON traceback.
+            raise ModelProviderError(
+                self.provider,
+                "unavailable",
+                f"{self.base_url} answered with something that is not an Ollama reply",
+            ) from exc
         text = data.get("message", {}).get("content", "")
         tokens = int(data.get("prompt_eval_count", 0)) + int(data.get("eval_count", 0))
         return LLMResponse(text=text, tokens=tokens)
