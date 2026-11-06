@@ -2240,9 +2240,13 @@ def _print_doctor(checks, *, task: str = "data", probe_result=None, provider: Op
     from tradeflow.services import setup
     from tradeflow.settings import state_root
 
+    root = str(state_root())
     print(f"\n{BRAND} setup check\n")
-    print(f"  state root: {state_root()}")
+    print(f"  state root: {root}")
     print("  (journal, trial store, bar cache, and configs all live here)\n")
+    # Sized to the longest name, so a long one ("state outside version control") does
+    # not push its own detail out of the column.
+    width = max([22, *(len(c.name) + 1 for c in checks)])
     for check in checks:
         # A row that gates only other tasks is not "blocked" for the one asked about; the
         # per-task summary below still lists it where it does block.
@@ -2250,7 +2254,12 @@ def _print_doctor(checks, *, task: str = "data", probe_result=None, provider: Op
         if status == "blocked" and check.needed_for and task not in check.needed_for:
             status = "optional_missing"
         label = f"[{_STATUS_LABELS[status]}]"
-        print(f"  {label:<10} {check.name:<22} {check.detail}")
+        # The full root is printed once above; repeated on every row it buried the part
+        # that differs.
+        detail = (
+            check.detail.replace(root + "/", "<state root>/") if check.name != "state root" else check.detail
+        )
+        print(f"  {label:<10} {check.name:<{width}} {detail}")
         if check.next_action:
             for line in check.next_action.splitlines():
                 print(
