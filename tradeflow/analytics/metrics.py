@@ -266,24 +266,27 @@ def sterling_ratio(cagr_value: float, average_drawdown: float) -> float:
 def value_at_risk(returns: Numbers, level: float = 0.95) -> float:
     """Historical Value-at-Risk: the loss not exceeded with ``level`` confidence.
 
-    Returned as a positive fraction (0.03 == a 3% loss).
+    Returned as a positive fraction (0.03 == a 3% loss), and 0.0 when even that tail is
+    a gain: taking the magnitude of the percentile reported a 0.2% *gain* at the 5th
+    percentile as a 0.2% loss.
     """
     r = _as_series(returns)
     if r.empty:
         return 0.0
-    return float(abs(np.percentile(r.to_numpy(), (1.0 - level) * 100.0)))
+    return float(max(0.0, -np.percentile(r.to_numpy(), (1.0 - level) * 100.0)))
 
 
 def conditional_var(returns: Numbers, level: float = 0.95) -> float:
-    """Expected shortfall: mean loss in the worst ``1 - level`` tail (positive)."""
+    """Expected shortfall: mean loss in the worst ``1 - level`` tail (positive), 0.0 when
+    that tail is on average a gain - the same sign rule as :func:`value_at_risk`."""
     r = _as_series(returns)
     if r.empty:
         return 0.0
     cutoff = np.percentile(r.to_numpy(), (1.0 - level) * 100.0)
     tail = r[r <= cutoff]
     if tail.empty:
-        return float(abs(cutoff))
-    return float(abs(tail.mean()))
+        return float(max(0.0, -cutoff))
+    return float(max(0.0, -tail.mean()))
 
 
 def skewness(returns: Numbers) -> float:

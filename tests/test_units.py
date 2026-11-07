@@ -213,3 +213,16 @@ def test_a_losing_run_has_a_negative_calmar_and_sterling():
         assert m.calmar_ratio(-0.041, drawdown) == pytest.approx(-0.041 / 0.055)
         assert m.sterling_ratio(-0.041, drawdown) == pytest.approx(-0.041 / 0.055)
     assert m.calmar_ratio(0.041, -0.055) == pytest.approx(0.041 / 0.055)
+
+
+def test_value_at_risk_is_a_loss_and_never_a_gain_reported_as_one():
+    """Both took the magnitude of the tail percentile, so a series whose worst 5% was
+    still a 0.2% gain reported a 0.2% VaR - a gain read as a loss."""
+    from tradeflow.analytics import metrics as m
+
+    gains = pd.Series([0.002, 0.003, 0.004, 0.005] * 25)
+    assert m.value_at_risk(gains, 0.95) == 0.0
+    assert m.conditional_var(gains, 0.95) == 0.0
+    losses = pd.Series([-0.03] * 10 + [0.01] * 90)
+    assert m.value_at_risk(losses, 0.95) == pytest.approx(0.03)
+    assert m.conditional_var(losses, 0.95) == pytest.approx(0.03)

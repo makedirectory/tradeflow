@@ -333,6 +333,9 @@ backtests included, though most never touched a boundary - drop out of the defau
   the whole ratio, so a loss read as a reward. Values already stored for losing runs
   carry the old sign, so neither is accepted as a search objective for now (a search
   reuses stored per-candidate results); neither feeds a gate or a leaderboard.
+- VaR and CVaR are losses, and 0 when even the tail is a gain; they took the magnitude of
+  the tail return, so a series whose worst 5% still gained reported that gain as a loss.
+  Display-only, like Calmar; values already stored keep the old reading.
 
 ### Model providers
 
