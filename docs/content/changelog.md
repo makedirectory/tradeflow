@@ -289,6 +289,10 @@ backtests included, though most never touched a boundary - drop out of the defau
 - The preflight and the dry run warn when the declared book cannot place an order
   (`max_position_size`, a gross cap or the capital below `min_notional`), and label a
   ceiling that is only the strategy's default.
+- `small-real` no longer gives circular advice on a config with no recorded capital:
+  `--scale` and `--capital` are both refused with the same way forward (a config that
+  records the capital it was validated at), and the `--capital` help says so. The scaling
+  rule itself is unchanged.
 
 ## 2.3.0 — 2026-09-16
 

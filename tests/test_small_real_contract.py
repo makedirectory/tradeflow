@@ -160,7 +160,7 @@ def test_a_scale_derives_the_capital_and_a_capital_derives_the_scale():
 def test_a_scale_needs_a_validated_capital_to_be_a_fraction_of():
     """And says what to do instead, because a refusal an operator cannot act on gets
     worked around."""
-    with pytest.raises(smallreal.ContractError, match="--capital with the amount"):
+    with pytest.raises(smallreal.ContractError, match="records the capital it was validated at"):
         smallreal.resolve_scale(validated_capital=None, scale=SCALE)
 
 

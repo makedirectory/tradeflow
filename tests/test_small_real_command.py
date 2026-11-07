@@ -186,7 +186,7 @@ def test_a_config_that_records_no_book_is_refused(wired, tmp_path):
 def test_a_config_with_no_capital_refuses_a_scale_and_names_the_way_out(wired, tmp_path):
     config = _config(tmp_path, capital=None)
 
-    with pytest.raises(SystemExit, match="--capital with the amount"):
+    with pytest.raises(SystemExit, match="records the capital it was validated at"):
         _run(["small-real", "--config", str(config), "--scale", "0.05"])
 
 
@@ -906,3 +906,26 @@ def test_the_report_tells_a_committed_session_from_one_that_traded(wired, tmp_pa
     printed = capsys.readouterr().out
     assert "committed, never started — feed unreachable" in printed
     assert "started — warm-up completed and the trading loop began" in printed
+
+
+def test_scale_and_capital_refusals_on_a_config_with_no_capital_give_one_way_forward(wired, tmp_path):
+    """`--scale` said "pass --capital instead" and `--capital` said "use a config that
+    records the capital", on the same config. --capital cannot stand in, because the dollar
+    ceiling is restated by the ratio to the validated capital - so both now say the same,
+    and the `--capital` help no longer promises the opposite."""
+    config = _config(tmp_path, capital=None)
+    messages = []
+    for flag, value in (("--scale", "0.05"), ("--capital", "10000")):
+        with pytest.raises(SystemExit) as refused:
+            _run(["small-real", "--config", str(config), flag, value])
+        messages.append(str(refused.value))
+
+    assert all("records the capital it was validated at" in m for m in messages)
+    assert not any("Pass --capital" in m for m in messages)
+
+    help_text = ""
+    for action in cli.build_parser()._subparsers._group_actions[0].choices["small-real"]._actions:
+        if action.dest == "capital":
+            help_text = action.help
+    assert "Use this when the config records no" not in help_text
+    assert "has to record the capital it was validated at" in help_text

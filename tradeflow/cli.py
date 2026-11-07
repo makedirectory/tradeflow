@@ -6826,8 +6826,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--capital",
         type=_positive_amount,
         default=None,
-        help="Amount to deploy, stated outright. Use this when the config records no "
-        "validated capital for --scale to be a fraction of",
+        help="Amount to deploy, stated outright (instead of --scale). The config still has "
+        "to record the capital it was validated at: dollar ceilings such as "
+        "max_position_size are restated by the ratio of the two, so a config without "
+        "one is refused with --capital as with --scale",
     )
     small.add_argument(
         "--live-money",

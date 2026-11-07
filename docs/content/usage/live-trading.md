@@ -443,11 +443,13 @@ nobody chose. Passing both is refused even when they agree — two sources for o
 is a thing to keep in step, and the arithmetic that checks they agree is the arithmetic
 that would be wrong.
 
-`--scale` needs a config that records the capital it was validated at, since otherwise
-there is nothing to take a fraction of; the refusal names `--capital` as the way out. And
-where no ratio is known, a dollar ceiling **cannot** be restated, so a config recording
-no capital but declaring a `max_position_size` is refused rather than run with a limit
-gone quietly inert.
+Both need a config that records the capital it was validated at. `--scale` is a fraction
+of it, and `--capital` is restated against it: where no ratio is known a dollar ceiling
+**cannot** be restated, so a config recording no capital but declaring a
+`max_position_size` is refused rather than run with a limit gone quietly inert. Every
+strategy's book carries that ceiling, so `--capital` is not a way around a config with no
+recorded capital; both refusals say so and name the one way forward, a config that
+records the capital it was validated at.
 
 ### It cannot be reached by composing live flags
 

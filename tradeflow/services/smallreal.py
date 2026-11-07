@@ -133,8 +133,11 @@ def resolve_scale(
     for one number is a thing to keep in step, and the arithmetic that checks them
     agree is the arithmetic that would be wrong.
 
-    ``scale`` needs a recorded validated capital to be a fraction *of* something. Where
-    the config has none, the caller is told to state the capital outright.
+    ``scale`` needs a recorded validated capital to be a fraction *of* something, and so
+    does a ``capital`` whenever the book carries a dollar ceiling (see
+    :func:`unscalable_ceilings`) - which every strategy's book does. Where the config has
+    none, both are refused with the same way forward: a config that records the capital
+    it was validated at.
     """
     if scale is None and capital is None:
         raise ContractError(
@@ -154,7 +157,9 @@ def resolve_scale(
             raise ContractError(
                 "--scale is a fraction of the capital this config was validated at, and "
                 "this config records none, so there is nothing to take a fraction of.\n"
-                "  Pass --capital with the amount to deploy instead."
+                "  --capital cannot stand in for it: a dollar ceiling such as "
+                "max_position_size is restated by the ratio to the validated capital.\n"
+                "  Use a config that records the capital it was validated at."
             )
         if scale <= 0:
             raise ContractError(f"--scale must be positive, not {scale}")
