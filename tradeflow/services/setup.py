@@ -890,11 +890,16 @@ def _writable_check() -> Check:
     from tradeflow.services.audit import DEFAULT_TRIAL_JOURNAL
 
     directory = Path(DEFAULT_TRIAL_JOURNAL).parent
+    # `init --check` says it writes nothing, so directories the probe has to create are
+    # removed again; a run creates them for real when it first journals.
+    created = [parent for parent in (directory, *directory.parents) if not parent.exists()]
     try:
         directory.mkdir(parents=True, exist_ok=True)
         probe = directory / ".write-probe"
         probe.write_text("")
         probe.unlink()
+        for made in created:  # deepest first
+            made.rmdir()
     except PermissionError as exc:
         # A host permission boundary, not a credentials problem: the fix is a different
         # directory or different ownership, and no key will change it.

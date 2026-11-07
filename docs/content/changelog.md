@@ -106,6 +106,7 @@ backtests included, though most never touched a boundary - drop out of the defau
 
 ### Getting started
 
+- The bar cache without the `store` extra stops with the install command instead of a `pyarrow` traceback (following an offline miss's own `cache warm` hint used to crash). `mcp` without its extra says so before logging anything, and `init --check` leaves no directory behind.
 - `init --check` says what is ready for which task (demo, data, research, MCP) instead
   of one pass/fail and names the missing capability. `init --check --for <task>` prints
   the single install command for that task, and the command that needs an extra prints

@@ -281,3 +281,18 @@ def install_hint(*extras: str) -> str:
 def missing_extra_message(what: str, extra: str) -> str:
     """``what`` needs ``extra``, and the one way to get it."""
     return f"{what} needs the '{extra}' extra.\n{install_hint(extra)}"
+
+
+class MissingExtra(RuntimeError):
+    """A capability was reached without the extra that provides it.
+
+    Raised where the capability starts rather than where its first import happens to
+    sit, and carrying the install text, so every caller ends on the same instruction -
+    the CLI prints it, the MCP server returns it as the tool error.
+    """
+
+
+def require_extra(what: str, extra: str) -> None:
+    """Raise :class:`MissingExtra` unless ``extra`` is installed."""
+    if not installed(extra):
+        raise MissingExtra(missing_extra_message(what, extra))

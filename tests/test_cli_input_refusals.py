@@ -614,3 +614,58 @@ def test_a_fresh_backtest_names_the_trial_it_recorded(tmp_path, monkeypatch):
         == fresh["trial_id"]
     )
     assert analysis.run_backtest(client, "demo_trend", ["AAA"], start, end, journal=False)["trial_id"] is None
+
+
+def test_the_bar_cache_without_its_extra_says_how_to_add_it(monkeypatch, tmp_path):
+    """Following an offline miss's own `cache warm` hint without the `store` extra ended
+    in a pyarrow traceback: the Parquet libraries are imported only on the first read or
+    write. The cache now refuses where it starts, with the one install command."""
+    from argparse import Namespace
+
+    from tradeflow.utils import extras
+
+    real = extras.installed
+    monkeypatch.setattr(extras, "installed", lambda name: False if name == "store" else real(name))
+    args = cli.parse_cli(["scan", "--offline", "--symbols", "AAA", "--cache-dir", str(tmp_path / "bars")])
+    with pytest.raises(extras.MissingExtra, match="needs the 'store' extra"):
+        args.func(args)
+
+    def _missing(_args):
+        raise extras.MissingExtra(
+            "The bar cache needs the 'store' extra.\n    uv sync --inexact --extra store"
+        )
+
+    monkeypatch.setattr(cli, "parse_cli", lambda: Namespace(func=_missing))
+    monkeypatch.setattr(cli, "setup_logging", lambda: None)
+    with pytest.raises(SystemExit) as exited:
+        cli.main()
+    assert "needs the 'store' extra" in str(exited.value.code)
+
+
+def test_the_writable_probe_leaves_no_directory_behind(tmp_path, monkeypatch):
+    """`init --check` says it writes nothing; the probe created the state's logs/
+    directory and left it there."""
+    from tradeflow.services import audit, setup
+
+    journal = tmp_path / "home" / "logs" / "research_journal.jsonl"
+    monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", journal)
+    check = setup._writable_check()
+    assert check.status == "ready"
+    assert not (tmp_path / "home").exists()
+
+
+def test_mcp_without_its_extra_says_so_before_logging_anything(monkeypatch, caplog):
+    """A client launching the server without the extra got an INFO line about the state
+    root ahead of the refusal."""
+    import logging
+
+    from tradeflow.utils import extras
+
+    real = extras.installed
+    monkeypatch.setattr(extras, "installed", lambda name: False if name == "mcp" else real(name))
+    caplog.set_level(logging.INFO)
+    args = cli.parse_cli(["mcp"])
+    with pytest.raises(SystemExit) as exited:
+        args.func(args)
+    assert "needs the 'mcp' extra" in str(exited.value.code)
+    assert "state root" not in caplog.text

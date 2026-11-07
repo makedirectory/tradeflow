@@ -4377,6 +4377,12 @@ def cmd_mcp(args) -> None:
     # build_server — so guarding only the import let the real failure escape as a
     # traceback from several frames down, which is precisely the moment someone is
     # trying to connect a client for the first time.
+    from tradeflow.utils.extras import installed
+
+    # Checked before `serve` too: it logs the state root first, so a client launching a
+    # server without the extra got an INFO line ahead of the one that matters.
+    if not installed("mcp"):
+        sys.exit(missing_extra_message("The MCP server", "mcp"))
     try:
         from tradeflow.mcp.server import serve
 
@@ -8332,12 +8338,13 @@ def main() -> None:
     from tradeflow.settings import SettingsError
     from tradeflow.store.bars import CacheMiss
     from tradeflow.utils.errors import RunRefused
+    from tradeflow.utils.extras import MissingExtra
 
     setup_logging()
     args = parse_cli()
     try:
         args.func(args)
-    except (SettingsError, CacheMiss, AuthenticationError, RunRefused) as exc:
+    except (SettingsError, CacheMiss, AuthenticationError, RunRefused, MissingExtra) as exc:
         # Rejected keys are the likeliest first mistake, and their message says what to
         # do - it used to sit under sixty lines of the vendor SDK's stack.
         sys.exit(str(exc))

@@ -411,7 +411,12 @@ class CachedMarketData(MarketDataProvider):
         adjustment: str = "split",
     ):
         from tradeflow.data.store import ParquetBarStore
+        from tradeflow.utils.extras import require_extra
 
+        # Here, at the start of the capability: the Parquet libraries are imported only
+        # on the first read or write, so following an offline miss's own `cache warm`
+        # hint without the extra ended in a pyarrow traceback.
+        require_extra("The bar cache (--cache, --offline, cache warm)", "store")
         self.upstream = upstream
         self.offline = offline
         self.adjustment = adjustment
