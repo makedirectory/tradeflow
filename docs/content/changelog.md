@@ -205,6 +205,25 @@ backtests included, though most never touched a boundary - drop out of the defau
 
 ### Trial history
 
+- `trials promote` carries the cost model the trial was validated under. A walk-forward
+  or verdict keeps it in its recipe rather than its params, so promoting one wrote a
+  config with no `cost` and a run from it priced trades at the cheaper defaults. The
+  config load line now says which costs it applied, or that none were recorded. A
+  promoted config also names its scanner the way `walkforward --save-config` does
+  (`none` for a replayed book) instead of `null`; over MCP, `save_config` takes the cost
+  from the campaign block in its provenance.
+- `trials list`, `trials show` and `trials campaign` say what a Sharpe is for each kind
+  (walk-forward aggregate, research median fold, backtest full window, optimize best of
+  N) instead of calling all of them out-of-sample. `--sort sharpe|dsr` and `--min-sharpe`
+  leave in-sample kinds out unless `--include-in-sample` (the same flag, and MCP
+  `list_trials` argument, `trials best` has), and count what they hid. A backtest's
+  campaign is headed "not validated out of sample", and promoting an ungated run no
+  longer says it "did not clear its gates".
+- `trials show` prints drawdown and trade counts in the units `trials campaign` uses.
+- `trials list --since/--until` says how many rows it excluded because their recorded
+  time is unknown, rather than dropping them silently.
+- A refused `trials promote` points at `trials campaign`, which exists, instead of
+  telling the reader to re-run `trials show`, which shows only the verdict.
 - `trials list --since/--until` read a date as the New York market date and include
   the whole of it. Before, `--until` dropped trials recorded on the day it named and
   `--since` could admit the previous evening's. `trials mark-contaminated --before`

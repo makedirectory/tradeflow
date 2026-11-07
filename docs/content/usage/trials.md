@@ -26,22 +26,29 @@ quantred trials list --strategy demo_trend --min-sharpe 1.0 --sort dsr --limit 2
 ```
 
 ```
-ID            KIND        STRATEGY           SHARPE     DSR  PROMO  ACCT  TS
-a1b2c3d4e5f6  walkforward demo_trend        1.512   0.903    yes     3  2025-03-01T09:14:22
-b2c3d4e5f6a1  backtest    demo_trend        2.104   0.201     no     3  2025-02-01T11:02:07
+ID            KIND        STRATEGY           SHARPE BASIS          DSR  PROMO  ACCT  TS
+a1b2c3d4e5f6  walkforward demo_trend          1.512 oos agg      0.903    yes     3  2025-03-01 09:14:22 EST
 …
 
 Showing 20 of 4318 matching trials (use --limit/--offset for more).
+3 in-sample row(s) (optimize/backtest/alpha) left out of this ranking — none was validated out of sample. Pass --include-in-sample to see them.
 ```
+
+The `SHARPE` column is not one quantity. `BASIS` says which: `oos agg` is a walk-forward's
+out-of-sample aggregate over its folds, `oos median` a research round's median fold, and
+`IN-SAMPLE` is either a backtest's one pass over the whole window or an optimize row's
+best-of-N candidate. `trials show` spells the basis out in full, and `--json` rows carry
+`sharpe_basis` and `in_sample`.
 
 | Flag | Meaning |
 |---|---|
 | `--strategy` / `--kind` | Filter to one strategy, or one kind (`backtest`, `optimize`, `walkforward`, `alpha`, `research`, `verdict`) |
 | `--symbols` | Filter to one universe — matched on the **normalized** universe, so `NVDA,MSFT` and `msft, nvda` find the same trials |
 | `--since` / `--until` | Filter by when the trial was recorded. A date is a New York market date and both ends include it: `--until 2026-08-01` includes trials from that evening |
-| `--min-sharpe` | Only trials with a recorded OOS Sharpe at or above this |
+| `--min-sharpe` | Only trials with a recorded Sharpe at or above this; in-sample kinds are left out unless `--include-in-sample` |
 | `--gates-passed` | Only trials recorded as promotable |
-| `--sort date\|sharpe\|dsr` | Sort order (default `date`) |
+| `--sort date\|sharpe\|dsr` | Sort order (default `date`). Sorting by `sharpe` or `dsr` is a ranking, so optimize, backtest and alpha rows are left out of it unless `--include-in-sample`, as `trials best` does |
+| `--include-in-sample` | Rank in-sample rows too. They stay marked `IN-SAMPLE`. Naming one with `--kind optimize` shows exactly those rows without it |
 | `--limit` / `--offset` | Paging — done in SQL, so a store with tens of thousands of rows stays fast |
 | `--accounting` / `--all-accounting` | Stay within one accounting version (default), or span them deliberately |
 | `--json` | Emit the rows as JSON |
@@ -53,6 +60,10 @@ Two rules the listing follows:
   persist returns, and a forecast did not score a Sharpe of 0.00.
 - **Truncation is never silent.** The footer always says how many rows matched
   versus how many were shown.
+- **Exclusions are counted.** A ranking says how many in-sample rows it left out, and a
+  `--since`/`--until` filter says how many rows it could not place because their
+  recorded time is unknown. Those rows are not guessed a date; drop the bound to see
+  them.
 
 `trials query` still works as an alias for `trials list` for one release.
 

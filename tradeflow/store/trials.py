@@ -198,6 +198,53 @@ _EXCLUDED_FROM_FAMILY_COUNT = ("alpha",)
 #: Sharpe is description, not out-of-sample evidence - whatever column it is stored in.
 #: Ranked beside walk-forwards under "validated runs only", a novice read it as one.
 IN_SAMPLE_KINDS = ("optimize", "alpha", "backtest")
+
+#: What a row's ``oos_sharpe`` column *is*, by kind. The column name is wrong for three
+#: of the four kinds that fill it: the same number is an out-of-sample aggregate on a
+#: walk-forward, the median of the fold Sharpes on a research round, one pass over the
+#: whole window on a backtest, and the winner of a search on an optimize row. Identical
+#: as numbers, opposite as evidence - so every surface that prints one asks here what it
+#: is. A kind absent from this table (verdict, alpha) records no Sharpe at all.
+SHARPE_BASIS = {
+    "walkforward": "out-of-sample, aggregate over folds",
+    "research": "out-of-sample, median fold",
+    "backtest": "full window, in-sample",
+    "optimize": "best of N candidates, in-sample",
+}
+#: The same, as the one short cell a table has room for.
+SHARPE_BASIS_SHORT = {
+    "walkforward": "oos agg",
+    "research": "oos median",
+    "backtest": "IN-SAMPLE",
+    "optimize": "IN-SAMPLE",
+}
+
+
+def sharpe_basis(kind: Optional[str]) -> Optional[str]:
+    """What the Sharpe recorded for a trial of this kind measures, or ``None``."""
+    return SHARPE_BASIS.get(kind or "")
+
+
+def ranking_exclusions(
+    *,
+    sort: str = "date",
+    min_sharpe: Optional[float] = None,
+    kind: Optional[str] = None,
+    include_in_sample: bool = False,
+) -> tuple:
+    """The kinds a listing must leave out because it is being used to rank.
+
+    A date-ordered listing is history, and shows everything. The moment it sorts by a
+    metric or floors on one it is a leaderboard, and an in-sample row at the top of one
+    is the artifact presented as the finding - the same rule ``best`` applies. Naming an
+    in-sample kind with ``--kind`` is asking for exactly those rows, so that is honoured;
+    they are still marked in-sample.
+    """
+    if include_in_sample or (sort == "date" and min_sharpe is None) or kind in IN_SAMPLE_KINDS:
+        return ()
+    return IN_SAMPLE_KINDS
+
+
 #: The journal event that quarantines a suspect subset of trials. Append-only, like
 #: everything else the journal holds: the trials it names stay exactly as they were
 #: recorded, and this says what was later learned about them.
@@ -207,6 +254,14 @@ CONTAMINATION_TOOL = "trials:contaminated"
 #: a walk-forward validates many inner configs per row, as does a research round
 #: that let the optimizer search internally.
 _SUMMED_KINDS = ("walkforward", "research")
+
+
+def _with_basis(row: Dict[str, Any]) -> Dict[str, Any]:
+    """A row annotated with what its Sharpe measures. Derived from the kind on every
+    read, never stored - so nothing here needs to be replayable."""
+    row["sharpe_basis"] = sharpe_basis(row.get("kind"))
+    row["in_sample"] = row.get("kind") in IN_SAMPLE_KINDS
+    return row
 
 
 def db_path_for_journal(journal_path) -> Path:
@@ -1217,6 +1272,7 @@ class TrialStore:
         all_accounting: bool = False,
         exclude_kinds: Sequence[str] = (),
         exclude_contaminated: bool = False,
+        undated_only: bool = False,
     ) -> tuple:
         """The shared ``WHERE`` clause behind listing, counting, and ranking.
 
@@ -1268,6 +1324,10 @@ class TrialStore:
             args.extend(exclude_kinds)
         if exclude_contaminated:
             clauses.append("contaminated_at IS NULL")
+        if undated_only:
+            # Rows whose recorded instant is missing or unreadable: the ones a date
+            # bound cannot place on either side of it.
+            clauses.append("julianday(ts) IS NULL")
         return (f"WHERE {' AND '.join(clauses)}" if clauses else ""), args
 
     def list_trials(
@@ -1296,7 +1356,49 @@ class TrialStore:
             f"SELECT * FROM trials {where} ORDER BY {order}, id LIMIT ? OFFSET ?",
             [*args, int(limit), int(offset)],
         )
-        return [dict(row) for row in cur.fetchall()]
+        return [_with_basis(dict(row)) for row in cur.fetchall()]
+
+    def listing(
+        self,
+        *,
+        sort: str = "date",
+        limit: int = 20,
+        offset: int = 0,
+        include_in_sample: bool = False,
+        **filters: Any,
+    ) -> Dict[str, Any]:
+        """:meth:`list_trials` plus its count, scoped the way a ranking has to be.
+
+        The one definition the CLI and the MCP tool both call, so a surface cannot rank
+        in-sample rows that the other leaves out. Ranking (a metric sort or a Sharpe
+        floor) excludes :data:`IN_SAMPLE_KINDS` unless asked, and ``in_sample_excluded``
+        counts what that hid - zero is reported as zero, never omitted.
+        """
+        exclude = ranking_exclusions(
+            sort=sort,
+            min_sharpe=filters.get("min_sharpe"),
+            kind=filters.get("kind"),
+            include_in_sample=include_in_sample,
+        )
+        scoped = {**filters, "exclude_kinds": exclude} if exclude else filters
+        rows = self.list_trials(sort=sort, limit=limit, offset=offset, **scoped)
+        total = self.count_trials(**scoped)
+        hidden = self.count_trials(**filters) - total if exclude else 0
+        # A date bound compares against a timestamp, and a row without one satisfies
+        # neither side. Dropping it silently reads as "nothing was recorded then", so
+        # the filter says how many it could not place - never guessing a date for them.
+        undated = 0
+        if filters.get("since") is not None or filters.get("until") is not None:
+            unbounded = {k: v for k, v in scoped.items() if k not in ("since", "until", "before")}
+            undated = self.count_trials(**unbounded, undated_only=True)
+        return {
+            "rows": rows,
+            "total": total,
+            "in_sample_excluded": hidden,
+            "in_sample_included": not exclude,
+            "exclude_kinds": exclude,
+            "undated_excluded": undated,
+        }
 
     def count_trials(self, **filters: Any) -> int:
         """How many rows these filters match in total, ignoring paging - so a
@@ -1341,7 +1443,7 @@ class TrialStore:
         row = self._conn.execute("SELECT * FROM trials WHERE id = ?", (trial_id,)).fetchone()
         if row is None:
             return None
-        trial = dict(row)
+        trial = _with_basis(dict(row))
         try:
             trial["params"] = json.loads(trial.get("params_json") or "{}")
         except json.JSONDecodeError:

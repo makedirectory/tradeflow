@@ -3935,13 +3935,39 @@ def _print_trials_list(store, args) -> None:
     from tradeflow.analytics.reporting import format_trials_table
 
     filters = _trial_filters(args)
-    rows = store.list_trials(sort=args.sort, limit=args.limit, offset=args.offset, **filters)
-    total = store.count_trials(**filters)
+    # Ranking by a metric (or flooring on one) is a leaderboard, and the store's one
+    # `listing` definition leaves in-sample kinds out of it unless asked - as `best` does.
+    listing = store.listing(
+        sort=args.sort,
+        limit=args.limit,
+        offset=args.offset,
+        include_in_sample=getattr(args, "include_in_sample", False),
+        **filters,
+    )
+    rows, total = listing["rows"], listing["total"]
     if args.json:
-        print(json.dumps({"rows": rows, "total": total}, indent=2, default=str))
+        print(
+            json.dumps(
+                {
+                    "rows": rows,
+                    "total": total,
+                    "in_sample_excluded": listing["in_sample_excluded"],
+                    "undated_excluded": listing["undated_excluded"],
+                },
+                indent=2,
+                default=str,
+            )
+        )
         return
-    print(format_trials_table(rows, total=total))
-    _print_other_accounting_notice(store, filters, total)
+    print(
+        format_trials_table(
+            rows,
+            total=total,
+            in_sample_excluded=listing["in_sample_excluded"],
+            undated_excluded=listing["undated_excluded"],
+        )
+    )
+    _print_other_accounting_notice(store, {**filters, "exclude_kinds": listing["exclude_kinds"]}, total)
     if args.strategy and args.symbols:
         from tradeflow.engine.backtest import ACCOUNTING_VERSION
 
@@ -4007,12 +4033,28 @@ def _promote_trial(store, args) -> None:
         sys.exit(f"No trial with id {args.trial_id!r}. Try `trials list` to see what is recorded.")
 
     promotable = trial.get("promotable")
+    # `None` is not "failed": a backtest or optimize row never faced the promotion gates
+    # at all, and saying it "did not clear" them would invent a verdict that was never
+    # reached. Only a gated kind can have failed.
+    ungated = promotable is None
     if not promotable and not args.force:
-        sys.exit(
-            f"Trial {args.trial_id} is not promotable (promotable={promotable!r}). Promoting it "
-            "would put a config on disk whose own provenance says it did not clear the gates. "
-            "Re-run `trials show` to see why, or pass --force to save it with that verdict recorded."
-        )
+        if ungated:
+            what = (
+                f"Trial {args.trial_id} is a {trial.get('kind')!r} run, which never faced the "
+                "promotion gates (promotable is not recorded) — it was not validated out of "
+                "sample. Run `walkforward` for the same config to get a verdict, or pass --force "
+                "to save it with that absence recorded."
+            )
+        else:
+            what = (
+                f"Trial {args.trial_id} is not promotable: it did not clear the promotion gates. "
+                "Promoting it would put a config on disk whose own provenance says so. "
+                f"`trials campaign {args.trial_id}` shows its recipe, evidence and any probes that "
+                "ran; the per-gate values are printed by the walkforward run itself (the store "
+                "keeps the verdict, not each gate's value). Pass --force to save it with that "
+                "verdict recorded."
+            )
+        sys.exit(what)
 
     # Through the same journal the campaign block is read from. Both the resolved
     # universe and the validation recipe live in the journal rather than the index, so
@@ -4087,7 +4129,13 @@ def _promote_trial(store, args) -> None:
             accounting=int(trial.get("accounting") or 1),
             campaign=material,
             notes=f"promoted from trial {args.trial_id}"
-            + ("" if promotable else " (NOT promotable at the time of promotion)"),
+            + (
+                ""
+                if promotable
+                else " (never gated: not validated out of sample)"
+                if ungated
+                else " (NOT promotable at the time of promotion)"
+            ),
         ),
     )
     print(f"Promoted trial {args.trial_id} -> {path}")
@@ -4099,7 +4147,12 @@ def _promote_trial(store, args) -> None:
         # Distinguishable from a config whose candidates equal its universe, because
         # `--re-resolve-universe` can only be honest about one of those.
         print(" (no candidate list recorded - --re-resolve-universe will say so)")
-    if not promotable:
+    if ungated:
+        print(
+            f"  WARNING: this {trial.get('kind')!r} trial never faced the promotion gates; the "
+            "config records that it was not validated out of sample."
+        )
+    elif not promotable:
         print("  WARNING: this trial did not clear its gates; the config records that verdict.")
     print("  Saving a config never trades it - a human promotes it to live.")
 
@@ -7940,7 +7993,9 @@ def build_parser() -> argparse.ArgumentParser:
             dest="min_sharpe",
             type=float,
             default=None,
-            help="Only trials with a recorded OOS Sharpe at or above this",
+            help="Only trials with a recorded Sharpe at or above this. In-sample kinds "
+            "(optimize/backtest/alpha) are left out unless --include-in-sample: a floor on a "
+            "search's winner or a one-pass backtest is not an out-of-sample floor",
         )
         p.add_argument(
             "--gates-passed",
@@ -7968,7 +8023,15 @@ def build_parser() -> argparse.ArgumentParser:
             "--sort",
             choices=["date", "sharpe", "dsr"],
             default="date",
-            help="Sort order; unrecorded metrics sort last, never as zero (default: %(default)s)",
+            help="Sort order; unrecorded metrics sort last, never as zero. Sorting by sharpe "
+            "or dsr leaves in-sample kinds out unless --include-in-sample (default: %(default)s)",
+        )
+        p.add_argument(
+            "--include-in-sample",
+            dest="include_in_sample",
+            action="store_true",
+            help="Rank in-sample rows (optimize/alpha/backtest) too when sorting by a metric or "
+            "using --min-sharpe. They are marked IN-SAMPLE; none was validated out of sample",
         )
         p.add_argument(
             "--limit", type=int, default=20, help="Show at most this many rows (default: %(default)s)"

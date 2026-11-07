@@ -782,29 +782,62 @@ def _plural(count: int, noun: str) -> str:
     return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
 
-def format_trials_table(rows: List[Dict[str, Any]], *, total: Optional[int] = None) -> str:
+def _basis_cell(row: Dict[str, Any]) -> str:
+    """What a row's Sharpe measures, in the one short cell a table has room for."""
+    from tradeflow.store.trials import SHARPE_BASIS_SHORT
+
+    return SHARPE_BASIS_SHORT.get(row.get("kind") or "", NOT_RECORDED)
+
+
+def format_trials_table(
+    rows: List[Dict[str, Any]],
+    *,
+    total: Optional[int] = None,
+    in_sample_excluded: int = 0,
+    undated_excluded: int = 0,
+) -> str:
     """The trial listing: one row per trial, absences rendered as absences.
 
     Always states how many rows matched versus how many are shown — a listing that
-    silently truncates reads as "this is everything" when it is not.
+    silently truncates reads as "this is everything" when it is not. Every row says
+    what its Sharpe *is* (BASIS): the same number is an out-of-sample aggregate on a
+    walk-forward and a search's winning candidate on an optimize row, and a table that
+    prints both under one heading invites ranking them together.
     """
+    notices = []
+    if in_sample_excluded:
+        notices.append(
+            f"{in_sample_excluded} in-sample row(s) (optimize/backtest/alpha) left out of this "
+            "ranking — none was validated out of sample. Pass --include-in-sample to see them."
+        )
+    if undated_excluded:
+        notices.append(
+            f"{undated_excluded} row(s) with no recorded timestamp are not shown: a date bound "
+            "cannot place them, and no date is guessed for them. Drop --since/--until to see them."
+        )
     if not rows:
-        return "No trials matched."
+        return "\n".join(["No trials matched.", *notices])
     lines = [
-        f"{'ID':14}{'KIND':12}{'STRATEGY':16}{'SHARPE':>9}{'DSR':>8}{'PROMO':>7}{'ACCT':>6}  TS",
+        f"{'ID':14}{'KIND':12}{'STRATEGY':16}{'SHARPE':>9} {'BASIS':<11}{'DSR':>7}{'PROMO':>7}{'ACCT':>6}  TS",
     ]
     for r in rows:
         promo = NOT_RECORDED if r.get("promotable") is None else ("yes" if r["promotable"] else "no")
         lines.append(
             f"{str(r.get('id', ''))[:14]:14}{str(r.get('kind', ''))[:12]:12}"
             f"{str(r.get('strategy') or '')[:16]:16}"
-            f"{_cell(r.get('oos_sharpe')):>9}{_prob_cell(r.get('deflated_sharpe')):>8}"
+            f"{_cell(r.get('oos_sharpe')):>9} {_basis_cell(r):<11}{_prob_cell(r.get('deflated_sharpe')):>7}"
             f"{promo:>7}{r.get('accounting', ''):>6}  {_local_ts(r.get('ts'))}"
         )
     if total is not None and total > len(rows):
         lines.append(f"\nShowing {len(rows)} of {total} matching trials (use --limit/--offset for more).")
     elif total is not None:
         lines.append(f"\n{total} matching trial(s).")
+    if any(r.get("kind") in ("optimize", "backtest") for r in rows):
+        lines.append(
+            "IN-SAMPLE rows: the Sharpe is a search's winning candidate (optimize) or one pass "
+            "over the whole window (backtest) — not out-of-sample evidence."
+        )
+    lines.extend(notices)
     return "\n".join(lines)
 
 
@@ -904,16 +937,33 @@ def format_trial_detail(trial: Dict[str, Any]) -> str:
 
     lines.append("")
     lines.append("  Headline metrics:")
-    for label, key, spec in (
-        ("OOS Sharpe", "oos_sharpe", "{:.3f}"),
-        ("Deflated Sharpe", "deflated_sharpe", "{:.3f}"),
-        ("Profit factor", "oos_profit_factor", "{:.3f}"),
-        ("Max drawdown", "oos_max_dd", "{:.3f}"),
-        ("Efficiency", "efficiency", "{:.3f}"),
-        ("OOS trades", "oos_trades", "{:.0f}"),
+    from tradeflow.optimization.walk_forward import format_gate_value
+    from tradeflow.store.trials import IN_SAMPLE_KINDS, sharpe_basis
+
+    # Named by what it is for this kind, not by the column it happens to be stored in:
+    # `oos_sharpe` holds a full-window figure on a backtest and a search's winner on an
+    # optimize row, and printing either as "OOS Sharpe" is the label doing the flattering.
+    basis = sharpe_basis(trial.get("kind"))
+    sharpe_label = "Sharpe"
+    # (label, stored column, the name the shared unit table knows that quantity by)
+    for label, key, unit_name in (
+        (sharpe_label, "oos_sharpe", None),
+        ("Deflated Sharpe", "deflated_sharpe", "deflated_sharpe"),
+        ("Profit factor", "oos_profit_factor", None),
+        ("Max drawdown", "oos_max_dd", "max_drawdown"),
+        ("Efficiency", "efficiency", None),
+        ("Trades", "oos_trades", "total_trades"),
     ):
-        value = _prob_cell(trial.get(key), key) if _is_probability(key) else _cell(trial.get(key), spec)
+        raw = trial.get(key)
+        if unit_name is None:
+            value = _cell(raw)
+        else:
+            value = NOT_RECORDED if raw is None else format_gate_value(unit_name, raw)
+        if key == "oos_sharpe" and basis and raw is not None:
+            value = f"{value}   [{basis}]"
         lines.append(f"    {label:<18}{value}")
+    if trial.get("kind") in IN_SAMPLE_KINDS:
+        lines.append("    (in-sample: describes the data it was fitted or run on, not out-of-sample skill)")
     promo = trial.get("promotable")
     lines.append(f"    {'Promotable':<18}{NOT_RECORDED if promo is None else ('yes' if promo else 'no')}")
 
@@ -1327,6 +1377,22 @@ def _universe_lines(universe: Dict[str, Any], readable: Optional[bool] = None) -
     return lines
 
 
+def _campaign_heading(material: Dict[str, Any]) -> str:
+    """The block's title, by whether the trial was validated at all.
+
+    "What validated" over a backtest or an optimize row claims a validation that never
+    happened: those kinds were not split into a part fitted and a part judged. The
+    block is still worth printing - it is the run's recipe and record - but it is
+    headed as what it is.
+    """
+    from tradeflow.store.trials import IN_SAMPLE_KINDS
+
+    ident = f"{material.get('trial_id')} ({material.get('kind')})"
+    if material.get("kind") in IN_SAMPLE_KINDS:
+        return f"=== What produced {ident} — NOT validated out of sample ==="
+    return f"=== What validated {ident} ==="
+
+
 def format_campaign_material(material: Dict[str, Any]) -> str:
     """What validated a trial, with each section labelled by what kind of thing it is.
 
@@ -1342,7 +1408,7 @@ def format_campaign_material(material: Dict[str, Any]) -> str:
     metadata = material.get("metadata") or {}
     lines = [
         "",
-        f"=== What validated {material.get('trial_id')} ({material.get('kind')}) ===",
+        _campaign_heading(material),
         "",
         "  RECIPE — how it was validated. Survives an accounting bump.",
     ]
@@ -1381,7 +1447,8 @@ def format_campaign_material(material: Dict[str, Any]) -> str:
         from tradeflow.optimization.walk_forward import format_gate_value
 
         for key, value in sorted(metrics.items()):
-            lines.append(f"    {key:<16}{format_gate_value(key, value)}")
+            gap = " " if len(key) >= 16 else ""  # a long name must not run into its value
+            lines.append(f"    {key:<16}{gap}{format_gate_value(key, value)}")
     else:
         lines.append(f"    {NOT_RECORDED} no metrics recorded")
     promo = evidence.get("promotable")

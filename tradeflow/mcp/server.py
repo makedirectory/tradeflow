@@ -1653,6 +1653,7 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         sort: str = "date",
         limit: int = 20,
         offset: int = 0,
+        include_in_sample: bool = False,
         all_accounting: bool = False,
     ) -> Dict[str, Any]:
         """What has this campaign already tried? Filtered rows from the trial store.
@@ -1667,8 +1668,16 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         datetime; both ends include the dates they name, so `until="2026-11-06"` includes
         that evening. Each row's `ts` is the UTC instant it was recorded. `sort` is
         date/sharpe/dsr; a trial with no recorded metric
-        sorts last rather than as a zero. Returns `{rows, total}` — `total` is how
-        many matched, which is usually more than were returned.
+        sorts last rather than as a zero. Returns `{rows, total, in_sample_excluded}` —
+        `total` is how many matched, which is usually more than were returned.
+
+        **Ranking leaves in-sample kinds out.** Sorting by `sharpe`/`dsr`, or setting
+        `min_sharpe`, makes this a leaderboard, and `optimize` (best of N candidates),
+        `backtest` (one pass over its window) and `alpha` rows are not validated out of
+        sample, so they are excluded unless `include_in_sample=true` — as `best_trials`
+        does. `in_sample_excluded` says how many that hid. Every row carries
+        `sharpe_basis` (what its Sharpe measures: out-of-sample aggregate, median fold,
+        full window, or best of N) and `in_sample`; read them before comparing two Sharpes.
 
         Absent fields are null, and null means *not recorded*: a trial predating a
         field did not fail to record it, and a forecast kind did not score zero.
@@ -1688,8 +1697,11 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
                 "promotable": gates_passed,
                 "all_accounting": all_accounting,
             }
-            rows = store.list_trials(sort=sort, limit=limit, offset=offset, **filters)
-            return _logged("list_trials", inputs, {"rows": rows, "total": store.count_trials(**filters)})
+            listing = store.listing(
+                sort=sort, limit=limit, offset=offset, include_in_sample=include_in_sample, **filters
+            )
+            listing.pop("exclude_kinds", None)
+            return _logged("list_trials", inputs, listing)
 
     @tool()
     def get_trial(trial_id: str) -> Dict[str, Any]:
