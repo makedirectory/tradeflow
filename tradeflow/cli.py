@@ -715,7 +715,17 @@ def apply_run_config(args):
     for field in applied_cost:
         setattr(args, field, cost[field])
     if applied_cost:
-        sources.append("cost=<config>")
+        # Say what the costs are, not just that a config supplied them: a config that
+        # carries none leaves a run on the (cheaper) defaults, and the line is where a
+        # reader checks which of the two happened.
+        shown = (
+            "gross"
+            if cost.get("gross")
+            else ", ".join(f"{field}={cost[field]}" for field in applied_cost if field != "gross")
+        )
+        sources.append(f"cost=<config: {shown}>")
+    elif not cost and hasattr(args, "commission_bps"):
+        sources.append("cost=<none recorded; this run's flags/defaults>")
 
     # Under --json the provenance goes to stderr: stdout is the JSON document, and two
     # lines ahead of it made `--dry-run --json` (and every --config --json command)
@@ -3986,7 +3996,7 @@ def _promote_trial(store, args) -> None:
     most that a saved config means what it says.
     """
     from tradeflow.optimization.config_store import Provenance, save_config
-    from tradeflow.services.analysis import recorded_book
+    from tradeflow.services.analysis import recorded_book, recorded_cost
     from tradeflow.services.audit import universe_for_trial
     from tradeflow.services.campaign import campaign_material
 
@@ -4022,7 +4032,6 @@ def _promote_trial(store, args) -> None:
     # friends). They are not strategy parameters - the schema has its own `cost` field -
     # and passing them through would leave a stray key in every constructed strategy.
     recorded = dict(trial.get("params") or {})
-    cost = recorded.pop("_cost", None)
     params = {name: value for name, value in recorded.items() if not name.startswith("_")}
 
     # What validated it, not just what it validated to. A promoted row carries the
@@ -4039,11 +4048,18 @@ def _promote_trial(store, args) -> None:
     # first, because that is where a walk-forward keeps it; a backtest keeps it in the
     # params, since its dedup identity *is* its params.
     book = recorded_book(recipe.get("folded_into_identity"), recorded)
+    # The cost model it validated under, from the same two places and for the same
+    # reason: a walk-forward keeps `_cost` in its recipe, so reading only the params
+    # wrote no cost for it and the promoted config traded under the default one.
+    cost = recorded_cost(recipe.get("folded_into_identity"), recorded)
+    # The scanner the run resolved its universe through; "none" where the journal did not
+    # record one, which is what `walkforward --save-config` writes for a replayed book.
+    scanner = ((recipe.get("context") or {}).get("scanner") or {}).get("value") or "none"
 
     path = save_config(
         args.save_config,
         strategy=trial.get("strategy"),
-        scanner=None,
+        scanner=scanner,
         params=params,
         cost=cost,
         symbols=symbols,

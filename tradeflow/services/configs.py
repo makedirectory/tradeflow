@@ -124,6 +124,7 @@ def save_config(
     _validate_candidate(strategy, params, scanner, position_limits, provenance)
     position_limits = _reconcile_book(position_limits, provenance)
     capital = _reconcile_capital(capital, provenance)
+    cost = _recorded_cost(provenance)
     prov = config_store.Provenance(**provenance) if isinstance(provenance, dict) else provenance
     path = config_store.save_config(
         filename,
@@ -133,6 +134,7 @@ def save_config(
         symbols=symbols,
         capital=capital,
         position_limits=position_limits,
+        cost=cost,
         provenance=prov,
     )
     return {"path": str(path), "name": name}
@@ -192,6 +194,20 @@ def _campaign_fact(provenance: Optional[Any], fact: str) -> Optional[Any]:
     campaign = (provenance or {}).get("campaign") if isinstance(provenance, dict) else None
     entry = ((campaign or {}).get("recipe") or {}).get("context", {}).get(fact) or {}
     return entry.get("value") if entry.get("recorded") else None
+
+
+def _recorded_cost(provenance: Optional[Any]) -> Optional[Dict[str, Any]]:
+    """The cost model the provenance's campaign material says was validated, or ``None``.
+
+    Taken rather than reconciled: this surface has no cost parameter to disagree with,
+    and a config that records an evidence block but no cost trades under the defaults
+    - the same file-argues-with-itself defect the book and capital guard against, and
+    the one ``trials promote`` shared. Absent stays absent.
+    """
+    from tradeflow.services.analysis import recorded_cost
+
+    campaign = (provenance or {}).get("campaign") if isinstance(provenance, dict) else None
+    return recorded_cost(((campaign or {}).get("recipe") or {}).get("folded_into_identity"))
 
 
 def _reconcile_book(

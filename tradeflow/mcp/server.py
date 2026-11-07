@@ -1954,6 +1954,8 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         leave the book unspecified: a run from the config inherits the strategy class's
         default of one position, so a config whose provenance says eight were validated
         silently trades one. `symbols` and `capital` the same way, when you know them.
+        The validated cost model is taken from that same campaign block when it records
+        one, so the config trades at the costs it was validated under.
         """
         inputs = {
             "name": name,

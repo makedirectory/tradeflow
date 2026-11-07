@@ -241,6 +241,28 @@ def recorded_book(*sources: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]
     return None
 
 
+def recorded_cost(*sources: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """The cost model a recorded trial validated under, read back out of its identity.
+
+    The sibling of :func:`recorded_book`, for the same reason: ``_cost`` is folded into
+    every kind's identity but lives in the params for a backtest and in the recipe for a
+    walk-forward or verdict, so a promoter that looked in one place wrote a config with
+    no ``cost`` for the other - and a run from it traded under the default (cheaper)
+    costs rather than the ones the result was validated at.
+
+    The data-vintage stamp is dropped: it fingerprints the bars a run read, and pinning
+    a reusable config to one data snapshot is the opposite of what it is for (the same
+    reason ``walkforward --save-config`` writes the key without it).
+
+    ``None`` when no source recorded a cost model, never an invented one.
+    """
+    for source in sources:
+        declared = (source or {}).get("_cost")
+        if declared:
+            return {name: value for name, value in declared.items() if not name.startswith("_")}
+    return None
+
+
 def walk_forward_recipe(
     *,
     mode: str,
