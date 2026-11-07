@@ -1380,8 +1380,9 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         A PROPOSAL, never an order. This is research-clock only: it cannot trade, and
         a human promotes any config that comes out of it.
 
-        `book="market_neutral"` with `gross_leverage`/`short_max_weight` builds a
-        long/short book; `benchmark_holdings` (plus `benchmark_premium`) makes the solve
+        `book="market_neutral"` builds a long/short book and REQUIRES `gross_leverage` (the
+        cap is never defaulted); `short_max_weight` sizes the short side.
+        `gross_leverage` with the default long-only book is refused rather than ignored; `benchmark_holdings` (plus `benchmark_premium`) makes the solve
         benchmark-relative; `neutralize_factors` regresses named risk-model factors out
         of the alpha first; `current_weights` makes turnover measured from a real book
         rather than from cash. The cost knobs set the assumptions the objective prices
@@ -1625,7 +1626,8 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         the later steps are reported as skipped, and more dates will not help. Nothing
         is relaxed for you. Recover by passing a wider `symbols` list, a larger
         `max_weight`, or a larger `max_names` explicitly, and read the result's
-        `inputs` to confirm which caps were applied. A history too short to estimate a
+        `inputs` to confirm which caps were applied. An unknown `risk_model` is refused
+        up front, listing the valid models. A history too short to estimate a
         book at all names no constraint and is `needs more data`, not `infeasible`.
 
         The allocation knobs (`max_weight`, `max_names`, `lookback_days`,

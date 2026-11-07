@@ -111,6 +111,9 @@ def refuse_unusable_run_args(
     n_folds: Optional[int] = None,
     holdout_days: Optional[int] = None,
     cost_stress: Optional[str] = None,
+    risk_model: Optional[str] = None,
+    book: Optional[str] = None,
+    gross_leverage: Optional[float] = None,
 ) -> None:
     """Refuse arguments no run can mean, before anything is read or journaled.
 
@@ -155,6 +158,26 @@ def refuse_unusable_run_args(
         problems.append(
             f"cost_stress must be one of {', '.join(COST_STRESS_AXES)} (or null to skip), got {cost_stress!r}"
         )
+    if risk_model is not None:
+        from tradeflow.risk import COVARIANCE_MODELS
+
+        if risk_model not in COVARIANCE_MODELS:
+            # Unchecked, this surfaced three steps in as `KeyError: 'bogus'` on an
+            # otherwise incomplete verdict, after the earlier steps had already run.
+            problems.append(f"risk_model must be one of {', '.join(COVARIANCE_MODELS)}, got {risk_model!r}")
+    if book is not None:
+        if book not in ("long_only", "market_neutral"):
+            problems.append(f"book must be 'long_only' or 'market_neutral', got {book!r}")
+        elif book == "market_neutral" and gross_leverage is None:
+            problems.append(
+                "book='market_neutral' requires gross_leverage: an unconstrained long/short book "
+                "on a noisy covariance is a leverage machine, so the cap is never defaulted"
+            )
+        elif book == "long_only" and gross_leverage is not None:
+            problems.append(
+                "gross_leverage only applies to book='market_neutral'; with the long-only book it "
+                "would be ignored. Drop it, or set book='market_neutral'"
+            )
     if problems:
         raise RunRefused("; ".join(problems) + ".")
 
@@ -3031,6 +3054,7 @@ def compute_information(
     (``compute_risk(..., model='factor')``); realized-return attribution and capacity
     are smaller follow-ons.
     """
+    refuse_unusable_run_args(risk_model=risk_model)
     from tradeflow.alphas import horizon as hz
     from tradeflow.alphas import refine
     from tradeflow.analytics import information as info
@@ -3267,7 +3291,7 @@ def run_verdict(
     ``run_id``, ``inputs``, ``steps``, ``scan``, ``alphas``, ``combination``,
     ``portfolio``, ``information``, ``verdict``.
     """
-    refuse_unusable_run_args(symbols=symbols, capital=capital)
+    refuse_unusable_run_args(symbols=symbols, capital=capital, risk_model=risk_model)
     _refuse_unusable_window(start, end)
     # Before the first step, not inside it: an unknown scanner used to fail the scan and
     # then leave the report to explain a missing universe as an infeasible book.
@@ -3997,6 +4021,7 @@ def compute_attribution(
     family Reality Check needs the trial store's stored trials and lives on
     ``run_walk_forward``'s ``--bootstrap-skill`` instead.
     """
+    refuse_unusable_run_args(risk_model=risk_model)
     from tradeflow.analytics import attribution as attr
     from tradeflow.analytics import information as info
     from tradeflow.portfolio.benchmark import load_benchmark_weights, restrict_and_renormalize
@@ -4924,6 +4949,7 @@ def construct_portfolio(
     composite run passes the same values it gives every other step, so one report
     never mixes two cost worlds.
     """
+    refuse_unusable_run_args(risk_model=risk_model, book=book, gross_leverage=gross_leverage)
     from tradeflow.costs import ParametricCostModel
     from tradeflow.portfolio.optimizer import MeanVarianceOptimizer
 

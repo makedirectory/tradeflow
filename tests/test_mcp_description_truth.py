@@ -423,3 +423,62 @@ def test_the_service_report_the_cli_prints_keeps_its_pointer():
         datetime(2025, 6, 1),
     )
     assert "--policy aim" in direct["blend_superseded_by"]
+
+
+# --- 12. portfolio book/leverage and risk model are refused up front ------------------
+def _construct(built, **extra):
+    return _call(
+        built,
+        "construct_portfolio",
+        strategy="demo_trend",
+        symbols=SYMBOLS,
+        as_of="2025-05-30",
+        **extra,
+    )
+
+
+def test_market_neutral_without_gross_leverage_is_refused_clearly(built):
+    with pytest.raises(Exception) as exc:
+        _construct(built, book="market_neutral")
+    assert "requires gross_leverage" in str(exc.value)
+
+
+def test_gross_leverage_on_a_long_only_book_is_refused_not_ignored(built):
+    with pytest.raises(Exception) as exc:
+        _construct(built, gross_leverage=2.0)
+    assert "only applies to book='market_neutral'" in str(exc.value)
+
+
+def test_a_market_neutral_book_with_leverage_still_runs(built):
+    result = _construct(built, book="market_neutral", gross_leverage=2.0, short_max_weight=0.3)
+    assert "feasible" in result
+
+
+def test_an_unknown_risk_model_is_refused_before_any_step_runs(built, tmp_path):
+    with pytest.raises(Exception) as exc:
+        _call(
+            built,
+            "run_verdict",
+            strategy="demo_trend",
+            symbols=SYMBOLS,
+            start=START,
+            end=END,
+            scanner="none",
+            risk_model="bogus",
+        )
+    message = str(exc.value)
+    assert "shrinkage" in message and "factor" in message
+    assert "KeyError" not in message
+    assert _journal(tmp_path) == []
+
+
+def test_the_cli_refuses_gross_leverage_without_the_market_neutral_book(monkeypatch):
+    from tradeflow import cli
+    from tradeflow.utils.errors import RunRefused
+
+    client = MarketDataClient(FakeMarketData([*SYMBOLS, "SPY"], n=600, freq="1D"))
+    monkeypatch.setattr(cli, "build_research_data", lambda **kw: client)
+    argv = ["allocate", "--objective", "utility", "--symbols", ",".join(SYMBOLS), "--as-of", "2025-05-30"]
+    argv += ["--gross-leverage", "2"]
+    with pytest.raises(RunRefused, match="only applies to book='market_neutral'"):
+        cli._allocate_utility(cli.build_parser().parse_args(argv))
