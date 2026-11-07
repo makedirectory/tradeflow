@@ -2713,14 +2713,39 @@ def summarize_bars(
     return {"timeframe": timeframe, "lookback_days": lookback_days, "symbols": out}
 
 
-def _low_confidence_reason(panel) -> Optional[str]:
+def _low_confidence_reason(panel, *, requested: Sequence[str] = ()) -> Optional[str]:
     """The reason text for ``low_confidence`` (``None`` when it is not set), so a payload
-    reader gets the same explanation the CLI prints rather than a bare flag."""
+    reader gets the same explanation the CLI prints rather than a bare flag.
+
+    ``requested`` names the refinements the caller asked for that a thin universe skips
+    (neutralization, the case choice). Without it the payload echoed the request back
+    beside an empty ``neutralized_against`` and identical case1/case2 alphas, and nothing
+    said that nothing had been done.
+    """
     if not panel.meta.get("low_confidence"):
         return None
     from tradeflow.alphas.base import thin_universe_text
 
-    return thin_universe_text(int(panel.get("score").notna().sum()) if panel.has("score") else 0)
+    text = thin_universe_text(int(panel.get("score").notna().sum()) if panel.has("score") else 0)
+    if requested:
+        text += f"; therefore skipped as requested: {', '.join(requested)}"
+    return text
+
+
+#: The scalings `compute_alphas` knows. Anything else used to fall through to case 1.
+ALPHA_SCALINGS = ("case1", "case2", "auto")
+
+
+def _thin_universe_skips(neutralize: bool, neutralize_factors: Sequence[str], scaling: str) -> List[str]:
+    """What a caller asked for that ``refine_alpha`` does not do on a thin universe."""
+    skipped = []
+    if neutralize_factors:
+        skipped.append(f"neutralization against {', '.join(neutralize_factors)} (`neutralized_against` is empty)")
+    elif neutralize:
+        skipped.append("beta neutralization (`neutralized_against` is empty)")
+    if scaling in ("case2", "auto"):
+        skipped.append(f"the case choice (`scaling={scaling}` was applied as case 1)")
+    return skipped
 
 
 def compute_alphas(
@@ -2758,6 +2783,8 @@ def compute_alphas(
     diagnostics — chosen case, R², both candidates' cross-sectional correlation — are
     echoed under ``case`` whenever the test runs so a wrong call is visible.
     """
+    if scaling not in ALPHA_SCALINGS:
+        raise ValueError(f"scaling must be one of {', '.join(ALPHA_SCALINGS)}, got {scaling!r}")
     run_id = new_run_id()
     strat = _strategy(strategy, config)
     tf = timeframe or strat.config.get("timeframe", "1Day")
@@ -2830,7 +2857,9 @@ def compute_alphas(
         # were analyzed", and a universe that shrank under the caps' feet went unreported.
         "dropped_symbols": [sym for sym in symbols if sym not in universe_bars],
         "low_confidence": bool(panel.meta.get("low_confidence")),
-        "low_confidence_reason": _low_confidence_reason(panel),
+        "low_confidence_reason": _low_confidence_reason(
+            panel, requested=_thin_universe_skips(neutralize, neutralize_factors, scaling)
+        ),
         "scaling": chosen_scaling,
         "case": _jsonable(case_diag) if case_diag else None,
         "shrink_chain": _jsonable(panel.meta.get("shrink_chain", [])),

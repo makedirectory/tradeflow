@@ -366,3 +366,39 @@ def test_an_unknown_campaign_material_id_does_not_name_a_cli_command(built):
     message = str(exc.value)
     assert "trials rebuild" not in message
     assert "operator action" in message
+
+
+# --- 9. compute_alphas: an unknown scaling is refused; a thin universe says what it skipped
+def _alphas(built, **extra):
+    return _call(
+        built,
+        "compute_alphas",
+        strategy="demo_trend",
+        symbols=SYMBOLS,
+        as_of="2025-05-30",
+        source="strategy",
+        **extra,
+    )
+
+
+def test_an_unknown_scaling_is_refused_not_treated_as_case1(built):
+    with pytest.raises(Exception) as exc:
+        _alphas(built, scaling="bogus")
+    assert "case1" in str(exc.value)
+    assert _alphas(built, scaling="case1")["scaling"] == "case1"
+
+
+def test_a_thin_universe_says_it_skipped_neutralization_and_the_case_choice(built):
+    result = _alphas(built, neutralize_factors=["market", "size"], scaling="case2")
+    assert result["low_confidence"] is True
+    assert result["neutralize_factors"] == ["market", "size"]
+    assert result["neutralized_against"] == []
+    reason = result["low_confidence_reason"]
+    assert "neutralization against market, size" in reason
+    assert "the case choice" in reason
+
+
+def test_a_thin_universe_that_asked_for_nothing_extra_adds_no_skip_text(built):
+    reason = _alphas(built)["low_confidence_reason"]
+    assert "thin universe" in reason
+    assert "skipped" not in reason

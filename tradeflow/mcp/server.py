@@ -1186,6 +1186,11 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         field is empty — which is what this surface reported for every call before the
         parameter existed, so a caller could ask for neutralization and be told, in a
         field it echoed back, that none had happened.
+
+        `scaling` is one of case1/case2/auto; anything else is refused. On a thin
+        universe (fewer than ten scored names) neutralization and the case choice are
+        both skipped - `neutralized_against` stays empty and case2 gives case1's alphas -
+        and `low_confidence_reason` says which of your requests were skipped.
         """
         inputs = {
             "strategy": strategy,
