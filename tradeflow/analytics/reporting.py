@@ -291,6 +291,22 @@ def format_verdicts(
     return lines
 
 
+def format_backtest_verdicts(executability: Dict[str, Any]) -> List[str]:
+    """A backtest can speak to execution and to nothing else; this says so.
+
+    ``executability`` is :func:`performance.execution_verdict`'s answer. One definition
+    for the terminal and the HTML report, so the "not assessed here" lines that stop a
+    replay reading as approval cannot be missing from either.
+    """
+    executable = executability.get("executable")
+    summary = {
+        None: "UNKNOWN - nothing was attempted",
+        True: "PASS",
+        False: f"FAIL - {executability.get('reason')}",
+    }[executable]
+    return format_verdicts(execution=summary)
+
+
 def format_backtest_report(
     metrics: Dict[str, float],
     initial_capital: float,

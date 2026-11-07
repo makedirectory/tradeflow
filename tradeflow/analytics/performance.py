@@ -129,6 +129,28 @@ OBJECTIVE_KEYS = (
 FLAG_KEYS = ("benchmark_available", "low_sample", "treynor_available", "deflation_applied")
 
 
+#: Metrics that are regressions against a benchmark. Without one they are stored as 0.0,
+#: which is a placeholder and not a measurement.
+BENCHMARK_DEPENDENT_METRICS = ("alpha", "beta", "r_squared", "information_ratio", "benchmark_buy_hold_return")
+
+
+def unmeasured_metrics(metrics: Dict[str, Any]) -> Dict[str, str]:
+    """Metric name -> why it was not measured, for the ones stored as a placeholder zero.
+
+    ``treynor_available`` and ``benchmark_available`` exist because a suppressed ratio and
+    a genuine zero are the same number; this is the reader of those flags, so a renderer
+    that shows a stored value cannot show a zero beside a flag saying it never existed.
+    """
+    out: Dict[str, str] = {}
+    if not metrics.get("benchmark_available", True):
+        for name in (*BENCHMARK_DEPENDENT_METRICS, "treynor_ratio"):
+            if name in metrics:
+                out[name] = "no benchmark"
+    elif not metrics.get("treynor_available", True) and "treynor_ratio" in metrics:
+        out["treynor_ratio"] = "beta too close to zero"
+    return out
+
+
 #: Thresholds for the executability verdict. Judgment calls, not evidence-derived:
 #: they mark where an executed book stops resembling the one that was validated, and
 #: they are exposed so a deployment can set its own. Deliberately **separate** from the

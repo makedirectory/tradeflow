@@ -164,6 +164,24 @@ def _metric_cell(name: str, value: Any) -> str:
     return _num(value)
 
 
+def _metric_rows(metrics: Dict[str, Any]) -> List[List[str]]:
+    """Name/value rows for a metrics dict, with a placeholder zero shown as not measured.
+
+    A ratio stored as 0.0 beside a flag saying it was unavailable is not a result of
+    zero; it is a number that never existed.
+    """
+    from tradeflow.analytics.performance import unmeasured_metrics
+
+    unmeasured = unmeasured_metrics(metrics)
+    return [
+        [
+            _metric_label(k, metrics),
+            f"not measured ({unmeasured[k]})" if k in unmeasured else _metric_cell(k, v),
+        ]
+        for k, v in sorted(metrics.items())
+    ]
+
+
 def _metric_label(name: str, metrics: Dict[str, Any]) -> str:
     """The row label for a metric: an undeflated 'deflated' Sharpe says what it is.
 
@@ -221,6 +239,12 @@ def _pill(passed: Optional[bool]) -> str:
     if passed is None:
         return '<span class="pill neutral">—</span>'
     return '<span class="pill pass">PASS</span>' if passed else '<span class="pill fail">FAIL</span>'
+
+
+def _pre(lines: Sequence[str]) -> str:
+    """Terminal text, verbatim, in a block: the same words the terminal prints, so a
+    caveat is one definition shown twice rather than two phrasings that can drift."""
+    return f"<pre>{esc(chr(10).join(line.rstrip() for line in lines).strip(chr(10)))}</pre>"
 
 
 def _warning(text: str, *, level: str = "warn") -> str:
@@ -289,8 +313,14 @@ def _provenance_block(result: Dict[str, Any], kind: str) -> str:
         ("Kind", kind),
         ("Window", f"{_short_date(window.get('start'))} → {_short_date(window.get('end'))}"),
         ("Universe", f"{len(universe)} names: {', '.join(str(s) for s in universe) or '—'}"),
-        ("Timeframe", inputs.get("timeframe") or result.get("timeframe") or "—"),
-        ("Benchmark", inputs.get("benchmark") or result.get("benchmark") or "—"),
+        ("Timeframe", _requested(inputs.get("timeframe") or result.get("timeframe"), result)),
+        (
+            "Benchmark",
+            _requested(
+                inputs.get("benchmark") or result.get("benchmark") or result.get("benchmark_requested"),
+                result,
+            ),
+        ),
         ("Cost model", _cost_text(inputs.get("cost"), result)),
         # "Version" rather than "Git SHA": an installed copy has no repository, and
         # the packaged version is the honest answer to "what made this".
@@ -303,6 +333,14 @@ def _provenance_block(result: Dict[str, Any], kind: str) -> str:
     if result.get("trial_id"):
         pairs.append(("Trial id", result["trial_id"]))
     return _card("Provenance", _kv(pairs))
+
+
+def _requested(value: Any, result: Dict[str, Any]) -> str:
+    """A header fact, marked "as requested" on a reused result: the trial store kept the
+    metrics, not what the run was scored against, so the request is all that is known."""
+    if not value:
+        return "—"
+    return f"{value} (as requested)" if result.get("memoized") else str(value)
 
 
 def _campaign_trials(provenance: Dict[str, Any], result: Dict[str, Any]) -> str:
@@ -719,12 +757,80 @@ def _backtest_sections(result: Dict[str, Any], extras: Dict[str, Any]) -> List[s
             "Metrics",
             _table(
                 ["Metric", "Value"],
-                [[_metric_label(k, metrics), _metric_cell(k, v)] for k, v in sorted(metrics.items())],
+                _metric_rows(metrics),
             ),
         )
     )
     out.append(_card("Run", _kv(_backtest_run_rows(result))))
-    return out
+    out.append(_pnl_by_exit_card(result))
+    out.append(_backtest_verdicts_card(result))
+    out.append(_universe_card(result, extras))
+    return [s for s in out if s]
+
+
+def _pnl_by_exit_card(result: Dict[str, Any]) -> str:
+    """"Where the P&L came from", as the terminal prints it, including the warning when
+    nearly all of the gain is one exit path. A reused result never kept its trades, so the
+    card says that instead of vanishing."""
+    from tradeflow.analytics.reporting import format_exit_concentration
+
+    if result.get("memoized"):
+        return _card(
+            "Where the P&L came from",
+            '<p class="empty">Not recorded for a reused result - its trades were not kept. '
+            "Re-run with force to see whether one exit path carries the gain.</p>",
+        )
+    report = result.get("pnl_by_exit")
+    if not report:
+        return ""
+    block = format_exit_concentration(report)
+    return _card("Where the P&L came from", _pre(block.splitlines())) if block else ""
+
+
+def _backtest_verdicts_card(result: Dict[str, Any]) -> str:
+    """The three verdicts, two of them "not assessed here": a backtest is an in-sample
+    replay and cannot say the edge was real."""
+    from tradeflow.analytics.reporting import format_backtest_verdicts
+
+    verdict = result.get("executability")
+    if verdict is None:
+        return _card(
+            "Verdicts",
+            _pre(
+                [
+                    "Statistical validation   not assessed here - was the edge real, and not overfit (`walkforward`)",
+                    "Execution viability      not recorded for this result",
+                    "Evidence completeness    not assessed here (`walkforward --bootstrap-skill`)",
+                ]
+            )
+            + "<p>A backtest replays one history, in-sample; it is not a validation.</p>",
+        )
+    return _card(
+        "Verdicts",
+        _pre(format_backtest_verdicts(verdict)) + "<p>A backtest replays one history, in-sample; it is not a validation.</p>",
+    )
+
+
+def _universe_card(result: Dict[str, Any], extras: Dict[str, Any]) -> str:
+    """Where the universe came from and what that does not guarantee (survivorship).
+
+    The CLI hands in the terminal's own block (it knows the scanner and the source); a
+    payload alone knows only the names, so the fallback is the same block for a supplied
+    list - the one case an MCP caller can be in."""
+    from tradeflow.analytics.reporting import format_universe_provenance
+
+    lines = extras.get("universe_provenance")
+    if not lines:
+        names = result.get("symbols") or []
+        lines = format_universe_provenance(
+            candidates=names,
+            resolved=names,
+            scanner=None,
+            scan_clock=None,
+            source="the supplied list",
+            replayed=False,
+        )
+    return _card("Universe provenance", _pre([line for line in lines if not line.startswith("===")]))
 
 
 def _execution_card(result: Dict[str, Any]) -> str:
@@ -885,6 +991,24 @@ def _reused_walkforward_sections(result: Dict[str, Any]) -> List[str]:
     ]
 
 
+def _walkforward_verdicts_card(gate_report: Dict[str, Any], evidence: Optional[Dict[str, Any]]) -> str:
+    """The terminal's "Verdicts" block: statistical validation and evidence completeness,
+    with execution viability named as not assessed here (a walk-forward has no capital)."""
+    from tradeflow.analytics.reporting import format_verdicts
+    from tradeflow.services.analysis import evidence_verdicts
+
+    if not gate_report.get("checks"):
+        return ""
+    prereq = (evidence or {}).get("prerequisites")
+    if prereq:
+        statistical, completeness = evidence_verdicts(gate_report, prereq)
+    else:
+        failed = [n for n, c in gate_report["checks"].items() if not c.get("passed")]
+        statistical = "PASS" if gate_report.get("promotable") else f"FAIL - {', '.join(failed)}"
+        completeness = None
+    return _card("Verdicts", _pre(format_verdicts(statistical=statistical, evidence=completeness)))
+
+
 def _walkforward_sections(result: Dict[str, Any], extras: Dict[str, Any]) -> List[str]:
     from tradeflow.analytics import charts
 
@@ -943,6 +1067,7 @@ def _walkforward_sections(result: Dict[str, Any], extras: Dict[str, Any]) -> Lis
             tone=verdict_class,
         ),
         _evidence_card(evidence),
+        _walkforward_verdicts_card(gate_report, evidence),
         _card(
             "Folds",
             _table(
@@ -967,7 +1092,7 @@ def _walkforward_sections(result: Dict[str, Any], extras: Dict[str, Any]) -> Lis
             "Out-of-sample aggregate",
             _table(
                 ["Metric", "Value"],
-                [[k, _metric_cell(k, v)] for k, v in sorted((result.get("oos_aggregate") or {}).items())],
+                _metric_rows(result.get("oos_aggregate") or {}),
             ),
         ),
     ]

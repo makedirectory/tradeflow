@@ -442,6 +442,7 @@ def memoized_backtest_payload(
     capital: float,
     gross: bool,
     benchmark: Optional[str] = None,
+    timeframe: Optional[str] = None,
 ) -> Dict[str, Any]:
     """A reused backtest as a payload that says what it lacks.
 
@@ -492,13 +493,14 @@ def memoized_backtest_payload(
         "initial_capital": capital,
         "gross": gross,
         "benchmark_requested": benchmark,
+        "timeframe": timeframe,
         "final_capital_derived": final_capital,
         "total_trades": total_trades,
         "metrics": _jsonable(metrics),
         "memoized": True,
         "trial_id": cached.get("id"),
         "trial_ts": cached.get("ts"),
-        "from_request": ["initial_capital", "window", "symbols", "gross", "benchmark_requested"],
+        "from_request": ["initial_capital", "window", "symbols", "gross", "benchmark_requested", "timeframe"],
         "derived": derived,
         "not_recorded": not_recorded,
         "note": (
@@ -583,6 +585,7 @@ def run_backtest(
                 capital=capital,
                 gross=gross,
                 benchmark=benchmark,
+                timeframe=strat.config.get("timeframe"),
             )
 
     sizer = build_beta_sizer(data_client, strat, symbols, benchmark, as_of=start) if beta_sizing else None
@@ -811,7 +814,23 @@ def backtest_payload(
         "total_trades": int(len(result.trades)),
         "trades_csv": trades_csv,
         "resolved_config": _jsonable(result.strategy_config),
+        "timeframe": (getattr(result, "strategy_config", None) or {}).get("timeframe"),
+        # Where the P&L came from, by exit reason: the shared trade-analytics definition
+        # over the whole in-memory table, so the report prints the terminal's block.
+        "pnl_by_exit": _pnl_by_exit(result.trades),
     }
+
+
+def _pnl_by_exit(trades) -> Optional[Dict[str, Any]]:
+    """The exit-reason split of a run's trades (``analytics.trade_analytics``), or ``None``
+    when the trades carry no exit reason. An in-memory result is the whole frame, so no
+    row ceiling; ``None`` is "not applicable", not "no trades"."""
+    from tradeflow.analytics.trade_analytics import trade_analytics
+
+    if trades is None or len(trades) == 0 or "exit_reason" not in trades:
+        return None
+    report = trade_analytics(trades_payload(trades, max_rows=None, jsonable=False))
+    return _jsonable({"status": report.get("status"), "reason": report.get("reason"), "exit_reasons": report.get("exit_reasons")})
 
 
 def _worker_data_spec(workers: Optional[int], cache_dir: Optional[Any], offline: bool):

@@ -823,6 +823,7 @@ def cmd_backtest(args) -> None:
                 capital=args.capital,
                 gross=args.gross,
                 benchmark=args.benchmark,
+                timeframe=strategy.config.get("timeframe"),
             )
             print(
                 format_backtest_report(
@@ -833,7 +834,12 @@ def cmd_backtest(args) -> None:
                 )
             )
             print(format_not_recorded(payload))
-            _write_html(args, payload, "backtest")
+            _write_html(
+                args,
+                payload,
+                "backtest",
+                extras={"universe_provenance": _universe_provenance_lines(args, universe)},
+            )
             return
 
     sizer = None
@@ -935,7 +941,10 @@ def cmd_backtest(args) -> None:
             # The equity curve is not in the result dict (it can run to tens of
             # thousands of points), but the CLI is holding it, so the chart can be
             # drawn here without changing what any surface returns.
-            extras={"equity_curve": result.equity_curve},
+            extras={
+                "equity_curve": result.equity_curve,
+                "universe_provenance": _universe_provenance_lines(args, universe),
+            },
         )
 
     _maybe_print_attribution_verdict(
@@ -3328,6 +3337,11 @@ def _print_universe_provenance(args, resolved) -> None:
     A 61-name large-cap list is not "the market", and a report that leaves the universe
     in the background invites it to be read as one.
     """
+    print("\n".join(_universe_provenance_lines(args, resolved)))
+
+
+def _universe_provenance_lines(args, resolved) -> List[str]:
+    """The provenance block as lines, so the terminal and ``--html`` print the same one."""
     from tradeflow.analytics.reporting import format_universe_provenance
     from tradeflow.scanners.symbol_scanner import resolve_scan_clock
 
@@ -3342,17 +3356,13 @@ def _print_universe_provenance(args, resolved) -> None:
         args, "re_resolve_universe", False
     )
     clock = resolve_scan_clock(args.scan_as_of or args.end).isoformat() if args.scanner != "none" else None
-    print(
-        "\n".join(
-            format_universe_provenance(
-                candidates=candidates,
-                resolved=resolved,
-                scanner=args.scanner,
-                scan_clock=clock,
-                source=source,
-                replayed=replayed,
-            )
-        )
+    return format_universe_provenance(
+        candidates=candidates,
+        resolved=resolved,
+        scanner=args.scanner,
+        scan_clock=clock,
+        source=source,
+        replayed=replayed,
     )
 
 
@@ -3364,14 +3374,9 @@ def _print_verdicts_for_backtest(result) -> None:
     replay reads as approval.
     """
     from tradeflow.analytics.performance import execution_verdict
-    from tradeflow.analytics.reporting import format_verdicts
+    from tradeflow.analytics.reporting import format_backtest_verdicts
 
-    verdict = execution_verdict(getattr(result, "execution", None))
-    executable = verdict["executable"]
-    summary = {None: "UNKNOWN - nothing was attempted", True: "PASS", False: f"FAIL - {verdict['reason']}"}[
-        executable
-    ]
-    print("\n".join(format_verdicts(execution=summary)))
+    print("\n".join(format_backtest_verdicts(execution_verdict(getattr(result, "execution", None)))))
 
 
 def _print_exit_concentration(result) -> None:

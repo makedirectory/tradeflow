@@ -195,3 +195,67 @@ def test_the_holdout_table_formats_metrics_as_the_aggregate_table_does(tmp_path)
             holdout[key],
             aggregate[key],
         )
+
+
+# ---- item 4: the backtest report carries the labels the terminal prints ---------------
+BT = [
+    "backtest",
+    "--strategy",
+    "demo_trend",
+    "--scanner",
+    "none",
+    "--symbols",
+    ",".join(SYMBOLS),
+    "--start",
+    START,
+    "--end",
+    END,
+]
+
+
+def test_the_backtest_report_says_it_is_not_a_validation_and_names_survivorship(tmp_path, capsys):
+    document = _cli([*BT, "--benchmark", "SPY"], tmp_path / "bt.html")
+    printed = capsys.readouterr().out
+    text = _text(document)
+    assert re.search(r"Statistical validation\s+not assessed here", printed)
+    assert re.search(r"Statistical validation\s+not assessed here", text)
+    assert "in-sample" in text
+    assert "survivorship" in printed and "survivorship" in text
+    assert "membership was not point-in-time" in text
+
+
+def test_the_backtest_report_carries_the_pnl_split_when_the_terminal_prints_it(tmp_path, capsys):
+    document = _cli([*BT, "--benchmark", "SPY"], tmp_path / "bt.html")
+    printed = capsys.readouterr().out
+    assert "Where the P&L came from" in printed, "fixture should produce exit reasons"
+    text = _text(document)
+    assert "Where the P&L came from" in text
+    after = printed.split("Where the P&L came from")[1]
+    for row in re.findall(r"^  (\w+)\s+\d+\s+[\d.]+%", after, re.M):
+        assert row in text
+    if "Nearly all of the gain" in printed:
+        assert "Nearly all of the gain" in text
+
+
+def test_a_ratio_with_no_benchmark_is_not_measured_rather_than_zero():
+    from tradeflow.analytics.htmlreport import render_html
+
+    metrics = {"treynor_ratio": 0.0, "treynor_available": False, "benchmark_available": True, "beta": 0.01}
+    result = {"metrics": metrics, "strategy": "s", "symbols": ["AAA"], "window": {}}
+    assert re.search(r"treynor_ratio\s+not measured", _text(render_html(result, "backtest")))
+    bare = {**metrics, "benchmark_available": False, "alpha": 0.0, "information_ratio": 0.0}
+    text = _text(render_html({**result, "metrics": bare}, "backtest"))
+    for name in ("alpha", "information_ratio", "treynor_ratio", "beta"):
+        assert re.search(rf"{name}\s+not measured \(no benchmark\)", text), name
+
+
+# ---- item 5: a reused backtest's header is filled from the request --------------------
+def test_a_reused_backtest_header_names_the_benchmark_and_timeframe():
+    arguments = {"strategy": "demo_trend", "symbols": SYMBOLS, "start": START, "end": END, "benchmark": "SPY"}
+    _mcp("run_backtest", arguments)
+    reused = _mcp("run_backtest", arguments)
+    assert reused["memoized"] is True
+    text = _text(_mcp("render_report", {"kind": "backtest", "result": reused})["html"])
+    assert re.search(r"Benchmark\s+SPY \(as requested\)", text)
+    assert not re.search(r"Timeframe\s+—", text) and not re.search(r"Benchmark\s+—", text)
+    assert re.search(r"Timeframe\s+\S+ \(as requested\)", text)
