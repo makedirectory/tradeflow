@@ -632,3 +632,33 @@ def test_a_walk_forward_without_a_benchmark_does_not_stress_against_one(tmp_path
     with caplog.at_level(logging.WARNING):
         assert _offline_command(monkeypatch, cache_dir, argv) is None
     assert "Benchmark SPY unavailable" not in caplog.text
+
+
+def test_a_cached_run_over_the_cli_and_over_the_service_is_one_trial(monkeypatch, tmp_path):
+    """Found in the final review: the CLI folds the cache's data-vintage stamp into a
+    run's identity and the service did not, so once the MCP server could read the cache
+    (`mcp --offline`) the same backtest over the two surfaces could never match - two
+    journaled trials, the family count inflated, the memo never served. Builds the run
+    both ways against one cache and requires a single trial."""
+    from tradeflow import cli
+    from tradeflow.marketdata.client import MarketDataClient
+    from tradeflow.services import analysis, audit
+
+    journal = tmp_path / "journal.jsonl"
+    monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", journal)
+    monkeypatch.setattr(analysis, "ARTIFACT_DIR", tmp_path / "artifacts")
+    client = MarketDataClient(
+        CachedMarketData(WindowedFakeProvider([*SYMBOLS, "SPY"]), cache_dir=tmp_path / "bars")
+    )
+    monkeypatch.setattr(cli, "build_research_data", lambda **kw: client)
+
+    argv = ["backtest", "--strategy", "demo_trend", "--scanner", "none", "--symbols", ",".join(SYMBOLS)]
+    argv += ["--start", "2024-01-02", "--end", "2024-06-01", "--cache"]
+    args = cli.parse_cli(argv)
+    args.func(args)
+    reused = analysis.run_backtest(
+        client, "demo_trend", list(SYMBOLS), args.start, args.end, capital=args.capital
+    )
+    assert reused.get("memoized") is True
+    trials = [line for line in journal.read_text().splitlines() if '"trial:backtest"' in line]
+    assert len(trials) == 1

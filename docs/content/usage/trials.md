@@ -298,7 +298,7 @@ perfectly good:
 | Section | What it is | What an accounting bump does to it |
 | --- | --- | --- |
 | `recipe` | How it was validated | Nothing — it stays true |
-| `set up with` | How the run was configured (capital, scanner, cache) | Nothing — it is context, not identity |
+| `set up with` | How the run was configured (capital, scanner, cache) | Nothing — it records context (capital also keys the run, through its own identity; see below) |
 | `evidence` | What was measured | Invalidates all of it |
 | `metadata` | About the record | Nothing |
 

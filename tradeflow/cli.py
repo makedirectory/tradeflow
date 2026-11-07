@@ -257,12 +257,9 @@ def _vintage_stamp(data_client, universe: List[str], timeframe: str, start: Any,
     two must use an identical dedup key or a matching prior trial would never be
     found.
     """
-    from tradeflow.store.bars import CachedMarketData
+    from tradeflow.services.data import vintage_stamp
 
-    provider = getattr(data_client, "provider", None)
-    if not isinstance(provider, CachedMarketData):
-        return None
-    return provider.vintage_stamp(universe, timeframe, start, end)
+    return vintage_stamp(data_client, universe, timeframe, start, end)
 
 
 @contextlib.contextmanager

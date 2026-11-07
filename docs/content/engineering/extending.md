@@ -54,6 +54,12 @@ coin flip.
    the [alpha layer](alphas) scales the same score. Set `LONG_ONLY = False` to allow
    shorts, and override `signal_thresholds()` for asymmetric entry/exit bands.
 
+   A config may carry keys your strategy reads but does not tune. Those pass through,
+   except one whose name is close to a declared parameter, which is refused as a likely
+   typo (`fast_emaperiod` for `fast_ema_period`). If you deliberately read such a key -
+   say `exit_threshold` beside a declared `entry_threshold` - list it in
+   `EXTRA_CONFIG_KEYS = ("exit_threshold",)`.
+
 2. Expose it through the `tradeflow.strategies` entry-point group. For proprietary
    strategies that is a separate installed package:
 
@@ -162,6 +168,9 @@ error, so an adapter can be exercised against the same expectations.
 
 ## Add an optimization objective
 
-Any key in the metrics dict (`sharpe_ratio`, `total_return`, `calmar_ratio`, ...)
-is a valid `--objective`. To add a new one, compute it in
-`analytics.performance.compute_backtest_metrics` and it's immediately selectable.
+`--objective` takes any key in `analytics.performance.OBJECTIVE_KEYS` (`sharpe_ratio`,
+`total_return`, `calmar_ratio`, ...). The search always *maximises*, so the list holds only
+metrics where higher is better and that depend on the strategy; anything else is refused
+rather than silently picking the worst candidate. To add one, compute it in
+`analytics.performance.compute_backtest_metrics` and add its key to `OBJECTIVE_KEYS` - a
+lower-is-better metric needs negating first.

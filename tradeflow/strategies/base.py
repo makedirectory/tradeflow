@@ -122,10 +122,17 @@ def refuse_unknown_params(strategy_class, params: Optional[Dict[str, Any]]) -> N
     import difflib
 
     declared = strategy_class.PARAM_RANGES
+    # A strategy's own non-parameter keys (found in the final review: a near-pair such
+    # as `entry_threshold` declared and `exit_threshold` read undeclared was refused on
+    # every surface, `live --config` included).
+    extra = set(getattr(strategy_class, "EXTRA_CONFIG_KEYS", ()) or ())
     undeclared = [
         name
         for name in (params or {})
-        if name not in declared and name not in BEHAVIOURAL_CONFIG_KEYS and not name.startswith("_")
+        if name not in declared
+        and name not in BEHAVIOURAL_CONFIG_KEYS
+        and name not in extra
+        and not name.startswith("_")
     ]
     typos = {}
     for name in undeclared:
@@ -230,6 +237,13 @@ class Strategy(ABC):
     #: candidate in its family. Rejecting invalid points after drawing them would still
     #: spend that budget; the search space simply must not contain them.
     PARAM_CONSTRAINTS: Tuple[Tuple[str, str, Any], ...] = ()
+
+    #: Config keys this strategy reads that are not tunable parameters. A key that is
+    #: neither declared here nor in ``PARAM_RANGES`` still passes through, but one whose
+    #: name is close to a declared parameter is refused as a likely typo; a strategy that
+    #: declares ``entry_threshold`` and reads an undeclared ``exit_threshold`` names it
+    #: here so the check knows it is deliberate.
+    EXTRA_CONFIG_KEYS: Tuple[str, ...] = ()
 
     #: Whether the strategy may hold short positions. Long-only strategies never
     #: emit SELL entries; a negative score simply means "flat" (exit any long).

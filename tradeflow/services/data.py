@@ -75,6 +75,25 @@ class _NoVendor(MarketDataProvider):
         return False
 
 
+def vintage_stamp(data_client, universe: List[str], timeframe: Any, start: Any, end: Any) -> Optional[str]:
+    """The bar cache's data-vintage stamp for this exact fetch, or ``None`` when the
+    client is not cache-backed.
+
+    Part of a run's dedup identity whenever the cache is in play, so a run over bars
+    that have since changed is not answered from the old result. One definition for
+    both surfaces: the CLI folded it and the service did not, so once the MCP server
+    could read the cache (`mcp --offline`) the same run over the two surfaces could never
+    match and journaled twice. Calling it ensures the window is cached (it warms the
+    cache as a side effect), which is why callers compute it once, up front.
+    """
+    from tradeflow.store.bars import CachedMarketData
+
+    provider = getattr(data_client, "provider", None)
+    if not isinstance(provider, CachedMarketData):
+        return None
+    return provider.vintage_stamp(universe, timeframe, start, end)
+
+
 #: ``(symbols, timeframe, start, end)``: the arguments of one ``get_bars`` call.
 BarRead = Tuple[List[str], Any, datetime, datetime]
 

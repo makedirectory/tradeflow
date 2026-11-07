@@ -66,13 +66,16 @@ def _rejected_credentials(status: int, message: str) -> str:
     the whole of the error a verdict printed - three times - without ever saying the
     keys were the problem. The vendor's text is kept only when it is plain text.
     """
-    from tradeflow.settings import invocation
+    from tradeflow.settings import invocation, paper_trade_mode
 
     detail = message.strip()
     detail = f": {detail}" if detail and not detail.startswith("<") and len(detail) <= 200 else ""
+    # The section that matches the account this run is configured for: telling a live
+    # user to fetch paper keys would send them to the wrong pair.
+    section = "Paper Account" if paper_trade_mode() else "Live Account"
     return (
         f"Alpaca rejected these credentials (HTTP {status}{detail}). Check that the key and "
-        "secret came from the Paper Account section - paper and live keys differ - "
+        f"secret came from the {section} section - paper and live keys differ - "
         f"then run `{invocation('init')}`."
     )
 

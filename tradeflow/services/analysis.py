@@ -354,19 +354,27 @@ def walk_forward_recipe(
     }
 
 
-def _cost_key(gross: bool, commission_bps: float, impact_eta: float, borrow_bps: float) -> Dict[str, Any]:
+def _cost_key(
+    gross: bool, commission_bps: float, impact_eta: float, borrow_bps: float, vintage: Optional[str] = None
+) -> Dict[str, Any]:
     """The cost-model assumptions folded into a trial's dedup key - same shape as
     the CLI's ``main._cost_key`` so a trial recorded via one surface is found by
     the other. Two runs differing only in a cost flag must never collide as "the
-    same trial"."""
-    if gross:
-        return {"gross": True}
-    return {
-        "gross": False,
-        "commission_bps": commission_bps,
-        "impact_eta": impact_eta,
-        "borrow_bps": borrow_bps,
-    }
+    same trial". ``vintage`` (see :func:`tradeflow.services.data.vintage_stamp`) is
+    folded exactly when the CLI folds it: whenever the client reads the bar cache."""
+    key: Dict[str, Any] = (
+        {"gross": True}
+        if gross
+        else {
+            "gross": False,
+            "commission_bps": commission_bps,
+            "impact_eta": impact_eta,
+            "borrow_bps": borrow_bps,
+        }
+    )
+    if vintage is not None:
+        key["_vintage"] = vintage
+    return key
 
 
 def backtest_run_key(
@@ -603,9 +611,12 @@ def run_backtest(
 
     run_id = new_run_id()
     strat = _strategy(strategy, config)
+    from tradeflow.services.data import vintage_stamp
+
+    vintage = vintage_stamp(data_client, symbols, strat.config["timeframe"], start, end)
     dedup_params = {
         **_tunable_params(strat),
-        "_cost": _cost_key(gross, commission_bps, impact_eta, borrow_bps),
+        "_cost": _cost_key(gross, commission_bps, impact_eta, borrow_bps, vintage),
         **limits_key(strat.position_limits()),
         **backtest_run_key(capital, benchmark, beta_sizing, take_profit_margin_bps),
     }
@@ -988,7 +999,10 @@ def run_optimization(
     run_id = new_run_id()
     cls = resolve_strategy_class(strategy)
     cost_model = _build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
-    cost_key = _cost_key(gross, commission_bps, impact_eta, borrow_bps)
+    from tradeflow.services.data import vintage_stamp
+
+    vintage = vintage_stamp(data_client, symbols, cls.create_with_defaults().config["timeframe"], start, end)
+    cost_key = _cost_key(gross, commission_bps, impact_eta, borrow_bps, vintage)
     data_spec = _worker_data_spec(workers, cache_dir, offline)
     if data_spec is not None:
         # Warm once, in this process, before any dispatch: N cold workers would
@@ -1529,7 +1543,10 @@ def run_walk_forward(
     run_id = new_run_id()
     cls = resolve_strategy_class(strategy)
     cost_model = _build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
-    cost_key = _cost_key(gross, commission_bps, impact_eta, borrow_bps)
+    from tradeflow.services.data import vintage_stamp
+
+    vintage = vintage_stamp(data_client, symbols, cls.create_with_defaults().config["timeframe"], start, end)
+    cost_key = _cost_key(gross, commission_bps, impact_eta, borrow_bps, vintage)
     wf_data_spec = _worker_data_spec(workers, cache_dir, offline)
     if wf_data_spec is not None:
         from tradeflow.optimization.parallel import warm_for

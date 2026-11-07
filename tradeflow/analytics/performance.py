@@ -94,12 +94,17 @@ METRIC_KEYS = (
 #: the *worst* candidate, and one that does not depend on the strategy
 #: (``buy_hold_return``) picked arbitrarily. ``total_trades`` is excluded because
 #: maximising it selects for turnover, not edge. ``calmar_ratio`` and
-#: ``sterling_ratio`` are held out for now: they were positive for losing runs until a
-#: sign fix that did not bump ACCOUNTING_VERSION, and a search reuses stored
-#: per-candidate results, so it could rank a losing candidate by its old value.
+#: ``sterling_ratio`` were held out while stored results could carry their old
+#: (wrong-signed) values; the accounting v6 bump retired every such result, since a
+#: search reuses only same-version candidates.
+#:
+#: A new metric becomes an objective by being added here as well as to the metrics
+#: dict - deliberately, so its direction is a decision rather than an accident.
 OBJECTIVE_KEYS = (
     "sharpe_ratio",
     "sortino_ratio",
+    "calmar_ratio",
+    "sterling_ratio",
     "martin_ratio",
     "omega_ratio",
     "gain_to_pain_ratio",

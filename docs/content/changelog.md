@@ -239,7 +239,6 @@ backtests included, though most never touched a boundary - drop out of the defau
 
 ### Trial history
 
-- A research-agent code round is recorded under its own `draft:` identity, as a draft walk-forward already was, rather than the base strategy's. From now on such rounds form their own (usually one-trial) families, so they no longer raise the base strategy's family count; rounds recorded earlier stay under the base strategy.
 - `trials promote` carries the cost model the trial was validated under. A walk-forward
   or verdict keeps it in its recipe rather than its params, so promoting one wrote a
   config with no `cost` and a run from it priced trades at the cheaper defaults. The
@@ -261,7 +260,8 @@ backtests included, though most never touched a boundary - drop out of the defau
 - Research-agent rounds read honestly in the history. A `kind: code` round is recorded
   as `draft:<Class>:<hash>` (the identity the draft walk-forward already uses) instead of
   the base strategy it was proposed beside, so `--strategy <base>` no longer mixes
-  generated and base code; the identity is written into the round's journal line, so a
+  generated and base code, and such rounds form their own (usually one-trial) families
+  rather than raising the base strategy's count; the identity is written into the round's journal line, so a
   rebuild reproduces it (lines written earlier carry none and read as the session's
   strategy, as before). `trials campaign` on a round finds its `research:trial` line and
   says a round has no recipe of its own, instead of "could not be read"; a research
@@ -315,8 +315,9 @@ backtests included, though most never touched a boundary - drop out of the defau
 ### MCP
 
 - **Descriptions and behaviour agree.** `run_verdict` lists candidates it dropped for having
-  no bars (`dropped_symbols`, also printed by the CLI report) and its description says only
-  a refusal by the allocation preflight journals none. Every memoized answer says
+  no bars (`dropped_symbols`, also printed by the CLI report) and its description says which
+  runs journal none: an incomplete run that measured no IC, and an infeasible one refused by
+  the allocation preflight. Every memoized answer says
   `journaled: false` (`confirm_screen_point` and the draft walk-forward said `true`), and the
   shared "one trial per evaluated config" sentence now sits on `run_optimization` alone.
   `run_backtest` journals its dated return series as the CLI always did, so two MCP backtests
@@ -386,9 +387,9 @@ backtests included, though most never touched a boundary - drop out of the defau
   across folds, or the stitched out-of-sample aggregate), so a gate value no longer
   looks like it contradicts the aggregate metric of the same name.
 - Calmar and Sterling ratios are negative for a losing run; they took the magnitude of
-  the whole ratio, so a loss read as a reward. Values already stored for losing runs
-  carry the old sign, so neither is accepted as a search objective for now (a search
-  reuses stored per-candidate results); neither feeds a gate or a leaderboard.
+  the whole ratio, so a loss read as a reward. Results stored before accounting v6
+  carry the old sign and are retired with that era, so both remain valid search
+  objectives; neither feeds a gate or a leaderboard.
 - VaR and CVaR are losses, and 0 when even the tail is a gain; they took the magnitude of
   the tail return, so a series whose worst 5% still gained reported that gain as a loss.
   Display-only, like Calmar; values already stored keep the old reading.

@@ -694,13 +694,13 @@ def test_the_live_path_imports_no_research_machinery():
     a research import into the order path."""
     from pathlib import Path
 
-    for module in (
-        "tradeflow/engine/live.py",
-        "tradeflow/engine/barcheck.py",
-        "tradeflow/execution/ledger.py",
-        "tradeflow/execution/live_trader.py",
-        "tradeflow/execution/sizing.py",
-    ):
+    # The whole execution tree, not a list of files: a list misses the next module
+    # added to the order path (found in the final review - `flatten.py` was not on it).
+    root = Path(__file__).resolve().parents[1]
+    modules = [root / "tradeflow/engine/live.py", root / "tradeflow/engine/barcheck.py"]
+    modules += sorted((root / "tradeflow/execution").rglob("*.py"))
+    assert len(modules) > 5, "the execution tree was not found"
+    for module in modules:
         source = Path(module).read_text()
         for forbidden in (
             "tradeflow.services",

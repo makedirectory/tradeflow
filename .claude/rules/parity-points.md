@@ -44,7 +44,7 @@ asserting each clock separately — the backtest's own test passed throughout.
 
 **CLI ↔ service dedup identity** — `cli._cost_key` and `services.analysis._cost_key` are
 two implementations that must produce the same shape, because a trial recorded over one
-surface has to be found by the other. The CLI additionally folds a bar-cache vintage.
+surface has to be found by the other. Both fold the bar cache's data-vintage stamp whenever the client reads the cache, through one definition, `services.data.vintage_stamp`: only the CLI did, which was harmless until `mcp --offline` let the service read the cache too - then the same run over the two surfaces could never match. *Also guarded by* `tests/test_bar_cache.py`.
 A backtest's run shape - capital, benchmark, beta sizing, take-profit margin - is one
 definition, `services.analysis.backtest_run_key`, which both call. It was missing from the
 key entirely, so a run at $100,000 answered a request at $4,000; adding it changed every

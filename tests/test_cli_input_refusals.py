@@ -462,10 +462,13 @@ def test_the_draft_walk_forward_gets_the_same_refusals():
         )
 
 
-def test_calmar_and_sterling_are_not_objectives_while_stored_values_carry_the_old_sign(capsys):
-    """A search reuses stored per-candidate results, and the sign fix did not bump the
-    accounting version, so ranking by them could pick a losing candidate."""
-    assert "cannot be maximised meaningfully" in _refusal(["optimize", "--objective", "calmar_ratio"], capsys)
+def test_calmar_and_sterling_are_objectives_again_once_v6_retired_the_old_sign():
+    """They were held out while stored per-candidate results could carry the old,
+    wrong-signed values. Found in the final review: the accounting v6 bump retired every
+    such result (a search reuses only same-version candidates), so the hold-out had no
+    reason left and its refusal said something untrue ("the worst candidate")."""
+    assert cli.parse_cli(["optimize", "--objective", "calmar_ratio"]).objective == "calmar_ratio"
+    assert cli.parse_cli(["optimize", "--objective", "sterling_ratio"]).objective == "sterling_ratio"
 
 
 def test_an_empty_window_says_so_and_the_refusal_names_the_subcommand(capsys):
@@ -669,3 +672,34 @@ def test_mcp_without_its_extra_says_so_before_logging_anything(monkeypatch, capl
         args.func(args)
     assert "needs the 'mcp' extra" in str(exited.value.code)
     assert "state root" not in caplog.text
+
+
+def test_a_strategy_names_the_extra_keys_it_reads_so_a_near_pair_is_not_a_typo():
+    """Found in the final review: a strategy declaring `entry_threshold` and reading an
+    undeclared `exit_threshold` (ratio 0.83) was refused as a typo on every surface,
+    `live --config` included. `EXTRA_CONFIG_KEYS` says the key is deliberate; without
+    it the near-miss is still caught."""
+    from tradeflow.strategies.base import refuse_unknown_params
+
+    class Plain:
+        __name__ = "Plain"
+        PARAM_RANGES = {"entry_threshold": {"type": "float", "min": 0, "max": 1}}
+
+    class Declares(Plain):
+        EXTRA_CONFIG_KEYS = ("exit_threshold",)
+
+    with pytest.raises(ValueError, match="did you mean 'entry_threshold'"):
+        refuse_unknown_params(Plain, {"exit_threshold": 0.2})
+    refuse_unknown_params(Declares, {"exit_threshold": 0.2})
+
+
+def test_rejected_keys_point_at_the_section_for_the_configured_account(monkeypatch):
+    """Found in the final review: the fix text always said "Paper Account", so a user
+    configured for live trading was sent to fetch the wrong key pair."""
+    from tradeflow import settings
+    from tradeflow.brokers.alpaca import broker
+
+    monkeypatch.setattr(settings, "paper_trade_mode", lambda: False)
+    assert "Live Account section" in broker._rejected_credentials(401, "")
+    monkeypatch.setattr(settings, "paper_trade_mode", lambda: True)
+    assert "Paper Account section" in broker._rejected_credentials(401, "")
