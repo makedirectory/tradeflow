@@ -1403,6 +1403,37 @@ def _unmeasured_benchmark_keys(metrics: Dict[str, Any]) -> set:
     return out
 
 
+def format_holdout(holdout: Dict[str, Any]) -> List[str]:
+    """A walk-forward's holdout as lines, in each of the states a journal can leave it.
+
+    The four states are not interchangeable and none is rendered as another: a holdout
+    that was never asked for, one whose result is in the journal, one that was asked
+    for and produced nothing, and one asked for on a line written before the journal
+    kept the result - that last is *absent*, and says so rather than printing nothing.
+    """
+    from tradeflow.optimization.walk_forward import format_gate_value
+
+    state, days = holdout.get("state"), holdout.get("days")
+    if state == "none_requested":
+        return ["  Holdout : none requested (--holdout-days 0)"]
+    if state == "not_retained":
+        return [
+            f"  Holdout : requested ({days} days) but its result was not retained — this trial "
+            "was recorded before the journal kept holdout results"
+        ]
+    if state == "recorded":
+        metrics = holdout.get("metrics")
+        if not metrics:
+            return [f"  Holdout : requested ({days} days) but it produced no result"]
+        cells = "  ".join(
+            f"{label} {format_gate_value(key, metrics.get(key))}"
+            for label, key in (("Sharpe", "sharpe_ratio"), ("CAGR", "cagr"), ("trades", "total_trades"))
+            if key in metrics
+        )
+        return [f"  Holdout : {days} days, scored once — {cells}"]
+    return ["  Holdout : unknown — the journal line for this trial is not readable"]
+
+
 def _campaign_heading(material: Dict[str, Any]) -> str:
     """The block's title, by whether the trial was validated at all.
 
@@ -1486,6 +1517,8 @@ def format_campaign_material(material: Dict[str, Any]) -> str:
             )
     else:
         lines.append(f"    {NOT_RECORDED} no metrics recorded")
+    if evidence.get("holdout") is not None:
+        lines.extend("  " + line for line in format_holdout(evidence["holdout"]))
     promo = evidence.get("promotable")
     lines.append(f"    {'promotable':<16}{NOT_RECORDED if promo is None else ('yes' if promo else 'no')}")
     lines.append(f"    {'family n_trials':<16}{_cell(evidence.get('family_n_trials'), '{:.0f}')}")

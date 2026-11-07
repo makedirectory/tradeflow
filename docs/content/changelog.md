@@ -233,6 +233,16 @@ backtests included, though most never touched a boundary - drop out of the defau
   row's EVIDENCE notes that its Sharpe is the aggregate while `list`/`show` print the
   median fold; benchmark metrics of a run with no benchmark print "not measured" rather
   than `0.00`.
+- A walk-forward's holdout is visible from the history. The result was printed once and
+  then lost: `trials show`, `trials campaign` and a reused result never mentioned it.
+  The journal line now carries it (`holdout`: days, metrics, chosen params, written
+  whenever a holdout was asked for), and `show`, `campaign`, the CLI's reused report
+  and the MCP `get_trial` / reused-walk-forward payloads read it back. The field is new
+  and absent from older lines, so those say "requested (N days) but its result was not
+  retained" rather than printing nothing; a run that asked for no holdout says "none
+  requested". No schema change: the index never held it. `trials list` carries no
+  holdout marker - a row per trial has no room for one, and reading the journal for
+  every listed row is the cost it is built to avoid.
 - `trials show` prints drawdown and trade counts in the units `trials campaign` uses.
 - `trials list --since/--until` says how many rows it excluded because their recorded
   time is unknown, rather than dropping them silently.

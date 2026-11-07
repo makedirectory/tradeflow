@@ -105,6 +105,13 @@ That last section is the reverse of the memoization lookup: a number served from
 the store is traceable in both directions, from the reuse back to its origin and
 from the origin forward to everything it was reused for.
 
+A walk-forward's `show` and `campaign` also report its **holdout**, read from the
+journal (the index never kept it): the days, Sharpe, CAGR and trade count it was scored
+at, or one of three honest absences — `none requested`, `requested but produced no
+result`, or `requested (N days) but its result was not retained` for a trial recorded
+before the journal kept holdout results. A reused walk-forward (CLI, or the MCP tool's
+`holdout` key) repeats the same statement rather than dropping it.
+
 An unknown id exits non-zero with a plain message.
 
 ## Promoting a validated trial

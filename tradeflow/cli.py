@@ -1750,7 +1750,7 @@ def cmd_walkforward(args) -> None:
     trial_id = None
     if not args.no_journal and result.folds:
         from tradeflow.services.analysis import trades_payload
-        from tradeflow.services.audit import journal_trial, probe_verdicts
+        from tradeflow.services.audit import holdout_extra, journal_trial, probe_verdicts
 
         # One walk-forward is one *validated* config — the OOS aggregate is the
         # headline. The many IS-optimization configs it evaluated internally are
@@ -1772,6 +1772,7 @@ def cmd_walkforward(args) -> None:
                 "n_trials": result.n_trials_total,
                 "promotable": report["promotable"],
                 "efficiency": result.median_efficiency(),
+                **holdout_extra(result, args.holdout_days),
             },
             returns=result.oos_returns,
             trades=trades_payload(result.oos_trade_table) if args.record_trades else None,
@@ -1921,6 +1922,11 @@ def _print_cached_walkforward(row: Dict[str, Any]) -> None:
     from tradeflow.analytics.reporting import _cell
 
     print("\n=== Walk-Forward Validation (cached — per-fold detail not stored) ===")
+    from tradeflow.analytics.reporting import format_holdout
+    from tradeflow.services.audit import holdout_for_trial
+
+    holdout = holdout_for_trial(row.get("id"))
+    held = format_holdout(holdout) if holdout["state"] != "none_requested" else []
     # `_cell` renders an unrecorded field as unrecorded; `or 0` printed a trial that
     # never stored a Sharpe as one that scored 0.000.
     print(
@@ -1934,6 +1940,8 @@ def _print_cached_walkforward(row: Dict[str, Any]) -> None:
         f"  Efficiency (OOS/IS): {'n/a' if efficiency is None else f'{efficiency:.3f}'}  "
         f"trials total: {'n/a' if n_trials is None else n_trials}"
     )
+    for line in held:
+        print(line)
     promotable = row.get("promotable")
     verdict = "PROMOTABLE" if promotable else ("NOT promotable" if promotable is not None else "unknown")
     print(f"\nVerdict: {verdict} (from the original run — pass --force to re-verify the promotion gates)")
@@ -4218,6 +4226,11 @@ def _print_trial_detail(store, args) -> None:
         print(json.dumps(_limit_trial_trades(trial, args.trades_limit), indent=2, default=str))
         return
     print(format_trial_detail(trial))
+    if trial.get("kind") == "walkforward":
+        from tradeflow.analytics.reporting import format_holdout
+        from tradeflow.services.audit import holdout_for_trial
+
+        print("\n".join(format_holdout(holdout_for_trial(trial["id"], getattr(args, "journal", None)))))
     if trial.get("trades"):
         print(format_trial_trades(trial["trades"], limit=args.trades_limit))
 

@@ -102,7 +102,9 @@ def campaign_material(store, trial_id: str, *, journal_path: Optional[Any] = Non
             "kind": row.get("kind"),
             "strategy": row.get("strategy"),
             RECIPE: _recipe_section(row, inputs, record),
-            EVIDENCE: _evidence_section(store, row, inputs, trial_id, accounting, ACCOUNTING_VERSION),
+            EVIDENCE: _evidence_section(
+                store, row, inputs, trial_id, accounting, ACCOUNTING_VERSION, record=record
+            ),
             METADATA: _metadata_section(row, inputs, record, trial_id),
         }
     )
@@ -233,8 +235,10 @@ def _parse_metrics(row) -> Optional[Dict[str, Any]]:
     return parsed or None
 
 
-def _evidence_section(store, row, inputs, trial_id, accounting, current) -> Dict[str, Any]:
+def _evidence_section(store, row, inputs, trial_id, accounting, current, record=None) -> Dict[str, Any]:
     """What was measured. Scoped to one accounting era and worthless outside it."""
+    from tradeflow.services.audit import holdout_from_record
+
     strategy, universe_hash = row.get("strategy"), row.get("universe_hash")
     family = (
         store.family_count_by_hash(strategy, universe_hash, accounting)
@@ -263,6 +267,9 @@ def _evidence_section(store, row, inputs, trial_id, accounting, current) -> Dict
         # is built around, carried into the record.
         "probes": _recorded(inputs, "probes"),
         "family_n_trials": family,
+        # A walk-forward's holdout is evidence the index never kept; it lives only in the
+        # journal line. Other kinds have no such concept, so they carry no key at all.
+        **({"holdout": holdout_from_record(record)} if row.get("kind") == "walkforward" else {}),
         "quarantined": bool(row.get("contaminated_at")),
         "quarantine_reason": row.get("contamination_reason"),
     }

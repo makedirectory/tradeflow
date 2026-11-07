@@ -475,6 +475,63 @@ def journal_record_for_trial(trial_id: str, path: Optional[Path] = None) -> Opti
     return None
 
 
+def holdout_extra(result: Any, holdout_days: int) -> Dict[str, Any]:
+    """The ``holdout`` field a walk-forward's journal line carries, or ``{}``.
+
+    A holdout is scored once and printed once, and the journal kept nothing of it: the
+    store, ``show`` and ``campaign`` could not say a holdout had ever been scored, and a
+    reused result dropped it without a word. The field is new and **absent on every line
+    written before it**, which a reader must keep distinct from a run that asked for no
+    holdout (``holdout_days`` in the recipe is 0) - see :func:`holdout_from_record`.
+
+    Written whenever a holdout was requested, even if it produced nothing, so "asked and
+    got no result" is also distinguishable from "asked and the result was not kept".
+    """
+    if not holdout_days:
+        return {}
+    metrics = getattr(result, "holdout", None)
+    params = getattr(result, "holdout_params", None)
+    return {
+        "holdout": {
+            "days": int(holdout_days),
+            "metrics": _safe(metrics) if metrics else None,
+            "params": _safe(params) if params else None,
+        }
+    }
+
+
+def holdout_from_record(record: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """What a walk-forward's journal line says about its holdout.
+
+    ``state`` is one of ``recorded`` (the metrics are here, or ``metrics`` is None when a
+    holdout was requested and produced nothing), ``not_retained`` (a holdout was
+    requested but the line predates the field, so the result is gone), ``none_requested``
+    (the recipe asked for none) and ``unknown`` (no readable line, or a recipe that does
+    not say). Never a guess: an absent field is reported as absent.
+    """
+    if record is None:
+        return {"state": "unknown", "days": None, "metrics": None}
+    saved = record.get("holdout")
+    if isinstance(saved, dict):
+        return {
+            "state": "recorded",
+            "days": saved.get("days"),
+            "metrics": saved.get("metrics"),
+            "params": saved.get("params"),
+        }
+    days = (record.get("dedup_params") or {}).get("holdout_days")
+    if days is None:
+        return {"state": "unknown", "days": None, "metrics": None}
+    if not days:
+        return {"state": "none_requested", "days": 0, "metrics": None}
+    return {"state": "not_retained", "days": int(days), "metrics": None}
+
+
+def holdout_for_trial(trial_id: str, path: Optional[Path] = None) -> Dict[str, Any]:
+    """:func:`holdout_from_record` for the journal line of one trial."""
+    return holdout_from_record(journal_record_for_trial(trial_id, path))
+
+
 def research_record_for_trial(trial_id: str, path: Optional[Path] = None) -> Optional[Dict[str, Any]]:
     """The journal line a research-agent round was written as, or ``None``.
 

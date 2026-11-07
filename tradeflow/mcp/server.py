@@ -1714,7 +1714,10 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         keeping one, and which later trials were served from this one.
 
         `null` for a companion means *not recorded* — the run predates that storage,
-        or did not opt in. It never means the run produced nothing. Read-only.
+        or did not opt in. It never means the run produced nothing. A walk-forward also
+        carries `holdout`: `state` is `recorded` (with `metrics`), `none_requested`,
+        `not_retained` (asked for, but the trial predates the journal keeping the result)
+        or `unknown`. Read-only.
         """
         with _trial_store() as store:
             if store is None:
@@ -1728,6 +1731,13 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
             trial = store.get_trial(resolved) if resolved else None
             if trial is None:
                 raise ValueError(f"No trial with id {trial_id!r}. {_USE_LIST_TRIALS}")
+            if trial.get("kind") == "walkforward":
+                # The index never kept the holdout; the journal line is the only place it
+                # is, and `state` says whether it is there, was never asked for, or
+                # predates the journal keeping it.
+                from tradeflow.services.audit import holdout_for_trial
+
+                trial["holdout"] = holdout_for_trial(trial["id"])
             return _logged("get_trial", {"trial_id": trial_id}, trial)
 
     @tool()

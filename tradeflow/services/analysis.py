@@ -1543,7 +1543,7 @@ def run_walk_forward(
 
     trial_id = None
     if result.folds:
-        from tradeflow.services.audit import probe_verdicts, run_context
+        from tradeflow.services.audit import holdout_extra, probe_verdicts, run_context
 
         chosen = result.holdout_params or result.folds[-1].is_best_params
         gate_report = result.gate_report(gates)
@@ -1560,6 +1560,7 @@ def run_walk_forward(
                 "n_trials": result.n_trials_total,
                 "promotable": gate_report["promotable"],
                 "efficiency": result.median_efficiency(),
+                **holdout_extra(result, holdout_days),
             },
             returns=result.oos_returns,
             trades=trades_payload(result.oos_trade_table) if record_trades else None,
@@ -2127,7 +2128,7 @@ def run_draft_walk_forward(
     journaled = bool(journal and result.folds)
     trial_id = None
     if journaled:
-        from tradeflow.services.audit import probe_verdicts, run_context
+        from tradeflow.services.audit import holdout_extra, probe_verdicts, run_context
 
         chosen = result.holdout_params or result.folds[-1].is_best_params
         gate_report = result.gate_report(gates)
@@ -2144,6 +2145,7 @@ def run_draft_walk_forward(
                 "n_trials": result.n_trials_total,
                 "promotable": gate_report["promotable"],
                 "efficiency": result.median_efficiency(),
+                **holdout_extra(result, holdout_days),
             },
             returns=result.oos_returns,
             dedup_params=recipe,
@@ -2229,6 +2231,9 @@ def memoized_walk_forward_payload(
     trial store never kept; ``benchmark``/``timeframe`` are from the request.
     """
     metrics = json.loads(cached["metrics_json"] or "{}")
+    from tradeflow.services.audit import holdout_for_trial
+
+    holdout = holdout_for_trial(cached["id"])
     return {
         "run_id": run_id,
         "strategy": strategy,
@@ -2245,7 +2250,12 @@ def memoized_walk_forward_payload(
         "evidence": None,
         "evidence_unavailable": "a reused result keeps no per-fold detail; pass force=true to "
         "re-run it with the promotion prerequisites",
-        "not_retained": list(WALK_FORWARD_NOT_RETAINED),
+        # What the original run recorded of its holdout: here, never asked for, or from
+        # before the journal kept it. Listed as not retained only when it is not here.
+        "holdout": holdout,
+        "not_retained": [
+            item for item in WALK_FORWARD_NOT_RETAINED if item != "holdout" or holdout.get("state") != "recorded"
+        ],
         "benchmark": benchmark,
         "timeframe": timeframe,
         "oos_aggregate": _jsonable(metrics),
