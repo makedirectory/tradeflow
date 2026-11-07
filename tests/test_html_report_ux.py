@@ -166,3 +166,32 @@ def test_the_reason_a_universe_is_low_confidence_reaches_the_verdict_report():
     assert result["alphas"]["low_confidence"], "fixture should be a thin universe"
     reason = result["alphas"]["low_confidence_reason"]
     assert reason and reason in _text(render_html(result, "verdict"))
+
+
+# ---- item 3: every metrics table uses the same unit formatter -------------------------
+def _metric_rows(document: str, section: str) -> dict:
+    """Metric name -> displayed value for the table inside the card titled ``section``."""
+    card = re.search(rf"<h2>{section}</h2>(.*?)</section>", document, re.S).group(1)
+    return {
+        _text(name).strip(): _text(value).strip()
+        for name, value in re.findall(r"<tr><td>(.*?)</td><td>(.*?)</td></tr>", card, re.S)
+    }
+
+
+def _unit_marker(shown: str):
+    return ("%" in shown, "$" in shown)
+
+
+def test_the_holdout_table_formats_metrics_as_the_aggregate_table_does(tmp_path):
+    document = _cli([*WF, "--holdout-days", "60", "--force"], tmp_path / "wf.html")
+    aggregate = _metric_rows(document, "Out-of-sample aggregate")
+    holdout = _metric_rows(document, "Holdout")
+    shared = [k for k in ("cagr", "max_drawdown", "avg_loss") if k in aggregate and k in holdout]
+    assert shared, "fixture should share unit-declared metrics between the two tables"
+    for key in shared:
+        # A raw 0.9594 beside an aggregate 4.44% is the defect: the unit marker must agree.
+        assert _unit_marker(holdout[key]) == _unit_marker(aggregate[key]), (
+            key,
+            holdout[key],
+            aggregate[key],
+        )

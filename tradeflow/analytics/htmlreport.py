@@ -975,7 +975,7 @@ def _walkforward_sections(result: Dict[str, Any], extras: Dict[str, Any]) -> Lis
         out.append(
             _card(
                 "Holdout",
-                _table(["Metric", "Value"], [[k, _num(v)] for k, v in sorted((result["holdout"]).items())]),
+                _table(["Metric", "Value"], [[k, _metric_cell(k, v)] for k, v in sorted((result["holdout"]).items())]),
             )
         )
     return out
