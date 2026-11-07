@@ -18,10 +18,10 @@ Printed by every backtest, no flag required.
 
 ```
 === Where the P&L came from ===
-  exit              trades   share       net P&L
-  TAKE_PROFIT         1130   57.9%$      581,923
-  SIGNAL               787   40.3%$     -118,444
-  STOP_LOSS             30    1.5%$      -47,112
+  exit              trades   share       net P&L  win rate
+  TAKE_PROFIT         1130   57.9%      $581,923     71.2%
+  SIGNAL               787   40.3%     -$118,444     38.0%
+  STOP_LOSS             30    1.5%      -$47,112      0.0%
   Nearly all of the gain comes from TAKE_PROFIT. The result is a bet on that exit's
   fill assumption - stress it before believing the headline.
 ```
