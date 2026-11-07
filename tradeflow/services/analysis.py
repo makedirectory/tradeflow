@@ -2254,7 +2254,9 @@ def memoized_walk_forward_payload(
         # before the journal kept it. Listed as not retained only when it is not here.
         "holdout": holdout,
         "not_retained": [
-            item for item in WALK_FORWARD_NOT_RETAINED if item != "holdout" or holdout.get("state") != "recorded"
+            item
+            for item in WALK_FORWARD_NOT_RETAINED
+            if item != "holdout" or holdout.get("state") != "recorded"
         ],
         "benchmark": benchmark,
         "timeframe": timeframe,
