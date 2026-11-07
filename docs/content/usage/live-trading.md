@@ -557,6 +557,7 @@ Every live run prints what it is about to do, before any order logic runs:
   capital this run      $25,000.00
   universe              40 symbols (replayed)
   data feed             iex
+  cost model            1 bps commission, eta 0.3, borrow 50 bps  (recorded, not charged)
   max positions         8
   max position size     $2,500.00
   max gross exposure    0.8 (80% of capital = $20,000.00)
@@ -566,9 +567,10 @@ Every live run prints what it is about to do, before any order logic runs:
   entries               re-affirmed
   bar guards            on
   reconcile every       300s
-  ledger                ~/.tradeflow/logs/positions.jsonl
+  ledger                ~/.tradeflow/logs/position_ledger.jsonl
   journal               ~/.tradeflow/logs/research_journal.jsonl
   halt state            ~/.tradeflow/logs/halts.json
+  state root            ~/.tradeflow
 
   warm-up coverage      40 of 40 symbols have history
                         39 of 40 have the full 120-bar lookback (1 short)
