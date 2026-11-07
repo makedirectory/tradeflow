@@ -1,0 +1,23 @@
+# An allowlist, not a denylist: the Dockerfile copies the build context, and a
+# checkout holds things that must never reach an image - `.env` (broker credentials),
+# the gitignored `specs/`, `configs/` and `logs/` (a campaign's private strategy
+# evidence and journal), `cache/`, `.git`, virtual environments and node_modules.
+# A denylist misses the next one somebody adds; this names only what the image runs.
+*
+
+!pyproject.toml
+!uv.lock
+!README.md
+!LICENSE
+!main.py
+!tradeflow/
+!example/
+
+# Even inside the allowed trees.
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ruff_cache
+**/.DS_Store
+**/.env
+**/.venv

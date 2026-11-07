@@ -53,7 +53,9 @@ services:
       # The setup doctor: env readable, credentials present, state writable, extras
       # importable. It makes no network call, so this reports on the container's own
       # configuration rather than on a vendor's uptime.
-      test: ["CMD", "uv", "run", "python", "main.py", "init", "--check"]
+      # `--for mcp`: the server starts and serves the catalogue without keys, so a plain
+      # `init --check` (which wants keys for data) marked a keyless server unhealthy.
+      test: ["CMD", "uv", "run", "python", "main.py", "init", "--check", "--for", "mcp"]
       interval: 60s
       timeout: 30s
       retries: 3

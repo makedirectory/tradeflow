@@ -6540,8 +6540,13 @@ def _next_step_hint() -> str:
     An installed copy has no Makefile and no `.env.example` to copy, so pointing at
     either is a dead end for exactly the user this path exists to serve.
     """
-    from tradeflow.settings import started_from_checkout_shim
+    from tradeflow.settings import in_container, started_from_checkout_shim
 
+    if in_container():
+        return (
+            "     add your free Alpaca paper keys to the .env beside docker-compose.yml (mounted read-only)\n"
+            f"     {_invocation('verdict'):<20} then run the whole pipeline on real market data"
+        )
     if started_from_checkout_shim():
         return (
             "     make init        add your free Alpaca paper keys (or see .env.example)\n"

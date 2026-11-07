@@ -151,10 +151,21 @@ def started_from_checkout_shim() -> bool:
     the installed command's name when that is what ran, the shim otherwise. Anything
     unrecognised (a test runner, ``python -c``) keeps the checkout's own spelling.
     """
-    if not running_from_checkout():
+    if not running_from_checkout() or in_container():
         return False
     started = Path(sys.argv[0]).stem if sys.argv and sys.argv[0] else ""
     return started not in (CLI_NAME, *LEGACY_CLI_NAMES)
+
+
+#: Set by the project's Dockerfile. The image carries `main.py` and `pyproject.toml`, so
+#: it looks like a checkout, but it has no Makefile and no `.env.example`: a container
+#: told to run `make init` was sent to files that were never copied in.
+CONTAINER_ENV = "QUANTRED_CONTAINER"
+
+
+def in_container() -> bool:
+    """Whether this process runs in the project's own image."""
+    return bool(os.environ.get(CONTAINER_ENV))
 
 
 def running_from_checkout() -> bool:
@@ -485,6 +496,15 @@ def _missing_credentials_message(missing: list) -> str:
             "",
             "  make init                 guided setup (or copy .env.example to .env)",
             "  make demo                 no keys needed — the full pipeline on synthetic data",
+        ]
+    elif in_container():
+        # The compose file mounts the host's .env read-only at the state root, so `init`
+        # inside the container could not write it; the keys go in on the host.
+        lines += [
+            "",
+            f"  Put them in the .env beside docker-compose.yml on the host; compose mounts it "
+            f"read-only at {setup_path}.",
+            f"  {invocation('demo'):<25} no keys needed — the full pipeline on synthetic data",
         ]
     else:
         lines += [

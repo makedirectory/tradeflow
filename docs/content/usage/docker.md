@@ -64,12 +64,20 @@ docker compose --profile docs up docs      # http://localhost:3000
 Three named volumes hold everything the application writes — the research journal
 and trial store (`/state/logs`), the bar cache (`/state/cache`), and promoted
 configs (`/state/configs`). `.env` is bind-mounted **read-only** from the host: a
-container should not be able to rewrite the keys it was given.
+container should not be able to rewrite the keys it was given, so keys go in the `.env`
+beside `docker-compose.yml`, not through `init` inside the container (the container's
+own messages say so).
+
+Nothing else from the checkout reaches the image: `.dockerignore` is an allowlist of
+the package, the example pack and the project metadata, so `.env`, `specs/`, `configs/`,
+`logs/`, `cache/` and `.git` stay out of the build context. The image's environment is
+built once with the extras it carries and is not re-synced at start, so a container
+runs without network access.
 
 This is the part worth getting right. A compose setup that looks fine while
 journaling trials into the container layer would discard them on `down`, silently
 resetting the campaign count that every multiple-testing correction depends on — and
-nothing would error. `scripts/compose_smoke.sh` tests exactly that: run a backtest,
+nothing would error. `scripts/compose_smoke.sh` tests exactly that: journal a trial (no keys needed),
 `down`, and check the trial is still there.
 
 **Ownership.** The image runs as a pinned non-root uid (1000) and creates each mount

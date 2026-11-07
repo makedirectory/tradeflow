@@ -366,3 +366,38 @@ def test_another_tables_name_line_is_not_a_checkout(tmp_path):
         f'[build-system]\nrequires = []\n\n[ project ]\nversion = "1"\nname = "{own}"\n'
     )
     assert settings._looks_like_checkout(tmp_path)
+
+
+def test_the_project_image_is_told_it_is_not_a_checkout(monkeypatch, tmp_path):
+    """The image carries main.py and pyproject.toml, so it read as a checkout and told a
+    container user to run `make init` and copy `.env.example` - neither is in the image -
+    and `init` could not write the .env compose mounts read-only."""
+    from tradeflow import cli
+
+    monkeypatch.setenv(settings.CONTAINER_ENV, "1")
+    monkeypatch.setattr(sys, "argv", ["main.py", "demo"])
+    assert settings.invocation("init", make_target="init") == f"{settings.CLI_NAME} init"
+    message = settings._missing_credentials_message(["APCA_API_KEY_ID"])
+    assert "make " not in message and ".env.example" not in message
+    assert "read-only" in message
+    hint = cli._next_step_hint()
+    assert "make " not in hint and ".env.example" not in hint and "read-only" in hint
+
+
+def test_the_dockerfile_declares_the_container_and_stops_runtime_syncs():
+    """The two settings the image depends on, read from the Dockerfile itself: without
+    UV_NO_SYNC every `uv run` re-synced the environment at start (an offline container
+    could not start), and without the container flag it printed checkout instructions."""
+    dockerfile = (PROJECT_ROOT / "Dockerfile").read_text()
+    assert "ENV UV_NO_SYNC=1" in dockerfile
+    assert f"ENV {settings.CONTAINER_ENV}=1" in dockerfile
+
+
+def test_the_build_context_is_an_allowlist_that_keeps_secrets_out():
+    """There was no .dockerignore, and the Dockerfile copies the whole context: an image
+    built from a checkout carried `.env`, `specs/`, `configs/` and `logs/`."""
+    ignore = (PROJECT_ROOT / ".dockerignore").read_text().splitlines()
+    assert ignore[[line.strip() for line in ignore].index("*")] == "*"
+    allowed = {line[1:].rstrip("/") for line in ignore if line.startswith("!")}
+    assert not allowed & {".env", "specs", "configs", "logs", "cache", ".git", ".venv"}
+    assert {"tradeflow", "main.py", "pyproject.toml"} <= allowed

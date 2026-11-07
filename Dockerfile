@@ -8,6 +8,17 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1
+# The environment is built once, below, with exactly the extras this image carries.
+# Without this every `uv run` re-synced it at container start to uv's own defaults -
+# the dev group, none of the extras - so each start needed the network (an offline
+# container failed to start at all) and could rebuild the environment without the
+# MCP server and bar cache the image exists to carry.
+ENV UV_NO_SYNC=1
+# Tells the application it is in this image rather than a checkout, so the
+# instructions it prints name `quantred` (on PATH below) instead of `make` targets and
+# an `.env.example` the image does not contain.
+ENV QUANTRED_CONTAINER=1
+ENV PATH="/app/.venv/bin:$PATH"
 
 # Which optional capabilities this image carries. `uv sync --no-dev` would exclude
 # them all, leaving the MCP server and the bar cache unable to import — so the
