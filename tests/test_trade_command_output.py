@@ -95,8 +95,7 @@ def _write_config(tmp_path, capital=8000.0, limits=None, name="cfg.json"):
         },
         "scanner": "none",
         "symbols": ["AAA", "BBB"],
-        "position_limits": limits
-        or {"max_positions": 4, "max_position_size": 900.0, "min_notional": 50.0},
+        "position_limits": limits or {"max_positions": 4, "max_position_size": 900.0, "min_notional": 50.0},
     }
     if capital is not None:
         payload["capital"] = capital
@@ -112,9 +111,7 @@ def test_the_provenance_line_names_the_limits_a_flag_overrode(tmp_path, capsys):
     path = _write_config(tmp_path)
 
     cli.apply_run_config(
-        cli.parse_cli(
-            ["live", "--config", str(path), "--max-positions", "2", "--max-position-size", "500"]
-        )
+        cli.parse_cli(["live", "--config", str(path), "--max-positions", "2", "--max-position-size", "500"])
     )
     line = capsys.readouterr().out.splitlines()[0]
     assert "position_limits=<config + --max-positions, --max-position-size given>" in line
@@ -150,9 +147,7 @@ def test_a_dry_run_prints_the_book_it_checks_against(tmp_path, monkeypatch, caps
     _wired_dry_run(monkeypatch)
     path = _write_config(tmp_path)
 
-    cli.cmd_live(
-        cli.parse_cli(["live", "--config", str(path), "--dry-run", "--max-positions", "2"])
-    )
+    cli.cmd_live(cli.parse_cli(["live", "--config", str(path), "--dry-run", "--max-positions", "2"]))
     out = capsys.readouterr().out
     assert "max positions         2" in out
     assert "max position size" in out and "min notional" in out and "max gross exposure" in out
@@ -165,11 +160,13 @@ def test_a_dry_run_json_carries_the_book(tmp_path, monkeypatch, capsys):
     _wired_dry_run(monkeypatch)
     path = _write_config(tmp_path)
 
-    cli.cmd_live(cli.parse_cli(["live", "--config", str(path), "--dry-run", "--json", "--max-positions", "2"]))
+    cli.cmd_live(
+        cli.parse_cli(["live", "--config", str(path), "--dry-run", "--json", "--max-positions", "2"])
+    )
     out = capsys.readouterr().out
     # `apply_run_config` prints its provenance lines ahead of the document; that is a
     # separate matter from what the document holds.
-    report = json.loads(out[out.index("{"):])
+    report = json.loads(out[out.index("{") :])
     assert report["position_limits"]["max_positions"] == 2
 
 
@@ -193,8 +190,18 @@ def test_a_book_whose_ceiling_is_below_the_floor_is_flagged_not_repaired(tmp_pat
 
     cli.cmd_live(
         cli.parse_cli(
-            ["live", "--config", str(path), "--dry-run", "--capital", "3000",
-             "--max-position-size", "500", "--min-notional", "2000"]
+            [
+                "live",
+                "--config",
+                str(path),
+                "--dry-run",
+                "--capital",
+                "3000",
+                "--max-position-size",
+                "500",
+                "--min-notional",
+                "2000",
+            ]
         )
     )
     out = capsys.readouterr().out

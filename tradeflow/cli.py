@@ -694,9 +694,7 @@ def apply_run_config(args):
     # the provenance names them here: a line saying `<config>` beside a table showing
     # other caps made the file look like the source of numbers it did not supply.
     typed = [
-        flag
-        for _, dest, flag in _LIMIT_OVERRIDES
-        if dest in given and getattr(args, dest, None) is not None
+        flag for _, dest, flag in _LIMIT_OVERRIDES if dest in given and getattr(args, dest, None) is not None
     ]
     if typed:
         sources[:] = [x for x in sources if x != "position_limits=<config>"]
@@ -5231,6 +5229,7 @@ def _book_limit_lines(args, limits, capital) -> list:
     reported, never repaired - the run goes ahead with the book it was given.
     """
     lines = []
+
     # Absent is not zero: a limit nobody declared is unbounded, and must not read as 0.
     def _limit(value, render):
         return render(value) if value is not None else "unset"
@@ -5244,14 +5243,20 @@ def _book_limit_lines(args, limits, capital) -> list:
     )
     # A ceiling nobody typed and no config recorded is the strategy class's own default.
     # Beside "capital: the whole account" it reads as though the account were the cap.
-    chosen = set(getattr(args, "flags_given", set())) | set(getattr(args, "config_position_limits", None) or {})
-    default_note = "" if "max_position_size" in chosen or size is None else "  (strategy default, not set for this run)"
+    chosen = set(getattr(args, "flags_given", set())) | set(
+        getattr(args, "config_position_limits", None) or {}
+    )
+    default_note = (
+        "" if "max_position_size" in chosen or size is None else "  (strategy default, not set for this run)"
+    )
     lines.append(f"  {'max position size':22}{_limit(size, lambda v: f'${v:,.2f}')}{default_note}{inert}")
     # Gross exposure is a fraction of deployable capital, so show the dollars it means
     # here - the fraction alone is the one number an operator cannot sanity-check.
     gross = limits.get("max_gross_exposure")
     if gross is not None and capital:
-        lines.append(f"  {'max gross exposure':22}{gross:g} ({gross:.0%} of capital = ${gross * capital:,.2f})")
+        lines.append(
+            f"  {'max gross exposure':22}{gross:g} ({gross:.0%} of capital = ${gross * capital:,.2f})"
+        )
     else:
         lines.append(f"  {'max gross exposure':22}{_limit(gross, lambda v: f'{v:g} ({v:.0%} of capital)')}")
     net = limits.get("max_net_exposure")
@@ -5288,7 +5293,9 @@ def _book_warnings(limits, capital) -> list:
             f"every entry would be refused"
         )
     if capital and capital < floor:
-        warnings.append(f"capital ${capital:,.2f} is below min notional ${floor:,.2f}: every entry would be refused")
+        warnings.append(
+            f"capital ${capital:,.2f} is below min notional ${floor:,.2f}: every entry would be refused"
+        )
     gross = limits.get("max_gross_exposure")
     if gross is not None and capital and gross * capital < floor:
         warnings.append(
