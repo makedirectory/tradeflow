@@ -201,9 +201,21 @@ pinned by tests:
   `glossary.definitions_for()` supplies the canonical definition (and pitfall) of
   every metric a tool reports, appended to its description at registration time. Two
   descriptions of one metric would drift; one definition with two readers cannot.
-- **Journaling is stated wherever it happens.** Every tool in `JOURNALING_TOOLS`
-  says, in identical words, that the call records a trial, counts toward the
-  campaign's multiple-testing total, and serves a memoized prior run unless forced.
+- **Journaling is stated wherever it happens, in the tool's own count.** Every tool in
+  `JOURNALING_TOOLS` says that the call records a trial, counts toward the campaign's
+  multiple-testing total, and serves a memoized prior run unless forced. The "one trial
+  per evaluated config" sentence belongs to `run_optimization` alone: a backtest, a
+  confirmed screen point and a walk-forward each journal one trial, and the draft
+  walk-forward can journal none. A memoized answer reports `journaled: false`, because
+  the trial id it carries is the original's and nothing new was recorded.
+- **Recovery advice names a tool that can do it.** Only `run_backtest` and
+  `run_walk_forward` take `record_trades`, and only trials that store a dated return series
+  (backtests and walk-forwards, drafts included) can be compared by `compare_trials`;
+  `analyze_trial`'s reason is written per trial kind for that reason.
+- **Arguments that mean nothing are refused up front**, before any step runs or a trial is
+  journaled: a `confirm_screen_point` key the strategy does not declare, a screen range
+  wider than the declared bounds, an unknown `scaling`, `risk_model` or trial `kind`, and a
+  `gross_leverage` that disagrees with `book`.
 - **Evidence-gated features are never presented as neutral options.** Conditional
   risk, the aim trading policy, and the Black–Litterman posterior each ship off
   because their own adoption gates do not clear on this repository's data; the

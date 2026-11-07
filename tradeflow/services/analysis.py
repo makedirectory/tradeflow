@@ -1116,7 +1116,10 @@ def screen_ranges(strategy_class, overrides: Optional[Dict[str, Dict[str, Any]]]
         if unknown:
             raise ValueError(f"Cannot override {sorted(unknown)} for {name!r}; only min/max/step")
         declared = ranges[name]
-        for bound, outside in (("min", lambda v: v < declared["min"]), ("max", lambda v: v > declared["max"])):
+        for bound, outside in (
+            ("min", lambda v: v < declared["min"]),
+            ("max", lambda v: v > declared["max"]),
+        ):
             if bound in override and outside(override[bound]):
                 raise ValueError(
                     f"Range for {name!r} cannot widen past the declared {declared['min']}..{declared['max']}: "
@@ -2763,7 +2766,9 @@ def _thin_universe_skips(neutralize: bool, neutralize_factors: Sequence[str], sc
     """What a caller asked for that ``refine_alpha`` does not do on a thin universe."""
     skipped = []
     if neutralize_factors:
-        skipped.append(f"neutralization against {', '.join(neutralize_factors)} (`neutralized_against` is empty)")
+        skipped.append(
+            f"neutralization against {', '.join(neutralize_factors)} (`neutralized_against` is empty)"
+        )
     elif neutralize:
         skipped.append("beta neutralization (`neutralized_against` is empty)")
     if scaling in ("case2", "auto"):

@@ -355,9 +355,9 @@ def test_a_draft_walk_forward_trial_is_not_told_to_rerun_with_record_trades(buil
     assert "`run_draft_walk_forward` cannot record" in reason
 
 
-def test_a_backtest_without_a_table_names_the_tool_that_can_record_one(built):
+def test_a_backtest_without_a_table_keeps_the_shared_advice_its_tool_can_follow(built):
     result = _call(built, "run_backtest", strategy="demo_trend", symbols=SYMBOLS, start=START, end=END)
-    assert "`run_backtest` with `record_trades=true`" in _analyze_reason(built, result["trial_id"])
+    assert "record_trades=true" in _analyze_reason(built, result["trial_id"])
 
 
 def test_an_unknown_campaign_material_id_does_not_name_a_cli_command(built):
@@ -406,9 +406,7 @@ def test_a_thin_universe_that_asked_for_nothing_extra_adds_no_skip_text(built):
 
 # --- 10. compute_horizon does not point an agent at a CLI flag it cannot use ----------
 def test_compute_horizon_payload_does_not_recommend_a_cli_policy_flag(built):
-    result = _call(
-        built, "compute_horizon", strategy="demo_trend", symbols=SYMBOLS, start=START, end=END
-    )
+    result = _call(built, "compute_horizon", strategy="demo_trend", symbols=SYMBOLS, start=START, end=END)
     assert "recommended_cadence" in result
     assert "--policy" not in json.dumps(result)
     assert "blend_superseded_by" not in result

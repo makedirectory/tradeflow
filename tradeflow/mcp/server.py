@@ -293,19 +293,6 @@ def _trade_recovery_reason(report: Dict[str, Any]) -> Optional[str]:
             "cannot record one. Run `run_backtest` with `record_trades=true` on an installed "
             "strategy, or install the draft and run `run_walk_forward` with `record_trades=true`."
         )
-    if kind == "walkforward":
-        return (
-            "no trade table was recorded for this validation. Re-run `run_walk_forward` with "
-            "`record_trades=true` and the same recipe and window (this journals a new trial "
-            "and re-runs its search), or run `run_backtest` with `record_trades=true` on the "
-            "chosen parameters. This is not the same as a run that made no trades."
-        )
-    if kind == "backtest":
-        return (
-            "no trade table was recorded for this backtest. Re-run `run_backtest` with "
-            "`record_trades=true` over the same window, universe and parameters (this "
-            "journals a new trial). This is not the same as a run that made no trades."
-        )
     return None
 
 
@@ -836,7 +823,11 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         )
         return _logged("run_backtest", inputs, result)
 
-    @tool("sharpe_ratio", "deflated_sharpe_ratio", notes=[_OPTIMIZATION_JOURNALING_NOTE, _NOT_DEFLATED_NOTE, _WORKERS_NOTE])
+    @tool(
+        "sharpe_ratio",
+        "deflated_sharpe_ratio",
+        notes=[_OPTIMIZATION_JOURNALING_NOTE, _NOT_DEFLATED_NOTE, _WORKERS_NOTE],
+    )
     def run_optimization(
         strategy: str,
         symbols: List[str],

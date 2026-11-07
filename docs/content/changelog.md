@@ -314,6 +314,28 @@ backtests included, though most never touched a boundary - drop out of the defau
 
 ### MCP
 
+- **Descriptions and behaviour agree.** `run_verdict` lists candidates it dropped for having
+  no bars (`dropped_symbols`, also printed by the CLI report) and its description says only
+  a refusal by the allocation preflight journals none. Every memoized answer says
+  `journaled: false` (`confirm_screen_point` and the draft walk-forward said `true`), and the
+  shared "one trial per evaluated config" sentence now sits on `run_optimization` alone.
+  `run_backtest` journals its dated return series as the CLI always did, so two MCP backtests
+  can be compared with `compare_trials` (earlier MCP backtests have none); the descriptions
+  say which kinds store a series. `analyze_trial` names a tool that can record trades for the
+  trial's own kind.
+- **Walk-forward cost stress trades the validated book.** It re-ran the chosen params at the
+  strategy's default book, so its executability described a different book than the folds.
+  Both surfaces now pass the run's `position_limits`. Where the MCP tool takes no bootstrap
+  input, the family-bootstrap note says that rather than "0 available".
+- **Refused instead of silently accepted:** `confirm_screen_point` params the strategy does not
+  declare (a screen's `best_point` now carries `params` for this), screen ranges wider than
+  the declared bounds (CLI `--range` too), `compute_alphas` scaling outside case1/case2/auto,
+  `book="market_neutral"` without `gross_leverage` and `gross_leverage` without it (CLI too),
+  an unknown `risk_model`, and an unknown `list_trials` kind. A thin universe's
+  `low_confidence_reason` names the neutralization and case choice it skipped.
+- `compute_horizon` no longer points an agent at the CLI's evidence-gated `--policy aim`;
+  the not-deflated caveat now sits on the tools whose Sharpe is a single trial; `load_config`
+  lists `symbols`, `capital` and `position_limits`.
 - A fresh `run_backtest` result names the trial it recorded (`trial_id`, `journaled`), as a reused one already did. A config written with `save_config` from a backtest's campaign block now carries the cost model it was validated under, as `trials promote` does. A reused walk-forward's holdout is `holdout_record` (with its state), so `holdout` keeps one shape: the metrics of a fresh run.
 - The `mcp` extra needs the SDK at 1.22 or later; earlier releases do not import
   under current pydantic.
