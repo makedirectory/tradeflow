@@ -1273,6 +1273,7 @@ class TrialStore:
         exclude_kinds: Sequence[str] = (),
         exclude_contaminated: bool = False,
         undated_only: bool = False,
+        ranked_by: Optional[str] = None,
     ) -> tuple:
         """The shared ``WHERE`` clause behind listing, counting, and ranking.
 
@@ -1324,6 +1325,12 @@ class TrialStore:
             args.extend(exclude_kinds)
         if exclude_contaminated:
             clauses.append("contaminated_at IS NULL")
+        if ranked_by is not None:
+            # A row with no value for the ranking metric has no place in the ranking.
+            # Sorted last it still sat in the table as though it had been ranked - a
+            # verdict row with neither a Sharpe nor a DSR appeared at #5 of a board.
+            column = {"dsr": "deflated_sharpe", "sharpe": "oos_sharpe"}[ranked_by]
+            clauses.append(f"{column} IS NOT NULL")
         if undated_only:
             # Rows whose recorded instant is missing or unreadable: the ones a date
             # bound cannot place on either side of it.
@@ -1548,8 +1555,18 @@ class TrialStore:
         # the exclusions that happened to fall inside the page.
         kinds = () if include_in_sample else IN_SAMPLE_KINDS
         rows = self.list_trials(
-            sort=rank_by, limit=limit, exclude_kinds=kinds, exclude_contaminated=True, **filters
+            sort=rank_by,
+            limit=limit,
+            exclude_kinds=kinds,
+            exclude_contaminated=True,
+            ranked_by=rank_by,
+            **filters,
         )
+        # Rows that have no value for the metric cannot be ranked by it; counted so the
+        # board's length is not a silent claim about the campaign.
+        unranked = self.count_trials(
+            exclude_kinds=kinds, exclude_contaminated=True, **filters
+        ) - self.count_trials(exclude_kinds=kinds, exclude_contaminated=True, ranked_by=rank_by, **filters)
         eligible = self.count_trials(exclude_kinds=kinds, **filters)
         excluded = self.count_trials(**filters) - eligible
         # Quarantined rows are never ranked, and the count is reported rather than
@@ -1572,6 +1589,7 @@ class TrialStore:
             "in_sample_included": include_in_sample,
             "in_sample_excluded": excluded,
             "contaminated_excluded": contaminated_excluded,
+            "unranked_excluded": unranked,
             "caveat": _LEADERBOARD_CAVEAT[rank_by],
         }
 

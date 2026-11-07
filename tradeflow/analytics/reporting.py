@@ -1501,17 +1501,30 @@ def format_leaderboard(board: Dict[str, Any]) -> str:
         # KIND is not decoration. Without it a reader cannot tell a validated
         # walk-forward from a search's winning candidate, and those mean opposite
         # things about whether a number is evidence.
-        f"    {'#':<3}{'ID':14}{'KIND':12}{'STRATEGY':16}{'DSR':>8}{'SHARPE':>9}{'FAMILY n_trials':>17}",
+        f"    {'#':<3}{'ID':14}{'KIND':12}{'STRATEGY':16}{'DSR':>8}{'SHARPE':>9} {'BASIS':<11}{'FAMILY n_trials':>16}",
     ]
     for i, r in enumerate(rows, 1):
         family = r.get("family_n_trials")
         lines.append(
             f"    {i:<3}{str(r.get('id', ''))[:14]:14}{str(r.get('kind') or '')[:12]:12}"
             f"{str(r.get('strategy') or '')[:16]:16}"
-            f"{_prob_cell(r.get('deflated_sharpe')):>8}{_cell(r.get('oos_sharpe')):>9}"
-            f"{(NOT_RECORDED if family is None else family):>17}"
+            f"{_prob_cell(r.get('deflated_sharpe')):>8}{_cell(r.get('oos_sharpe')):>9} "
+            f"{_basis_cell(r):<11}{(NOT_RECORDED if family is None else family):>16}"
         )
     lines.append("")
+    if board.get("unranked_excluded"):
+        lines.append(
+            f"  {board['unranked_excluded']} row(s) have no {ranked_by} recorded and cannot be "
+            "ranked by it (a verdict records neither a Sharpe nor a DSR); they are not listed."
+        )
+    # Two different counts sit on a row and they are easy to read as one. The DSR was
+    # fixed when the row was recorded, deflated by the configs tried inside that one run;
+    # the family count is read now, across every run of the strategy over the universe.
+    lines.append(
+        "  FAMILY n_trials = configs tried so far on this row's strategy over its universe "
+        "(this accounting version), counted now. A row's DSR was deflated by the trials of "
+        "its own run, so two rows' DSRs are not comparable when their runs searched different amounts."
+    )
     if board.get("in_sample_included"):
         lines.append(
             "  (!) IN-SAMPLE rows included. An 'optimize' row is the winner of a search — "

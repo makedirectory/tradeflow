@@ -127,6 +127,24 @@ def test_the_mcp_listing_ranks_the_same_way_as_the_cli(tmp_path, monkeypatch):
     assert call(sort="sharpe", include_in_sample=True)["rows"][0]["kind"] == "optimize"
 
 
+# --- the leaderboard ranks only what has the metric, and says what a family count is --
+def test_a_row_with_no_metric_is_not_on_the_board_at_all(store):
+    """A verdict records neither a Sharpe nor a DSR. Sorted last it still appeared at #5
+    of a five-row board, as if ranked."""
+    from tradeflow.analytics.reporting import format_leaderboard
+
+    _record(store, "wf1", oos_sharpe=0.4, deflated_sharpe=0.3)
+    _record(store, "wf2", oos_sharpe=0.2, deflated_sharpe=0.1, params={"fast": 8})
+    _record(store, "vd", kind="verdict", params={"fast": 9})
+    for rank_by in ("dsr", "sharpe"):
+        board = store.best(rank_by=rank_by, accounting=ACCOUNTING_VERSION)
+        assert [r["id"] for r in board["rows"]] == ["wf1", "wf2"]
+        assert board["unranked_excluded"] == 1
+    text = format_leaderboard(store.best(accounting=ACCOUNTING_VERSION))
+    assert "cannot be ranked" in text
+    assert "FAMILY n_trials =" in text and "oos agg" in text
+
+
 # --- the detail view labels the number, with units ------------------------------------
 def test_show_does_not_call_a_backtests_full_window_sharpe_out_of_sample(store):
     _mixed(store)

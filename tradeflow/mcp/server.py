@@ -1874,8 +1874,14 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         full-window Sharpe). `include_in_sample=true`
         opts back in, and `in_sample_excluded` reports how many were dropped.
 
+        A row with no value for the ranking metric (a verdict has neither a Sharpe nor a
+        DSR) is not ranked and not listed; `unranked_excluded` counts them. A row's DSR
+        was deflated by the trials of its own run, while `family_n_trials` is the
+        strategy-and-universe count now, so DSRs from runs of different size are not
+        comparable.
+
         Returns `{rank_by, rows, max_family_n_trials, in_sample_included,
-        in_sample_excluded, caveat}`. The caveat and the per-row family counts are
+        in_sample_excluded, unranked_excluded, caveat}`. The caveat and the per-row family counts are
         part of the payload, not decoration — quote them when you report a result.
         Read-only.
         """

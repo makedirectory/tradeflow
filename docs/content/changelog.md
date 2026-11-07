@@ -219,6 +219,10 @@ backtests included, though most never touched a boundary - drop out of the defau
   `list_trials` argument, `trials best` has), and count what they hid. A backtest's
   campaign is headed "not validated out of sample", and promoting an ungated run no
   longer says it "did not clear its gates".
+- `trials best` no longer lists a row that has no value for the metric it ranks by (a
+  verdict, which records neither a Sharpe nor a DSR, appeared at #5 of a five-row board)
+  and reports how many it left out. Rows carry a `BASIS` cell, and the board says what a
+  family `n_trials` is and why DSRs from runs of different size are not comparable.
 - `trials show` prints drawdown and trade counts in the units `trials campaign` uses.
 - `trials list --since/--until` says how many rows it excluded because their recorded
   time is unknown, rather than dropping them silently.

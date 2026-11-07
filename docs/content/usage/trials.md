@@ -173,7 +173,15 @@ worse coming from our own tooling, which lends it authority. So:
 - **Every row names its kind**, because a validated walk-forward and a search's
   winning candidate look identical as numbers and mean opposite things as evidence.
 - Every row shows its family's `n_trials`, and a large count gets its own warning
-  line.
+  line. That count is the configs tried so far on the row's strategy over its universe,
+  read now; a row's DSR was deflated by the trials of its *own* run, so two rows' DSRs
+  are not comparable when their runs searched different amounts. This is why a row from
+  a short research round can outrank a longer walk-forward on DSR while showing a worse
+  Sharpe: the ranking is by the recorded DSR, and each row also carries a `BASIS` cell
+  saying what its Sharpe measures.
+- **A row with nothing to rank by is not listed.** A verdict records neither a Sharpe nor
+  a DSR; it used to sort last but still sit in the table. The count of such rows is
+  reported (`unranked_excluded`).
 - `--rank-by sharpe` is available and prints a caveat saying, in as many words,
   that the ordering does not correct for how many configs were tried.
 
