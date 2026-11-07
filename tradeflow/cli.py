@@ -690,6 +690,18 @@ def apply_run_config(args):
         sources.append("position_limits=<config>")
     else:
         tuned_limits = None
+    # The overrides apply after this line is printed (see `_apply_limit_overrides`), so
+    # the provenance names them here: a line saying `<config>` beside a table showing
+    # other caps made the file look like the source of numbers it did not supply.
+    typed = [
+        flag
+        for _, dest, flag in _LIMIT_OVERRIDES
+        if dest in given and getattr(args, dest, None) is not None
+    ]
+    if typed:
+        sources[:] = [x for x in sources if x != "position_limits=<config>"]
+        base = "config + " if limits else ""
+        sources.append(f"position_limits=<{base}{', '.join(typed)} given>")
     args.config_position_limits = tuned_limits
 
     args.candidate_symbols = payload.get("candidate_symbols")

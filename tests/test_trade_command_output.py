@@ -78,3 +78,51 @@ def test_the_default_ledger_label_cannot_be_read_as_the_live_account(state):
     label = cli._describe_ledger(None)
     assert "(live-session ledger)" in label
     assert not label.endswith("(live)")
+
+
+def _write_config(tmp_path, capital=8000.0, limits=None, name="cfg.json"):
+    """A config in the shape `save_config` writes, built by hand so the strategy params
+    are exactly the ones the demo strategy accepts."""
+    payload = {
+        "strategy": "demo_trend",
+        "params": {
+            "fast_ema_period": 10,
+            "slow_ema_period": 30,
+            "risk_per_trade": 0.02,
+            "stop_loss": 0.03,
+            "take_profit": 0.06,
+        },
+        "scanner": "none",
+        "symbols": ["AAA", "BBB"],
+        "position_limits": limits
+        or {"max_positions": 4, "max_position_size": 900.0, "min_notional": 50.0},
+    }
+    if capital is not None:
+        payload["capital"] = capital
+    path = tmp_path / name
+    path.write_text(json.dumps(payload))
+    return path
+
+
+def test_the_provenance_line_names_the_limits_a_flag_overrode(tmp_path, capsys):
+    """`Config ... position_limits=<config>` was printed while the table below it showed
+    the flag-overridden caps; only capital switched to `<--capital given>`, so the file
+    looked like the source of numbers it did not supply."""
+    path = _write_config(tmp_path)
+
+    cli.apply_run_config(
+        cli.parse_cli(
+            ["live", "--config", str(path), "--max-positions", "2", "--max-position-size", "500"]
+        )
+    )
+    line = capsys.readouterr().out.splitlines()[0]
+    assert "position_limits=<config + --max-positions, --max-position-size given>" in line
+    assert "position_limits=<config>" not in line
+
+
+def test_the_provenance_line_stays_config_when_no_limit_flag_was_typed(tmp_path, capsys):
+    """The other direction: untyped defaults must not be reported as overrides."""
+    path = _write_config(tmp_path)
+
+    cli.apply_run_config(cli.parse_cli(["live", "--config", str(path)]))
+    assert "position_limits=<config>" in capsys.readouterr().out

@@ -280,6 +280,9 @@ backtests included, though most never touched a boundary - drop out of the defau
 - `flatten` and `reconcile` (text and `--json`) state the broker mode, and the `flatten`
   refusal names the account. The default ledger is labelled `(live-session ledger)`,
   which can no longer be read as the live account.
+- The `Config ...` provenance line names the limits typed on the command line
+  (`position_limits=<config + --max-positions, --max-position-size given>`) instead of
+  claiming `<config>` beside a table of overridden caps.
 
 ## 2.3.0 — 2026-09-16
 
