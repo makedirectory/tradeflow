@@ -109,6 +109,43 @@ quantred research \
   --holdout-days 60 --max-trials 10
 ```
 
+It prints one line per round as it runs: `evaluated` with the round's median
+out-of-sample Sharpe across folds (the measure the promotion gate applies, and the one
+candidates are compared and ranked on), or `rejected` with the reason the journal also
+records. A reply that is not a proposal (prose, `params` that is not an object, a text
+value for a number, `10.5` for an integer parameter) is a rejected round, not the end of
+the session; only a provider with nothing left to propose ends it early. A session whose
+rounds were all rejected says nothing was evaluated, rather than "no candidate cleared
+the gates".
+
+Budgets, in plain units:
+
+- `--max-trials` counts *evaluated* trials, proposals that reached a walk-forward. A
+  rejected proposal does not spend one. `--max-dry-rounds` counts consecutive proposals
+  that did not produce a better candidate, rejections included, so it is what ends a
+  proposer that keeps being refused.
+- `--max-tokens` is a total model-token budget for the whole session.
+- `--holdout-days` is calendar days reserved at the end of the range; at least 1. A
+  holdout that leaves no research window is refused.
+- The trial count printed is this session's own. The campaign-wide multiple-testing
+  count is a separate number.
+
+Like every other command, `research` evaluates **net of costs** (`--commission-bps`,
+`--impact-eta`, `--borrow-bps`) and says so at the start; `--gross` selects on gross
+returns and is a diagnostic. The cost basis is part of each round's recorded identity
+and of the saved config, so a gross round is never served for a net request. The holdout
+is scored only when there is a shortlist to score; otherwise the output says none was.
+If an earlier session in the journal already scored the same holdout on the same
+universe, `research` warns: every look lets the next search fit to it.
+
+With `--allow-code-gen`, a candidate the agent *wrote* is recorded with its source: on the
+round's journal line (`code`, `code_hash`) and in the saved config's
+`provenance.generated_code`. The config's strategy is the `draft:<Class>:<hash>` identity,
+and loading it (`--config` on any command, `live` included) is refused: generated code is
+never run by loading a config. Review the source and add it to a strategy pack
+([private strategies](private-strategies)); a repeat of the same source over the same
+window is a duplicate, like a repeated tune.
+
 The loop proposes a hypothesis → validates it with walk-forward (never on the
 holdout) → keeps it only if it's *promotable* and beats the incumbent
 out-of-sample → repeats until its trial/token budget or a "no improvement" stop →
@@ -176,8 +213,15 @@ locally, and add `--probe-model` to make one real request. If a provider fails
 *during* a session, `research` stops with the category (`auth`, `quota`, `rate_limited`,
 `unavailable`, `timeout`, ...) and exits non-zero. A transient one (`rate_limited`,
 `unavailable`, `unreachable`) is retried twice with a short wait first. An exhausted
-balance, a bad key or a missing model is reported once and never sent again, and the
-session journal stays as it was.
+balance, a bad key or a missing model is reported once and never sent again. Each retry
+prints a line as it happens, and the final message states what actually occurred: a
+`Retry-After` longer than the 30 seconds this tool will wait is reported as not retried.
+A failure part-way through a session prints the session id, how many rounds were
+journaled (they count toward the campaign), and that no holdout was scored; the session's
+end is journaled with the stop reason.
+
+`demo-agent` takes the same `--gross` switch and `--no-journal`, which journals the demo
+to a scratch file so repeated runs do not add identical drafts to the real campaign.
 
 See the engineering wiki's **MCP server** and **Research agent** pages for the
 architecture and guardrails.

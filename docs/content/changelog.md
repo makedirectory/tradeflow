@@ -33,6 +33,37 @@ index; they are tagged in the repository.
 TradeFlow is now **QuantRed**, and a first session works from install to a result
 without guessing. The history below keeps the old name as it was written.
 
+### Research agent
+
+- `research` prints one line per round (evaluated with its median-across-folds OOS Sharpe,
+  or rejected with the journaled reason). A session where nothing was evaluated says so;
+  it used to end "No candidate cleared the promotion gates". The trial count is worded as
+  this session's own.
+- `--max-trials` counts evaluated trials, not proposals. `--max-trials 0`, `--max-dry-rounds 0`,
+  `--holdout-days 0` and a holdout larger than the range are refused with a message; the
+  budget flags have help text with units.
+- A model reply that is not a proposal, or has the wrong types (`params` a list or null, a
+  string for a number, `10.5` for an integer parameter, a boolean), is a rejected round with
+  its reason journaled instead of ending the session or crashing after `session_start`. A
+  started session always writes its `session_end`, including when the provider fails.
+- Candidates are compared and ranked on the per-fold median Sharpe the promotion gate uses;
+  the incumbent comparison mixed it with the stitched aggregate.
+- `research` is net of costs by default like every other command, with `--gross` and the
+  cost flags; the basis is printed and enters each round's identity and the saved config.
+  `demo-agent` takes `--gross` too (replacing `--no-costs`). Research trials gain a `_cost`
+  key in their recorded params, so earlier research memos miss once.
+- A config saved from generated code names the `draft:<Class>:<hash>` identity and carries the
+  source in `provenance.generated_code` (also on the round's journal line). Loading it is
+  refused everywhere, `live` included; generated code is never run by loading a config. Code
+  proposals are deduplicated by hash and window, and `demo-agent --no-journal` keeps a demo
+  out of the campaign.
+- A holdout that was not scored is no longer printed as if it were; a holdout an earlier
+  session already scored gets a warning. Provider failures say whether a retry happened (a
+  `Retry-After` over 30 s is not retried), announce retries, and report the rounds already
+  journaled and that no holdout was scored. Non-finite metrics in saved provenance are
+  written as `"inf"`/`"nan"`. A strategy that raises prints one line, not a traceback per
+  symbol.
+
 ### HTML reports say what the terminal says
 
 - A reused walk-forward renders as a reduced report on both surfaces (`walkforward --html`
