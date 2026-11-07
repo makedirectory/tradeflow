@@ -218,8 +218,8 @@ trace.
 ## Dry run: what would this trade?
 
 ```bash
-quantred live --config configs/breakout.json --dry-run
-quantred live --config configs/breakout.json --dry-run --json
+quantred live --config ~/.tradeflow/configs/breakout.json --dry-run
+quantred live --config ~/.tradeflow/configs/breakout.json --dry-run --json
 ```
 
 > **Dry-run answers: what would this contract try to do right now?**
@@ -330,8 +330,8 @@ to serialize.
 ## Small-real: what happens when the broker tries to do it
 
 ```bash
-quantred small-real --config configs/candidate.json --scale 0.05 --preflight
-quantred small-real --config configs/candidate.json --scale 0.05
+quantred small-real --config ~/.tradeflow/configs/candidate.json --scale 0.05 --preflight
+quantred small-real --config ~/.tradeflow/configs/candidate.json --scale 0.05
 quantred execution-report --small-real
 ```
 

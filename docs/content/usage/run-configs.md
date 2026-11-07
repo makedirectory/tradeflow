@@ -19,10 +19,16 @@ saved **file**.
 ```bash
 quantred walkforward --strategy my_breakout --symbols AAPL,MSFT,NVDA \
   --start 2020-01-02 --end 2025-01-02 --folds 4 \
-  --save-config configs/breakout.json
+  --save-config breakout.json
 ```
 
 Saving a config never trades it. Promotion to live is a human step, deliberately.
+
+**Where the file lands.** `--save-config` with a bare filename (`breakout.json`) writes
+to `configs/` under the state root (`~/.tradeflow/configs/` by default). A path that
+carries a directory (`./runs/breakout.json`, `/data/breakout.json`) is used as given,
+relative to the current directory. `--config` does no such lookup: it reads the path you
+pass, so the examples below spell out the state-root location.
 
 ## What is in it
 
@@ -58,9 +64,9 @@ different book from the one the evidence came from.
 ## Consuming one
 
 ```bash
-quantred backtest    --config configs/breakout.json --start 2024-01-02 --end 2025-01-02
-quantred walkforward --config configs/breakout.json --start 2020-01-02 --end 2025-01-02
-quantred live        --config configs/breakout.json --capital 8000 --preflight
+quantred backtest    --config ~/.tradeflow/configs/breakout.json --start 2024-01-02 --end 2025-01-02
+quantred walkforward --config ~/.tradeflow/configs/breakout.json --start 2020-01-02 --end 2025-01-02
+quantred live        --config ~/.tradeflow/configs/breakout.json --capital 8000 --preflight
 ```
 
 Each command prints what it took from the file and what it ignored, because a config
@@ -77,7 +83,7 @@ the validated book. Re-running the scanner would give you today's universe attac
 yesterday's evidence — a different book with the same provenance stamped on it.
 
 ```bash
-quantred backtest --config configs/breakout.json --re-resolve-universe
+quantred backtest --config ~/.tradeflow/configs/breakout.json --re-resolve-universe
 ```
 
 `--re-resolve-universe` opts into re-scanning from `candidate_symbols`. It is worth

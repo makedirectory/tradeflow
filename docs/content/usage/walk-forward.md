@@ -86,7 +86,7 @@ replayed rather than re-scanned.
 | `--param-sensitivity` | Perturb the chosen params ±10% and re-test robustness. |
 | `--leakage-probe` | Shift the data feed forward to detect future-data leakage. |
 | `--bootstrap-skill` | Nonparametric own p-value (stationary block bootstrap) next to the FAMILY p from White's Reality Check over every OOS return series the trial store has recorded for this strategy/universe/accounting — advisory only, not a gate. See [below](#nonparametric-skill-check). |
-| `--save-config PATH` | Save the chosen config — params *and* run inputs — for a human to review. See [Reusing a saved config](#reusing-a-saved-config). |
+| `--save-config PATH` | Save the chosen config — params *and* run inputs — for a human to review. A bare filename lands in `configs/` under the state root; a path with a directory is used as given. See [Reusing a saved config](#reusing-a-saved-config). |
 | `--results-csv PATH` | Write the per-fold table to CSV. |
 
 ## Reading the output
@@ -98,8 +98,8 @@ block, and the **promotion-gate verdict** — a pass/fail per gate plus an overa
 Sharpe, profit factor, efficiency, drawdown ratio, minimum OOS trades, deflated
 Sharpe, and — when requested — parameter sensitivity and the leakage probe).
 
-> Saving a config never changes live behavior. It writes a JSON file to a
-> gitignored `configs/` directory; promoting it to live trading is a manual human
+> Saving a config never changes live behavior. It writes a JSON file to the `configs/`
+> directory under the state root (outside any repository by default); promoting it to live trading is a manual human
 > step.
 
 ## Excess return by fold
@@ -206,10 +206,10 @@ recorded keys win, unrecorded ones fall back to the strategy's own. So one file 
 versioned in a private repository beside the strategies it belongs to:
 
 ```bash
-quantred backtest --config configs/alpha.json --start 2024-01-02 --end 2024-06-01
-quantred verdict  --config configs/alpha.json --start 2024-01-02 --end 2024-06-01
-quantred alphas   --config configs/alpha.json
-quantred risk     --config configs/alpha.json
+quantred backtest --config ~/.tradeflow/configs/alpha.json --start 2024-01-02 --end 2024-06-01
+quantred verdict  --config ~/.tradeflow/configs/alpha.json --start 2024-01-02 --end 2024-06-01
+quantred alphas   --config ~/.tradeflow/configs/alpha.json
+quantred risk     --config ~/.tradeflow/configs/alpha.json
 ```
 
 `--config` is accepted by `backtest`, `live`, `verdict`, `info`, `alphas`, `horizon`,

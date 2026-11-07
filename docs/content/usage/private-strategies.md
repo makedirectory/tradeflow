@@ -124,7 +124,7 @@ worth exactly one thing: confirming the strategy executes and trades. Read the
 
 ```bash
 quantred walkforward --strategy my_breakout --symbols AAPL,MSFT,NVDA \
-  --start 2020-01-02 --end 2025-01-02 --folds 4 --save-config configs/breakout.json
+  --start 2020-01-02 --end 2025-01-02 --folds 4 --save-config breakout.json
 ```
 
 Walk-forward searches parameters inside each fold and scores them on data the search
@@ -142,7 +142,7 @@ result, and what the book was actually exposed to.
 **4. Paper, then a long look.**
 
 ```bash
-quantred live --config configs/breakout.json --capital 8000 --feed iex --preflight
+quantred live --config ~/.tradeflow/configs/breakout.json --capital 8000 --feed iex --preflight
 ```
 
 `--preflight` prints the contract and exits without starting the order path. Read
