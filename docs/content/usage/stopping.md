@@ -136,7 +136,8 @@ So a flatten confirmed flat records a terminal event per position, and names the
 it told:
 
 ```text
-ledger: /…/logs/position_ledger.jsonl (live)
+broker mode: PAPER
+ledger: /…/logs/position_ledger.jsonl (live-session ledger)
 FLATTEN
   positions observed closed : yes
   recorded in the ledger    : 2 (KO, PFE) closed by operator

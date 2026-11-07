@@ -275,6 +275,12 @@ backtests included, though most never touched a boundary - drop out of the defau
 
 ---
 
+### Trading commands report the run they are about to affect
+
+- `flatten` and `reconcile` (text and `--json`) state the broker mode, and the `flatten`
+  refusal names the account. The default ledger is labelled `(live-session ledger)`,
+  which can no longer be read as the live account.
+
 ## 2.3.0 — 2026-09-16
 
 Research affordances, the second half of the causality defect, and two telemetry modes

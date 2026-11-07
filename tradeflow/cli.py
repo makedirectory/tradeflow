@@ -5364,7 +5364,8 @@ def cmd_flatten(args) -> None:
 
     if not args.confirm:
         raise SystemExit(
-            "flatten closes every position and halts trading. Re-run with --confirm once you are sure."
+            f"flatten closes every position and halts trading on the {_broker_mode_label()} "
+            "account. Re-run with --confirm once you are sure."
         )
     from tradeflow.execution.ledger import PositionLedger
 
@@ -5380,8 +5381,18 @@ def cmd_flatten(args) -> None:
         # Inside the payload, not printed beside it: a line of prose before the JSON is
         # not JSON, and a script parsing this is exactly who needs to know which book
         # was told about the flatten.
-        print(json.dumps({"ledger": _describe_ledger(ledger_path), **report.as_dict()}, indent=2))
+        print(
+            json.dumps(
+                {
+                    "broker_mode": _broker_mode_label(),
+                    "ledger": _describe_ledger(ledger_path),
+                    **report.as_dict(),
+                },
+                indent=2,
+            )
+        )
     else:
+        print(_broker_mode_line())
         print(_describe_ledger(ledger_path))
         print(report.summary())
         if not report.complete:
@@ -5422,8 +5433,14 @@ def cmd_reconcile(args) -> None:
     if args.json:
         # Added around the report rather than inside it: which file was opened is a fact
         # about this invocation, not part of what reconciliation found.
-        print(json.dumps({"ledger": _describe_ledger(path), **report.as_dict()}, indent=2))
+        print(
+            json.dumps(
+                {"broker_mode": _broker_mode_label(), "ledger": _describe_ledger(path), **report.as_dict()},
+                indent=2,
+            )
+        )
     else:
+        print(_broker_mode_line())
         print(_describe_ledger(path))
         print(report.summary())
     if not report.clean:
@@ -5487,6 +5504,17 @@ def _execution_ledger_path(args):
     return small_real_ledger_path() if small_real else None
 
 
+def _broker_mode_label() -> str:
+    """Which account an order-capable command talks to, from the same source as the
+    preflights (`settings.paper_trade_mode`, readable without credentials)."""
+    return "PAPER" if _paper_mode() else "LIVE - REAL MONEY"
+
+
+def _broker_mode_line() -> str:
+    """The `broker mode` row, worded as the live and small-real preflights word it."""
+    return f"broker mode: {_broker_mode_label()}"
+
+
 def _describe_ledger(path) -> str:
     """The ledger a read-only command actually opened, named in its own output.
 
@@ -5501,7 +5529,7 @@ def _describe_ledger(path) -> str:
     if resolved == small_real_ledger_path():
         return f"ledger: {resolved} (small-real)"
     if resolved == default_ledger_path():
-        return f"ledger: {resolved} (live)"
+        return f"ledger: {resolved} (live-session ledger)"
     return f"ledger: {resolved}"
 
 
