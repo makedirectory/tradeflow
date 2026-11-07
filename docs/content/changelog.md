@@ -293,6 +293,9 @@ backtests included, though most never touched a boundary - drop out of the defau
   `--scale` and `--capital` are both refused with the same way forward (a config that
   records the capital it was validated at), and the `--capital` help says so. The scaling
   rule itself is unchanged.
+- `reconcile --ledger` and `execution-report --ledger` refuse a path that does not exist
+  instead of reporting an empty ledger as a clean book; a default ledger not yet written
+  is labelled, and the `--ledger` help says the default is under the state root.
 
 ## 2.3.0 — 2026-09-16
 

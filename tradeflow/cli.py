@@ -5501,7 +5501,10 @@ def cmd_reconcile(args) -> None:
 
     # Resolved before the broker is built: refusing an argument combination should not
     # need credentials, a network round trip, or a reader to wonder whether it connected.
-    path = _execution_ledger_path(args)
+    path = _execution_ledger_path(args, must_exist=True)
+    # Described before the ledger is opened: opening creates the file, which would make
+    # a ledger that never existed read as one that did.
+    described = _describe_ledger(path)
     broker, _ = build_data_and_broker()
     report = PositionLedger(path).reconcile(broker)
     if args.json:
@@ -5509,13 +5512,13 @@ def cmd_reconcile(args) -> None:
         # about this invocation, not part of what reconciliation found.
         print(
             json.dumps(
-                {"broker_mode": _broker_mode_label(), "ledger": _describe_ledger(path), **report.as_dict()},
+                {"broker_mode": _broker_mode_label(), "ledger": described, **report.as_dict()},
                 indent=2,
             )
         )
     else:
         print(_broker_mode_line())
-        print(_describe_ledger(path))
+        print(described)
         print(report.summary())
     if not report.clean:
         raise SystemExit(1)
@@ -5533,7 +5536,7 @@ def cmd_execution_report(args) -> None:
     from tradeflow.analytics.execution_quality import execution_report
     from tradeflow.execution.ledger import PositionLedger
 
-    ledger = PositionLedger(_execution_ledger_path(args))
+    ledger = PositionLedger(_execution_ledger_path(args, must_exist=True))
     report = execution_report(ledger.lifecycles(), ledger.declines(), ledger.flattens())
     _print_ledger_sessions(ledger, args.json)
     if args.json:
@@ -5545,6 +5548,11 @@ def cmd_execution_report(args) -> None:
 #: One help string for one knob, so the two commands carrying it cannot describe it
 #: differently — a reader comparing `reconcile --help` and `execution-report --help`
 #: should not have to work out whether two wordings mean two things.
+_LEDGER_PATH_HELP = (
+    "Ledger path (default: logs/position_ledger.jsonl under the state root, not the "
+    "current directory). A path that does not exist is refused by the read-only commands"
+)
+
 _SMALL_REAL_LEDGER_HELP = (
     "Read the small-real telemetry ledger instead of the live one. They are separate "
     "files on purpose: averaging a full-size book's fills with the same book's fills at "
@@ -5552,7 +5560,7 @@ _SMALL_REAL_LEDGER_HELP = (
 )
 
 
-def _execution_ledger_path(args):
+def _execution_ledger_path(args, *, must_exist: bool = False):
     """Which ledger to read. Explicit path, the small-real one, or the live one.
 
     A flag rather than a path the reader has to know, because telemetry nobody can find
@@ -5574,6 +5582,14 @@ def _execution_ledger_path(args):
             "specific file — not both."
         )
     if args.ledger:
+        if must_exist and not Path(args.ledger).is_file():
+            # A read-only command over a path somebody typed. A missing file read as an
+            # empty ledger, so `reconcile` printed "no divergence" and `execution-report`
+            # blamed a missing session header - a typo reading as a clean book.
+            raise SystemExit(
+                f"--ledger {args.ledger} does not exist, so there is nothing to read. "
+                "Check the path; without --ledger the default under the state root is used."
+            )
         return args.ledger
     return small_real_ledger_path() if small_real else None
 
@@ -5600,11 +5616,14 @@ def _describe_ledger(path) -> str:
     from tradeflow.execution.ledger import default_ledger_path, small_real_ledger_path
 
     resolved = Path(path) if path else default_ledger_path()
+    # A default that has not been written yet is normal on a fresh root, but "no
+    # divergence" over a file that is not there should not read as a verdict on a book.
+    absent = "" if resolved.exists() else " [no ledger written yet]"
     if resolved == small_real_ledger_path():
-        return f"ledger: {resolved} (small-real)"
+        return f"ledger: {resolved} (small-real){absent}"
     if resolved == default_ledger_path():
-        return f"ledger: {resolved} (live-session ledger)"
-    return f"ledger: {resolved}"
+        return f"ledger: {resolved} (live-session ledger){absent}"
+    return f"ledger: {resolved}{absent}"
 
 
 def _print_ledger_sessions(ledger, as_json: bool) -> None:
@@ -6923,7 +6942,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     flat.add_argument("--confirm", action="store_true", help="Required — this closes real positions")
     flat.add_argument("--reason", required=True, help="Why — recorded with the halt")
-    flat.add_argument("--ledger", default=None, help="Ledger path (default: logs/position_ledger.jsonl)")
+    flat.add_argument("--ledger", default=None, help=_LEDGER_PATH_HELP)
     flat.add_argument("--small-real", dest="small_real", action="store_true", help=_SMALL_REAL_LEDGER_HELP)
     flat.add_argument("--json", action="store_true", help="Emit the report as JSON")
     flat.set_defaults(func=cmd_flatten)
@@ -6932,7 +6951,7 @@ def build_parser() -> argparse.ArgumentParser:
         "reconcile",
         help="Check the position ledger against the broker's actual account state — read-only",
     )
-    reconcile.add_argument("--ledger", default=None, help="Ledger path (default: logs/position_ledger.jsonl)")
+    reconcile.add_argument("--ledger", default=None, help=_LEDGER_PATH_HELP)
     reconcile.add_argument(
         "--small-real", dest="small_real", action="store_true", help=_SMALL_REAL_LEDGER_HELP
     )
@@ -6943,7 +6962,7 @@ def build_parser() -> argparse.ArgumentParser:
         "execution-report",
         help="Summarise how well the live path executed, from the ledger — read-only",
     )
-    execution.add_argument("--ledger", default=None, help="Ledger path (default: logs/position_ledger.jsonl)")
+    execution.add_argument("--ledger", default=None, help=_LEDGER_PATH_HELP)
     execution.add_argument(
         "--small-real", dest="small_real", action="store_true", help=_SMALL_REAL_LEDGER_HELP
     )

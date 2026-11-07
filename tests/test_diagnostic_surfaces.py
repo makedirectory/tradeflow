@@ -203,6 +203,7 @@ def test_the_execution_report_command_runs_over_an_empty_ledger(capsys, tmp_path
     it must report that rather than fail."""
     from tradeflow.cli import cmd_execution_report
 
+    (tmp_path / "ledger.jsonl").touch()  # empty, not absent: a missing path is refused
     cmd_execution_report(_ledger_args(ledger=str(tmp_path / "ledger.jsonl")))
 
     assert "Execution quality" in capsys.readouterr().out
@@ -489,6 +490,7 @@ def test_reconcile_names_the_ledger_it_opened_even_when_it_is_the_default(capsys
     from tests.fakes import FakeBroker
     from tradeflow.cli import cmd_reconcile
 
+    (tmp_path / "ledger.jsonl").touch()
     with mock.patch("tradeflow.cli.build_data_and_broker", return_value=(FakeBroker(), None)):
         cmd_reconcile(_ledger_args(ledger=str(tmp_path / "ledger.jsonl")))
 

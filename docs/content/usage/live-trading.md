@@ -133,6 +133,12 @@ RECONCILIATION FOUND 2 DIVERGENCE(S):
 The broker's state is authoritative. Nothing has been corrected automatically.
 ```
 
+The text and `--json` forms both lead with the broker mode (`PAPER` or `LIVE - REAL MONEY`)
+and the ledger they opened. `--ledger PATH` is refused when the file does not exist
+(`reconcile` and `execution-report` alike), since an empty read looked like a clean book;
+the default ledger lives under the state root and, when none has been written yet, is
+labelled `[no ledger written yet]`.
+
 Three rules govern it, and the first two are what keep it safe:
 
 - **The broker is authoritative, always.** The ledger records what we believed so a

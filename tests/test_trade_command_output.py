@@ -66,6 +66,7 @@ def test_flatten_and_reconcile_state_which_account_they_act_on(state, monkeypatc
     assert f"broker mode: {label}" in capsys.readouterr().out
 
     _broker(monkeypatch)  # flat: a divergence would exit nonzero and this is not about that
+    (state / "l.jsonl").touch()
     cli.cmd_reconcile(_ledger_args(ledger=str(state / "l.jsonl")))
     assert f"broker mode: {label}" in capsys.readouterr().out
 
@@ -229,3 +230,32 @@ def test_the_live_preflight_says_a_default_ceiling_is_not_the_account(monkeypatc
     typed = cli.parse_cli(["live", "--symbols", "AAA", "--scanner", "none", "--max-position-size", "500"])
     lines = cli._book_limit_lines(typed, {"max_position_size": 500.0}, None)
     assert not any("strategy default" in line for line in lines)
+
+
+def test_an_explicit_ledger_that_does_not_exist_is_refused_by_the_read_only_commands(state, monkeypatch):
+    """`reconcile --ledger typo.jsonl` printed "Reconciled 0 broker position(s): no
+    divergence" and `execution-report` blamed a missing session header, so a mistyped
+    path read as a clean book. Refused before the broker is built."""
+    monkeypatch.setattr(cli, "build_data_and_broker", lambda *a, **k: pytest.fail("broker built"))
+    missing = str(state / "nonexistent.jsonl")
+
+    for command in (cli.cmd_reconcile, cli.cmd_execution_report):
+        with pytest.raises(SystemExit) as refused:
+            command(_ledger_args(ledger=missing))
+        assert "does not exist" in str(refused.value) and missing in str(refused.value)
+
+
+def test_a_default_ledger_not_yet_written_says_so_instead_of_reading_as_clean(state, monkeypatch, capsys):
+    """The other direction: a fresh root has no ledger and that is normal, so the default
+    is not refused - but the output says there is no ledger rather than implying one."""
+    _broker(monkeypatch)
+    cli.cmd_reconcile(_ledger_args())
+    assert "[no ledger written yet]" in capsys.readouterr().out
+
+
+def test_the_ledger_help_says_the_default_resolves_under_the_state_root():
+    parser = cli.build_parser()
+    commands = parser._subparsers._group_actions[0].choices
+    for name in ("reconcile", "execution-report", "flatten"):
+        help_text = next(a.help for a in commands[name]._actions if a.dest == "ledger")
+        assert "state root" in help_text
