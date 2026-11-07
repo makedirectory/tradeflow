@@ -294,6 +294,6 @@ prints, from one service function (`walk_forward_evidence`) that both surfaces c
 `promotable` is the statistical gates only; an agent reads `evidence.clear` and
 `evidence.evidence_completeness` before acting on it, and an unevaluated check is
 unknown rather than passed. A memoized answer keeps no per-fold detail, so its
-`evidence` is null. The glossary spells out the deflated-Sharpe
+`evidence` is null and `evidence_unavailable` says why. The glossary spells out the deflated-Sharpe
 / multiple-testing trap. These keep an agent from optimizing and then trusting the
 in-sample Sharpe.

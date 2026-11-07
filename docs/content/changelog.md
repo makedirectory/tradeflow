@@ -42,8 +42,10 @@ research agent's holdout - kept January's offset, so from March to November they
 starting on a summer day skipped that day's bar: every such out-of-sample fold began a
 bar late. There was no look-ahead (the gap between in-sample and out-of-sample only grew),
 but the windows were not the ones asked for, so v5 walk-forwards are not comparable with
-v6 ones. Earlier trials drop out of the default `trials list` (it says how many);
-`trials archive` retires the era.
+v6 ones. Consecutive out-of-sample folds no longer share their boundary bar either (its
+return counted in both). The version is one stamp for every kind, so all earlier trials -
+backtests included, though most never touched a boundary - drop out of the default
+`trials list` (it says how many); `trials archive` retires the era.
 
 ### Honest labels
 
@@ -65,6 +67,9 @@ v6 ones. Earlier trials drop out of the default `trials list` (it says how many)
   best of N configs scored on the data that chose it, with a `deflated_sharpe_ratio`
   column that is not deflated. `allocate --scanner none` allocates across the candidates
   as given instead of crashing, and a scanner that flags nothing says so.
+- **Walk-forward evidence over MCP**: an unknown `cost_stress` is refused (it used to
+  scale nothing, so the cost prerequisite passed on an unstressed run), and a result with
+  no evidence says why in `evidence_unavailable` (reused, draft, or not computed).
 - **MCP results are always valid JSON**: non-finite numbers are spelled `"nan"`, `"inf"`
   or `"-inf"` everywhere; some tools emitted bare `NaN` / `Infinity`, which strict
   clients cannot parse.

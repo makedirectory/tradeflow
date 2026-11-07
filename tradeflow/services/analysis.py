@@ -30,6 +30,7 @@ from tradeflow.alphas import (
 )
 from tradeflow.analytics import metrics as m
 from tradeflow.analytics import performance, series_comparison
+from tradeflow.analytics.reporting import CAPACITY_SEARCH_CEILING, CAPACITY_SEARCH_FLOOR
 from tradeflow.data import (
     ClientBarSource,
     FeaturePanel,
@@ -88,6 +89,11 @@ def refuse_a_run_with_no_bars(result, symbols: Sequence[str], start: datetime, e
     raise no_bars_refusal(symbols, start, end)
 
 
+#: The cost axes a stress can scale. Anything else used to scale nothing, so every
+#: "stress" point was the baseline run and the cost prerequisite passed at the top multiple.
+COST_STRESS_AXES = ("all", "turnover", "borrow")
+
+
 #: Search methods each caller accepts; screening has no Bayesian search.
 SEARCH_METHODS = ("grid", "random", "bayesian")
 WALK_FORWARD_MODES = ("anchored", "rolling")
@@ -104,6 +110,7 @@ def refuse_unusable_run_args(
     mode: Optional[str] = None,
     n_folds: Optional[int] = None,
     holdout_days: Optional[int] = None,
+    cost_stress: Optional[str] = None,
 ) -> None:
     """Refuse arguments no run can mean, before anything is read or journaled.
 
@@ -144,6 +151,10 @@ def refuse_unusable_run_args(
         problems.append(f"n_folds must be at least 1, got {n_folds}")
     if holdout_days is not None and holdout_days < 0:
         problems.append(f"holdout_days cannot be negative, got {holdout_days}")
+    if cost_stress is not None and cost_stress not in COST_STRESS_AXES:
+        problems.append(
+            f"cost_stress must be one of {', '.join(COST_STRESS_AXES)} (or null to skip), got {cost_stress!r}"
+        )
     if problems:
         raise RunRefused("; ".join(problems) + ".")
 
@@ -1387,6 +1398,7 @@ def run_walk_forward(
         mode=mode,
         n_folds=n_folds,
         holdout_days=holdout_days,
+        cost_stress=cost_stress,
     )
     refuse_unknown_limits(position_limits)
     _refuse_unusable_window(start, end)
@@ -1446,6 +1458,11 @@ def run_walk_forward(
                     "note": "Served from an identical prior validation (same recipe), not re-run. "
                     "Pass force=True to re-verify — per-fold detail isn't retained, only the "
                     "OOS aggregate below.",
+                    # The description promises `evidence: null` for a reused answer; the key
+                    # was simply absent, which a strict reader cannot tell from an old schema.
+                    "evidence": None,
+                    "evidence_unavailable": "a reused result keeps no per-fold detail; pass force=true to "
+                    "re-run it with the promotion prerequisites",
                     "oos_aggregate": _jsonable(metrics),
                     "promotable": bool(cached["promotable"]) if cached["promotable"] is not None else None,
                     "efficiency": cached["efficiency"],
@@ -1847,6 +1864,7 @@ def run_cost_stress(
     candidates, and recording them as trials would inflate the multiple-testing count
     that the deflated Sharpe deflates against.
     """
+    refuse_unusable_run_args(cost_stress=axis)
     run_id = new_run_id()
     points: List[Dict[str, Any]] = []
     for multiple in multiples:
@@ -2101,6 +2119,7 @@ def run_draft_walk_forward(
 
     payload = walk_forward_payload(
         result,
+        evidence_unavailable="a draft walk-forward does not run the promotion prerequisites",
         run_id=run_id,
         strategy=draft_strategy,
         symbols=symbols,
@@ -2162,6 +2181,7 @@ def walk_forward_payload(
     benchmark: Optional[str] = None,
     timeframe: Optional[str] = None,
     evidence: Optional[Dict[str, Any]] = None,
+    evidence_unavailable: Optional[str] = None,
 ) -> Dict[str, Any]:
     """A ``WalkForwardResult`` as the JSON-serializable dict every surface consumes.
 
@@ -2220,6 +2240,16 @@ def walk_forward_payload(
         # None only when the evidence was not computed (a memoized answer keeps no
         # per-fold detail); a consumer must read that as unknown, never as clear.
         "evidence": _jsonable(evidence) if evidence is not None else None,
+        # Why there is none, so a reader can tell a reused result from a draft or a run
+        # with no folds - three reasons that all used to read as "reused".
+        **(
+            {
+                "evidence_unavailable": evidence_unavailable
+                or "the promotion prerequisites were not computed for this run"
+            }
+            if evidence is None
+            else {}
+        ),
     }
 
 
@@ -3659,8 +3689,9 @@ def _journal_verdict(
 def _attribution_failure_note(periods: int, sampled: int, skipped: Counter) -> str:
     """Say why attribution produced fewer than the 5 periods it needs.
 
-    Blaming "insufficient history" for every failure sent a user with 19 months of
-    data to look for more data when the real cause was a six-name universe.
+    Blaming "insufficient history" for every failure sent a user with well over a year
+    of data to look for more when the real cause was a universe too small to build a
+    cross-section from.
     """
     head = f"Attribution needs >= 5 usable rebalances; {periods} of {sampled} sampled produced a period."
     if not skipped:
@@ -5400,17 +5431,13 @@ def _cost_inputs(universe_bars, cost_model, window: int = _COST_WINDOW):
     return CostInputs(spread=spread, adv_dollar=adv_dollar, daily_vol=daily_vol)
 
 
-CAPACITY_SEARCH_FLOOR = 1e3
-CAPACITY_SEARCH_CEILING = 1e12
-
-
 def _capacity(weights, universe_bars, gross_alpha, holding_period_years) -> tuple:
     """``(capital, status)``: where √-impact cost erases the gross alpha (net → 0).
 
     Cost as a fraction of capital grows ∝ √capital (square-root impact), so net alpha
     is monotone-decreasing in capital — solved by bisection. ``capital`` is a number
     only when ``status == "measured"``; otherwise it is ``None`` and ``status`` names
-    the bound that was hit: ``"no_edge"`` (gross alpha <= 0, or no priced holdings),
+    the bound that was hit: ``"no_priced_holdings"``, ``"no_edge"`` (gross alpha <= 0),
     ``"below_search_floor"`` (alpha does not cover cost even at the search floor) or
     ``"above_search_ceiling"`` (still positive at the ceiling). A sentinel such as 0
     or the search bound is not a capacity and must not read as one.
@@ -5429,7 +5456,9 @@ def _capacity(weights, universe_bars, gross_alpha, holding_period_years) -> tupl
             float(frame["volume"].tail(20).mean()),
             float(frame["close"].pct_change().tail(20).std()),
         )
-    if not liquidity or gross_alpha <= 0:
+    if not liquidity:
+        return None, "no_priced_holdings"
+    if gross_alpha <= 0:
         return None, "no_edge"
 
     def net(capital: float) -> float:

@@ -5839,7 +5839,7 @@ def cmd_demo_agent(args) -> None:
     print(rule)
 
     end = args.end or (datetime.now() - timedelta(days=2))
-    start = args.start or (end - timedelta(days=args.lookback_days))
+    start = args.start or shift_days(end, -args.lookback_days)
 
     if args.provider == "replay":
         proposer = FixedProposer(DEMO_PROPOSALS)
@@ -6385,7 +6385,7 @@ def build_parser() -> argparse.ArgumentParser:
             "--symbols", type=_symbols, default=DEFAULT_UNIVERSE, help="Comma-separated candidate symbols"
         )
         if with_dates:
-            p.add_argument("--start", type=_date, default=_now() - timedelta(days=30))
+            p.add_argument("--start", type=_date, default=shift_days(_now(), -30))
             p.add_argument("--end", type=_date, default=_now())
             p.add_argument("--capital", type=_positive_amount, default=100_000.0)
             p.add_argument(
@@ -7322,7 +7322,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--scanner", type=_scanner, default="demo_volume", help="Universe scanner ('none' to skip)"
     )
     verdict.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
-    verdict.add_argument("--start", type=_date, default=_now() - timedelta(days=365))
+    verdict.add_argument("--start", type=_date, default=shift_days(_now(), -365))
     verdict.add_argument("--end", type=_date, default=_now())
     verdict.add_argument("--capital", type=_positive_amount, default=100_000.0)
     verdict.add_argument(
@@ -7449,7 +7449,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--scanner", type=_scanner, default="demo_volume", help="Scanner used when --source scanner"
     )
     info.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
-    info.add_argument("--start", type=_date, default=_now() - timedelta(days=365))
+    info.add_argument("--start", type=_date, default=shift_days(_now(), -365))
     info.add_argument("--end", type=_date, default=_now())
     info.add_argument("--benchmark", default="SPY", help="Benchmark for residual returns")
     info.add_argument("--horizon", type=int, default=5, help="Forward-return horizon in bars")
@@ -7543,7 +7543,7 @@ def build_parser() -> argparse.ArgumentParser:
     hz.add_argument("--source", choices=["strategy", "signal", "scanner"], default="strategy")
     hz.add_argument("--scanner", type=_scanner, default="demo_volume")
     hz.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
-    hz.add_argument("--start", type=_date, default=_now() - timedelta(days=365))
+    hz.add_argument("--start", type=_date, default=shift_days(_now(), -365))
     hz.add_argument("--end", type=_date, default=_now())
     hz.add_argument("--benchmark", default="SPY")
     hz.add_argument(
@@ -7614,7 +7614,7 @@ def build_parser() -> argparse.ArgumentParser:
     c_warm.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
     c_warm.add_argument("--scanner", type=_scanner, default="none", help="Universe scanner ('none' to skip)")
     c_warm.add_argument("--timeframe", default="1Day")
-    c_warm.add_argument("--start", type=_date, default=_now() - timedelta(days=365))
+    c_warm.add_argument("--start", type=_date, default=shift_days(_now(), -365))
     c_warm.add_argument("--end", type=_date, default=_now())
     c_warm.add_argument(
         "--scan-as-of",

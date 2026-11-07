@@ -17,7 +17,7 @@ import logging
 import math
 import sys
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 try:
     # pydantic (hence every install with the 'mcp' extra) needs this TypedDict on
@@ -852,7 +852,7 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         benchmark: Optional[str] = None,
         position_limits: Optional[Dict[str, Any]] = None,
         record_trades: bool = False,
-        cost_stress: Optional[str] = "all",
+        cost_stress: Optional[Literal["all", "turnover", "borrow"]] = "all",
     ) -> Dict[str, Any]:
         """Honest out-of-sample evaluation across folds - your advancement criterion.
 
@@ -873,7 +873,8 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         information ratio and excess return, each pass/fail/unevaluated, plus excess
         return per fold and `evidence.clear`. Read `evidence.evidence_completeness`
         before acting on `promotable`; an unevaluated check is unknown, not passed.
-        A memoized answer keeps no per-fold detail, so its `evidence` is null.
+        When `evidence` is null, `evidence_unavailable` says why (a memoized answer keeps no
+        per-fold detail). An unknown `cost_stress` is refused rather than stressing nothing.
         `cost_stress` ("all"/"turnover"/"borrow", null to skip) re-runs the chosen
         config at worse costs, unjournaled, and is on by default as in the CLI.
 
@@ -2236,8 +2237,11 @@ def _json_safe(value: Any) -> Any:
         return [_json_safe(item) for item in value]
     if isinstance(value, float) and not math.isfinite(value):
         return "nan" if math.isnan(value) else ("inf" if value > 0 else "-inf")
-    if type(value).__module__ == "numpy" and hasattr(value, "item"):
-        return _json_safe(value.item())
+    if type(value).__module__ == "numpy":
+        if getattr(value, "ndim", 0):
+            return _json_safe(value.tolist())
+        if hasattr(value, "item"):
+            return _json_safe(value.item())
     return value
 
 

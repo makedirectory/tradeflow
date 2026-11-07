@@ -91,6 +91,10 @@ logger = logging.getLogger(__name__)
 #:   bar, an out-of-sample fold began one bar late and a lookback lost its first bar.
 #:   No look-ahead (the in-sample/out-of-sample gap only grew by a day), but the
 #:   windows were not the ones requested, so a v5 walk-forward is not comparable.
+#:   Out-of-sample folds are also half-open now: consecutive folds shared their
+#:   boundary bar (in winter under v5, all year once the boundaries were fixed), so
+#:   that bar's return counted in two folds. The version is one stamp for every kind,
+#:   so v5 backtests leave the default listing too, though most never crossed a boundary.
 #:
 #: Records written before this field existed carry no version; absence means 1.
 ACCOUNTING_VERSION = 6

@@ -265,3 +265,23 @@ def test_an_alpha_run_that_scored_no_names_is_not_journaled(monkeypatch, capsys)
     cli._journal_alpha(args, "a+b", "combine", {"universe_size": 0, "alphas": []})
     assert calls == []
     assert "not journaled" in capsys.readouterr().out
+
+
+def test_capacity_names_a_universe_with_no_priced_holdings_and_reads_its_bounds():
+    """Found in review: no priced holdings reported "gross alpha is not positive", and the
+    bound text restated the search range instead of reading it."""
+    from tradeflow.analytics.reporting import CAPACITY_SEARCH_CEILING, CAPACITY_SEARCH_FLOOR, capacity_text
+
+    assert "no holding had" in capacity_text({"capacity_status": "no_priced_holdings"})
+    assert f"{CAPACITY_SEARCH_FLOOR:,.0f}" in capacity_text({"capacity_status": "below_search_floor"})
+    assert f"{CAPACITY_SEARCH_CEILING:,.0f}" in capacity_text({"capacity_status": "above_search_ceiling"})
+
+
+def test_a_drawdown_duration_is_in_bars_and_prerequisites_carry_units():
+    """Found in review: the duration counts bars but was labelled days, which is wrong on
+    any intraday report; the evidence card printed a cost multiple and an excess return bare."""
+    from tradeflow.optimization.walk_forward import format_gate_value
+
+    assert format_gate_value("max_drawdown_duration", 40) == "40 bars"
+    assert format_gate_value("cost_stress", 3) == "3.0x"
+    assert format_gate_value("benchmark_excess", 1.25) == "1.25%"

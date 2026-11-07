@@ -133,7 +133,13 @@ def shift_days(moment, days: int):
     if isinstance(moment, pd.Timestamp):
         if moment.tzinfo is None:
             return moment + pd.Timedelta(days=days)
-        return (moment.tz_localize(None) + pd.Timedelta(days=days)).tz_localize(moment.tz)
+        # Resolve a wall time that does not exist or occurs twice the way pytz's
+        # localize does for a datetime (read as standard time), so both kinds agree
+        # instead of one raising on the transition hour. A skipped wall time read as
+        # standard time is the instant one hour on.
+        return (moment.tz_localize(None) + pd.Timedelta(days=days)).tz_localize(
+            moment.tz, nonexistent=pd.Timedelta(hours=1), ambiguous=False
+        )
     if moment.tzinfo is None:
         return moment + timedelta(days=days)
     zone = getattr(moment.tzinfo, "zone", None)

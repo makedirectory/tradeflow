@@ -16,6 +16,12 @@ from tradeflow.analytics import performance
 logger = logging.getLogger(__name__)
 
 
+#: The capital range the capacity search bisects over. Here, below the service that
+#: searches it, so the words describing a bound cannot drift from the bound.
+CAPACITY_SEARCH_FLOOR = 1e3
+CAPACITY_SEARCH_CEILING = 1e12
+
+
 def capacity_text(diagnostics: Dict[str, Any]) -> Optional[str]:
     """Words for a portfolio's capacity result, or ``None`` when none was computed.
 
@@ -31,10 +37,11 @@ def capacity_text(diagnostics: Dict[str, Any]) -> Optional[str]:
     return {
         "no_edge": "not applicable - expected gross alpha is not positive, so there is no capital at which "
         "it survives cost",
+        "no_priced_holdings": "not measured - no holding had the price and volume history the cost model needs",
         "below_search_floor": "not measured - the alpha does not cover √-impact cost even at the smallest "
-        "capital searched ($1,000)",
+        f"capital searched (${CAPACITY_SEARCH_FLOOR:,.0f})",
         "above_search_ceiling": "not measured - the alpha still covers √-impact cost at the largest capital "
-        "searched ($1 trillion)",
+        f"searched (${CAPACITY_SEARCH_CEILING:,.0f})",
     }.get(status, f"unknown ({status})")
 
 

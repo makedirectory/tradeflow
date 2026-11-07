@@ -381,8 +381,8 @@ def _warnings_block(result: Dict[str, Any], kind: str) -> str:
             banners.append(
                 _warning(
                     "Evidence completeness not computed — promotion prerequisites were not assessed "
-                    "for this result (a reused result keeps no per-fold detail). `promotable` is "
-                    "the statistical gates only.",
+                    f"for this result ({result.get('evidence_unavailable') or 'not computed for this run'}). "
+                    "`promotable` is the statistical gates only.",
                 )
             )
         elif gate_report.get("promotable") and not evidence.get("clear"):
@@ -767,19 +767,31 @@ def _evidence_card(evidence: Optional[Dict[str, Any]]) -> str:
             tone="warn",
         )
     prereq = evidence.get("prerequisites") or {}
+    from tradeflow.optimization.walk_forward import format_gate_value
+
     rows = []
     for name, check in (prereq.get("checks") or {}).items():
         if not check.get("evaluated"):
             rows.append(
-                [_pill(None), esc(name), "not evaluated", esc(check.get("threshold")), esc(check.get("note"))]
+                [
+                    _pill(None),
+                    esc(name),
+                    "not evaluated",
+                    esc(format_gate_value(name, check.get("threshold"))),
+                    esc(check.get("note")),
+                ]
             )
             continue
         rows.append(
             [
                 _pill(check.get("passed")),
                 esc(name),
-                esc(_num(check.get("value"))),
-                esc(_num(check.get("threshold"))),
+                esc(
+                    format_gate_value(name, check.get("value"))
+                    if check.get("value") is not None
+                    else "not evaluated"
+                ),
+                esc(format_gate_value(name, check.get("threshold"))),
                 esc(check.get("note", "")),
             ]
         )

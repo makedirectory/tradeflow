@@ -27,7 +27,7 @@ Key correctness properties:
 import logging
 import math
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple, Type
 
 import numpy as np
@@ -298,6 +298,10 @@ _GATE_BASIS = {
 }
 
 
+#: How far before a boundary a half-open window ends - below any bar's resolution.
+_JUST_BEFORE = timedelta(microseconds=1)
+
+
 def _check(value: float, op: str, threshold: float) -> Dict[str, Any]:
     passed = value >= threshold if op == ">=" else value > threshold if op == ">" else value <= threshold
     return {"value": float(value), "threshold": float(threshold), "passed": bool(passed)}
@@ -314,6 +318,10 @@ def _check(value: float, op: str, threshold: float) -> Dict[str, Any]:
 #: Anything absent is a ratio, which is the safe default — being wrong about a ratio
 #: costs two decimal places, and being wrong about a count costs credibility.
 _GATE_VALUE_KINDS = {
+    # Promotion prerequisites: a cost multiple, a p-value and an excess return in percent.
+    "cost_stress": "multiple",
+    "family_bootstrap": "probability",
+    "benchmark_excess": "percent",
     "min_oos_trades": "count",
     # A drawdown in percent against a threshold in percent; printed bare, "10.59 vs
     # 15.41" read as a ratio.
@@ -360,7 +368,7 @@ _GATE_VALUE_KINDS = {
     "largest_win": "money",
     "largest_loss": "money",
     "expectancy": "money",
-    "max_drawdown_duration": "days",
+    "max_drawdown_duration": "periods",
     "avg_trade_duration": "hours",
     "max_consecutive_wins": "count",
     "max_consecutive_losses": "count",
@@ -408,6 +416,12 @@ def format_gate_value(gate_name: str, value: Any) -> str:
         return f"-${abs(number):,.2f}" if number < 0 else f"${number:,.2f}"
     if kind == "days":
         return f"{number:.0f} days"
+    if kind == "multiple":
+        return f"{number:.1f}x"
+    if kind == "periods":
+        # Bars of the run's own timeframe: a drawdown lasting 40 periods is 40 days on
+        # daily bars and 40 minutes on minute bars, so it is not labelled as either.
+        return f"{number:.0f} bars"
     if kind == "hours":
         return f"{number:.2f} h"
     if kind == "probability":
@@ -579,7 +593,11 @@ class WalkForwardValidator:
             oos_end = shift_days(oos_start, test_days)
             if oos_end > region_end:
                 break
-            folds.append(Fold(index, is_start, is_end, oos_start, oos_end))
+            # Half-open: the next fold's out-of-sample window starts exactly at this
+            # boundary, and windows are sliced inclusive at both ends, so ending *at* it
+            # put the boundary bar in two folds - its return counted twice across the
+            # fold statistics. Ending just before it gives each bar to one fold.
+            folds.append(Fold(index, is_start, is_end, oos_start, oos_end - _JUST_BEFORE))
             index += 1
             is_end = shift_days(is_end, test_days)
 
