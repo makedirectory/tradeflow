@@ -1737,6 +1737,7 @@ def cmd_walkforward(args) -> None:
         )
     _print_walkforward(result, args.objective)
 
+    trial_id = None
     if not args.no_journal and result.folds:
         from tradeflow.services.analysis import trades_payload
         from tradeflow.services.audit import journal_trial, probe_verdicts
@@ -1747,7 +1748,7 @@ def cmd_walkforward(args) -> None:
         # rather than one row per inner config, matching how the agent journals.
         chosen = result.holdout_params or result.folds[-1].is_best_params
         report = result.gate_report()
-        journal_trial(
+        trial_id = journal_trial(
             "walkforward",
             strategy=args.strategy,
             symbols=universe,
@@ -1811,6 +1812,7 @@ def cmd_walkforward(args) -> None:
                 benchmark=getattr(args, "benchmark", None),
                 timeframe=timeframe,
                 evidence=evidence,
+                trial_id=trial_id,
             ),
             "walkforward",
         )
@@ -2019,12 +2021,15 @@ def _print_promotion_prerequisites(data_client, args, result, universe, bootstra
         return evidence  # nothing to say: no input was produced by this run
 
     print("\n=== Promotion prerequisites (separate from `promotable`) ===")
+    # Wide enough for the longest name plus a gap: a fixed width glued the label to its
+    # value the moment a name reached it (`benchmark_relativenot evaluated`).
+    width = max(len(name) for name in prereq["checks"]) + 2
     for name, check in prereq["checks"].items():
         if not check["evaluated"]:
-            print(f"  [ -- ] {name:18}not evaluated - {check['note']}")
+            print(f"  [ -- ] {name:{width}}not evaluated - {check['note']}")
             continue
         mark = "PASS" if check["passed"] else "FAIL"
-        print(f"  [{mark}] {name:18}{check['value']:.4g} vs {check['threshold']:.4g}")
+        print(f"  [{mark}] {name:{width}}{check['value']:.4g} vs {check['threshold']:.4g}")
     # The count leads, and the verdict word never stands alone: "Prerequisites: clear"
     # can be skimmed as all-clear even with a caveat on the next line, and this is a
     # display someone reads immediately before risking money.

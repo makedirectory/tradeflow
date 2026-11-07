@@ -11,7 +11,7 @@ import hashlib
 import json
 import logging
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
@@ -1513,12 +1513,13 @@ def run_walk_forward(
             n_trials_offset=n_trials_offset,
         )
 
+    trial_id = None
     if result.folds:
         from tradeflow.services.audit import probe_verdicts, run_context
 
         chosen = result.holdout_params or result.folds[-1].is_best_params
         gate_report = result.gate_report(gates)
-        journal_trial(
+        trial_id = journal_trial(
             "walkforward",
             strategy=strategy,
             symbols=symbols,
@@ -1576,6 +1577,7 @@ def run_walk_forward(
         benchmark=benchmark,
         timeframe=timeframe,
         evidence=evidence,
+        trial_id=trial_id,
     )
 
 
@@ -2095,12 +2097,13 @@ def run_draft_walk_forward(
     # store that will not open must not quietly turn a spent out-of-sample test into
     # an unrecorded one. Same placement as run_walk_forward, for the same reason.
     journaled = bool(journal and result.folds)
+    trial_id = None
     if journaled:
         from tradeflow.services.audit import probe_verdicts, run_context
 
         chosen = result.holdout_params or result.folds[-1].is_best_params
         gate_report = result.gate_report(gates)
-        journal_trial(
+        trial_id = journal_trial(
             "walkforward",
             strategy=draft_strategy,
             symbols=symbols,
@@ -2138,6 +2141,7 @@ def run_draft_walk_forward(
         gross=gross,
         seed=seed,
         gates=gates,
+        trial_id=trial_id,
     )
     payload["draft"] = {
         "class_name": cls.__name__,
@@ -2241,6 +2245,7 @@ def walk_forward_payload(
     timeframe: Optional[str] = None,
     evidence: Optional[Dict[str, Any]] = None,
     evidence_unavailable: Optional[str] = None,
+    trial_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """A ``WalkForwardResult`` as the JSON-serializable dict every surface consumes.
 
@@ -2252,6 +2257,10 @@ def walk_forward_payload(
     was scored against instead of printing a dash. ``evidence`` is
     :func:`walk_forward_evidence`'s answer, carried beside ``gate_report`` so a
     consumer cannot read ``promotable`` without the prerequisites that qualify it.
+
+    ``trial_id`` is the journaled trial's id when the run was recorded; it brings the
+    campaign's trial count (this run included) with it, so a report can name the record
+    it came from instead of leaving both blank.
     """
     folds = [
         {
@@ -2268,7 +2277,16 @@ def walk_forward_payload(
         for fr in result.folds
     ]
 
+    recorded = (
+        {
+            "trial_id": trial_id,
+            "provenance": {"n_trials": _family_count(strategy, symbols, ACCOUNTING_VERSION)},
+        }
+        if trial_id
+        else {}
+    )
     return {
+        **recorded,
         "run_id": run_id,
         "strategy": strategy,
         "symbols": list(symbols),
@@ -3485,7 +3503,7 @@ def _verdict_provenance(inputs: Dict[str, Any], cache, n_trials: int) -> Dict[st
     one fetch (requests issued vs. requests that reached the provider)."""
     return {
         "git_sha": code_version(),
-        "generated_at": datetime.now().isoformat(),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "n_trials": n_trials,
         "universe_size": len(inputs.get("universe") or []),
         "bar_requests": cache.stats() if cache is not None else None,

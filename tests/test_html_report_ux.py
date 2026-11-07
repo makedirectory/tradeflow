@@ -259,3 +259,44 @@ def test_a_reused_backtest_header_names_the_benchmark_and_timeframe():
     assert re.search(r"Benchmark\s+SPY \(as requested\)", text)
     assert not re.search(r"Timeframe\s+—", text) and not re.search(r"Benchmark\s+—", text)
     assert re.search(r"Timeframe\s+\S+ \(as requested\)", text)
+
+
+# ---- item 6: ids and timestamps -------------------------------------------------------
+def _journaled_ids(tmp_path):
+    rows = [json.loads(line) for line in (tmp_path / "journal.jsonl").read_text().splitlines() if line.strip()]
+    return [r["run_id"] for r in rows if r.get("tool") == "trial:walkforward"]
+
+
+def test_a_journaled_walkforward_report_names_its_trial_and_campaign_count(tmp_path):
+    document = _cli(WF, tmp_path / "wf.html")
+    ids = _journaled_ids(tmp_path)
+    assert len(ids) == 1, "the run should have been journaled once"
+    text = _text(document)
+    assert re.search(rf"Trial id\s+{re.escape(ids[0])}", text)
+    assert not re.search(r"Campaign trials\s+—", text)
+    assert re.search(r"Campaign trials\s+\d+", text)
+
+
+def test_the_mcp_walkforward_report_names_its_trial_too(tmp_path):
+    fresh = _mcp("run_walk_forward", WF_ARGS)
+    ids = _journaled_ids(tmp_path)
+    assert fresh["trial_id"] == ids[0]
+    text = _text(_mcp("render_report", {"kind": "walkforward", "result": fresh})["html"])
+    assert re.search(rf"Trial id\s+{re.escape(ids[0])}", text)
+
+
+def test_no_prerequisite_label_is_glued_to_its_value(tmp_path, capsys):
+    """`benchmark_relative` is as wide as the old fixed column, so its value ran into it."""
+    argv = [a for a in WF if a not in ("--benchmark", "SPY")]
+    _cli(argv, tmp_path / "wf.html")
+    block = capsys.readouterr().out.split("Promotion prerequisites")[1].split("Prerequisites:")[0]
+    rows = re.findall(r"^  \[(?:PASS|FAIL| -- )\] (.*)$", block, re.M)
+    assert rows and any(r.startswith("benchmark_relative") for r in rows)
+    for row in rows:
+        assert re.match(r"\w+ {2,}\S", row), row
+
+
+def test_a_verdict_report_is_stamped_in_utc_like_the_others(tmp_path):
+    text = _text(_cli(VERDICT, tmp_path / "v.html"))
+    stamp = re.search(r"Generated\s+(\S+)", text).group(1)
+    assert stamp.endswith("+00:00"), stamp
