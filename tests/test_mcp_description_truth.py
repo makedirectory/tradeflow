@@ -402,3 +402,24 @@ def test_a_thin_universe_that_asked_for_nothing_extra_adds_no_skip_text(built):
     reason = _alphas(built)["low_confidence_reason"]
     assert "thin universe" in reason
     assert "skipped" not in reason
+
+
+# --- 10. compute_horizon does not point an agent at a CLI flag it cannot use ----------
+def test_compute_horizon_payload_does_not_recommend_a_cli_policy_flag(built):
+    result = _call(
+        built, "compute_horizon", strategy="demo_trend", symbols=SYMBOLS, start=START, end=END
+    )
+    assert "recommended_cadence" in result
+    assert "--policy" not in json.dumps(result)
+    assert "blend_superseded_by" not in result
+
+
+def test_the_service_report_the_cli_prints_keeps_its_pointer():
+    direct = analysis.compute_horizon(
+        MarketDataClient(FakeMarketData([*SYMBOLS, "SPY"], n=600, freq="1D")),
+        "demo_trend",
+        SYMBOLS,
+        datetime(2024, 1, 2),
+        datetime(2025, 6, 1),
+    )
+    assert "--policy aim" in direct["blend_superseded_by"]

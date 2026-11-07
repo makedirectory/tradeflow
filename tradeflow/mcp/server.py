@@ -1278,6 +1278,9 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         maximizes IC·√(1/Δt), and computes the IR-maximizing current/lagged blend from
         δ and the signal autocorrelation (diversify if δ>ρ, hedge if δ<ρ). The
         half-life is the holding period to amortize cost over. Read-only.
+
+        The report carries no recommendation to switch trading policy: the policy that
+        would replace the lagged blend is evidence-gated and not offered on this surface.
         """
         inputs = {"strategy": strategy, "symbols": symbols, "start": start, "end": end}
         result = analysis.compute_horizon(
@@ -1290,6 +1293,10 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
             benchmark=benchmark,
             max_lag=max_lag,
         )
+        # The CLI's report points at its `--policy aim` flag, which this server does not
+        # expose (evidence-gated) and which is no tuning suggestion for an agent to act
+        # on, so the pointer is left off this payload rather than reworded.
+        result = {k: v for k, v in result.items() if k != "blend_superseded_by"}
         return _logged("compute_horizon", inputs, result)
 
     @tool(notes=[_GATED_NOTE])
