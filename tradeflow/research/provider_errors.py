@@ -84,11 +84,24 @@ class ModelProviderError(RuntimeError):
     ``category`` is one of :data:`ProbeCategory`; ``detail`` is safe to print.
     """
 
-    def __init__(self, provider: str, category: ProbeCategory, detail: str):
+    def __init__(
+        self,
+        provider: str,
+        category: ProbeCategory,
+        detail: str,
+        *,
+        attempts: int = 1,
+        advised_wait: Optional[float] = None,
+    ):
         super().__init__(f"model provider {provider}: {category} - {detail}")
         self.provider = provider
         self.category = category
         self.detail = detail
+        #: Requests actually sent before giving up (1 means no retry happened) and the
+        #: wait the provider asked for, if any. Carried so the message can say what
+        #: happened instead of what the policy usually does.
+        self.attempts = attempts
+        self.advised_wait = advised_wait
 
 
 def _class_names(exc: BaseException) -> set:
@@ -216,8 +229,14 @@ def classify_provider_error(exc: BaseException) -> Tuple[ProbeCategory, str]:
 
 
 def as_provider_error(
-    provider: str, exc: BaseException, *, detail: Optional[Any] = None
+    provider: str, exc: BaseException, *, detail: Optional[Any] = None, attempts: int = 1
 ) -> ModelProviderError:
     """Wrap ``exc`` as a :class:`ModelProviderError`, optionally overriding the detail."""
     category, classified = classify_provider_error(exc)
-    return ModelProviderError(provider, category, str(detail) if detail else classified)
+    return ModelProviderError(
+        provider,
+        category,
+        str(detail) if detail else classified,
+        attempts=attempts,
+        advised_wait=retry_after_seconds(exc),
+    )

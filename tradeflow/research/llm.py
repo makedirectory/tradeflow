@@ -14,10 +14,11 @@ Each SDK is imported lazily inside its client, so the base install needs none of
 them and an unused provider never has to be installed.
 """
 
+import logging
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Callable, Optional, Tuple
 
 from tradeflow.research.provider_errors import (
     RETRYABLE,
@@ -34,6 +35,8 @@ from tradeflow.settings import (
     ollama_num_ctx,
     ollama_timeout,
 )
+
+logger = logging.getLogger(__name__)
 
 #: Default model per provider (override with ``--model`` / the ``model`` arg).
 DEFAULT_MODELS = {
@@ -79,6 +82,11 @@ class LLMClient(ABC):
     #: request. Zero means one request, always - the readiness probe sets it so.
     max_retries: int = len(RETRY_DELAYS)
 
+    #: Called as ``(category, attempt, max_retries, wait_seconds)`` just before waiting
+    #: out a retry. A retry that nobody can see reads as a hang; the CLI sets this to
+    #: print one line, and without it the same line goes to the log.
+    on_retry: Optional[Callable[[str, int, int, float], None]] = None
+
     def complete(self, system: str, user: str, max_tokens: int = 1024) -> LLMResponse:
         """Return the model's completion for a system + user prompt.
 
@@ -106,9 +114,23 @@ class LLMClient(ABC):
                 category, _ = classify_provider_error(exc)
                 delay = self._retry_delay(attempt, category, exc)
                 if delay is None:
-                    raise as_provider_error(self.provider, exc, detail=self._detail_for(exc)) from exc
+                    raise as_provider_error(
+                        self.provider, exc, detail=self._detail_for(exc), attempts=attempt + 1
+                    ) from exc
                 attempt += 1
+                self._announce_retry(category, attempt, delay)
                 _sleep(delay)
+
+    def _announce_retry(self, category: str, attempt: int, delay: float) -> None:
+        if self.on_retry is not None:
+            try:
+                self.on_retry(category, attempt, self.max_retries, delay)
+            except Exception:  # noqa: BLE001 - narration must not break the policy
+                logger.debug("retry notice raised; continuing", exc_info=True)
+            return
+        logger.warning(
+            "%s: %s - retry %d of %d in %gs", self.provider, category, attempt, self.max_retries, delay
+        )
 
     def _retry_delay(self, attempt: int, category: str, exc: BaseException) -> Optional[float]:
         """Seconds to wait before retry number ``attempt + 1``, or ``None`` to give up."""
