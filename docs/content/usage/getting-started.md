@@ -47,8 +47,8 @@ quantred demo
 ```
 
 This runs the entire pipeline on synthetic data: it backtests every bundled
-strategy, picks the one that looks best, walk-forward validates it, and refuses to
-promote it.
+strategy, walk-forward validates `demo_trend` (fixed in advance, not chosen by its
+in-sample result), and refuses to promote it.
 
 **The refusal is the point.** The synthetic series is a seeded random walk with no
 edge in it, and a strategy that looks profitable in-sample gets called noise
