@@ -127,6 +127,8 @@ quantred reconcile          # or: reconcile --json
 ```
 
 ```
+broker mode: PAPER
+ledger: /…/logs/position_ledger.jsonl (live-session ledger)
 RECONCILIATION FOUND 2 DIVERGENCE(S):
   [quantity_drift] NVDA: ledger expects +10, broker holds +4 — likely a partial fill
   [unexpected] TSLA: broker holds +7 that this ledger never ordered — opened manually

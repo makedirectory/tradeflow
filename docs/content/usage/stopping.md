@@ -67,6 +67,8 @@ accepted and the account still holds everything. The report therefore separates 
 facts and never calls the book flat without a broker read that saw it:
 
 ```
+broker mode: PAPER
+ledger: /…/logs/position_ledger.jsonl (live-session ledger)
 FLATTEN
   halt set                  : yes
   orders cancelled          : yes
@@ -169,8 +171,10 @@ separate files on purpose and the default is the live one.
 quantred resume all                   # or a strategy name
 ```
 
-Then restart the engine. Nothing resumes on its own — that is the point of the state
-being durable.
+`resume <scope>` lifts only the halt of that scope, so `resume all` clears the `all`
+halt a flatten sets and nothing else. It then prints the halts still standing (new
+entries stay refused under each), or says none remain. Then restart the engine. Nothing
+resumes on its own — that is the point of the state being durable.
 
 ## After a flatten
 
@@ -185,7 +189,8 @@ being durable.
    unstated book.
 4. `quantred execution-report` — what the live path actually did: slippage,
    latency, submitted-versus-filled notional, and which refusals stopped a signal.
-5. Diagnose, fix, then `quantred resume all`.
+5. Diagnose, fix, then `quantred resume all`, and read what it prints: it lifts only the
+   `all` halt, and lists any strategy-scoped halts still refusing entries.
 
 ## Practise it
 
