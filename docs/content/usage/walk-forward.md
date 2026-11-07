@@ -290,12 +290,12 @@ journal — `logs/trials.db`. It's what makes campaign-wide counts answerable
 without reading the whole journal:
 
 ```bash
-quantred trials query --strategy demo_trend --symbols NVDA,AAPL,META
+quantred trials list --strategy demo_trend --symbols NVDA,AAPL,META
 quantred trials status      # row/journal-line counts + a drift check
 quantred trials rebuild     # rebuild from the journal — safe, it's derived
 ```
 
-`trials query --strategy ... --symbols ...` prints the campaign's real
+`trials list --strategy ... --symbols ...` prints the campaign's real
 `n_trials` — useful to check by hand, since the promotion gate above still only
 counts the current run (deliberately: wiring the campaign count into the gate
 automatically would make every gate strictly harder and reclassify configs

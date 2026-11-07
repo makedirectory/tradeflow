@@ -213,7 +213,7 @@ for asking how robust your strategy is.
 Each run records one **trial** — the config it evaluated, on this universe and
 window — to `logs/research_journal.jsonl`, and is dual-written into the
 [trial store](../engineering/walk-forward#the-trial-store) (`logs/trials.db`) so
-`trials query` can report the real campaign-wide trial count on demand — the
+`trials list` can report the real campaign-wide trial count on demand — the
 gate itself still counts only the current run (see the
 [open item](../engineering/walk-forward#n_trials-still-counts-a-run-at-gate-time-not-a-campaign)).
 Pass `--no-journal` to keep a throwaway or reproducibility run out of that total.
