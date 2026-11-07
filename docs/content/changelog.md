@@ -243,6 +243,15 @@ backtests included, though most never touched a boundary - drop out of the defau
   requested". No schema change: the index never held it. `trials list` carries no
   holdout marker - a row per trial has no room for one, and reading the journal for
   every listed row is the cost it is built to avoid.
+- `trials show` lists a trial's proposed book - symbols and weights, largest first,
+  with active weights when stored - instead of only "8 names", which is where a verdict's
+  next step sends the reader. Past 25 names it says how many it left out; `--json`
+  carries all of them.
+- `trials compare` names each series' kind in its header (`walkforward: stitched
+  out-of-sample folds`, `backtest: full-window, in-sample`) and flags a pair of unlike
+  series, instead of correlating a stitched out-of-sample series with a full-window
+  in-sample one as though they measured the same thing. The MCP `compare_trials` payload
+  carries `kinds_differ` and each pair's `unlike_basis`.
 - `trials show` prints drawdown and trade counts in the units `trials campaign` uses.
 - `trials list --since/--until` says how many rows it excluded because their recorded
   time is unknown, rather than dropping them silently.

@@ -246,6 +246,58 @@ def test_the_refusal_for_a_failed_run_points_at_a_command_that_exists(tmp_path, 
     assert "Re-run `trials show`" not in message
 
 
+# --- show prints the proposed book, not only its size ---------------------------------
+def test_show_lists_the_proposed_book_not_just_how_many_names(store):
+    """A verdict's next step sends the reader to `trials show` for the proposed book, which
+    printed "8 names"."""
+    _record(store, "vd", kind="verdict")
+    book = {f"S{i}": 0.1 + i * 0.01 for i in range(8)}
+    store.record_weights("vd", {"as_of": "2024-12-31", "weights": book, "active_weights": {"S7": 0.02}})
+    text = format_trial_detail(store.get_trial("vd"))
+    assert "8 names" in text
+    assert "S7" in text and "17.00%" in text  # largest first, with its weight
+    assert text.index("S7") < text.index("S0")
+    assert "total" in text
+
+    many = {f"X{i:02d}": 0.01 for i in range(40)}
+    _record(store, "wide", kind="verdict", params={"fast": 2})
+    store.record_weights("wide", {"as_of": "2024-12-31", "weights": many})
+    wide = format_trial_detail(store.get_trial("wide"))
+    assert "15 more name(s) not shown" in wide  # truncated loudly
+
+
+# --- comparing unlike series says so ----------------------------------------------------
+def test_comparing_a_stitched_oos_series_with_a_full_window_one_is_flagged():
+    import numpy as np
+
+    from tradeflow.analytics.reporting import format_series_comparison
+    from tradeflow.analytics.series_comparison import compare_series
+
+    dates = [f"2024-{1 + i // 28:02d}-{1 + i % 28:02d}" for i in range(120)]
+    rng = np.random.default_rng(3)
+
+    def entry(trial_id, kind):
+        return {
+            "trial_id": trial_id,
+            "dates": dates,
+            "values": list(rng.normal(0, 0.01, 120)),
+            "accounting": 6,
+            "strategy": "demo_trend",
+            "kind": kind,
+        }
+
+    unlike = compare_series([entry("wf", "walkforward"), entry("bt", "backtest")])
+    assert unlike["kinds_differ"] is True and unlike["pairs"][0]["unlike_basis"] is True
+    text = format_series_comparison(unlike)
+    assert "walkforward: stitched out-of-sample folds" in text
+    assert "backtest: full-window, in-sample" in text
+    assert "UNLIKE SERIES" in text
+
+    like = compare_series([entry("a", "walkforward"), entry("b", "research")])
+    assert like["kinds_differ"] is False and like["pairs"][0]["unlike_basis"] is False
+    assert "UNLIKE SERIES" not in format_series_comparison(like)
+
+
 # --- a date bound discloses the rows it could not place -------------------------------
 def test_a_date_filter_counts_the_rows_with_no_recorded_time(store):
     """`--since` said "12 matching" of 14: the two rows with an unknown timestamp

@@ -217,6 +217,23 @@ def _deduplicate(entries: Sequence[Dict[str, Any]]) -> "tuple[List[Dict[str, Any
     return list(seen.values()), duplicates
 
 
+#: What a stored return series *is*, by trial kind. A walk-forward's is the out-of-sample
+#: folds stitched together; a backtest's is one pass over its whole window, which is
+#: in-sample. Correlating the two is arithmetic over unlike things, so every comparison
+#: names each series' kind and says when the kinds differ.
+SERIES_BASIS = {
+    "walkforward": "stitched out-of-sample folds",
+    "research": "stitched out-of-sample folds",
+    "backtest": "full-window, in-sample",
+    "optimize": "full-window, in-sample",
+}
+
+
+def series_basis(kind: Optional[str]) -> Optional[str]:
+    """What a series of this trial kind measures, or ``None`` for a kind not listed."""
+    return SERIES_BASIS.get(kind or "")
+
+
 def compare_series(
     entries: Sequence[Dict[str, Any]],
     *,
@@ -265,7 +282,14 @@ def compare_series(
         matrix[i][j] = matrix[j][i] = pair["correlation"]
 
     compared = [p for p in pairs if p["status"] == COMPARED]
+    kind_of = {entry.get("trial_id"): entry.get("kind") for entry in entries}
+    for pair in pairs:
+        pair["kind_a"], pair["kind_b"] = kind_of.get(pair["a"]), kind_of.get(pair["b"])
+        # Unlike bases, not unlike kinds: two walk-forwards and a research round are all
+        # out-of-sample series, and a note on every such pair would be noise.
+        pair["unlike_basis"] = series_basis(pair["kind_a"]) != series_basis(pair["kind_b"])
     return {
+        "kinds_differ": len({series_basis(k) for k in kind_of.values()}) > 1,
         "duplicate_trial_ids": duplicates,
         "min_overlap": min_overlap,
         "across_accounting": across_accounting,

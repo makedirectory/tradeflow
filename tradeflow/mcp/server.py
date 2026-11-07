@@ -1796,8 +1796,12 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         computed, because in a correlation matrix a zero is the strong claim that two
         results move independently — exactly what a refusal cannot say. Every
         correlation carries a Fisher-z `interval`; quote it, since one resting on a
-        short overlap is wide and a bare coefficient hides that. Journals nothing;
-        read-only.
+        short overlap is wide and a bare coefficient hides that.
+
+        Each series carries its trial `kind`, and `kinds_differ` / a pair's `unlike_basis`
+        flag a comparison of unlike things: a walk-forward's series is stitched
+        out-of-sample folds, a backtest's is one in-sample pass over its window.
+        Journals nothing; read-only.
         """
         # `across_accounting` decides whether cross-era pairs were computed or refused,
         # so an audit trail without it cannot tell a default comparison from one that

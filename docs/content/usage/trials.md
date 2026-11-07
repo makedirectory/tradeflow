@@ -105,6 +105,10 @@ That last section is the reverse of the memoization lookup: a number served from
 the store is traceable in both directions, from the reuse back to its origin and
 from the origin forward to everything it was reused for.
 
+For a trial that proposed a portfolio (a `verdict`), `show` lists the **proposed book**
+itself — each symbol and its weight, largest first, plus active weights when stored — and
+says how many names it left out past 25. `--json` carries the whole book.
+
 A walk-forward's `show` and `campaign` also report its **holdout**, read from the
 journal (the index never kept it): the days, Sharpe, CAGR and trade count it was scored
 at, or one of three honest absences — `none requested`, `requested but produced no
@@ -384,8 +388,8 @@ quantred trials compare a1b2c3d4e5f6 b2c3d4e5f6a1
 
 ```
 === Return-series comparison ===
-  a1b2c3d4e5f6     300 periods, 2024-01-02 → 2024-10-27  (v5, demo_trend)
-  b2c3d4e5f6a1     300 periods, 2024-01-02 → 2024-10-27  (v5, demo_trend)
+  a1b2c3d4e5f6     300 periods, 2024-01-02 → 2024-10-27  (v5, demo_trend, walkforward: stitched out-of-sample folds)
+  b2c3d4e5f6a1     300 periods, 2024-01-02 → 2024-10-27  (v5, demo_trend, walkforward: stitched out-of-sample folds)
 
   a1b2c3d4e5f6 vs b2c3d4e5f6a1  overlap 300 periods, 2024-01-02..2024-10-27
       correlation +0.98 [+0.98, +0.99]
@@ -396,7 +400,10 @@ quantred trials compare a1b2c3d4e5f6 b2c3d4e5f6a1
   parameterised — promoting both counts a single result as two.
 ```
 
-*(Illustrative figures.)* Two candidates that correlate near 1.0 are one candidate. A
+*(Illustrative figures.)* Each series names its kind, and a pair of unlike series — a
+stitched out-of-sample walk-forward against a full-window in-sample backtest — is flagged
+`UNLIKE SERIES`, because the overlap between them is arithmetic over two different
+things. Two candidates that correlate near 1.0 are one candidate. A
 campaign that promotes both believes it has two findings and has one.
 
 **Pairs get refused, not caveated.** A correlation is a claim about a relationship and

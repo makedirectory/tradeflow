@@ -910,6 +910,39 @@ def describe_trade_table(trades: Optional[Dict[str, Any]]) -> str:
     return describe_trade_table_source(describe_source(trades))
 
 
+#: Names listed under a stored book before the rest are summarised. A verdict over a wide
+#: universe proposes dozens of names; the full book is always in `--json`.
+_BOOK_LINES = 25
+
+
+def _book_lines(weights: Optional[Dict[str, Any]]) -> List[str]:
+    """The proposed book itself - symbols and weights, largest first.
+
+    `show` is where the verdict's next step sends a reader asking what the proposed book
+    *is*, and a count ("8 names") answers a different question. Truncated loudly, with the
+    remainder and where to get all of it, never quietly.
+    """
+    book = (weights or {}).get("weights") or {}
+    if not book:
+        return []
+    active = (weights or {}).get("active_weights") or {}
+    ranked = sorted(book.items(), key=lambda item: (-abs(float(item[1])), item[0]))
+    as_of = (weights or {}).get("as_of")
+    lines = ["", f"  Proposed book{f' (as of {str(as_of)[:10]})' if as_of else ''}:"]
+    header = f"    {'symbol':<10}{'weight':>9}" + (f"{'active':>9}" if active else "")
+    lines.append(header)
+    for symbol, weight in ranked[:_BOOK_LINES]:
+        row = f"    {symbol:<10}{float(weight):>9.2%}"
+        if active:
+            row += f"{_cell(active.get(symbol), '{:+.2%}'):>9}"
+        lines.append(row)
+    if len(ranked) > _BOOK_LINES:
+        rest = len(ranked) - _BOOK_LINES
+        lines.append(f"    … {rest} more name(s) not shown (`trials show --json` carries the whole book).")
+    lines.append(f"    {'total':<10}{sum(float(w) for w in book.values()):>9.2%}")
+    return lines
+
+
 def format_trial_detail(trial: Dict[str, Any]) -> str:
     """Everything the store knows about one trial.
 
@@ -985,6 +1018,7 @@ def format_trial_detail(trial: Dict[str, Any]) -> str:
         + (", with active weights" if weights.get("active_weights") else "")
     )
     lines.append(f"    trade table   : {describe_trade_table(trial.get('trades'))}")
+    lines.extend(_book_lines(weights))
 
     reused = trial.get("reused_by") or []
     lines.append("")
@@ -1150,6 +1184,14 @@ def _money(value: Any) -> str:
 NEAR_DUPLICATE = 0.80
 
 
+def _series_kind(kind: Optional[str]) -> str:
+    """``walkforward: stitched out-of-sample folds``, or just the kind when unlisted."""
+    from tradeflow.analytics.series_comparison import series_basis
+
+    basis = series_basis(kind)
+    return f"{kind or NOT_RECORDED}: {basis}" if basis else str(kind or NOT_RECORDED)
+
+
 def format_series_comparison(report: Dict[str, Any]) -> str:
     """Pairwise correlation of recorded return series, refusals included.
 
@@ -1163,7 +1205,8 @@ def format_series_comparison(report: Dict[str, Any]) -> str:
             lines.append(
                 f"  {str(summary['trial_id'])[:14]:14} {summary['periods']:>5} periods, "
                 f"{str(summary['start'])[:10]} → {str(summary['end'])[:10]}  "
-                f"(v{summary.get('accounting')}, {summary.get('strategy') or NOT_RECORDED})"
+                f"(v{summary.get('accounting')}, {summary.get('strategy') or NOT_RECORDED}, "
+                f"{_series_kind(summary.get('kind'))})"
             )
         else:
             lines.append(f"  {str(summary['trial_id'])[:14]:14} {NOT_RECORDED} {summary['reason']}")
@@ -1191,7 +1234,19 @@ def format_series_comparison(report: Dict[str, Any]) -> str:
         lines.append(f"{head}  {span}\n      correlation {pair['correlation']:+.2f}{band}")
         if pair.get("comparable") is False:
             lines.append(f"      {pair['reason']}")
+        if pair.get("unlike_basis"):
+            lines.append(
+                f"      UNLIKE SERIES — {_series_kind(pair.get('kind_a'))} against "
+                f"{_series_kind(pair.get('kind_b'))}: the overlap is arithmetic over two "
+                "different things, not two estimates of one."
+            )
 
+    if report.get("kinds_differ"):
+        lines.append(
+            "  The trials compared are not all the same kind of result: a walk-forward or research "
+            "series is stitched out-of-sample\n  folds, a backtest or optimize series is one "
+            "in-sample pass over its window."
+        )
     lines.append("")
     lines.append(
         f"  {report.get('n_compared', 0)} of {report.get('n_pairs', 0)} pair(s) compared; "
