@@ -50,7 +50,14 @@ definition, `services.analysis.backtest_run_key`, which both call. It was missin
 key entirely, so a run at $100,000 answered a request at $4,000; adding it changed every
 backtest's identity, so their memos miss once. `walk_forward_recipe` takes capital and
 benchmark as required arguments for the same reason.
-*Guarded by* `tests/test_surface_parity.py`.
+
+The optimizer's per-candidate memo is a third key of the same kind, and it held params
+and costs only, so a search at one capital was served to a request at another.
+`ParameterOptimizer.candidate_identity` is its one definition (cost, the resolved book
+via `limits_key`, the capital via `backtest_run_key`); the lookup, `cmd_optimize`, and
+`run_optimization` all read it, and the walk-forward's inner search inherits it. Candidates
+stored before this miss once.
+*Guarded by* `tests/test_surface_parity.py`, `tests/test_optimizer_book.py`.
 
 **A request's window ↔ the surface that parsed it** — *converged*. The CLI read
 `--start/--end` as exchange-zone instants and the MCP tool's own `_parse_date` left them

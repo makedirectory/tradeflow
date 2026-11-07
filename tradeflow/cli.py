@@ -1344,7 +1344,7 @@ def cmd_optimize(args) -> None:
                 symbols=universe,
                 start=args.start,
                 end=args.end,
-                params={**defaults, **searched, "_cost": _cost_key(args, vintage)},
+                params={**defaults, **searched, **optimizer.candidate_identity()},
                 metrics=metrics,
                 objective=args.objective,
                 context=_run_context(args),

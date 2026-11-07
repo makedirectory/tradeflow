@@ -325,6 +325,27 @@ class ParameterOptimizer:
         )
         return result.metrics
 
+    def candidate_identity(self) -> Dict[str, Any]:
+        """What a candidate's result depends on besides its params, under reserved keys.
+
+        One definition for the lookup in :meth:`_find_cached` and for the journal line a
+        caller writes after the search, because a memo is only ever found by the key it
+        was recorded under. The key held the params and the cost model; the capital and
+        the book were missing, and both change the result (whole-share rounding scales
+        with capital, and a one-position book is a different strategy from an
+        eight-position one), so a search at one capital was answered from a search at
+        another. The shapes are the ones backtests and walk-forwards already key by.
+        """
+        # Lazy: services sit above this layer, and these two are the shared definitions.
+        from tradeflow.services.analysis import backtest_run_key, limits_key
+        from tradeflow.strategies.base import resolve_book
+
+        return {
+            "_cost": self.cost_key,
+            **limits_key(resolve_book(self.strategy_class, self.position_limits)),
+            **backtest_run_key(self.initial_capital, None, False),
+        }
+
     def _find_cached(
         self, params: Dict[str, Any], symbols, start, end, objective: Optional[str]
     ) -> Optional[Dict[str, float]]:
@@ -343,7 +364,7 @@ class ParameterOptimizer:
 
         found = self.trial_store.find(
             strategy=self.strategy_name,
-            params={**params, "_cost": self.cost_key},
+            params={**params, **self.candidate_identity()},
             symbols=symbols,
             window_start=start,
             window_end=end,

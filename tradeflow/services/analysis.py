@@ -1070,7 +1070,7 @@ def run_optimization(
                 symbols=symbols,
                 start=start,
                 end=end,
-                params={**defaults, **searched, "_cost": cost_key},
+                params={**defaults, **searched, **opt.candidate_identity()},
                 metrics=metrics,
                 objective=objective,
                 # The service path journalled none of this, so an optimization run over

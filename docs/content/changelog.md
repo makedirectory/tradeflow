@@ -97,6 +97,12 @@ backtests included, though most never touched a boundary - drop out of the defau
   used the book the config asked for, so parameters were chosen for one book and
   validated on another. The search, the holdout fit and the parallel workers now take the
   validator's book.
+- **Optimize candidates are keyed on capital and book.** A stored per-candidate result
+  was found by params and costs alone, so a search at one capital (or book) answered a
+  request at another with the first's numbers. The key now carries the same capital and
+  book shapes backtests use, so candidates stored at a different capital or book miss
+  once and are recomputed; the journal line and the lookup share one definition. The
+  walk-forward's inner search shares the key.
 
 ### Honest labels
 

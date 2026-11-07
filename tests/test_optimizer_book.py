@@ -16,6 +16,7 @@ from datetime import datetime
 import pytest
 
 from tests.fakes import FakeMarketData
+from tests.test_walk_forward import PeriodicStrategy
 from tradeflow.engine import backtest as backtest_module
 from tradeflow.marketdata.client import MarketDataClient
 from tradeflow.marketdata.synthetic import SyntheticMarketData
@@ -27,7 +28,6 @@ from tradeflow.optimization.parallel import DataSpec, EvalRequest, candidate_key
 from tradeflow.optimization.walk_forward import WalkForwardValidator
 from tradeflow.services import analysis, audit
 from tradeflow.services.registry import STRATEGIES
-from tests.test_walk_forward import PeriodicStrategy
 
 SYMBOLS = ["AAA", "BBB"]
 START, END = datetime(2024, 1, 2), datetime(2024, 9, 1)
@@ -125,3 +125,26 @@ def test_the_parallel_dispatch_carries_the_book_to_every_request(monkeypatch):
     optimizer.grid_search(SYMBOLS, START, END, "sharpe_ratio", max_evals=3)
     books = seen[backtest_module.__name__]
     assert books and set(books) == {5}
+
+
+# --- defect: candidate memos ignored capital and book ------------------------
+def _optimize(capital):
+    return analysis.run_optimization(
+        _client(), STRATEGY, SYMBOLS, START, END, method="grid", max_evals=3, capital=capital
+    )
+
+
+def test_a_candidate_scored_at_one_capital_is_not_served_to_another():
+    assert _optimize(100_000.0)["n_memoized"] == 0
+    other = _optimize(4_000.0)
+    assert other["n_memoized"] == 0
+    # The same request again is what the memo exists for.
+    assert _optimize(4_000.0)["n_memoized"] == other["n_trials"]
+
+
+def test_a_candidate_identity_changes_with_the_book_it_is_scored_at():
+    one = _optimizer(position_limits={"max_positions": 1}).candidate_identity()
+    eight = _optimizer(position_limits={"max_positions": 8}).candidate_identity()
+    assert one != eight
+    # No override resolves to the class book, so it keys as that book spelled out.
+    assert _optimizer().candidate_identity() == _optimizer(position_limits={}).candidate_identity()

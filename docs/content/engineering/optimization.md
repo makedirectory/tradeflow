@@ -62,6 +62,16 @@ Constraints are also enforced when a strategy is constructed, reading the same
 declaration, so there is one definition of the rule rather than a sampler's copy and a
 `initialize()` copy that can disagree.
 
+## Per-candidate memoization
+
+With a trial store, a candidate already scored is served from it rather than re-run.
+The key is the params plus `ParameterOptimizer.candidate_identity()`: the cost model, the
+resolved book, and the capital. The last two change the result (whole-share rounding
+scales with capital; a one-position book is a different strategy from an eight-position
+one), so a search at another capital or book is a miss, not a reuse. The journal line an
+optimize run writes uses the same identity, because a memo is only found under the key it
+was recorded with. A walk-forward's inner search shares this key.
+
 ## Screening, before optimizing
 
 `services.analysis.run_screen` is a sweep that **journals nothing**. It builds a
