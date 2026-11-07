@@ -116,6 +116,10 @@ def test_both_surfaces_report_the_same_prerequisites_and_evidence(monkeypatch, c
     cli_evidence = json.loads(json.dumps(cli_evidence))
 
     assert mcp_evidence is not None
+    # The one field that differs on purpose: with no bootstrap input, each surface says
+    # why in its own terms (the MCP tool never takes one). Everything else must agree.
+    for evidence in (mcp_evidence, cli_evidence):
+        evidence["prerequisites"]["checks"]["family_bootstrap"].pop("note")
     for key in (
         "prerequisites",
         "excess_return_by_fold",

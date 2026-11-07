@@ -238,3 +238,13 @@ def test_the_cli_hands_the_configs_book_to_the_evidence(monkeypatch, tmp_path, c
     argv += ["--folds", "3", "--max-evals", "3", "--benchmark", "SPY", "--force", "--no-journal"]
     cli.cmd_walkforward(cli.parse_cli(argv))
     assert seen["limits"] == {"max_positions": 3}
+
+
+# --- 6. the bootstrap note agrees with the description -------------------------------
+def test_the_family_bootstrap_note_says_this_surface_supplies_no_bootstrap():
+    from tests.test_walk_forward_evidence_parity import _over_mcp
+
+    check = _over_mcp()["evidence"]["prerequisites"]["checks"]["family_bootstrap"]
+    assert check["evaluated"] is False
+    assert "does not take" in check["note"]
+    assert "available" not in check["note"]

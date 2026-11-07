@@ -303,6 +303,7 @@ def promotion_prerequisites(
     benchmark_ir: Optional[float] = None,
     benchmark_excess_pct: Optional[float] = None,
     limits: Optional[Dict[str, float]] = None,
+    bootstrap_unavailable: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Checks a candidate should clear before paper, reported beside ``promotable``.
 
@@ -313,6 +314,10 @@ def promotion_prerequisites(
     ``ready`` is ``None`` when nothing could be evaluated, ``False`` when an evaluated
     check failed, ``True`` only when every evaluated check passed - and it never
     implies the unevaluated ones would have.
+
+    ``bootstrap_unavailable`` is why a surface supplies no bootstrap at all. Without it
+    the family check says "0 available", which reads as a campaign too thin to test
+    when the truth is that this surface never asked.
     """
     limit = {**DEFAULT_PREREQUISITES, **(limits or {})}
     checks: Dict[str, Any] = {}
@@ -337,7 +342,9 @@ def promotion_prerequisites(
         "passed": enough_family and family_p is not None and float(family_p) <= limit["max_family_p"],
         "n_used": n_used,
         "note": (
-            f"needs {int(limit['min_family_trials'])} usable return-series trials to mean "
+            bootstrap_unavailable
+            if bootstrap is None and bootstrap_unavailable
+            else f"needs {int(limit['min_family_trials'])} usable return-series trials to mean "
             f"anything; {n_used} available"
             if not enough_family
             else "still notable once every trial the campaign tried is priced in"

@@ -1619,6 +1619,11 @@ def run_walk_forward(
             borrow_bps=borrow_bps,
             gates=gates,
             position_limits=position_limits,
+            bootstrap_unavailable=(
+                "not evaluated on this surface: the family bootstrap needs a bootstrap "
+                "input that this tool does not take, so it says nothing about how many "
+                "trials the campaign has"
+            ),
         )
         if result.folds
         else None
@@ -2424,6 +2429,7 @@ def walk_forward_evidence(
     bootstrap: Optional[Dict[str, Any]] = None,
     gates: Optional[Dict[str, float]] = None,
     position_limits: Optional[Dict[str, Any]] = None,
+    bootstrap_unavailable: Optional[str] = None,
 ) -> Dict[str, Any]:
     """What a candidate should clear before paper, beside ``promotable`` rather than in it.
 
@@ -2475,6 +2481,7 @@ def walk_forward_evidence(
         bootstrap=bootstrap,
         benchmark_ir=benchmark_ir,
         benchmark_excess_pct=benchmark_excess,
+        bootstrap_unavailable=bootstrap_unavailable,
     )
     excess = result.excess_return_by_fold()
     gate_report = result.gate_report(gates)
