@@ -393,13 +393,31 @@ def log_backtest_report(
     )
 
 
+def _parse_iso(text: str) -> datetime:
+    """An ISO timestamp, on every supported Python.
+
+    ``datetime.fromisoformat`` before 3.11 refuses a ``Z`` suffix and fractional seconds
+    of other than three or six digits, so a stamp such as ``03:00:00.5+00:00`` printed
+    as raw UTC text on 3.10 and as New York time on 3.11. pandas reads both.
+    """
+    import pandas as pd
+
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            return pd.Timestamp(text).to_pydatetime()
+        except (ValueError, TypeError) as exc:
+            raise ValueError(str(exc)) from exc
+
+
 def _age_str(ts: Optional[str]) -> str:
     """A human ``"N days"``/``"N hours"`` age for an ISO timestamp; ``"unknown"``
     when it can't be parsed - never let a formatting failure block the notice."""
     if not ts:
         return "unknown age"
     try:
-        when = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        when = _parse_iso(ts)
         if when.tzinfo is None:
             when = when.replace(tzinfo=timezone.utc)
         delta = datetime.now(timezone.utc) - when
@@ -756,7 +774,7 @@ def _local_ts(value: Any) -> str:
     from tradeflow.utils.timeutils import NEW_YORK
 
     try:
-        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        parsed = _parse_iso(str(value))
     except ValueError:
         return str(value)[:19]
     if parsed.tzinfo is None:

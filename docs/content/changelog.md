@@ -106,6 +106,8 @@ backtests included, though most never touched a boundary - drop out of the defau
 
 ### Getting started
 
+- The Docker image no longer re-syncs its environment at container start (every start needed the network, and could rebuild without the extras the image carries); a `.dockerignore` allowlist keeps `.env`, `specs/`, `configs/`, `logs/` and `.git` out of the build context; inside the container, instructions name `quantred` and the host `.env` rather than `make` targets; the compose MCP healthcheck no longer needs keys. Verified by building and running the smoke checks on a Linux amd64 host.
+- Tested on Python 3.10, 3.11, 3.12, 3.13 and 3.14; the classifiers now list all five. A trial timestamp printed as raw UTC text on 3.10, whose ISO parser is stricter.
 - The bar cache without the `store` extra stops with the install command instead of a `pyarrow` traceback (following an offline miss's own `cache warm` hint used to crash). `mcp` without its extra says so before logging anything, and `init --check` leaves no directory behind.
 - `init --check` says what is ready for which task (demo, data, research, MCP) instead
   of one pass/fail and names the missing capability. `init --check --for <task>` prints
