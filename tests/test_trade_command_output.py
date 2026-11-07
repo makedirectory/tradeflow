@@ -259,3 +259,20 @@ def test_the_ledger_help_says_the_default_resolves_under_the_state_root():
     for name in ("reconcile", "execution-report", "flatten"):
         help_text = next(a.help for a in commands[name]._actions if a.dest == "ledger")
         assert "state root" in help_text
+
+
+def test_resume_lists_the_halts_that_still_stand(state, capsys):
+    """After `halt --reason a` (all) and `halt --reason b AAPL`, `resume` printed "Halt
+    lifted for 'all'. Trading may resume." although AAPL stayed halted."""
+    cli.cmd_halt(argparse.Namespace(reason="a", scope="all"))
+    cli.cmd_halt(argparse.Namespace(reason="b", scope="AAPL"))
+    capsys.readouterr()
+
+    cli.cmd_resume(argparse.Namespace(scope="all"))
+    out = capsys.readouterr().out
+    assert "Still halted" in out and "AAPL" in out
+    assert "Trading may resume" not in out
+
+    cli.cmd_resume(argparse.Namespace(scope="AAPL"))
+    out = capsys.readouterr().out
+    assert "No halts remain. Trading may resume." in out

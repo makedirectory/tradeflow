@@ -296,6 +296,8 @@ backtests included, though most never touched a boundary - drop out of the defau
 - `reconcile --ledger` and `execution-report --ledger` refuse a path that does not exist
   instead of reporting an empty ledger as a clean book; a default ledger not yet written
   is labelled, and the `--ledger` help says the default is under the state root.
+- `resume` lists the halts still in force after lifting one, and only says trading may
+  resume when none remain.
 
 ## 2.3.0 — 2026-09-16
 

@@ -5409,10 +5409,24 @@ def cmd_resume(args) -> None:
     """Lift a halt."""
     from tradeflow.execution.halt import HaltState
 
-    if HaltState().clear(args.scope):
-        print(f"Halt lifted for {args.scope!r}. Trading may resume.")
+    state = HaltState()
+    lifted = state.clear(args.scope)
+    remaining = state.list()
+    if lifted:
+        print(f"Halt lifted for {args.scope!r}.")
     else:
         print(f"No halt was in force for {args.scope!r}; nothing to lift.")
+    # Said either way: "Trading may resume" used to follow lifting one halt while others
+    # still refused entries, and a no-op resume is where an operator most needs to see
+    # what is in fact still standing.
+    if remaining:
+        print("Still halted (new entries refused):")
+        for halt in remaining:
+            print(f"  {halt}")
+    elif lifted:
+        print("No halts remain. Trading may resume.")
+    else:
+        print("No halts are in force.")
 
 
 def cmd_halts(args) -> None:
