@@ -1658,6 +1658,26 @@ def cmd_walkforward(args) -> None:
                     )
                 )
                 _print_cached_walkforward(cached)
+                if getattr(args, "html", None):
+                    from tradeflow.services.analysis import memoized_walk_forward_payload
+                    from tradeflow.services.audit import new_run_id
+
+                    # The same reduced payload the MCP tool returns, so a reused run
+                    # renders instead of silently producing no file.
+                    _write_html(
+                        args,
+                        memoized_walk_forward_payload(
+                            cached,
+                            run_id=new_run_id(),
+                            strategy=args.strategy,
+                            symbols=universe,
+                            start=args.start,
+                            end=args.end,
+                            benchmark=getattr(args, "benchmark", None),
+                            timeframe=timeframe,
+                        ),
+                        "walkforward",
+                    )
                 return
 
         # Net of transaction cost by default; --gross validates on gross returns, which

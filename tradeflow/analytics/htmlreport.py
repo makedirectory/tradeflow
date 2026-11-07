@@ -114,6 +114,10 @@ def _assert_shape(result: Dict[str, Any], kind: str) -> None:
             )
         return
     required = {"backtest": "metrics", "walkforward": "folds", "info": "mean_ic"}[kind]
+    # A reused walk-forward keeps the OOS aggregate and not the folds; it is a legitimate
+    # (reduced) result of this kind, not a mismatched payload.
+    if kind == "walkforward" and result.get("memoized") and "oos_aggregate" in result:
+        return
     if required not in result:
         raise ReportKindError(
             f"This does not look like a {kind} result: no {required!r} field. "
@@ -826,8 +830,60 @@ def _evidence_card(evidence: Optional[Dict[str, Any]]) -> str:
     )
 
 
+def _reused_walkforward_sections(result: Dict[str, Any]) -> List[str]:
+    """The reduced report for a reused walk-forward: what the trial store kept, and a
+    plain list of what it did not. The REUSED banner is the header's; this is the body."""
+    promotable = result.get("promotable")
+    if promotable is None:
+        text, tone = "Promotability was not recorded for the original run", "warn"
+    elif promotable:
+        text, tone = "Recorded as PROMOTABLE (statistical gates only) by the original run", "warn"
+    else:
+        text, tone = "Recorded as NOT PROMOTABLE by the original run", "fail"
+    not_retained = result.get("not_retained") or [
+        "per-fold detail",
+        "promotion prerequisites (evidence)",
+        "holdout",
+        "gate checks",
+    ]
+    facts = [
+        ("Efficiency (OOS / IS)", _recorded(result.get("efficiency"), "{:.3f}")),
+        ("Trials total", _recorded(result.get("n_trials_total"), "{:,.0f}")),
+        ("Original trial", result.get("trial_id") or NOT_RECORDED),
+        ("Original recorded at", result.get("trial_ts") or NOT_RECORDED),
+    ]
+    return [
+        _card(
+            "Verdict (from the original run)",
+            f'<p class="verdict {tone}">{esc(text)}</p>'
+            + _kv(facts)
+            + "<p>The individual gate checks were not retained, so no pass/fail table is shown. "
+            "Re-run with force to re-verify.</p>",
+            tone=tone,
+        ),
+        _card(
+            "Not retained in a reused result",
+            "<ul>"
+            + "".join(f"<li>{esc(item)}</li>" for item in not_retained)
+            + "</ul>"
+            + f"<p>{esc(result.get('evidence_unavailable') or '')}</p>",
+            tone="warn",
+        ),
+        _card(
+            "Out-of-sample aggregate",
+            _table(
+                ["Metric", "Value"],
+                [[k, _metric_cell(k, v)] for k, v in sorted((result.get("oos_aggregate") or {}).items())],
+            ),
+        ),
+    ]
+
+
 def _walkforward_sections(result: Dict[str, Any], extras: Dict[str, Any]) -> List[str]:
     from tradeflow.analytics import charts
+
+    if result.get("memoized") and "folds" not in result:
+        return _reused_walkforward_sections(result)
     from tradeflow.optimization.walk_forward import format_gate_value
 
     gate_report = result.get("gate_report") or {}

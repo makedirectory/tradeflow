@@ -1446,28 +1446,16 @@ def run_walk_forward(
                 require_trade_table=record_trades,
             )
             if cached is not None:
-                metrics = json.loads(cached["metrics_json"] or "{}")
-                return {
-                    "run_id": run_id,
-                    "strategy": strategy,
-                    "symbols": list(symbols),
-                    "window": {"start": start.isoformat(), "end": end.isoformat()},
-                    "memoized": True,
-                    "trial_id": cached["id"],
-                    "trial_ts": cached["ts"],
-                    "note": "Served from an identical prior validation (same recipe), not re-run. "
-                    "Pass force=True to re-verify — per-fold detail isn't retained, only the "
-                    "OOS aggregate below.",
-                    # The description promises `evidence: null` for a reused answer; the key
-                    # was simply absent, which a strict reader cannot tell from an old schema.
-                    "evidence": None,
-                    "evidence_unavailable": "a reused result keeps no per-fold detail; pass force=true to "
-                    "re-run it with the promotion prerequisites",
-                    "oos_aggregate": _jsonable(metrics),
-                    "promotable": bool(cached["promotable"]) if cached["promotable"] is not None else None,
-                    "efficiency": cached["efficiency"],
-                    "n_trials_total": cached["n_trials_in_session"],
-                }
+                return memoized_walk_forward_payload(
+                    cached,
+                    run_id=run_id,
+                    strategy=strategy,
+                    symbols=symbols,
+                    start=start,
+                    end=end,
+                    benchmark=benchmark,
+                    timeframe=cls.create_with_defaults().config.get("timeframe"),
+                )
 
         validator = WalkForwardValidator(
             cls,
@@ -2162,6 +2150,58 @@ NO_OOS_TRADES_NOTE = (
     "No out-of-sample trades were made: every aggregate metric below is 0.0 because nothing "
     "was measured, not because performance was flat, and no gate computed from them is evidence."
 )
+
+
+WALK_FORWARD_NOT_RETAINED = (
+    "per-fold detail",
+    "promotion prerequisites (evidence)",
+    "holdout",
+    "gate checks",
+)
+
+
+def memoized_walk_forward_payload(
+    cached: Mapping[str, Any],
+    *,
+    run_id: str,
+    strategy: str,
+    symbols: Sequence[str],
+    start: datetime,
+    end: datetime,
+    benchmark: Optional[str] = None,
+    timeframe: Optional[str] = None,
+) -> Dict[str, Any]:
+    """A reused walk-forward as a payload that says what it no longer holds.
+
+    The one builder both the CLI and the service call, so a reused answer reads the same
+    over either surface and the HTML report can render it. ``not_retained`` names what the
+    trial store never kept; ``benchmark``/``timeframe`` are from the request.
+    """
+    metrics = json.loads(cached["metrics_json"] or "{}")
+    return {
+        "run_id": run_id,
+        "strategy": strategy,
+        "symbols": list(symbols),
+        "window": {"start": start.isoformat(), "end": end.isoformat()},
+        "memoized": True,
+        "trial_id": cached["id"],
+        "trial_ts": cached["ts"],
+        "note": "Served from an identical prior validation (same recipe), not re-run. "
+        "Pass force=True to re-verify — per-fold detail isn't retained, only the "
+        "OOS aggregate below.",
+        # The description promises `evidence: null` for a reused answer; the key
+        # was simply absent, which a strict reader cannot tell from an old schema.
+        "evidence": None,
+        "evidence_unavailable": "a reused result keeps no per-fold detail; pass force=true to "
+        "re-run it with the promotion prerequisites",
+        "not_retained": list(WALK_FORWARD_NOT_RETAINED),
+        "benchmark": benchmark,
+        "timeframe": timeframe,
+        "oos_aggregate": _jsonable(metrics),
+        "promotable": bool(cached["promotable"]) if cached["promotable"] is not None else None,
+        "efficiency": cached["efficiency"],
+        "n_trials_total": cached["n_trials_in_session"],
+    }
 
 
 def walk_forward_payload(
