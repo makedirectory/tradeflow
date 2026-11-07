@@ -49,7 +49,7 @@ These aren't built, but the design has a clear seam for each:
 1. Create `tradeflow/brokers/<vendor>/` implementing `Broker` (and optionally
    `MarketDataProvider`), mapping the SDK's objects to the project's vendor-neutral
    domain types (`Position`, `OrderResult`, `AccountSnapshot`, `BarEvent`, ...).
-2. Construct it in `main.build_data_and_broker()`.
+2. Construct it in `tradeflow.cli.build_data_and_broker` (`main.py` is only a shim).
 
 That's the whole change — `engine/`, `execution/`, `strategies/`, `scanners/`, and
 the optimizer are untouched. See [Broker abstraction](../engineering/broker-abstraction)

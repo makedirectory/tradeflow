@@ -34,7 +34,7 @@ goal ─▶ propose (Proposer) ─▶ hygiene gate ─▶ validate OUT-OF-SAMPLE
    **per session**: it resets when the process exits, so trials from earlier
    sessions do not raise the bar for this one at gate time. Every round is also
    dual-written into the [trial store](walk-forward.md#the-trial-store), so the
-   campaign-wide count is queryable by hand (`trials query`) even though it
+   campaign-wide count is queryable by hand (`trials list`) even though it
    isn't wired into the gate itself — see
    [the open item](walk-forward.md#n_trials-still-counts-a-run-at-gate-time-not-a-campaign).
    Read a deflated Sharpe as a lower bound on the deflation warranted.

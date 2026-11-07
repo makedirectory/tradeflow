@@ -19,9 +19,9 @@ Given `start`, `end`, and either `n_folds` or `(train_days, test_days)`:
 
 ```
 anchored (expanding IS):
-  fold k:  IS = [start ............ t_k]  | embargo |  OOS = (t_k+gap, t_k+gap+test]
+  fold k:  IS = [start ............ t_k]  | embargo |  OOS = [t_k+gap, t_k+gap+test)
 rolling (sliding IS, width = train_days):
-  fold k:  IS = [t_k-train, t_k]          | embargo |  OOS = (t_k+gap, t_k+gap+test]
+  fold k:  IS = [t_k-train, t_k]          | embargo |  OOS = [t_k+gap, t_k+gap+test)
 holdout: [end - holdout_days, end]  — carved off FIRST, excluded from every fold
 ```
 
@@ -29,19 +29,29 @@ The holdout is computed before fold generation and subtracted from the fold
 region, so it is provably disjoint from every IS/OOS window and never reaches an
 optimizer call.
 
+Every boundary is derived with `utils.timeutils.shift_days`, which adds days to a
+market date and stays at New York midnight across daylight saving. Each OOS window is
+half-open: `Fold.oos_end` is set one microsecond before the next boundary
+(`_JUST_BEFORE`), so consecutive folds share no bar.
+
 ## Correctness properties
 
 - **No fold-boundary leakage.** Each OOS backtest fetches `embargo` (≥ lookback)
   bars *before* `oos_start` so indicators are valid, but only trades entered
   at/after `oos_start` are counted (`_filter_trades_from`). The embargo separates
   IS from OOS.
+- **Boundaries are real midnights, and folds do not overlap.** Day arithmetic that
+  kept the January UTC offset put every boundary at 01:00 New York from March to
+  November, so a fold began a bar late; and a closed upper bound let the boundary bar's
+  return count in two folds. Both were fixed at accounting v6 (see
+  [the stamp](#the-accounting-stamp)).
 - **Variable-length folds ⇒ CAGR / annualized metrics**, never raw total return.
 - **Honest aggregate.** The OOS aggregate recomputes metrics over the
   concatenation of every fold's OOS trades and a stitched curve — cross-fold
   Sharpe/drawdown are real, not an average of per-fold numbers.
 - **Determinism.** The optimizer `seed` is threaded, so a run is reproducible.
 - **Prefetch once, slice per fold.** The full window (plus warmup) is fetched a
-  single time and sliced in memory per fold via `_PrefetchedProvider` — fetching
+  single time and sliced in memory per fold via `PrefetchedProvider` (also used by the causality probes) — fetching
   per fold would dominate the cost.
 
 ## Diagnostics
@@ -101,7 +111,7 @@ dangerous direction — the correction gets *weaker* the harder you search:
 | 3700 (a real campaign) | 0.43 | **FAIL** |
 
 Treat a gate-reported deflated Sharpe as a **lower bound on how much deflation
-is warranted**. `trials query --strategy ... --symbols ...` prints the real
+is warranted**. `trials list --strategy ... --symbols ...` prints the real
 campaign-wide `n_trials` on demand — worth checking by hand before trusting a
 gate pass — but wiring that number automatically into the gate itself is a
 separate, deliberately deferred decision: doing so makes every gate strictly
@@ -161,13 +171,20 @@ and precisely while iterating, which is when the tree is dirty. Every step of th
 lookup fails toward a redundant run, never toward a skipped one; `--force` bypasses it
 entirely.
 
-`python main.py trials status` reports row/journal-line counts and flags drift
+`trials status` reports row/journal-line counts and flags drift
 (a truncated or out-of-order journal); `trials rebuild` resyncs from scratch;
-`trials query --strategy ... --symbols ...` lists recent trials and, with both
-flags, the campaign's real `n_trials`. `--accounting` filters to one engine
+`trials list --strategy ... --symbols ...` lists recent trials and, with both
+flags, the campaign's real `n_trials` (`trials query` remains as an alias). `--accounting` filters to one engine
 [accounting version](#the-accounting-stamp) (default: the current one) — pass
 `--all-accounting` to see every version, but read the column before comparing
 rows across them; the numbers aren't on the same footing.
+
+The store's verbs are `list`, `show`, `best`, `analyze`, `compare`, `campaign`,
+`promote`, `status`, `rebuild`, `archive`, `archives` and `mark-contaminated`. Anywhere a
+trial id is taken, a unique prefix of at least four characters will do
+(`TrialStore.resolve_id`). `store.listing()` is the one listing definition behind both
+the CLI and the MCP tools; in-sample kinds are kept out of rankings, with the excluded
+counts reported.
 
 ### Why the thresholds are what they are
 
@@ -216,8 +233,17 @@ provenance block records the engine's `ACCOUNTING_VERSION`:
   at exit.
 - **2** — one merged timeline, one capital pool, per-bar mark-to-market, with per-step
   quantities annualized at the strategy's single-symbol timeframe rate.
-- **3** — current: per-step quantities annualize on the
+- **3** — per-step quantities annualize on the
   [merged timeline's own rate](engine.md#annualizing-per-step-quantities).
+- **4** — a signal is executed one bar after the bar that produced it. Through v3 a
+  signal from bar *i*'s close filled at bar *i*'s open, a one-bar look-ahead the
+  leakage probe could not see.
+- **5** — the book is marked at the bar's open for the decisions that transact at it
+  (exposure-cap admission) and at the close for the equity curve.
+- **6** — current: window boundaries stay at New York midnight across daylight saving
+  (via `shift_days`), and out-of-sample folds are half-open so no bar is counted in
+  two folds. Because the stamp is one number for every kind of result, v5 backtests
+  also leave the default listing.
 
 Records written before the field existed carry no version, so absence reads as 1 —
 which is exactly what they are. `load_config` warns when a stored version differs

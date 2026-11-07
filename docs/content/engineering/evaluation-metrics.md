@@ -55,10 +55,14 @@ zeroed and `benchmark_available` is `False`.
 
 ## Annualization
 
-Headline ratios take a `periods_per_year`. The backtest equity curve is resampled
-to daily P&L, so its returns are daily and `TRADING_DAYS_PER_YEAR` (252) is the
-correct factor. `Timeframe.periods_per_year()` exists for callers that work on
-bar-frequency returns directly.
+Headline ratios take a `periods_per_year`. The backtest does not resample: it
+annualizes its per-bar mark-to-market returns at the merged timeline's own step rate
+(`_step_periods_per_year`), the strategy's timeframe rate scaled by observed density —
+see [annualizing per-step quantities](engine.md#annualizing-per-step-quantities).
+Only `build_equity_curve`, the closed-trade curve behind a walk-forward's
+out-of-sample aggregate, resamples to calendar days; that is the case where
+`TRADING_DAYS_PER_YEAR` (252) applies. `Timeframe.periods_per_year()` exists for
+callers that work on bar-frequency returns directly.
 
 ## Known limitation (flagged in the glossary)
 
@@ -66,11 +70,11 @@ The risk metrics depend on which equity curve they were computed from, and two a
 in use:
 
 - **Bar-close marks.** A backtest, and each walk-forward fold, use the engine's own
-  curve, marked to market at every bar's close. A loss inside an open position counts,
+  curve, marked to market at every bar's close and annualized at the step rate above. A loss inside an open position counts,
   but only as of bar closes: a fall and recovery within one bar is not seen.
 - **Closed-trade P&L.** A walk-forward's out-of-sample aggregate across folds has no
   single simulation behind it, so `build_equity_curve` rebuilds one from realized P&L
-  resampled to daily. Intra-trade drawdown is invisible there, and `max_drawdown`,
+  resampled to daily (annualized at 252). Intra-trade drawdown is invisible there, and `max_drawdown`,
   `ulcer_index` and volatility *understate* risk during long holds.
 
 The metric glossary states which basis applies where, so an agent does not read one

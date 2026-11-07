@@ -150,7 +150,12 @@ coroutine that wrapper wraps instead.
 ## Dropping in another broker
 
 1. Implement `Broker` (and optionally `MarketDataProvider`) for the new venue.
-2. Construct it in `main.build_data_and_broker()` instead of the Alpaca classes.
+2. Construct it in `tradeflow.cli.build_data_and_broker` (`main.py` is only a shim) instead of the Alpaca classes.
+
+Research commands do not go through that function: they build a data client only via
+`cli.build_research_data` → `services.data.build_data_client`, which constructs no
+trading client and needs no keys under `--offline`. A research run is therefore
+structurally unable to place an order — the same wall the MCP server has.
 
 That's it — `engine/`, `execution/`, `strategies/`, `scanners/`, and the optimizer
 are untouched because they only ever knew the interface. The test suite proves

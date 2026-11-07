@@ -12,8 +12,9 @@ look best in-sample are very often the highest-turnover ones that costs destroy.
 default**.
 
 :::note Research clock only
-This models cost for *simulation*. The live path gets real fills from the broker; it
-imports no cost model.
+This models cost for *simulation*. The live path gets real fills from the broker and
+never charges the model: it uses `tradeflow.costs.base` only to record an expected cost
+beside the venue's fill (see the last section), and imports nothing from `services/`.
 :::
 
 ## The decomposition

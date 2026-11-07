@@ -40,7 +40,7 @@ live. Each step:
    whole bar. The open, because every decision below transacts at it: the exposure caps
    in step 4 are tested against `equity × cap`, so marking at the close first meant
    whether an entry was admitted could depend on where the bar finished, hours after the
-   price it filled at. That was accounting v4's remaining intra-bar look-ahead — the same
+   price it filled at. That was the intra-bar look-ahead left after accounting v4, removed at v5 — the remaining intra-bar look-ahead — the same
    class as the signal one above, in the admission gate rather than the signal, and just
    as invisible to a feed shift. The excursion extremes stay full-bar: they are reported,
    never consulted by a decision, and the worst and best a position saw is the point.

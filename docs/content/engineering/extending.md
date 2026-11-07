@@ -140,7 +140,7 @@ runs can refer to it by name and share the normal registry/memoization path.
 
 1. Implement `Broker` (and optionally `MarketDataProvider`) for the venue in a new
    `tradeflow/brokers/<vendor>/` package, mapping the SDK to the domain types.
-2. Construct it in `main.build_data_and_broker()`.
+2. Construct it in `tradeflow.cli.build_data_and_broker` (`main.py` is only a shim).
 
 Three parts of the contract are easy to get wrong, and all three are load-bearing:
 
