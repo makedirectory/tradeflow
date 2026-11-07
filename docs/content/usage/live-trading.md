@@ -288,8 +288,12 @@ order path: a flag can be forgotten on one branch or inverted in a refactor, and
 capability cannot. It is the same guarantee the [MCP server](../engineering/mcp-server)
 gets from building only a data client.
 
-The broker factory is never called at all, so a dry run needs **no broker credentials** —
-which is the point, since the mode is most useful before an account exists.
+The broker factory is never called at all, so a dry run builds **no trading client** and
+needs no trading permission. It does read market data to evaluate the universe, through
+the same data-only client the MCP server uses, so it still needs the Alpaca API key pair
+that client authenticates with (`APCA_API_KEY_ID` and `APCA_API_SECRET_KEY`); without
+them it stops at `Missing Alpaca credentials` before evaluating anything. Dry run has no
+`--offline` mode.
 
 ### Capital must be stated
 

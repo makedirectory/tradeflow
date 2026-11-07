@@ -298,6 +298,8 @@ backtests included, though most never touched a boundary - drop out of the defau
   is labelled, and the `--ledger` help says the default is under the state root.
 - `resume` lists the halts still in force after lifting one, and only says trading may
   resume when none remain.
+- The dry-run docs no longer say it needs no credentials: it builds no trading client,
+  but it reads market data and so needs the data API key pair.
 
 ## 2.3.0 — 2026-09-16
 
