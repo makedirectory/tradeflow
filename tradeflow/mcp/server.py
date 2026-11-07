@@ -200,14 +200,24 @@ def _parse_date(value: str) -> datetime:
     return parse_market_date(value)
 
 
-#: Appended to every journaling tool's description. One sentence, one place: an
-#: agent that misreads its own experiment history misreads every result after it.
-_JOURNALING_NOTE = (
+#: Appended to `run_optimization` only: it is the one tool that journals one trial per
+#: evaluated config. Every other journaling tool states its own count in its own words,
+#: because a shared sentence was false under three of them. An agent that misreads its
+#: own experiment history misreads every result after it.
+_OPTIMIZATION_JOURNALING_NOTE = (
     "Journals one trial per evaluated config, so this call counts toward the "
     "campaign's multiple-testing total (what the Deflated Sharpe deflates against). "
     "An identical prior run is returned from the trial store labeled `memoized`, with "
     "the original run's timestamp, instead of being re-run; pass `force=true` to "
     "re-verify and append a new trial."
+)
+
+#: `confirm_screen_point` journals exactly what `run_backtest` does: one trial.
+_CONFIRM_JOURNALING_NOTE = (
+    "Journals ONE trial (the same record `run_backtest` writes), so this call counts "
+    "once toward the campaign's multiple-testing total. An identical prior run is "
+    "returned from the trial store labeled `memoized: true` with `journaled: false` - "
+    "nothing new was recorded - unless `force=true`, which re-runs and appends a new trial."
 )
 
 #: Appended where a tool exposes an evidence-gated feature.
@@ -615,7 +625,7 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         )
         return _logged("run_screen", inputs, result)
 
-    @tool("sharpe_ratio", "deflated_sharpe_ratio", notes=[_JOURNALING_NOTE])
+    @tool("sharpe_ratio", "deflated_sharpe_ratio", notes=[_CONFIRM_JOURNALING_NOTE])
     def confirm_screen_point(
         strategy: str,
         symbols: List[str],
@@ -675,7 +685,6 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         "max_drawdown",
         "profit_factor",
         "low_sample",
-        notes=[_JOURNALING_NOTE],
     )
     def run_backtest(
         strategy: str,
@@ -718,7 +727,8 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         `backtest` command uses) so it counts toward the campaign's multiple-testing
         total. An exact prior trial is served instead (result has `memoized: true`)
         unless `force=True`, which re-runs and appends a new trial rather than
-        overwriting the memoized one. Memoization is scoped to the engine's accounting
+        overwriting the memoized one. A memoized result says `journaled: false`: nothing
+        new was recorded, and `trial_id` is the original's. Memoization is scoped to the engine's accounting
         version, so results from an older engine are never served to a newer one.
 
         `record_trades=true` stores the full trade table with the journaled trial, which
@@ -764,7 +774,7 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         )
         return _logged("run_backtest", inputs, result)
 
-    @tool("sharpe_ratio", "deflated_sharpe_ratio", notes=[_JOURNALING_NOTE, _WORKERS_NOTE])
+    @tool("sharpe_ratio", "deflated_sharpe_ratio", notes=[_OPTIMIZATION_JOURNALING_NOTE, _WORKERS_NOTE])
     def run_optimization(
         strategy: str,
         symbols: List[str],
@@ -827,7 +837,7 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         "deflated_sharpe_ratio",
         "profit_factor",
         "max_drawdown",
-        notes=[_JOURNALING_NOTE, _WORKERS_NOTE],
+        notes=[_WORKERS_NOTE],
     )
     def run_walk_forward(
         strategy: str,
@@ -891,8 +901,9 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
 
         Journals the OOS aggregate as one validated trial. An identical prior
         validation (same recipe: mode/folds/method/objective/max_evals/seed/cost/
-        book over the same window) is served instead (result has `memoized: true`)
-        unless `force=True`.
+        book over the same window) is served instead (result has `memoized: true` and
+        `journaled: false`: nothing new was recorded) unless `force=True`. The trial
+        counts toward the campaign's multiple-testing total once.
 
         `record_trades=true` stores the out-of-sample trade table with the validated
         trial, which `analyze_trial` and `compare_trials` read; without it the trial
@@ -1001,7 +1012,7 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
             analysis.validate_draft_scanner_code(code, class_name=class_name),
         )
 
-    @tool("sharpe_ratio", "deflated_sharpe_ratio", "profit_factor", "max_drawdown", notes=[_JOURNALING_NOTE])
+    @tool("sharpe_ratio", "deflated_sharpe_ratio", "profit_factor", "max_drawdown")
     def run_draft_walk_forward(
         code: str,
         symbols: List[str],
@@ -1042,8 +1053,11 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         By default this journals one validated trial under
         `draft:<ClassName>:<code_hash>` so campaign history still reflects that the
         source consumed a test. Set `journal=false` only for smoke tests that should
-        not enter the campaign record. An identical prior draft validation is served
-        from the trial store unless `force=true`.
+        not enter the campaign record (`draft.journaled` is then false). One
+        journaled run counts once toward the campaign's multiple-testing total. An
+        identical prior draft validation is served from the trial store, labeled
+        `memoized: true` with `draft.journaled: false` (nothing new was recorded),
+        unless `force=true`.
         """
         inputs = {
             "code_hash": analysis.draft_code_hash(code),
@@ -1564,9 +1578,10 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
 
         Read-only research clock: proposes a portfolio, never places an order. Journals
         exactly ONE trial (kind `verdict`), so it counts once toward the campaign's
-        multiple-testing total - except an `incomplete` run in which no step measured an
-        IC, and an `infeasible` run refused by the allocation preflight (before any step
-        read the data), which journal none (`journaled: false`, with `not_journaled_reason`).
+        multiple-testing total - except that an `incomplete` run in which no step measured an
+        IC journals none, and so does an `infeasible` run refused by the allocation preflight
+        (before any step read the data): `journaled: false`, with
+        `not_journaled_reason`.
         An `infeasible` run found only after the alphas read the data does journal, since
         it was a look at the data. A non-journaled run also reports `provenance.n_trials`
         without itself (`null` when the store could not say). Candidates with no bars are

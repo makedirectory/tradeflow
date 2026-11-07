@@ -92,5 +92,62 @@ def test_the_terminal_report_names_the_dropped_candidates(built):
 
 def test_verdict_description_states_which_infeasible_runs_journal_none(built):
     text = _tools(built)["run_verdict"].description
-    assert "refused by the allocation preflight" in text
+    assert " ".join(text.split()).count("refused by the allocation preflight") == 1
     assert "dropped_symbols" in text
+
+
+# --- 2. a memoized hit says nothing was journaled ------------------------------------
+def _confirm(built, **extra):
+    return _call(
+        built,
+        "confirm_screen_point",
+        strategy="demo_trend",
+        symbols=SYMBOLS,
+        start=START,
+        end=END,
+        params={},
+        **extra,
+    )
+
+
+def test_a_memoized_confirm_says_journaled_false(built, tmp_path):
+    first = _confirm(built)
+    second = _confirm(built)
+    assert first["journaled"] is True
+    assert second["memoized"] is True
+    assert second["journaled"] is False
+    assert len(_journal(tmp_path)) == 1
+
+
+def test_a_memoized_backtest_says_journaled_false_too(built):
+    args = dict(strategy="demo_trend", symbols=SYMBOLS, start=START, end=END)
+    _call(built, "run_backtest", **args)
+    again = _call(built, "run_backtest", **args)
+    assert again["memoized"] is True
+    assert again["journaled"] is False
+
+
+def test_a_memoized_draft_walk_forward_says_journaled_false(built, tmp_path):
+    from tests.test_research import _VALID_CODE
+
+    args = dict(code=_VALID_CODE, symbols=SYMBOLS, start=START, end=END, n_folds=2, max_evals=2)
+    first = _call(built, "run_draft_walk_forward", **args)
+    second = _call(built, "run_draft_walk_forward", **args)
+    assert first["draft"]["journaled"] is True
+    assert second["memoized"] is True
+    assert second["draft"]["journaled"] is False
+    assert len(_journal(tmp_path)) == 1
+
+
+# --- 3. the shared journaling sentence is only where it is true -----------------------
+def test_only_optimization_claims_one_trial_per_evaluated_config(built):
+    for name, spec in _tools(built).items():
+        claims = "one trial per evaluated config" in spec.description
+        assert claims == (name == "run_optimization"), name
+
+
+def test_the_single_trial_tools_say_one_trial(built):
+    tools = _tools(built)
+    assert "ONE trial" in tools["confirm_screen_point"].description
+    assert "one validated trial" in tools["run_walk_forward"].description
+    assert "one validated trial" in tools["run_draft_walk_forward"].description

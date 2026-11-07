@@ -520,6 +520,8 @@ def memoized_backtest_payload(
         "total_trades": total_trades,
         "metrics": _jsonable(metrics),
         "memoized": True,
+        # Nothing is recorded when an earlier trial answers: the id is the original's.
+        "journaled": False,
         "trial_id": cached.get("id"),
         "trial_ts": cached.get("ts"),
         "from_request": ["initial_capital", "window", "symbols", "gross", "benchmark_requested", "timeframe"],
@@ -1265,7 +1267,13 @@ def confirm_screen_point(
         force=force,
         journal=True,
     )
-    return {**result, "confirmed_params": _jsonable(params), "journaled": True}
+    # From the outcome: a memoized answer journals nothing, and saying otherwise had an
+    # agent counting a trial that was never added.
+    return {
+        **result,
+        "confirmed_params": _jsonable(params),
+        "journaled": bool(result.get("journaled", not result.get("memoized"))),
+    }
 
 
 def run_causality_probes(
@@ -2093,7 +2101,8 @@ def run_draft_walk_forward(
                     "draft": {
                         "class_name": cls.__name__,
                         "code_hash": code_hash,
-                        "journaled": True,
+                        # Served from the store: nothing new was recorded.
+                        "journaled": False,
                     },
                 }
 
@@ -2247,6 +2256,7 @@ def memoized_walk_forward_payload(
         "symbols": list(symbols),
         "window": {"start": start.isoformat(), "end": end.isoformat()},
         "memoized": True,
+        "journaled": False,
         "trial_id": cached["id"],
         "trial_ts": cached["ts"],
         "note": "Served from an identical prior validation (same recipe), not re-run. "
@@ -3250,6 +3260,7 @@ def run_verdict(
                 memoized = None
             if memoized is not None:
                 memoized["memoized"] = True
+                memoized["journaled"] = False
                 memoized["trial_id"] = cached["id"]
                 memoized["trial_ts"] = cached["ts"]
                 memoized["note"] = (
