@@ -203,7 +203,7 @@ out-of-sample trades, the honest reading is that it has not earned a verdict yet
 
 `tradeflow/optimization/config_store.py` saves a chosen config as JSON with a
 `provenance` block (method, windows, objective, OOS metrics, `n_trials`, seed, git
-SHA, timestamp, `accounting`). Configs land in a gitignored `configs/` directory.
+SHA, timestamp, `accounting`). A bare file name is written under the state root's `configs/` directory (`~/.tradeflow/configs` by default, outside any repository); a path with a directory component is written where it says.
 Saving a config never alters live behavior — it's a file a human chooses to promote.
 
 ### The `accounting` stamp

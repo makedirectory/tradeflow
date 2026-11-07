@@ -250,6 +250,10 @@ command below go through one function, so a live result and a recorded one canno
 to disagree about where a run's P&L came from. See [the trial store](trials) for both
 commands.
 
+## On a reused backtest
+
+If an identical backtest is already in the trial store, the run is reused rather than repeated. `--causality`, `--cost-stress` and `--fill-stress` still run, because each re-runs its own unjournaled backtests. `--excursion` does not: it is read from the run's own simulation, which a reused result does not keep, and the output says to re-run with `--force` (which records another trial).
+
 ## None of this is journaled
 
 The stress runs and the causality probes record nothing. They are one candidate under stated assumptions, not new
