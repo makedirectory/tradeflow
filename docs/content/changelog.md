@@ -205,6 +205,7 @@ backtests included, though most never touched a boundary - drop out of the defau
 
 ### Trial history
 
+- A research-agent code round is recorded under its own `draft:` identity, as a draft walk-forward already was, rather than the base strategy's. From now on such rounds form their own (usually one-trial) families, so they no longer raise the base strategy's family count; rounds recorded earlier stay under the base strategy.
 - `trials promote` carries the cost model the trial was validated under. A walk-forward
   or verdict keeps it in its recipe rather than its params, so promoting one wrote a
   config with no `cost` and a run from it priced trades at the cheaper defaults. The
@@ -279,6 +280,7 @@ backtests included, though most never touched a boundary - drop out of the defau
 
 ### MCP
 
+- A fresh `run_backtest` result names the trial it recorded (`trial_id`, `journaled`), as a reused one already did. A config written with `save_config` from a backtest's campaign block now carries the cost model it was validated under, as `trials promote` does. A reused walk-forward's holdout is `holdout_record` (with its state), so `holdout` keeps one shape: the metrics of a fresh run.
 - The `mcp` extra needs the SDK at 1.22 or later; earlier releases do not import
   under current pydantic.
 - The server reports the application's version to a client, not the MCP SDK's.
@@ -339,8 +341,6 @@ backtests included, though most never touched a boundary - drop out of the defau
 - Rate-limited, unavailable and unreachable calls are retried a bounded number of
   times; authentication, credit and model errors never are.
 
----
-
 ### Trading commands report the run they are about to affect
 
 - `flatten` and `reconcile` (text and `--json`) state the broker mode, and the `flatten`
@@ -366,6 +366,8 @@ backtests included, though most never touched a boundary - drop out of the defau
   resume when none remain.
 - The dry-run docs no longer say it needs no credentials: it builds no trading client,
   but it reads market data and so needs the data API key pair.
+
+---
 
 ## 2.3.0 — 2026-09-16
 

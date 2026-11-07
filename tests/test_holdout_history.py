@@ -140,11 +140,31 @@ def test_a_reused_result_over_the_service_keeps_the_holdout_too(_cli):
     assert not fresh.get("memoized")
     reused = analysis.run_walk_forward(client, "demo_trend", SYMBOLS, start, end, **kwargs)
     assert reused["memoized"] is True
-    assert reused["holdout"]["state"] == "recorded"
-    assert reused["holdout"]["metrics"] == pytest.approx(fresh["holdout"], rel=1e-9)
+    assert reused["holdout_record"]["state"] == "recorded"
+    assert reused["holdout_record"]["metrics"] == pytest.approx(fresh["holdout"], rel=1e-9)
+    assert "holdout" not in reused  # one key, one shape
 
 
 def test_a_reused_result_that_predates_the_field_says_so(_cli, capsys, tmp_path):
     row = {"id": _trial(tmp_path / "journal.jsonl", 60, False), "oos_sharpe": 0.4}
     cli._print_cached_walkforward(row)
     assert "was not retained" in capsys.readouterr().out
+
+
+def test_a_reused_walk_forward_report_shows_its_recorded_holdout(_cli):
+    """Found in review: the reused payload took the holdout off its not-retained list
+    because it was recorded, and the reduced report then showed it nowhere."""
+    from tradeflow.analytics.htmlreport import render_html
+
+    client = MarketDataClient(FakeMarketData(SYMBOLS + ["SPY"], n=700, freq="1D"))
+    kwargs = {"max_evals": 3, "holdout_days": 60}
+    start, end = cli._date("2023-01-02"), cli._date("2024-09-30")
+    analysis.run_walk_forward(client, "demo_trend", SYMBOLS, start, end, **kwargs)
+    reused = analysis.run_walk_forward(client, "demo_trend", SYMBOLS, start, end, **kwargs)
+    page = render_html(reused, "walkforward")
+    assert "Holdout (from the original run)" in page and "60 days, scored once" in page
+    assert "<li>holdout</li>" not in page
+    # The aggregate goes through the fresh report's rows: no bare zero beside an
+    # unavailable benchmark.
+    if reused["oos_aggregate"].get("benchmark_available") is False and "alpha" in reused["oos_aggregate"]:
+        assert "not measured (no benchmark)" in page

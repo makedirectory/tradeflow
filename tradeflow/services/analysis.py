@@ -626,10 +626,11 @@ def run_backtest(
     # recording each point would inflate the multiple-testing total the deflated
     # Sharpe deflates against. It must never be the default: a run that quietly does
     # not count is how a campaign loses track of what it tried.
+    trial_id = None
     if journal:
         from tradeflow.services.audit import journal_trial, run_context
 
-        journal_trial(
+        trial_id = journal_trial(
             "backtest",
             strategy=strategy,
             symbols=symbols,
@@ -661,7 +662,13 @@ def run_backtest(
         gross=gross,
         benchmark=benchmark,
         trades_csv=trades_csv,
-    )
+    ) | {
+        # The trial this run just recorded: without it an agent could not analyze, compare
+        # or promote what it had made without listing trials to find it again. A reused
+        # payload already names its trial; `None` here means nothing was journaled.
+        "trial_id": trial_id,
+        "journaled": trial_id is not None,
+    }
 
 
 def analyze_trial(store, trial_id: str, *, allow_partial: bool = False) -> Dict[str, Any]:
@@ -1501,7 +1508,7 @@ def run_walk_forward(
                     start=start,
                     end=end,
                     benchmark=benchmark,
-                    timeframe=cls.create_with_defaults().config.get("timeframe"),
+                    timeframe=cls.create_with_defaults().config.get("timeframe", "1Day"),
                 )
 
         validator = WalkForwardValidator(
@@ -2252,11 +2259,13 @@ def memoized_walk_forward_payload(
         "re-run it with the promotion prerequisites",
         # What the original run recorded of its holdout: here, never asked for, or from
         # before the journal kept it. Listed as not retained only when it is not here.
-        "holdout": holdout,
+        # Not `holdout`: a fresh payload's `holdout` is the metrics themselves, and one key
+        # with two shapes is what an agent reading `holdout.sharpe_ratio` trips on.
+        "holdout_record": holdout,
         "not_retained": [
             item
             for item in WALK_FORWARD_NOT_RETAINED
-            if item != "holdout" or holdout.get("state") != "recorded"
+            if item != "holdout" or holdout.get("state") not in ("recorded", "none_requested")
         ],
         "benchmark": benchmark,
         "timeframe": timeframe,

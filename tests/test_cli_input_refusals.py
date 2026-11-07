@@ -594,3 +594,23 @@ def test_the_terminal_prints_a_gates_note(capsys):
     result.gate_report = lambda *a, **k: report
     cli._print_walkforward(result, "sharpe_ratio")
     assert "- not evaluated - no OOS trades" in capsys.readouterr().out
+
+
+def test_a_fresh_backtest_names_the_trial_it_recorded(tmp_path, monkeypatch):
+    """Found in review: a fresh run_backtest payload carried no trial id, so an agent had
+    to list trials to find the one it had just made before analyzing or promoting it."""
+    from tests.fakes import FakeMarketData
+    from tradeflow.marketdata.client import MarketDataClient
+    from tradeflow.services import analysis, audit
+
+    monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", tmp_path / "journal.jsonl")
+    monkeypatch.setattr(analysis, "ARTIFACT_DIR", tmp_path / "artifacts")
+    client = MarketDataClient(FakeMarketData(["AAA", "BBB"], n=400, freq="1D"))
+    start, end = cli._date("2023-01-02"), cli._date("2024-06-01")
+    fresh = analysis.run_backtest(client, "demo_trend", ["AAA", "BBB"], start, end)
+    assert fresh["journaled"] is True and fresh["trial_id"]
+    assert (
+        analysis.run_backtest(client, "demo_trend", ["AAA", "BBB"], start, end)["trial_id"]
+        == fresh["trial_id"]
+    )
+    assert analysis.run_backtest(client, "demo_trend", ["AAA"], start, end, journal=False)["trial_id"] is None

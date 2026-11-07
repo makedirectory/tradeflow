@@ -110,3 +110,24 @@ def test_a_line_written_before_the_field_existed_still_reads_as_the_session_stra
     assert _row_kwargs_from_research_trial(record, {"strategy": "periodic"})["strategy"] == "periodic"
     record["inputs"]["strategy"] = "draft:X:abc"
     assert _row_kwargs_from_research_trial(record, {"strategy": "periodic"})["strategy"] == "draft:X:abc"
+
+
+def test_campaign_evidence_and_the_html_report_read_unmeasured_metrics_one_way():
+    """Found in review: two parallel copies of the "unmeasured metric" rule had diverged -
+    the campaign view called a Treynor ratio suppressed for a near-zero beta "no
+    benchmark" with a benchmark present. One reader of the flags now serves both."""
+    from tradeflow.analytics.reporting import format_campaign_material
+
+    metrics = {"treynor_ratio": 0.0, "treynor_available": False, "benchmark_available": True, "alpha": 0.4}
+    text = format_campaign_material(
+        {
+            "available": True,
+            "trial_id": "t",
+            "kind": "backtest",
+            "recipe": {},
+            "evidence": {"metrics": metrics},
+            "metadata": {},
+        }
+    )
+    assert "not measured (beta too close to zero)" in text
+    assert "not measured (no benchmark)" not in text

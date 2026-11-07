@@ -102,3 +102,27 @@ def test_the_resolver_skips_the_vintage_and_returns_none_when_unrecorded():
     assert recorded_cost({"_cost": {"gross": True, "_vintage": "x"}}) == {"gross": True}
     assert recorded_cost(None, {"_cost": COST}) == COST
     assert recorded_cost({}, {"_cost": {}}) is None
+
+
+def test_a_backtest_campaign_block_names_its_cost_so_mcp_save_config_writes_it(tmp_path, monkeypatch):
+    """Found in review: a backtest's campaign block has no recipe (its identity is its
+    params), so a config written from it over MCP carried no cost where `trials promote`
+    did - the two surfaces disagreeing about one trial."""
+    from tests.fakes import FakeMarketData
+    from tradeflow.marketdata.client import MarketDataClient
+    from tradeflow.optimization import config_store
+    from tradeflow.services import analysis, audit, campaign, configs
+    from tradeflow.utils.timeutils import parse_market_date as day
+
+    monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", tmp_path / "journal.jsonl")
+    monkeypatch.setattr(analysis, "ARTIFACT_DIR", tmp_path / "artifacts")
+    monkeypatch.setattr(config_store, "DEFAULT_CONFIG_DIR", tmp_path / "configs")
+    client = MarketDataClient(FakeMarketData(["AAA", "BBB"], n=400, freq="1D"))
+    fresh = analysis.run_backtest(
+        client, "demo_trend", ["AAA", "BBB"], day("2023-01-02"), day("2024-06-01"), commission_bps=7
+    )
+    with audit.open_trial_store() as store:
+        material = campaign.campaign_material(store, fresh["trial_id"])
+    assert material["recipe"]["folded_into_identity"]["_cost"]["commission_bps"] == 7
+    saved = configs.save_config("bt", strategy="demo_trend", params={}, provenance={"campaign": material})
+    assert json.loads(open(saved["path"]).read())["cost"]["commission_bps"] == 7

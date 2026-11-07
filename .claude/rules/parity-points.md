@@ -371,6 +371,8 @@ all. `services.analysis.recorded_book` is the one resolver, and it takes several
 because the book is not in the same place for every kind: a walk-forward keeps it in its
 recipe, a backtest in its params, since a backtest's dedup identity *is* its params.
 
+The cost model is the same hazard one field over: `_cost` is folded into every kind's identity, in the params for a backtest and in the recipe for a walk-forward or verdict, and `trials promote` read only the first, so a promoted walk-forward traded under default (cheaper) costs. `services.analysis.recorded_cost` is the sibling of `recorded_book`; a backtest's campaign block names its folded cost and book too, so the MCP `save_config` path reaches them. *Also guarded by* `tests/test_promoted_cost.py`.
+
 *Guarded by* `tests/test_saved_config_book.py`, which enumerates the `save_config` call
 sites from the AST rather than from a list somebody remembered, and promotes a trial then
 reloads the file and builds the strategy to check the number that arrives at the far end.

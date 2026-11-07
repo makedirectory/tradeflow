@@ -984,12 +984,25 @@ def _reused_walkforward_sections(result: Dict[str, Any]) -> List[str]:
         ),
         _card(
             "Out-of-sample aggregate",
-            _table(
-                ["Metric", "Value"],
-                [[k, _metric_cell(k, v)] for k, v in sorted((result.get("oos_aggregate") or {}).items())],
-            ),
+            # The fresh report's rows, so a placeholder zero beside an unavailable flag
+            # reads as not measured here too.
+            _table(["Metric", "Value"], _metric_rows(result.get("oos_aggregate") or {})),
         ),
+        *_reused_holdout_card(result.get("holdout_record")),
     ]
+
+
+def _reused_holdout_card(holdout: Any) -> List[str]:
+    """What the original run recorded of its holdout, in the terminal's words.
+
+    Found in review: the reused payload carried a recorded holdout and took it off the
+    not-retained list, while this report showed it nowhere - neither present nor missing.
+    """
+    if not isinstance(holdout, dict):
+        return []
+    from tradeflow.analytics.reporting import format_holdout
+
+    return [_card("Holdout (from the original run)", _pre(format_holdout(holdout)))]
 
 
 def _walkforward_verdicts_card(gate_report: Dict[str, Any], evidence: Optional[Dict[str, Any]]) -> str:

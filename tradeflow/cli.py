@@ -4598,7 +4598,7 @@ def _run_dry(args, strategy) -> None:
     book_lines = _book_limit_lines(args, limits, capital)
     if getattr(args, "json", False):
         report["position_limits"] = limits
-        report["warnings"] = [line.strip() for line in _book_warnings(limits, capital)]
+        report["warnings"] = [line.strip() for line in _book_warnings(limits, capital, _resizing_sizer(args))]
         print(json.dumps(report, indent=2, default=str))
     else:
         print(format_dry_run(report, book_lines=book_lines))
@@ -5388,11 +5388,25 @@ def _book_limit_lines(args, limits, capital) -> list:
     else:
         lines.append(f"  {'max total risk':22}{_limit(risk, lambda v: f'{v:g} ({v:.0%} of capital)')}")
     lines.append(f"  {'min notional':22}{_limit(limits.get('min_notional'), lambda v: f'${v:,.2f}')}")
-    lines.extend(_book_warnings(limits, capital))
+    lines.extend(_book_warnings(limits, capital, _resizing_sizer(args)))
     return lines
 
 
-def _book_warnings(limits, capital) -> list:
+def _resizing_sizer(args) -> Optional[str]:
+    """The sizer that can place a position larger than ``max_position_size``, if any.
+
+    Beta sizing divides the capped size by an effective beta that can be well below one,
+    and the portfolio sizer ignores the per-position ceiling entirely, so under either a
+    ceiling below the floor does not by itself refuse every entry.
+    """
+    if getattr(args, "portfolio", False):
+        return "--portfolio"
+    if getattr(args, "beta_sizing", False):
+        return "--beta-sizing"
+    return None
+
+
+def _book_warnings(limits, capital, resizing_sizer: Optional[str] = None) -> list:
     """Lines saying the declared book cannot place an order, when that is certain.
 
     Only arithmetic that holds whatever the market does: a per-position ceiling below
@@ -5405,7 +5419,9 @@ def _book_warnings(limits, capital) -> list:
         return []
     warnings = []
     size = limits.get("max_position_size")
-    if size is not None and size < floor:
+    # Not certain under a sizer that can exceed the ceiling (found in review: beta 0.25
+    # turned a $50 ceiling into a $200 entry, past a $100 floor the warning said refused it).
+    if size is not None and size < floor and resizing_sizer is None:
         warnings.append(
             f"max position size ${size:,.2f} is below min notional ${floor:,.2f}: "
             f"every entry would be refused"
@@ -5692,6 +5708,7 @@ _LEDGER_PATH_HELP = (
     "current directory). A path that does not exist is refused by the read-only commands"
 )
 
+#: Shared the same way, for the same reason.
 _SMALL_REAL_LEDGER_HELP = (
     "Read the small-real telemetry ledger instead of the live one. They are separate "
     "files on purpose: averaging a full-size book's fills with the same book's fills at "

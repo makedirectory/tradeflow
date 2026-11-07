@@ -284,3 +284,20 @@ def test_resume_lists_the_halts_that_still_stand(state, capsys):
     cli.cmd_resume(argparse.Namespace(scope="AAPL"))
     out = capsys.readouterr().out
     assert "No halts remain. Trading may resume." in out
+
+
+def test_the_ceiling_below_floor_warning_is_not_claimed_under_a_resizing_sizer():
+    """Found in review: beta sizing divides the capped size by an effective beta that can
+    be 0.25, and the portfolio sizer ignores the ceiling, so "every entry would be
+    refused" was false under either. The other two warnings hold for every sizer."""
+    from argparse import Namespace
+
+    limits = {"max_position_size": 50.0, "min_notional": 100.0, "max_gross_exposure": None}
+    plain = cli._book_limit_lines(Namespace(beta_sizing=False, portfolio=False), limits, 5000.0)
+    beta = cli._book_limit_lines(Namespace(beta_sizing=True, portfolio=False), limits, 5000.0)
+    weights = cli._book_limit_lines(Namespace(beta_sizing=False, portfolio=True), limits, 5000.0)
+    assert any("max position size $50.00 is below min notional" in line for line in plain)
+    for lines in (beta, weights):
+        assert not any("max position size $50.00 is below min notional" in line for line in lines)
+    tiny = cli._book_limit_lines(Namespace(beta_sizing=True, portfolio=False), limits, 80.0)
+    assert any("capital $80.00 is below min notional" in line for line in tiny)

@@ -205,6 +205,14 @@ def _recipe_section(row, inputs, record) -> Dict[str, Any]:
             f"a {row.get('kind')!r} trial records no separate validation recipe — its "
             "identity is its parameters, which are the config's own `params`"
         )
+        # The cost model and book folded into those parameters are still named, in the
+        # same place a recipe names them: without this a config written from this block
+        # over MCP carried no `cost` for a backtest, where `trials promote` did.
+        params = _recorded_params(row, record)
+        if params:
+            folded = _split_recipe(params)["folded"]
+            if folded:
+                section["folded_into_identity"] = folded
         return section
 
     split = _split_recipe(dedup)
@@ -218,6 +226,20 @@ def _recipe_section(row, inputs, record) -> Dict[str, Any]:
         }
     )
     return section
+
+
+def _recorded_params(row, record: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """A trial's recorded params: the journal line's, else the index row's."""
+    import json
+
+    params = (record or {}).get("params")
+    if isinstance(params, dict):
+        return params
+    try:
+        parsed = json.loads(row.get("params_json") or "null")
+    except (TypeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 def _parse_metrics(row) -> Optional[Dict[str, Any]]:

@@ -873,6 +873,9 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         information ratio and excess return, each pass/fail/unevaluated, plus excess
         return per fold and `evidence.clear`. Read `evidence.evidence_completeness`
         before acting on `promotable`; an unevaluated check is unknown, not passed.
+        `holdout` is the holdout's metrics on a fresh run (null when none was requested); a
+        memoized answer carries `holdout_record` instead ({state, days, metrics, params}:
+        recorded, none requested, or requested before the journal kept it).
         When `evidence` is null, `evidence_unavailable` says why (a memoized answer keeps no
         per-fold detail). An unknown `cost_stress` is refused rather than stressing nothing.
         `cost_stress` ("all"/"turnover"/"borrow", null to skip) re-runs the chosen
@@ -1668,7 +1671,7 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         datetime; both ends include the dates they name, so `until="2026-11-06"` includes
         that evening. Each row's `ts` is the UTC instant it was recorded. `sort` is
         date/sharpe/dsr; a trial with no recorded metric
-        sorts last rather than as a zero. Returns `{rows, total, in_sample_excluded}` —
+        sorts last rather than as a zero. Returns `{rows, total, in_sample_excluded, in_sample_included, undated_excluded}` —
         `total` is how many matched, which is usually more than were returned.
 
         **Ranking leaves in-sample kinds out.** Sorting by `sharpe`/`dsr`, or setting
@@ -1715,7 +1718,7 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
 
         `null` for a companion means *not recorded* — the run predates that storage,
         or did not opt in. It never means the run produced nothing. A walk-forward also
-        carries `holdout`: `state` is `recorded` (with `metrics`), `none_requested`,
+        carries `holdout_record`: `state` is `recorded` (with `metrics`), `none_requested`,
         `not_retained` (asked for, but the trial predates the journal keeping the result)
         or `unknown`. Read-only.
         """
@@ -1737,7 +1740,7 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
                 # predates the journal keeping it.
                 from tradeflow.services.audit import holdout_for_trial
 
-                trial["holdout"] = holdout_for_trial(trial["id"])
+                trial["holdout_record"] = holdout_for_trial(trial["id"])
             return _logged("get_trial", {"trial_id": trial_id}, trial)
 
     @tool()

@@ -1432,32 +1432,6 @@ def _universe_lines(universe: Dict[str, Any], readable: Optional[bool] = None) -
     return lines
 
 
-#: Metrics that need a benchmark series and are stored as 0.0 when there is none.
-_BENCHMARK_METRICS = (
-    "alpha",
-    "beta",
-    "r_squared",
-    "information_ratio",
-    "benchmark_buy_hold_return",
-)
-
-
-def _unmeasured_benchmark_keys(metrics: Dict[str, Any]) -> set:
-    """Stored metric names that were never measured, because the run had no benchmark.
-
-    Only when the record says so (``benchmark_available`` present and false): a metrics
-    block that does not carry the flag at all says nothing either way, and is left as
-    recorded. A treynor ratio is its own case - it can be suppressed for a near-zero beta
-    with a benchmark present - so it follows ``treynor_available`` instead.
-    """
-    out = set()
-    if "benchmark_available" in metrics and not metrics["benchmark_available"]:
-        out.update(k for k in _BENCHMARK_METRICS if k in metrics)
-    if "treynor_available" in metrics and not metrics["treynor_available"] and "treynor_ratio" in metrics:
-        out.add("treynor_ratio")
-    return out
-
-
 def format_holdout(holdout: Dict[str, Any]) -> List[str]:
     """A walk-forward's holdout as lines, in each of the states a journal can leave it.
 
@@ -1556,14 +1530,19 @@ def format_campaign_material(material: Dict[str, Any]) -> str:
         # Through the shared unit table, not a flat float format. A trade count
         # rendered as `88.000` is the defect this project has now found in three
         # separate renderers, and a fourth private formatter here would be the fourth.
-        from tradeflow.optimization.walk_forward import format_gate_value
-
         # Without a benchmark these are stored as 0.0, which beside
         # `benchmark_available no` reads as a measured zero alpha. They were not measured.
-        unmeasured = _unmeasured_benchmark_keys(metrics)
+        # The one reader of those flags (the HTML report uses it too), so a Treynor ratio
+        # suppressed for a near-zero beta is not called "no benchmark" here.
+        from tradeflow.analytics.performance import unmeasured_metrics
+        from tradeflow.optimization.walk_forward import format_gate_value
+
+        unmeasured = unmeasured_metrics(metrics)
         for key, value in sorted(metrics.items()):
             gap = " " if len(key) >= 16 else ""  # a long name must not run into its value
-            shown = "not measured (no benchmark)" if key in unmeasured else format_gate_value(key, value)
+            shown = (
+                f"not measured ({unmeasured[key]})" if key in unmeasured else format_gate_value(key, value)
+            )
             lines.append(f"    {key:<16}{gap}{shown}")
         if material.get("kind") == "research" and "sharpe_ratio" in metrics:
             lines.append(
