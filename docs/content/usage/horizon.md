@@ -21,7 +21,7 @@ quantred horizon \
 Information horizon: 'demo_trend' 2024-01-01..2025-02-05
   IC by lag: 1:-0.084  2:+0.090  3:+0.012  4:-0.024  5:-0.029  6:+0.007  7:+0.027  8:+0.072  9:+0.113  10:+0.126
   decay δ 1.177  half-life ∞ (no decay detected)  fit R² 0.18
-    CI (±1.96 SE on the fit): [4.8, ∞] periods — the multi-period trading policy
+    CI (±1.96 SE on the fit): [4.8, ∞] periods — the aim policy
     discounts using the upper bound (conservative against killing a good signal)
   recommended cadence: every 2 periods  (best return horizon ≈ inf)
   lagged blend [diversify]: w_now +0.39  w_lagged +0.61  (ρ 0.28, cost 2.70%/yr → not worth the turnover cost)

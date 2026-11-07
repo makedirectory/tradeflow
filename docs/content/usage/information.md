@@ -27,6 +27,7 @@ Information report: 'demo_trend' 2024-01-01..2024-12-31
   breadth: 142 effective vs 504 naive (ρ̄ 0.41, 8 names)
   IR: predicted +0.21  realized +0.18 ± 0.61 (SE)
   guardrails: P(any |t|>2 in 10 trials) = 0.40
+  attribution: factor +0.0021 / specific +0.0034 per rebalance (factor tilts vs name selection)
 
   Verdict: skill is NOT distinguishable from luck (IC t-stat +0.74).
 ```
@@ -37,7 +38,10 @@ correlated the bets are (`ρ̄`); **predicted IR** = `mean_IC · √BR_eff`. The
 IR comes with a **standard-error band** — a 1-year window has `SE(IR) ≈ 1`, so almost
 any IR is indistinguishable from zero on a single short window. `--n-trials` reports
 how inflated a "significant" result is once you account for everything you tried. It
-describes configurations you have *already* tried; it does not start a search.
+describes configurations you have *already* tried; it does not start a search. The
+`attribution` line splits the average per-rebalance return into what factor tilts earned
+and what name selection earned (the numbers above are illustrative); `--attribution`,
+below, is the full per-period version.
 
 ## Options
 
