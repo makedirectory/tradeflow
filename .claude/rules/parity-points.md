@@ -325,6 +325,14 @@ definition and the CLI block is a renderer over it, reaching it through
 than being assumed so.
 *Guarded by* `tests/test_trade_analytics.py`.
 
+**The return series a backtest journals** — *converged*. The CLI journaled a backtest's dated
+return series and the service path did not, so every backtest recorded over MCP had
+`returns: null` and could never be put through `compare_trials` or a Reality Check family
+panel - the same trial kind carrying evidence or not depending on which surface ran it.
+`services.analysis.backtest_returns` is the one construction both call. Backtests recorded
+over MCP before this have no series and stay without one.
+*Guarded by* `tests/test_mcp_description_truth.py`.
+
 **Trial-analytics knobs across CLI and MCP** — `trials analyze` / `analyze_trial` and
 `trials compare` / `compare_trials`. Both surfaces enumerate their flags from the parser
 and must have a counterpart in the MCP signature, and both *defaults* are compared too:
