@@ -141,6 +141,27 @@ Requires `--benchmark`; diagnostic, and gates nothing. See
 [long/short legs](backtesting.md#longshort-legs) for the per-leg return, volatility,
 drawdown and cost breakdown on a single backtest.
 
+## The Verdicts block
+
+After the gate list and the one-line promotability verdict, the report prints a
+`=== Verdicts ===` block that keeps three questions apart:
+
+```
+=== Verdicts ===
+  Statistical validation  FAIL - oos_sharpe, oos_profit_factor, min_oos_trades, deflated_sharpe
+  Execution viability     not assessed here - can this book be traded at this capital (`backtest`)
+  Evidence completeness   1 of 4 evaluated - clear so far; 3 unknown
+  Three separate facts. Clearing one says nothing about the others.
+```
+
+- **Statistical validation** is the gate verdict: `PASS`, or `FAIL` naming the gates
+  that failed.
+- **Execution viability** is not assessed by a walk-forward, which has no book at a
+  capital to trade; the line points at `backtest`, whose
+  [Execution & cost block](backtesting.md#execution-and-cost) answers it.
+- **Evidence completeness** counts the promotion prerequisites below that were actually
+  evaluated.
+
 ## Promotion prerequisites
 
 `promotable` stays **statistical**: median OOS Sharpe, profit factor, walk-forward
@@ -152,12 +173,17 @@ Two further questions come *after* a candidate clears those, and are reported be
 
 ```
 === Promotion prerequisites (separate from `promotable`) ===
-  [PASS] cost_stress        5 vs 3
-  [ -- ] family_bootstrap   not evaluated - needs 10 usable return-series trials to
-                            mean anything; 2 available
-  Prerequisites: 1 of 3 evaluated - clear so far; 2 unknown
+  [PASS] cost_stress         3 vs 3
+  [ -- ] family_bootstrap    not evaluated - needs 10 usable return-series trials to mean anything; 2 available
+  [ -- ] benchmark_relative  not evaluated - median per-fold information ratio against the benchmark
+  [ -- ] benchmark_excess    not evaluated - median per-fold return less the benchmark's over the same steps
+  Prerequisites: 1 of 4 evaluated - clear so far; 3 unknown
   An unevaluated check is not a passed one - what is unknown stays unknown.
 ```
+
+There are four rows. Without `--benchmark` the two benchmark rows are always
+unevaluated, so a run with no benchmark can reach at most 3 of 4 evaluated; with one
+(and enough folds) they are scored too.
 
 - **`cost_stress`** — the edge survives at least 3x its own assumed cost, stressing
   the config the folds actually chose. **On by default here**: this is where a promotion
@@ -168,16 +194,16 @@ Two further questions come *after* a candidate clears those, and are reported be
   in. It does **not** run below 10 usable return-series trials: a family test over two
   series is arithmetic rather than evidence, and a striking p-value on K=2 is exactly
   the kind of number that should not gate anything.
-- **`benchmark_excess`** — the median per-fold return *less the benchmark's over the
-  same steps* is positive. A different question from the ratio below: a strategy can
-  hold a good risk-adjusted number while losing to the benchmark outright, which is not
-  something to promote on.
 - **`benchmark_relative`** — the median per-fold information ratio against
   `--benchmark` is positive. **Per fold, then median**, because every other fold
   statistic here is a median and a second aggregation convention in one report would
   differ from its neighbours most exactly when the folds disagree. They do: a real run
   produced per-fold IRs of `[0.13, -1.25, 2.10]` for a median of `+0.13`, and a single
   figure over the stitched curve would have hidden that spread entirely.
+- **`benchmark_excess`** — the median per-fold return *less the benchmark's over the
+  same steps* is positive. A different question from the ratio above: a strategy can
+  hold a good risk-adjusted number while losing to the benchmark outright, which is not
+  something to promote on.
 
 Over MCP, `run_walk_forward` returns the same block as `evidence` beside `gate_report`
 (prerequisites, evidence completeness, excess return by fold, and `clear`). Cost stress
@@ -212,8 +238,8 @@ quantred alphas   --config ~/.tradeflow/configs/alpha.json
 quantred risk     --config ~/.tradeflow/configs/alpha.json
 ```
 
-`--config` is accepted by `backtest`, `live`, `verdict`, `info`, `alphas`, `horizon`,
-`allocate` and `risk`. Four rules make it predictable:
+`--config` is accepted by `backtest`, `walkforward`, `live`, `small-real`, `screen`,
+`verdict`, `info`, `alphas`, `horizon`, `allocate` and `risk`. Four rules make it predictable:
 
 - **Anything you type wins.** The file fills in only what the command line left
   unsaid, so `--symbols ZZZ` beats the file's universe. Each run prints where every
