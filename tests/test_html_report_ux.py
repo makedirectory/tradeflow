@@ -263,7 +263,9 @@ def test_a_reused_backtest_header_names_the_benchmark_and_timeframe():
 
 # ---- item 6: ids and timestamps -------------------------------------------------------
 def _journaled_ids(tmp_path):
-    rows = [json.loads(line) for line in (tmp_path / "journal.jsonl").read_text().splitlines() if line.strip()]
+    rows = [
+        json.loads(line) for line in (tmp_path / "journal.jsonl").read_text().splitlines() if line.strip()
+    ]
     return [r["run_id"] for r in rows if r.get("tool") == "trial:walkforward"]
 
 

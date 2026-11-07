@@ -598,9 +598,8 @@ def alphas_heading(result: Dict[str, Any]) -> str:
     combination = result.get("combination")
     if combination:
         weights = combination.get("signal_weights") or {}
-        return (
-            f"Alphas (combined, measured IC {combination.get('combined_ic', 0.0):+.4f}): "
-            + ", ".join(f"{k} {v:+.2f}" for k, v in weights.items())
+        return f"Alphas (combined, measured IC {combination.get('combined_ic', 0.0):+.4f}): " + ", ".join(
+            f"{k} {v:+.2f}" for k, v in weights.items()
         )
     alphas = result.get("alphas") or {}
     flag = "  (low confidence - thin universe, demean-only)" if alphas.get("low_confidence") else ""

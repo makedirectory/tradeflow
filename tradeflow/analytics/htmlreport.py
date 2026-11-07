@@ -769,7 +769,7 @@ def _backtest_sections(result: Dict[str, Any], extras: Dict[str, Any]) -> List[s
 
 
 def _pnl_by_exit_card(result: Dict[str, Any]) -> str:
-    """"Where the P&L came from", as the terminal prints it, including the warning when
+    """ "Where the P&L came from", as the terminal prints it, including the warning when
     nearly all of the gain is one exit path. A reused result never kept its trades, so the
     card says that instead of vanishing."""
     from tradeflow.analytics.reporting import format_exit_concentration
@@ -807,7 +807,8 @@ def _backtest_verdicts_card(result: Dict[str, Any]) -> str:
         )
     return _card(
         "Verdicts",
-        _pre(format_backtest_verdicts(verdict)) + "<p>A backtest replays one history, in-sample; it is not a validation.</p>",
+        _pre(format_backtest_verdicts(verdict))
+        + "<p>A backtest replays one history, in-sample; it is not a validation.</p>",
     )
 
 
@@ -1100,7 +1101,10 @@ def _walkforward_sections(result: Dict[str, Any], extras: Dict[str, Any]) -> Lis
         out.append(
             _card(
                 "Holdout",
-                _table(["Metric", "Value"], [[k, _metric_cell(k, v)] for k, v in sorted((result["holdout"]).items())]),
+                _table(
+                    ["Metric", "Value"],
+                    [[k, _metric_cell(k, v)] for k, v in sorted((result["holdout"]).items())],
+                ),
             )
         )
     return out

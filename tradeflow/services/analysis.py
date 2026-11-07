@@ -830,7 +830,13 @@ def _pnl_by_exit(trades) -> Optional[Dict[str, Any]]:
     if trades is None or len(trades) == 0 or "exit_reason" not in trades:
         return None
     report = trade_analytics(trades_payload(trades, max_rows=None, jsonable=False))
-    return _jsonable({"status": report.get("status"), "reason": report.get("reason"), "exit_reasons": report.get("exit_reasons")})
+    return _jsonable(
+        {
+            "status": report.get("status"),
+            "reason": report.get("reason"),
+            "exit_reasons": report.get("exit_reasons"),
+        }
+    )
 
 
 def _worker_data_spec(workers: Optional[int], cache_dir: Optional[Any], offline: bool):
