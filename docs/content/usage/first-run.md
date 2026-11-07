@@ -99,7 +99,6 @@ QuantRed setup check
   ready for:  demo
   blocked for: data (APCA_API_KEY_ID, APCA_API_SECRET_KEY)
   blocked for: research (APCA_API_KEY_ID, APCA_API_SECRET_KEY, model provider)
-  blocked for: mcp (APCA_API_KEY_ID, APCA_API_SECRET_KEY)
 
   Also not installed (optional): viz - what each unlocks and how to add it: https://tradeflow.mk-dir.com/usage/extras
 ```
@@ -177,7 +176,9 @@ A desktop client often has a smaller `PATH` than your terminal, so a bare `quant
 
 Your client **launches the server itself**, from that command. Starting `quantred mcp`
 in a terminal does not connect any chat; it only proves the server starts. Needs the
-`mcp` extra and market-data keys. To confirm discovery works without a chat client:
+`mcp` extra. The server starts **without** market-data keys: the catalogue and trial-history
+tools answer, and the tools that need bars need keys (`quantred init`) or a cache launched with
+`quantred mcp --offline` (see [agents](agents)). To confirm discovery works without a chat client:
 
 ```bash
 quantred mcp --self-test
@@ -185,7 +186,8 @@ quantred init --check --for mcp
 ```
 
 The first lists the tools and calls the discovery tools through a real MCP client;
-the second reports whether the extra and keys are in place. See
+the second reports whether the extra is installed (keys are reported too, but the
+server does not need them to start). See
 [agents](agents) for what the tools are.
 
 ## 6. Run a real example
