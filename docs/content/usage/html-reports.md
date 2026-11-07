@@ -23,8 +23,10 @@ both be given; `backtest`, `walkforward` and `info` have `--html` only. A memoiz
 renders its reuse warning in the report rather than hiding it. A reused walk-forward renders
 as a reduced report - the stored out-of-sample aggregate, the original trial's id and age, and
 a list of what a reused result does not retain (per-fold detail, promotion prerequisites,
-holdout, the individual gate checks) - over both the CLI and `render_report`; re-run with
-force for the full one. A reused backtest's header names the benchmark and timeframe as
+the individual gate checks, and the holdout only when the original run did not record one)
+- over both the CLI and `render_report`. When the original run did record a holdout, the
+report shows it in a "Holdout (from the original run)" section instead of listing it as
+missing; re-run with force for the full one. A reused backtest's header names the benchmark and timeframe as
 requested.
 
 ## Self-contained means self-contained
