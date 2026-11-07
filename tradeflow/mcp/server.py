@@ -253,25 +253,65 @@ def _trial_store():
 _USE_LIST_TRIALS = "Use list_trials to see which trial ids are recorded."
 
 
-def _verdict_trade_note(report: Dict[str, Any]) -> Dict[str, Any]:
-    """Say what an agent can actually do when a verdict trial has no trade table.
+def _trade_recovery_reason(report: Dict[str, Any]) -> Optional[str]:
+    """What an agent can actually do to get a trade table for this kind of trial.
 
-    The shared reason tells the caller to re-run "with trades recorded", which a verdict
-    cannot do: `run_verdict` has no `record_trades` parameter, and a verdict is a
-    cross-sectional pipeline that makes no trades of its own. Advice that names a
-    parameter the tool lacks is worse than none - the agent acts on it.
+    The shared reason says to re-run "with trades recorded", which only two tools can
+    do: `run_backtest` and `run_walk_forward` take `record_trades`. `run_verdict`,
+    `run_optimization` and `run_draft_walk_forward` do not, so advice naming the
+    parameter sent an agent to a tool that rejects it - and it acts on the advice.
     """
-    if report.get("kind") == "verdict" and report.get("status") == "unavailable":
-        report = {
-            **report,
-            "reason": (
-                "a verdict trial carries no trade table - it scores a cross-sectional book, not "
-                "a sequence of trades, and `run_verdict` cannot record one. To see trades, run "
-                "`run_backtest` with `record_trades=true` over the same window and universe "
-                "and analyze that trial instead."
-            ),
-        }
-    return report
+    kind = report.get("kind")
+    if kind == "verdict":
+        return (
+            "a verdict trial carries no trade table - it scores a cross-sectional book, not "
+            "a sequence of trades, and `run_verdict` cannot record one. To see trades, run "
+            "`run_backtest` with `record_trades=true` over the same window and universe "
+            "and analyze that trial instead."
+        )
+    if kind == "optimize":
+        return (
+            "an optimization trial carries no trade table - `run_optimization` evaluates many "
+            "configs and cannot record any of their trades. To see one config's trades, run "
+            "`run_backtest` with `record_trades=true` on its parameters over the same window "
+            "and universe, and analyze that trial instead."
+        )
+    if kind == "walkforward" and str(report.get("strategy") or "").startswith("draft:"):
+        return (
+            "a draft walk-forward trial carries no trade table - `run_draft_walk_forward` "
+            "cannot record one. Run `run_backtest` with `record_trades=true` on an installed "
+            "strategy, or install the draft and run `run_walk_forward` with `record_trades=true`."
+        )
+    if kind == "walkforward":
+        return (
+            "no trade table was recorded for this validation. Re-run `run_walk_forward` with "
+            "`record_trades=true` and the same recipe and window (this journals a new trial "
+            "and re-runs its search), or run `run_backtest` with `record_trades=true` on the "
+            "chosen parameters. This is not the same as a run that made no trades."
+        )
+    if kind == "backtest":
+        return (
+            "no trade table was recorded for this backtest. Re-run `run_backtest` with "
+            "`record_trades=true` over the same window, universe and parameters (this "
+            "journals a new trial). This is not the same as a run that made no trades."
+        )
+    return None
+
+
+def _trade_recovery_note(report: Dict[str, Any]) -> Dict[str, Any]:
+    """Replace the shared "re-run with trades recorded" reason with one the trial's own
+    kind can act on. Only an unavailable table is touched, and only when the kind has a
+    tailored answer; a capped or unrecorded-completeness table keeps its own reason."""
+    if report.get("status") != "unavailable":
+        return report
+    reason = _trade_recovery_reason(report)
+    if reason is None:
+        return report
+    if report.get("kind") != "verdict" and not str(report.get("reason", "")).startswith(
+        "no trade table was recorded"
+    ):
+        return report
+    return {**report, "reason": reason}
 
 
 #: Appended where a tool accepts `workers`. Parallelism is a throughput choice, and
@@ -1781,8 +1821,10 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         Read `status` before any number. `complete` means the figures cover every trade
         the run made. `unavailable` means there are none and `reason` says why — most
         often that the run did not record trades (`record_trades=true` on `run_backtest` or
-        `run_walk_forward`), which is NOT the same as a run that made no trades. A `verdict` trial
-        never carries a trade table (`run_verdict` cannot record one); `reason` says what to run instead. `truncated` appears only with `allow_partial=true`,
+        `run_walk_forward`; no other tool takes it), which is NOT the same as a run that made
+        no trades. Verdict, optimization and draft walk-forward trials never carry a trade
+        table; `reason` says which tool to run instead for the trial's own kind. `truncated`
+        appears only with `allow_partial=true`,
         and then every count and total is a partial and must be reported as one.
 
         A trade table capped at the storage ceiling is refused by default rather than
@@ -1802,7 +1844,7 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
             report = analysis.analyze_trial(store, trial_id, allow_partial=allow_partial)
             if report.get("error"):
                 raise ValueError(f"{report['error']} {_USE_LIST_TRIALS}")
-            return _logged("analyze_trial", inputs, _verdict_trade_note(report))
+            return _logged("analyze_trial", inputs, _trade_recovery_note(report))
 
     @tool()
     def compare_trials(
@@ -1893,6 +1935,14 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
             if store is None:
                 return _logged("get_campaign_material", {"trial_id": trial_id}, {"error": _NO_STORE})
             material = campaign.campaign_material(store, trial_id)
+            if material.get("not_indexed"):
+                # The service's reason names the CLI's reindex command, which an agent
+                # cannot run; say what it can do instead.
+                raise ValueError(
+                    f"No trial with id {trial_id!r} is indexed. Its journal line may still exist, but "
+                    "reindexing the store from the journal is an operator action this server does not "
+                    f"offer. {_USE_LIST_TRIALS}"
+                )
             if not material.get("available"):
                 raise ValueError(f"{material.get('reason') or 'No such trial.'} {_USE_LIST_TRIALS}")
             return _logged("get_campaign_material", {"trial_id": trial_id}, material)

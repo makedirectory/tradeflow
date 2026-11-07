@@ -308,3 +308,61 @@ def test_a_screen_range_cannot_widen_past_the_declared_bounds(built):
         analysis.screen_ranges(STRATEGIES["demo_trend"], wider)
     inside = {"fast_ema_period": {"min": declared["min"] + 1, "max": declared["max"]}}
     assert _screen(built, param_ranges=inside)["searched"]["requested"] >= 1
+
+
+# --- 8. recovery advice names a tool that can do it -----------------------------------
+def _analyze_reason(built, trial_id):
+    report = _call(built, "analyze_trial", trial_id=trial_id)
+    assert report["status"] == "unavailable"
+    return report["reason"]
+
+
+def _first_id(built, kind):
+    rows = _call(built, "list_trials", kind=kind)
+    rows = rows["rows"]
+    return rows[0]["id"]
+
+
+def test_an_optimization_trial_is_not_told_to_rerun_with_record_trades(built):
+    _call(
+        built,
+        "run_optimization",
+        strategy="demo_trend",
+        symbols=SYMBOLS,
+        start=START,
+        end=END,
+        max_evals=2,
+    )
+    reason = _analyze_reason(built, _first_id(built, "optimize"))
+    assert "`run_optimization`" in reason
+    assert "`run_backtest` with `record_trades=true`" in reason
+
+
+def test_a_draft_walk_forward_trial_is_not_told_to_rerun_with_record_trades(built):
+    from tests.test_research import _VALID_CODE
+
+    _call(
+        built,
+        "run_draft_walk_forward",
+        code=_VALID_CODE,
+        symbols=SYMBOLS,
+        start=START,
+        end=END,
+        n_folds=2,
+        max_evals=2,
+    )
+    reason = _analyze_reason(built, _first_id(built, "walkforward"))
+    assert "`run_draft_walk_forward` cannot record" in reason
+
+
+def test_a_backtest_without_a_table_names_the_tool_that_can_record_one(built):
+    result = _call(built, "run_backtest", strategy="demo_trend", symbols=SYMBOLS, start=START, end=END)
+    assert "`run_backtest` with `record_trades=true`" in _analyze_reason(built, result["trial_id"])
+
+
+def test_an_unknown_campaign_material_id_does_not_name_a_cli_command(built):
+    with pytest.raises(Exception) as exc:
+        _call(built, "get_campaign_material", trial_id="deadbeef")
+    message = str(exc.value)
+    assert "trials rebuild" not in message
+    assert "operator action" in message
