@@ -33,6 +33,20 @@ index; they are tagged in the repository.
 TradeFlow is now **QuantRed**, and a first session works from install to a result
 without guessing. The history below keeps the old name as it was written.
 
+### HTML reports say what the terminal says
+
+- A reused walk-forward renders as a reduced report on both surfaces (`walkforward --html`
+  used to write nothing and say nothing; `render_report` rejected the payload it had just
+  been handed).
+- The verdict report carries the alphas heading and thin-universe reason; the backtest
+  report carries the Verdicts block, the survivorship statement and the P&L-by-exit block;
+  the holdout table uses the same units as the aggregate; a ratio that was never measured
+  reads "not measured" instead of 0.
+- A reused backtest's header names the benchmark and timeframe as requested; a journaled
+  walk-forward shows its trial id and campaign count; the verdict report's generation time
+  is UTC like the rest.
+- The walk-forward prerequisites block no longer glues a long check name to its value.
+
 ### Accounting v6
 
 `ACCOUNTING_VERSION` is **6**. Window boundaries computed by adding days to a market

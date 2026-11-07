@@ -20,7 +20,12 @@ quantred info        --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-3
 `--html` is independent of the other output flags. Of these four commands only
 `verdict` also has `--json PATH` (the structured result object), and there the two can
 both be given; `backtest`, `walkforward` and `info` have `--html` only. A memoized run
-renders its reuse warning in the report rather than hiding it.
+renders its reuse warning in the report rather than hiding it. A reused walk-forward renders
+as a reduced report - the stored out-of-sample aggregate, the original trial's id and age, and
+a list of what a reused result does not retain (per-fold detail, promotion prerequisites,
+holdout, the individual gate checks) - over both the CLI and `render_report`; re-run with
+force for the full one. A reused backtest's header names the benchmark and timeframe as
+requested.
 
 ## Self-contained means self-contained
 
@@ -52,8 +57,20 @@ as prominent banners above every section:
 
 **Then the sections**, per kind: a verdict's five stages and its gate scorecard; a
 backtest's metrics and equity curve; a walk-forward's per-fold table, out-of-sample
-aggregate, holdout, and the promotion prerequisites with evidence completeness and
-excess return by fold (the same block the terminal prints); an information report's IC, breadth, and IR reconciliation.
+aggregate, holdout (formatted with the same units as the aggregate), and the promotion
+prerequisites with evidence completeness and excess return by fold (the same block the
+terminal prints); an information report's IC, breadth, and IR reconciliation.
+
+The terminal's caveats are carried too, from the same functions rather than a second
+phrasing: a verdict's alphas heading (scaling, assumed IC, name count, thin-universe
+warning); a backtest's Verdicts block (statistical validation and evidence completeness
+"not assessed here" - a backtest is an in-sample replay), its universe provenance
+including the survivorship statement, and "Where the P&L came from" with the
+exit-concentration warning (for a reused backtest, which kept no trades, the card says so);
+a walk-forward's Verdicts block. A metric stored as a placeholder zero beside a flag that
+it was unavailable (Treynor with a near-zero beta; alpha, beta and the information ratio
+without a benchmark) reads "not measured". A journaled walk-forward names its trial id and
+the campaign's trial count; timestamps are UTC.
 
 ## It renders, it does not compute
 
