@@ -597,8 +597,14 @@ def _verdict_step_lines(result: Dict[str, Any]) -> list:
 
 def _verdict_scan_lines(result: Dict[str, Any]) -> list:
     scan = result.get("scan")
+    dropped = result.get("dropped_symbols") or []
+    tail = (
+        [f"  (!) dropped for having no bars: {', '.join(dropped)} — the book was judged without them"]
+        if dropped
+        else []
+    )
     if not scan:
-        return []
+        return tail
     lines = [
         "",
         f"  Scan ({scan.get('scanner')}): {scan.get('flagged_count', 0)} of "
@@ -606,7 +612,7 @@ def _verdict_scan_lines(result: Dict[str, Any]) -> list:
     ]
     if scan.get("fell_back_to_candidates"):
         lines.append("  (i) nothing flagged — the full candidate list was analyzed instead")
-    return lines
+    return lines + tail
 
 
 def alphas_heading(result: Dict[str, Any]) -> str:

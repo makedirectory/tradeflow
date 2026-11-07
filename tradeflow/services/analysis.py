@@ -2767,6 +2767,9 @@ def compute_alphas(
         "neutralize_factors": list(neutralize_factors),
         "neutralized_against": list(panel.meta.get("neutralized_against", [])),
         "universe_size": int(panel.get("score").notna().sum()) if panel.has("score") else 0,
+        # Requested names the data had no bars for. Silence here read as "all of them
+        # were analyzed", and a universe that shrank under the caps' feet went unreported.
+        "dropped_symbols": [sym for sym in symbols if sym not in universe_bars],
         "low_confidence": bool(panel.meta.get("low_confidence")),
         "low_confidence_reason": _low_confidence_reason(panel),
         "scaling": chosen_scaling,
@@ -3432,6 +3435,10 @@ def run_verdict(
                 ),
             )
 
+    # The preflight counts the names it was handed; the alphas step is the first to read
+    # bars, so a name with none is dropped there. Say so rather than let the book be
+    # judged on fewer names than the header claims.
+    result["dropped_symbols"] = list((result["alphas"] or {}).get("dropped_symbols") or [])
     result["verdict"] = _verdict_gates(result)
     result["provenance"] = _verdict_provenance(inputs, cache, n_trials)
     if cache_misses:
