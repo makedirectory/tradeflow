@@ -151,3 +151,21 @@ def test_the_single_trial_tools_say_one_trial(built):
     assert "ONE trial" in tools["confirm_screen_point"].description
     assert "one validated trial" in tools["run_walk_forward"].description
     assert "one validated trial" in tools["run_draft_walk_forward"].description
+
+
+# --- 4. what compare_trials can actually compare --------------------------------------
+def test_two_backtests_recorded_over_mcp_can_be_compared(built):
+    """A backtest journaled over MCP stored no return series (the CLI stored one), so
+    the tool whose description says it reads recorded series found nothing."""
+    a = _call(built, "run_backtest", strategy="demo_trend", symbols=SYMBOLS[:3], start=START, end=END)
+    b = _call(built, "run_backtest", strategy="demo_trend", symbols=SYMBOLS[3:], start=START, end=END)
+    report = _call(built, "compare_trials", trial_ids=[a["trial_id"], b["trial_id"]])
+    pair = report["pairs"][0]
+    assert pair.get("correlation") is not None, pair
+
+
+def test_descriptions_do_not_send_compare_trials_to_the_trade_table(built):
+    tools = _tools(built)
+    flat = " ".join(tools["run_backtest"].description.split())
+    assert "`analyze_trial` and `compare_trials` read" not in flat
+    assert "one in-sample pass" not in tools["compare_trials"].description

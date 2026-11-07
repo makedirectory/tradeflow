@@ -732,8 +732,9 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         version, so results from an older engine are never served to a newer one.
 
         `record_trades=true` stores the full trade table with the journaled trial, which
-        `analyze_trial` and `compare_trials` read; without it the trial keeps no table
-        and they report it as not recorded. A prior identical trial that kept no table
+        `analyze_trial` reads; without it the trial keeps no table and it reports it as
+        not recorded. `compare_trials` does not read that table: it reads the dated
+        return series every journaled backtest stores either way. A prior identical trial that kept no table
         does not answer a `record_trades=true` request: the backtest is re-run and a new
         trial (with the table) is journaled, counting toward the multiple-testing total.
 
@@ -906,8 +907,9 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         counts toward the campaign's multiple-testing total once.
 
         `record_trades=true` stores the out-of-sample trade table with the validated
-        trial, which `analyze_trial` and `compare_trials` read; without it the trial
-        keeps no table. A prior identical validation that kept no table does not
+        trial, which `analyze_trial` reads; without it the trial keeps no table.
+        `compare_trials` reads the stitched out-of-sample return series instead, which
+        every journaled validation stores either way. A prior identical validation that kept no table does not
         answer a `record_trades=true` request: the validation is re-run and a new trial
         (with the table) is journaled, adding every configuration its inner search
         evaluates to the family's multiple-testing total - as large a cost as the first
@@ -1820,10 +1822,13 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         correlation carries a Fisher-z `interval`; quote it, since one resting on a
         short overlap is wide and a bare coefficient hides that.
 
-        Each series carries its trial `kind`, and `kinds_differ` / a pair's `unlike_basis`
-        flag a comparison of unlike things: a walk-forward's series is stitched
-        out-of-sample folds, a backtest's is one in-sample pass over its window.
-        Journals nothing; read-only.
+        Only trials that store a dated return series can be compared: walk-forwards (the
+        stitched out-of-sample folds, drafts included) and backtests (daily returns from
+        realized trade P&L over the window, in-sample). Optimizations, verdicts and other
+        kinds store none, and neither do backtests recorded over MCP before this server
+        began storing one; those are reported as having no series. Each series carries its
+        trial `kind`, and `kinds_differ` / a pair's `unlike_basis` flag a comparison of
+        unlike things. Journals nothing; read-only.
         """
         # `across_accounting` decides whether cross-era pairs were computed or refused,
         # so an audit trail without it cannot tell a default comparison from one that

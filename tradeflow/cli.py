@@ -874,16 +874,13 @@ def cmd_backtest(args) -> None:
     refuse_a_run_with_no_bars(result, universe, args.start, args.end)
 
     if not args.no_journal:
-        from tradeflow.analytics.metrics import returns_from_equity
-        from tradeflow.analytics.performance import build_dated_equity_curve
+        from tradeflow.services.analysis import backtest_returns, trades_payload
         from tradeflow.services.audit import journal_trial
 
         # Persist this trial's own dated return series (daily-resampled,
         # from realized trade P&L - the same construction every persisted trial
         # kind uses) so it can later join a Reality Check family panel.
-        dated_equity = build_dated_equity_curve(result.trades, args.capital)
-        returns_series = returns_from_equity(dated_equity) if not dated_equity.empty else None
-        from tradeflow.services.analysis import trades_payload
+        returns_series = backtest_returns(result.trades, args.capital)
 
         journal_trial(
             "backtest",

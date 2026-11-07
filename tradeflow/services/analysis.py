@@ -640,6 +640,9 @@ def run_backtest(
             end=end,
             params=dedup_params,
             metrics=result.metrics,
+            # The CLI journals this series and this path did not, so a backtest recorded
+            # over MCP could never be compared: `compare_trials` found no series for it.
+            returns=backtest_returns(result.trades, capital),
             # Same helper and journal field the CLI fills, so the store indexes it alike.
             trades=trades_payload(result.trades) if record_trades else None,
             # Same builder the CLI adapter calls, so a trial recorded over MCP and one
@@ -760,6 +763,20 @@ def compare_trials(
     )
     report["unknown_trial_ids"] = unknown
     return report
+
+
+def backtest_returns(trades, capital: float):
+    """A backtest's own dated return series (daily-resampled, from realized trade P&L),
+    or ``None`` when it made no trades.
+
+    The one construction both the CLI and the service journal, so a backtest recorded
+    over either surface can join a correlation panel or a Reality Check family.
+    """
+    from tradeflow.analytics.metrics import returns_from_equity
+    from tradeflow.analytics.performance import build_dated_equity_curve
+
+    dated_equity = build_dated_equity_curve(trades, capital)
+    return returns_from_equity(dated_equity) if not dated_equity.empty else None
 
 
 def trades_payload(
