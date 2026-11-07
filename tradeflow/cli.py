@@ -717,11 +717,17 @@ def apply_run_config(args):
     if applied_cost:
         sources.append("cost=<config>")
 
-    print(f"Config {args.config}: {', '.join(sources) or 'nothing this command can use'}")
+    # Under --json the provenance goes to stderr: stdout is the JSON document, and two
+    # lines ahead of it made `--dry-run --json` (and every --config --json command)
+    # unparseable by the scripts that flag exists for.
+    out = sys.stderr if getattr(args, "json", False) else sys.stdout
+    print(f"Config {args.config}: {', '.join(sources) or 'nothing this command can use'}", file=out)
     # The window is never stored - see save_config - so it is always this run's own,
     # and saying so is what stops a reader assuming the config pinned it.
     if hasattr(args, "start") and hasattr(args, "end"):
-        print(f"  window {args.start:%Y-%m-%d}..{args.end:%Y-%m-%d} (from this run, not the config)")
+        print(
+            f"  window {args.start:%Y-%m-%d}..{args.end:%Y-%m-%d} (from this run, not the config)", file=out
+        )
     return dict(payload.get("params") or {})
 
 

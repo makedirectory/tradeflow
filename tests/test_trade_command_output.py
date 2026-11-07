@@ -163,11 +163,12 @@ def test_a_dry_run_json_carries_the_book(tmp_path, monkeypatch, capsys):
     cli.cmd_live(
         cli.parse_cli(["live", "--config", str(path), "--dry-run", "--json", "--max-positions", "2"])
     )
-    out = capsys.readouterr().out
-    # `apply_run_config` prints its provenance lines ahead of the document; that is a
-    # separate matter from what the document holds.
-    report = json.loads(out[out.index("{") :])
+    captured = capsys.readouterr()
+    # The whole of stdout is the document: the config provenance lines used to precede
+    # it, so `--json` output did not parse. They now go to stderr.
+    report = json.loads(captured.out)
     assert report["position_limits"]["max_positions"] == 2
+    assert f"Config {path}" in captured.err
 
 
 def test_preflight_together_with_dry_run_is_refused_not_dropped(tmp_path, monkeypatch):
