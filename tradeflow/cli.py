@@ -850,6 +850,7 @@ def cmd_backtest(args) -> None:
                 "backtest",
                 extras={"universe_provenance": _universe_provenance_lines(args, universe)},
             )
+            _print_diagnostics_for_reused_backtest(args, data_client, strategy_name, universe, tuned)
             return
 
     sizer = None
@@ -1613,6 +1614,28 @@ def _coerce_number(text):
     except (TypeError, ValueError):
         return text
     return int(value) if value.is_integer() else value
+
+
+def _print_diagnostics_for_reused_backtest(args, data_client, strategy_name, universe, tuned) -> None:
+    """The diagnostics a reused backtest can still answer, and the one it cannot.
+
+    A reused result returned before any diagnostic ran, so `--causality` or
+    `--cost-stress` after an identical earlier backtest printed nothing and said nothing.
+    The probes and the stress curves run their own unjournaled backtests and do not need
+    the original result, so they run. Excursion is read from the run's own simulation,
+    which a reused result does not have.
+    """
+    if getattr(args, "causality", False):
+        _print_causality_for_backtest(args, data_client, universe)
+    if getattr(args, "cost_stress", False):
+        _print_cost_stress(data_client, strategy_name, universe, args, tuned)
+    if getattr(args, "fill_stress", False):
+        _print_fill_stress(data_client, strategy_name, universe, args, tuned)
+    if getattr(args, "excursion", False):
+        print(
+            "\n--excursion did not run: it is read from the run's own simulation, which a reused "
+            "result does not keep. Re-run with --force for it (that records another trial)."
+        )
 
 
 def cmd_walkforward(args) -> None:

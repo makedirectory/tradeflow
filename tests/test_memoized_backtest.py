@@ -186,3 +186,20 @@ def test_asking_a_cli_walk_forward_for_its_trade_table_is_not_answered_by_a_memo
         rows = store.list_trials(kind="walkforward", limit=10, all_accounting=True)
         assert len(rows) == 2
         assert any(store.get_trial(r["id"]).get("trades") for r in rows)
+
+
+def test_a_reused_backtest_still_runs_the_diagnostics_it_can(client, monkeypatch, capsys):
+    """After an identical earlier backtest, `--causality` and `--cost-stress` printed
+    nothing: the reused result returned before any diagnostic ran, and nothing said so.
+    The probes and the stress curve run their own backtests, so they run; excursion
+    needs the original simulation and says how to get it."""
+    argv = ["backtest", "--strategy", "demo_trend", "--scanner", "none", "--symbols", "AAA,BBB"]
+    argv += ["--start", START, "--end", END]
+    main.build_parser().parse_args(argv).func(main.build_parser().parse_args(argv))
+    capsys.readouterr()
+    args = main.build_parser().parse_args(argv + ["--causality", "--cost-stress", "--excursion"])
+    args.func(args)
+    out = capsys.readouterr().out
+    assert "REUSED" in out or "reused" in out.lower()
+    assert "Causality probes" in out and "=== Cost stress" in out
+    assert "--excursion did not run" in out and "--force" in out
