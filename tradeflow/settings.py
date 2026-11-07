@@ -487,8 +487,8 @@ def _missing_credentials_message(missing: list) -> str:
         "Missing Alpaca credentials: " + ", ".join(missing) + ".",
         # Said outright because the reader has usually just run the keyless demo, and
         # nothing else told them why this command is different.
-        "Fetching market data and reaching the broker both need them; a research command "
-        "can run --offline from bars already in the local cache without them.",
+        "Fetching market data and reaching the broker both need them; most research commands "
+        "(not `research` or `demo-agent`) can run --offline from bars already in the local cache without them.",
     ]
 
     if started_from_checkout_shim():

@@ -2203,6 +2203,100 @@ def _print_bootstrap_skill(report: Dict[str, Any]) -> None:
     print(f"  verdict: {report['verdict']}")
 
 
+def _cost_basis_line(args) -> str:
+    """Which returns a research session selects on, stated rather than implied."""
+    if args.gross:
+        return "gross returns (--gross: no transaction cost charged; diagnostic only)"
+    return (
+        f"net of costs (commission {args.commission_bps:g} bps, impact eta {args.impact_eta:g}, "
+        f"short borrow {args.borrow_bps:g} bps/yr)"
+    )
+
+
+def _provider_failure_lines(exc: ModelProviderError, agent=None) -> List[str]:
+    """What to print when the model provider ends a session part-way.
+
+    Says what the retry policy *did* on this occasion (``exc.attempts``, the wait the
+    provider asked for) rather than what it usually does, and what the stop left behind:
+    rounds already journaled count toward the campaign whether or not the session
+    finished, and no holdout was scored.
+    """
+    from tradeflow.research.llm import MAX_RETRY_WAIT
+
+    lines = [f"model provider {exc.provider}: {exc.category} — {exc.detail}"]
+    if exc.category == "quota":
+        lines.append("No retry was attempted; check the provider account's billing.")
+    elif exc.category in ("rate_limited", "unavailable", "unreachable"):
+        retries = exc.attempts - 1
+        if retries > 0:
+            lines.append(
+                f"Retried {retries} time{'s' if retries != 1 else ''} before stopping; try again later."
+            )
+        elif exc.advised_wait is not None and exc.advised_wait > MAX_RETRY_WAIT:
+            lines.append(
+                f"Not retried: the provider asked for a {exc.advised_wait:g}s wait, longer than the "
+                f"{MAX_RETRY_WAIT:g}s this tool waits. Try again after that."
+            )
+        else:
+            lines.append("Not retried.")
+    if agent is not None:
+        progress = getattr(agent, "progress", None) or {}
+        done = progress.get("rounds", 0)
+        evaluated = progress.get("evaluated", 0)
+        lines.append(
+            f"Session {agent.session_id} stopped after {done} round{'s' if done != 1 else ''} "
+            f"({evaluated} evaluated); the session end is journaled with the stop reason."
+        )
+        if evaluated:
+            lines.append(
+                f"Those {evaluated} trial{'s' if evaluated != 1 else ''} are in the journal and count toward "
+                "the campaign's multiple-testing total."
+            )
+        lines.append("No holdout was scored and no config was saved.")
+    return lines
+
+
+def _research_narrator(args):
+    """The observer that prints one line per round as the session runs."""
+
+    def narrate(event: str, payload: dict) -> None:
+        if event == "session_start":
+            print(f"Cost basis: {_cost_basis_line(args)}")
+            window = payload["holdout_window"]
+            print(f"Holdout reserved: {window['start'][:10]} -> {window['end'][:10]} (never searched)")
+            looks = payload.get("prior_holdout_looks") or 0
+            if looks:
+                print(
+                    f"WARNING: {looks} earlier session{'s' if looks != 1 else ''} in this journal already scored "
+                    "this same holdout window on this universe. Each look at a holdout lets the next "
+                    "search fit to it; treat its score as weaker evidence, or move the window."
+                )
+            print("")
+        elif event == "reject":
+            print(f"  round {payload.get('round', '?')}: rejected - {str(payload['reason'])[:200]}")
+        elif event == "trial":
+            if payload["advanced"]:
+                outcome = "promotable, enters the shortlist"
+            elif payload["promotable"]:
+                outcome = "passes the gates but does not beat the incumbent"
+            else:
+                outcome = "not promotable"
+            print(
+                f"  round {payload['round']}: evaluated - median OOS Sharpe across folds "
+                f"{payload['oos_sharpe']:.2f} (in-sample {payload['is_sharpe']:.2f}); {outcome}"
+            )
+
+    return narrate
+
+
+_STOP_REASONS = {
+    "max_trials": "the evaluated-trial budget was reached",
+    "dry_rounds": "too many rounds in a row without a better candidate",
+    "token_budget": "the token budget was reached",
+    "proposer_exhausted": "the proposer had nothing more to try",
+}
+
+
 def cmd_research(args) -> None:
     """Run the autonomous research loop (opt-in; needs the ``ai`` extra).
 
@@ -2236,34 +2330,61 @@ def cmd_research(args) -> None:
         max_tokens=args.max_tokens,
         shortlist_size=args.shortlist_size,
         allow_code_gen=args.allow_code_gen,
+        # Net of costs like every other command; the key is the one the other commands
+        # fold into their own dedup identity, so a round is found by the same rule.
+        cost_model=build_cost_model(args),
+        cost_key=_cost_key(args),
     )
     proposer = build_proposer(args.provider, args.model, allow_code_gen=args.allow_code_gen)
-    agent = ResearchAgent(args.strategy, data_client, proposer, cfg, seed=args.seed)
+    proposer.client.on_retry = lambda category, attempt, limit, wait: print(
+        f"  model provider {proposer.client.provider}: {category}; retry {attempt} of {limit} in {wait:g}s"
+    )
+    agent = ResearchAgent(
+        args.strategy, data_client, proposer, cfg, seed=args.seed, observer=_research_narrator(args)
+    )
+    print(f"\n=== Research session {agent.session_id} ===")
     try:
         result = agent.run(universe, args.start, args.end)
     except ModelProviderError as exc:
-        # Left as the journal already records it: inventing an outcome event for a
-        # session the provider cut short would be a claim nobody measured.
-        lines = [f"model provider {exc.provider}: {exc.category} \u2014 {exc.detail}"]
-        if exc.category == "quota":
-            lines.append("No retry was attempted; check the provider account's billing.")
-        elif exc.category in ("rate_limited", "unavailable"):
-            lines.append("Retried a few times with a short wait before stopping; try again later.")
-        sys.exit("\n".join(lines))
+        sys.exit("\n".join(_provider_failure_lines(exc, agent)))
 
-    print(f"\n=== Research session {agent.session_id} ===")
     print(
-        f"Stopped: {result.stopped_reason} after {result.rounds} rounds, "
-        f"{result.n_trials_total} cumulative trials"
+        f"\nStopped: {_STOP_REASONS.get(result.stopped_reason, result.stopped_reason)} "
+        f"({result.stopped_reason}) after {result.rounds} round{'s' if result.rounds != 1 else ''}: "
+        f"{result.n_evaluated} evaluated, {result.n_rejected} rejected"
     )
-    print(f"Holdout (scored once): {result.holdout_window}")
+    if not result.n_evaluated:
+        print(
+            "Nothing was evaluated: every round was rejected before a walk-forward ran, so no idea was tested."
+        )
+    else:
+        print(
+            f"Trials this session: {result.n_trials_total} "
+            "(the multiple-testing count for this session alone, not the campaign's)"
+        )
+    window = result.holdout_window
+    if result.holdout_scored:
+        print(f"Holdout (scored once, for the shortlist): {window['start'][:10]} -> {window['end'][:10]}")
+    else:
+        print(
+            f"Holdout: not scored - the shortlist is empty, so there was nothing to score ({window['start'][:10]} -> {window['end'][:10]} stays unspent)."
+        )
     if not result.shortlist:
         print("No candidate cleared the promotion gates.")
     for c in result.shortlist:
-        oos = c.oos_metrics.get("sharpe_ratio", 0.0)
-        hold = (c.holdout_metrics or {}).get("sharpe_ratio", 0.0)
-        print(f"  [{c.id}] OOS Sharpe {oos:.2f} | holdout Sharpe {hold:.2f} | {c.saved_path}")
+        hold_metrics = c.holdout_metrics or {}
+        hold = hold_metrics.get("sharpe_ratio")
+        hold_text = f"{hold:.2f}" if hold is not None else "n/a"
+        print(
+            f"  [{c.id}] median OOS Sharpe across folds {c.oos_sharpe:.2f} | holdout Sharpe {hold_text} | "
+            f"{c.saved_path}"
+        )
         print(f"        hypothesis: {c.hypothesis[:100]}")
+        if c.code is not None:
+            print(
+                "        generated code: its config cannot be loaded as a strategy; review the source "
+                "in the config's provenance and add it to a strategy pack."
+            )
     print(f"\nJournal: {result.journal_path}  (a human reviews and promotes; nothing is live)")
 
 
@@ -6139,7 +6260,6 @@ def cmd_demo_agent(args) -> None:
     deterministic and needs no LLM key. Any other provider drives a live model
     through the identical loop.
     """
-    from tradeflow.costs import ParametricCostModel
     from tradeflow.research.agent import ResearchAgent, ResearchConfig
     from tradeflow.research.demo_proposals import DEMO_PROPOSALS
     from tradeflow.research.proposer import FixedProposer, build_proposer
@@ -6163,7 +6283,7 @@ def cmd_demo_agent(args) -> None:
 
     # Costs are charged on every simulated fill, in-sample and out. Validating on
     # gross returns systematically promotes turnover a strategy could not afford.
-    cost_model = None if args.no_costs else ParametricCostModel()
+    cost_model = build_cost_model(args)
 
     data_client = build_data_client()
     symbols = args.symbols
@@ -6179,11 +6299,17 @@ def cmd_demo_agent(args) -> None:
             print(f"\n  Proposals from : {source}")
             print(f"  Universe       : {', '.join(symbols)}  (bars fetched live from Alpaca)")
             costs = (
-                "gross returns (--no-costs)"
+                "gross returns (--gross)"
                 if cost_model is None
                 else "commission + half-spread + sqrt impact, charged per fill"
             )
             print(f"  Costs          : {costs}")
+            looks = payload.get("prior_holdout_looks") or 0
+            if looks:
+                print(
+                    f"  WARNING        : {looks} earlier session{'s' if looks != 1 else ''} in this journal already "
+                    "scored this same holdout"
+                )
             print(f"  Base strategy  : {payload['strategy']}")
             print(f"  Goal           : {payload['goal']}")
             print(f"\n  Research window: {research['start'][:10]} → {research['end'][:10]}")
@@ -6197,7 +6323,7 @@ def cmd_demo_agent(args) -> None:
             hypothesis = payload.get("hypothesis") or "(no hypothesis supplied)"
             print(f"     Hypothesis  {_wrap_field(hypothesis)}")
             print(f"     Sandbox     REJECTED — {payload['reason']}")
-            print("                 ↳ no bars loaded, no backtest run, no trial consumed")
+            print(f"                 ↳ {_reject_consequence(payload['reason'])}")
             return
 
         if event == "trial":
@@ -6231,7 +6357,9 @@ def cmd_demo_agent(args) -> None:
         if event == "holdout_score":
             metrics = payload["holdout_metrics"] or {}
             print(f"\n  Holdout score (first and only look) — candidate {payload['candidate']}")
-            print(f"     Sharpe {metrics.get('sharpe_ratio', 0.0):.2f}   config → {payload['saved']}")
+            sharpe = metrics.get("sharpe_ratio")
+            shown = f"{sharpe:.2f}" if sharpe is not None else "n/a"
+            print(f"     Sharpe {shown}   config → {payload['saved']}")
 
     cfg = ResearchConfig(
         goal=args.goal,
@@ -6245,13 +6373,38 @@ def cmd_demo_agent(args) -> None:
         capital=args.capital,
         allow_code_gen=True,
         cost_model=cost_model,
+        cost_key=_cost_key(args),
     )
-    agent = ResearchAgent(args.strategy, data_client, proposer, cfg, seed=args.seed, observer=narrate)
-    result = agent.run(symbols, start, end)
+    import contextlib
+    import tempfile
+
+    with contextlib.ExitStack() as stack:
+        journal_path = None
+        if args.no_journal:
+            # A scratch journal (and so a scratch trial store): nothing the demo tries is
+            # added to the real campaign, and nothing in the real campaign makes it a
+            # duplicate. Saved configs still go where configs go.
+            scratch = stack.enter_context(tempfile.TemporaryDirectory(prefix="demo-agent-"))
+            journal_path = str(Path(scratch) / "journal.jsonl")
+        agent = ResearchAgent(
+            args.strategy,
+            data_client,
+            proposer,
+            cfg,
+            seed=args.seed,
+            observer=narrate,
+            journal_path=journal_path,
+        )
+        result = agent.run(symbols, start, end)
+    if args.no_journal:
+        result.journal_path = "(discarded: --no-journal)"
 
     print(f"\n{rule}")
     print(f"  Session {agent.session_id} — stopped: {result.stopped_reason}")
-    print(f"  {result.rounds} rounds, {result.n_trials_total} cumulative trials")
+    print(
+        f"  {result.rounds} rounds: {result.n_evaluated} evaluated, {result.n_rejected} rejected; "
+        f"{result.n_trials_total} trials this session"
+    )
     print(rule)
 
     if not result.shortlist:
@@ -6263,9 +6416,11 @@ def cmd_demo_agent(args) -> None:
     else:
         print(f"\n  Shortlist: {len(result.shortlist)} candidate(s) for HUMAN review")
         for c in result.shortlist:
-            oos = c.oos_metrics.get("sharpe_ratio", 0.0)
-            hold = (c.holdout_metrics or {}).get("sharpe_ratio", 0.0)
-            print(f"    [{c.id}] OOS Sharpe {oos:.2f} | holdout Sharpe {hold:.2f}")
+            hold = (c.holdout_metrics or {}).get("sharpe_ratio")
+            hold_text = f"{hold:.2f}" if hold is not None else "n/a"
+            print(
+                f"    [{c.id}] median OOS Sharpe across folds {c.oos_sharpe:.2f} | holdout Sharpe {hold_text}"
+            )
             print(f"          {c.saved_path}")
         print("\n  These are provenance-stamped config files on disk. Nothing is live.")
 
@@ -6274,6 +6429,22 @@ def cmd_demo_agent(args) -> None:
     print("    · PAPER_TRADE was never read, let alone flipped.")
     print("    · No model output reached the trade clock. Promotion is a human step.")
     print(f"\n  Full audit trail (every proposal, rejection, and gate): {result.journal_path}\n")
+
+
+def _reject_consequence(reason: str) -> str:
+    """What a rejected round did and did not cost, by *why* it was rejected.
+
+    One line used to cover every reason, and it was wrong for two of them: a duplicate
+    is found by looking the config up (no bars), but an unrunnable proposal fails only
+    after its bars have loaded and a backtest has started.
+    """
+    if reason.startswith("duplicate"):
+        return "found in the trial history - no walk-forward run, no new trial counted"
+    if reason.startswith("unrunnable"):
+        return "bars were loaded and the backtest failed to run - no trial recorded"
+    if reason.startswith("no folds evaluable"):
+        return "the walk-forward ran but produced no usable fold - no trial recorded"
+    return "no bars loaded, no backtest run, no trial consumed"
 
 
 def _wrap_field(text: str, width: int = 58, indent: int = 17) -> str:
@@ -8279,14 +8450,49 @@ def build_parser() -> argparse.ArgumentParser:
     res.add_argument("--mode", choices=["anchored", "rolling"], default="anchored")
     res.add_argument("--folds", type=_positive_count, default=4)
     res.add_argument("--embargo-days", dest="embargo_days", type=int, default=None)
-    res.add_argument("--holdout-days", dest="holdout_days", type=_non_negative_days, default=60)
+    res.add_argument(
+        "--holdout-days",
+        dest="holdout_days",
+        type=_positive_count,
+        default=60,
+        help="Calendar days at the end of the range reserved as the holdout, scored once on the "
+        "shortlist (at least 1; default 60)",
+    )
     res.add_argument("--method", choices=["grid", "random", "bayesian"], default="grid")
     res.add_argument("--objective", type=_objective, default="sharpe_ratio")
     res.add_argument("--max-evals", dest="max_evals", type=_positive_count, default=25)
-    res.add_argument("--max-trials", dest="max_trials", type=int, default=10)
-    res.add_argument("--max-dry-rounds", dest="max_dry_rounds", type=int, default=3)
-    res.add_argument("--max-tokens", dest="max_tokens", type=int, default=None)
-    res.add_argument("--shortlist-size", dest="shortlist_size", type=int, default=3)
+    res.add_argument(
+        "--max-trials",
+        dest="max_trials",
+        type=_positive_count,
+        default=10,
+        help="Stop after this many evaluated trials - proposals that reached a walk-forward; "
+        "a rejected proposal does not spend one (at least 1; default 10)",
+    )
+    res.add_argument(
+        "--max-dry-rounds",
+        dest="max_dry_rounds",
+        type=_positive_count,
+        default=3,
+        help="Stop after this many consecutive proposals that neither were rejected nor beat the "
+        "best candidate so far - rejections count (at least 1; default 3)",
+    )
+    res.add_argument(
+        "--max-tokens",
+        dest="max_tokens",
+        type=_positive_count,
+        default=None,
+        help="Total model-token budget for the whole session (input + output, all proposals); "
+        "default unlimited",
+    )
+    res.add_argument(
+        "--shortlist-size",
+        dest="shortlist_size",
+        type=_positive_count,
+        default=3,
+        help="Candidates kept and scored on the holdout (default 3)",
+    )
+    _add_cost_flags(res)
     res.add_argument(
         "--allow-code-gen",
         dest="allow_code_gen",
@@ -8324,10 +8530,28 @@ def build_parser() -> argparse.ArgumentParser:
     )
     dagent.add_argument("--goal", default="Improve out-of-sample Sharpe without raising max drawdown")
     dagent.add_argument("--folds", type=_positive_count, default=4)
-    dagent.add_argument("--holdout-days", dest="holdout_days", type=_non_negative_days, default=90)
+    dagent.add_argument(
+        "--holdout-days",
+        dest="holdout_days",
+        type=_positive_count,
+        default=90,
+        help="Calendar days at the end of the range reserved as the holdout (at least 1; default 90)",
+    )
     dagent.add_argument("--max-evals", dest="max_evals", type=_positive_count, default=25)
-    dagent.add_argument("--max-trials", dest="max_trials", type=int, default=6)
-    dagent.add_argument("--max-dry-rounds", dest="max_dry_rounds", type=int, default=3)
+    dagent.add_argument(
+        "--max-trials",
+        dest="max_trials",
+        type=_positive_count,
+        default=6,
+        help="Evaluated-trial budget for a live model (ignored by the replay; at least 1)",
+    )
+    dagent.add_argument(
+        "--max-dry-rounds",
+        dest="max_dry_rounds",
+        type=_positive_count,
+        default=3,
+        help="Consecutive proposals without a better candidate before stopping (at least 1)",
+    )
     dagent.add_argument("--capital", type=_positive_amount, default=100_000.0)
     dagent.add_argument(
         "--provider",
@@ -8337,11 +8561,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     dagent.add_argument("--model", default=None, help="Model id (ignored when --provider replay)")
     dagent.add_argument("--seed", type=int, default=42)
+    _add_cost_flags(dagent)
     dagent.add_argument(
-        "--no-costs",
-        dest="no_costs",
+        "--no-journal",
+        dest="no_journal",
         action="store_true",
-        help="Validate on gross returns (diagnostic only; costs are charged by default)",
+        help="Journal this demo to a scratch file that is discarded, so it adds nothing to the "
+        "real campaign and is not deduplicated against it",
     )
     dagent.set_defaults(func=cmd_demo_agent)
 

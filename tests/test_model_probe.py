@@ -292,7 +292,7 @@ def _run_research_with(monkeypatch, error):
     class _Agent:
         session_id = "s"
 
-        def __init__(self, strategy, data_client, proposer, cfg, seed=None):
+        def __init__(self, strategy, data_client, proposer, cfg, seed=None, observer=None):
             self.proposer = proposer
 
         def run(self, universe, start, end):
