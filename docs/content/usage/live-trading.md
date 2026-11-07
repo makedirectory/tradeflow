@@ -71,9 +71,9 @@ quantred live --scanner demo_volume --symbols NVDA,META,TSLA --beta-sizing --ben
 quantred flatten --confirm --reason "end of test"   # halt, cancel all orders, close all positions
 ```
 
-See [stopping](stopping) for the smaller levels. A checkout also has two single-purpose
-helper scripts (`make cancel-orders`, `make close-positions`); the installed command has
-no equivalent for either on its own, so use `flatten` or your broker's dashboard.
+See [stopping](stopping) for the smaller levels. There is no separate "cancel all orders" or
+"close all positions" command: `flatten` does both after halting, records them in the
+ledger and verifies the account is flat, which a bare cancel or close did not.
 
 The full real-time path is described in **[The Engine](../engineering/engine)** and
 **[Broker Abstraction](../engineering/broker-abstraction)**.

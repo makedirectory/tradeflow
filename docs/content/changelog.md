@@ -349,6 +349,7 @@ backtests included, though most never touched a boundary - drop out of the defau
 
 ### Trading commands report the run they are about to affect
 
+- `make cancel-orders` / `make close-positions` and their scripts are retired: they bypassed the halt state and the ledger, and installed copies could not reach them. `flatten --confirm` halts, cancels, closes, records and verifies.
 - `flatten` and `reconcile` (text and `--json`) state the broker mode, and the `flatten`
   refusal names the account. The default ledger is labelled `(live-session ledger)`,
   which can no longer be read as the live account.

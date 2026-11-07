@@ -12,7 +12,7 @@ CAPITAL ?= 100000
 PY       = uv run python main.py
 
 .PHONY: help demo demo-agent demo-agent-live init install install-optimize verdict backtest backtest-no-scan scan live \
-        allocate allocate-utility alphas risk info horizon screen causality trials-status optimize optimize-bayesian cancel-orders close-positions \
+        allocate allocate-utility alphas risk info horizon screen causality trials-status optimize optimize-bayesian \
         small-real small-real-preflight small-real-report \
         check test secret-scan check-links docs docs-build docker-build docker-run up down compose-run compose-smoke \
         build release-check clean
@@ -149,13 +149,6 @@ halts:  ## Show what is currently halted — read-only
 
 flatten:  ## EMERGENCY: halt, cancel all orders, close all positions. REASON="why"
 	$(PY) flatten --confirm --reason "$(REASON)"
-
-# --- account utilities ------------------------------------------------------
-cancel-orders:  ## Cancel all open orders
-	uv run python cancel_all_orders.py
-
-close-positions:  ## Close all open positions (also cancels orders)
-	uv run python close_all_positions.py
 
 # --- release ----------------------------------------------------------------
 build:  ## Build the wheel and sdist into dist/

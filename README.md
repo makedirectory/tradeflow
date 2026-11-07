@@ -559,11 +559,6 @@ Halt state is a file under the state root, not a database — the order path hol
 connection to anything that can be down, so the switch still works when the engine
 does not. See [Stopping trading](https://tradeflow.mk-dir.com/usage/stopping).
 
-```bash
-make cancel-orders         # cancel all open orders
-make close-positions       # liquidate all positions (and cancel orders)
-```
-
 ## ☕ Coffee?
 
 If this code somehow makes you money, I'd genuinely love to hear about it. If it
