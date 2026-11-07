@@ -3,8 +3,10 @@
 .DEFAULT_GOAL := help
 
 # --- tunable defaults -------------------------------------------------------
-# Interpreter for the clean venv release-check builds (needs 3.10+; the system python3 on some machines is older).
-PYTHON ?= python3
+# Interpreter for the clean venv release-check builds: one the package supports (3.10+).
+# The system `python3` is 3.9 on some machines, where release-check failed until PYTHON=
+# was passed. Override with PYTHON=.
+PYTHON ?= $(shell uv python find '>=3.10' 2>/dev/null || echo python3)
 SYMBOLS ?= NVDA,RIVN,NFLX,META,BAC,MS,TSLA,GS,AMD,AAPL
 START   ?= 2024-01-02
 END      ?= 2024-04-01
