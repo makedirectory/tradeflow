@@ -252,8 +252,17 @@ class ResearchAgent:
             promotable = gate_report["promotable"]
             advanced = promotable and self._beats_incumbent(oos_sharpe, oos_dd, incumbent)
 
+            # Generated code is a different mechanism from the base strategy it was
+            # proposed beside, and recording it under the base's name made
+            # `--strategy <base>` mix the two (and fold their trials into one family).
+            # The draft walk-forward already records `draft:<Class>:<hash>`; this matches it.
+            row_strategy = self._row_strategy(proposal, cls)
             trial_payload = {
                 "session_id": self.session_id,
+                # Written into the journal line, which the store's rebuild reads: without
+                # it the rebuilt row falls back to the session's strategy and the store
+                # and its journal disagree about which strategy a round ran.
+                "strategy": row_strategy,
                 "round": rounds,
                 "kind": proposal.kind,
                 "hypothesis": proposal.hypothesis,
@@ -288,7 +297,7 @@ class ResearchAgent:
                 # Same resolution _evaluate's dedup check used - a proposal naming
                 # a different registered strategy must be recorded (and later
                 # deduped) under that strategy, not the session's default.
-                strategy=proposal.strategy or self.strategy_name,
+                strategy=row_strategy,
                 is_sharpe=is_sharpe,
                 oos_sharpe=oos_sharpe,
                 oos_dd=oos_dd,
@@ -576,6 +585,14 @@ class ResearchAgent:
             except Exception:  # noqa: BLE001 - narration is not load-bearing
                 logger.debug("research observer raised; continuing", exc_info=True)
         return run_id
+
+    def _row_strategy(self, proposal: Proposal, cls) -> str:
+        """The strategy identity a round is recorded under."""
+        if proposal.kind == "code":
+            from tradeflow.services.analysis import draft_code_hash
+
+            return f"draft:{cls.__name__}:{draft_code_hash(proposal.code)}"
+        return proposal.strategy or self.strategy_name
 
     def _record_trial_row(
         self,

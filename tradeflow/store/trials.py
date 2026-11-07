@@ -1724,7 +1724,9 @@ def _row_kwargs_from_research_trial(record: Dict[str, Any], ctx: Dict[str, Any])
     return {
         "id": record.get("run_id"),
         "kind": "research",
-        "strategy": ctx.get("strategy"),
+        # The round's own strategy where the line recorded one (generated code is not the
+        # session's base strategy); a line written before that read only the session's.
+        "strategy": payload.get("strategy") or ctx.get("strategy"),
         "symbols": ctx.get("symbols") or [],
         "params": payload.get("params") or {},
         "accounting": record.get("accounting", 1),

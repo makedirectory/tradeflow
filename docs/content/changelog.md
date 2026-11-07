@@ -223,6 +223,16 @@ backtests included, though most never touched a boundary - drop out of the defau
   verdict, which records neither a Sharpe nor a DSR, appeared at #5 of a five-row board)
   and reports how many it left out. Rows carry a `BASIS` cell, and the board says what a
   family `n_trials` is and why DSRs from runs of different size are not comparable.
+- Research-agent rounds read honestly in the history. A `kind: code` round is recorded
+  as `draft:<Class>:<hash>` (the identity the draft walk-forward already uses) instead of
+  the base strategy it was proposed beside, so `--strategy <base>` no longer mixes
+  generated and base code; the identity is written into the round's journal line, so a
+  rebuild reproduces it (lines written earlier carry none and read as the session's
+  strategy, as before). `trials campaign` on a round finds its `research:trial` line and
+  says a round has no recipe of its own, instead of "could not be read"; a research
+  row's EVIDENCE notes that its Sharpe is the aggregate while `list`/`show` print the
+  median fold; benchmark metrics of a run with no benchmark print "not measured" rather
+  than `0.00`.
 - `trials show` prints drawdown and trade counts in the units `trials campaign` uses.
 - `trials list --since/--until` says how many rows it excluded because their recorded
   time is unknown, rather than dropping them silently.

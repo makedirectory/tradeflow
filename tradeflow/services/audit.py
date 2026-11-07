@@ -475,6 +475,29 @@ def journal_record_for_trial(trial_id: str, path: Optional[Path] = None) -> Opti
     return None
 
 
+def research_record_for_trial(trial_id: str, path: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+    """The journal line a research-agent round was written as, or ``None``.
+
+    A round is journaled as ``research:trial``, not ``trial:<kind>``, so
+    :func:`journal_record_for_trial` never finds it - and the campaign then reported
+    "the journal line could not be read" about a line that was sitting in the file under
+    a different tool name. A separate function because the two shapes differ (this one
+    keeps its figures under ``inputs`` and has no dedup recipe), and one that accepted
+    both would have to guess which it was holding.
+    """
+    journal = Path(path or default_trial_journal())
+    if not journal.exists():
+        return None
+    for line in journal.read_text().splitlines():
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if record.get("run_id") == trial_id and record.get("tool") == "research:trial":
+            return record
+    return None
+
+
 def universe_for_trial(trial_id: str, path: Optional[Path] = None) -> Optional[Dict[str, Any]]:
     """The universe a journaled trial ran on, read from the journal itself.
 

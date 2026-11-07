@@ -64,7 +64,7 @@ def campaign_material(store, trial_id: str, *, journal_path: Optional[Any] = Non
     store is the last thing this codebase needs.
     """
     from tradeflow.engine.backtest import ACCOUNTING_VERSION
-    from tradeflow.services.audit import journal_record_for_trial
+    from tradeflow.services.audit import journal_record_for_trial, research_record_for_trial
 
     material: Dict[str, Any] = {"available": False, "reason": "", "trial_id": trial_id}
 
@@ -91,6 +91,8 @@ def campaign_material(store, trial_id: str, *, journal_path: Optional[Any] = Non
     # beside `inputs`. Printed once rather than inferred from the writer's signature:
     # assuming a nested `extra` compiled, passed, and reported every recipe as absent.
     record = journal_record_for_trial(trial_id, journal_path)
+    if record is None and row.get("kind") == "research":
+        record = research_record_for_trial(trial_id, journal_path)
     inputs = (record or {}).get("inputs") or {}
 
     accounting = row.get("accounting")
@@ -175,6 +177,20 @@ def _recipe_section(row, inputs, record) -> Dict[str, Any]:
         section["reason"] = (
             "the journal line for this trial could not be read, and the recipe is only "
             "recorded there — the store keeps a hash of it, not the recipe itself"
+        )
+        return section
+
+    if row.get("kind") == "research":
+        # The line was found; what it lacks is a per-trial recipe, which a research round
+        # does not have - its validation settings belong to the session, journaled once on
+        # the `research:session_start` line. "Could not be read" would send a reader
+        # looking for a corrupt journal.
+        section["available"] = False
+        section["reason"] = (
+            "a research round has no validation recipe of its own: the settings it was "
+            "validated under are the session's, journaled on its `research:session_start` "
+            f"line (session {inputs.get('session_id') or row.get('session_id') or 'unknown'}). "
+            "This round's line records its params, gate report and out-of-sample aggregate"
         )
         return section
 
@@ -318,6 +334,9 @@ def _metadata_section(row, inputs, record, trial_id) -> Dict[str, Any]:
         ("proposed book", "weights", invocation(f"trials show {trial_id}")),
     ):
         present = record is not None and record.get(key) is not None
+        if record is not None and key == "returns" and not present:
+            # A research round keeps its series under `inputs`, not at the top level.
+            present = (record.get("inputs") or {}).get("oos_returns") is not None
         stored.append({"artifact": name, "recorded": present, "read_with": how if present else None})
 
     return {

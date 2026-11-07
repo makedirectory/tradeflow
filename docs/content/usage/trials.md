@@ -65,6 +65,11 @@ Two rules the listing follows:
   recorded time is unknown. Those rows are not guessed a date; drop the bound to see
   them.
 
+Rows from the research agent are worth reading with that in mind. Their `SHARPE` is the
+**median fold**, while `trials campaign` prints the aggregate over all folds under
+EVIDENCE, and says so. A round that proposed new code is listed under
+`draft:<Class>:<hash>` as its strategy, never the base strategy's name.
+
 `trials query` still works as an alias for `trials list` for one release.
 
 ## `trials show` — what did trial X actually run?
