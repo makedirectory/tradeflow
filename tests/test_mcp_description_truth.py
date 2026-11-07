@@ -40,8 +40,8 @@ def _tools(built):
     return {t.name: t for t in asyncio.run(built.list_tools())}
 
 
-def _call(built, name, **kwargs):
-    content = asyncio.run(built.call_tool(name, kwargs))
+def _call(built, _tool, **kwargs):
+    content = asyncio.run(built.call_tool(_tool, kwargs))
     if isinstance(content, tuple):
         content = content[0]
     return json.loads(content[0].text)
@@ -482,3 +482,59 @@ def test_the_cli_refuses_gross_leverage_without_the_market_neutral_book(monkeypa
     argv += ["--gross-leverage", "2"]
     with pytest.raises(RunRefused, match="only applies to book='market_neutral'"):
         cli._allocate_utility(cli.build_parser().parse_args(argv))
+
+
+# --- 13. glossary caveat, list_trials kind, load_config fields ------------------------
+def test_tools_whose_dsr_is_a_single_trial_say_it_is_not_deflated(built):
+    tools = _tools(built)
+    for name in ("run_optimization", "confirm_screen_point", "run_backtest"):
+        assert "NOT deflated" in tools[name].description, name
+    assert "NOT deflated" not in tools["run_walk_forward"].description
+
+
+def test_the_not_deflated_claim_is_true_of_a_confirmed_point(built):
+    metrics = _confirm(built)["metrics"]
+    assert metrics["deflation_applied"] is False
+
+
+def test_list_trials_refuses_an_unknown_kind_listing_the_valid_ones(built):
+    with pytest.raises(Exception) as exc:
+        _call(built, "list_trials", kind="bogus")
+    assert "walkforward" in str(exc.value) and "verdict" in str(exc.value)
+    assert _call(built, "list_trials", kind="backtest")["total"] == 0
+
+
+def test_the_cli_kind_choices_are_the_stores_kinds():
+    from tradeflow import cli
+    from tradeflow.store.trials import TRIAL_KINDS
+
+    parser = cli.build_parser()
+    listing = parser.parse_args(["trials", "list", "--kind", "verdict"])
+    assert listing.kind == "verdict"
+    with pytest.raises(SystemExit):
+        parser.parse_args(["trials", "list", "--kind", "bogus"])
+    assert set(TRIAL_KINDS) >= {"backtest", "walkforward", "verdict"}
+
+
+def test_load_config_describes_the_fields_it_returns(built, tmp_path, monkeypatch):
+    from tradeflow.optimization import config_store
+
+    monkeypatch.setattr(config_store, "DEFAULT_CONFIG_DIR", tmp_path / "configs")
+    (tmp_path / "configs").mkdir()
+    (tmp_path / "configs" / "book.json").write_text(
+        json.dumps(
+            {
+                "strategy": "demo_trend",
+                "params": {},
+                "symbols": ["AAA"],
+                "capital": 5000.0,
+                "position_limits": {"max_positions": 2},
+                "provenance": {},
+            }
+        )
+    )
+    loaded = _call(built, "load_config", name="book")
+    description = _tools(built)["load_config"].description
+    for field in ("symbols", "capital", "position_limits"):
+        assert field in loaded
+        assert field in description

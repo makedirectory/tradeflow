@@ -8212,12 +8212,14 @@ def build_parser() -> argparse.ArgumentParser:
     def add_trial_filters(p) -> None:
         """The filters `list` and `best` share, so the two can never disagree about
         what a filter means."""
+        from tradeflow.store.trials import TRIAL_KINDS
+
         _add_db_flag(p)
         p.add_argument("--strategy", default=None)
         p.add_argument(
             "--kind",
             default=None,
-            choices=["backtest", "optimize", "walkforward", "alpha", "research", "verdict"],
+            choices=list(TRIAL_KINDS),
         )
         p.add_argument(
             "--symbols",

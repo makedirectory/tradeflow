@@ -212,6 +212,17 @@ _OPTIMIZATION_JOURNALING_NOTE = (
     "re-verify and append a new trial."
 )
 
+#: The glossary's deflated-Sharpe definition is appended to every tool that reports the
+#: metric, and it describes the deflated figure. A single backtest or an optimization row
+#: is computed for one trial, so the definition would be read as a claim about a number
+#: that was never deflated.
+_NOT_DEFLATED_NOTE = (
+    "Caution on `deflated_sharpe_ratio` in THIS tool's results: it is computed for a single "
+    "trial (`deflation_applied: false` where reported), so it is NOT deflated for the number "
+    "of configs the campaign has tried, whatever the definition above says. For the "
+    "deflated figure use `run_walk_forward`, `list_trials` or `best_trials`."
+)
+
 #: `confirm_screen_point` journals exactly what `run_backtest` does: one trial.
 _CONFIRM_JOURNALING_NOTE = (
     "Journals ONE trial (the same record `run_backtest` writes), so this call counts "
@@ -668,7 +679,7 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         )
         return _logged("run_screen", inputs, result)
 
-    @tool("sharpe_ratio", "deflated_sharpe_ratio", notes=[_CONFIRM_JOURNALING_NOTE])
+    @tool("sharpe_ratio", "deflated_sharpe_ratio", notes=[_CONFIRM_JOURNALING_NOTE, _NOT_DEFLATED_NOTE])
     def confirm_screen_point(
         strategy: str,
         symbols: List[str],
@@ -734,6 +745,7 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         "max_drawdown",
         "profit_factor",
         "low_sample",
+        notes=[_NOT_DEFLATED_NOTE],
     )
     def run_backtest(
         strategy: str,
@@ -824,7 +836,7 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         )
         return _logged("run_backtest", inputs, result)
 
-    @tool("sharpe_ratio", "deflated_sharpe_ratio", notes=[_OPTIMIZATION_JOURNALING_NOTE, _WORKERS_NOTE])
+    @tool("sharpe_ratio", "deflated_sharpe_ratio", notes=[_OPTIMIZATION_JOURNALING_NOTE, _NOT_DEFLATED_NOTE, _WORKERS_NOTE])
     def run_optimization(
         strategy: str,
         symbols: List[str],
@@ -1768,6 +1780,7 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
 
         Absent fields are null, and null means *not recorded*: a trial predating a
         field did not fail to record it, and a forecast kind did not score zero.
+        An unknown `kind` is refused with the valid ones rather than listing nothing.
         Read-only: this cannot modify or delete anything.
         """
         inputs = {"strategy": strategy, "kind": kind, "symbols": symbols, "limit": limit}
@@ -2112,7 +2125,12 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
 
     @tool()
     def load_config(name: str) -> Dict[str, Any]:
-        """Read back one saved candidate config: its strategy, params, and provenance.
+        """Read back one saved candidate config: its strategy, params, symbols, capital,
+        position_limits, and provenance.
+
+        `symbols`, `capital` and `position_limits` are absent when the config never
+        recorded them (absent, not zero or a default); a config with no
+        `position_limits` runs at the strategy class's own book.
 
         Reading a config does not activate it — nothing here is running the config,
         and loading it changes no behavior anywhere. Use it to check what a past

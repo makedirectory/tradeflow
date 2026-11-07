@@ -199,6 +199,11 @@ _EXCLUDED_FROM_FAMILY_COUNT = ("alpha",)
 #: Ranked beside walk-forwards under "validated runs only", a novice read it as one.
 IN_SAMPLE_KINDS = ("optimize", "alpha", "backtest")
 
+#: Every kind a trial is recorded under. A filter on any other value matches nothing, and
+#: an empty listing reads as "the campaign never ran that" rather than "that is not a
+#: kind", so the listing refuses it. The CLI's `--kind` choices are this tuple.
+TRIAL_KINDS = ("backtest", "optimize", "walkforward", "alpha", "research", "verdict")
+
 #: What a row's ``oos_sharpe`` column *is*, by kind. The column name is wrong for three
 #: of the four kinds that fill it: the same number is an out-of-sample aggregate on a
 #: walk-forward, the median of the fold Sharpes on a research round, one pass over the
@@ -1333,6 +1338,8 @@ class TrialStore:
 
             accounting = ACCOUNTING_VERSION
 
+        if kind and kind not in TRIAL_KINDS:
+            raise ValueError(f"kind must be one of {', '.join(TRIAL_KINDS)}, got {kind!r}")
         clauses: List[str] = []
         args: List[Any] = []
         if strategy:
