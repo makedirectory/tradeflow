@@ -126,3 +126,106 @@ def test_the_provenance_line_stays_config_when_no_limit_flag_was_typed(tmp_path,
 
     cli.apply_run_config(cli.parse_cli(["live", "--config", str(path)]))
     assert "position_limits=<config>" in capsys.readouterr().out
+
+
+# --- the book a run checks against ----------------------------------------------
+def _wired_dry_run(monkeypatch):
+    """The CLI wired to the real data client over a fake provider, with no broker."""
+    from tests.fakes import FakeMarketData
+    from tradeflow.marketdata.client import MarketDataClient
+
+    monkeypatch.setattr(
+        "tradeflow.services.data.build_data_client",
+        lambda **kw: MarketDataClient(FakeMarketData(["AAA", "BBB"], n=200, freq="1D")),
+    )
+    monkeypatch.setattr(cli, "build_data_and_broker", lambda *a, **k: pytest.fail("broker factory reached"))
+    monkeypatch.setattr(cli, "resolve_universe", lambda *a, **k: ["AAA", "BBB"])
+
+
+def test_a_dry_run_prints_the_book_it_checks_against(tmp_path, monkeypatch, capsys):
+    """`WOULD BIND: 0` was unreadable: the dry run printed capital and buckets but not the
+    position limits, gross, net or floor it was deciding against. The flat starting book
+    was also stated as fact although a dry run cannot see the account."""
+    _wired_dry_run(monkeypatch)
+    path = _write_config(tmp_path)
+
+    cli.cmd_live(
+        cli.parse_cli(["live", "--config", str(path), "--dry-run", "--max-positions", "2"])
+    )
+    out = capsys.readouterr().out
+    assert "max positions         2" in out
+    assert "max position size" in out and "min notional" in out and "max gross exposure" in out
+    assert "assumed flat" in out
+    assert "starting book         flat" not in out
+
+
+def test_a_dry_run_json_carries_the_book(tmp_path, monkeypatch, capsys):
+    """The JSON reader has the same question as the text reader."""
+    _wired_dry_run(monkeypatch)
+    path = _write_config(tmp_path)
+
+    cli.cmd_live(cli.parse_cli(["live", "--config", str(path), "--dry-run", "--json", "--max-positions", "2"]))
+    out = capsys.readouterr().out
+    # `apply_run_config` prints its provenance lines ahead of the document; that is a
+    # separate matter from what the document holds.
+    report = json.loads(out[out.index("{"):])
+    assert report["position_limits"]["max_positions"] == 2
+
+
+def test_preflight_together_with_dry_run_is_refused_not_dropped(tmp_path, monkeypatch):
+    """`--preflight --dry-run` ran the dry run and discarded the preflight without a
+    word, so the operator believed the account had been checked."""
+    _wired_dry_run(monkeypatch)
+    path = _write_config(tmp_path)
+
+    with pytest.raises(SystemExit) as refused:
+        cli.cmd_live(cli.parse_cli(["live", "--config", str(path), "--dry-run", "--preflight"]))
+    assert "--preflight and --dry-run" in str(refused.value)
+
+
+def test_a_book_whose_ceiling_is_below_the_floor_is_flagged_not_repaired(tmp_path, monkeypatch, capsys):
+    """`--max-position-size 500 --min-notional 2000` refuses every entry and the report
+    showed three ordinary-looking numbers. The warning is printed; the limits are left
+    exactly as given."""
+    _wired_dry_run(monkeypatch)
+    path = _write_config(tmp_path)
+
+    cli.cmd_live(
+        cli.parse_cli(
+            ["live", "--config", str(path), "--dry-run", "--capital", "3000",
+             "--max-position-size", "500", "--min-notional", "2000"]
+        )
+    )
+    out = capsys.readouterr().out
+    assert "max position size $500.00 is below min notional $2,000.00" in out
+    assert "$500.00" in out and "$2,000.00" in out  # not repaired
+
+
+def test_a_consistent_book_gets_no_warning():
+    """Boundary: a ceiling equal to the floor can place an order."""
+    assert cli._book_warnings({"max_position_size": 2000.0, "min_notional": 2000.0}, 8000.0) == []
+    assert cli._book_warnings({"max_position_size": 1999.0, "min_notional": 2000.0}, 8000.0)
+
+
+def test_a_gross_cap_and_a_capital_below_the_floor_are_flagged():
+    warned = cli._book_warnings({"max_gross_exposure": 0.1, "min_notional": 2000.0}, 8000.0)
+    assert any("max gross exposure" in w for w in warned)
+    warned = cli._book_warnings({"min_notional": 2000.0}, 1500.0)
+    assert any("capital $1,500.00" in w for w in warned)
+
+
+def test_the_live_preflight_says_a_default_ceiling_is_not_the_account(monkeypatch, capsys):
+    """Without a config, `max position size $100,000.00` sat beside `capital this run the
+    whole account` and read as though the account were the cap. It is the strategy
+    class's own default."""
+    from tradeflow.services.registry import STRATEGIES
+
+    strategy = STRATEGIES["demo_trend"].create_with_defaults()
+    args = cli.parse_cli(["live", "--symbols", "AAA,BBB", "--scanner", "none", "--preflight"])
+    for line in cli._book_limit_lines(args, strategy.position_limits(), None):
+        print(line)
+    assert "(strategy default, not set for this run)" in capsys.readouterr().out
+
+    typed = cli.parse_cli(["live", "--symbols", "AAA", "--scanner", "none", "--max-position-size", "500"])
+    lines = cli._book_limit_lines(typed, {"max_position_size": 500.0}, None)
+    assert not any("strategy default" in line for line in lines)

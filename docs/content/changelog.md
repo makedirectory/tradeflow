@@ -283,6 +283,12 @@ backtests included, though most never touched a boundary - drop out of the defau
 - The `Config ...` provenance line names the limits typed on the command line
   (`position_limits=<config + --max-positions, --max-position-size given>`) instead of
   claiming `<config>` beside a table of overridden caps.
+- `live --dry-run` prints the book it checks against (the preflight's own rows, and
+  `position_limits` in `--json`) and words the flat starting book as an assumption.
+  `--preflight` with `--dry-run` is refused instead of dropping one of them.
+- The preflight and the dry run warn when the declared book cannot place an order
+  (`max_position_size`, a gross cap or the capital below `min_notional`), and label a
+  ceiling that is only the strategy's default.
 
 ## 2.3.0 — 2026-09-16
 

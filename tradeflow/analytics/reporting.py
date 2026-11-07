@@ -1158,7 +1158,15 @@ def _recorded_cell(fact: Optional[Dict[str, Any]]) -> str:
     return str(value)
 
 
-def format_dry_run(report: Dict[str, Any]) -> str:
+def _starting_book(source: Any) -> str:
+    """How the starting book reads. A dry run cannot see the account, so a flat book is
+    an assumption it made, not a fact it observed."""
+    if source == "flat":
+        return "assumed flat (a dry run cannot see the account)"
+    return str(source)
+
+
+def format_dry_run(report: Dict[str, Any], book_lines: Optional[Sequence[str]] = None) -> str:
     """A dry run's decision path, in language that cannot be read as execution.
 
     Every heading is conditional — *would* submit, *would* bind, *would* skip — and the
@@ -1173,7 +1181,7 @@ def format_dry_run(report: Dict[str, Any]) -> str:
         f"=== {report.get('banner')} ===",
         "",
         f"  {'capital':<20}${report.get('capital', 0):,.2f} ({report.get('capital_source')})",
-        f"  {'starting book':<20}{report.get('starting_positions')}",
+        f"  {'starting book':<20}{_starting_book(report.get('starting_positions'))}",
         f"  {'universe':<20}{len(report.get('universe') or [])} symbol(s)",
         # Both numbers, always. "12 symbols, 12 evaluated" and "12 symbols, 7 evaluated"
         # look identical if only the first is printed, and the second is a different run.
@@ -1185,6 +1193,10 @@ def format_dry_run(report: Dict[str, Any]) -> str:
         ),
         "",
     ]
+    if book_lines:
+        # The caps these buckets were decided against; without them "WOULD BIND: 0" is
+        # unreadable, since nothing says what there was to bind.
+        lines.extend(["  book checked against:", *book_lines, ""])
 
     for bucket, heading in (
         ("would_submit", "WOULD SUBMIT — orders this contract would have sent"),

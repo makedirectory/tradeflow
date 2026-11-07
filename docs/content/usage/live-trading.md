@@ -232,9 +232,17 @@ what would have happened.
 === DRY RUN — broker has no trading capability; no orders can be submitted ===
 
   capital             $8,000.00 (from config)
-  starting book       flat
+  starting book       assumed flat (a dry run cannot see the account)
   universe            4 symbol(s)
   evaluated           3  (1 could not be evaluated)
+
+  book checked against:
+    max positions         4
+    max position size     $900.00
+    max gross exposure    0.8 (80% of capital = $6,400.00)
+    max net exposure      unset
+    max total risk        0.05 (5% of capital = $400.00)
+    min notional          $50.00
 
   WOULD SUBMIT — orders this contract would have sent: 1
     AAA       buy 25 @ 100.00 (stop 97.00 / target 106.00)
@@ -292,6 +300,17 @@ nothing, so it observes none of them — that is what a small-real session is fo
 is journaled either: a dry run measures nothing, so recording it would spend the family's
 multiple-testing budget on a rehearsal.
 
+The `book checked against` block is the same rows the live preflight prints, so
+`WOULD BIND: 0` can be read against the caps there were to bind (`--json` carries them as
+`position_limits`). When the declared book cannot place any order - a per-position
+ceiling or a gross cap below `min_notional`, or a capital below it - the block ends in a
+`WARNING` line saying every entry would be refused; the live preflight prints the same
+warning. It is reported, never repaired. A ceiling that is the strategy's own default,
+rather than one typed or configured, is labelled `(strategy default, not set for this
+run)`.
+
+`--dry-run` refuses `--preflight` as well as `--live-money`: a preflight reads the account
+through a broker and a dry run builds none, so combining them would silently drop one.
 `--dry-run` refuses `--live-money` rather than ignoring it, and `--json` is refused
 outside a dry run: a live session streams for as long as it runs and has no single report
 to serialize.

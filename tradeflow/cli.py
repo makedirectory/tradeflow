@@ -4387,6 +4387,15 @@ def _refuse_inert_flags(args) -> None:
             "--json only applies to --dry-run: a live session streams for as long as it "
             "runs and has no single report to serialize. Add --dry-run, or drop --json."
         )
+    if getattr(args, "dry_run", False) and getattr(args, "preflight", False):
+        # Refused rather than run as one: --preflight reads the account through a broker,
+        # and a dry run builds none. Honouring the dry run and dropping --preflight left
+        # an operator believing the account had been checked.
+        sys.exit(
+            "--preflight and --dry-run cannot be combined: --preflight reads the account "
+            "through a broker, and a dry run builds none. The dry run prints the book it "
+            "checks against; run --preflight on its own to see the account."
+        )
     if getattr(args, "dry_run", False) and "live_money" in given:
         # Refused rather than ignored. Someone who typed --live-money believes this run
         # can trade; silently honouring --dry-run would leave them right about the
@@ -4467,10 +4476,16 @@ def _run_dry(args, strategy) -> None:
         universe=universe,
         unable_to_evaluate=unevaluable,
     )
+    # The caps the buckets were decided against, from the same renderer the preflight
+    # uses: `WOULD BIND: 0` cannot be read without knowing what there was to bind.
+    limits = strategy.position_limits()
+    book_lines = _book_limit_lines(args, limits, capital)
     if getattr(args, "json", False):
+        report["position_limits"] = limits
+        report["warnings"] = [line.strip() for line in _book_warnings(limits, capital)]
         print(json.dumps(report, indent=2, default=str))
     else:
-        print(format_dry_run(report))
+        print(format_dry_run(report, book_lines=book_lines))
 
 
 def _dry_run_history(data_client, strategy, universe):
@@ -5208,6 +5223,81 @@ def _live_capital(args) -> Optional[float]:
     return None
 
 
+def _book_limit_lines(args, limits, capital) -> list:
+    """The book's caps as preflight rows, shared by the live preflight and the dry run.
+
+    One renderer, so a dry run's `WOULD BIND` can be read against exactly the numbers the
+    preflight would print. Warnings about a contradictory book end the list: they are
+    reported, never repaired - the run goes ahead with the book it was given.
+    """
+    lines = []
+    # Absent is not zero: a limit nobody declared is unbounded, and must not read as 0.
+    def _limit(value, render):
+        return render(value) if value is not None else "unset"
+
+    lines.append(f"  {'max positions':22}{_limit(limits.get('max_positions'), str)}")
+    size = limits.get("max_position_size")
+    # A per-position ceiling above the whole deployable book cannot bind. Saying so
+    # here stops it reading as a limit somebody chose.
+    inert = (
+        "  (above this run's capital - not a binding limit)" if size and capital and size >= capital else ""
+    )
+    # A ceiling nobody typed and no config recorded is the strategy class's own default.
+    # Beside "capital: the whole account" it reads as though the account were the cap.
+    chosen = set(getattr(args, "flags_given", set())) | set(getattr(args, "config_position_limits", None) or {})
+    default_note = "" if "max_position_size" in chosen or size is None else "  (strategy default, not set for this run)"
+    lines.append(f"  {'max position size':22}{_limit(size, lambda v: f'${v:,.2f}')}{default_note}{inert}")
+    # Gross exposure is a fraction of deployable capital, so show the dollars it means
+    # here - the fraction alone is the one number an operator cannot sanity-check.
+    gross = limits.get("max_gross_exposure")
+    if gross is not None and capital:
+        lines.append(f"  {'max gross exposure':22}{gross:g} ({gross:.0%} of capital = ${gross * capital:,.2f})")
+    else:
+        lines.append(f"  {'max gross exposure':22}{_limit(gross, lambda v: f'{v:g} ({v:.0%} of capital)')}")
+    net = limits.get("max_net_exposure")
+    if net is not None and capital:
+        lines.append(f"  {'max net exposure':22}{net:g} ({net:.0%} of capital = ${net * capital:,.2f})")
+    else:
+        lines.append(f"  {'max net exposure':22}{_limit(net, lambda v: f'{v:g} ({v:.0%} of capital)')}")
+    risk = limits.get("max_total_risk")
+    if risk is not None and capital:
+        lines.append(f"  {'max total risk':22}{risk:g} ({risk:.0%} of capital = ${risk * capital:,.2f})")
+    else:
+        lines.append(f"  {'max total risk':22}{_limit(risk, lambda v: f'{v:g} ({v:.0%} of capital)')}")
+    lines.append(f"  {'min notional':22}{_limit(limits.get('min_notional'), lambda v: f'${v:,.2f}')}")
+    lines.extend(_book_warnings(limits, capital))
+    return lines
+
+
+def _book_warnings(limits, capital) -> list:
+    """Lines saying the declared book cannot place an order, when that is certain.
+
+    Only arithmetic that holds whatever the market does: a per-position ceiling below
+    the execution floor, a capital below it, or a gross cap whose dollars are below it.
+    Each refuses every entry, and nothing else in the output would say so - the table
+    simply shows three plausible-looking numbers.
+    """
+    floor = limits.get("min_notional")
+    if not floor:
+        return []
+    warnings = []
+    size = limits.get("max_position_size")
+    if size is not None and size < floor:
+        warnings.append(
+            f"max position size ${size:,.2f} is below min notional ${floor:,.2f}: "
+            f"every entry would be refused"
+        )
+    if capital and capital < floor:
+        warnings.append(f"capital ${capital:,.2f} is below min notional ${floor:,.2f}: every entry would be refused")
+    gross = limits.get("max_gross_exposure")
+    if gross is not None and capital and gross * capital < floor:
+        warnings.append(
+            f"max gross exposure ({gross:g} of ${capital:,.2f} = ${gross * capital:,.2f}) is below "
+            f"min notional ${floor:,.2f}: every entry would be refused"
+        )
+    return [f"  {'WARNING':22}{w}" for w in warnings]
+
+
 def _print_live_preflight(args, strategy, broker, universe, capital, ledger) -> None:
     """The exact contract this run will trade under, printed before any order logic.
 
@@ -5250,36 +5340,8 @@ def _print_live_preflight(args, strategy, broker, universe, capital, ledger) -> 
         f"  (recorded, not charged)"
     )
 
-    # Absent is not zero: a limit nobody declared is unbounded, and must not read as 0.
-    def _limit(value, render):
-        return render(value) if value is not None else "unset"
-
-    print(f"  {'max positions':22}{_limit(limits.get('max_positions'), str)}")
-    size = limits.get("max_position_size")
-    # A per-position ceiling above the whole deployable book cannot bind. Saying so
-    # here stops it reading as a limit somebody chose.
-    inert = (
-        "  (above this run's capital - not a binding limit)" if size and capital and size >= capital else ""
-    )
-    print(f"  {'max position size':22}{_limit(size, lambda v: f'${v:,.2f}')}{inert}")
-    # Gross exposure is a fraction of deployable capital, so show the dollars it means
-    # here - the fraction alone is the one number an operator cannot sanity-check.
-    gross = limits.get("max_gross_exposure")
-    if gross is not None and capital:
-        print(f"  {'max gross exposure':22}{gross:g} ({gross:.0%} of capital = ${gross * capital:,.2f})")
-    else:
-        print(f"  {'max gross exposure':22}{_limit(gross, lambda v: f'{v:g} ({v:.0%} of capital)')}")
-    net = limits.get("max_net_exposure")
-    if net is not None and capital:
-        print(f"  {'max net exposure':22}{net:g} ({net:.0%} of capital = ${net * capital:,.2f})")
-    else:
-        print(f"  {'max net exposure':22}{_limit(net, lambda v: f'{v:g} ({v:.0%} of capital)')}")
-    risk = limits.get("max_total_risk")
-    if risk is not None and capital:
-        print(f"  {'max total risk':22}{risk:g} ({risk:.0%} of capital = ${risk * capital:,.2f})")
-    else:
-        print(f"  {'max total risk':22}{_limit(risk, lambda v: f'{v:g} ({v:.0%} of capital)')}")
-    print(f"  {'min notional':22}{_limit(limits.get('min_notional'), lambda v: f'${v:,.2f}')}")
+    for line in _book_limit_lines(args, limits, capital):
+        print(line)
     print(
         f"  {'entries':22}{'re-affirmed' if strategy.config.get('reaffirm_entries', True) else 'fresh crossings only'}"
     )
