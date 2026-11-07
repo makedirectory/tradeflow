@@ -500,7 +500,10 @@ def run_checks(
                 if filled
                 else f"{mask(value)} - no command that touches the market will run",
                 None if filled else "run `init` to enter it, or export it as an environment variable",
-                frozenset({"data", "research", "mcp"}),
+                # Not the mcp task: the server starts without keys and serves the catalogue
+                # and trial history; its data tools need them or `mcp --offline`. Requiring
+                # them here reported "blocked for: mcp" for a server that runs.
+                frozenset({"data", "research"}),
             )
         )
     paper = state.resolved("PAPER_TRADE")

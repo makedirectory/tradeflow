@@ -477,8 +477,10 @@ def _status(checks, name):
         (True, ("ai", "mcp"), "anthropic", {"demo", "data", "mcp"}, {"research"}),
         # SDK and key both there
         (True, ("ai", "mcp"), "ollama", {"demo", "data", "mcp", "research"}, set()),
-        # no market keys: only the demo runs
-        (False, ("ai", "mcp"), "ollama", {"demo"}, {"data", "mcp", "research"}),
+        # no market keys: the demo runs, and so does the MCP server - it starts keyless and
+        # serves the catalogue and trial history (its data tools need keys or --offline).
+        # Reversed on purpose: this used to report "blocked for: mcp" for a server that runs.
+        (False, ("ai", "mcp"), "ollama", {"demo", "mcp"}, {"data", "research"}),
     ],
 )
 def test_readiness_is_computed_per_task(tmp_path, monkeypatch, keys, sdks, provider, ready, blocked):
