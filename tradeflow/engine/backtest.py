@@ -674,7 +674,10 @@ class BacktestEngine:
                 frames[symbol] = processed
             except Exception as exc:  # noqa: BLE001 - one bad symbol shouldn't abort the run
                 failures.append(f"{symbol}: {exc}")
-                logger.error("Error preparing %s: %s", symbol, exc, exc_info=True)
+                # The traceback is for whoever is debugging; the failure itself is reported once,
+                # below, as a single line - a strategy that raises on every symbol used to
+                # print a full traceback per symbol.
+                logger.debug("Error preparing %s: %s", symbol, exc, exc_info=True)
 
         # A run where *every* symbol raised is a broken strategy, not a flat one.
         # Reporting it as a zero-trade result would let a config error masquerade as
@@ -692,10 +695,18 @@ class BacktestEngine:
                 panels[symbol] = self._panel_for(symbol, data, master)
             except Exception as exc:  # noqa: BLE001
                 failures.append(f"{symbol}: {exc}")
-                logger.error("Error backtesting %s: %s", symbol, exc, exc_info=True)
+                logger.debug("Error backtesting %s: %s", symbol, exc, exc_info=True)
 
         if attempted and len(failures) == attempted:
             raise BacktestError(f"backtest failed for all {attempted} symbol(s); first error - {failures[0]}")
+        if failures:
+            # Some symbols dropped out: never silent, but one line, not one traceback each.
+            logger.warning(
+                "%d of %d symbol(s) failed and were left out of the run; first error - %s",
+                len(failures),
+                attempted,
+                failures[0],
+            )
         return panels, market_data, master
 
     def _step_rate(self, panels: Dict[str, _Panel], master: pd.DatetimeIndex) -> float:

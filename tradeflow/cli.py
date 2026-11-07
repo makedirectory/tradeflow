@@ -471,6 +471,13 @@ def _refuse_unusable_config(path, exc) -> "NoReturn":  # noqa: F821 - string ann
     and no summary here would be better than that. What this adds is what the loader
     cannot know: which file asked, and the likeliest reason.
     """
+    from tradeflow.utils.errors import GeneratedCodeRefused
+
+    if isinstance(exc, GeneratedCodeRefused):
+        # Not a damaged file and not a missing package: the config is fine, and is
+        # deliberately not runnable. The generic list of likely causes would send the
+        # reader looking for a typo.
+        sys.exit(f"Refusing to run: {path} holds generated code.\n  {exc}")
     detail = f"{type(exc).__name__}: {exc}" if isinstance(exc, (OSError, KeyError)) else str(exc)
     sys.exit(
         f"Refusing to run: {path} cannot be used by this build.\n"

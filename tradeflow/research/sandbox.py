@@ -94,6 +94,8 @@ def validate_hygiene(proposal, strategy_cls: Optional[Type[Strategy]] = None) ->
     if proposal.kind == "tune":
         if strategy_cls is None:
             return False, "tune proposal without a known strategy class"
+        if not isinstance(proposal.params, Mapping):
+            return False, f"params must be an object of name: value, got {type(proposal.params).__name__}"
         tuned = proposal.tuned_params or list(proposal.params)
         if len(tuned) > MAX_TUNABLE_PARAMS:
             return False, f"{len(tuned)} tuned params exceeds the cap of {MAX_TUNABLE_PARAMS}"
@@ -101,17 +103,41 @@ def validate_hygiene(proposal, strategy_cls: Optional[Type[Strategy]] = None) ->
         for name, value in proposal.params.items():
             if name not in ranges:
                 return False, f"unknown parameter {name!r}"
-            spec = ranges[name]
-            if "min" in spec and "max" in spec and not (spec["min"] <= value <= spec["max"]):
-                return False, f"{name}={value} outside [{spec['min']}, {spec['max']}]"
+            reason = _value_problem(name, value, ranges[name])
+            if reason:
+                return False, reason
         return True, "ok"
 
     if proposal.kind == "code":
-        if not (proposal.code or "").strip():
+        if not isinstance(proposal.code, str) or not proposal.code.strip():
             return False, "code proposal without source"
         return True, "ok"
 
     return False, f"unknown proposal kind {proposal.kind!r}"
+
+
+def _value_problem(name: str, value, spec) -> Optional[str]:
+    """Why ``value`` cannot be this parameter's value, or ``None`` when it can.
+
+    The declared type is checked before the range: ``10.5`` for an integer parameter
+    used to be evaluated and saved as ``10.5``, while ``True`` (a bool is an ``int`` to
+    Python) was reported as "outside the range" - a wrong reason that hid the real one.
+    """
+    if not isinstance(spec, Mapping):
+        return None
+    declared = spec.get("type")
+    if not (declared in ("int", "float") or ("min" in spec and "max" in spec)):
+        return None
+    expected = declared or "a number"
+    if isinstance(value, bool):
+        return f"{name}={value} is a boolean; expected {expected}"
+    if not isinstance(value, (int, float)):
+        return f"{name}={value!r} is not a number; expected {expected}"
+    if declared == "int" and isinstance(value, float) and not value.is_integer():
+        return f"{name}={value} is not an integer; {name} is declared int"
+    if "min" in spec and "max" in spec and not (spec["min"] <= value <= spec["max"]):
+        return f"{name}={value} outside [{spec['min']}, {spec['max']}]"
+    return None
 
 
 def load_strategy_from_code(code: str, *, class_name: Optional[str] = None) -> Type[Strategy]:

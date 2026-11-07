@@ -155,7 +155,16 @@ def get_param_ranges(kind: str, name: str) -> Dict[str, Any]:
     return {"kind": kind, "name": name, "param_ranges": registry[name].PARAM_RANGES}
 
 
+#: Identity prefix of a strategy the research agent or a draft walk-forward wrote. It
+#: names a mechanism for the trial history; it is never a registered, runnable name.
+DRAFT_PREFIX = "draft:"
+
+
 def resolve_strategy_class(name: str) -> Type[Strategy]:
+    if name.startswith(DRAFT_PREFIX):
+        from tradeflow.utils.errors import GeneratedCodeRefused
+
+        raise GeneratedCodeRefused(name)
     if name not in STRATEGIES:
         raise ValueError(f"Unknown strategy '{name}'. Available: {list(STRATEGIES)}")
     return STRATEGIES[name]

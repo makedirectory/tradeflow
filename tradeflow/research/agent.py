@@ -25,6 +25,7 @@ Guardrails enforced here in code (not by prompt):
    (<=5 params, rationale required, contract-valid) before evaluation.
 """
 
+import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -43,9 +44,50 @@ from tradeflow.services.audit import audit_log, new_run_id
 from tradeflow.services.registry import resolve_strategy_class
 from tradeflow.store.trials import TrialStore, db_path_for_journal
 from tradeflow.strategies.base import Strategy
+from tradeflow.utils.errors import RunRefused
 from tradeflow.utils.timeutils import shift_days
 
 logger = logging.getLogger(__name__)
+
+
+def draft_code_hash(code: str) -> str:
+    """The digest a generated strategy is identified by (one definition, in the service)."""
+    from tradeflow.services.analysis import draft_code_hash as _hash
+
+    return _hash(code)
+
+
+def prior_holdout_looks(journal_path: str, holdout_window: Dict[str, str], symbols: List[str]) -> int:
+    """How many earlier sessions in this journal scored this same holdout over this universe.
+
+    Each look at a holdout is information the next search can overfit to, so a repeat is
+    worth saying out loud. Counted from the journal (the only record that carries both
+    the window and the scoring), and best-effort: an unreadable journal is zero looks
+    found, never a reason to stop a session.
+    """
+    wanted = sorted(s.upper() for s in symbols)
+    windows: Dict[str, bool] = {}
+    scored: set = set()
+    try:
+        with open(journal_path, encoding="utf-8") as handle:
+            for line in handle:
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    continue
+                inputs = record.get("inputs") or {}
+                sid = inputs.get("session_id")
+                if record.get("tool") == "research:session_start":
+                    same = (
+                        inputs.get("holdout_window") == holdout_window
+                        and sorted(str(s).upper() for s in inputs.get("symbols") or []) == wanted
+                    )
+                    windows[sid] = same
+                elif record.get("tool") == "research:holdout_score":
+                    scored.add(sid)
+    except OSError:
+        return 0
+    return sum(1 for sid in scored if windows.get(sid))
 
 
 #: Default research-journal location (append-only JSONL). The same file CLI
@@ -89,6 +131,27 @@ class ResearchConfig:
     #: Charged on every simulated fill. Left ``None`` the loop selects on gross
     #: returns, which favors turnover the strategy could not afford live.
     cost_model: Optional[CostModel] = None
+    #: How that model is spelled in a trial's identity (``{"gross": True}`` or the three
+    #: cost parameters) - the same shape every other command folds into its dedup key.
+    #: Left ``None`` it is derived from ``cost_model``, so a caller that builds the model
+    #: from flags passes the key it built the model from rather than have it re-derived.
+    cost_key: Optional[Dict[str, Any]] = None
+
+    def cost_identity(self) -> Dict[str, Any]:
+        """The cost assumptions as they enter a round's recorded identity."""
+        if self.cost_key is not None:
+            return dict(self.cost_key)
+        model = self.cost_model
+        if model is None:
+            return {"gross": True}
+        if hasattr(model, "commission_rate"):
+            return {
+                "gross": False,
+                "commission_bps": round(model.commission_rate * 1e4, 9),
+                "impact_eta": model.impact_eta,
+                "borrow_bps": round(model.annual_borrow_rate * 1e4, 9),
+            }
+        return {"gross": False, "model": type(model).__name__}
 
 
 @dataclass
@@ -104,6 +167,14 @@ class Candidate:
     oos_metrics: Dict[str, float]
     gate_report: Dict[str, Any]
     n_trials_at_selection: int
+    #: Median-across-folds OOS Sharpe - the measure the promotion gate applies, and so the
+    #: one candidates are compared and ranked on. ``oos_metrics`` is the stitched
+    #: aggregate, a different number; mixing the two compared a median with an aggregate.
+    oos_sharpe: Optional[float] = None
+    #: Source of the generated strategy, for a ``kind == "code"`` candidate. The config
+    #: saved from it names a ``draft:`` identity and cannot be loaded as a strategy; this
+    #: is what a human reviews before adding it to a strategy pack.
+    code: Optional[str] = None
     holdout_metrics: Optional[Dict[str, float]] = None
     saved_path: Optional[str] = None
     strategy_cls: Optional[Type[Strategy]] = field(default=None, repr=False)
@@ -127,6 +198,15 @@ class ResearchResult:
     journal_path: str
     holdout_window: Optional[Dict[str, str]] = None
     saved_configs: List[str] = field(default_factory=list)
+    #: Rounds that reached a walk-forward (each is one journaled trial) and rounds
+    #: rejected before one ran. ``rounds`` is both: the number of proposals made.
+    n_evaluated: int = 0
+    n_rejected: int = 0
+    #: Whether the holdout was scored at all - it is only scored for a shortlist.
+    holdout_scored: bool = False
+    #: Earlier sessions in this journal that scored this same holdout window over this
+    #: same universe; each look at a holdout erodes it.
+    prior_holdout_looks: int = 0
 
 
 class ResearchAgent:
@@ -157,6 +237,12 @@ class ResearchAgent:
         #: Purely observational - it cannot influence the loop or its decisions.
         self.observer = observer
         self.session_id = new_run_id()
+        #: The round being decided and the reason the last rejection gave; the loop reads
+        #: the second to tell the proposer why its last idea was refused.
+        self._round = 0
+        self._last_reject: Optional[str] = None
+        #: Counts as of the last failure, for a caller that has only the exception.
+        self.progress: Dict[str, int] = {}
         #: The trial store this session dual-writes into and dedups
         #: against - defaults to the store alongside this session's journal, so
         #: redirecting ``journal_path`` (as tests do) isolates the store too.
@@ -175,12 +261,27 @@ class ResearchAgent:
 
     def run(self, symbols: List[str], start: datetime, end: datetime) -> ResearchResult:
         cfg = self.config
+        # Refused before anything is journaled: these are inputs that cannot describe a
+        # session at all, and a session_start for one would be a claim nobody measured.
+        if cfg.holdout_days < 1:
+            raise RunRefused(
+                "holdout_days must be at least 1: the holdout is what the shortlist is scored on "
+                "once the search is over, and an empty one scores nothing."
+            )
+        if cfg.max_trials < 1 or cfg.max_dry_rounds < 1:
+            raise RunRefused("max_trials and max_dry_rounds must each be at least 1.")
         # Reserve the sacred holdout up front; the search never sees it (guardrail).
         research_end = shift_days(end, -cfg.holdout_days)
         holdout_window = {"start": research_end.isoformat(), "end": end.isoformat()}
         if research_end <= start:
-            raise ValueError("holdout_days leaves no research window; widen the date range")
+            raise RunRefused(
+                f"A {cfg.holdout_days}-day holdout leaves no research window between "
+                f"{start:%Y-%m-%d} and {end:%Y-%m-%d} (holdout_days leaves no research window); "
+                "widen the date range or shorten the holdout."
+            )
 
+        prior_looks = prior_holdout_looks(self.journal_path, holdout_window, symbols)
+        cost_identity = cfg.cost_identity()
         self._journal(
             "session_start",
             {
@@ -196,20 +297,85 @@ class ResearchAgent:
                     "max_tokens": cfg.max_tokens,
                 },
                 "seed": self.seed,
+                "cost": cost_identity,
+                "prior_holdout_looks": prior_looks,
             },
         )
 
-        param_ranges = resolve_strategy_class(self.strategy_name).PARAM_RANGES
         shortlist: List[Candidate] = []
+        saved: List[str] = []
+        state = {"rounds": 0, "evaluated": 0, "rejected": 0, "trials": 0}
+        stopped = "max_trials"
+        try:
+            stopped = self._loop(symbols, start, research_end, shortlist, state)
+            # Final exam: score the shortlist ONCE on the sacred holdout (guardrail).
+            saved = self._finalize(shortlist, symbols, research_end, end, state["trials"])
+        except Exception as exc:
+            # A session that was started is a session that ends: without this line the
+            # journal shows rounds that count toward the campaign and no sign of why
+            # they stopped.
+            category = getattr(exc, "category", None)
+            reason = f"provider_error:{category}" if category else f"error:{type(exc).__name__}"
+            self._journal(
+                "session_end",
+                {
+                    "session_id": self.session_id,
+                    "stopped_reason": reason,
+                    "rounds": state["rounds"],
+                    "n_evaluated": state["evaluated"],
+                    "n_rejected": state["rejected"],
+                    "n_trials_total": state["trials"],
+                    "shortlist": [],
+                    "saved_configs": [],
+                    "holdout_scored": False,
+                },
+            )
+            self.progress = dict(state)
+            raise
+
+        self._journal(
+            "session_end",
+            {
+                "session_id": self.session_id,
+                "stopped_reason": stopped,
+                "rounds": state["rounds"],
+                "n_evaluated": state["evaluated"],
+                "n_rejected": state["rejected"],
+                "n_trials_total": state["trials"],
+                "shortlist": [c.id for c in shortlist],
+                "saved_configs": saved,
+                "holdout_scored": bool(shortlist),
+            },
+        )
+        return ResearchResult(
+            shortlist=shortlist,
+            n_trials_total=state["trials"],
+            rounds=state["rounds"],
+            stopped_reason=stopped,
+            journal_path=self.journal_path,
+            holdout_window=holdout_window,
+            saved_configs=saved,
+            n_evaluated=state["evaluated"],
+            n_rejected=state["rejected"],
+            holdout_scored=bool(shortlist),
+            prior_holdout_looks=prior_looks,
+        )
+
+    def _loop(self, symbols, start, research_end, shortlist: List[Candidate], state: Dict[str, int]) -> str:
+        """The propose -> evaluate -> keep loop; returns why it stopped."""
+        cfg = self.config
+        param_ranges = resolve_strategy_class(self.strategy_name).PARAM_RANGES
         incumbent: Optional[Candidate] = None
         history: List[Dict[str, Any]] = []
-        n_trials_cumulative = 0
         tokens_used = 0
         dry = 0
-        rounds = 0
         stopped = "max_trials"
 
-        while rounds < cfg.max_trials:
+        # The budget counts evaluated trials - rounds that reached a walk-forward and were
+        # journaled as one - not proposals. A rejected proposal costs no walk-forward and
+        # adds nothing to the multiple-testing count, so it does not spend a trial; the
+        # dry-round stop is what bounds a proposer that keeps being rejected.
+        while state["evaluated"] < cfg.max_trials:
             if dry >= cfg.max_dry_rounds:
                 stopped = "dry_rounds"
                 break
@@ -223,29 +389,36 @@ class ResearchAgent:
                 param_ranges=param_ranges,
                 history=history[-10:],
                 incumbent=self._incumbent_summary(incumbent),
-                round_index=rounds,
+                round_index=state["rounds"],
             )
             proposal = self.proposer.propose(context)
             if proposal is None:
                 stopped = "proposer_exhausted"
                 break
-            rounds += 1
+            state["rounds"] += 1
+            rounds = state["rounds"]
+            self._round = rounds
             tokens_used += proposal.tokens_used
 
-            n_trials_offset = n_trials_cumulative
+            n_trials_offset = state["trials"]
             verdict = self._evaluate(proposal, symbols, start, research_end, n_trials_offset)
             if verdict is None:
                 dry += 1
-                history.append({"round": rounds, "rejected": True})
+                state["rejected"] += 1
+                history.append({"round": rounds, "rejected": True, "reason": self._last_reject})
                 continue
 
+            state["evaluated"] += 1
             result, cls, full_params = verdict
-            n_trials_cumulative = result.n_trials_total
+            state["trials"] = result.n_trials_total
+            n_trials_cumulative = state["trials"]
             # In-sample median is recorded for contrast only - selection is OOS-only
             # (guardrail 1). It is what makes the IS -> OOS collapse legible.
             is_sharpe = float(
                 median([fr.is_metrics.get("sharpe_ratio", 0.0) for fr in result.folds] or [0.0])
             )
+            # Median across folds: what the promotion gate applies, so what a round is
+            # compared and ranked on. The stitched aggregate stays in `oos_aggregate`.
             oos_sharpe = result.median_oos("sharpe_ratio")
             oos_dd = result.oos_aggregate.get("max_drawdown", 0.0)
             gate_report = result.gate_report(cfg.gates)
@@ -257,6 +430,9 @@ class ResearchAgent:
             # `--strategy <base>` mix the two (and fold their trials into one family).
             # The draft walk-forward already records `draft:<Class>:<hash>`; this matches it.
             row_strategy = self._row_strategy(proposal, cls)
+            # The cost assumptions are part of what was measured, so part of the identity
+            # a repeat is looked up under - a gross round must not answer a net request.
+            identity_params = {**full_params, "_cost": cfg.cost_identity()}
             trial_payload = {
                 "session_id": self.session_id,
                 # Written into the journal line, which the store's rebuild reads: without
@@ -266,7 +442,7 @@ class ResearchAgent:
                 "round": rounds,
                 "kind": proposal.kind,
                 "hypothesis": proposal.hypothesis,
-                "params": full_params,
+                "params": identity_params,
                 "is_sharpe": is_sharpe,
                 "oos_sharpe": oos_sharpe,
                 "efficiency": result.median_efficiency(),
@@ -278,6 +454,11 @@ class ResearchAgent:
                 "n_trials_cumulative": n_trials_cumulative,
                 "tokens_used": tokens_used,
             }
+            if proposal.kind == "code":
+                # The only durable copy of the mechanism: the strategy identity above is
+                # a hash, and a hash cannot be reviewed or added to a strategy pack.
+                trial_payload["code"] = proposal.code
+                trial_payload["code_hash"] = draft_code_hash(proposal.code)
             # Persist this round's own dated OOS return series in the
             # journal too (not just the trial store) - rebuild() must be able to
             # restore it from the journal alone, the sole source of truth.
@@ -292,7 +473,7 @@ class ResearchAgent:
                 symbols,
                 start,
                 research_end,
-                full_params,
+                identity_params,
                 result,
                 # Same resolution _evaluate's dedup check used - a proposal naming
                 # a different registered strategy must be recorded (and later
@@ -320,93 +501,107 @@ class ResearchAgent:
                     lineage=self._lineage(proposal, incumbent),
                     hypothesis=proposal.hypothesis,
                     kind=proposal.kind,
-                    strategy=self.strategy_name,
+                    strategy=row_strategy,
                     params=full_params,
                     oos_metrics=result.oos_aggregate,
                     gate_report=gate_report,
                     n_trials_at_selection=n_trials_cumulative,
+                    oos_sharpe=oos_sharpe,
+                    code=proposal.code if proposal.kind == "code" else None,
                     strategy_cls=cls,
                     oos_returns=result.oos_returns,
                 )
                 shortlist.append(candidate)
-                shortlist.sort(key=lambda c: c.oos_metrics.get("sharpe_ratio", 0.0), reverse=True)
+                shortlist.sort(key=lambda c: c.oos_sharpe, reverse=True)
                 del shortlist[cfg.shortlist_size :]
                 incumbent = shortlist[0]
                 dry = 0
             else:
                 dry += 1
-
-        # Final exam: score the shortlist ONCE on the sacred holdout (guardrail).
-        saved = self._finalize(shortlist, symbols, research_end, end, n_trials_cumulative)
-
-        self._journal(
-            "session_end",
-            {
-                "session_id": self.session_id,
-                "stopped_reason": stopped,
-                "rounds": rounds,
-                "n_trials_total": n_trials_cumulative,
-                "shortlist": [c.id for c in shortlist],
-                "saved_configs": saved,
-            },
-        )
-        return ResearchResult(
-            shortlist=shortlist,
-            n_trials_total=n_trials_cumulative,
-            rounds=rounds,
-            stopped_reason=stopped,
-            journal_path=self.journal_path,
-            holdout_window=holdout_window,
-            saved_configs=saved,
-        )
+        return stopped
 
     # ------------------------------------------------------------------ #
     # Evaluation
     # ------------------------------------------------------------------ #
+    def _reject(self, reason: str, proposal: Proposal, **extra: Any) -> None:
+        """Journal a rejected round, with the round it was and the reason it was refused."""
+        self._last_reject = reason
+        payload: Dict[str, Any] = {
+            "session_id": self.session_id,
+            "round": self._round,
+            "reason": reason,
+            "hypothesis": proposal.hypothesis,
+            "kind": proposal.kind,
+        }
+        if proposal.kind == "code" and isinstance(proposal.code, str) and proposal.code:
+            payload["code_hash"] = draft_code_hash(proposal.code)
+        payload.update(extra)
+        self._journal("reject", payload)
+
     def _evaluate(self, proposal: Proposal, symbols, start, research_end, n_trials_offset):
         """Hygiene-gate and validate one proposal OOS; return (result, cls, params) or None."""
         cfg = self.config
+        if proposal.malformed:
+            self._reject(proposal.malformed, proposal)
+            return None
         if proposal.kind == "code":
             if not cfg.allow_code_gen:
-                self._journal("reject", {"reason": "code-gen disabled", "hypothesis": proposal.hypothesis})
+                self._reject("code-gen disabled", proposal)
+                return None
+            ok, reason = validate_hygiene(proposal)
+            if not ok:
+                self._reject(reason, proposal)
                 return None
             try:
                 cls: Type[Strategy] = load_strategy_from_code(proposal.code)
             except Exception as exc:  # noqa: BLE001 - rejection, not crash
-                self._journal("reject", {"reason": f"sandbox: {exc}", "hypothesis": proposal.hypothesis})
+                self._reject(f"sandbox: {exc}", proposal)
                 return None
             ok, reason = validate_hygiene(proposal, cls)
         else:
-            cls = resolve_strategy_class(proposal.strategy or self.strategy_name)
+            try:
+                cls = resolve_strategy_class(proposal.strategy or self.strategy_name)
+            except ValueError as exc:
+                self._reject(str(exc), proposal)
+                return None
             ok, reason = validate_hygiene(proposal, cls)
 
         if not ok:
-            self._journal(
-                "reject", {"reason": reason, "hypothesis": proposal.hypothesis, "params": proposal.params}
-            )
+            self._reject(reason, proposal, params=(proposal.params))
             return None
 
-        # Dedup: a "tune" proposal that repeats an exact prior config
-        # for this strategy/universe/window is the same lottery ticket checked
-        # twice - reject it before it burns a walk-forward. Code proposals define
-        # a new mechanism each time, so params alone don't identify a repeat.
-        if proposal.kind != "code" and self.trial_store is not None:
-            full_params = self._full_params(cls, proposal.params)
-            if self.trial_store.seen(
-                strategy=proposal.strategy or self.strategy_name,
-                params=full_params,
-                symbols=symbols,
-                window_start=start,
-                window_end=research_end,
-                accounting=ACCOUNTING_VERSION,
-            ):
-                self._journal(
-                    "reject",
-                    {
-                        "reason": "duplicate: identical config already tried this campaign",
-                        "hypothesis": proposal.hypothesis,
-                        "params": full_params,
-                    },
+        # Dedup: a repeat of an exact prior config for this strategy/universe/window/cost
+        # is the same lottery ticket checked twice - reject it before it burns a
+        # walk-forward. A generated strategy is identified by its code hash, so a repeat
+        # is the same source over the same window (its params are the *result* of a
+        # search and cannot be compared before it runs).
+        if self.trial_store is not None:
+            cost = {"_cost": cfg.cost_identity()}
+            if proposal.kind == "code":
+                repeat = self.trial_store.seen_strategy(
+                    strategy=self._row_strategy(proposal, cls),
+                    symbols=symbols,
+                    window_start=start,
+                    window_end=research_end,
+                    accounting=ACCOUNTING_VERSION,
+                    params_include=cost,
+                )
+                full_params: Dict[str, Any] = {}
+            else:
+                full_params = self._full_params(cls, proposal.params)
+                repeat = self.trial_store.seen(
+                    strategy=proposal.strategy or self.strategy_name,
+                    params={**full_params, **cost},
+                    symbols=symbols,
+                    window_start=start,
+                    window_end=research_end,
+                    accounting=ACCOUNTING_VERSION,
+                )
+            if repeat:
+                self._reject(
+                    "duplicate: identical config already tried this campaign",
+                    proposal,
+                    params=(full_params) if full_params else None,
                 )
                 return None
 
@@ -415,10 +610,7 @@ class ResearchAgent:
         except BacktestError as exc:
             # Unrunnable is not the same as unprofitable. Journal it as its own
             # rejection so a broken proposal can never be scored as "no edge".
-            self._journal(
-                "reject",
-                {"reason": f"unrunnable: {exc}", "hypothesis": proposal.hypothesis, "kind": proposal.kind},
-            )
+            self._reject(f"unrunnable: {exc}", proposal)
             return None
 
     def _validate(self, proposal: Proposal, cls, symbols, start, research_end, n_trials_offset):
@@ -457,7 +649,11 @@ class ResearchAgent:
                 n_trials_offset=n_trials_offset,
             )
         if not result.folds:
-            self._journal("reject", {"reason": "no folds evaluable", "params": full_params})
+            self._reject(
+                "no folds evaluable (no fold produced a valid in-sample config or out-of-sample result)",
+                proposal,
+                params=(full_params),
+            )
             return None
         return result, cls, full_params
 
@@ -482,6 +678,7 @@ class ResearchAgent:
                 embargo_days=self.config.embargo_days,
                 n_trials=n_trials_total,
             )
+            cost_identity = self.config.cost_identity()
             provenance = config_store.build_provenance(
                 method=self.config.method,
                 objective=self.config.objective,
@@ -496,6 +693,18 @@ class ResearchAgent:
                 seed=self.seed,
                 notes=f"Research session {self.session_id}. Hypothesis: {candidate.hypothesis}",
             )
+            # Generated source never executes when a config is loaded. The config names a
+            # draft identity no registry resolves; this is what a human reviews before
+            # adding the class to a strategy pack.
+            generated = (
+                {
+                    "code": candidate.code,
+                    "code_hash": draft_code_hash(candidate.code),
+                    "class_name": cls.__name__,
+                }
+                if candidate.code is not None
+                else None
+            )
             path = config_store.save_config(
                 f"research_{self.session_id}_{candidate.id}.json",
                 strategy=candidate.strategy,
@@ -508,7 +717,9 @@ class ResearchAgent:
                 position_limits=(candidate.strategy_cls or resolve_strategy_class(candidate.strategy))(
                     dict(candidate.params)
                 ).position_limits(),
+                cost=cost_identity,
                 provenance=provenance,
+                generated_code=generated,
             )
             candidate.saved_path = str(path)
             saved.append(str(path))
@@ -554,12 +765,21 @@ class ResearchAgent:
     def _full_params(self, cls: Type[Strategy], overrides: Dict[str, Any]) -> Dict[str, Any]:
         params = {name: spec["default"] for name, spec in cls.PARAM_RANGES.items() if "default" in spec}
         params.update(overrides)
+        for name, value in params.items():
+            # An integral float for an int parameter (10.0) is the same number; keep the
+            # declared type so it is recorded, deduped and saved as 10, not 10.0.
+            spec = cls.PARAM_RANGES.get(name) or {}
+            if spec.get("type") == "int" and isinstance(value, float) and value.is_integer():
+                params[name] = int(value)
         return params
 
     def _beats_incumbent(self, oos_sharpe: float, oos_dd: float, incumbent: Optional[Candidate]) -> bool:
         if incumbent is None:
             return True
-        better_sharpe = oos_sharpe > incumbent.oos_metrics.get("sharpe_ratio", float("-inf"))
+        # Both sides are the median across folds - the gate's own measure. The incumbent's
+        # `oos_metrics` is the stitched aggregate, which is a different number.
+        incumbent_sharpe = incumbent.oos_sharpe if incumbent.oos_sharpe is not None else float("-inf")
+        better_sharpe = oos_sharpe > incumbent_sharpe
         incumbent_dd = incumbent.oos_metrics.get("max_drawdown", float("inf"))
         dd_ok = incumbent_dd == 0.0 or oos_dd <= incumbent_dd * (1 + self.config.drawdown_guard_tolerance)
         return better_sharpe and dd_ok
@@ -568,7 +788,7 @@ class ResearchAgent:
     def _incumbent_summary(incumbent: Optional[Candidate]) -> Optional[Dict[str, Any]]:
         if incumbent is None:
             return None
-        return {"params": incumbent.params, "oos_sharpe": incumbent.oos_metrics.get("sharpe_ratio", 0.0)}
+        return {"params": incumbent.params, "oos_sharpe": incumbent.oos_sharpe}
 
     @staticmethod
     def _lineage(proposal: Proposal, incumbent: Optional[Candidate]) -> str:
@@ -589,8 +809,6 @@ class ResearchAgent:
     def _row_strategy(self, proposal: Proposal, cls) -> str:
         """The strategy identity a round is recorded under."""
         if proposal.kind == "code":
-            from tradeflow.services.analysis import draft_code_hash
-
             return f"draft:{cls.__name__}:{draft_code_hash(proposal.code)}"
         return proposal.strategy or self.strategy_name
 

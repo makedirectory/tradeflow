@@ -49,7 +49,7 @@ def _agent(tmp_path, proposer, **overrides):
         goal="test",
         n_folds=3,
         embargo_days=2,
-        holdout_days=60,
+        holdout_days=overrides.pop("holdout_days", 60),
         method="grid",
         max_trials=overrides.pop("max_trials", 10),
         max_dry_rounds=overrides.pop("max_dry_rounds", 5),
@@ -400,7 +400,7 @@ def test_llm_proposer_parses_json_from_any_client():
     assert proposal.tokens_used == 11
 
 
-def test_llm_proposer_returns_none_on_unparseable_output():
+def test_llm_proposer_marks_unparseable_output_as_a_malformed_proposal():
     from tradeflow.research.llm import LLMResponse
     from tradeflow.research.proposer import LLMProposer
 
@@ -413,7 +413,10 @@ def test_llm_proposer_returns_none_on_unparseable_output():
     ctx = ProposalContext(
         goal="g", strategy="periodic", param_ranges={}, history=[], incumbent=None, round_index=0
     )
-    assert LLMProposer(JunkClient()).propose(ctx) is None
+    proposal = LLMProposer(JunkClient()).propose(ctx)
+    # None would read as "nothing more to try" and end the session on one bad reply.
+    assert proposal is not None and proposal.malformed == "unparseable reply"
+    assert proposal.tokens_used == 3
 
 
 def test_build_proposer_accepts_injected_client():

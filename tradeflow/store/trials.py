@@ -1132,6 +1132,54 @@ class TrialStore:
             is not None
         )
 
+    def seen_strategy(
+        self,
+        *,
+        strategy: str,
+        symbols: Iterable[Any],
+        window_start: Optional[Any] = None,
+        window_end: Optional[Any] = None,
+        accounting: Optional[int] = None,
+        params_include: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """Has this strategy identity been recorded over this universe and window?
+
+        For an identity that already names the whole mechanism - a generated strategy's
+        ``draft:<Class>:<code hash>`` - where the exact params are the *result* of a
+        search and so cannot be stated before the repeat has been run. ``params_include``
+        narrows by the reserved keys that are known up front (the cost assumptions).
+        Same best-effort contract as :meth:`seen`.
+        """
+        try:
+            clauses = [
+                "strategy = ?",
+                "universe_hash = ?",
+                "IFNULL(window_start, '') = ?",
+                "IFNULL(window_end, '') = ?",
+                "contaminated_at IS NULL",
+            ]
+            args: List[Any] = [
+                strategy,
+                universe_hash(symbols),
+                _iso(window_start) or "",
+                _iso(window_end) or "",
+            ]
+            if accounting is not None:
+                clauses.append("accounting = ?")
+                args.append(int(accounting))
+            rows = self._conn.execute(
+                f"SELECT params_json FROM trials WHERE {' AND '.join(clauses)}", args
+            ).fetchall()
+            wanted = _canon_value(dict(params_include or {}))
+            for row in rows:
+                recorded = json.loads(row[0])
+                if all(_canon_value(recorded.get(k)) == v for k, v in wanted.items()):
+                    return True
+            return False
+        except (sqlite3.Error, TypeError, ValueError):
+            logger.warning("Trial store dedup lookup failed; treating as unseen", exc_info=True)
+            return False
+
     def find(
         self,
         *,

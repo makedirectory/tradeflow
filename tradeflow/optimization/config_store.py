@@ -12,6 +12,7 @@ chooses to use. Configs land in a gitignored ``configs/`` directory by default.
 
 import json
 import logging
+import math
 import subprocess
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -135,6 +136,7 @@ def save_config(
     position_limits: Optional[Dict[str, Any]] = None,
     cost: Optional[Dict[str, Any]] = None,
     provenance: Optional[Provenance] = None,
+    generated_code: Optional[Dict[str, Any]] = None,
 ) -> Path:
     """Write the run configuration as JSON; return the path.
 
@@ -166,6 +168,13 @@ def save_config(
     Keys whose value is ``None`` are omitted rather than written as null, so a config
     that never had a universe is distinguishable from one that was saved without one.
     A relative ``path`` with no directory is placed under :data:`DEFAULT_CONFIG_DIR`.
+
+    ``generated_code`` is the source of a strategy the research agent wrote
+    (``{"code", "code_hash", "class_name"}``), for a config whose ``strategy`` is a
+    ``draft:<Class>:<hash>`` identity. It is written under ``provenance`` and only
+    there: the identity is a hash, and the source must survive somewhere a human can
+    review it. Loading the config never executes it - the identity resolves to nothing.
+    Absent for every config that names a registered strategy.
     """
     path = Path(path)
     if not path.is_absolute() and path.parent == Path("."):
@@ -176,8 +185,10 @@ def save_config(
         "strategy": strategy,
         "scanner": scanner,
         "params": _jsonable(params),
-        "provenance": asdict(provenance) if provenance else {},
+        "provenance": _nonfinite_as_text(asdict(provenance)) if provenance else {},
     }
+    if generated_code:
+        payload["provenance"] = {**payload["provenance"], "generated_code": _jsonable(generated_code)}
     for key, value in (
         ("symbols", symbols),
         ("candidate_symbols", candidate_symbols),
@@ -252,6 +263,23 @@ def is_current_accounting(payload: Dict[str, Any]) -> bool:
     assume every record on disk measured the same thing.
     """
     return (payload.get("provenance") or {}).get("accounting", 1) == ACCOUNTING_VERSION
+
+
+def _nonfinite_as_text(value: Any) -> Any:
+    """Non-finite floats as ``"inf"`` / ``"-inf"`` / ``"nan"``, the MCP surface's spelling.
+
+    ``json.dumps`` writes them as bare ``Infinity`` / ``NaN``, which is not JSON: a
+    strict reader refuses the whole file. A profit factor or tail ratio over a run with
+    no losing trade is genuinely infinite, so the value is kept as text rather than
+    dropped or clamped.
+    """
+    if isinstance(value, dict):
+        return {k: _nonfinite_as_text(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_nonfinite_as_text(v) for v in value]
+    if isinstance(value, float) and not math.isfinite(value):
+        return "nan" if math.isnan(value) else ("inf" if value > 0 else "-inf")
+    return value
 
 
 def _jsonable(value: Any) -> Any:

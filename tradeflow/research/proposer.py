@@ -34,6 +34,10 @@ class Proposal:
     tuned_params: List[str] = field(default_factory=list)  # which params this varies (hygiene cap)
     parent_id: Optional[str] = None  # lineage: the candidate this mutates, if any
     tokens_used: int = 0  # reported LLM token cost, for the budget
+    #: Why the reply could not be read as a proposal at all (unparseable text, a field of
+    #: the wrong type). Set instead of returning ``None``, which means "nothing more to
+    #: try": a model that answered badly once still has ideas, and the round is spent.
+    malformed: Optional[str] = None
 
 
 @dataclass
@@ -94,26 +98,67 @@ class LLMProposer(Proposer):
         try:
             payload = json.loads(_extract_json(response.text))
         except (ValueError, KeyError):
-            return None
+            return self._malformed("unparseable reply", response.tokens, context)
+        if not isinstance(payload, dict):
+            return self._malformed("unparseable reply: expected a JSON object", response.tokens, context)
+
+        hypothesis = payload.get("hypothesis", "")
+        if not isinstance(hypothesis, str):
+            return self._malformed(
+                f"hypothesis must be text, got {_type_name(hypothesis)}", response.tokens, context
+            )
 
         if payload.get("kind") == "code":
+            code = payload.get("code", "")
+            if not isinstance(code, str):
+                return self._malformed(f"code must be text, got {_type_name(code)}", response.tokens, context)
             return Proposal(
-                hypothesis=payload.get("hypothesis", ""),
+                hypothesis=hypothesis,
                 kind="code",
                 strategy=context.strategy,
-                code=payload.get("code", ""),
+                code=code,
                 tokens_used=response.tokens,
             )
 
         params = payload.get("params", {})
+        if not isinstance(params, dict):
+            return self._malformed(
+                f"params must be an object of name: value, got {_type_name(params)}",
+                response.tokens,
+                context,
+                hypothesis,
+            )
         return Proposal(
-            hypothesis=payload.get("hypothesis", ""),
+            hypothesis=hypothesis,
             kind="tune",
             strategy=context.strategy,
             params=params,
             tuned_params=list(params),
             tokens_used=response.tokens,
         )
+
+    @staticmethod
+    def _malformed(reason: str, tokens: int, context: ProposalContext, hypothesis: str = "") -> Proposal:
+        return Proposal(
+            hypothesis=hypothesis,
+            kind="tune",
+            strategy=context.strategy,
+            tokens_used=tokens,
+            malformed=reason,
+        )
+
+
+def _type_name(value: Any) -> str:
+    """A JSON-flavoured name for a decoded value, for a message a human reads."""
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "a boolean"
+    if isinstance(value, (int, float)):
+        return "a number"
+    if isinstance(value, str):
+        return "text"
+    return "a list" if isinstance(value, list) else type(value).__name__
 
 
 def build_proposer(

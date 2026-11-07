@@ -27,3 +27,22 @@ def no_bars_refusal(symbols: Sequence[str], start: datetime, end: datetime) -> R
         f"No bars for any of {named} between {start:%Y-%m-%d} and {end:%Y-%m-%d}, so there is "
         "nothing to measure and nothing was recorded. Check the symbols and the window."
     )
+
+
+class GeneratedCodeRefused(RunRefused):
+    """A config or strategy name that points at code the research agent wrote.
+
+    A saved config names its strategy, and a generated strategy has no registered name -
+    only a ``draft:<Class>:<hash>`` identity. Resolving that identity must never mean
+    "find the source and run it": loading a config is not a review.
+    """
+
+    def __init__(self, name: str):
+        from tradeflow.settings import DOCS_URL
+
+        super().__init__(
+            f"{name!r} is a strategy the research agent wrote, and generated code is never run by "
+            "loading a config. Review its source (recorded in the config's "
+            "provenance.generated_code and on the journal's trial line), add it to a strategy "
+            f"pack, and point the config at the registered name: {DOCS_URL}/usage/private-strategies"
+        )
