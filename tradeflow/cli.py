@@ -2057,6 +2057,7 @@ def _print_promotion_prerequisites(data_client, args, result, universe, bootstra
         impact_eta=args.impact_eta,
         borrow_bps=args.borrow_bps,
         bootstrap=bootstrap_report,
+        position_limits=getattr(args, "config_position_limits", None),
     )
     prereq = evidence["prerequisites"]
     _print_fold_disagreement(result)

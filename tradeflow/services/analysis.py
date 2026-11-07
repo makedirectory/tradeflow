@@ -1618,6 +1618,7 @@ def run_walk_forward(
             impact_eta=impact_eta,
             borrow_bps=borrow_bps,
             gates=gates,
+            position_limits=position_limits,
         )
         if result.folds
         else None
@@ -2422,6 +2423,7 @@ def walk_forward_evidence(
     borrow_bps: float = 50.0,
     bootstrap: Optional[Dict[str, Any]] = None,
     gates: Optional[Dict[str, float]] = None,
+    position_limits: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """What a candidate should clear before paper, beside ``promotable`` rather than in it.
 
@@ -2434,19 +2436,26 @@ def walk_forward_evidence(
 
     ``cost_stress`` is the axis (``"all"``/``"turnover"``/``"borrow"``) or ``None`` to
     skip the re-runs. A skipped input leaves its check *unevaluated*, never passed.
+
+    ``position_limits`` is the book the folds were validated at. The stress re-runs the
+    chosen params, which carry no book of their own, so without it the stress traded the
+    class default (one position) while the validation it is evidence for traded eight.
     """
     from tradeflow.analytics.performance import promotion_prerequisites
 
     stress = None
     if cost_stress and data_client is not None and result.folds:
         chosen = result.holdout_params or result.folds[-1].is_best_params
+        stress_config = dict(chosen)
+        if position_limits:
+            stress_config["position_limits"] = dict(position_limits)
         stress = run_cost_stress(
             data_client,
             strategy,
             list(symbols),
             start,
             end,
-            config=dict(chosen),
+            config=stress_config,
             capital=capital,
             # The walk-forward's own benchmark, or none: the stress judges Sharpe and
             # return, and the service's SPY default fetched a symbol nobody asked for.

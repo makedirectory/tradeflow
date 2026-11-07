@@ -169,3 +169,72 @@ def test_descriptions_do_not_send_compare_trials_to_the_trade_table(built):
     flat = " ".join(tools["run_backtest"].description.split())
     assert "`analyze_trial` and `compare_trials` read" not in flat
     assert "one in-sample pass" not in tools["compare_trials"].description
+
+
+# --- 5. the cost stress trades the book the folds were validated at ------------------
+def _stress_configs(monkeypatch):
+    seen = []
+    real = analysis.run_cost_stress
+
+    def spy(*args, **kwargs):
+        seen.append(kwargs.get("config"))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(analysis, "run_cost_stress", spy)
+    return seen
+
+
+def test_walk_forward_cost_stress_runs_at_the_requested_book(monkeypatch):
+    from tests.test_walk_forward_evidence_parity import _over_mcp
+
+    seen = _stress_configs(monkeypatch)
+    result = _over_mcp(position_limits={"max_positions": 3}, cost_stress="turnover")
+    assert seen and seen[0]["position_limits"] == {"max_positions": 3}
+    assert result["evidence"]["prerequisites"]["checks"]["cost_stress"]["evaluated"] is True
+
+
+def test_cost_stress_without_a_book_override_carries_none(monkeypatch):
+    from tests.test_walk_forward_evidence_parity import _over_mcp
+
+    seen = _stress_configs(monkeypatch)
+    _over_mcp(cost_stress="turnover")
+    assert seen and "position_limits" not in seen[0]
+
+
+def test_the_cli_hands_the_configs_book_to_the_evidence(monkeypatch, tmp_path, capsys):
+    """Both surfaces call one evidence function; the CLI's call is its own line."""
+    from tests.test_walk_forward_evidence_parity import SYMBOLS as WF_SYMBOLS
+    from tests.test_walk_forward_evidence_parity import _client
+    from tradeflow import cli
+
+    seen = {}
+    real = analysis.walk_forward_evidence
+
+    def spy(*args, **kwargs):
+        seen["limits"] = kwargs.get("position_limits")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(analysis, "walk_forward_evidence", spy)
+    monkeypatch.setattr(cli, "build_research_data", lambda **kw: _client())
+    path = tmp_path / "book.json"
+    path.write_text(
+        json.dumps(
+            {
+                "strategy": "demo_trend",
+                "symbols": WF_SYMBOLS,
+                "params": {
+                    "fast_ema_period": 18,
+                    "slow_ema_period": 24,
+                    "risk_per_trade": 0.04,
+                    "stop_loss": 0.02,
+                    "take_profit": 0.03,
+                },
+                "position_limits": {"max_positions": 3},
+                "provenance": {},
+            }
+        )
+    )
+    argv = ["walkforward", "--config", str(path), "--start", "2024-01-02", "--end", "2025-08-01"]
+    argv += ["--folds", "3", "--max-evals", "3", "--benchmark", "SPY", "--force", "--no-journal"]
+    cli.cmd_walkforward(cli.parse_cli(argv))
+    assert seen["limits"] == {"max_positions": 3}

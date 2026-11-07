@@ -890,7 +890,7 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         When `evidence` is null, `evidence_unavailable` says why (a memoized answer keeps no
         per-fold detail). An unknown `cost_stress` is refused rather than stressing nothing.
         `cost_stress` ("all"/"turnover"/"borrow", null to skip) re-runs the chosen
-        config at worse costs, unjournaled, and is on by default as in the CLI.
+        config at worse costs and at the same `position_limits` book, unjournaled, and is on by default as in the CLI.
 
         `benchmark` is a symbol to measure against (e.g. "SPY"). Without it the
         benchmark-relative prerequisites are left unevaluated rather than failed.
