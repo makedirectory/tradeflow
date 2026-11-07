@@ -145,6 +145,27 @@ def refuse_unknown_params(strategy_class, params: Optional[Dict[str, Any]]) -> N
         )
 
 
+def refuse_undeclared_params(strategy_class, params: Optional[Dict[str, Any]]) -> None:
+    """Refuse any key the strategy does not declare in ``PARAM_RANGES``.
+
+    The strict sibling of :func:`refuse_unknown_params`, for a caller whose params are by
+    definition one point of a *declared* search space - a screen only ever varies
+    declared parameters, so anything else is not a screened point. Passed a screen's
+    ``best_point`` (a flat dict of parameters and metrics), the lenient check let the
+    metric keys through into a journaled trial's config; and ``{"bogus": 1}`` ran the
+    defaults while echoing ``bogus`` back as if it had been confirmed.
+    """
+    declared = strategy_class.PARAM_RANGES
+    extra = [name for name in (params or {}) if name not in declared]
+    if extra:
+        named = "; ".join(f"{name!r}{_did_you_mean(name, declared)}" for name in extra)
+        raise ValueError(
+            f"{strategy_class.__name__} declares no parameter {named}. Its parameters: "
+            f"{', '.join(sorted(declared))}. Pass only parameter values - from `run_screen`, "
+            "`best_point.params`, not the metrics beside them."
+        )
+
+
 def refuse_unknown_limits(limits: Optional[Dict[str, Any]]) -> None:
     """Refuse a book limit nothing enforces - a typo'd cap is no cap at all."""
     unknown = [name for name in (limits or {}) if name not in DEFAULT_POSITION_LIMITS]

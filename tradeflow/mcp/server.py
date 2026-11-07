@@ -569,7 +569,9 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         evaluations, and nothing recorded — so "does any parameterisation of this idea
         survive?" is a question you can afford to ask.
 
-        Read the `distribution` block, not `best_point`. The best of N points is the
+        Read the `distribution` block, not `best_point`. `best_point` is the winning
+        row flattened with its metrics; its `params` field is just the parameter values,
+        and is what `confirm_screen_point` takes. The best of N points is the
         maximum of N draws, which is a positive number even when nothing searched has
         any edge, and it grows with N. `noise_baseline.expected_best_under_null` is
         what the best of that many draws is worth if none of them had any edge: a
@@ -586,7 +588,8 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
 
         `param_ranges` narrows the search per parameter, e.g.
         {"lookback": {"min": 10, "max": 30, "step": 5}}; each supplies any of
-        min/max/step and inherits the rest. `position_limits` is the book each point is
+        min/max/step and inherits the rest. It can only narrow: a bound outside the
+        strategy's declared range is refused. `position_limits` is the book each point is
         evaluated against (e.g. {"max_positions": 8}); without it every point runs at
         whatever the strategy class declares, which is not what would be deployed.
         Parameter combinations a strategy declares invalid are never drawn.
@@ -642,15 +645,21 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
     ) -> Dict[str, Any]:
         """Re-run EXACTLY ONE screened point as a proper, journaled trial.
 
-        `params` is one parameter set — one point. This is the only way a screen's
+        `params` is one parameter set — one point: only parameters the strategy declares
+        (see `get_param_ranges`), such as a screen's `best_point.params`. Any other key,
+        including the metrics beside `best_point`'s parameters, is refused rather than
+        journaled into the trial's config. This is the only way a screen's
         finding becomes evidence, and it is deliberately singular: confirming a set
         would make the screen itself journal, which is the statistical-budget problem
         the screen exists to avoid. It would also record the best of N, which is the
         one selection a sweep cannot support.
 
-        Identical to running `run_backtest` with those parameters — same dedup
-        identity, same memoization, same journal record — so a confirmed point is
-        indistinguishable from a backtest anyone else ran, and counts once.
+        Identical to running `run_backtest` with those parameters when the extra
+        cost and book knobs here (`commission_bps`, `impact_eta`, `borrow_bps`,
+        `position_limits`) are left at their defaults — same dedup identity, same
+        memoization, same journal record — so a confirmed point is indistinguishable
+        from a backtest anyone else ran, and counts once. Set one and the run is a
+        different config from a plain backtest of those parameters.
         """
         inputs = {
             "strategy": strategy,

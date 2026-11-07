@@ -248,3 +248,63 @@ def test_the_family_bootstrap_note_says_this_surface_supplies_no_bootstrap():
     assert check["evaluated"] is False
     assert "does not take" in check["note"]
     assert "available" not in check["note"]
+
+
+# --- 7 and 11. confirm takes declared parameters only; a screen range only narrows ----
+def _screen(built, **extra):
+    return _call(
+        built,
+        "run_screen",
+        strategy="demo_trend",
+        symbols=SYMBOLS,
+        start=START,
+        end=END,
+        max_evals=4,
+        **extra,
+    )
+
+
+def _confirm_with(built, params):
+    return _call(
+        built,
+        "confirm_screen_point",
+        strategy="demo_trend",
+        symbols=SYMBOLS,
+        start=START,
+        end=END,
+        params=params,
+    )
+
+
+def test_confirm_refuses_a_key_the_strategy_does_not_declare(built, tmp_path):
+    with pytest.raises(Exception) as exc:
+        _confirm_with(built, {"bogus": 1})
+    assert "bogus" in str(exc.value)
+    assert _journal(tmp_path) == []
+
+
+def test_a_whole_best_point_is_refused_but_its_params_are_confirmable(built, tmp_path):
+    best = _screen(built)["best_point"]
+    assert set(best["params"]) < set(best)
+    with pytest.raises(Exception):
+        _confirm_with(built, {k: v for k, v in best.items() if k != "params"})
+    assert _journal(tmp_path) == []
+
+    confirmed = _confirm_with(built, best["params"])
+    assert confirmed["journaled"] is True
+    config = _journal(tmp_path)[0]["resolved_config"]
+    assert set(config).isdisjoint({"sharpe_ratio", "total_return"})
+
+
+def test_a_screen_range_cannot_widen_past_the_declared_bounds(built):
+    from tradeflow.services.registry import STRATEGIES
+
+    declared = STRATEGIES["demo_trend"].PARAM_RANGES["fast_ema_period"]
+    wider = {"fast_ema_period": {"min": declared["min"], "max": declared["max"] + 80}}
+    with pytest.raises(Exception) as exc:
+        _screen(built, param_ranges=wider)
+    assert "fast_ema_period" in str(exc.value)
+    with pytest.raises(ValueError):
+        analysis.screen_ranges(STRATEGIES["demo_trend"], wider)
+    inside = {"fast_ema_period": {"min": declared["min"] + 1, "max": declared["max"]}}
+    assert _screen(built, param_ranges=inside)["searched"]["requested"] >= 1

@@ -47,7 +47,7 @@ from tradeflow.optimization.walk_forward import WalkForwardValidator
 from tradeflow.services.audit import new_run_id
 from tradeflow.services.registry import resolve_strategy_class, scanner_refusal
 from tradeflow.settings import state_root
-from tradeflow.strategies.base import build_with_limits, refuse_unknown_limits
+from tradeflow.strategies.base import build_with_limits, refuse_undeclared_params, refuse_unknown_limits
 from tradeflow.utils.errors import RunRefused, no_bars_refusal
 from tradeflow.utils.timeutils import shift_days
 
@@ -1080,7 +1080,10 @@ def screen_ranges(strategy_class, overrides: Optional[Dict[str, Dict[str, Any]]]
     An override supplies any of ``min``/``max``/``step`` and inherits the rest, so
     narrowing one axis cannot silently change a parameter's type or drop its default.
     Unknown names are refused rather than ignored: a typo that quietly screens the
-    full range looks exactly like a screen that found nothing where you looked.
+    full range looks exactly like a screen that found nothing where you looked. So is a
+    bound outside the declared range: it can only narrow, because a point past the
+    declared edge is one the strategy refuses to build, and the screen then reports
+    fewer evaluations than requested with the reason on a console.
     """
     ranges = {name: dict(spec) for name, spec in (strategy_class.PARAM_RANGES or {}).items()}
     for name, override in (overrides or {}).items():
@@ -1089,6 +1092,13 @@ def screen_ranges(strategy_class, overrides: Optional[Dict[str, Dict[str, Any]]]
         unknown = set(override) - {"min", "max", "step"}
         if unknown:
             raise ValueError(f"Cannot override {sorted(unknown)} for {name!r}; only min/max/step")
+        declared = ranges[name]
+        for bound, outside in (("min", lambda v: v < declared["min"]), ("max", lambda v: v > declared["max"])):
+            if bound in override and outside(override[bound]):
+                raise ValueError(
+                    f"Range for {name!r} cannot widen past the declared {declared['min']}..{declared['max']}: "
+                    f"{bound} {override[bound]} is outside it. A screen only narrows."
+                )
         ranges[name] = {**ranges[name], **override}
         if ranges[name]["min"] > ranges[name]["max"]:
             raise ValueError(f"Narrowed range for {name!r} is empty: min {ranges[name]['min']} > max")
@@ -1203,6 +1213,11 @@ def run_screen(
         max(raw_rows, key=lambda r: r.get(objective, float("-inf")), default=None) if raw_rows else None
     )
     best_row = _jsonable(best_raw) if best_raw is not None else None
+    if best_row is not None:
+        # The row is parameters and metrics flattened together; handing it to
+        # `confirm_screen_point` journaled a trial with metric keys in its config. The
+        # flat fields stay for existing readers, and `params` is the part to confirm.
+        best_row["params"] = {k: best_row[k] for k in space.searchable if k in best_row}
 
     return {
         "run_id": run_id,
@@ -1265,6 +1280,7 @@ def confirm_screen_point(
     trial is.
     """
     refuse_unknown_limits(position_limits)
+    refuse_undeclared_params(resolve_strategy_class(strategy), params)
     config = dict(params)
     if position_limits:
         config["position_limits"] = dict(position_limits)
