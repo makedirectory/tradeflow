@@ -24,7 +24,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from tradeflow.analytics.reporting import capacity_text
+from tradeflow.analytics.reporting import alphas_heading, capacity_text
 
 #: Result kinds this module knows how to render.
 KINDS = ("verdict", "backtest", "walkforward", "info")
@@ -554,7 +554,13 @@ def _verdict_sections(result: Dict[str, Any], extras: Dict[str, Any]) -> List[st
         out.append(
             _card(
                 "Alphas",
-                chart
+                f"<p>{esc(alphas_heading(result))}</p>"
+                + (
+                    f"<p>{esc(source['low_confidence_reason'])}</p>"
+                    if source.get("low_confidence") and source.get("low_confidence_reason")
+                    else ""
+                )
+                + chart
                 + _table(
                     ["Symbol", "Alpha", "z", "Residual vol"],
                     [

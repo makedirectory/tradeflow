@@ -575,6 +575,25 @@ def _verdict_scan_lines(result: Dict[str, Any]) -> list:
     return lines
 
 
+def alphas_heading(result: Dict[str, Any]) -> str:
+    """The one-line statement of what the alphas are: how scaled, on which IC, how many
+    names, and whether the universe is too thin to trust. One definition for the terminal
+    and the HTML report, so a caveat printed in one cannot be missing from the other."""
+    combination = result.get("combination")
+    if combination:
+        weights = combination.get("signal_weights") or {}
+        return (
+            f"Alphas (combined, measured IC {combination.get('combined_ic', 0.0):+.4f}): "
+            + ", ".join(f"{k} {v:+.2f}" for k, v in weights.items())
+        )
+    alphas = result.get("alphas") or {}
+    flag = "  (low confidence - thin universe, demean-only)" if alphas.get("low_confidence") else ""
+    return (
+        f"Alphas ({alphas.get('scaling', '?')} scaling, assumed IC "
+        f"{alphas.get('ic', 0.0):+.4f}): {alphas.get('universe_size', 0)} names{flag}"
+    )
+
+
 def _more_line(shown: int, total: int) -> list:
     """A truncated list says how many names it left out; silence reads as 'all of them'."""
     return [f"    ... +{total - shown} more (not shown)"] if total > shown else []
@@ -586,19 +605,7 @@ def _verdict_alpha_lines(result: Dict[str, Any], top: int = 5) -> list:
     source = combination or alphas
     if not source:
         return []
-    lines = [""]
-    if combination:
-        weights = combination.get("signal_weights") or {}
-        lines.append(
-            f"  Alphas (combined, measured IC {combination.get('combined_ic', 0.0):+.4f}): "
-            + ", ".join(f"{k} {v:+.2f}" for k, v in weights.items())
-        )
-    else:
-        flag = "  (low confidence - thin universe, demean-only)" if alphas.get("low_confidence") else ""
-        lines.append(
-            f"  Alphas ({alphas.get('scaling', '?')} scaling, assumed IC "
-            f"{alphas.get('ic', 0.0):+.4f}): {alphas.get('universe_size', 0)} names{flag}"
-        )
+    lines = ["", "  " + alphas_heading(result)]
     full = source.get("alphas") or []
     for row in full[:top]:
         lines.append(

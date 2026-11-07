@@ -70,7 +70,9 @@ def _mcp(tool, arguments):
 
 def _text(document: str) -> str:
     """The visible text of a document, tags dropped, so assertions read what a person reads."""
-    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", document))
+    import html
+
+    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", document)))
 
 
 WF = [
@@ -128,3 +130,39 @@ def test_a_reused_walkforward_renders_over_mcp():
     assert "REUSED" in text and reused["trial_id"] in text
     assert "per-fold detail" in text
 
+
+# ---- item 2: the verdict report carries the alphas caveats the terminal prints --------
+VERDICT = [
+    "verdict",
+    "--strategy",
+    "demo_trend",
+    "--scanner",
+    "none",
+    "--symbols",
+    ",".join(SYMBOLS),
+    "--start",
+    START,
+    "--end",
+    END,
+]
+
+
+def test_the_verdict_report_states_the_assumed_ic_and_scaling_the_terminal_prints(tmp_path, capsys):
+    document = _cli(VERDICT, tmp_path / "v.html")
+    printed = capsys.readouterr().out
+    heading = re.search(r"Alphas \(.*?\): \d+ names[^\n]*", printed).group(0).strip()
+    heading = re.sub(r"\s+", " ", heading)
+    assert heading in _text(document)
+    assert "assumed IC" in _text(document)
+
+
+def test_the_reason_a_universe_is_low_confidence_reaches_the_verdict_report():
+    from tradeflow.analytics.htmlreport import render_html
+    from tradeflow.services import analysis
+
+    result = analysis.run_verdict(
+        _client(), "demo_trend", SYMBOLS, cli._date(START), cli._date(END), journal=False
+    )
+    assert result["alphas"]["low_confidence"], "fixture should be a thin universe"
+    reason = result["alphas"]["low_confidence_reason"]
+    assert reason and reason in _text(render_html(result, "verdict"))
