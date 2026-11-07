@@ -55,8 +55,17 @@ JSON. The exposed surface:
 - Discovery: `list_strategies`, `list_scanners`, `get_param_ranges`
 - Analyze: `run_scan`, `run_backtest`, `run_optimization`, `run_walk_forward`,
   `get_metrics_glossary`, `summarize_bars`
+- Screen: `run_screen` sweeps a parameter space cheaply to ask whether a family holds
+  anything at all, and **journals nothing**; `confirm_screen_point` re-runs exactly one
+  screened point as an ordinary backtest and **journals one trial**, the only way a
+  screen's finding becomes evidence
+- Probes: `run_causality_probes` perturbs what only becomes knowable after a fill and
+  requires each decision to be unchanged (execution clock, same-bar ranking, benchmark
+  alignment, as-of scanner); it is not the leakage probe and does not replace it
 - Research: `compute_alphas`, `combine_alphas`, `compute_risk`,
-  `construct_portfolio`, `compute_information`, `compute_horizon`,
+  `construct_portfolio`, `compute_information`, `compute_attribution` (where realized
+  active return came from: timing, factors, signals, picking; read-only, journals
+  nothing), `compute_horizon`,
   `run_verdict` (the whole pipeline as one call — see
   [One-command verdict](../usage/verdict.md); it takes the allocation knobs
   `max_weight`, `max_names`, `lookback_days`, `neutralize_factors`,
@@ -66,8 +75,12 @@ JSON. The exposed surface:
   `run_draft_walk_forward`
 - Artifact: `render_report` (a result dict → one self-contained HTML document, the
   same renderer `--html` uses — see [HTML reports](../usage/html-reports.md))
-- Campaign memory: `list_trials`, `get_trial`, `best_trials` (read-only views of
-  the [trial store](../usage/trials.md))
+- Campaign memory: `list_trials`, `get_trial`, `best_trials`, `analyze_trial` (what one
+  run's trades did, by exit reason), `compare_trials` (are two results in fact one bet:
+  return-series correlation, refused rather than caveated on thin overlap or mixed
+  accounting), `get_campaign_material` (a trial's recipe, evidence and metadata, to pass
+  through as `provenance.campaign`) — all read-only views of the
+  [trial store](../usage/trials.md)
 - Propose (writes a file, never live state): `save_config`, `load_config`,
   `list_configs`
 

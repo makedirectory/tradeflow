@@ -49,6 +49,24 @@ goal ─▶ propose (Proposer) ─▶ hygiene gate ─▶ validate OUT-OF-SAMPLE
 7. **Sandbox + hygiene.** Generated code and configs pass `tradeflow/research/sandbox.py`
    before evaluation.
 
+### What the journal records for a session
+
+A session writes `research:session_start` (goal, strategy, symbols, research window,
+holdout window, budgets), then one `research:trial` line per evaluated round, plus
+`research:reject` lines for proposals that never reached evaluation. A parameter round
+is recorded under the session's strategy; a generated-code round under
+`draft:<Class>:<hash>` of its source. Each trial line is dual-written into the trial
+store under the same id. After the loop, each shortlisted candidate gets one
+`research:holdout_score` line holding its single holdout score, and
+`research:session_end` closes the session.
+
+A walk-forward run elsewhere records its holdout in a `holdout` field on its own journal
+line (`days`, `metrics`, `params`), written whenever a holdout was requested.
+`services.audit.holdout_from_record` reads it back in one of four states: `recorded`,
+`none_requested` (the recipe asked for none), `not_retained` (asked for, but the line
+predates the field) and `unknown` (no readable line). An absent field is reported as
+absent, never as a holdout that was not asked for.
+
 ## Research hygiene (`sandbox.py`)
 
 Cheap, load-bearing rules that stop the loop manufacturing overfit garbage at
