@@ -90,6 +90,13 @@ factor, walk-forward efficiency, OOS-vs-IS drawdown ratio, a minimum-OOS-trades
 floor, the deflated Sharpe, and — when computed — parameter sensitivity and the
 leakage probe. A config is `promotable` only if it clears **every** gate.
 
+### The search and the folds run at one book
+
+`position_limits` is not a tunable parameter, so a candidate built from params alone is
+the strategy class's default book. The validator hands its book to every in-sample
+search (each fold, the holdout fit, and the parallel workers), so the parameters are
+chosen at the book the out-of-sample folds then score them at.
+
 ### `n_trials` still counts a run at gate time, not a campaign
 
 The Deflated Sharpe raises the bar as you try more configurations — the more

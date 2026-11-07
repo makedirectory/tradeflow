@@ -627,6 +627,9 @@ class WalkForwardValidator:
             force=self.force,
             workers=self.workers,
             data_spec=self.data_spec,
+            # The book the out-of-sample folds run at. Without it the search chose
+            # parameters for the class default and the folds scored them at another.
+            position_limits=self.position_limits,
         )
 
     def _bars_per_day(self) -> float:

@@ -172,7 +172,12 @@ parameter space needs the same three lines, and each one that wrote its own was 
 the book could go missing again, so it is now
 `strategies.base.build_with_limits` — used by the walk-forward validator, the parameter
 optimizer, and the screen.
-*Guarded by* `tests/test_surface_parity.py`.
+
+The walk-forward validator's *inner* optimizer was the one construction site that did not
+receive the book, so the in-sample search chose parameters at the class default while the
+folds scored them at the configured book; `_make_optimizer` now passes it, and
+`EvalRequest` carries it to parallel workers.
+*Guarded by* `tests/test_surface_parity.py`, `tests/test_optimizer_book.py`.
 
 **Scanner registry ↔ the driver's class attribute** — `services.registry.SCANNERS` and
 `SymbolScanner.SCANNERS` are two dicts holding one answer, kept in step by

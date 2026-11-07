@@ -280,6 +280,7 @@ class ParameterOptimizer:
                     cost=spec,
                     data=self.data_spec,
                     base_seed=self.seed,
+                    position_limits=dict(self.position_limits) if self.position_limits else None,
                 )
             )
 

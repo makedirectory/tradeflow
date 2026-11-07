@@ -118,6 +118,9 @@ class EvalRequest:
     cost: Optional[Dict[str, Any]] = None
     data: DataSpec = field(default_factory=DataSpec)
     base_seed: int = 42
+    #: The book each candidate is evaluated at. Not a tunable param, so a worker that
+    #: built the strategy from ``params`` alone evaluated the class default instead.
+    position_limits: Optional[Dict[str, Any]] = None
 
     @property
     def seed(self) -> int:
@@ -162,8 +165,11 @@ def evaluate(request: EvalRequest) -> Dict[str, Any]:
     try:
         from tradeflow.engine.backtest import BacktestEngine
         from tradeflow.services.registry import resolve_strategy_class
+        from tradeflow.strategies.base import build_with_limits
 
-        strategy = resolve_strategy_class(request.strategy)(dict(request.params))
+        strategy = build_with_limits(
+            resolve_strategy_class(request.strategy), dict(request.params), request.position_limits
+        )
         result = BacktestEngine(
             strategy,
             request.data.build(),

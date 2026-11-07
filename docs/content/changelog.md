@@ -92,6 +92,12 @@ return counted in both). The version is one stamp for every kind, so all earlier
 backtests included, though most never touched a boundary - drop out of the default
 `trials list` (it says how many); `trials archive` retires the era.
 
+- **A walk-forward's in-sample search runs at the configured book.** It built every
+  candidate at the strategy class's default (one position) while the out-of-sample folds
+  used the book the config asked for, so parameters were chosen for one book and
+  validated on another. The search, the holdout fit and the parallel workers now take the
+  validator's book.
+
 ### Honest labels
 
 - **Capacity** says which bound it hit instead of a sentinel: `capacity_capital` is

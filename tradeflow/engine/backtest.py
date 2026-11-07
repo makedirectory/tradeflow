@@ -95,6 +95,8 @@ logger = logging.getLogger(__name__)
 #:   boundary bar (in winter under v5, all year once the boundaries were fixed), so
 #:   that bar's return counted in two folds. The version is one stamp for every kind,
 #:   so v5 backtests leave the default listing too, though most never crossed a boundary.
+#:   A walk-forward's in-sample search now runs at the configured book, not the class
+#:   default, so v5 walk-forwards chose parameters for a different book than they scored.
 #:
 #: Records written before this field existed carry no version; absence means 1.
 ACCOUNTING_VERSION = 6
