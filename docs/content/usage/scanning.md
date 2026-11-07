@@ -69,8 +69,12 @@ historical clock, so drift is that seam asked several times and differenced.
 
 `backtest`, `optimize`, `walkforward`, `research`, `cache warm` and `live` all accept
 a `--scanner` option. When set, they run the scanner first and trade only the flagged
-symbols; if the scanner flags nothing, they fall back to the candidate list. Pass
-`--scanner none` to skip scanning and use the symbols as-is.
+symbols; if the scanner flags nothing, they log a warning and fall back to the candidate
+list. Pass `--scanner none` to skip scanning and use the symbols as-is.
+
+`allocate` is the exception: it does not fall back. When the scanner flags none of the
+candidates it prints that and stops, suggesting `--scanner none` to allocate across the
+candidates as given.
 
 The historical commands resolve the scanner at `--end` by default, so a validation
 window does not mix in today's universe, and `--scan-as-of` pins a different scanner
