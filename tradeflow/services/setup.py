@@ -901,8 +901,6 @@ def _writable_check() -> Check:
         probe = directory / ".write-probe"
         probe.write_text("")
         probe.unlink()
-        for made in created:  # deepest first
-            made.rmdir()
     except PermissionError as exc:
         # A host permission boundary, not a credentials problem: the fix is a different
         # directory or different ownership, and no key will change it.
@@ -919,6 +917,11 @@ def _writable_check() -> Check:
             f"cannot write {directory}: {exc.strerror}",
             "point TRADEFLOW_HOME at a directory you can write to",
         )
+    for made in created:  # deepest first; best effort - a failure here is not unwritability
+        try:
+            made.rmdir()
+        except OSError:
+            break
     return Check("state directory", "ready", f"{directory} is writable")
 
 
