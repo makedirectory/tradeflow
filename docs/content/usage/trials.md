@@ -14,10 +14,13 @@ It is deliberately a **CLI browser, not a UI** — the store is SQLite, the quer
 are cheap, and what was missing was filters, a detail view, and honest
 presentation.
 
-Everything here is **read-only**. There is no delete, no edit, no annotate: the
-journal is append-only history, and the browser must not make corrupting it
-convenient. (`trials rebuild` already exists to reconstruct the index from the
-journal.)
+The browse commands are **read-only**: `list`, `show`, `best`, `campaign`, `analyze`,
+`compare`, `status` and `archives` change nothing. There is no delete and no edit of a
+trial: the journal is append-only history, and the browser must not make corrupting it
+convenient. The commands that do write are named where they appear: `promote` writes a
+config file, `mark-contaminated` records a quarantine and `archive` retires the journal to a manifest (see
+[Maintenance](#maintenance-quarantine-a-subset-or-retire-an-era)), and `rebuild`
+reconstructs the derived index from the journal.
 
 ## `trials list` — what have we tried?
 
@@ -128,11 +131,13 @@ question.
 `trials promote` reads the recorded trial instead:
 
 ```bash
-quantred trials promote 50fd06209f49 --save-config configs/alpha.json
+quantred trials promote 50fd06209f49 --save-config alpha.json
 ```
 
 ```
-Promoted trial 50fd06209f49 -> configs/alpha.json
+Promoted trial 50fd06209f49 -> ~/.tradeflow/configs/alpha.json
+  recipe   : embargo_days=5, holdout_days=0, max_evals=50, method=grid, mode=anchored, objective=sharpe_ratio, seed=42, test_days=63, train_days=252
+  evidence : accounting v6, 1 trial id(s), family has tried 50
   strategy 'demo_trend'  universe 61 symbols resolved from 85 candidates
   Saving a config never trades it - a human promotes it to live.
 ```
@@ -145,7 +150,11 @@ means what it says.
 
 A trial that did not clear its gates is **refused**, because promoting one silently
 would put a config on disk whose own provenance says it failed. `--force` saves it
-anyway with that verdict recorded in the file.
+anyway with that verdict recorded in the file, and prints
+`WARNING: this trial did not clear its gates; the config records that verdict.` (a trial
+that was never gated, such as a backtest, gets its own warning saying it was not validated
+out of sample). A bare `--save-config` filename lands in `configs/` under the state root, as
+for [`walkforward`](run-configs.md#producing-one).
 
 The universe comes from the **journal**, not the store: the store records a universe
 *hash*, not the symbols. That keeps the store passive and derived, and means a trial
@@ -160,10 +169,14 @@ quantred trials best --strategy demo_trend
 ```
 
 ```
-  Top 5 by deflated Sharpe:
-    #  ID            STRATEGY             DSR   SHARPE    FAMILY n_trials
-    1  a1b2c3d4e5f6  demo_trend       0.903    1.512                 87
+  Top 5 by deflated Sharpe (validated runs only):
+    #  ID            KIND        STRATEGY             DSR   SHARPE BASIS       FAMILY n_trials
+    1  a1b2c3d4e5f6  walkforward demo_trend         0.903    1.512 oos agg                 87
     …
+
+  FAMILY n_trials = configs tried so far on this row's strategy over its universe (this
+  accounting version), counted now. A row's DSR was deflated by the trials of its own run,
+  so two rows' DSRs are not comparable when their runs searched different amounts.
 
   Ranked by DEFLATED Sharpe, which already discounts for how many configs the
   family tried. Each row's family n_trials is shown: the larger it is, the more
@@ -232,39 +245,60 @@ showing a default.
 
   RECIPE — how it was validated. Survives an accounting bump.
     window          2024-01-01 → 2024-06-29
-    train_days      252
-    test_days       63
     embargo_days    5
+    holdout_days    0
+    max_evals       50
     method          grid
+    mode            anchored
     objective       sharpe_ratio
     seed            42
+    test_days       63
+    train_days      252
+    _cost           {'gross': False, 'commission_bps': 1.0, 'impact_eta': 0.3, 'borrow_bps': 50.0}   (folded into its identity)
     _limits         {'max_positions': 8}   (folded into its identity)
+    _run            {'capital': 100000.0, 'benchmark': None}   (folded into its identity)
     universe        8 symbol(s): AAA, BBB, CCC, DDD, EEE, FFF, GGG, HHH
     considered      31 candidate(s) before the scan
 
+  SET UP WITH — how the run was configured. Not part of its identity.
+    capital         100,000.00
+    scanner         none
+    scan_as_of      2024-06-29T00:00:00-04:00
+    cache           cache=False, offline=False, workers=1
+
   EVIDENCE — what was measured, under accounting v6. Valid only there.
+    deflated_sharpe_ratio 0.903
+    max_drawdown    4.10%
+    profit_factor   1.31
     sharpe_ratio    1.12
+    total_return    9.40%
     total_trades    88
+    Holdout : none requested (--holdout-days 0)
     promotable      yes
     family n_trials 50
+    trial ids       a1b2c3d4e5f6
+    probes          — not recorded
 
   METADATA — about the record, not about the strategy.
-    recorded        2026-03-01T09:14:22
+    recorded        2026-03-01 09:14:22 EST
     git             a1b2c3d
     seed            42   (from the validation recipe)
+    notes           — not recorded
     return series   quantred trials compare a1b2c3d4e5f6 <other-trial-id>
     trade table     — not recorded
+    proposed book   — not recorded
 ```
 
 *(Illustrative figures.)*
 
-**The three labels are the feature.** They age differently, and a reader who cannot
+**The four labels are the feature.** They age differently, and a reader who cannot
 tell them apart will carry a stale number forward beside a recipe that is still
 perfectly good:
 
 | Section | What it is | What an accounting bump does to it |
 | --- | --- | --- |
 | `recipe` | How it was validated | Nothing — it stays true |
+| `set up with` | How the run was configured (capital, scanner, cache) | Nothing — it is context, not identity |
 | `evidence` | What was measured | Invalidates all of it |
 | `metadata` | About the record | Nothing |
 
@@ -284,12 +318,13 @@ exception that keys a run anyway, through the run's own identity rather than thi
 whole-share rounding makes a run at $4,000 a different book from one at $100,000, so a
 backtest or walk-forward at one capital is never served for a request at another.
 
-Every fact reports whether it was **recorded**, not just its value:
+Every fact reports whether it was **recorded**, not just its value. A recorded fact prints
+as its value; one that was not prints as `— not recorded`:
 
 ```
-  capital     recorded, 250,000
-  scanner     — not recorded
-  cache       — not recorded
+  capital         250,000.00
+  scanner         — not recorded
+  cache           — not recorded
 ```
 
 A trial written before this existed reads as *not recorded* for all of them, which is
