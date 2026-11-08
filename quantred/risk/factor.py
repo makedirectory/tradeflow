@@ -43,6 +43,28 @@ class FactorRiskMatrix(RiskMatrix):
         return float(np.sum(self.specific_var * w * w))
 
 
+#: The name of the constant column the risk model regresses on first.
+INTERCEPT = "intercept"
+
+
+def with_intercept(exposures: pd.DataFrame) -> pd.DataFrame:
+    """``exposures`` with a leading column of ones, unless one is already there.
+
+    The style exposures are cross-sectionally z-scored, so each column sums to zero
+    across names and none of them can carry a move that lifts every name together. In
+    the per-period cross-sectional regression that common move then has nowhere to go
+    but the residuals, whose covariance is taken as diagonal: the model reports almost
+    no co-movement at all, and a long-only book's risk is understated several-fold. A
+    ones column absorbs the common move into a factor of its own, so the shared
+    component lands in ``F`` and the residual that is left really is idiosyncratic.
+    """
+    if INTERCEPT in exposures.columns:
+        return exposures
+    out = exposures.copy()
+    out.insert(0, INTERCEPT, 1.0)
+    return out
+
+
 def estimate_factor_model(
     returns: pd.DataFrame, exposures: pd.DataFrame, periods_per_year: float
 ) -> Optional[FactorRiskMatrix]:
@@ -50,13 +72,15 @@ def estimate_factor_model(
 
     ``returns`` is (T × names), ``exposures`` (names × K). Factor returns are recovered
     per period by cross-sectional OLS ``f_t = (XᵀX)⁻¹ Xᵀ r_t``; ``F`` is their
-    covariance and ``Δ`` the residual variance per name (both annualized). Returns
+    covariance and ``Δ`` the residual variance per name (both annualized). A constant
+    ``intercept`` factor is prepended (see :func:`with_intercept`). Returns
     ``None`` if too few names/periods overlap.
     """
     names = [c for c in returns.columns if c in exposures.index]
     if len(names) < 2 or len(returns) < 2:
         return None
 
+    exposures = with_intercept(exposures)
     r = returns[names].to_numpy()  # T×N
     x = exposures.loc[names].to_numpy()  # N×K
     xtx_inv = np.linalg.pinv(x.T @ x)  # K×K (pinv guards a thin/collinear X)
