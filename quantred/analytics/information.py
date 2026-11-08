@@ -68,6 +68,32 @@ def effective_breadth(n_names: int, rebalances_per_year: float, rho_bar: float) 
     return {"br_eff": float(br_eff), "br_naive": float(br_naive), "rho_bar": float(rho_bar)}
 
 
+def mean_residual_correlation(returns: pd.DataFrame, benchmark_returns: pd.Series) -> float:
+    """Mean pairwise correlation of the names' *benchmark-residual* returns.
+
+    ``returns`` is (periods × names), ``benchmark_returns`` the aligned benchmark. Each
+    name's residual is ``r − β·r_benchmark`` with ``β = cov(r, r_b)/var(r_b)`` - the same
+    residual the information coefficient is measured on. Breadth must be deflated by the
+    correlation of the *bets being counted*: total-return correlations include the common
+    market move, which the residual IC has already stripped out, so using them deflates
+    breadth by a large factor (and moves with whatever risk model estimated them).
+    Returns 0.0 when fewer than two names or two periods overlap.
+    """
+    frame = pd.concat([returns, benchmark_returns.rename("__bench__")], axis=1).dropna()
+    names = [c for c in frame.columns if c != "__bench__"]
+    if len(names) < 2 or len(frame) < 3:
+        return 0.0
+    bench = frame["__bench__"]
+    var_b = float(bench.var())
+    if var_b <= 0:
+        return 0.0
+    resid = pd.DataFrame({c: frame[c] - (frame[c].cov(bench) / var_b) * bench for c in names})
+    corr = resid.corr().to_numpy()
+    n = len(names)
+    off_diagonal = np.nan_to_num(corr - np.eye(n))
+    return float(off_diagonal.sum() / (n * (n - 1)))
+
+
 def predicted_ir(mean_ic: float, br_eff: float) -> float:
     """The Fundamental Law: ``predicted_IR = mean_IC · √BR_eff``."""
     return float(mean_ic * math.sqrt(max(br_eff, 0.0)))

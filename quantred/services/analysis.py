@@ -3169,13 +3169,16 @@ def compute_information(
     rank_stats = info.ic_stats(rank_ics)
     n_names = int(np.median(n_names_seen)) if n_names_seen else 0
 
-    # ρ̄ from the risk model over the window (correlated bets deflate breadth).
+    # Correlated bets deflate breadth, and the bets counted here are the *residual*
+    # returns the IC was measured on, so ρ̄ is the mean correlation of those - not of
+    # total returns (which carry the market move the residual already removed) and so
+    # not a function of the risk model either. The risk model still supplies Σ for the
+    # risk-bucket diagnostic below.
     matrix = _build_covariance(risk_model, universe_bars, bench, periods_per_year)
-    if matrix is not None and len(matrix.symbols) > 1:
-        corr = matrix.correlation().to_numpy()
-        rho_bar = float((corr.sum() - len(corr)) / (len(corr) * (len(corr) - 1)))
-    else:
-        rho_bar = 0.0
+    rho_bar = info.mean_residual_correlation(
+        pd.DataFrame({s: f["close"].pct_change() for s, f in universe_bars.items() if not f.empty}),
+        bench["close"].pct_change(),
+    )
 
     breadth = info.effective_breadth(n_names, rebalances_per_year, rho_bar)
     pred_ir = info.predicted_ir(stats["mean_ic"], breadth["br_eff"])

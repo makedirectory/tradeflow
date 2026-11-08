@@ -48,8 +48,10 @@ BR_eff ≈ (rebalances/yr) · N / (1 + (N−1)·ρ̄)
 ```
 
 `BR_naive = (rebalances/yr)·N` treats every name as an independent bet. `BR_eff`
-deflates it by the average pairwise correlation `ρ̄` (taken from the [risk model](./risk-model)'s
-Σ): perfectly correlated bets (`ρ̄→1`) collapse to one bet per rebalance. Reporting
+deflates it by the average pairwise correlation `ρ̄` of the names' *residual* returns
+(`r − β·r_benchmark`, the same residuals the IC is measured on — total-return correlations
+carry the market move the IC has already removed, so they over-deflate breadth, and they
+would change with `--risk-model`; `ρ̄` no longer does): perfectly correlated bets (`ρ̄→1`) collapse to one bet per rebalance. Reporting
 `BR_eff` vs `BR_naive` exposes the single most common self-deception in quant —
 *thinking you have 500 bets when you have 3.*
 
