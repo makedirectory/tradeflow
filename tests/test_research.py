@@ -183,6 +183,20 @@ def test_sandbox_blocks_disallowed_imports():
         sandbox.load_strategy_from_code(bad)
 
 
+def test_a_draft_importing_the_old_package_name_is_told_to_use_the_new_one():
+    """Drafts written from older prompts still say `from tradeflow...`.
+
+    The refusal used to read "may not import 'tradeflow.strategies.base'", which sends a
+    model looking for a permissions problem when the module simply moved. The message
+    has to name the replacement, and the same line under the new name must still load.
+    """
+    old = _VALID_CODE.replace("from quantred.strategies.base", "from tradeflow.strategies.base")
+    assert old != _VALID_CODE
+    with pytest.raises(sandbox.HygieneError, match=r"tradeflow\.strategies\.base.*import from `quantred`"):
+        sandbox.load_strategy_from_code(old)
+    assert sandbox.load_strategy_from_code(_VALID_CODE) is not None
+
+
 def test_a_malformed_strategy_param_spec_is_a_rejection_not_a_crash():
     """`PARAM_RANGES = {"threshold": 0.01}` is what generated code actually writes.
 

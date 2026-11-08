@@ -8,10 +8,10 @@ Two jobs:
    cheap, load-bearing rules that stop the loop manufacturing overfit garbage at
    scale.
 2. **Contract validation** of agent-authored strategy/scanner *code*: a strategy
-   must define a concrete :class:`~tradeflow.strategies.base.Strategy` subclass that
+   must define a concrete :class:`~quantred.strategies.base.Strategy` subclass that
    implements the abstract hooks, declares a valid ``PARAM_RANGES`` (<= 5
    searchable), carries a docstring (the hypothesis), and actually constructs. A
-   scanner must define a concrete :class:`~tradeflow.scanners.base.ScannerStrategy`
+   scanner must define a concrete :class:`~quantred.scanners.base.ScannerStrategy`
    subclass that emits the scanner signal vocabulary and a numeric
    ``signal_strength``.
 
@@ -318,6 +318,13 @@ def _scanner_sample(cls: Type, instance):
 
 def _guarded_import(name, *args, **kwargs):
     root = name.split(".")[0]
+    if root == "tradeflow":
+        # Older prompts and drafts name the package this one replaced; say where the
+        # module went instead of reporting a permission problem that does not exist.
+        raise HygieneError(
+            f"generated code may not import {name!r}: the package is now `quantred`, "
+            f"so import from `quantred` ({name.replace('tradeflow', 'quantred', 1)!r})"
+        )
     if name in _ALLOWED_IMPORTS or root in {"pandas", "numpy", "math"} or name.startswith("quantred."):
         if name.startswith("quantred.") and name not in _ALLOWED_IMPORTS and root == "quantred":
             # Only allow the explicitly whitelisted quantred.* modules.
