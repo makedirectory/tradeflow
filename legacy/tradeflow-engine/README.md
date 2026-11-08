@@ -27,4 +27,4 @@ Then change a pack's imports from `tradeflow` to `quantred`, and its dependency 
 `tradeflow-engine` to `quantred`. MCP client configs should launch `quantred mcp`.
 
 The full migration notes are at
-<https://tradeflow.mk-dir.com/usage/migrating-to-quantred>.
+<https://quantred.mk-dir.com/usage/migrating-to-quantred>.

@@ -224,6 +224,26 @@ versions deliberately. What moved:
 
 ---
 
+## 2.4.1 — 2026-11-08
+
+- **No false "a pack imports the old name" line when launched through the old name.**
+  `python -m tradeflow.cli ...` - the form MCP client configs written before the rename
+  use, working through `tradeflow-engine` 2.3.1 - imports the old name itself before
+  discovery runs, and the check read that as a pack using it, printing the warning on
+  every launch. It now warns only when the old name first appears while packs are
+  loading. One blind spot is accepted: when the process itself was launched through the
+  old name, a pack that also imports it is not named.
+- **The documentation moves to https://quantred.mk-dir.com.** quantred's own package
+  metadata, the README links and the hints the CLI prints point there.
+  `tradeflow-engine` 2.3.1 is already published and its metadata still names the old
+  address; that cannot change.
+- **The Docker containers are renamed `quantred-mcp` and `quantred-docs`** (they were
+  `tradeflow-mcp` and `tradeflow-docs`). Update any `docker exec`, `docker logs` or
+  client config that names the old container. The volumes keep their names because the
+  compose project is pinned to `tradeflow`.
+
+---
+
 ## 2.4.0 — 2026-11-07
 
 TradeFlow is now **QuantRed**, and a first session works from install to a result

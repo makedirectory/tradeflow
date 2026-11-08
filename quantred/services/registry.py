@@ -199,6 +199,10 @@ def _entry_point_classes(group: str, base_cls: Type) -> Dict[str, Type]:
     so a broken private package cannot make the public engine unusable.
     """
     found: Dict[str, Type] = {}
+    # Whether the old name was already imported before any pack loaded: launching
+    # through it (`python -m tradeflow.cli`, the form old MCP client configs use) does
+    # that itself, and is not a pack using the old name.
+    old_name_already_loaded = _old_import_name_loaded()
     for entry_point in _select_entry_points(group):
         declared = getattr(entry_point, "group", None) or group
         if _from_legacy_distribution(entry_point):
@@ -250,7 +254,7 @@ def _entry_point_classes(group: str, base_cls: Type) -> Dict[str, Type]:
                 )
                 continue
             found[name] = cls
-    _warn_if_a_pack_imports_the_old_name()
+    _warn_if_a_pack_imports_the_old_name(already_loaded=old_name_already_loaded)
     return found
 
 
@@ -269,16 +273,25 @@ def _from_legacy_distribution(entry_point: Any) -> bool:
 _WARNED_OLD_IMPORT = False
 
 
-def _warn_if_a_pack_imports_the_old_name() -> None:
-    """Say once that something loaded through the ``tradeflow`` import alias.
+def _old_import_name_loaded() -> bool:
+    """Whether the old import package (the alias `tradeflow-engine` 2.3.1 ships) is loaded."""
+    return "tradeflow" in sys.modules
+
+
+def _warn_if_a_pack_imports_the_old_name(already_loaded: bool) -> None:
+    """Say once that a pack loaded through the ``tradeflow`` import alias.
 
     The alias's ``DeprecationWarning`` is hidden by Python's default filters unless it
     is raised from ``__main__``, so a pack loaded by entry point would use it silently
     while the docs say it warns. Detected from the alias itself (its module and its
-    import finder are present) rather than from any one pack.
+    import finder are present) rather than from any one pack, and only when the module
+    appeared while packs were loading: with ``already_loaded`` the process itself was
+    launched through the old name, and blaming a pack for that printed a false line on
+    every launch from an old MCP client config. Accepted blind spot: when the process
+    itself was launched through the old name, a pack that also imports it is not named.
     """
     global _WARNED_OLD_IMPORT
-    if _WARNED_OLD_IMPORT or "tradeflow" not in sys.modules:
+    if _WARNED_OLD_IMPORT or already_loaded or not _old_import_name_loaded():
         return
     if not any(type(finder).__name__ == "_AliasFinder" for finder in sys.meta_path):
         return

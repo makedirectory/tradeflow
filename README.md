@@ -1,7 +1,7 @@
 # QuantRed
 
 [![CI](https://github.com/makedirectory/quantred/actions/workflows/ci.yml/badge.svg)](https://github.com/makedirectory/quantred/actions/workflows/ci.yml)
-[![Docs](https://img.shields.io/badge/docs-tradeflow.mk--dir.com-blue)](https://tradeflow.mk-dir.com/)
+[![Docs](https://img.shields.io/badge/docs-quantred.mk--dir.com-blue)](https://quantred.mk-dir.com/)
 
 A small, **layered**, **broker-agnostic** algorithmic-trading **research
 engine** — and an honest one, which mostly means it's very good at telling you
@@ -16,8 +16,8 @@ optimization**, **walk-forward validation**, and **constraint-solver portfolio
 allocation**.
 
 Full docs — usage guide, engineering wiki, and
-[changelog](https://tradeflow.mk-dir.com/changelog) — live at
-**[tradeflow.mk-dir.com](https://tradeflow.mk-dir.com/)**.
+[changelog](https://quantred.mk-dir.com/changelog) — live at
+**[quantred.mk-dir.com](https://quantred.mk-dir.com/)**.
 
 > Making money in markets is genuinely hard. This project won't change that — but
 > it will at least stop you from fooling yourself quite so quickly, which is most
@@ -56,7 +56,7 @@ never touch**:
 **Promotion is a manual human step** — automation never flips `PAPER_TRADE` or
 places an order. The [MCP server](#agent-integration-mcp) enforces this
 *structurally*: it builds only a data client, so it physically cannot trade. See
-the [architecture docs](https://tradeflow.mk-dir.com/engineering/architecture)
+the [architecture docs](https://quantred.mk-dir.com/engineering/architecture)
 for the full picture.
 
 ## Requirements
@@ -94,11 +94,11 @@ quantred mcp --self-test               # confirm discovery works without a chat 
 
 Optional capabilities are extras (charts, the MCP server, the model SDKs). Adding one
 later with `uv tool` replaces the environment, so list every extra you want — the
-[extras guide](https://tradeflow.mk-dir.com/usage/extras) has the table and the exact
+[extras guide](https://quantred.mk-dir.com/usage/extras) has the table and the exact
 commands. `quantred init --check --for <task>` prints the one you need for that task, and a
 command that needs a missing extra prints it with your current extras filled in.
 
-**→ [Getting started](https://tradeflow.mk-dir.com/usage/getting-started)** walks the
+**→ [Getting started](https://quantred.mk-dir.com/usage/getting-started)** walks the
 whole path: install → keys → your first real result → Claude connected. Six steps,
 the first two with no keys and no network.
 
@@ -108,7 +108,7 @@ The distribution and the command are both **`quantred`**; the importable package
 `quantred`, so upgrading it moves you across without breaking old scripts, MCP configs or
 packs importing `tradeflow` (the alias raises a `DeprecationWarning`, shown under `-W default` or in test runs). A private pack needs its imports
 changed from `tradeflow` to `quantred` before you drop it. The steps are in
-[migrating to QuantRed](https://tradeflow.mk-dir.com/usage/migrating-to-quantred).
+[migrating to QuantRed](https://quantred.mk-dir.com/usage/migrating-to-quantred).
 
 State (the research journal, trial store, bar cache, promoted configs) lives in
 `~/.tradeflow` — for an installed copy and for a checkout alike. `quantred --version`
@@ -151,7 +151,7 @@ docker compose run --rm verdict --scanner none \
 ```
 
 `live` is profile-gated and is never started by `up` — turning the machine on must
-not turn trading on. See [Running in Docker](https://tradeflow.mk-dir.com/usage/docker).
+not turn trading on. See [Running in Docker](https://quantred.mk-dir.com/usage/docker).
 
 Run `make help` to see every target. Anything is overridable inline:
 
@@ -214,7 +214,7 @@ alongside it appears in the same table, scored the same way.
 Notice the arc: `demo_trend` looks tradeable in-sample (+14.7%, Sharpe 0.48), but
 once it's optimized in-sample and scored **out-of-sample** the edge evaporates
 (median OOS Sharpe −0.26) and all but one promotion gate fails. That's
-[walk-forward validation](https://tradeflow.mk-dir.com/engineering/walk-forward)
+[walk-forward validation](https://quantred.mk-dir.com/engineering/walk-forward)
 doing its job.
 
 ### Watching the agent get told "no"
@@ -317,13 +317,13 @@ them out of this repository entirely.
 
 Each strategy defines a single continuous **score** (its conviction); the trade
 clock's `BUY/SELL/HOLD` and the
-[continuous alpha](https://tradeflow.mk-dir.com/engineering/alphas) are both
+[continuous alpha](https://quantred.mk-dir.com/engineering/alphas) are both
 derived from it — one source of truth.
 
 `example` is a complete working pack to copy — `quantred init
 --example-pack ./my-signals` writes it out. See
-[Your own strategies](https://tradeflow.mk-dir.com/usage/private-strategies)
-and [Extending](https://tradeflow.mk-dir.com/engineering/extending).
+[Your own strategies](https://quantred.mk-dir.com/usage/private-strategies)
+and [Extending](https://quantred.mk-dir.com/engineering/extending).
 
 ### Using it from your own code
 
@@ -340,13 +340,13 @@ print(result["verdict"]["summary"])
 ```
 
 Everything outside `services/` is internal and moves without notice. See
-[Using QuantRed as a library](https://tradeflow.mk-dir.com/engineering/embedding).
+[Using QuantRed as a library](https://quantred.mk-dir.com/engineering/embedding).
 
 ### Optional features
 
 Capabilities are optional extras so the base install stays lean:
 
-Installed: see the [extras guide](https://tradeflow.mk-dir.com/usage/extras). In a
+Installed: see the [extras guide](https://quantred.mk-dir.com/usage/extras). In a
 checkout:
 
 ```bash
@@ -451,7 +451,7 @@ quantred research --provider ollama --model llama3.1 \
   --goal "improve OOS Sharpe without raising max drawdown" --holdout-days 60
 ```
 
-See the [docs](https://tradeflow.mk-dir.com/) (Usage → *AI agents*) for the full
+See the [docs](https://quantred.mk-dir.com/) (Usage → *AI agents*) for the full
 tool surface, guardrails, and provider setup.
 
 *Contributors, from a checkout:* the same commands run as `python main.py mcp` and
@@ -560,7 +560,7 @@ make flatten REASON="why"             # halt, cancel everything, close everythin
 
 Halt state is a file under the state root, not a database — the order path holds no
 connection to anything that can be down, so the switch still works when the engine
-does not. See [Stopping trading](https://tradeflow.mk-dir.com/usage/stopping).
+does not. See [Stopping trading](https://quantred.mk-dir.com/usage/stopping).
 
 ## ☕ Coffee?
 

@@ -18,7 +18,7 @@ name: Release
 #
 # A tag `v*` publishes the engine from the repository root. A tag `tradeflow-engine-v*`
 # publishes the final transition release of the old distribution name from
-# packaging/tradeflow-engine instead. That project's trusted publisher must name the
+# legacy/tradeflow-engine instead. That project's trusted publisher must name the
 # repository as it is now called (`quantred`, renamed from the old one) and the same
 # workflow `release.yml` and environment `pypi`.
 
@@ -53,7 +53,7 @@ jobs:
         run: uv build
       - name: Build the transition package (tag tradeflow-engine-v*)
         if: startsWith(github.ref, 'refs/tags/tradeflow-engine-v')
-        run: uv build packaging/tradeflow-engine -o dist
+        run: uv build legacy/tradeflow-engine -o dist
       # Catches a malformed README or bad metadata before it is permanent.
       - run: uvx twine check dist/*
       # The tag and the packaged version must agree, or the release notes describe
@@ -77,7 +77,7 @@ jobs:
       # installed, so the order of the two tags is checked, not remembered.
       - name: The engine release this requires is on PyPI
         if: startsWith(github.ref, 'refs/tags/tradeflow-engine-v')
-        run: uv run --no-project --with packaging python .github/scripts/require_published_dependency.py packaging/tradeflow-engine/pyproject.toml
+        run: uv run --no-project --with packaging python .github/scripts/require_published_dependency.py legacy/tradeflow-engine/pyproject.toml
       - uses: actions/upload-artifact@v7
         with:
           name: dist
