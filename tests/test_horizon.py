@@ -1,5 +1,7 @@
+
 """Tests for information horizon / alpha decay."""
 
+import math
 from datetime import datetime
 
 import numpy as np
@@ -27,7 +29,11 @@ def test_decay_is_recovered():
 
 
 def test_peak_horizon_tracks_half_life():
-    assert abs(peak_return_horizon(4.0) - 1.2566 * 4.0) < 1e-6
+    # Peak of the profile (1 - e^-x)/sqrt(x), found by brute-force grid search here (x in decay
+    # time constants); half-lives = x / ln 2.
+    xs = [i * 1e-5 for i in range(1, 400_000)]
+    x_star = max(xs, key=lambda x: (1 - math.exp(-x)) / math.sqrt(x))
+    assert abs(peak_return_horizon(4.0) - 4.0 * x_star / math.log(2)) < 1e-3
 
 
 def test_fit_decay_handles_degenerate_profile():

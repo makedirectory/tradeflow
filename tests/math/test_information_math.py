@@ -244,7 +244,18 @@ def test_fit_decay_with_too_little_data_is_nan_not_a_number():
 
 
 def test_peak_return_horizon_and_effective_sample_size():
-    assert horizon.peak_return_horizon(10.0) == pytest.approx(12.566)
+    # Independent derivation: with IC(n) = delta^n, the correlation with an h-bar return is
+    # proportional to (1 - delta^h)/sqrt(h). Discrete search at HL=10 (delta = 2^(-1/10)):
+    delta = 0.5 ** (1 / 10)
+    best = max(range(1, 200), key=lambda h: (1 - delta**h) / math.sqrt(h))
+    assert best == 18  # not 12.6: the old ratio was the peak in time constants, not half-lives
+    assert horizon.peak_return_horizon(10.0) == pytest.approx(best, abs=0.5)
+    # continuous: x* solves e^x = 1 + 2x, the stationary point of (1 - e^-x)/sqrt(x)
+    lo, hi = 0.5, 3.0
+    for _ in range(100):
+        mid = (lo + hi) / 2
+        lo, hi = (mid, hi) if math.exp(mid) - 1 - 2 * mid < 0 else (lo, mid)
+    assert horizon.peak_return_horizon(10.0) == pytest.approx(10 * lo / math.log(2), rel=1e-8)
     assert math.isinf(horizon.peak_return_horizon(math.inf))
     assert horizon.effective_sample_size(210, 21, 1) == pytest.approx(10.0)
     assert (

@@ -77,8 +77,11 @@ on its own terms either way.
 
 ## Matching signal to return horizon
 
-A signal of half-life `HL` predicts returns best at a horizon ≈ `1.26·HL` (where the
-signal-return correlation peaks). Surfaced as `peak_return_horizon` so a short-horizon
+A signal of half-life `HL` predicts returns best at a horizon ≈ `1.81·HL` (where the
+signal-return correlation peaks). With the IC decaying as `e^(−φn)`, the correlation of the signal
+with an `h`-bar return is proportional to `(1 − e^(−φh)) / √h`; setting its derivative to zero
+gives `e^x = 1 + 2x` for `x = φh`, so `x ≈ 1.2564` decay time constants, which is
+`1.2564 / ln 2 ≈ 1.81` half-lives. Surfaced as `peak_return_horizon` so a short-horizon
 signal isn't scored against a long-horizon return — a common way to understate real
 skill.
 

@@ -20,8 +20,13 @@ from typing import Dict, Mapping, Tuple
 
 import numpy as np
 
-#: horizon/half-life ratio at which signal-return correlation peaks (≈ 0.638).
-PEAK_HORIZON_RATIO = 1.2566
+#: Model: the signal's IC decays as ``e^(-phi*n)`` and a return over ``h`` periods accumulates
+#: ``h`` independent increments, so the correlation of the signal with that return is
+#: proportional to ``(1 - e^(-phi*h)) / sqrt(h)``. With ``x = phi*h`` (time in units of the decay
+#: time constant ``1/phi``) its derivative vanishes where ``e^x = 1 + 2x``, i.e. ``x* = 1.25643``.
+#: The half-life is ``ln2/phi``, so the peak horizon in half-lives is ``x*/ln 2``. (1.2564 is
+#: the peak in *time constants*, not half-lives.)
+PEAK_HORIZON_RATIO = 1.2564312086 / math.log(2)
 
 
 def fit_decay(ic_by_lag: Mapping[int, float], ci_z: float = 1.96) -> Dict[str, float]:
@@ -91,7 +96,7 @@ def fit_decay(ic_by_lag: Mapping[int, float], ci_z: float = 1.96) -> Dict[str, f
 
 
 def peak_return_horizon(half_life: float) -> float:
-    """The forward-return horizon a signal of this half-life predicts best (≈ 1.26·HL).
+    """The forward-return horizon a signal of this half-life predicts best (≈ 1.81·HL).
 
     Scoring a short-horizon signal against a long-horizon return (or vice versa) is a
     common way to understate real skill; this is the horizon to match.
