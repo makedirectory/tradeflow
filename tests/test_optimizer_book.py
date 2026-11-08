@@ -15,19 +15,19 @@ from datetime import datetime
 
 import pytest
 
+from quantred.engine import backtest as backtest_module
+from quantred.marketdata.client import MarketDataClient
+from quantred.marketdata.synthetic import SyntheticMarketData
+from quantred.optimization import optimizer as optimizer_module
+from quantred.optimization import parallel
+from quantred.optimization import walk_forward as walk_forward_module
+from quantred.optimization.optimizer import ParameterOptimizer
+from quantred.optimization.parallel import DataSpec, EvalRequest, candidate_key
+from quantred.optimization.walk_forward import WalkForwardValidator
+from quantred.services import analysis, audit
+from quantred.services.registry import STRATEGIES
 from tests.fakes import FakeMarketData
 from tests.test_walk_forward import PeriodicStrategy
-from tradeflow.engine import backtest as backtest_module
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.marketdata.synthetic import SyntheticMarketData
-from tradeflow.optimization import optimizer as optimizer_module
-from tradeflow.optimization import parallel
-from tradeflow.optimization import walk_forward as walk_forward_module
-from tradeflow.optimization.optimizer import ParameterOptimizer
-from tradeflow.optimization.parallel import DataSpec, EvalRequest, candidate_key
-from tradeflow.optimization.walk_forward import WalkForwardValidator
-from tradeflow.services import analysis, audit
-from tradeflow.services.registry import STRATEGIES
 
 SYMBOLS = ["AAA", "BBB"]
 START, END = datetime(2024, 1, 2), datetime(2024, 9, 1)

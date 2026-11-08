@@ -10,12 +10,12 @@ import json
 
 import pytest
 
+from quantred import cli, settings
+from quantred.brokers.errors import AuthenticationError
+from quantred.marketdata.client import MarketDataClient
+from quantred.mcp import server as mcp_server
+from quantred.services import analysis, audit, setup
 from tests.fakes import FakeMarketData
-from tradeflow import cli, settings
-from tradeflow.brokers.errors import AuthenticationError
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.mcp import server as mcp_server
-from tradeflow.services import analysis, audit, setup
 
 pytest.importorskip("mcp", reason="the MCP surface needs the 'mcp' extra")
 
@@ -79,7 +79,7 @@ def test_a_failed_build_is_retried_not_remembered(no_keys, monkeypatch):
     built = mcp_server.build_server()
     with pytest.raises(Exception):
         _call(built, "summarize_bars", symbols=["AAA"])
-    from tradeflow.services import data
+    from quantred.services import data
 
     monkeypatch.setattr(
         data,

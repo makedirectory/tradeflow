@@ -17,12 +17,12 @@ from datetime import datetime
 import pandas as pd
 import pytest
 
-from tradeflow.cli import build_parser
-from tradeflow.optimization.config_store import DEFAULT_CONFIG_DIR, load_config
-from tradeflow.services.analysis import recorded_book, walk_forward_recipe
-from tradeflow.services.audit import journal_trial
-from tradeflow.services.registry import STRATEGIES
-from tradeflow.store.trials import db_path_for_journal
+from quantred.cli import build_parser
+from quantred.optimization.config_store import DEFAULT_CONFIG_DIR, load_config
+from quantred.services.analysis import recorded_book, walk_forward_recipe
+from quantred.services.audit import journal_trial
+from quantred.services.registry import STRATEGIES
+from quantred.store.trials import db_path_for_journal
 
 BOOK = {"max_positions": 8, "max_total_risk": 0.2}
 
@@ -31,7 +31,7 @@ BOOK = {"max_positions": 8, "max_total_risk": 0.2}
 #: Read from the strategy rather than written out here, so this fixture cannot drift
 #: into being a set of params the strategy could not actually be built from.
 def _chosen_params():
-    from tradeflow.services.registry import STRATEGIES
+    from quantred.services.registry import STRATEGIES
 
     return dict(STRATEGIES["demo_trend"].create_with_defaults().config.get("params") or {}) or {
         name: spec["default"] for name, spec in STRATEGIES["demo_trend"].PARAM_RANGES.items()
@@ -72,7 +72,7 @@ def _journal_walkforward(journal, limits=None):
 
 
 def _promote(journal, trial_id, name, monkeypatch):
-    monkeypatch.setattr("tradeflow.services.audit.DEFAULT_TRIAL_JOURNAL", journal, raising=False)
+    monkeypatch.setattr("quantred.services.audit.DEFAULT_TRIAL_JOURNAL", journal, raising=False)
     args = build_parser().parse_args(
         [
             "trials",
@@ -96,7 +96,7 @@ def test_a_promoted_config_trades_the_book_its_provenance_says_was_validated(tmp
     provenance and carried no `position_limits` of its own, so a run from it inherited
     the class default of one position — one file, two answers, and the one a live run
     obeys is the one nothing ever validated."""
-    monkeypatch.setattr("tradeflow.optimization.config_store.DEFAULT_CONFIG_DIR", tmp_path, raising=False)
+    monkeypatch.setattr("quantred.optimization.config_store.DEFAULT_CONFIG_DIR", tmp_path, raising=False)
     journal = tmp_path / "journal.jsonl"
     trial_id = _journal_walkforward(journal)
 
@@ -115,10 +115,10 @@ def test_the_promoted_book_survives_a_reload_and_reaches_a_constructed_strategy(
     """End to end, through the path a run actually takes: promote, reload the file, and
     build the strategy the way a backtest or a live session would. The number that comes
     out the far end is the one that was validated."""
-    from tradeflow.services.registry import STRATEGIES
-    from tradeflow.strategies.base import build_with_limits
+    from quantred.services.registry import STRATEGIES
+    from quantred.strategies.base import build_with_limits
 
-    monkeypatch.setattr("tradeflow.optimization.config_store.DEFAULT_CONFIG_DIR", tmp_path, raising=False)
+    monkeypatch.setattr("quantred.optimization.config_store.DEFAULT_CONFIG_DIR", tmp_path, raising=False)
     journal = tmp_path / "journal.jsonl"
     trial_id = _journal_walkforward(journal)
     _promote(journal, trial_id, str(tmp_path / "roundtrip.json"), monkeypatch)
@@ -137,7 +137,7 @@ def test_a_backtest_trial_promotes_its_book_too(tmp_path, monkeypatch):
     """A backtest journals its dedup params *as* its params, so its book is in the
     params rather than in a recipe. A resolver that looked in one place would work for
     one kind and silently return nothing for the other."""
-    monkeypatch.setattr("tradeflow.optimization.config_store.DEFAULT_CONFIG_DIR", tmp_path, raising=False)
+    monkeypatch.setattr("quantred.optimization.config_store.DEFAULT_CONFIG_DIR", tmp_path, raising=False)
     journal = tmp_path / "journal.jsonl"
     trial_id = journal_trial(
         "backtest",
@@ -162,7 +162,7 @@ def test_a_trial_that_recorded_no_book_says_nothing_rather_than_inventing_one(tm
     """Both directions, and the absent-is-not-zero half. A trial predating limits in the
     dedup identity keyed exactly as it did before; writing a book it never had would be
     manufacturing the evidence this whole path exists to preserve."""
-    monkeypatch.setattr("tradeflow.optimization.config_store.DEFAULT_CONFIG_DIR", tmp_path, raising=False)
+    monkeypatch.setattr("quantred.optimization.config_store.DEFAULT_CONFIG_DIR", tmp_path, raising=False)
     journal = tmp_path / "journal.jsonl"
     trial_id = journal_trial(
         "backtest",
@@ -210,20 +210,20 @@ def test_every_call_site_that_writes_a_runnable_config_states_its_book():
     transport that never passes it records nothing, and the agent that supplied it has
     no way to tell.
     """
-    import tradeflow.cli
-    import tradeflow.mcp.server
-    import tradeflow.research.agent
-    import tradeflow.services.configs
+    import quantred.cli
+    import quantred.mcp.server
+    import quantred.research.agent
+    import quantred.services.configs
 
     missing = []
     for module in (
-        tradeflow.cli,
-        tradeflow.research.agent,
-        tradeflow.services.configs,
+        quantred.cli,
+        quantred.research.agent,
+        quantred.services.configs,
         # The MCP server too: it forwards to the service, and a parameter the service
         # accepts but the transport never passes is a book an agent supplied and the
         # file never recorded.
-        tradeflow.mcp.server,
+        quantred.mcp.server,
     ):
         source = ast.parse(open(module.__file__).read())
         for node in ast.walk(source):
@@ -249,7 +249,7 @@ def test_the_walk_forward_saver_writes_the_book_it_validated_not_the_class_defau
     asking for eight positions validated eight and saved one."""
     import inspect
 
-    from tradeflow import cli
+    from quantred import cli
 
     source = inspect.getsource(cli.cmd_walkforward)
     saver = source[source.index("path = save_config(") : source.index("provenance=provenance")]
@@ -264,8 +264,8 @@ def test_the_mcp_tool_accepts_nothing_the_config_service_cannot_take():
     notice a stale signature — it acts on one."""
     import inspect
 
-    from tradeflow.mcp import server as mcp_server
-    from tradeflow.services import configs
+    from quantred.mcp import server as mcp_server
+    from quantred.services import configs
 
     source = inspect.getsource(mcp_server)
     start = source.index("def save_config(") + len("def save_config(")
@@ -282,9 +282,9 @@ def test_the_config_service_fills_the_book_from_the_campaign_it_was_given(tmp_pa
     """A parameter is not a guarantee. An agent can pass campaign material carrying the
     validated book and still leave `position_limits` unset — writing exactly the config
     this branch exists to prevent, from the surface that was given the right answer."""
-    from tradeflow.services import configs
+    from quantred.services import configs
 
-    monkeypatch.setattr("tradeflow.optimization.config_store.DEFAULT_CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("quantred.optimization.config_store.DEFAULT_CONFIG_DIR", tmp_path)
 
     material = {"recipe": {"folded_into_identity": {"_limits": BOOK}}}
     saved = configs.save_config(
@@ -301,9 +301,9 @@ def test_the_config_service_fills_the_book_from_the_campaign_it_was_given(tmp_pa
 def test_a_book_that_disagrees_with_its_own_provenance_is_refused(tmp_path, monkeypatch):
     """One of the two numbers is wrong and nothing here can tell which. A file that
     argues with itself is worse than no file."""
-    from tradeflow.services import configs
+    from quantred.services import configs
 
-    monkeypatch.setattr("tradeflow.optimization.config_store.DEFAULT_CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("quantred.optimization.config_store.DEFAULT_CONFIG_DIR", tmp_path)
 
     material = {"recipe": {"folded_into_identity": {"_limits": BOOK}}}
     with pytest.raises(ValueError, match="disagrees"):
@@ -319,9 +319,9 @@ def test_a_book_that_disagrees_with_its_own_provenance_is_refused(tmp_path, monk
 def test_an_agreeing_book_and_a_campaign_free_config_both_pass_through(tmp_path, monkeypatch):
     """Both directions. The check must accept the book it was drawn to protect, and
     must not invent one where the provenance never knew it."""
-    from tradeflow.services import configs
+    from quantred.services import configs
 
-    monkeypatch.setattr("tradeflow.optimization.config_store.DEFAULT_CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("quantred.optimization.config_store.DEFAULT_CONFIG_DIR", tmp_path)
 
     material = {"recipe": {"folded_into_identity": {"_limits": BOOK}}}
     agreeing = configs.save_config(

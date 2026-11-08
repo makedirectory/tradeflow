@@ -1,12 +1,12 @@
 [project]
-# The distribution name. The importable package stays `tradeflow` (as do the plugin
-# entry-point groups and the state root), so extensions and recorded history are
-# untouched by the name. The project was previously published as `tradeflow-engine`;
-# installing that beside this one puts two distributions on the same import tree and
-# nothing prevents it, so the old one has to be uninstalled first (see the migration
-# notes in the documentation).
+# The distribution name, and the import package's. The project was previously published
+# as `tradeflow-engine` with the import package `tradeflow`; the state root
+# (`~/.tradeflow`, `TRADEFLOW_HOME`) keeps that name so recorded history carries over,
+# and the old plugin entry-point groups are still read. Because the two distributions
+# no longer share a package directory, the old one's final release can depend on this
+# one without an upgrade deleting files out from under it.
 name = "quantred"
-# Read from tradeflow/__init__.py — one place, so the packaged version and the one
+# Read from quantred/__init__.py — one place, so the packaged version and the one
 # `--version` prints can never disagree.
 dynamic = ["version"]
 license = "MIT"
@@ -85,26 +85,26 @@ dev = [
 # by tests. The registry also holds these two directly - enumeration order across
 # distributions is undefined, and a reserved name is worth nothing if which class
 # answers to it is a coin flip - so this declaration is the path, not the source.
-[project.entry-points."tradeflow.strategies"]
-demo_trend = "tradeflow.demo.strategies:DemoTrendStrategy"
+[project.entry-points."quantred.strategies"]
+demo_trend = "quantred.demo.strategies:DemoTrendStrategy"
 
-[project.entry-points."tradeflow.scanners"]
-demo_volume = "tradeflow.demo.scanners:DemoVolumeScanner"
+[project.entry-points."quantred.scanners"]
+demo_volume = "quantred.demo.scanners:DemoVolumeScanner"
 
 [project.scripts]
 # The installed entry point. `python main.py` from a checkout reaches the same
 # `main`, so the two are one code path found two ways rather than two things that
 # have to be kept in agreement.
-quantred = "tradeflow.cli:main"
+quantred = "quantred.cli:main"
 # The previous command name, kept so existing scripts and MCP client configs keep
 # launching. Same entry point from the same distribution - an alias, not a fork.
-tradeflow = "tradeflow.cli:main"
+tradeflow = "quantred.cli:main"
 
 [project.urls]
 Homepage = "https://tradeflow.mk-dir.com/"
 Documentation = "https://tradeflow.mk-dir.com/"
-Source = "https://github.com/makedirectory/tradeflow"
-Issues = "https://github.com/makedirectory/tradeflow/issues"
+Source = "https://github.com/makedirectory/quantred"
+Issues = "https://github.com/makedirectory/quantred/issues"
 Changelog = "https://tradeflow.mk-dir.com/changelog"
 
 [build-system]
@@ -112,14 +112,14 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.version]
-path = "tradeflow/__init__.py"
+path = "quantred/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 # Only the package ships. `main.py` is a checkout convenience, and the tests, docs,
 # and scripts are not something an installed copy has any use for.
-# `tradeflow.demo` rides along as a subpackage; it holds what `demo` runs on and what a
-# bare install defaults to, so `tradeflow/strategies/` can hold only the framework.
-packages = ["tradeflow"]
+# `quantred.demo` rides along as a subpackage; it holds what `demo` runs on and what a
+# bare install defaults to, so `quantred/strategies/` can hold only the framework.
+packages = ["quantred"]
 
 [tool.hatch.build.targets.sdist]
 # The sdist carries the repo (tests and CI are useful to a packager), minus local
@@ -167,4 +167,4 @@ ignore = ["E501"]
 [tool.ruff.lint.isort]
 # Classify the application package as first-party so import ordering is stable
 # across a local checkout and CI.
-known-first-party = ["tradeflow"]
+known-first-party = ["quantred"]

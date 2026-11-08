@@ -17,11 +17,11 @@ from datetime import datetime
 import pandas as pd
 import pytest
 
+from quantred.engine.backtest import BacktestEngine
+from quantred.marketdata.client import MarketDataClient
+from quantred.strategies.base import Strategy
+from quantred.utils.timeutils import NEW_YORK
 from tests.fakes import DictMarketData, RecordingBroker
-from tradeflow.engine.backtest import BacktestEngine
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.strategies.base import Strategy
-from tradeflow.utils.timeutils import NEW_YORK
 
 #: Bar 1 opens at 100 and closes at 200. A score that flips only above a close of 150
 #: is therefore knowable at bar 1's close and at no earlier moment, so a fill at bar 1's
@@ -129,10 +129,10 @@ def test_live_acts_on_a_closed_bar_at_that_bar_s_close():
     """
     import asyncio
 
-    from tradeflow.engine.live import LiveEngine
-    from tradeflow.execution.live_trader import LiveTrader
-    from tradeflow.marketdata.base import BarEvent
-    from tradeflow.services.registry import STRATEGIES
+    from quantred.engine.live import LiveEngine
+    from quantred.execution.live_trader import LiveTrader
+    from quantred.marketdata.base import BarEvent
+    from quantred.services.registry import STRATEGIES
 
     strategy = STRATEGIES["demo_trend"].create_with_defaults()
     strategy.process_bar = lambda symbol, bar, ts: "BUY"
@@ -140,7 +140,7 @@ def test_live_acts_on_a_closed_bar_at_that_bar_s_close():
     seen = {}
 
     def capture(symbol, signal, price, bar_timestamp=None):
-        from tradeflow.execution import decision as decisions
+        from quantred.execution import decision as decisions
 
         seen["price"] = price
         return decisions.decline(symbol, signal, "captured", ())

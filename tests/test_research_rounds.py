@@ -7,6 +7,13 @@ import json
 
 import pytest
 
+from quantred.costs import ParametricCostModel
+from quantred.optimization import config_store
+from quantred.research.agent import Candidate, prior_holdout_looks
+from quantred.research.llm import LLMResponse
+from quantred.research.proposer import FixedProposer, LLMProposer, Proposal
+from quantred.research.provider_errors import ModelProviderError
+from quantred.utils.errors import GeneratedCodeRefused, RunRefused
 from tests.test_research import (
     _VALID_CODE,
     END,
@@ -17,13 +24,6 @@ from tests.test_research import (
     _isolate,  # noqa: F401 - the autouse fixture registers the test strategy
     _tune,
 )
-from tradeflow.costs import ParametricCostModel
-from tradeflow.optimization import config_store
-from tradeflow.research.agent import Candidate, prior_holdout_looks
-from tradeflow.research.llm import LLMResponse
-from tradeflow.research.proposer import FixedProposer, LLMProposer, Proposal
-from tradeflow.research.provider_errors import ModelProviderError
-from tradeflow.utils.errors import GeneratedCodeRefused, RunRefused
 
 #: Always-long code never closes a trade, and a run with no OOS trades cannot be promotable.
 #: This alternates conviction so the generated strategy actually trades.
@@ -199,7 +199,7 @@ def test_a_code_candidate_is_saved_under_its_draft_identity_with_its_source(tmp_
 
 
 def test_loading_a_generated_code_config_is_refused_not_run(tmp_path):
-    from tradeflow import cli
+    from quantred import cli
 
     proposal = Proposal(hypothesis="the series drifts up", kind="code", code=_TRADING_CODE)
     result = _agent(tmp_path, FixedProposer([proposal]), allow_code_gen=True).run(SYMBOLS, START, END)

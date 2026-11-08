@@ -17,9 +17,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from quantred.marketdata.client import MarketDataClient
+from quantred.utils.timeutils import NEW_YORK
 from tests.fakes import DictMarketData
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.utils.timeutils import NEW_YORK
 
 SYMBOLS = ["AAA", "BBB", "CCC"]
 REQUEST = {"start": "2024-01-02", "end": "2024-12-31", "capital": 4000.0}
@@ -64,7 +64,7 @@ def _client():
 
 
 def _over_mcp():
-    from tradeflow.mcp import server
+    from quantred.mcp import server
 
     built = server.build_server(data_client=_client())
     arguments = {
@@ -82,8 +82,8 @@ def _over_mcp():
 
 
 def _over_cli(monkeypatch):
-    from tradeflow import cli
-    from tradeflow.analytics import reporting
+    from quantred import cli
+    from quantred.analytics import reporting
 
     captured = {}
     render = reporting.format_backtest_report
@@ -116,7 +116,7 @@ def _over_cli(monkeypatch):
 @pytest.fixture(autouse=True)
 def _isolated(tmp_path, monkeypatch):
     """Both runs journal a trial; keep them out of the session's shared state root."""
-    from tradeflow.services import analysis, audit
+    from quantred.services import analysis, audit
 
     monkeypatch.setattr(analysis, "ARTIFACT_DIR", tmp_path / "artifacts")
     monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", tmp_path / "journal.jsonl")
@@ -139,7 +139,7 @@ def test_the_comparison_notices_a_second_reading_of_a_date(monkeypatch):
     returns: with MCP reading a bare date as naive again, the figures must differ."""
     from datetime import datetime
 
-    from tradeflow.mcp import server
+    from quantred.mcp import server
 
     monkeypatch.setattr(server, "_parse_date", lambda value: datetime.fromisoformat(value))
     differences = _differences(_over_mcp(), _over_cli(monkeypatch))

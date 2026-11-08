@@ -11,15 +11,15 @@ import json
 
 import pytest
 
+from quantred.marketdata.client import MarketDataClient
 from tests.fakes import FakeMarketData
-from tradeflow.marketdata.client import MarketDataClient
 
 
 # --- fill stress ------------------------------------------------------------------
 def _stress(margins=(0.0, 25.0)):
     from datetime import datetime
 
-    from tradeflow.services import analysis
+    from quantred.services import analysis
 
     symbols = [f"S{i}" for i in range(4)]
     client = MarketDataClient(FakeMarketData([*symbols, "SPY"], n=200, freq="1D"))
@@ -55,8 +55,8 @@ def test_a_wider_margin_never_admits_more_fills():
 def test_the_stress_journals_nothing():
     """One candidate under stated assumptions, not new candidates — recording them
     would inflate the multiple-testing count the deflated Sharpe deflates against."""
-    from tradeflow.engine.backtest import ACCOUNTING_VERSION
-    from tradeflow.store.trials import TrialStore
+    from quantred.engine.backtest import ACCOUNTING_VERSION
+    from quantred.store.trials import TrialStore
 
     with TrialStore() as store:
         before = len(store.list_trials(accounting=ACCOUNTING_VERSION))
@@ -69,10 +69,10 @@ def test_a_missing_trade_count_renders_as_unknown_not_zero(capsys):
     """Absent is not zero, in the rendering as well as the data."""
     from unittest import mock
 
-    from tradeflow.cli import _print_fill_stress
+    from quantred.cli import _print_fill_stress
 
     with mock.patch(
-        "tradeflow.services.analysis.run_fill_stress",
+        "quantred.services.analysis.run_fill_stress",
         return_value={
             "points": [{"margin_bps": 0.0, "sharpe_ratio": 1.0, "total_return": 5.0, "trades": None}],
             "survives_to_bps": None,
@@ -108,7 +108,7 @@ def _result_with_exits(pairs):
 def test_a_book_whose_gain_is_one_exit_path_is_told_so(capsys):
     """This finding needed a hand-written query against a 1952-row trade table. A
     result that is a bet on one exit's fill assumption should say so on the page."""
-    from tradeflow.cli import _print_exit_concentration
+    from quantred.cli import _print_exit_concentration
 
     _print_exit_concentration(_result_with_exits([("TAKE_PROFIT", 500.0)] * 9 + [("SIGNAL", -20.0)]))
 
@@ -119,7 +119,7 @@ def test_a_book_whose_gain_is_one_exit_path_is_told_so(capsys):
 
 def test_a_book_with_spread_gains_is_not_warned_about(capsys):
     """Both directions: a warning that fires on every result is one nobody reads."""
-    from tradeflow.cli import _print_exit_concentration
+    from quantred.cli import _print_exit_concentration
 
     _print_exit_concentration(_result_with_exits([("TAKE_PROFIT", 100.0)] * 5 + [("SIGNAL", 100.0)] * 5))
 
@@ -127,7 +127,7 @@ def test_a_book_with_spread_gains_is_not_warned_about(capsys):
 
 
 def test_a_result_with_no_trades_prints_nothing(capsys):
-    from tradeflow.cli import _print_exit_concentration
+    from quantred.cli import _print_exit_concentration
 
     _print_exit_concentration(_result_with_exits([]))
 
@@ -142,7 +142,7 @@ def _trial(rows):
 def test_the_json_form_honours_the_trade_limit():
     """The flag was read only on the text path, so JSON dumped every stored trade —
     for a real trial, thousands of rows nobody asked for."""
-    from tradeflow.cli import _limit_trial_trades
+    from quantred.cli import _limit_trial_trades
 
     limited = _limit_trial_trades(_trial(1952), 3)
 
@@ -151,7 +151,7 @@ def test_the_json_form_honours_the_trade_limit():
 
 def test_a_truncated_payload_says_what_it_dropped():
     """A truncated payload that does not say so looks like the whole table."""
-    from tradeflow.cli import _limit_trial_trades
+    from quantred.cli import _limit_trial_trades
 
     marker = _limit_trial_trades(_trial(1952), 3)["trades"]["display_truncated"]
 
@@ -162,7 +162,7 @@ def test_the_view_limit_does_not_overwrite_the_store_s_own_completeness_flag():
     """Two truncations, one word. This view's row limit is undone by a flag; whether
     the *store* capped the run's trades on the way in is not undoable at all, and
     writing the first over the second under one name loses the permanent fact."""
-    from tradeflow.cli import _limit_trial_trades
+    from quantred.cli import _limit_trial_trades
 
     capped = _trial(1952)
     capped["trades"].update(total_rows=9000, truncated=True)
@@ -176,7 +176,7 @@ def test_the_view_limit_does_not_overwrite_the_store_s_own_completeness_flag():
 
 def test_a_payload_under_the_limit_is_untouched():
     """Both directions, and it must not carry a truncation marker it did not earn."""
-    from tradeflow.cli import _limit_trial_trades
+    from quantred.cli import _limit_trial_trades
 
     whole = _limit_trial_trades(_trial(2), 25)
 
@@ -185,14 +185,14 @@ def test_a_payload_under_the_limit_is_untouched():
 
 
 def test_a_trial_with_no_trades_survives_the_limit():
-    from tradeflow.cli import _limit_trial_trades
+    from quantred.cli import _limit_trial_trades
 
     assert _limit_trial_trades({"id": "t1"}, 3) == {"id": "t1"}
 
 
 def test_the_limited_payload_is_still_json():
     """It is the JSON path; a marker that breaks serialization defeats the point."""
-    from tradeflow.cli import _limit_trial_trades
+    from quantred.cli import _limit_trial_trades
 
     json.dumps(_limit_trial_trades(_trial(50), 5), default=str)
 
@@ -201,7 +201,7 @@ def test_the_limited_payload_is_still_json():
 def test_the_execution_report_command_runs_over_an_empty_ledger(capsys, tmp_path):
     """A session that placed nothing is the most likely first run of this command, and
     it must report that rather than fail."""
-    from tradeflow.cli import cmd_execution_report
+    from quantred.cli import cmd_execution_report
 
     (tmp_path / "ledger.jsonl").touch()  # empty, not absent: a missing path is refused
     cmd_execution_report(_ledger_args(ledger=str(tmp_path / "ledger.jsonl")))
@@ -210,8 +210,8 @@ def test_the_execution_report_command_runs_over_an_empty_ledger(capsys, tmp_path
 
 
 def test_the_execution_report_emits_valid_json(capsys, tmp_path):
-    from tradeflow.cli import cmd_execution_report
-    from tradeflow.execution.ledger import CUMULATIVE, PositionLedger
+    from quantred.cli import cmd_execution_report
+    from quantred.execution.ledger import CUMULATIVE, PositionLedger
 
     ledger = PositionLedger(tmp_path / "ledger.jsonl")
     ledger.record_intent(
@@ -236,7 +236,7 @@ def test_the_execution_report_emits_valid_json(capsys, tmp_path):
 def test_candidate_caps_always_offer_one_above_the_observed_maximum():
     """A percentile ladder alone can sit entirely under a fat tail, and then reports
     that no cap leaves the book intact when one obviously does."""
-    from tradeflow.analytics.exposure import candidate_caps
+    from quantred.analytics.exposure import candidate_caps
 
     caps = candidate_caps({"p95": 0.05, "max": 0.90})
 
@@ -245,13 +245,13 @@ def test_candidate_caps_always_offer_one_above_the_observed_maximum():
 
 def test_candidate_caps_are_empty_when_no_tilt_was_carried():
     """Every positive cap is unbinding, so offering candidates would invent a choice."""
-    from tradeflow.analytics.exposure import candidate_caps
+    from quantred.analytics.exposure import candidate_caps
 
     assert candidate_caps({"p95": 0.0, "max": 0.0}) == []
 
 
 def test_candidate_caps_are_sorted_and_positive():
-    from tradeflow.analytics.exposure import candidate_caps
+    from quantred.analytics.exposure import candidate_caps
 
     caps = candidate_caps({"p95": 0.30, "max": 0.42})
 
@@ -262,7 +262,7 @@ def test_candidate_caps_are_sorted_and_positive():
 def test_the_factory_passes_the_feed_through():
     """Pinning the feed is only useful if it survives construction — the mismatch it
     exists to close is between the two halves of one provider."""
-    from tradeflow.brokers.alpaca.factory import build_market_data
+    from quantred.brokers.alpaca.factory import build_market_data
 
     assert build_market_data("k", "s", feed="iex")._feed == "iex"
     assert build_market_data("k", "s")._feed is None
@@ -270,7 +270,7 @@ def test_the_factory_passes_the_feed_through():
 
 # --- execution diagnostics that feed a promotion gate ------------------------------
 def _execution(filled=0, rounded=0, below=0):
-    from tradeflow.engine.backtest import _Execution
+    from quantred.engine.backtest import _Execution
 
     return _Execution(filled=filled, rounded_to_zero=rounded, below_min_notional=below)
 
@@ -302,7 +302,7 @@ def test_no_attempted_entries_is_zero_rather_than_a_division():
 def test_the_net_cap_derivation_is_skipped_for_a_long_only_book(capsys):
     """A long-only book's net *is* its gross, so a cap on it would be a second name for
     a limit that already exists — printing one invites a reader to set both."""
-    from tradeflow.cli import _print_net_cap_derivation
+    from quantred.cli import _print_net_cap_derivation
 
     class Result:
         legs = {"long": {"trades": 12}}  # no short leg
@@ -319,8 +319,8 @@ def test_the_net_cap_derivation_is_skipped_for_a_long_only_book(capsys):
 
 def test_the_net_cap_derivation_prints_for_a_book_that_traded_both_sides(capsys):
     """Both directions: the diagnostic exists for exactly this book."""
-    from tradeflow.analytics.exposure import candidate_caps
-    from tradeflow.cli import _print_net_cap_derivation
+    from quantred.analytics.exposure import candidate_caps
+    from quantred.cli import _print_net_cap_derivation
 
     stats = {"median": 0.20, "p90": 0.30, "p95": 0.32, "p99": 0.37, "max": 0.42}
 
@@ -348,7 +348,7 @@ def test_an_offline_scan_says_its_universe_is_only_as_current_as_the_cache():
     chosen from fresh ones. That is the case that has to announce itself."""
     from datetime import datetime
 
-    from tradeflow.analytics.reporting import format_offline_scan_notice
+    from quantred.analytics.reporting import format_offline_scan_notice
 
     notice = format_offline_scan_notice(datetime(2026, 8, 21))
 
@@ -382,9 +382,9 @@ def test_the_leg_decomposition_reaches_the_log_and_not_only_the_formatter(caplog
     """
     import logging
 
-    from tradeflow.analytics.reporting import log_backtest_report
+    from quantred.analytics.reporting import log_backtest_report
 
-    with caplog.at_level(logging.INFO, logger="tradeflow.analytics.reporting"):
+    with caplog.at_level(logging.INFO, logger="quantred.analytics.reporting"):
         log_backtest_report({"sharpe_ratio": 1.0}, 100_000.0, 110_000.0, legs=_both_legs())
 
     assert "Legs (diagnostic" in caplog.text
@@ -396,9 +396,9 @@ def test_a_long_only_book_still_logs_no_leg_block(caplog):
     a book with nothing to decompose."""
     import logging
 
-    from tradeflow.analytics.reporting import log_backtest_report
+    from quantred.analytics.reporting import log_backtest_report
 
-    with caplog.at_level(logging.INFO, logger="tradeflow.analytics.reporting"):
+    with caplog.at_level(logging.INFO, logger="quantred.analytics.reporting"):
         log_backtest_report({"sharpe_ratio": 1.0}, 100_000.0, 110_000.0, legs={"long": {"trades": 12}})
 
     assert "Legs (diagnostic" not in caplog.text
@@ -410,7 +410,7 @@ def test_every_execution_check_a_real_run_produces_declares_its_unit():
     stops the checks and the formatter drifting apart. A check reaching a surface
     without an entry here renders under the formatter's default assumption, which is
     how a position count printed as "1.00%"."""
-    from tradeflow.analytics.performance import EXECUTION_VALUE_KINDS, execution_verdict
+    from quantred.analytics.performance import EXECUTION_VALUE_KINDS, execution_verdict
 
     verdict = execution_verdict(
         {
@@ -438,7 +438,7 @@ def test_every_execution_check_a_real_run_produces_declares_its_unit():
 def test_a_position_count_is_not_rendered_as_a_percentage():
     """`book_breadth`'s value is a count of positions. Every check was formatted as
     `{value}% vs {threshold}%`, so it read as "a maximum of 1.00% positions"."""
-    from tradeflow.analytics.performance import format_execution_value
+    from quantred.analytics.performance import format_execution_value
 
     assert format_execution_value("book_breadth", 1.0) == "1"
     assert format_execution_value("book_breadth", 5) == "5"
@@ -450,7 +450,7 @@ def test_the_breadth_remedy_is_not_printed_at_a_book_that_already_has_breadth():
     """The note hardcoded "max_positions is 1, the shipped default" whatever the value
     was, so a five-position run passed the check and still told the reader to go and
     change a config that was already right."""
-    from tradeflow.analytics.performance import execution_verdict
+    from quantred.analytics.performance import execution_verdict
 
     def note(max_positions):
         return execution_verdict(
@@ -487,11 +487,11 @@ def test_reconcile_names_the_ledger_it_opened_even_when_it_is_the_default(capsys
     after a small-real session the default is the wrong one."""
     from unittest import mock
 
+    from quantred.cli import cmd_reconcile
     from tests.fakes import FakeBroker
-    from tradeflow.cli import cmd_reconcile
 
     (tmp_path / "ledger.jsonl").touch()
-    with mock.patch("tradeflow.cli.build_data_and_broker", return_value=(FakeBroker(), None)):
+    with mock.patch("quantred.cli.build_data_and_broker", return_value=(FakeBroker(), None)):
         cmd_reconcile(_ledger_args(ledger=str(tmp_path / "ledger.jsonl")))
 
     out = capsys.readouterr().out
@@ -504,11 +504,11 @@ def test_reconcile_small_real_reads_the_small_real_ledger_and_says_so(capsys, tm
     one that could only answer about the live book."""
     from unittest import mock
 
+    from quantred.cli import cmd_reconcile
+    from quantred.execution.ledger import small_real_ledger_path
     from tests.fakes import FakeBroker
-    from tradeflow.cli import cmd_reconcile
-    from tradeflow.execution.ledger import small_real_ledger_path
 
-    with mock.patch("tradeflow.cli.build_data_and_broker", return_value=(FakeBroker(), None)):
+    with mock.patch("quantred.cli.build_data_and_broker", return_value=(FakeBroker(), None)):
         cmd_reconcile(_ledger_args(small_real=True))
 
     out = capsys.readouterr().out
@@ -523,7 +523,7 @@ def test_reconcile_refuses_ledger_and_small_real_together(tmp_path):
     Refused before the broker is built, so it costs no credentials and no round trip."""
     import pytest as _pytest
 
-    from tradeflow.cli import cmd_reconcile
+    from quantred.cli import cmd_reconcile
 
     with _pytest.raises(SystemExit) as raised:
         cmd_reconcile(_ledger_args(ledger=str(tmp_path / "l.jsonl"), small_real=True))
@@ -537,7 +537,7 @@ def test_execution_report_refuses_the_same_ambiguous_pair(tmp_path):
     the whole point of one resolver is that they cannot answer differently."""
     import pytest as _pytest
 
-    from tradeflow.cli import cmd_execution_report
+    from quantred.cli import cmd_execution_report
 
     args = _ledger_args(ledger=str(tmp_path / "l.jsonl"), small_real=True, orders=False)
     with _pytest.raises(SystemExit) as raised:
@@ -553,10 +553,10 @@ def test_reconcile_json_carries_the_ledger_alongside_the_findings(capsys, tmp_pa
     import json
     from unittest import mock
 
+    from quantred.cli import cmd_reconcile
     from tests.fakes import FakeBroker
-    from tradeflow.cli import cmd_reconcile
 
-    with mock.patch("tradeflow.cli.build_data_and_broker", return_value=(FakeBroker(), None)):
+    with mock.patch("quantred.cli.build_data_and_broker", return_value=(FakeBroker(), None)):
         cmd_reconcile(_ledger_args(small_real=True, json=True))
 
     payload = json.loads(capsys.readouterr().out)

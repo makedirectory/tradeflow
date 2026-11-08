@@ -6,9 +6,9 @@ import argparse
 
 import pytest
 
-from tradeflow import cli
-from tradeflow.settings import DOCS_URL
-from tradeflow.utils.extras import EXTRAS
+from quantred import cli
+from quantred.settings import DOCS_URL
+from quantred.utils.extras import EXTRAS
 
 
 def test_research_info_suggests_the_sibling_command(capsys):

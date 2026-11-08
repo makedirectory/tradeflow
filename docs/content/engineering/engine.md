@@ -5,7 +5,7 @@ title: The engine
 
 # The engine
 
-`tradeflow/engine/` contains two orchestrators. They wire the other layers together and
+`quantred/engine/` contains two orchestrators. They wire the other layers together and
 own the per-bar loop — but contain no indicator math, no metric formulas, and no
 vendor specifics.
 

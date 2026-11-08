@@ -8,8 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from tests.fakes import DictMarketData, make_ohlcv
-from tradeflow.analytics.attribution import (
+from quantred.analytics.attribution import (
     attribute_period,
     bayesian_blend_variance,
     cross_sectional_regression,
@@ -20,8 +19,9 @@ from tradeflow.analytics.attribution import (
     systematic_split,
     years_to_significance,
 )
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.services import analysis
+from quantred.marketdata.client import MarketDataClient
+from quantred.services import analysis
+from tests.fakes import DictMarketData, make_ohlcv
 
 RISK_COLS = ["market", "momentum", "volatility", "size"]
 
@@ -405,9 +405,9 @@ def test_reported_levels_are_unit_gross_while_ratios_are_unchanged():
     """
     from datetime import datetime
 
+    from quantred.marketdata.client import MarketDataClient
+    from quantred.services import analysis
     from tests.fakes import FakeMarketData
-    from tradeflow.marketdata.client import MarketDataClient
-    from tradeflow.services import analysis
 
     symbols = [f"S{i}" for i in range(12)]
     client = MarketDataClient(FakeMarketData([*symbols, "SPY"], n=600, freq="1D"))
@@ -434,7 +434,7 @@ def test_a_constant_rescale_cannot_move_the_ir():
     mean/vol and the t-stat is mean/sd x sqrt(t), so a constant divides out of both.
     Per-period normalization would *not* have this property - a time-varying divisor
     reshapes the series and moves the IR with it."""
-    from tradeflow.analytics import attribution as attr
+    from quantred.analytics import attribution as attr
 
     values = [0.004, -0.002, 0.007, 0.001, -0.005, 0.003, 0.002, -0.001]
     scale = 49.5

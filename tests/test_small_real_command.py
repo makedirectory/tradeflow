@@ -16,9 +16,9 @@ import json
 
 import pytest
 
+from quantred import cli
+from quantred.marketdata.client import MarketDataClient
 from tests.fakes import DictMarketData, FakeBroker
-from tradeflow import cli
-from tradeflow.marketdata.client import MarketDataClient
 
 VALIDATED_CAPITAL = 200_000.0
 VALIDATED_BOOK = {
@@ -56,7 +56,7 @@ def _config(tmp_path, capital=VALIDATED_CAPITAL, limits=VALIDATED_BOOK, name="va
 def _frame(periods=60):
     import pandas as pd
 
-    from tradeflow.utils.timeutils import NEW_YORK
+    from quantred.utils.timeutils import NEW_YORK
 
     index = pd.date_range("2024-01-02", periods=periods, freq="D", tz=NEW_YORK)
     return pd.DataFrame(
@@ -377,7 +377,7 @@ def _start_and_let_the_stream_fail(config, extra=()):
 
 
 def test_the_session_header_records_the_contract_the_fills_will_belong_to(wired, tmp_path):
-    from tradeflow.execution.ledger import PositionLedger, small_real_ledger_path
+    from quantred.execution.ledger import PositionLedger, small_real_ledger_path
 
     _start_and_let_the_stream_fail(_config(tmp_path))
 
@@ -400,7 +400,7 @@ def test_nothing_reaches_the_research_journal(wired, tmp_path):
     that measures its own execution has searched nothing. A journaled trial here would
     permanently raise the bar for every future candidate in the family, for evidence
     that is not evidence of a strategy at all."""
-    from tradeflow.settings import trial_journal_path
+    from quantred.settings import trial_journal_path
 
     before = trial_journal_path().read_text() if trial_journal_path().exists() else None
 
@@ -413,7 +413,7 @@ def test_nothing_reaches_the_research_journal(wired, tmp_path):
 def test_the_telemetry_goes_to_its_own_ledger_not_the_live_one(wired, tmp_path):
     """Every roll-up over a ledger is an average, and averaging a full-size book's fills
     with the same book's fills at a twentieth of it describes neither."""
-    from tradeflow.execution.ledger import default_ledger_path, small_real_ledger_path
+    from quantred.execution.ledger import default_ledger_path, small_real_ledger_path
 
     _start_and_let_the_stream_fail(_config(tmp_path))
 
@@ -429,7 +429,7 @@ def test_the_run_says_how_to_read_its_own_telemetry(wired, tmp_path, capsys):
     there so nobody has to know where this ledger lives, and printing the path taught
     the long way round to the one reader guaranteed to see it. Printed instructions are
     an interface, and this one had outlived its own flag."""
-    from tradeflow.execution.ledger import small_real_ledger_path
+    from quantred.execution.ledger import small_real_ledger_path
 
     _start_and_let_the_stream_fail(_config(tmp_path))
 
@@ -458,7 +458,7 @@ def test_the_scaled_book_is_what_the_engine_is_actually_handed(wired, tmp_path, 
             captured["strategy"] = strategy
             raise RuntimeError("does not support streaming")
 
-    monkeypatch.setattr("tradeflow.engine.live.LiveEngine", _Spy)
+    monkeypatch.setattr("quantred.engine.live.LiveEngine", _Spy)
     _start_and_let_the_stream_fail(_config(tmp_path))
 
     strategy = captured["strategy"]
@@ -474,7 +474,7 @@ def test_the_recorded_contract_matches_the_book_that_was_applied(wired, tmp_path
     """The telemetry has to describe the run it belongs to. Two statements of one book —
     the strategy's and the session header's — and the fills only mean something against
     the right one."""
-    from tradeflow.execution.ledger import PositionLedger, small_real_ledger_path
+    from quantred.execution.ledger import PositionLedger, small_real_ledger_path
 
     _start_and_let_the_stream_fail(_config(tmp_path))
 
@@ -494,7 +494,7 @@ def test_the_preflight_warns_about_a_book_this_run_did_not_open(monkeypatch, tmp
     positions. The engine adopts them, their exits land in this session's telemetry at
     the size they were opened at, and — twelve against a scaled book of eight — no entry
     could be admitted at all. The operator would have seen a run that traded nothing."""
-    from tradeflow.brokers.base import Position
+    from quantred.brokers.base import Position
 
     monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("PAPER_TRADE", "true")
@@ -520,8 +520,8 @@ def test_the_preflight_warns_about_a_book_this_run_did_not_open(monkeypatch, tmp
 def test_the_session_header_records_what_the_run_inherited(wired, tmp_path, monkeypatch):
     """So a reader of the telemetry can tell this session's own fills from the exits of
     positions it inherited at another size."""
-    from tradeflow.brokers.base import Position
-    from tradeflow.execution.ledger import PositionLedger, small_real_ledger_path
+    from quantred.brokers.base import Position
+    from quantred.execution.ledger import PositionLedger, small_real_ledger_path
 
     held = [Position("OLD", 10, "long", 100.0, 100.0, 1_000.0, 0.0)]
     monkeypatch.setattr(
@@ -576,7 +576,7 @@ def test_the_telemetry_cannot_be_written_into_the_live_ledger(wired, tmp_path):
     """`--ledger` exists for flexibility and must not be a way around the separation.
     Every roll-up over a ledger is an average, so pointing this at the live one throws
     away the finding the mode exists to produce — silently, in a file nobody re-reads."""
-    from tradeflow.execution.ledger import default_ledger_path
+    from quantred.execution.ledger import default_ledger_path
 
     with pytest.raises(SystemExit, match="points at the live ledger"):
         _run(
@@ -621,8 +621,8 @@ def test_an_unreadable_position_list_is_not_recorded_as_a_flat_start(monkeypatch
 
     Absent is not zero, most of all about a book somebody holds.
     """
-    from tradeflow.brokers.errors import BrokerError
-    from tradeflow.execution.ledger import PositionLedger, small_real_ledger_path
+    from quantred.brokers.errors import BrokerError
+    from quantred.execution.ledger import PositionLedger, small_real_ledger_path
 
     monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("PAPER_TRADE", "true")
@@ -659,7 +659,7 @@ def test_the_live_ledger_guard_is_not_avoidable_by_spelling_the_path_differently
     """Found by an independent review: the guard compared paths as text, so `..` or a
     relative spelling named the same file without matching it. A guard that can be
     walked around by writing the path another way is not a guard."""
-    from tradeflow.execution.ledger import default_ledger_path
+    from quantred.execution.ledger import default_ledger_path
 
     live = default_ledger_path()
     live.parent.mkdir(parents=True, exist_ok=True)
@@ -721,7 +721,7 @@ def test_a_ledger_the_run_would_refuse_is_refused_before_the_preflight_shows_it(
     a configuration the run rejects. It was printing the live ledger as this session's
     destination and exiting cleanly under `--preflight`, for a run that would have
     refused to start."""
-    from tradeflow.execution.ledger import default_ledger_path
+    from quantred.execution.ledger import default_ledger_path
 
     with pytest.raises(SystemExit, match="points at the live ledger"):
         _run(
@@ -857,7 +857,7 @@ def test_a_run_that_reached_the_trading_loop_records_that_it_started(wired, tmp_
     committed run and a run that actually traded were the same record.
 
     The fixture's stream fails *after* warm-up, which is exactly the window this pins."""
-    from tradeflow.execution.ledger import PositionLedger, small_real_ledger_path
+    from quantred.execution.ledger import PositionLedger, small_real_ledger_path
 
     _start_and_let_the_stream_fail(_config(tmp_path))
 
@@ -870,8 +870,8 @@ def test_a_run_refused_after_committing_says_it_never_traded(wired, tmp_path, mo
     written. Without an outcome the ledger then held a session indistinguishable from
     one that traded, and `execution-report` listed it with its capital and scale as
     though it had happened."""
-    from tradeflow.engine.live import BlindStartError, LiveEngine
-    from tradeflow.execution.ledger import PositionLedger, small_real_ledger_path
+    from quantred.engine.live import BlindStartError, LiveEngine
+    from quantred.execution.ledger import PositionLedger, small_real_ledger_path
 
     def refuse(self, symbols):
         raise BlindStartError("Warm-up history could not be fetched: feed unreachable\n  second line")
@@ -892,8 +892,8 @@ def test_a_run_refused_after_committing_says_it_never_traded(wired, tmp_path, mo
 def test_the_report_tells_a_committed_session_from_one_that_traded(wired, tmp_path, capsys):
     """The defect as a reader sees it. Both sessions carry a capital and a scale, and
     before this they rendered identically."""
-    from tradeflow.cli import _print_ledger_sessions
-    from tradeflow.execution.ledger import PositionLedger
+    from quantred.cli import _print_ledger_sessions
+    from quantred.execution.ledger import PositionLedger
 
     ledger = PositionLedger(tmp_path / "l.jsonl")
     ledger.record_session("small_real", {"capital": 200.0, "broker_mode": "paper"})

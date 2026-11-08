@@ -12,11 +12,11 @@ from datetime import datetime
 
 import pytest
 
-from tradeflow.analytics.reporting import format_campaign_material, format_trial_detail, format_trials_table
-from tradeflow.cli import build_parser
-from tradeflow.engine.backtest import ACCOUNTING_VERSION
-from tradeflow.services.audit import journal_trial
-from tradeflow.store.trials import TrialStore, db_path_for_journal
+from quantred.analytics.reporting import format_campaign_material, format_trial_detail, format_trials_table
+from quantred.cli import build_parser
+from quantred.engine.backtest import ACCOUNTING_VERSION
+from quantred.services.audit import journal_trial
+from quantred.store.trials import TrialStore, db_path_for_journal
 
 
 @pytest.fixture
@@ -94,10 +94,10 @@ def test_the_mcp_listing_ranks_the_same_way_as_the_cli(tmp_path, monkeypatch):
     """Two transports, one rule: the tool leaves in-sample rows out of a ranking and
     says how many, exactly as the store's single definition does for the CLI."""
     pytest.importorskip("mcp")
+    from quantred.marketdata.client import MarketDataClient
+    from quantred.mcp import server as mcp_server
+    from quantred.services import analysis, audit
     from tests.fakes import FakeMarketData
-    from tradeflow.marketdata.client import MarketDataClient
-    from tradeflow.mcp import server as mcp_server
-    from tradeflow.services import analysis, audit
 
     journal = tmp_path / "journal.jsonl"
     monkeypatch.setattr(analysis, "ARTIFACT_DIR", tmp_path / "artifacts")
@@ -131,7 +131,7 @@ def test_the_mcp_listing_ranks_the_same_way_as_the_cli(tmp_path, monkeypatch):
 def test_a_row_with_no_metric_is_not_on_the_board_at_all(store):
     """A verdict records neither a Sharpe nor a DSR. Sorted last it still appeared at #5
     of a five-row board, as if ranked."""
-    from tradeflow.analytics.reporting import format_leaderboard
+    from quantred.analytics.reporting import format_leaderboard
 
     _record(store, "wf1", oos_sharpe=0.4, deflated_sharpe=0.3)
     _record(store, "wf2", oos_sharpe=0.2, deflated_sharpe=0.1, params={"fast": 8})
@@ -190,11 +190,11 @@ def _heading(kind):
 
 
 def test_promoting_an_ungated_run_does_not_claim_it_failed_its_gates(tmp_path, monkeypatch, capsys):
-    from tradeflow.optimization.config_store import DEFAULT_CONFIG_DIR  # noqa: F401
+    from quantred.optimization.config_store import DEFAULT_CONFIG_DIR  # noqa: F401
 
-    monkeypatch.setattr("tradeflow.optimization.config_store.DEFAULT_CONFIG_DIR", tmp_path, raising=False)
+    monkeypatch.setattr("quantred.optimization.config_store.DEFAULT_CONFIG_DIR", tmp_path, raising=False)
     journal = tmp_path / "journal.jsonl"
-    monkeypatch.setattr("tradeflow.services.audit.DEFAULT_TRIAL_JOURNAL", journal, raising=False)
+    monkeypatch.setattr("quantred.services.audit.DEFAULT_TRIAL_JOURNAL", journal, raising=False)
     trial_id = _journal_backtest(journal)
     base = [
         "trials",
@@ -221,9 +221,9 @@ def test_promoting_an_ungated_run_does_not_claim_it_failed_its_gates(tmp_path, m
 
 
 def test_the_refusal_for_a_failed_run_points_at_a_command_that_exists(tmp_path, monkeypatch):
-    monkeypatch.setattr("tradeflow.optimization.config_store.DEFAULT_CONFIG_DIR", tmp_path, raising=False)
+    monkeypatch.setattr("quantred.optimization.config_store.DEFAULT_CONFIG_DIR", tmp_path, raising=False)
     journal = tmp_path / "journal.jsonl"
-    monkeypatch.setattr("tradeflow.services.audit.DEFAULT_TRIAL_JOURNAL", journal, raising=False)
+    monkeypatch.setattr("quantred.services.audit.DEFAULT_TRIAL_JOURNAL", journal, raising=False)
     trial_id = journal_trial(
         "walkforward",
         strategy="demo_trend",
@@ -270,8 +270,8 @@ def test_show_lists_the_proposed_book_not_just_how_many_names(store):
 def test_comparing_a_stitched_oos_series_with_a_full_window_one_is_flagged():
     import numpy as np
 
-    from tradeflow.analytics.reporting import format_series_comparison
-    from tradeflow.analytics.series_comparison import compare_series
+    from quantred.analytics.reporting import format_series_comparison
+    from quantred.analytics.series_comparison import compare_series
 
     dates = [f"2024-{1 + i // 28:02d}-{1 + i % 28:02d}" for i in range(120)]
     rng = np.random.default_rng(3)

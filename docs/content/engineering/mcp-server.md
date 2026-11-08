@@ -13,16 +13,16 @@ the live order path is never reachable.
 MCP client (Claude Code / Desktop / research loop)
         │  stdio (JSON-RPC)
         ▼
-tradeflow/mcp/server.py        ← thin adapter, NO business logic
+quantred/mcp/server.py        ← thin adapter, NO business logic
         │  calls
         ▼
-tradeflow/services/*.py        ← plain functions over engine/optimizer/walk-forward/analytics
+quantred/services/*.py        ← plain functions over engine/optimizer/walk-forward/analytics
         │
         ▼
-existing tradeflow/ layers (unchanged)
+existing quantred/ layers (unchanged)
 ```
 
-## The shared service core (`tradeflow/services/`)
+## The shared service core (`quantred/services/`)
 
 One orchestration code path, reused by the CLI, the MCP server, and the research
 agent — no business logic lives in any adapter. Every function takes a data-only
@@ -46,7 +46,7 @@ agent — no business logic lives in any adapter. Every function takes a data-on
 - `data.py` — `build_data_client()` constructs **only** a historical-data client,
   never a broker.
 
-## The server (`tradeflow/mcp/server.py`)
+## The server (`quantred/mcp/server.py`)
 
 A FastMCP adapter (the `mcp` SDK is imported lazily, behind the `mcp` extra). Each
 tool is a typed function that calls a service function, logs the call, and returns
@@ -90,7 +90,7 @@ trading — that is the parity principle, and the exception is the whole safety 
 Draft code tools are for the workbench phase. They let an agent check or
 walk-forward-test generated/private strategy code in memory without putting that
 source in this repository. Once a candidate deserves a name, ship it in a private
-package using the `tradeflow.strategies` or `tradeflow.scanners` entry-point group;
+package using the `quantred.strategies` or `quantred.scanners` entry-point group;
 the MCP server will discover it at startup and the normal named-strategy tools will
 work.
 
@@ -156,7 +156,7 @@ config, and the command says so on every run. The discovery rows are typed
 (`StrategyEntry`, `ScannerEntry`): `demo` is a boolean and a strategy that declares no
 timeframe reports `timeframe: null`, not an empty string.
 
-Both reach the same `tradeflow.cli:main`. Note that they resolve **different state
+Both reach the same `quantred.cli:main`. Note that they resolve **different state
 roots** (`~/.tradeflow` vs. the checkout), so an agent and a human should be pointed
 at the same one — or `TRADEFLOW_HOME` set explicitly — if they are meant to share a
 campaign's trial history.

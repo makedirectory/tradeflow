@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from tradeflow import cli, settings
+from quantred import cli, settings
 
 ROOT = Path(settings.PROJECT_ROOT)
 USAGE = sorted((ROOT / "docs" / "content" / "usage").glob("*.md"))
@@ -168,7 +168,7 @@ def test_documented_verdict_examples_can_fund_a_long_only_book(page, line):
     - the book is funded from what it keeps, not from what was typed - so no name count
     can promise a fundable book through one. An example that runs a scanner must say
     ``--scanner none``; showing a scanner is for the scanning pages, not a first verdict."""
-    from tradeflow.portfolio.optimizer import long_only_cap_shortfall
+    from quantred.portfolio.optimizer import long_only_cap_shortfall
 
     tokens = _tokens(line)
     if tokens is None:

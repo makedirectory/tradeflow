@@ -5,7 +5,7 @@ title: Optimization (modeling)
 
 # Optimization (modeling)
 
-`tradeflow/optimization/` tunes a strategy's parameters by backtesting candidate
+`quantred/optimization/` tunes a strategy's parameters by backtesting candidate
 configurations and ranking them by an objective metric. Each evaluation is an
 independent `BacktestEngine` run, so it is trivially parallelizable later; it runs
 serially today for determinism and simplicity.

@@ -29,7 +29,7 @@ ARG EXTRAS="mcp,store,viz"
 
 # Install dependencies first so this layer caches across source changes.
 COPY pyproject.toml README.md ./
-COPY tradeflow ./tradeflow
+COPY quantred ./quantred
 RUN uv sync --no-dev $(echo "$EXTRAS" | tr ',' '\n' | sed 's/^/--extra /' | tr '\n' ' ')
 
 # Application source.
@@ -50,10 +50,10 @@ ENV TRADEFLOW_HOME=/state
 # creates it root-owned when there is nothing there to copy. Creating only /state
 # leaves every subdirectory below it unwritable by this user, which surfaces as
 # "unable to open database file" the first time anything journals.
-RUN useradd --uid 1000 --create-home tradeflow \
+RUN useradd --uid 1000 --create-home quantred \
     && mkdir -p /state/logs /state/cache /state/configs \
-    && chown -R tradeflow:tradeflow /state /app
-USER tradeflow
+    && chown -R quantred:quantred /state /app
+USER quantred
 
 # A safe default. This image previously defaulted to `live`, so `docker run` with no
 # arguments started a paper-trading loop — turning the machine on must not turn

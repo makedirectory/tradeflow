@@ -12,11 +12,11 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import pytest
 
+from quantred.marketdata.client import MarketDataClient
+from quantred.optimization.walk_forward import PrefetchedProvider, WalkForwardValidator
+from quantred.services.registry import resolve_strategy_class
+from quantred.utils.timeutils import NEW_YORK, parse_market_date, shift_days
 from tests.fakes import FakeMarketData
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.optimization.walk_forward import PrefetchedProvider, WalkForwardValidator
-from tradeflow.services.registry import resolve_strategy_class
-from tradeflow.utils.timeutils import NEW_YORK, parse_market_date, shift_days
 
 
 def _ny_wall(moment):
@@ -108,22 +108,22 @@ def test_consecutive_out_of_sample_folds_share_no_bar():
 #: Day arithmetic left on purpose, each with why it cannot move a measured window.
 _ALLOWED_DAY_ARITHMETIC = {
     (
-        "tradeflow/services/analysis.py",
+        "quantred/services/analysis.py",
         "start = end - timedelta(days=lookback_days)",
     ): "naive now(): bar summary",
     (
-        "tradeflow/services/analysis.py",
+        "quantred/services/analysis.py",
         "as_of_naive - timedelta(days=decay_lookback_days)",
     ): "explicitly naive",
-    ("tradeflow/services/setup.py", "start = end - timedelta(days=7)"): "naive now(): credential probe",
+    ("quantred/services/setup.py", "start = end - timedelta(days=7)"): "naive now(): credential probe",
     (
-        "tradeflow/analytics/performance.py",
+        "quantred/analytics/performance.py",
         "first_day = equity.index[0] - pd.Timedelta(days=1)",
     ): "curve anchor",
-    ("tradeflow/store/bars.py", "finish.date() + timedelta(days=1)"): "date arithmetic, no zone",
-    ("tradeflow/store/trials.py", "local.date() + timedelta(days=1)"): "date arithmetic, then localized",
-    ("tradeflow/cli.py", "start = end - timedelta(days=365)"): "naive now(): first cache warm",
-    ("tradeflow/cli.py", "datetime.now() - timedelta(days=2)"): "naive now(): demo default",
+    ("quantred/store/bars.py", "finish.date() + timedelta(days=1)"): "date arithmetic, no zone",
+    ("quantred/store/trials.py", "local.date() + timedelta(days=1)"): "date arithmetic, then localized",
+    ("quantred/cli.py", "start = end - timedelta(days=365)"): "naive now(): first cache warm",
+    ("quantred/cli.py", "datetime.now() - timedelta(days=2)"): "naive now(): demo default",
 }
 
 
@@ -138,8 +138,8 @@ def test_no_new_research_clock_window_is_built_with_aware_day_arithmetic():
     pattern = re.compile(r"[+-]\s*(?:pd\.)?[tT]imedelta\(days=")
     found = []
     for folder in ("optimization", "research", "scanners", "data", "services", "analytics", "store"):
-        found += sorted((root / "tradeflow" / folder).rglob("*.py"))
-    found.append(root / "tradeflow" / "cli.py")
+        found += sorted((root / "quantred" / folder).rglob("*.py"))
+    found.append(root / "quantred" / "cli.py")
     unexpected = []
     for path in found:
         rel = path.relative_to(root).as_posix()

@@ -5,13 +5,13 @@ from datetime import datetime
 import pandas as pd
 import pytest
 
+from quantred.demo.scanners import DemoVolumeScanner
+from quantred.marketdata.client import MarketDataClient
+from quantred.scanners.base import SCANNER_BUY, SCANNER_HOLD
+from quantred.scanners.symbol_scanner import SymbolScanner
+from quantred.services import analysis
+from quantred.utils.timeutils import NEW_YORK
 from tests.fakes import DictMarketData, FakeMarketData
-from tradeflow.demo.scanners import DemoVolumeScanner
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.scanners.base import SCANNER_BUY, SCANNER_HOLD
-from tradeflow.scanners.symbol_scanner import SymbolScanner
-from tradeflow.services import analysis
-from tradeflow.utils.timeutils import NEW_YORK
 
 
 def _scanner(**overrides):
@@ -135,7 +135,7 @@ def test_run_scan_reports_the_clock_it_resolved_at_not_the_one_requested():
     wall-clock now it resolved to. A selection clock reported differently from the one
     applied is worse than none, because it reads as provenance.
     """
-    from tradeflow.scanners.symbol_scanner import resolve_scan_clock
+    from quantred.scanners.symbol_scanner import resolve_scan_clock
 
     client = MarketDataClient(FakeMarketData(["AAA"], n=60, freq="1D"))
     as_of = datetime(2024, 6, 1)

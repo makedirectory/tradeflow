@@ -13,12 +13,12 @@ from datetime import datetime
 import pandas as pd
 import pytest
 
+from quantred.marketdata.client import MarketDataClient
+from quantred.mcp import server as mcp_server
+from quantred.optimization import config_store
+from quantred.services import analysis, audit
+from quantred.services.audit import journal_trial
 from tests.fakes import FakeMarketData
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.mcp import server as mcp_server
-from tradeflow.optimization import config_store
-from tradeflow.services import analysis, audit
-from tradeflow.services.audit import journal_trial
 
 pytest.importorskip("mcp", reason="the MCP surface needs the 'mcp' extra")
 

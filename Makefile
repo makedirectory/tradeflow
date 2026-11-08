@@ -164,7 +164,7 @@ release-check: build  ## Build, validate the metadata, and install into a clean 
 	@cd /tmp && TRADEFLOW_HOME=/tmp/quantred-release-state /tmp/quantred-release-check/bin/quantred --version | tee /tmp/quantred-release-check/banner.txt
 	@cd /tmp && TRADEFLOW_HOME=/tmp/quantred-release-state /tmp/quantred-release-check/bin/tradeflow --version
 	@grep -q '^quantred ' /tmp/quantred-release-check/banner.txt || { echo "FAIL: the banner does not start with 'quantred '"; exit 1; }
-	@cd /tmp && /tmp/quantred-release-check/bin/python -c "import importlib.metadata as m, tradeflow; assert m.metadata('quantred')['Name'] == 'quantred', m.metadata('quantred')['Name']; assert m.version('quantred') == tradeflow.__version__, (m.version('quantred'), tradeflow.__version__); assert tradeflow.__file__.startswith('/tmp/quantred-release-check'), tradeflow.__file__"
+	@cd /tmp && /tmp/quantred-release-check/bin/python -c "import importlib.metadata as m, quantred; assert m.metadata('quantred')['Name'] == 'quantred', m.metadata('quantred')['Name']; assert m.version('quantred') == quantred.__version__, (m.version('quantred'), quantred.__version__); assert quantred.__file__.startswith('/tmp/quantred-release-check'), quantred.__file__"
 	@echo "OK — the wheel installs and runs, as quantred and as tradeflow, outside this checkout."
 
 # --- quality & docs ---------------------------------------------------------

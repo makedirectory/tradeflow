@@ -4,11 +4,11 @@ from datetime import datetime
 
 import pytest
 
+from quantred.demo.strategies import DemoTrendStrategy
+from quantred.marketdata.client import MarketDataClient
+from quantred.optimization.optimizer import ParameterOptimizer
+from quantred.services.registry import STRATEGIES
 from tests.fakes import FakeMarketData
-from tradeflow.demo.strategies import DemoTrendStrategy
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.optimization.optimizer import ParameterOptimizer
-from tradeflow.services.registry import STRATEGIES
 
 SYMBOLS = ["AAA", "BBB"]
 START, END = datetime(2024, 1, 2), datetime(2024, 2, 1)
@@ -50,7 +50,7 @@ def test_best_params_retains_pinned_parameters():
     entries would hand back a config the strategy cannot be built from - which shows
     up much later as a walk-forward run that mysteriously places no trades.
     """
-    from tradeflow.optimization.param_space import ParameterSpace
+    from quantred.optimization.param_space import ParameterSpace
 
     ranges = {
         "searched": {"type": "int", "min": 1, "max": 3, "step": 1, "default": 2},
@@ -102,7 +102,7 @@ def test_the_seed_selects_which_candidates_a_random_search_draws():
 
 
 def test_optimize_exposes_the_seed_walkforward_already_had():
-    from tradeflow.cli import build_parser
+    from quantred.cli import build_parser
 
     args = build_parser().parse_args(
         ["optimize", "--strategy", "demo_trend", "--method", "random", "--seed", "27"]

@@ -19,7 +19,7 @@ package route is the intended shape for proprietary signal IP, and the one strat
 and one scanner shipped here (`demo_trend`, `demo_volume`) are **examples** — they
 demonstrate the interface and are not edges.
 
-They also arrive the same way yours does. Both live in `tradeflow/demo/` and are
+They also arrive the same way yours does. Both live in `quantred/demo/` and are
 declared as entry points by the engine's own `pyproject.toml`, so every install
 exercises the discovery path this page describes rather than leaving it to CI. The
 registry seeds them directly as well, because enumeration order across distributions
@@ -28,7 +28,7 @@ coin flip.
 
 ## Add a strategy
 
-1. Subclass `Strategy` in `tradeflow/strategies/`:
+1. Subclass `Strategy` in `quantred/strategies/`:
 
    ```python
    class MyStrategy(Strategy):
@@ -60,17 +60,17 @@ coin flip.
    say `exit_threshold` beside a declared `entry_threshold` - list it in
    `EXTRA_CONFIG_KEYS = ("exit_threshold",)`.
 
-2. Expose it through the `tradeflow.strategies` entry-point group. For proprietary
+2. Expose it through the `quantred.strategies` entry-point group. For proprietary
    strategies that is a separate installed package:
 
    ```toml
-   [project.entry-points."tradeflow.strategies"]
+   [project.entry-points."quantred.strategies"]
    private_trend = "yourfirm_signals.strategies:PrivateTrendStrategy"
    ```
 
    A *public* strategy shipped with the engine takes the same route — put it in
-   `tradeflow/demo/strategies.py`, declare it in this repository's `pyproject.toml`,
-   and add it to `BUILTIN_STRATEGIES` in `tradeflow/services/registry.py` as well.
+   `quantred/demo/strategies.py`, declare it in this repository's `pyproject.toml`,
+   and add it to `BUILTIN_STRATEGIES` in `quantred/services/registry.py` as well.
    The entry point is the path a user's install actually takes; the registry entry
    reserves the name and pins which class answers to it. Registry-only would ship a
    strategy that never exercises discovery, which is the mechanism the whole feature
@@ -87,18 +87,18 @@ Use the pure [indicators](indicators); don't reach for a compiled TA library.
 
 1. Subclass `ScannerStrategy` — implement `process_data` and `generate_signals_df`
    (emit `SCANNER_BUY`/`SCANNER_SELL`/`SCANNER_HOLD` plus a `signal_strength`).
-   `tradeflow/scanners/` holds the base class and the driver; a scanner itself goes
-   in your own package, or in `tradeflow/demo/scanners.py` if it ships here.
-2. Expose it through the `tradeflow.scanners` entry-point group:
+   `quantred/scanners/` holds the base class and the driver; a scanner itself goes
+   in your own package, or in `quantred/demo/scanners.py` if it ships here.
+2. Expose it through the `quantred.scanners` entry-point group:
 
    ```toml
-   [project.entry-points."tradeflow.scanners"]
+   [project.entry-points."quantred.scanners"]
    private_volume = "yourfirm_signals.scanners:PrivateVolumeScanner"
    ```
 
    As with strategies, a public scanner shipped here does the same and additionally
-   goes in `BUILTIN_SCANNERS` in `tradeflow/services/registry.py`. Not the
-   `BUILTIN_SCANNERS` literal in `tradeflow/scanners/symbol_scanner.py`, which is
+   goes in `BUILTIN_SCANNERS` in `quantred/services/registry.py`. Not the
+   `BUILTIN_SCANNERS` literal in `quantred/scanners/symbol_scanner.py`, which is
    empty and reserves names for classes defined in that module — there are none — and
    not `SymbolScanner.SCANNERS`, which discovery overwrites.
 
@@ -115,7 +115,7 @@ built-in names are reserved, so a private package cannot silently replace
 A private package can also return several contributions from one entry point:
 
 ```toml
-[project.entry-points."tradeflow.strategies"]
+[project.entry-points."quantred.strategies"]
 private_pack = "yourfirm_signals.registry:strategies"
 ```
 
@@ -145,8 +145,8 @@ runs can refer to it by name and share the normal registry/memoization path.
 ## Add a broker
 
 1. Implement `Broker` (and optionally `MarketDataProvider`) for the venue in a new
-   `tradeflow/brokers/<vendor>/` package, mapping the SDK to the domain types.
-2. Construct it in `tradeflow.cli.build_data_and_broker` (`main.py` is only a shim).
+   `quantred/brokers/<vendor>/` package, mapping the SDK to the domain types.
+2. Construct it in `quantred.cli.build_data_and_broker` (`main.py` is only a shim).
 
 Three parts of the contract are easy to get wrong, and all three are load-bearing:
 

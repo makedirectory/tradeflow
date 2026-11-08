@@ -5,6 +5,8 @@ under the base strategy's name made `--strategy <base>` mix them. All offline, t
 real agent with a fixed proposer.
 """
 
+from quantred.research.proposer import FixedProposer, Proposal
+from quantred.store.trials import TrialStore, db_path_for_journal
 from tests.test_research import (
     _VALID_CODE,
     END,
@@ -14,8 +16,6 @@ from tests.test_research import (
     _isolate,  # noqa: F401 - the autouse fixture registers the test strategy
     _tune,
 )
-from tradeflow.research.proposer import FixedProposer, Proposal
-from tradeflow.store.trials import TrialStore, db_path_for_journal
 
 
 def _run(tmp_path, proposals):
@@ -60,8 +60,8 @@ def test_a_research_rounds_campaign_does_not_claim_its_journal_line_is_unreadabl
     """The round is journaled as `research:trial`, which the trial-line lookup never
     matched, so the campaign said the line "could not be read" about a line that was in
     the file. What it actually lacks is a per-trial recipe."""
-    from tradeflow.analytics.reporting import format_campaign_material
-    from tradeflow.services.campaign import campaign_material
+    from quantred.analytics.reporting import format_campaign_material
+    from quantred.services.campaign import campaign_material
 
     journal = _run(tmp_path, [_tune(3)])
     with TrialStore(db_path_for_journal(journal), journal_path=journal) as store:
@@ -89,7 +89,7 @@ def _material(metrics):
 
 
 def test_an_unmeasured_benchmark_metric_is_not_printed_as_a_measured_zero():
-    from tradeflow.analytics.reporting import format_campaign_material
+    from quantred.analytics.reporting import format_campaign_material
 
     metrics = {"alpha": 0.0, "beta": 0.0, "benchmark_buy_hold_return": 0.0, "benchmark_available": False}
     text = format_campaign_material(_material(metrics))
@@ -104,7 +104,7 @@ def test_an_unmeasured_benchmark_metric_is_not_printed_as_a_measured_zero():
 def test_a_line_written_before_the_field_existed_still_reads_as_the_session_strategy():
     """Absent stays absent: an old line carries no strategy, and the reader falls back to
     the session's, which is what it was recorded under."""
-    from tradeflow.store.trials import _row_kwargs_from_research_trial
+    from quantred.store.trials import _row_kwargs_from_research_trial
 
     record = {"run_id": "r1", "inputs": {"params": {}, "oos_aggregate": {}}}
     assert _row_kwargs_from_research_trial(record, {"strategy": "periodic"})["strategy"] == "periodic"
@@ -116,7 +116,7 @@ def test_campaign_evidence_and_the_html_report_read_unmeasured_metrics_one_way()
     """Found in review: two parallel copies of the "unmeasured metric" rule had diverged -
     the campaign view called a Treynor ratio suppressed for a near-zero beta "no
     benchmark" with a benchmark present. One reader of the flags now serves both."""
-    from tradeflow.analytics.reporting import format_campaign_material
+    from quantred.analytics.reporting import format_campaign_material
 
     metrics = {"treynor_ratio": 0.0, "treynor_available": False, "benchmark_available": True, "alpha": 0.4}
     text = format_campaign_material(

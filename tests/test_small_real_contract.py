@@ -13,8 +13,8 @@ asserted against a book where the wrong answer is visibly different from the rig
 
 import pytest
 
-from tradeflow.services import smallreal
-from tradeflow.services.registry import STRATEGIES
+from quantred.services import smallreal
+from quantred.services.registry import STRATEGIES
 
 # A contract whose every limit is set, so a rule that silently drops one is visible.
 # Illustrative figures: round numbers chosen to make the arithmetic checkable by eye.
@@ -52,7 +52,7 @@ def test_every_limit_belongs_to_exactly_one_clause_of_the_rule():
     twice and a limit in none is carried by accident rather than by decision. Asserted
     against the shipped default book, so a limit added there without a clause fails
     here instead of silently taking the fallback."""
-    from tradeflow.strategies.base import DEFAULT_POSITION_LIMITS
+    from quantred.strategies.base import DEFAULT_POSITION_LIMITS
 
     clauses = (
         smallreal.FRACTIONS,
@@ -291,7 +291,7 @@ def test_the_contract_states_the_bias_it_cannot_design_away():
 
 # --- the account has to be able to fund what was asked for -------------------------
 def _account(equity=10_000.0, cash=None, buying_power=None):
-    from tradeflow.brokers.base import AccountSnapshot
+    from quantred.brokers.base import AccountSnapshot
 
     return AccountSnapshot(
         cash=equity if cash is None else cash,

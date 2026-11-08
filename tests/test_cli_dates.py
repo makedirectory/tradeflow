@@ -9,8 +9,8 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from tradeflow.cli import _date, build_parser, parse_cli
-from tradeflow.utils.timeutils import NEW_YORK
+from quantred.cli import _date, build_parser, parse_cli
+from quantred.utils.timeutils import NEW_YORK
 
 
 def test_a_bare_date_means_that_market_date_in_the_exchange_zone():
@@ -30,8 +30,8 @@ def test_a_bare_date_means_that_market_date_in_the_exchange_zone():
 
 def test_the_cache_and_the_scanner_now_read_a_date_the_same_way():
     """The defect itself, pinned end to end rather than through either component."""
-    from tradeflow.scanners.symbol_scanner import resolve_scan_clock
-    from tradeflow.store.bars import _to_utc
+    from quantred.scanners.symbol_scanner import resolve_scan_clock
+    from quantred.store.bars import _to_utc
 
     parsed = _date("2026-08-22")
 
@@ -90,7 +90,7 @@ def test_the_cache_flags_reach_the_data_client_of_every_command_that_offers_them
     Every command that offers the flags is exercised now, because the hole was in the
     coverage rather than in the rule.
     """
-    from tradeflow import cli
+    from quantred import cli
 
     seen = {}
 
@@ -109,7 +109,7 @@ def test_the_cache_flags_reach_the_data_client_of_every_command_that_offers_them
 def test_the_allocate_utility_book_reads_the_cache_too(monkeypatch):
     """`--objective utility` is a different function, and it was the one that ignored
     the flags its own command declared."""
-    from tradeflow import cli
+    from quantred import cli
 
     seen = {}
 
@@ -129,9 +129,9 @@ def test_an_offline_scan_says_its_universe_is_only_as_current_as_the_cache(monke
     """Nothing errors when coverage ends before the scan clock — the newest cached bar
     just becomes "the latest", so a universe picked from stale bars looks exactly like
     one picked from fresh bars. That case has to announce itself."""
+    from quantred import cli
+    from quantred.marketdata.client import MarketDataClient
     from tests.fakes import DictMarketData, make_ohlcv
-    from tradeflow import cli
-    from tradeflow.marketdata.client import MarketDataClient
 
     client = MarketDataClient(DictMarketData({"AAA": make_ohlcv(n=60, seed=0, freq="1D")}))
     monkeypatch.setattr(cli, "build_research_data", lambda **kw: client)
@@ -263,7 +263,7 @@ def test_an_interrupted_command_exits_cleanly_and_says_what_did_not_happen():
     """
     from unittest import mock
 
-    from tradeflow import cli
+    from quantred import cli
 
     def interrupted(args):
         raise KeyboardInterrupt

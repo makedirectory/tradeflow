@@ -10,7 +10,7 @@ This file is only what is true in every session.
 
 **Two clocks.** The research clock (backtest, optimize, walk-forward, analytics, the
 AI agent) is slow, exploratory, and only ever *proposes*. The trade clock
-(`tradeflow/engine/live.py`, `tradeflow/execution/`) is deterministic and imports
+(`quantred/engine/live.py`, `quantred/execution/`) is deterministic and imports
 **nothing** from `services/`, `analytics/`, `optimization/`, or `research/`.
 Promotion between them is a manual human step.
 

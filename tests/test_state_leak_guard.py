@@ -44,7 +44,7 @@ import pytest
 
 @pytest.hookimpl(trylast=True)
 def pytest_runtest_teardown(item):
-    from tradeflow.execution.halt import default_halt_path
+    from quantred.execution.halt import default_halt_path
 
     if default_halt_path().exists():
         raise AssertionError("the existence check refused this test")
@@ -57,7 +57,7 @@ import pytest
 
 @pytest.hookimpl(trylast=True)
 def pytest_runtest_teardown(item):
-    from tradeflow.execution.halt import HaltState
+    from quantred.execution.halt import HaltState
 
     if HaltState().list():
         raise AssertionError("the no-clear guard refused this test")
@@ -70,7 +70,7 @@ import pytest
 
 @pytest.hookimpl(trylast=True)
 def pytest_runtest_teardown(item):
-    from tradeflow.execution.halt import HaltState
+    from quantred.execution.halt import HaltState
 
     state = HaltState()
     leaked = state.list()
@@ -96,20 +96,20 @@ def pytest_configure(config):
 #: The second is what makes this a test of the *cascade*, not only of the blame.
 LEAK_THEN_OBSERVE = """
 def test_leaves_a_halt_set():
-    from tradeflow.execution.halt import HaltState
+    from quantred.execution.halt import HaltState
 
     HaltState().set("rehearsal", actor="the-leaking-test", scope="all")
 
 
 def test_runs_under_a_clean_root():
-    from tradeflow.execution.halt import HaltState
+    from quantred.execution.halt import HaltState
 
     assert HaltState().list() == []
 """
 
 TIDY = """
 def test_sets_then_clears():
-    from tradeflow.execution.halt import HaltState
+    from quantred.execution.halt import HaltState
 
     state = HaltState()
     state.set("rehearsal", actor="a-tidy-test")
@@ -166,7 +166,7 @@ def test_a_halt_on_a_path_the_test_owns_is_ignored(guarded):
     result = guarded(
         """
         def test_halts_on_its_own_path(tmp_path):
-            from tradeflow.execution.halt import HaltState
+            from quantred.execution.halt import HaltState
 
             state = HaltState(tmp_path / "halts.json")
             state.set("rehearsal", actor="a-test-that-owns-its-state")
@@ -208,13 +208,13 @@ def test_a_strategy_scoped_halt_is_a_leak_too(guarded):
     result = guarded(
         """
         def test_leaves_one_strategy_halted():
-            from tradeflow.execution.halt import HaltState
+            from quantred.execution.halt import HaltState
 
             HaltState().set("rehearsal", actor="the-leaking-test", scope="breakout")
 
 
         def test_runs_under_a_clean_root():
-            from tradeflow.execution.halt import HaltState
+            from quantred.execution.halt import HaltState
 
             assert HaltState().list() == []
             assert not HaltState().is_halted("breakout")
@@ -281,7 +281,7 @@ def test_a_guard_that_resolves_the_root_at_teardown_reaches_state_it_never_pinne
 
         def test_leaves_a_halt_outside_the_pinned_root(tmp_path):
             global HOME
-            from tradeflow.execution.halt import HaltState
+            from quantred.execution.halt import HaltState
 
             HOME = tmp_path / "home"
             (HOME / ".tradeflow" / "logs").mkdir(parents=True)
@@ -329,7 +329,7 @@ import pytest
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_sessionstart(session):
-    import tradeflow.execution.halt as halt
+    import quantred.execution.halt as halt
 
     class Exploding(halt.HaltState):
         def list(self):

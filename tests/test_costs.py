@@ -6,11 +6,11 @@ from datetime import datetime
 import pandas as pd
 import pytest
 
+from quantred.costs import ParametricCostModel, Trade
+from quantred.demo.strategies import DemoTrendStrategy
+from quantred.engine.backtest import BacktestEngine
+from quantred.marketdata.client import MarketDataClient
 from tests.fakes import FakeMarketData, LongShortScriptedStrategy
-from tradeflow.costs import ParametricCostModel, Trade
-from tradeflow.demo.strategies import DemoTrendStrategy
-from tradeflow.engine.backtest import BacktestEngine
-from tradeflow.marketdata.client import MarketDataClient
 
 
 def _model():

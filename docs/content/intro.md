@@ -83,7 +83,7 @@ one window, and one cost model, ending in a single verdict with every gate shown
   optimization, portfolio construction, the trial store, the AI agents
 - **[Engineering wiki](engineering/architecture)** — how it is built and why, and how
   to add a strategy, scanner, or broker
-- **[Using it as a library](engineering/embedding)** — `tradeflow.services.*` from
+- **[Using it as a library](engineering/embedding)** — `quantred.services.*` from
   your own code
 - **[Changelog](changelog)** — every release, and the project's history since 2023
 

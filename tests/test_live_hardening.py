@@ -20,6 +20,15 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from quantred.brokers.base import Position, TradeUpdate
+from quantred.engine.barcheck import BarChecks, BarQualityFilter
+from quantred.engine.live import BlindStartError, LiveEngine
+from quantred.execution.ledger import MISSING, QUANTITY_DRIFT, UNEXPECTED, PositionLedger
+from quantred.execution.live_trader import LiveTrader
+from quantred.marketdata.client import MarketDataClient
+from quantred.services.registry import STRATEGIES
+from quantred.strategies import signals
+from quantred.utils.timeutils import NEW_YORK
 from tests.fakes import (
     FakeTradeUpdate,
     RecordingBroker,
@@ -27,15 +36,6 @@ from tests.fakes import (
     ScriptedStrategy,
     bar_event,
 )
-from tradeflow.brokers.base import Position, TradeUpdate
-from tradeflow.engine.barcheck import BarChecks, BarQualityFilter
-from tradeflow.engine.live import BlindStartError, LiveEngine
-from tradeflow.execution.ledger import MISSING, QUANTITY_DRIFT, UNEXPECTED, PositionLedger
-from tradeflow.execution.live_trader import LiveTrader
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.services.registry import STRATEGIES
-from tradeflow.strategies import signals
-from tradeflow.utils.timeutils import NEW_YORK
 
 SYMBOL = "AAA"
 
@@ -389,7 +389,7 @@ class _UnreachableWarmUp(ScriptedFeed):
     """A feed whose historical half *fails* — a transient outage, not an empty window."""
 
     def get_bars(self, symbols, timeframe, start, end):
-        from tradeflow.brokers.errors import BrokerUnavailableError
+        from quantred.brokers.errors import BrokerUnavailableError
 
         raise BrokerUnavailableError("historical data endpoint returned 503")
 
@@ -697,16 +697,16 @@ def test_the_live_path_imports_no_research_machinery():
     # The whole execution tree, not a list of files: a list misses the next module
     # added to the order path (found in the final review - `flatten.py` was not on it).
     root = Path(__file__).resolve().parents[1]
-    modules = [root / "tradeflow/engine/live.py", root / "tradeflow/engine/barcheck.py"]
-    modules += sorted((root / "tradeflow/execution").rglob("*.py"))
+    modules = [root / "quantred/engine/live.py", root / "quantred/engine/barcheck.py"]
+    modules += sorted((root / "quantred/execution").rglob("*.py"))
     assert len(modules) > 5, "the execution tree was not found"
     for module in modules:
         source = Path(module).read_text()
         for forbidden in (
-            "tradeflow.services",
-            "tradeflow.analytics",
-            "tradeflow.optimization",
-            "tradeflow.research",
+            "quantred.services",
+            "quantred.analytics",
+            "quantred.optimization",
+            "quantred.research",
         ):
             assert forbidden not in source, f"{module} reaches into {forbidden}"
 
@@ -718,7 +718,7 @@ def test_the_warm_up_window_actually_spans_enough_sessions(spec, periods):
     overnight gap, the weekend and every holiday as tradeable: 50 one-minute bars
     became "100 minutes ago", so a 09:35 start fetched five bars for a fifty-bar
     indicator. Daily under-fetched too — 100 calendar days is about 70 sessions."""
-    from tradeflow.marketdata.timeframe import Timeframe
+    from quantred.marketdata.timeframe import Timeframe
 
     timeframe = Timeframe.parse(spec)
     start = LiveEngine.lookback_start(timeframe, periods)
@@ -730,7 +730,7 @@ def test_the_warm_up_window_actually_spans_enough_sessions(spec, periods):
 
 def test_an_intraday_warm_up_reaches_past_the_previous_session():
     """The specific failure: a window that never leaves the current morning."""
-    from tradeflow.marketdata.timeframe import Timeframe
+    from quantred.marketdata.timeframe import Timeframe
 
     start = LiveEngine.lookback_start(Timeframe.parse("1Min"), 50)
     assert (datetime.now(NEW_YORK) - start) > timedelta(days=1)
@@ -843,7 +843,7 @@ def test_a_fresh_crossing_still_enters_with_reaffirmation_off():
 def test_reaffirmation_defaults_to_on():
     """The default is the assumption: a trend-follower started mid-trend takes the
     position rather than sitting flat until the next crossing."""
-    from tradeflow.strategies.base import REAFFIRM_ENTRIES_DEFAULT
+    from quantred.strategies.base import REAFFIRM_ENTRIES_DEFAULT
 
     assert REAFFIRM_ENTRIES_DEFAULT is True
     strategy = ScriptedStrategy.create_with_defaults()
@@ -921,7 +921,7 @@ def test_a_stream_that_will_not_close_does_not_hold_the_process_open(monkeypatch
     A teardown that can block trains people to interrupt twice, and the second one
     lands during cleanup where it can interrupt anything.
     """
-    import tradeflow.engine.live as live_module
+    import quantred.engine.live as live_module
 
     monkeypatch.setattr(live_module, "SHUTDOWN_TIMEOUT", 0.05)
 

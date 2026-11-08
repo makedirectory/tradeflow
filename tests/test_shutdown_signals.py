@@ -15,7 +15,7 @@ import time
 
 import pytest
 
-from tradeflow.utils.streaming import run_until_stopped
+from quantred.utils.streaming import run_until_stopped
 
 
 @pytest.fixture(autouse=True)
@@ -182,7 +182,7 @@ def test_a_second_signal_exits_immediately(tmp_path):
         tmp_path,
         """
         import asyncio, pathlib, sys
-        from tradeflow.utils.streaming import run_until_stopped
+        from quantred.utils.streaming import run_until_stopped
 
         async def session():
             pathlib.Path(READY_FILE).write_text("go")
@@ -219,12 +219,12 @@ def test_a_second_signal_exits_immediately(tmp_path):
 def forced(monkeypatch):
     """Capture a forced exit instead of taking the interpreter down with it."""
     calls = []
-    monkeypatch.setattr("tradeflow.utils.streaming._exit_process", lambda code: calls.append(code))
+    monkeypatch.setattr("quantred.utils.streaming._exit_process", lambda code: calls.append(code))
     return calls
 
 
 def _stop(**kwargs):
-    from tradeflow.utils.streaming import _Stop
+    from quantred.utils.streaming import _Stop
 
     loop = asyncio.new_event_loop()
     try:
@@ -316,7 +316,7 @@ def test_one_signal_kills_a_process_whose_loop_is_deadlocked(tmp_path):
         tmp_path,
         """
         import asyncio, pathlib, sys
-        from tradeflow.utils.streaming import run_until_stopped
+        from quantred.utils.streaming import run_until_stopped
 
         async def session():
             pathlib.Path(READY_FILE).write_text("go")
@@ -363,7 +363,7 @@ class _Unraisable:
 
 
 def _hook_for(exc, _restore):
-    from tradeflow.utils.streaming import _silence_finalizer_noise
+    from quantred.utils.streaming import _silence_finalizer_noise
 
     seen = []
     sys.unraisablehook = lambda u: seen.append(u.exc_value)
@@ -417,7 +417,7 @@ def broken_handler():
 
 
 def test_exit_now_exits_even_when_a_log_handler_cannot_flush(forced, broken_handler):
-    from tradeflow.utils.streaming import exit_now
+    from quantred.utils.streaming import exit_now
 
     exit_now(7)
 
@@ -435,7 +435,7 @@ def test_a_forced_stop_exits_even_when_a_log_handler_cannot_flush(forced, broken
 def test_exit_now_does_not_wait_forever_on_a_handler_whose_lock_is_held(forced, monkeypatch):
     import threading
 
-    from tradeflow.utils import streaming
+    from quantred.utils import streaming
 
     release = threading.Event()
 

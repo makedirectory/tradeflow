@@ -1,6 +1,6 @@
 ---
 paths:
-  - "tradeflow/**/*.py"
+  - "quantred/**/*.py"
   - "tests/**/*.py"
   - "docs/content/**/*.md"
   - "*.md"

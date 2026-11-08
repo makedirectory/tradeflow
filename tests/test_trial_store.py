@@ -10,9 +10,9 @@ from pathlib import Path
 
 import pytest
 
-from tradeflow.engine.backtest import ACCOUNTING_VERSION
-from tradeflow.services.audit import audit_log, journal_trial
-from tradeflow.store.trials import (
+from quantred.engine.backtest import ACCOUNTING_VERSION
+from quantred.services.audit import audit_log, journal_trial
+from quantred.store.trials import (
     _REBUILD_SENTINEL,
     SCHEMA_VERSION,
     TrialStore,
@@ -713,7 +713,7 @@ def test_until_a_date_includes_every_trial_recorded_on_that_market_date(tmp_path
     The bound reached the store as ``2026-11-06T00:00:00-05:00`` and was compared as text
     against UTC stamps, so it meant "before midnight UTC-ish", not "on or before the 6th".
     """
-    from tradeflow.utils.timeutils import parse_market_date
+    from quantred.utils.timeutils import parse_market_date
 
     store = _dated_store(tmp_path)
     ids = {r["id"] for r in store.list_trials(until=parse_market_date("2026-11-06"))}
@@ -724,7 +724,7 @@ def test_until_a_date_includes_every_trial_recorded_on_that_market_date(tmp_path
 def test_since_a_date_starts_at_that_market_date_not_at_utc_midnight(tmp_path):
     """A trial at 22:00 New York on the 6th sorted after ``2026-11-07T00:00:00-05:00`` as
     text (its UTC stamp reads the 7th), so ``--since 2026-11-07`` included it."""
-    from tradeflow.utils.timeutils import parse_market_date
+    from quantred.utils.timeutils import parse_market_date
 
     store = _dated_store(tmp_path)
     ids = {r["id"] for r in store.list_trials(since=parse_market_date("2026-11-07"))}
@@ -733,7 +733,7 @@ def test_since_a_date_starts_at_that_market_date_not_at_utc_midnight(tmp_path):
 
 def test_an_explicit_instant_bound_is_an_instant(tmp_path):
     """Only a bare market date widens to the whole day; a time of day is taken as given."""
-    from tradeflow.utils.timeutils import parse_market_date
+    from quantred.utils.timeutils import parse_market_date
 
     store = _dated_store(tmp_path)
     ids = {r["id"] for r in store.list_trials(until=parse_market_date("2026-11-06T12:00:00"))}
@@ -743,8 +743,8 @@ def test_an_explicit_instant_bound_is_an_instant(tmp_path):
 def test_a_quarantine_before_a_date_names_exactly_the_trials_recorded_earlier(tmp_path):
     """``mark-contaminated --before`` compared the same way, so a late-evening trial on the
     day before the cut-off escaped the quarantine it was meant to be in."""
-    from tradeflow.services.maintenance import select_trials
-    from tradeflow.utils.timeutils import parse_market_date
+    from quantred.services.maintenance import select_trials
+    from quantred.utils.timeutils import parse_market_date
 
     journal = tmp_path / "journal.jsonl"
     store = _dated_store(tmp_path)
@@ -767,8 +767,8 @@ def test_a_whole_day_bound_ends_at_the_next_new_york_midnight_across_dst(day, ne
     would drop (or admit) an hour of trials at the edge of ``--until``."""
     from datetime import date
 
-    from tradeflow.store.trials import _recorded_bound
-    from tradeflow.utils.timeutils import parse_market_date
+    from quantred.store.trials import _recorded_bound
+    from quantred.utils.timeutils import parse_market_date
 
     assert _recorded_bound(parse_market_date(day), whole_day=True) == next_midnight_utc
     # A plain date object means the same bare date (the public API accepted one before).

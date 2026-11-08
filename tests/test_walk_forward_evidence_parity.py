@@ -14,9 +14,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from quantred.marketdata.client import MarketDataClient
+from quantred.utils.timeutils import NEW_YORK
 from tests.fakes import DictMarketData
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.utils.timeutils import NEW_YORK
 
 SYMBOLS = ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF"]
 START, END = "2024-01-02", "2025-08-01"
@@ -45,14 +45,14 @@ def _client():
 
 @pytest.fixture(autouse=True)
 def _isolated(tmp_path, monkeypatch):
-    from tradeflow.services import analysis, audit
+    from quantred.services import analysis, audit
 
     monkeypatch.setattr(analysis, "ARTIFACT_DIR", tmp_path / "artifacts")
     monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", tmp_path / "journal.jsonl")
 
 
 def _over_mcp(**extra):
-    from tradeflow.mcp import server
+    from quantred.mcp import server
 
     built = server.build_server(data_client=_client())
     arguments = {
@@ -73,8 +73,8 @@ def _over_mcp(**extra):
 
 
 def _over_cli(monkeypatch, capsys, html=None):
-    from tradeflow import cli
-    from tradeflow.services import analysis
+    from quantred import cli
+    from quantred.services import analysis
 
     seen = {}
     real = analysis.walk_forward_evidence
@@ -168,7 +168,7 @@ def _header(html: str, label: str) -> str:
 def test_the_walk_forward_report_names_what_it_ran_and_carries_the_evidence(monkeypatch, capsys, tmp_path):
     """The HTML's only verdict used to be the six gates, with a dash for the benchmark
     and timeframe, so a run whose gates passed and prerequisites failed looked clear."""
-    from tradeflow.analytics.htmlreport import render_html
+    from quantred.analytics.htmlreport import render_html
 
     cli_evidence, _ = _over_cli(monkeypatch, capsys, html=tmp_path / "wf.html")
     cli_html = (tmp_path / "wf.html").read_text(encoding="utf-8")
@@ -185,7 +185,7 @@ def test_the_walk_forward_report_names_what_it_ran_and_carries_the_evidence(monk
 
 
 def test_a_promotable_walk_forward_with_unmet_prerequisites_is_not_rendered_as_clear():
-    from tradeflow.analytics.htmlreport import render_html
+    from quantred.analytics.htmlreport import render_html
 
     payload = {
         "folds": [],
@@ -206,9 +206,9 @@ def test_a_promotable_walk_forward_with_unmet_prerequisites_is_not_rendered_as_c
 
 
 def test_the_information_report_header_names_the_run_it_describes():
+    from quantred.analytics.htmlreport import render_html
+    from quantred.services import analysis
     from tests.fakes import FakeMarketData
-    from tradeflow.analytics.htmlreport import render_html
-    from tradeflow.services import analysis
 
     names = ["S0", "S1", "S2", "S3", "S4", "S5"]
     client = MarketDataClient(FakeMarketData([*names, "SPY"], n=300, freq="1D"))

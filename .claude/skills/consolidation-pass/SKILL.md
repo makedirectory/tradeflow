@@ -16,7 +16,7 @@ disagree.
    `analytics/`. The mechanical check finds names defined in two modules:
 
    ```bash
-   rg -N '^\s*def ([a-zA-Z_]\w*)' -or '$1' tradeflow --sort path | sort | uniq -d
+   rg -N '^\s*def ([a-zA-Z_]\w*)' -or '$1' quantred --sort path | sort | uniq -d
    ```
 
    A duplicate name is either a delegate (fine) or a parity point (not fine yet).

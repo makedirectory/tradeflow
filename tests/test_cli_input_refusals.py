@@ -9,10 +9,10 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from tradeflow import cli
-from tradeflow.settings import CLI_NAME, SettingsError
-from tradeflow.store.bars import CacheMiss
-from tradeflow.utils.timeutils import NEW_YORK
+from quantred import cli
+from quantred.settings import CLI_NAME, SettingsError
+from quantred.store.bars import CacheMiss
+from quantred.utils.timeutils import NEW_YORK
 
 
 def _refusal(argv, capsys):
@@ -26,7 +26,7 @@ def _no_keys(monkeypatch):
     def _refuse():
         raise SettingsError("Missing Alpaca credentials")
 
-    monkeypatch.setattr("tradeflow.settings.load_settings", _refuse)
+    monkeypatch.setattr("quantred.settings.load_settings", _refuse)
 
 
 # --- --offline needs a cache, not keys ----------------------------------------------
@@ -79,7 +79,7 @@ def test_a_window_starting_in_the_future_is_refused(capsys):
 def test_an_ordinary_window_and_an_end_after_today_are_accepted():
     """The boundary: a window may end after now (it is clipped by the data), and the
     default window must pass, or every command without dates would refuse."""
-    from tradeflow.utils.timeutils import window_refusal
+    from quantred.utils.timeutils import window_refusal
 
     cli.parse_cli(["backtest", "--start", "2024-01-02", "--end", "2024-01-03"])
     cli.parse_cli(["backtest"])
@@ -94,9 +94,9 @@ def test_an_ordinary_window_and_an_end_after_today_are_accepted():
 def test_a_service_caller_gets_the_same_refusal_and_nothing_is_journaled(tmp_path, monkeypatch):
     """Over MCP a verdict on a reversed window was recorded as a trial, raising the
     multiple-testing count for a run that measured nothing."""
+    from quantred.marketdata.client import MarketDataClient
+    from quantred.services import analysis, audit
     from tests.fakes import FakeMarketData
-    from tradeflow.marketdata.client import MarketDataClient
-    from tradeflow.services import analysis, audit
 
     journal = tmp_path / "journal.jsonl"
     monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", journal)
@@ -159,7 +159,7 @@ def test_rejected_keys_end_the_command_with_their_message_not_a_stack(monkeypatc
     """The fix text was good and sat under sixty lines of the vendor SDK's stack."""
     from argparse import Namespace
 
-    from tradeflow.brokers.errors import AuthenticationError
+    from quantred.brokers.errors import AuthenticationError
 
     def _rejected(args):
         raise AuthenticationError("Alpaca rejected these credentials (HTTP 401).")
@@ -194,7 +194,7 @@ def test_every_key_the_writer_produces_is_one_the_hint_recognises(tmp_path):
     `save_config` and not to the list would be reported to its reader as a typo."""
     import inspect
 
-    from tradeflow.optimization.config_store import CONFIG_KEYS, Provenance, save_config, unrecognised_keys
+    from quantred.optimization.config_store import CONFIG_KEYS, Provenance, save_config, unrecognised_keys
 
     every = {
         name: ({"a": 1} if name in ("params", "position_limits", "cost") else "x")
@@ -216,14 +216,14 @@ def test_the_missing_keys_message_says_what_needs_them_and_the_keyless_route():
     """The reader has usually just run the keyless demo; the message listed the missing
     variables and a setup command without saying why this command was different, or
     that a warmed cache runs without keys."""
-    from tradeflow import settings
+    from quantred import settings
 
     message = settings._missing_credentials_message(["APCA_API_KEY_ID"])
     assert "market data" in message and "--offline" in message
 
 
 def _parse_refusal(capsys, *argv):
-    from tradeflow.cli import parse_cli
+    from quantred.cli import parse_cli
 
     with pytest.raises(SystemExit) as stop:
         parse_cli(list(argv))
@@ -263,9 +263,9 @@ def test_a_nested_subcommand_reports_its_own_usage(capsys):
 def test_a_misspelt_parameter_is_refused_not_run_at_the_default(tmp_path, monkeypatch):
     """`config={"fast_emaperiod": 9}` ran at the defaults and was served the defaults'
     memoized trial, with nothing saying the override reached nothing."""
+    from quantred.marketdata.client import MarketDataClient
+    from quantred.services import analysis, audit
     from tests.fakes import FakeMarketData
-    from tradeflow.marketdata.client import MarketDataClient
-    from tradeflow.services import analysis, audit
 
     monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", tmp_path / "journal.jsonl")
     client = MarketDataClient(FakeMarketData(["AAA"], n=300, freq="1D"))
@@ -281,8 +281,8 @@ def test_a_misspelt_parameter_is_refused_not_run_at_the_default(tmp_path, monkey
 
 def test_a_declared_parameter_and_a_real_limit_are_accepted():
     """The other direction, including the keys that are not parameters."""
-    from tradeflow.services.registry import resolve_strategy_class
-    from tradeflow.strategies.base import refuse_unknown_limits, refuse_unknown_params
+    from quantred.services.registry import resolve_strategy_class
+    from quantred.strategies.base import refuse_unknown_limits, refuse_unknown_params
 
     cls = resolve_strategy_class("demo_trend")
     refuse_unknown_params(cls, {"fast_ema_period": 9, "position_limits": {}, "_cost": {}})
@@ -321,9 +321,9 @@ def test_a_walk_forward_argument_no_run_can_mean_is_refused_and_not_journaled(
 ):
     """Over MCP each of these ran, echoed the value back and journaled a trial: an
     unknown objective scored every candidate as -inf, so the "best" was arbitrary."""
+    from quantred.marketdata.client import MarketDataClient
+    from quantred.services import analysis, audit
     from tests.fakes import FakeMarketData
-    from tradeflow.marketdata.client import MarketDataClient
-    from tradeflow.services import analysis, audit
 
     journal = tmp_path / "journal.jsonl"
     monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", journal)
@@ -338,9 +338,9 @@ def test_a_walk_forward_argument_no_run_can_mean_is_refused_and_not_journaled(
 def test_a_backtest_that_read_no_bars_is_refused_not_scored_as_zero(tmp_path, monkeypatch):
     """`symbols=["ZZZZ"]` returned final capital equal to initial and every ratio 0.0,
     journaled as a trial; only a log line said no bars were fetched."""
+    from quantred.marketdata.client import MarketDataClient
+    from quantred.services import analysis, audit
     from tests.fakes import FakeMarketData
-    from tradeflow.marketdata.client import MarketDataClient
-    from tradeflow.services import analysis, audit
 
     journal = tmp_path / "journal.jsonl"
     monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", journal)
@@ -358,7 +358,7 @@ def test_a_backtest_that_read_no_bars_is_refused_not_scored_as_zero(tmp_path, mo
 def test_the_cli_refuses_an_unknown_objective_and_ends_a_refused_run_without_a_stack(capsys, monkeypatch):
     from argparse import Namespace
 
-    from tradeflow.services.analysis import RunRefused
+    from quantred.services.analysis import RunRefused
 
     assert "did you mean 'sortino_ratio'" in _refusal(["optimize", "--objective", "sortino"], capsys)
     assert "cannot be negative" in _refusal(["walkforward", "--holdout-days", "-1"], capsys)
@@ -377,7 +377,7 @@ def test_the_cli_refuses_an_unknown_objective_and_ends_a_refused_run_without_a_s
 def test_a_malformed_date_says_so_on_every_surface():
     """The MCP server returned strptime's own text - "does not match format '%Y-%m-%d'" -
     which never said which formats work; the message now lives in the one parser."""
-    from tradeflow.utils.timeutils import parse_market_date
+    from quantred.utils.timeutils import parse_market_date
 
     with pytest.raises(ValueError, match=r"YYYY-MM-DD .* got '01/02/2024'"):
         parse_market_date("01/02/2024")
@@ -386,9 +386,9 @@ def test_a_malformed_date_says_so_on_every_surface():
 def test_walk_forward_gates_say_what_they_are_computed_over(tmp_path, monkeypatch):
     """The fold-median gates sat beside a stitched aggregate with the same metric names;
     a gate Sharpe of 0.21 next to an aggregate 0.20 read as a bug."""
+    from quantred.marketdata.client import MarketDataClient
+    from quantred.services import analysis, audit
     from tests.fakes import FakeMarketData
-    from tradeflow.marketdata.client import MarketDataClient
-    from tradeflow.services import analysis, audit
 
     monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", tmp_path / "journal.jsonl")
     monkeypatch.setattr(analysis, "ARTIFACT_DIR", tmp_path / "artifacts")
@@ -418,7 +418,7 @@ def test_an_objective_the_search_would_maximise_into_the_worst_candidate_is_refu
 
 
 def test_every_objective_is_a_reported_metric():
-    from tradeflow.analytics.performance import METRIC_KEYS, OBJECTIVE_KEYS
+    from quantred.analytics.performance import METRIC_KEYS, OBJECTIVE_KEYS
 
     assert set(OBJECTIVE_KEYS) <= set(METRIC_KEYS)
     cli.parse_cli(["optimize", "--objective", "sortino_ratio"])
@@ -432,8 +432,8 @@ def test_a_config_carrying_a_documented_behavioural_key_still_loads(tmp_path):
     key, so `live --config` and `backtest --config` refused a valid file."""
     import json
 
-    from tradeflow.services import analysis
-    from tradeflow.services.registry import resolve_strategy_class
+    from quantred.services import analysis
+    from quantred.services.registry import resolve_strategy_class
 
     params = {k: v["default"] for k, v in resolve_strategy_class("demo_trend").PARAM_RANGES.items()}
     path = tmp_path / "c.json"
@@ -449,7 +449,7 @@ def test_a_config_carrying_a_documented_behavioural_key_still_loads(tmp_path):
 def test_the_draft_walk_forward_gets_the_same_refusals():
     """It called neither check, so over MCP a bogus objective or a reversed window still
     recorded a draft trial."""
-    from tradeflow.services import analysis
+    from quantred.services import analysis
 
     with pytest.raises(analysis.RunRefused, match="cannot be maximised"):
         analysis.run_draft_walk_forward(
@@ -487,9 +487,9 @@ def test_a_walk_forward_over_a_universe_with_no_bars_is_refused_on_both_surfaces
 ):
     """It reported an out-of-sample Sharpe of 0.0 and journaled a trial for a run that
     never saw a bar. Bars for the benchmark alone are still nothing to trade."""
+    from quantred.marketdata.client import MarketDataClient
+    from quantred.services import analysis, audit
     from tests.fakes import FakeMarketData
-    from tradeflow.marketdata.client import MarketDataClient
-    from tradeflow.services import analysis, audit
 
     journal = tmp_path / "journal.jsonl"
     monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", journal)
@@ -519,9 +519,9 @@ def test_a_walk_forward_over_a_universe_with_no_bars_is_refused_on_both_surfaces
 def test_a_verdict_refused_by_the_allocation_preflight_records_no_trial(tmp_path, monkeypatch):
     """The preflight skips every step, so nothing looked at the data; it was journaled
     anyway, raising the family count for a request the caps alone ruled out."""
+    from quantred.marketdata.client import MarketDataClient
+    from quantred.services import analysis, audit
     from tests.fakes import FakeMarketData
-    from tradeflow.marketdata.client import MarketDataClient
-    from tradeflow.services import analysis, audit
 
     journal = tmp_path / "journal.jsonl"
     monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", journal)
@@ -540,8 +540,8 @@ def test_a_verdict_refused_by_the_allocation_preflight_records_no_trial(tmp_path
 def test_allocate_takes_scanner_none_as_every_other_command_does(monkeypatch, capsys):
     """`allocate --scanner none` handed `none` to the scanner registry and crashed with a
     traceback; everywhere else it means the candidates as given."""
+    from quantred.marketdata.client import MarketDataClient
     from tests.fakes import FakeMarketData
-    from tradeflow.marketdata.client import MarketDataClient
 
     client = MarketDataClient(FakeMarketData(["AAA", "BBB", "CCC", "DDD"], n=400, freq="1D"))
     monkeypatch.setattr(cli, "build_research_data", lambda **kw: client)
@@ -553,9 +553,9 @@ def test_allocate_takes_scanner_none_as_every_other_command_does(monkeypatch, ca
 
 def test_optimize_says_its_best_is_in_sample(monkeypatch, capsys, tmp_path):
     """The MCP payload always said IN-SAMPLE; the terminal printed a bare "Best" score."""
+    from quantred.marketdata.client import MarketDataClient
+    from quantred.services import audit
     from tests.fakes import FakeMarketData
-    from tradeflow.marketdata.client import MarketDataClient
-    from tradeflow.services import audit
 
     monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", tmp_path / "journal.jsonl")
     client = MarketDataClient(FakeMarketData(["AAA", "BBB"], n=400, freq="1D"))
@@ -582,10 +582,10 @@ def test_optimize_says_its_best_is_in_sample(monkeypatch, capsys, tmp_path):
 def test_the_terminal_prints_a_gates_note(capsys):
     """The no-out-of-sample-trades note reached the payload and the HTML but the
     terminal's gate list dropped it, so a failed gate gave no reason there."""
+    from quantred.marketdata.client import MarketDataClient
+    from quantred.optimization.walk_forward import WalkForwardValidator
+    from quantred.services.registry import resolve_strategy_class
     from tests.fakes import FakeMarketData
-    from tradeflow.marketdata.client import MarketDataClient
-    from tradeflow.optimization.walk_forward import WalkForwardValidator
-    from tradeflow.services.registry import resolve_strategy_class
 
     client = MarketDataClient(FakeMarketData(["AAA", "BBB"], n=500, freq="1D"))
     validator = WalkForwardValidator(resolve_strategy_class("demo_trend"), client)
@@ -602,9 +602,9 @@ def test_the_terminal_prints_a_gates_note(capsys):
 def test_a_fresh_backtest_names_the_trial_it_recorded(tmp_path, monkeypatch):
     """Found in review: a fresh run_backtest payload carried no trial id, so an agent had
     to list trials to find the one it had just made before analyzing or promoting it."""
+    from quantred.marketdata.client import MarketDataClient
+    from quantred.services import analysis, audit
     from tests.fakes import FakeMarketData
-    from tradeflow.marketdata.client import MarketDataClient
-    from tradeflow.services import analysis, audit
 
     monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", tmp_path / "journal.jsonl")
     monkeypatch.setattr(analysis, "ARTIFACT_DIR", tmp_path / "artifacts")
@@ -625,7 +625,7 @@ def test_the_bar_cache_without_its_extra_says_how_to_add_it(monkeypatch, tmp_pat
     write. The cache now refuses where it starts, with the one install command."""
     from argparse import Namespace
 
-    from tradeflow.utils import extras
+    from quantred.utils import extras
 
     real = extras.installed
     monkeypatch.setattr(extras, "installed", lambda name: False if name == "store" else real(name))
@@ -648,7 +648,7 @@ def test_the_bar_cache_without_its_extra_says_how_to_add_it(monkeypatch, tmp_pat
 def test_the_writable_probe_leaves_no_directory_behind(tmp_path, monkeypatch):
     """`init --check` says it writes nothing; the probe created the state's logs/
     directory and left it there."""
-    from tradeflow.services import audit, setup
+    from quantred.services import audit, setup
 
     journal = tmp_path / "home" / "logs" / "research_journal.jsonl"
     monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", journal)
@@ -662,7 +662,7 @@ def test_mcp_without_its_extra_says_so_before_logging_anything(monkeypatch, capl
     root ahead of the refusal."""
     import logging
 
-    from tradeflow.utils import extras
+    from quantred.utils import extras
 
     real = extras.installed
     monkeypatch.setattr(extras, "installed", lambda name: False if name == "mcp" else real(name))
@@ -679,7 +679,7 @@ def test_a_strategy_names_the_extra_keys_it_reads_so_a_near_pair_is_not_a_typo()
     undeclared `exit_threshold` (ratio 0.83) was refused as a typo on every surface,
     `live --config` included. `EXTRA_CONFIG_KEYS` says the key is deliberate; without
     it the near-miss is still caught."""
-    from tradeflow.strategies.base import refuse_unknown_params
+    from quantred.strategies.base import refuse_unknown_params
 
     class Plain:
         __name__ = "Plain"
@@ -696,8 +696,8 @@ def test_a_strategy_names_the_extra_keys_it_reads_so_a_near_pair_is_not_a_typo()
 def test_rejected_keys_point_at_the_section_for_the_configured_account(monkeypatch):
     """Found in the final review: the fix text always said "Paper Account", so a user
     configured for live trading was sent to fetch the wrong key pair."""
-    from tradeflow import settings
-    from tradeflow.brokers.alpaca import broker
+    from quantred import settings
+    from quantred.brokers.alpaca import broker
 
     monkeypatch.setattr(settings, "paper_trade_mode", lambda: False)
     assert "Live Account section" in broker._rejected_credentials(401, "")

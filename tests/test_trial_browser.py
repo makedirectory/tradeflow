@@ -12,15 +12,15 @@ from datetime import datetime
 
 import pytest
 
-from tradeflow.analytics.reporting import (
+from quantred.analytics.reporting import (
     NOT_RECORDED,
     format_leaderboard,
     format_trial_detail,
     format_trials_table,
 )
-from tradeflow.engine.backtest import ACCOUNTING_VERSION
-from tradeflow.services.audit import journal_trial
-from tradeflow.store.trials import TrialStore, db_path_for_journal
+from quantred.engine.backtest import ACCOUNTING_VERSION
+from quantred.services.audit import journal_trial
+from quantred.store.trials import TrialStore, db_path_for_journal
 
 # Read from the engine, never copied: a hardcoded number here is a fixture that agrees
 # with a *past* accounting version, and it goes quietly stale the moment one is bumped.
@@ -252,7 +252,7 @@ def test_an_unknown_ranking_is_refused(store):
 # --- trade-table persistence ------------------------------------------------
 def test_trades_round_trip_through_the_journal_alone(tmp_path):
     """The journal is the source of truth: a rebuild must reconstruct the table."""
-    from tradeflow.services import audit
+    from quantred.services import audit
 
     journal = tmp_path / "journal.jsonl"
     trial_id = audit.journal_trial(
@@ -266,7 +266,7 @@ def test_trades_round_trip_through_the_journal_alone(tmp_path):
         trades={"columns": ["symbol", "pnl"], "rows": [["AAA", 1.5], ["AAA", -0.5]]},
         path=journal,
     )
-    from tradeflow.store.trials import db_path_for_journal
+    from quantred.store.trials import db_path_for_journal
 
     with TrialStore(db_path_for_journal(journal), journal_path=journal) as s:
         assert s.trades_for(trial_id)["rows"] == [["AAA", 1.5], ["AAA", -0.5]]
@@ -275,8 +275,8 @@ def test_trades_round_trip_through_the_journal_alone(tmp_path):
 
 
 def test_without_the_flag_a_trial_stores_no_trade_table(tmp_path):
-    from tradeflow.services import audit
-    from tradeflow.store.trials import db_path_for_journal
+    from quantred.services import audit
+    from quantred.store.trials import db_path_for_journal
 
     journal = tmp_path / "journal.jsonl"
     trial_id = audit.journal_trial(
@@ -297,7 +297,7 @@ def test_a_truncated_trade_table_says_so(tmp_path):
     """A ceiling on stored rows is fine; a silent one is not."""
     import pandas as pd
 
-    from tradeflow.services.analysis import trades_payload
+    from quantred.services.analysis import trades_payload
 
     frame = pd.DataFrame({"symbol": ["AAA"] * 10, "pnl": range(10)})
     payload = trades_payload(frame, max_rows=4)
@@ -328,8 +328,8 @@ def test_a_truncated_trade_table_is_still_truncated_after_the_store_writes_it(tm
     """
     import pandas as pd
 
-    from tradeflow.services.analysis import trades_payload
-    from tradeflow.store.trials import TrialStore
+    from quantred.services.analysis import trades_payload
+    from quantred.store.trials import TrialStore
 
     frame = pd.DataFrame({"symbol": ["AAA"] * 10, "pnl": range(10)})
     with TrialStore(tmp_path / "trials.db", journal_path=tmp_path / "j.jsonl") as store:
@@ -350,7 +350,7 @@ def test_a_trade_table_stored_before_the_count_existed_is_unknown_not_complete(t
     """A row written before the store kept a total did not *prove* it held every
     trade, and rendering it as complete would put a confident claim on the one thing
     the record cannot support. Absent is not false."""
-    from tradeflow.store.trials import TrialStore
+    from quantred.store.trials import TrialStore
 
     with TrialStore(tmp_path / "trials.db", journal_path=tmp_path / "j.jsonl") as store:
         store.record_trades("old", {"columns": ["symbol", "pnl"], "rows": [["AAA", 1.0]]})
@@ -365,9 +365,9 @@ def test_the_completeness_of_a_stored_table_survives_a_rebuild(tmp_path):
     index holds — that is the rule a derived store lives by."""
     import pandas as pd
 
-    from tradeflow.services.analysis import trades_payload
-    from tradeflow.services.audit import journal_trial
-    from tradeflow.store.trials import TrialStore, db_path_for_journal
+    from quantred.services.analysis import trades_payload
+    from quantred.services.audit import journal_trial
+    from quantred.store.trials import TrialStore, db_path_for_journal
 
     journal = tmp_path / "journal.jsonl"
     frame = pd.DataFrame({"symbol": ["AAA"] * 10, "pnl": range(10)})
@@ -392,7 +392,7 @@ def test_the_completeness_of_a_stored_table_survives_a_rebuild(tmp_path):
 
 def test_a_capped_table_is_described_as_capped_wherever_it_is_described(tmp_path):
     """The user-facing half. `trials show` printed "4 trades" for a run that made ten."""
-    from tradeflow.analytics.reporting import describe_trade_table
+    from quantred.analytics.reporting import describe_trade_table
 
     capped = {"columns": [], "rows": [[]] * 4, "total_rows": 10, "truncated": True}
     whole = {"columns": [], "rows": [[]] * 4, "total_rows": 4, "truncated": False}
@@ -411,14 +411,14 @@ def test_a_capped_table_is_described_as_capped_wherever_it_is_described(tmp_path
 
 # --- the CLI surface --------------------------------------------------------
 def _cli(monkeypatch, tmp_path, *argv):
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     args = main.build_parser().parse_args(["trials", *argv, "--db", str(tmp_path / "trials.db")])
     args.func(args)
 
 
 def test_cli_list_show_and_best_round_trip_as_json(monkeypatch, tmp_path, capsys):
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     with TrialStore(tmp_path / "trials.db", journal_path=tmp_path / "journal.jsonl") as s:
         _populate(s)
@@ -437,7 +437,7 @@ def test_cli_list_show_and_best_round_trip_as_json(monkeypatch, tmp_path, capsys
 
 
 def test_cli_show_on_an_unknown_id_exits_non_zero(tmp_path):
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     with TrialStore(tmp_path / "trials.db", journal_path=tmp_path / "journal.jsonl"):
         pass
@@ -448,7 +448,7 @@ def test_cli_show_on_an_unknown_id_exits_non_zero(tmp_path):
 
 
 def test_query_remains_an_alias_for_list(tmp_path, capsys):
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     with TrialStore(tmp_path / "trials.db", journal_path=tmp_path / "journal.jsonl") as s:
         _populate(s)
@@ -567,11 +567,11 @@ def test_json_output_still_exits_non_zero_when_there_is_no_answer(monkeypatch, t
     """
     import json as json_mod
 
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     journal = tmp_path / "journal.jsonl"
     journal.write_text("")
-    monkeypatch.setattr("tradeflow.services.audit.DEFAULT_TRIAL_JOURNAL", journal, raising=False)
+    monkeypatch.setattr("quantred.services.audit.DEFAULT_TRIAL_JOURNAL", journal, raising=False)
 
     args = main.build_parser().parse_args(["trials", *argv, "--json", "--db", str(tmp_path / "trials.db")])
     if argv[0] == "analyze":
@@ -602,8 +602,8 @@ def test_json_output_exits_zero_when_there_is_an_answer(monkeypatch, tmp_path, c
     """Both directions: the exit code must not fire on a successful report."""
     import pandas as pd
 
-    from tradeflow import cli as main
-    from tradeflow.services.analysis import trades_payload
+    from quantred import cli as main
+    from quantred.services.analysis import trades_payload
 
     journal = tmp_path / "journal.jsonl"
     trial_id = journal_trial(
@@ -617,7 +617,7 @@ def test_json_output_exits_zero_when_there_is_an_answer(monkeypatch, tmp_path, c
         trades=trades_payload(pd.DataFrame({"pnl": [1.0, -2.0], "exit_reason": ["TP", "SL"]})),
         path=journal,
     )
-    monkeypatch.setattr("tradeflow.services.audit.DEFAULT_TRIAL_JOURNAL", journal, raising=False)
+    monkeypatch.setattr("quantred.services.audit.DEFAULT_TRIAL_JOURNAL", journal, raising=False)
 
     args = main.build_parser().parse_args(
         ["trials", "analyze", trial_id, "--json", "--db", str(db_path_for_journal(journal))]
@@ -628,10 +628,10 @@ def test_json_output_exits_zero_when_there_is_an_answer(monkeypatch, tmp_path, c
 
 # --- what the trials commands say when an id or a journal is not there -------------
 def _run_trials(monkeypatch, tmp_path, *argv):
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     journal = tmp_path / "journal.jsonl"
-    monkeypatch.setattr("tradeflow.services.audit.DEFAULT_TRIAL_JOURNAL", journal, raising=False)
+    monkeypatch.setattr("quantred.services.audit.DEFAULT_TRIAL_JOURNAL", journal, raising=False)
     args = main.build_parser().parse_args(["trials", *argv, "--db", str(tmp_path / "trials.db")])
     args.func(args)
 
@@ -663,7 +663,7 @@ def test_a_missing_journal_under_indexed_rows_still_raises_the_alarm(monkeypatch
 def test_analyze_names_the_cli_command_and_the_service_names_neither(monkeypatch, tmp_path):
     """The shared service said `Use list_trials` - an MCP tool name - to a CLI user.
     The service now names no surface; each surface appends its own pointer."""
-    from tradeflow.services.analysis import analyze_trial
+    from quantred.services.analysis import analyze_trial
 
     with pytest.raises(SystemExit) as exc:
         _run_trials(monkeypatch, tmp_path, "analyze", "abc123")
@@ -700,7 +700,7 @@ def test_quarantining_an_id_that_matches_no_trial_fails_and_writes_nothing(monke
     """`mark-contaminated --id <typo>` printed `Selected: 0 ... Nothing selected.` and
     exited 0. An explicitly named id is a claim the trial exists, so it is a typo signal;
     a filter matching nothing stays an ordinary empty answer."""
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     journal = tmp_path / "journal.jsonl"
     real = journal_trial(
@@ -734,7 +734,7 @@ def test_quarantining_an_id_that_matches_no_trial_fails_and_writes_nothing(monke
 def test_ids_and_filters_together_are_refused_rather_than_the_filters_ignored(tmp_path):
     """Found in review: beside `--id`, `--strategy`/`--kind`/`--accounting`/`--before`
     were silently ignored, so `--id X --strategy other` quarantined X anyway."""
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     journal = tmp_path / "journal.jsonl"
     real = journal_trial(
@@ -769,7 +769,7 @@ def test_ids_that_are_all_typos_select_nothing_rather_than_the_whole_store(tmp_p
     """Found in review: when no typed id resolved, the empty id list read as "no ids, no
     filters", so the report said every trial in the store would be quarantined. Only
     the unmatched-id guard stood between that and a whole-store quarantine."""
-    from tradeflow.services.maintenance import mark_contaminated
+    from quantred.services.maintenance import mark_contaminated
 
     journal = tmp_path / "journal.jsonl"
     for fast in (5, 6, 7):

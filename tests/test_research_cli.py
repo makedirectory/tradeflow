@@ -8,15 +8,15 @@ import json
 
 import pytest
 
+from quantred import cli
+from quantred.marketdata.client import MarketDataClient
+from quantred.research.proposer import Proposal
+from quantred.research.provider_errors import ModelProviderError
+from quantred.services import audit
+from quantred.services import data as data_mod
 from tests.fakes import FakeMarketData
 from tests.test_research import _isolate  # noqa: F401 - registers the test strategy
 from tests.test_research_rounds import ScriptedClient, ScriptedProposer
-from tradeflow import cli
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.research.proposer import Proposal
-from tradeflow.research.provider_errors import ModelProviderError
-from tradeflow.services import audit
-from tradeflow.services import data as data_mod
 
 _ARGV = [
     "research",
@@ -36,7 +36,7 @@ _ARGV = [
 
 
 def _run(monkeypatch, tmp_path, capsys, replies, extra=()):
-    from tradeflow.research import proposer as proposer_mod
+    from quantred.research import proposer as proposer_mod
 
     monkeypatch.setattr(audit, "default_trial_journal", lambda: tmp_path / "journal.jsonl")
     monkeypatch.setattr(
@@ -98,7 +98,7 @@ def test_a_second_session_over_the_same_holdout_is_warned_about(monkeypatch, tmp
     first, _ = _run(monkeypatch, tmp_path, capsys, [_reply({"buy_every": 5})])
     assert "WARNING" not in first
     # The shortlist is what gets scored, so use the relaxed gates by writing a scored look.
-    from tradeflow.research.agent import prior_holdout_looks
+    from quantred.research.agent import prior_holdout_looks
 
     journal = tmp_path / "journal.jsonl"
     start = json.loads(journal.read_text().splitlines()[0])["inputs"]
@@ -135,7 +135,7 @@ def test_a_holdout_longer_than_the_range_is_a_clean_refusal(monkeypatch, tmp_pat
 
 
 def _run_via_main(monkeypatch, tmp_path, extra):
-    from tradeflow.research import proposer as proposer_mod
+    from quantred.research import proposer as proposer_mod
 
     monkeypatch.setattr(audit, "default_trial_journal", lambda: tmp_path / "journal.jsonl")
     monkeypatch.setattr(
@@ -175,7 +175,7 @@ def test_a_failure_mid_session_says_what_it_left_behind():
 
 
 def test_retries_are_announced_while_they_happen(monkeypatch):
-    from tradeflow.research import llm
+    from quantred.research import llm
 
     seen = []
 
@@ -226,7 +226,7 @@ def test_demo_agent_with_no_journal_adds_nothing_to_the_real_journal(monkeypatch
         lambda *a, **k: MarketDataClient(FakeMarketData(["AAA", "BBB"], n=600, freq="1D")),
     )
     monkeypatch.setattr(
-        "tradeflow.research.demo_proposals.DEMO_PROPOSALS",
+        "quantred.research.demo_proposals.DEMO_PROPOSALS",
         [Proposal(hypothesis="cycle", kind="tune", strategy="periodic", params={"buy_every": 5})],
     )
     args = cli.parse_cli(

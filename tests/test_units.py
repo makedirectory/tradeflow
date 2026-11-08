@@ -4,10 +4,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from tradeflow.analytics import metrics
-from tradeflow.marketdata.timeframe import DAY, HOUR, MINUTE, Timeframe
-from tradeflow.optimization.param_space import ParameterSpace
-from tradeflow.utils import numeric
+from quantred.analytics import metrics
+from quantred.marketdata.timeframe import DAY, HOUR, MINUTE, Timeframe
+from quantred.optimization.param_space import ParameterSpace
+from quantred.utils import numeric
 
 
 # --- timeframe --------------------------------------------------------------
@@ -151,7 +151,7 @@ def test_new_primitives_handle_degenerate_input():
 
 # --- beta -------------------------------------------------------------------
 def test_beta_of_amplified_benchmark():
-    from tradeflow.indicators.indicators import calculate_beta
+    from quantred.indicators.indicators import calculate_beta
 
     rng = np.random.default_rng(0)
     benchmark_ret = rng.normal(0, 0.01, 300)
@@ -161,7 +161,7 @@ def test_beta_of_amplified_benchmark():
 
 
 def test_beta_neutral_on_degenerate_input():
-    from tradeflow.indicators.indicators import calculate_beta
+    from quantred.indicators.indicators import calculate_beta
 
     flat = pd.Series([100.0] * 10)
     assert calculate_beta(flat, flat) == 1.0  # flat benchmark -> neutral
@@ -207,7 +207,7 @@ def test_a_losing_run_has_a_negative_calmar_and_sterling():
     """Both took the magnitude of the whole ratio, so CAGR -4.1% over a 5.5% drawdown
     reported a Calmar of +0.74 - a losing run reading as a rewarded one. Either sign
     convention for the drawdown gives the same answer."""
-    from tradeflow.analytics import metrics as m
+    from quantred.analytics import metrics as m
 
     for drawdown in (0.055, -0.055):
         assert m.calmar_ratio(-0.041, drawdown) == pytest.approx(-0.041 / 0.055)
@@ -218,7 +218,7 @@ def test_a_losing_run_has_a_negative_calmar_and_sterling():
 def test_value_at_risk_is_a_loss_and_never_a_gain_reported_as_one():
     """Both took the magnitude of the tail percentile, so a series whose worst 5% was
     still a 0.2% gain reported a 0.2% VaR - a gain read as a loss."""
-    from tradeflow.analytics import metrics as m
+    from quantred.analytics import metrics as m
 
     gains = pd.Series([0.002, 0.003, 0.004, 0.005] * 25)
     assert m.value_at_risk(gains, 0.95) == 0.0

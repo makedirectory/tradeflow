@@ -13,11 +13,11 @@ from datetime import datetime, timedelta, timezone  # noqa: E402
 
 import pandas as pd  # noqa: E402
 
+from quantred.data.store import ParquetBarStore  # noqa: E402
+from quantred.marketdata.base import MarketDataProvider  # noqa: E402
+from quantred.marketdata.timeframe import Timeframe  # noqa: E402
+from quantred.store.bars import BarCoverage, CachedMarketData, CacheMiss  # noqa: E402
 from tests.fakes import make_ohlcv  # noqa: E402
-from tradeflow.data.store import ParquetBarStore  # noqa: E402
-from tradeflow.marketdata.base import MarketDataProvider  # noqa: E402
-from tradeflow.marketdata.timeframe import Timeframe  # noqa: E402
-from tradeflow.store.bars import BarCoverage, CachedMarketData, CacheMiss  # noqa: E402
 
 SYMBOLS = ["AAA", "BBB"]
 
@@ -147,7 +147,7 @@ def test_the_miss_names_the_warm_command_of_the_copy_that_is_running(
     tmp_path, monkeypatch, checkout, expected, absent
 ):
     """An installed copy has no main.py, so telling its user to run it is a dead end."""
-    from tradeflow import settings
+    from quantred import settings
 
     monkeypatch.setattr(settings, "running_from_checkout", lambda: checkout)
     cached, upstream = _cache(tmp_path, offline=True)
@@ -165,7 +165,7 @@ def test_one_miss_names_every_missing_symbol_and_a_warm_command_that_fixes_it(tm
     enough for the same offline request to succeed."""
     import re
 
-    from tradeflow.utils.timeutils import parse_market_date
+    from quantred.utils.timeutils import parse_market_date
 
     cached, upstream = _cache(tmp_path, offline=True)
     start, end = _full_window(upstream)
@@ -193,7 +193,7 @@ def _warm_from(miss, cache_dir, symbols=SYMBOLS):
     """Run the warm command a miss printed, the way a user would."""
     import re
 
-    from tradeflow.utils.timeutils import parse_market_date
+    from quantred.utils.timeutils import parse_market_date
 
     command = re.search(r"`[^`]*cache warm ([^`]*)`", str(miss)).group(1)
     flags = dict(re.findall(r"--(\w+) (\S+)", command))
@@ -209,7 +209,7 @@ def _warm_from(miss, cache_dir, symbols=SYMBOLS):
 
 
 def _run_window():
-    from tradeflow.utils.timeutils import parse_market_date
+    from quantred.utils.timeutils import parse_market_date
 
     return parse_market_date("2024-03-01"), parse_market_date("2024-12-31")
 
@@ -219,8 +219,8 @@ def test_a_scan_first_command_needs_one_warm_not_two(tmp_path):
     was warmed did it miss again on its own window: two rounds for one command. When the
     scan cannot run, the miss covers the scan and the run for every candidate, so running
     the printed command once is enough for both reads."""
-    from tradeflow.marketdata.client import MarketDataClient
-    from tradeflow.services.data import resolve_universe
+    from quantred.marketdata.client import MarketDataClient
+    from quantred.services.data import resolve_universe
 
     start, end = _run_window()
     cached, _ = _cache(tmp_path, offline=True)
@@ -249,8 +249,8 @@ def test_a_run_on_another_timeframe_is_left_to_its_own_miss(tmp_path):
     """One warm command takes one timeframe, so the run's read on a different timeframe
     from the scanner's cannot join the scan's miss; it must not be claimed in its
     explanation either."""
-    from tradeflow.marketdata.client import MarketDataClient
-    from tradeflow.services.data import resolve_universe
+    from quantred.marketdata.client import MarketDataClient
+    from quantred.services.data import resolve_universe
 
     start, end = _run_window()
     cached, _ = _cache(tmp_path, offline=True)
@@ -270,9 +270,9 @@ def test_a_run_on_another_timeframe_is_left_to_its_own_miss(tmp_path):
 def test_a_runnable_scan_is_not_widened_to_every_candidate(tmp_path):
     """Once the scan can run, the names it keeps are checked on their own: asking for every
     candidate over the run window would warm names the scanner then drops."""
-    from tradeflow.marketdata.client import MarketDataClient
-    from tradeflow.scanners.symbol_scanner import SymbolScanner
-    from tradeflow.services.data import resolve_universe
+    from quantred.marketdata.client import MarketDataClient
+    from quantred.scanners.symbol_scanner import SymbolScanner
+    from quantred.services.data import resolve_universe
 
     start, end = _run_window()
     online, _ = _cache(tmp_path)
@@ -292,8 +292,8 @@ def test_a_runnable_scan_is_not_widened_to_every_candidate(tmp_path):
 
 def _offline_command(monkeypatch, cache_dir, argv):
     """Run a CLI command offline against a cache dir, returning its miss or None."""
-    from tradeflow import cli
-    from tradeflow.marketdata.client import MarketDataClient
+    from quantred import cli
+    from quantred.marketdata.client import MarketDataClient
 
     cached = CachedMarketData(WindowedFakeProvider([*SYMBOLS, "SPY"]), cache_dir=cache_dir, offline=True)
     monkeypatch.setattr(cli, "build_research_data", lambda **kw: MarketDataClient(cached))
@@ -353,7 +353,7 @@ def test_beta_sizing_lookback_joins_the_first_miss_and_only_with_the_flag(tmp_pa
     first printed command covered only [start, end] and the rerun missed again. The miss
     now reaches back by the sizer's own lookback; without the flag it asks for nothing
     extra."""
-    from tradeflow.services.sizing import beta_read
+    from quantred.services.sizing import beta_read
 
     plain = ["backtest", "--strategy", "demo_trend", "--scanner", "none", *_WINDOW]
     miss = _offline_command(monkeypatch, tmp_path / "plain", plain)
@@ -369,7 +369,7 @@ def test_beta_sizing_lookback_joins_the_first_miss_and_only_with_the_flag(tmp_pa
 def test_a_cached_window_is_not_widened_for_reads_that_may_not_happen(tmp_path, monkeypatch):
     """With [start, end] cached the run may be a memo that reads nothing more, so the up-front
     check asks for nothing extra; the validation's own fetch names what it lacks."""
-    from tradeflow.utils.timeutils import parse_market_date
+    from quantred.utils.timeutils import parse_market_date
 
     online, _ = _cache(tmp_path)
     online.warm(SYMBOLS, "1Day", parse_market_date("2024-03-01"), parse_market_date("2024-12-31"))
@@ -425,7 +425,7 @@ def test_a_miss_in_a_custom_cache_directory_warms_that_directory(tmp_path):
 def test_a_miss_in_the_default_cache_directory_does_not_name_it(tmp_path, monkeypatch):
     """The other direction: the default needs no flag, and naming the path would put a
     machine-specific directory into a command meant to be copied."""
-    from tradeflow.store import bars
+    from quantred.store import bars
 
     monkeypatch.setattr(bars, "DEFAULT_CACHE_ROOT", tmp_path / "bars")
     cached, upstream = _cache(tmp_path, offline=True)
@@ -440,8 +440,8 @@ def test_the_date_note_appears_only_for_the_gap_the_date_change_left(tmp_path):
     midnight where the same date now means New York midnight. It was printed beside every
     miss — six times in one verdict — and then beside any miss on a symbol with any
     coverage at all, so warming one month and asking for another blamed the dates."""
-    from tradeflow.store.bars import DATE_CONTRACT_NOTICE
-    from tradeflow.utils.timeutils import parse_market_date
+    from quantred.store.bars import DATE_CONTRACT_NOTICE
+    from quantred.utils.timeutils import parse_market_date
 
     start, end = parse_market_date("2024-03-01"), parse_market_date("2024-06-03")
 
@@ -640,9 +640,9 @@ def test_a_cached_run_over_the_cli_and_over_the_service_is_one_trial(monkeypatch
     (`mcp --offline`) the same backtest over the two surfaces could never match - two
     journaled trials, the family count inflated, the memo never served. Builds the run
     both ways against one cache and requires a single trial."""
-    from tradeflow import cli
-    from tradeflow.marketdata.client import MarketDataClient
-    from tradeflow.services import analysis, audit
+    from quantred import cli
+    from quantred.marketdata.client import MarketDataClient
+    from quantred.services import analysis, audit
 
     journal = tmp_path / "journal.jsonl"
     monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", journal)

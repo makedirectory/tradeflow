@@ -11,13 +11,13 @@ from typing import Any, ClassVar, Dict
 import pandas as pd
 import pytest
 
+from quantred.marketdata.client import MarketDataClient
+from quantred.optimization import config_store
+from quantred.optimization.walk_forward import WalkForwardValidator, _filter_trades_from
+from quantred.strategies import signals
+from quantred.strategies.base import Strategy
+from quantred.utils.timeutils import NEW_YORK
 from tests.fakes import FakeMarketData
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.optimization import config_store
-from tradeflow.optimization.walk_forward import WalkForwardValidator, _filter_trades_from
-from tradeflow.strategies import signals
-from tradeflow.strategies.base import Strategy
-from tradeflow.utils.timeutils import NEW_YORK
 
 SYMBOLS = ["AAA", "BBB"]
 START, END = datetime(2024, 1, 2), datetime(2025, 6, 1)
@@ -194,7 +194,7 @@ def test_cost_model_reaches_both_in_sample_and_out_of_sample_backtests():
     gross returns and then score it net - flattering walk-forward efficiency for
     a purely mechanical reason.
     """
-    from tradeflow.costs import ParametricCostModel
+    from quantred.costs import ParametricCostModel
 
     client = MarketDataClient(FakeMarketData(["AAA", "BBB"], n=600, freq="1D"))
     kwargs = dict(
@@ -222,7 +222,7 @@ def test_cost_model_reaches_both_in_sample_and_out_of_sample_backtests():
 
 def test_provenance_stamps_the_accounting_model(tmp_path):
     """Saved metrics record which engine accounting produced them."""
-    from tradeflow.engine.backtest import ACCOUNTING_VERSION
+    from quantred.engine.backtest import ACCOUNTING_VERSION
 
     provenance = config_store.build_provenance(
         method="grid", objective="sharpe_ratio", windows={}, oos_metrics={"sharpe_ratio": 1.0}
@@ -270,7 +270,7 @@ def test_git_sha_marks_a_dirty_working_tree(monkeypatch):
 
     def fake_run(cmd, **kwargs):
         if "status" in cmd:
-            return subprocess.CompletedProcess(cmd, 0, stdout=" M tradeflow/strategies/base.py\n", stderr="")
+            return subprocess.CompletedProcess(cmd, 0, stdout=" M quantred/strategies/base.py\n", stderr="")
         return subprocess.CompletedProcess(cmd, 0, stdout="abc1234\n", stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -310,7 +310,7 @@ def test_an_unevaluated_prerequisite_is_never_a_pass():
     unknown as green is how a candidate gets promoted on evidence that was never
     gathered.
     """
-    from tradeflow.analytics.performance import promotion_prerequisites
+    from quantred.analytics.performance import promotion_prerequisites
 
     prereq = promotion_prerequisites()
 
@@ -322,7 +322,7 @@ def test_an_unevaluated_prerequisite_is_never_a_pass():
 def test_a_family_of_two_is_reported_as_too_thin_rather_than_significant():
     """Observed in a real run: K=2, p=0.002 - a striking p-value over a family so small
     the test is arithmetic rather than evidence. It must not gate on that."""
-    from tradeflow.analytics.performance import promotion_prerequisites
+    from quantred.analytics.performance import promotion_prerequisites
 
     prereq = promotion_prerequisites(
         bootstrap={"family": {"available": True, "family_p": 0.002, "n_used": 2}}
@@ -336,7 +336,7 @@ def test_a_family_of_two_is_reported_as_too_thin_rather_than_significant():
 
 def test_a_family_large_enough_is_gated_on_its_p_value():
     """And once there is enough family, both directions bite."""
-    from tradeflow.analytics.performance import promotion_prerequisites
+    from quantred.analytics.performance import promotion_prerequisites
 
     strong = promotion_prerequisites(
         bootstrap={"family": {"available": True, "family_p": 0.002, "n_used": 12}}
@@ -349,7 +349,7 @@ def test_a_family_large_enough_is_gated_on_its_p_value():
 
 
 def test_cost_stress_must_clear_three_times_its_assumed_cost():
-    from tradeflow.analytics.performance import promotion_prerequisites
+    from quantred.analytics.performance import promotion_prerequisites
 
     assert promotion_prerequisites(cost_stress={"survives_to_multiple": 5.0})["ready"] is True
     assert promotion_prerequisites(cost_stress={"survives_to_multiple": 1.0})["ready"] is False
@@ -361,7 +361,7 @@ def test_ready_never_implies_the_unevaluated_checks_would_have_passed():
     `ready` is True because every *evaluated* check passed, and the count has to travel
     with it or it reads as a full clearance.
     """
-    from tradeflow.analytics.performance import promotion_prerequisites
+    from quantred.analytics.performance import promotion_prerequisites
 
     prereq = promotion_prerequisites(
         cost_stress={"survives_to_multiple": 5.0},
@@ -376,8 +376,8 @@ def test_ready_never_implies_the_unevaluated_checks_would_have_passed():
 def test_prerequisites_are_not_the_promotion_gates():
     """`promotable` stays statistical and keeps meaning for every trial already
     recorded; nothing here touches it."""
-    from tradeflow.analytics.performance import DEFAULT_PREREQUISITES
-    from tradeflow.optimization.walk_forward import DEFAULT_GATES
+    from quantred.analytics.performance import DEFAULT_PREREQUISITES
+    from quantred.optimization.walk_forward import DEFAULT_GATES
 
     assert not set(DEFAULT_PREREQUISITES) & set(DEFAULT_GATES)
 
@@ -391,10 +391,10 @@ def test_the_benchmark_check_is_a_median_across_folds():
     """
     from datetime import datetime
 
+    from quantred.marketdata.client import MarketDataClient
+    from quantred.optimization.walk_forward import WalkForwardValidator
+    from quantred.services.registry import STRATEGIES
     from tests.fakes import FakeMarketData
-    from tradeflow.marketdata.client import MarketDataClient
-    from tradeflow.optimization.walk_forward import WalkForwardValidator
-    from tradeflow.services.registry import STRATEGIES
 
     symbols = ["AAA", "BBB"]
     client = MarketDataClient(FakeMarketData([*symbols, "SPY"], n=600, freq="1D"))
@@ -414,10 +414,10 @@ def test_without_a_benchmark_the_folds_say_so_rather_than_scoring_zero():
     distinguished that from a genuine zero."""
     from datetime import datetime
 
+    from quantred.marketdata.client import MarketDataClient
+    from quantred.optimization.walk_forward import WalkForwardValidator
+    from quantred.services.registry import STRATEGIES
     from tests.fakes import FakeMarketData
-    from tradeflow.marketdata.client import MarketDataClient
-    from tradeflow.optimization.walk_forward import WalkForwardValidator
-    from tradeflow.services.registry import STRATEGIES
 
     symbols = ["AAA", "BBB"]
     client = MarketDataClient(FakeMarketData([*symbols, "SPY"], n=600, freq="1D"))
@@ -430,7 +430,7 @@ def test_without_a_benchmark_the_folds_say_so_rather_than_scoring_zero():
 
 
 def test_a_benchmark_relative_prerequisite_needs_a_benchmark():
-    from tradeflow.analytics.performance import promotion_prerequisites
+    from quantred.analytics.performance import promotion_prerequisites
 
     absent = promotion_prerequisites()["checks"]["benchmark_relative"]
     beats = promotion_prerequisites(benchmark_ir=0.134)["checks"]["benchmark_relative"]
@@ -452,9 +452,9 @@ def test_leg_betas_are_kept_per_fold():
     """
     from datetime import datetime
 
+    from quantred.marketdata.client import MarketDataClient
+    from quantred.optimization.walk_forward import WalkForwardValidator
     from tests.fakes import FakeMarketData, LongShortScriptedStrategy
-    from tradeflow.marketdata.client import MarketDataClient
-    from tradeflow.optimization.walk_forward import WalkForwardValidator
 
     symbols = [f"S{i}" for i in range(6)]
     client = MarketDataClient(FakeMarketData([*symbols, "SPY"], n=700, freq="1D"))
@@ -480,10 +480,10 @@ def test_a_long_only_walk_forward_reports_no_leg_split():
     """Nothing to decompose, so nothing is claimed."""
     from datetime import datetime
 
+    from quantred.marketdata.client import MarketDataClient
+    from quantred.optimization.walk_forward import WalkForwardValidator
+    from quantred.services.registry import STRATEGIES
     from tests.fakes import FakeMarketData
-    from tradeflow.marketdata.client import MarketDataClient
-    from tradeflow.optimization.walk_forward import WalkForwardValidator
-    from tradeflow.services.registry import STRATEGIES
 
     symbols = ["AAA", "BBB"]
     client = MarketDataClient(FakeMarketData([*symbols, "SPY"], n=600, freq="1D"))
@@ -498,10 +498,10 @@ def test_a_long_only_walk_forward_reports_no_leg_split():
 def _benchmarked_run(n_folds=3):
     from datetime import datetime
 
+    from quantred.marketdata.client import MarketDataClient
+    from quantred.optimization.walk_forward import WalkForwardValidator
+    from quantred.services.registry import STRATEGIES
     from tests.fakes import FakeMarketData
-    from tradeflow.marketdata.client import MarketDataClient
-    from tradeflow.optimization.walk_forward import WalkForwardValidator
-    from tradeflow.services.registry import STRATEGIES
 
     symbols = ["AAA", "BBB"]
     client = MarketDataClient(FakeMarketData([*symbols, "SPY"], n=600, freq="1D"))
@@ -528,10 +528,10 @@ def test_without_a_benchmark_excess_is_unmeasured_rather_than_zero():
     evidence."""
     from datetime import datetime
 
+    from quantred.marketdata.client import MarketDataClient
+    from quantred.optimization.walk_forward import WalkForwardValidator
+    from quantred.services.registry import STRATEGIES
     from tests.fakes import FakeMarketData
-    from tradeflow.marketdata.client import MarketDataClient
-    from tradeflow.optimization.walk_forward import WalkForwardValidator
-    from tradeflow.services.registry import STRATEGIES
 
     symbols = ["AAA", "BBB"]
     client = MarketDataClient(FakeMarketData([*symbols, "SPY"], n=600, freq="1D"))
@@ -545,7 +545,7 @@ def test_without_a_benchmark_excess_is_unmeasured_rather_than_zero():
 
 def test_excess_and_ratio_are_separate_prerequisites():
     """Passing one says nothing about the other, so they are two checks."""
-    from tradeflow.analytics.performance import promotion_prerequisites
+    from quantred.analytics.performance import promotion_prerequisites
 
     # Good ratio, losing to the benchmark outright.
     mixed = promotion_prerequisites(benchmark_ir=0.8, benchmark_excess_pct=-3.0)
@@ -560,7 +560,7 @@ def test_fold_disagreement_is_reported_beside_the_median_that_hides_it(capsys):
     failure hides: an observed run gave +0.25%, -2.02% and +3.18% - a positive median
     over a five-point spread, and only one of those two numbers makes anyone look
     closer."""
-    from tradeflow.cli import _print_fold_disagreement
+    from quantred.cli import _print_fold_disagreement
 
     result = _benchmarked_run()
     _print_fold_disagreement(result)
@@ -576,7 +576,7 @@ def test_fold_disagreement_is_reported_beside_the_median_that_hides_it(capsys):
 def test_disagreement_is_reported_not_gated():
     """The median already gates. Nobody yet knows what "too much disagreement" is worth
     failing a candidate over, so it is exposed rather than thresholded."""
-    from tradeflow.analytics.performance import DEFAULT_PREREQUISITES
+    from quantred.analytics.performance import DEFAULT_PREREQUISITES
 
     assert not [name for name in DEFAULT_PREREQUISITES if "spread" in name or "disagree" in name]
 
@@ -587,7 +587,7 @@ def test_a_leg_that_missed_a_fold_holds_its_place():
     prints them as aligned columns, so one fold's short beta was rendered under another
     fold's heading — a per-fold diagnostic that cannot say which fold.
     """
-    from tradeflow.optimization.walk_forward import WalkForwardResult
+    from quantred.optimization.walk_forward import WalkForwardResult
 
     class Fold:
         def __init__(self, legs):
@@ -614,7 +614,7 @@ def test_gate_values_render_in_their_own_units():
     README commits verbatim. `leakage_probe` carries a *boolean*, which the same
     format rendered as `1.00`, a pass indistinguishable from a ratio.
     """
-    from tradeflow.optimization.walk_forward import format_gate_value
+    from quantred.optimization.walk_forward import format_gate_value
 
     assert format_gate_value("oos_sharpe", 1.2345) == "1.23"
     assert format_gate_value("min_oos_trades", 25.0) == "25"
@@ -630,7 +630,7 @@ def test_gate_values_survive_a_gate_that_recorded_no_verdict():
     NoneType.__format__` — inside a demo block whose sibling loop is explicitly
     wrapped so the demo "should never hard-crash".
     """
-    from tradeflow.optimization.walk_forward import format_gate_value
+    from quantred.optimization.walk_forward import format_gate_value
 
     assert format_gate_value("leakage_probe", None) == "n/a"
     # `oos_drawdown_vs_is` gets an infinite threshold when in-sample drawdown is 0.
@@ -645,7 +645,7 @@ def test_every_gate_a_report_produces_can_be_rendered():
     Asserting the formatter against a hand-written list of names proves nothing
     about the gates that actually exist; this walks a real report.
     """
-    from tradeflow.optimization.walk_forward import format_gate_value
+    from quantred.optimization.walk_forward import format_gate_value
 
     result = _validator().run(
         SYMBOLS, START, END, mode="anchored", n_folds=3, method="grid", objective="sharpe_ratio"
@@ -669,14 +669,14 @@ def test_a_tiny_deflated_sharpe_is_small_not_zero_and_reads_alike_everywhere():
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    from tradeflow.analytics import charts, htmlreport
-    from tradeflow.analytics.reporting import (
+    from quantred.analytics import charts, htmlreport
+    from quantred.analytics.reporting import (
         format_backtest_report,
         format_trial_detail,
         format_trials_table,
     )
-    from tradeflow.cli import _dsr_text
-    from tradeflow.optimization.walk_forward import format_gate_value
+    from quantred.cli import _dsr_text
+    from quantred.optimization.walk_forward import format_gate_value
 
     assert format_gate_value("deflated_sharpe", 4.4e-4) == "<0.001"
     assert format_gate_value("deflated_sharpe", 0.9996) == ">0.999"
@@ -719,7 +719,7 @@ def test_verdict_gates_keep_their_precision_on_the_chart():
     """Found in review: routing the chart through the unit table printed every unlisted gate
     with two decimals, so a passing expected return of 0.0035 read ``0.00 / 0.00`` and a
     sample size read ``24.00``, while the terminal printed ``0.0035`` and ``24``."""
-    from tradeflow.optimization.walk_forward import format_gate_value
+    from quantred.optimization.walk_forward import format_gate_value
 
     assert format_gate_value("net_of_cost_alpha", 0.0035) == "0.0035"
     assert format_gate_value("net_of_cost_alpha", 0.0) == "0"
@@ -731,7 +731,7 @@ def test_the_trial_listing_shows_recorded_time_in_the_zone_the_filter_reads():
     """Found in review: ``--until 2026-11-06`` correctly returned a trial recorded at 22:00
     New York, and the listing printed its UTC text, ``2026-11-07T03:00:00`` — a row that
     looked like a filter bug."""
-    from tradeflow.analytics.reporting import format_trials_table
+    from quantred.analytics.reporting import format_trials_table
 
     listing = format_trials_table([{"id": "t1", "kind": "backtest", "ts": "2026-11-07T03:00:00.5+00:00"}])
     assert "2026-11-06 22:00:00 EST" in listing
@@ -741,7 +741,7 @@ def test_the_trial_listing_shows_recorded_time_in_the_zone_the_filter_reads():
 def test_a_reused_walk_forward_shows_unrecorded_metrics_as_unrecorded(capsys):
     """The reused line printed `or 0` for every field, so a trial that never stored a Sharpe
     read as one that scored 0.000 — absent rendered as zero."""
-    from tradeflow.cli import _print_cached_walkforward
+    from quantred.cli import _print_cached_walkforward
 
     _print_cached_walkforward(
         {"oos_sharpe": None, "oos_max_dd": None, "oos_profit_factor": None, "oos_trades": None}

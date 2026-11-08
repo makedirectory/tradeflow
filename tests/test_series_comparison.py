@@ -10,8 +10,8 @@ from datetime import datetime, timedelta
 import numpy as np
 import pytest
 
-from tradeflow.analytics.reporting import format_series_comparison
-from tradeflow.analytics.series_comparison import (
+from quantred.analytics.reporting import format_series_comparison
+from quantred.analytics.series_comparison import (
     COMPARED,
     MIN_OVERLAP,
     REFUSED,
@@ -239,7 +239,7 @@ def test_a_near_duplicate_pair_does_get_the_verdict():
 
 # --- the store accessor -------------------------------------------------------------
 def test_a_trial_with_no_stored_series_reads_as_none_not_as_empty(tmp_path):
-    from tradeflow.store.trials import TrialStore
+    from quantred.store.trials import TrialStore
 
     with TrialStore(tmp_path / "trials.db", journal_path=tmp_path / "j.jsonl") as store:
         assert store.returns_for("nothing-here") is None
@@ -257,7 +257,7 @@ def test_a_series_whose_dates_and_values_disagree_is_refused_rather_than_truncat
     series is the guess this must not make."""
     import json
 
-    from tradeflow.store.trials import TrialStore
+    from quantred.store.trials import TrialStore
 
     with TrialStore(tmp_path / "trials.db", journal_path=tmp_path / "j.jsonl") as store:
         store._conn.execute(

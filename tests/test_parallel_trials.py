@@ -12,13 +12,13 @@ from datetime import datetime
 
 import pytest
 
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.marketdata.synthetic import SyntheticMarketData
-from tradeflow.optimization import parallel
-from tradeflow.optimization.optimizer import ParameterOptimizer
-from tradeflow.optimization.parallel import DataSpec, EvalRequest, candidate_key, resolve_workers, run_pool
-from tradeflow.services import analysis, audit
-from tradeflow.services.registry import STRATEGIES
+from quantred.marketdata.client import MarketDataClient
+from quantred.marketdata.synthetic import SyntheticMarketData
+from quantred.optimization import parallel
+from quantred.optimization.optimizer import ParameterOptimizer
+from quantred.optimization.parallel import DataSpec, EvalRequest, candidate_key, resolve_workers, run_pool
+from quantred.services import analysis, audit
+from quantred.services.registry import STRATEGIES
 
 SYMBOLS = ["AAA", "BBB"]
 START, END = datetime(2024, 1, 2), datetime(2024, 9, 1)
@@ -108,7 +108,7 @@ def test_a_candidates_seed_comes_from_its_identity_not_its_position():
 def test_identity_matches_the_stores_own_definition():
     """A second definition of "the same candidate" would eventually disagree with
     the store, and the disagreement would show up as a miscounted campaign."""
-    from tradeflow.store.trials import params_hash, universe_hash
+    from quantred.store.trials import params_hash, universe_hash
 
     params = {"fast_ema_period": 10}
     key = candidate_key(STRATEGY, params, SYMBOLS, START, END)
@@ -206,7 +206,7 @@ def test_a_request_is_picklable_with_nothing_live_inside_it():
 def test_a_cost_model_round_trips_through_its_spec():
     """Two descriptions of one cost model would drift, and the drift would show up
     as a parallel run pricing trades differently from the sequential one."""
-    from tradeflow.services.analysis import _build_cost_model as service_build
+    from quantred.services.analysis import _build_cost_model as service_build
 
     # Built the way the service builds the sequential run's model, and compared on
     # every field a worker rebuilds from - not a hand-picked few.

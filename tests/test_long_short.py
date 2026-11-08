@@ -17,10 +17,10 @@ from datetime import datetime
 import numpy as np
 import pytest
 
-from tradeflow.alphas.base import Alpha
-from tradeflow.costs.parametric import ParametricCostModel
-from tradeflow.portfolio.optimizer import CostInputs, MeanVarianceOptimizer
-from tradeflow.risk.base import RiskMatrix
+from quantred.alphas.base import Alpha
+from quantred.costs.parametric import ParametricCostModel
+from quantred.portfolio.optimizer import CostInputs, MeanVarianceOptimizer
+from quantred.risk.base import RiskMatrix
 
 AS_OF = datetime(2024, 6, 1)
 SYMS = ["A", "B", "C", "D"]
@@ -187,7 +187,7 @@ def test_long_only_shows_more_negative_size_exposure_than_long_short():
     size = np.log(caps)
     size = (
         size - size.mean()
-    ) / size.std()  # cross-sectionally standardized, like tradeflow/risk/exposures.py
+    ) / size.std()  # cross-sectionally standardized, like quantred/risk/exposures.py
     alpha = rng.normal(0, 0.05, n)
     chol = rng.normal(0, 0.05, (n, n))
     sigma = chol @ chol.T + np.eye(n) * 0.02
@@ -276,7 +276,7 @@ def test_borrow_rate_override_and_default():
     model = ParametricCostModel(annual_borrow_bps=50.0)
     assert model.borrow_rate(None) == pytest.approx(0.005)
     assert model.borrow_rate(0.10) == pytest.approx(0.10)
-    from tradeflow.costs.base import CostModel, TradeCost
+    from quantred.costs.base import CostModel, TradeCost
 
     class Null(CostModel):
         def cost(self, trade):  # pragma: no cover - trivial

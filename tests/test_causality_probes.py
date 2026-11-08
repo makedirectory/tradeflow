@@ -16,18 +16,18 @@ from datetime import datetime
 import pandas as pd
 import pytest
 
-import tradeflow.engine.backtest as backtest_module
-from tradeflow.engine.backtest import BacktestEngine
-from tradeflow.optimization.causality import (
+import quantred.engine.backtest as backtest_module
+from quantred.engine.backtest import BacktestEngine
+from quantred.optimization.causality import (
     AS_OF,
     INTRA_BAR,
     CausalityProbes,
     probe_as_of_scanner,
     run_causality_probes,
 )
-from tradeflow.strategies import signals
-from tradeflow.strategies.base import Strategy
-from tradeflow.utils.timeutils import NEW_YORK
+from quantred.strategies import signals
+from quantred.strategies.base import Strategy
+from quantred.utils.timeutils import NEW_YORK
 
 _INDEX = pd.date_range("2024-01-02", periods=10, freq="D", tz=NEW_YORK)
 _START, _END = datetime(2024, 1, 2), datetime(2024, 1, 20)
@@ -358,7 +358,7 @@ def test_a_flat_bar_offers_nothing_to_withhold_and_is_not_a_failure():
     """A bar whose high equals its low carries no post-open information, so there is
     nothing to take away — and inventing a perturbation outside the bar's range would
     move the high or low a stop legitimately reads."""
-    from tradeflow.optimization.causality import _perturbed_close
+    from quantred.optimization.causality import _perturbed_close
 
     flat = pd.DataFrame([{"open": 5, "high": 5, "low": 5, "close": 5, "volume": 1}], index=_INDEX[:1])
 

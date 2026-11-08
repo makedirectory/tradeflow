@@ -1,10 +1,10 @@
 ---
 paths:
-  - "tradeflow/analytics/**/*.py"
-  - "tradeflow/services/**/*.py"
-  - "tradeflow/store/**/*.py"
-  - "tradeflow/cli.py"
-  - "tradeflow/mcp/**/*.py"
+  - "quantred/analytics/**/*.py"
+  - "quantred/services/**/*.py"
+  - "quantred/store/**/*.py"
+  - "quantred/cli.py"
+  - "quantred/mcp/**/*.py"
 ---
 
 # Honesty rules for anything the tool reports

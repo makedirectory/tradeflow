@@ -55,7 +55,7 @@ def pytest_sessionstart(session):
 
     # Asked of the real resolver rather than rebuilt from parts, so this cannot drift
     # from where halt state actually lives.
-    from tradeflow.execution.halt import default_halt_path
+    from quantred.execution.halt import default_halt_path
 
     _HALT_PATH = default_halt_path()
 
@@ -66,7 +66,7 @@ def pytest_runtest_teardown(item):
     if _HALT_PATH is None:
         return
 
-    from tradeflow.execution.halt import HaltState
+    from quantred.execution.halt import HaltState
 
     state = HaltState(_HALT_PATH)
     try:

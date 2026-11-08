@@ -10,7 +10,7 @@ rather than that something invalid is caught.
 import numpy as np
 import pytest
 
-from tradeflow.optimization.param_space import ParameterConstraints, ParameterSpace
+from quantred.optimization.param_space import ParameterConstraints, ParameterSpace
 
 _RANGES = {
     "entry_period": {"type": "int", "min": 5, "max": 20, "step": 5, "default": 20},
@@ -147,7 +147,7 @@ def test_a_strategy_rejects_a_config_its_declared_constraints_forbid():
     one. A strategy that restated the comparison in `initialize` gave the sampler
     nothing to introspect, which is the half that matters — a combination a sampler
     draws gets evaluated, and an evaluated combination is a journaled trial."""
-    from tradeflow.strategies.base import Strategy
+    from quantred.strategies.base import Strategy
 
     class _Constrained(Strategy):
         PARAM_RANGES = dict(_RANGES)
@@ -179,7 +179,7 @@ def test_a_strategy_rejects_a_config_its_declared_constraints_forbid():
 def test_the_shipped_strategy_declares_its_ordering_rather_than_restating_it():
     """The demo strategy's fast/slow rule used to live only in `initialize`, where a
     sampler could not see it."""
-    from tradeflow.demo.strategies import DemoTrendStrategy
+    from quantred.demo.strategies import DemoTrendStrategy
 
     assert ("fast_ema_period", "<", "slow_ema_period") in DemoTrendStrategy.PARAM_CONSTRAINTS
     assert ParameterSpace.for_class(DemoTrendStrategy).constraints.describe() == (
@@ -190,10 +190,10 @@ def test_the_shipped_strategy_declares_its_ordering_rather_than_restating_it():
 def test_draft_code_declaring_an_unusable_constraint_gets_a_verdict_not_a_traceback():
     """A validator whose whole job is to answer "is this valid?" must answer it. The
     same contract the malformed-PARAM_RANGES rejection already has."""
-    from tradeflow.research.sandbox import HygieneError, load_strategy_from_code
+    from quantred.research.sandbox import HygieneError, load_strategy_from_code
 
     code = '''
-from tradeflow.strategies.base import Strategy
+from quantred.strategies.base import Strategy
 
 class Draft(Strategy):
     """A draft whose constraint names a parameter it never declared."""

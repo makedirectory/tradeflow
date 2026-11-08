@@ -5,10 +5,10 @@ title: Research agent
 
 # Research agent
 
-`tradeflow/research/` closes the loop: an **offline, self-pacing** agent that, given a
+`quantred/research/` closes the loop: an **offline, self-pacing** agent that, given a
 goal, runs the hypothesis → validate → keep/discard cycle on its own and hands a
 human a shortlist of vetted, provenance-stamped candidate configs. It reuses the
-same `tradeflow/services/` core as the MCP server, so there is one code path.
+same `quantred/services/` core as the MCP server, so there is one code path.
 
 The agent's genuine edge over the GP optimizer is *creativity* — hypotheses and
 (behind a flag) new strategy code. The deterministic pipeline supplies the
@@ -46,7 +46,7 @@ goal ─▶ propose (Proposer) ─▶ hygiene gate ─▶ validate OUT-OF-SAMPLE
    to live, no `PAPER_TRADE` toggle, no order capability reachable.
 6. **Full audit.** Every proposal, trial, and decision is journaled to
    `logs/research_journal.jsonl` and is replayable.
-7. **Sandbox + hygiene.** Generated code and configs pass `tradeflow/research/sandbox.py`
+7. **Sandbox + hygiene.** Generated code and configs pass `quantred/research/sandbox.py`
    before evaluation.
 
 ### What the journal records for a session
@@ -96,7 +96,7 @@ The loop and guardrails are proposer-agnostic. `LLMProposer` drives any
 
 `build_proposer(provider, model)` / `build_llm_client(provider, model)` pick the
 backend. Credentials resolve through the shared settings chain — environment /
-`.env` — via `tradeflow.settings.get_credential`
+`.env` — via `quantred.settings.get_credential`
 (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`; `OLLAMA_BASE_URL` for the local server).
 `FixedProposer` replays a fixed list for deterministic offline tests.
 

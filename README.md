@@ -1,6 +1,6 @@
 # QuantRed
 
-[![CI](https://github.com/makedirectory/tradeflow/actions/workflows/ci.yml/badge.svg)](https://github.com/makedirectory/tradeflow/actions/workflows/ci.yml)
+[![CI](https://github.com/makedirectory/quantred/actions/workflows/ci.yml/badge.svg)](https://github.com/makedirectory/quantred/actions/workflows/ci.yml)
 [![Docs](https://img.shields.io/badge/docs-tradeflow.mk--dir.com-blue)](https://tradeflow.mk-dir.com/)
 
 A small, **layered**, **broker-agnostic** algorithmic-trading **research
@@ -34,7 +34,7 @@ Designed to be easy to try and easy to read:
 
 > ⚠️ Educational software. Trading is risky; use paper trading. No warranty.
 
-![QuantRed demo — an in-sample equity curve that looks tradeable, beside the walk-forward verdict that refuses to promote it](https://raw.githubusercontent.com/makedirectory/tradeflow/main/docs/static/img/demo.png)
+![QuantRed demo — an in-sample equity curve that looks tradeable, beside the walk-forward verdict that refuses to promote it](https://raw.githubusercontent.com/makedirectory/quantred/main/docs/static/img/demo.png)
 
 *`make demo` runs the whole pipeline on synthetic data (no keys, no network) and
 renders this: a strategy that looks profitable in-sample, and the out-of-sample
@@ -324,13 +324,13 @@ and [Extending](https://tradeflow.mk-dir.com/engineering/extending).
 
 ### Using it from your own code
 
-`tradeflow.services.*` is the supported surface — the same JSON-returning functions
+`quantred.services.*` is the supported surface — the same JSON-returning functions
 the CLI renders and the MCP server exposes, so you get identical numbers by
 construction:
 
 ```python
-from tradeflow.services.analysis import run_verdict
-from tradeflow.services.data import build_data_client
+from quantred.services.analysis import run_verdict
+from quantred.services.data import build_data_client
 
 result = run_verdict(build_data_client(), "demo_trend", ["NVDA", "AAPL"], start, end)
 print(result["verdict"]["summary"])

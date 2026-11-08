@@ -10,10 +10,10 @@ from datetime import datetime
 
 import pytest
 
+from quantred.marketdata.client import MarketDataClient
+from quantred.mcp import server as mcp_server
+from quantred.services import analysis, audit
 from tests.fakes import FakeMarketData
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.mcp import server as mcp_server
-from tradeflow.services import analysis, audit
 
 pytest.importorskip("mcp", reason="the MCP surface needs the 'mcp' extra")
 
@@ -76,7 +76,7 @@ def test_a_verdict_with_nothing_dropped_says_so_with_an_empty_list(built):
 
 
 def test_the_terminal_report_names_the_dropped_candidates(built):
-    from tradeflow.analytics.reporting import format_verdict_report
+    from quantred.analytics.reporting import format_verdict_report
 
     result = _call(
         built,
@@ -203,9 +203,9 @@ def test_cost_stress_without_a_book_override_carries_none(monkeypatch):
 
 def test_the_cli_hands_the_configs_book_to_the_evidence(monkeypatch, tmp_path, capsys):
     """Both surfaces call one evidence function; the CLI's call is its own line."""
+    from quantred import cli
     from tests.test_walk_forward_evidence_parity import SYMBOLS as WF_SYMBOLS
     from tests.test_walk_forward_evidence_parity import _client
-    from tradeflow import cli
 
     seen = {}
     real = analysis.walk_forward_evidence
@@ -297,7 +297,7 @@ def test_a_whole_best_point_is_refused_but_its_params_are_confirmable(built, tmp
 
 
 def test_a_screen_range_cannot_widen_past_the_declared_bounds(built):
-    from tradeflow.services.registry import STRATEGIES
+    from quantred.services.registry import STRATEGIES
 
     declared = STRATEGIES["demo_trend"].PARAM_RANGES["fast_ema_period"]
     wider = {"fast_ema_period": {"min": declared["min"], "max": declared["max"] + 80}}
@@ -471,8 +471,8 @@ def test_an_unknown_risk_model_is_refused_before_any_step_runs(built, tmp_path):
 
 
 def test_the_cli_refuses_gross_leverage_without_the_market_neutral_book(monkeypatch):
-    from tradeflow import cli
-    from tradeflow.utils.errors import RunRefused
+    from quantred import cli
+    from quantred.utils.errors import RunRefused
 
     client = MarketDataClient(FakeMarketData([*SYMBOLS, "SPY"], n=600, freq="1D"))
     monkeypatch.setattr(cli, "build_research_data", lambda **kw: client)
@@ -503,8 +503,8 @@ def test_list_trials_refuses_an_unknown_kind_listing_the_valid_ones(built):
 
 
 def test_the_cli_kind_choices_are_the_stores_kinds():
-    from tradeflow import cli
-    from tradeflow.store.trials import TRIAL_KINDS
+    from quantred import cli
+    from quantred.store.trials import TRIAL_KINDS
 
     parser = cli.build_parser()
     listing = parser.parse_args(["trials", "list", "--kind", "verdict"])
@@ -515,7 +515,7 @@ def test_the_cli_kind_choices_are_the_stores_kinds():
 
 
 def test_load_config_describes_the_fields_it_returns(built, tmp_path, monkeypatch):
-    from tradeflow.optimization import config_store
+    from quantred.optimization import config_store
 
     monkeypatch.setattr(config_store, "DEFAULT_CONFIG_DIR", tmp_path / "configs")
     (tmp_path / "configs").mkdir()

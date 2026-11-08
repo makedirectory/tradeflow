@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from tradeflow import settings
+from quantred import settings
 
 #: Built from the real distribution name rather than hand-written. A literal here
 #: kept passing after the distribution was renamed, while checkout detection had
@@ -24,7 +24,7 @@ PYPROJECT = f'name = "{settings.DISTRIBUTION_NAME}"\n'
 
 # --- the entry point --------------------------------------------------------
 def test_the_console_script_target_exists_and_is_callable():
-    from tradeflow.cli import main
+    from quantred.cli import main
 
     assert callable(main)
 
@@ -32,7 +32,7 @@ def test_the_console_script_target_exists_and_is_callable():
 def test_the_checkout_shim_and_the_installed_command_are_the_same_code():
     """Two behaviors reachable two ways is the confusion this is meant to avoid."""
     import main as shim
-    from tradeflow.cli import main as packaged
+    from quantred.cli import main as packaged
 
     assert shim.main is packaged
 
@@ -46,10 +46,10 @@ def test_the_declared_entry_point_matches_reality():
     scripts = manifest["project"]["scripts"]
     # The primary command and the alias are one entry point from one distribution; an
     # alias that pointed anywhere else would be a second program.
-    assert scripts[settings.CLI_NAME] == "tradeflow.cli:main"
+    assert scripts[settings.CLI_NAME] == "quantred.cli:main"
     for legacy in settings.LEGACY_CLI_NAMES:
-        assert scripts[legacy] == "tradeflow.cli:main"
-    assert manifest["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == ["tradeflow"]
+        assert scripts[legacy] == "quantred.cli:main"
+    assert manifest["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == ["quantred"]
 
 
 def test_the_repo_itself_is_recognized_as_a_checkout(monkeypatch):
@@ -134,19 +134,19 @@ def test_the_wheel_installs_both_executables(tmp_path):
         )
     assert name_line == f"Name: {settings.DISTRIBUTION_NAME}"
     for command in (settings.CLI_NAME, *settings.LEGACY_CLI_NAMES):
-        assert f"{command} = tradeflow.cli:main" in scripts
+        assert f"{command} = quantred.cli:main" in scripts
 
 
 def test_the_version_has_exactly_one_source():
     """A packaged version and a printed version that can disagree will."""
     tomllib = pytest.importorskip("tomllib")  # 3.11+; the package still supports 3.10
 
-    import tradeflow
+    import quantred
 
     manifest = tomllib.loads(Path("pyproject.toml").read_text())
     assert "version" in manifest["project"].get("dynamic", []), "version must be dynamic"
-    assert manifest["tool"]["hatch"]["version"]["path"] == "tradeflow/__init__.py"
-    assert tradeflow.__version__
+    assert manifest["tool"]["hatch"]["version"]["path"] == "quantred/__init__.py"
+    assert quantred.__version__
 
 
 def test_help_exits_clean_through_the_shim():
@@ -171,8 +171,8 @@ def test_version_reports_which_copy_is_running_and_where_its_state_is():
 def test_the_package_root_imports_nothing_heavy():
     """`tradeflow --help` must not pay for pandas, the vendor SDK, or an optional
     extra it is not using."""
-    source = Path("tradeflow/__init__.py").read_text()
-    for heavy in ("import pandas", "import numpy", "from tradeflow.", "import alpaca"):
+    source = Path("quantred/__init__.py").read_text()
+    for heavy in ("import pandas", "import numpy", "from quantred.", "import alpaca"):
         assert heavy not in source
 
 
@@ -228,11 +228,11 @@ def test_state_path_creates_its_parent(tmp_path, monkeypatch):
 def test_every_kind_of_state_lands_under_one_root():
     """One campaign, one root — the split-journal failure has no error to catch it,
     so the only defense is that nothing resolves its own path."""
-    from tradeflow.optimization.config_store import DEFAULT_CONFIG_DIR
-    from tradeflow.services.analysis import ARTIFACT_DIR
-    from tradeflow.services.audit import DEFAULT_AUDIT_PATH, DEFAULT_TRIAL_JOURNAL
-    from tradeflow.store.bars import DEFAULT_CACHE_ROOT, DEFAULT_COVERAGE_DB
-    from tradeflow.store.trials import DEFAULT_DB_PATH, DEFAULT_JOURNAL_PATH
+    from quantred.optimization.config_store import DEFAULT_CONFIG_DIR
+    from quantred.services.analysis import ARTIFACT_DIR
+    from quantred.services.audit import DEFAULT_AUDIT_PATH, DEFAULT_TRIAL_JOURNAL
+    from quantred.store.bars import DEFAULT_CACHE_ROOT, DEFAULT_COVERAGE_DB
+    from quantred.store.trials import DEFAULT_DB_PATH, DEFAULT_JOURNAL_PATH
 
     root = settings.state_root()
     for path in (
@@ -253,8 +253,8 @@ def test_every_kind_of_state_lands_under_one_root():
 def test_the_journal_and_the_trial_store_agree_on_where_the_journal_is():
     """Two modules naming the same file separately is how a campaign silently
     becomes two campaigns."""
-    from tradeflow.services.audit import DEFAULT_TRIAL_JOURNAL
-    from tradeflow.store.trials import DEFAULT_JOURNAL_PATH
+    from quantred.services.audit import DEFAULT_TRIAL_JOURNAL
+    from quantred.store.trials import DEFAULT_JOURNAL_PATH
 
     assert Path(DEFAULT_TRIAL_JOURNAL) == Path(DEFAULT_JOURNAL_PATH)
 
@@ -331,8 +331,8 @@ def test_the_example_pack_fetch_command_is_the_one_the_docs_show(monkeypatch):
     the directory it copies must be one the repository actually has."""
     import re
 
-    from tradeflow import cli
-    from tradeflow.services import setup
+    from quantred import cli
+    from quantred.services import setup
 
     monkeypatch.setattr(setup, "example_pack_source", lambda: None)
     with pytest.raises(SystemExit) as refused:
@@ -349,8 +349,8 @@ def test_the_example_pack_fetch_command_is_the_one_the_docs_show(monkeypatch):
 
 def test_the_example_pack_fetch_command_follows_a_renamed_repository(monkeypatch):
     """The copied directory is the one the clone creates, whatever the repository is called."""
-    from tradeflow import cli
-    from tradeflow.services import setup
+    from quantred import cli
+    from quantred.services import setup
 
     monkeypatch.setattr(setup, "example_pack_source", lambda: None)
     monkeypatch.setattr(cli, "REPOSITORY_URL", "https://example.invalid/acme/renamed")

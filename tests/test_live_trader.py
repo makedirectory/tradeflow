@@ -4,14 +4,14 @@ from datetime import datetime
 
 import pytest
 
+from quantred.brokers.base import AccountSnapshot, OrderSide, Position
+from quantred.demo.strategies import DemoTrendStrategy
+from quantred.execution import decision as decisions
+from quantred.execution.live_trader import LiveTrader
+from quantred.execution.order_id import client_order_id
+from quantred.execution.sizing import BetaSizer, PortfolioWeightSizer, RiskBasedSizer
+from quantred.strategies import signals
 from tests.fakes import FakeBroker
-from tradeflow.brokers.base import AccountSnapshot, OrderSide, Position
-from tradeflow.demo.strategies import DemoTrendStrategy
-from tradeflow.execution import decision as decisions
-from tradeflow.execution.live_trader import LiveTrader
-from tradeflow.execution.order_id import client_order_id
-from tradeflow.execution.sizing import BetaSizer, PortfolioWeightSizer, RiskBasedSizer
-from tradeflow.strategies import signals
 
 
 def _trader(broker, sizer=None):
@@ -301,7 +301,7 @@ def test_a_declined_decision_is_written_to_the_ledger(tmp_path):
     """The case that leaves no other trace is exactly the one worth recording."""
     import json
 
-    from tradeflow.execution.ledger import PositionLedger
+    from quantred.execution.ledger import PositionLedger
 
     ledger = PositionLedger(tmp_path / "ledger.jsonl")
     broker = FakeBroker(positions=[_open_position()])
@@ -316,7 +316,7 @@ def test_a_declined_decision_is_written_to_the_ledger(tmp_path):
 
 def test_a_recorded_decision_carries_no_position_meaning(tmp_path):
     """It is an explanation, not a fill — it must not move the expected book."""
-    from tradeflow.execution.ledger import PositionLedger
+    from quantred.execution.ledger import PositionLedger
 
     ledger = PositionLedger(tmp_path / "ledger.jsonl")
     ledger.record_fill("AAA", "buy", 10.0)
@@ -510,8 +510,8 @@ def test_two_halts_are_one_refusal_family_not_two(tmp_path):
     Driven through `handle_signal` and summarised by the report a reader actually sees,
     rather than asserting the code on the decision: the code exists to make the grouping
     right, so the grouping is what has to be checked."""
-    from tradeflow.analytics.execution_quality import decline_summary
-    from tradeflow.execution.halt import HaltState
+    from quantred.analytics.execution_quality import decline_summary
+    from quantred.execution.halt import HaltState
 
     halts = HaltState(tmp_path / "halts.json")
     trader = LiveTrader(FakeBroker(), DemoTrendStrategy.create_with_defaults(), halt_state=halts)
@@ -541,8 +541,8 @@ def test_the_recorded_code_and_not_the_message_is_what_groups_a_halt(tmp_path):
 
     Rewriting the message to something no prefix recognises is what separates a row that
     carries its family from one that merely looks familiar today."""
-    from tradeflow.analytics.execution_quality import decline_summary
-    from tradeflow.execution.halt import HaltState
+    from quantred.analytics.execution_quality import decline_summary
+    from quantred.execution.halt import HaltState
 
     halts = HaltState(tmp_path / "halts.json")
     halts.set("drill", actor="cli")
@@ -559,7 +559,7 @@ def test_a_halt_refusal_recorded_before_codes_existed_joins_the_same_family():
     """The ledger is append-only, so every halt already journaled carries the old
     message and no code. A report that grouped only new rows would show one throttle as
     a tidy family beside a scatter of one-off rows saying the same thing."""
-    from tradeflow.analytics.execution_quality import decline_summary
+    from quantred.analytics.execution_quality import decline_summary
 
     legacy = {
         "reason": "halted — [all] first drill (set by cli at 2026-09-01T00:00:00+00:00)",

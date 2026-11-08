@@ -21,7 +21,7 @@ Then work the checklist, and for each item say **met**, **not met**, or **not ch
 never infer one from a passing gate:
 
 - **Layer.** Does the logic sit in the right layer, with dependencies pointing downward
-  and no vendor SDK above `tradeflow/brokers/`?
+  and no vendor SDK above `quantred/brokers/`?
 - **Two clocks.** Does `engine/live.py` or `execution/` import anything from `services/`,
   `analytics/`, `optimization/` or `research/`? Does automation still only propose?
 - **Tests.** Offline and deterministic through `tests/fakes.py`, state at `tmp_path`, and

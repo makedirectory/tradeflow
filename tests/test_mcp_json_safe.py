@@ -10,10 +10,10 @@ import json
 import numpy as np
 import pytest
 
+from quantred.marketdata.client import MarketDataClient
+from quantred.mcp import server as mcp_server
+from quantred.services import analysis, audit
 from tests.fakes import FakeMarketData
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.mcp import server as mcp_server
-from tradeflow.services import analysis, audit
 
 pytest.importorskip("mcp", reason="the MCP surface needs the 'mcp' extra")
 
@@ -67,7 +67,7 @@ def test_an_unknown_cost_stress_axis_is_refused_before_anything_is_journaled(tmp
     monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", tmp_path / "journal.jsonl")
     monkeypatch.setattr(analysis, "ARTIFACT_DIR", tmp_path / "artifacts")
     client = MarketDataClient(FakeMarketData(["AAA", "BBB"], n=500, freq="1D"))
-    from tradeflow.utils.timeutils import parse_market_date as day
+    from quantred.utils.timeutils import parse_market_date as day
 
     with pytest.raises(analysis.RunRefused, match="cost_stress must be one of"):
         analysis.run_walk_forward(
@@ -90,8 +90,8 @@ def test_an_unknown_cost_stress_axis_is_refused_before_anything_is_journaled(tmp
 def test_a_reused_or_draft_walk_forward_says_why_it_has_no_evidence(tmp_path, monkeypatch):
     """Found in review: a reused answer had no `evidence` key at all though the docs said
     null, and a draft's null evidence read as "reused" in the HTML banner."""
-    from tradeflow.analytics.htmlreport import render_html
-    from tradeflow.utils.timeutils import parse_market_date as day
+    from quantred.analytics.htmlreport import render_html
+    from quantred.utils.timeutils import parse_market_date as day
 
     monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", tmp_path / "journal.jsonl")
     monkeypatch.setattr(analysis, "ARTIFACT_DIR", tmp_path / "artifacts")

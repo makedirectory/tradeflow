@@ -9,9 +9,8 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
-from tests.fakes import DictMarketData, make_ohlcv
-from tradeflow.alphas import strategy_scorer
-from tradeflow.alphas.combine import (
+from quantred.alphas import strategy_scorer
+from quantred.alphas.combine import (
     combination_weights,
     combine_scores,
     combined_ic,
@@ -19,10 +18,11 @@ from tradeflow.alphas.combine import (
     measure_signals,
     shrink_ic,
 )
-from tradeflow.data import ClientBarSource
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.services import analysis
-from tradeflow.services.analysis import _strategy
+from quantred.data import ClientBarSource
+from quantred.marketdata.client import MarketDataClient
+from quantred.services import analysis
+from quantred.services.analysis import _strategy
+from tests.fakes import DictMarketData, make_ohlcv
 
 
 # --- two-signal closed form --------------------------------------------------

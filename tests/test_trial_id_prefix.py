@@ -11,11 +11,11 @@ import json
 
 import pytest
 
-from tradeflow.cli import main
-from tradeflow.services import analysis, audit, maintenance
-from tradeflow.services.campaign import campaign_material
-from tradeflow.store import trials as trials_module
-from tradeflow.store.trials import AmbiguousTrialId, TrialStore, db_path_for_journal
+from quantred.cli import main
+from quantred.services import analysis, audit, maintenance
+from quantred.services.campaign import campaign_material
+from quantred.store import trials as trials_module
+from quantred.store.trials import AmbiguousTrialId, TrialStore, db_path_for_journal
 
 AA = "aaaa1111deadbeef"
 AB = "aaaa2222deadbeef"
@@ -87,9 +87,9 @@ def test_cli_and_mcp_resolve_the_same_prefix_the_same_way(journal, monkeypatch, 
     """One resolver behind both transports: the same hit for a unique prefix and the
     same refusal, naming the same candidates, for an ambiguous one."""
     pytest.importorskip("mcp")
+    from quantred.marketdata.client import MarketDataClient
+    from quantred.mcp import server as mcp_server
     from tests.fakes import FakeMarketData
-    from tradeflow.marketdata.client import MarketDataClient
-    from tradeflow.mcp import server as mcp_server
 
     built = mcp_server.build_server(data_client=MarketDataClient(FakeMarketData(["AAA"], n=50, freq="1D")))
 

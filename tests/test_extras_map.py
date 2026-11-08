@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from tradeflow import __version__, cli, settings
-from tradeflow.utils import extras
+from quantred import __version__, cli, settings
+from quantred.utils import extras
 
 PYPROJECT = Path(settings.PROJECT_ROOT) / "pyproject.toml"
 
@@ -288,7 +288,7 @@ def test_nothing_recommends_uv_tool_inject():
     root = settings.PROJECT_ROOT
     needle = "uv tool " + "inject"
     hits = []
-    for base in (root / "tradeflow", root / "docs" / "content"):
+    for base in (root / "quantred", root / "docs" / "content"):
         for path in base.rglob("*"):
             if path.suffix in {".py", ".md", ".mdx"} and needle in path.read_text():
                 hits.append(str(path))
@@ -316,9 +316,9 @@ def _assert_installed_reader_message(text: str):
 def test_no_missing_dependency_message_sends_an_installed_reader_to_a_checkout(monkeypatch, capsys):
     """Drive every guard that reports a missing extra, as an installed copy with all of
     them absent. A guard that still prints its own `uv sync` fails here, whichever one."""
-    from tradeflow.analytics import charts, htmlreport
-    from tradeflow.optimization.optimizer import ParameterOptimizer
-    from tradeflow.portfolio.allocator import PortfolioAllocator
+    from quantred.analytics import charts, htmlreport
+    from quantred.optimization.optimizer import ParameterOptimizer
+    from quantred.portfolio.allocator import PortfolioAllocator
 
     _as_installed_copy(monkeypatch)
     _every_module_missing(monkeypatch)
@@ -336,7 +336,7 @@ def test_no_missing_dependency_message_sends_an_installed_reader_to_a_checkout(m
             cli.cmd_research(cli.parse_cli(["research", "--provider", provider]))
         _assert_installed_reader_message(str(caught.value.code))
 
-    import tradeflow.mcp.server as server
+    import quantred.mcp.server as server
 
     def no_sdk(**_):
         raise ImportError("No module named 'mcp'")
@@ -350,7 +350,7 @@ def test_no_missing_dependency_message_sends_an_installed_reader_to_a_checkout(m
 def test_the_html_placeholder_never_carries_this_machines_install_text(monkeypatch):
     """A report is attached and forwarded. The install command names the installer, the
     version and every pack the reader added with `--with`, so it stays in the terminal."""
-    from tradeflow.analytics import htmlreport
+    from quantred.analytics import htmlreport
 
     monkeypatch.setattr(settings, "running_from_checkout", lambda: False)
     monkeypatch.setattr(extras, "_pack_distributions", lambda: ["acme-signals"])

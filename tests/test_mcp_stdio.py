@@ -23,8 +23,8 @@ import anyio  # noqa: E402
 from mcp import ClientSession, StdioServerParameters  # noqa: E402
 from mcp.client.stdio import stdio_client  # noqa: E402
 
-from tradeflow import cli, settings  # noqa: E402
-from tradeflow.mcp.selftest import DISCLAIMER, default_command  # noqa: E402
+from quantred import cli, settings  # noqa: E402
+from quantred.mcp.selftest import DISCLAIMER, default_command  # noqa: E402
 
 pytestmark = pytest.mark.slow
 
@@ -73,7 +73,7 @@ def test_the_server_announces_the_app_version_not_the_sdks(child_env):
     """`initialize` carries the name and version a client shows beside the server. The
     SDK fills the version in with its own when the server gives none, so the app was
     displayed under a number that belongs to a different package."""
-    import tradeflow
+    import quantred
 
     command = default_command()
 
@@ -87,7 +87,7 @@ def test_the_server_announces_the_app_version_not_the_sdks(child_env):
     info = anyio.run(drive)
 
     assert info.name == settings.MCP_SERVER_NAME
-    assert info.version == tradeflow.__version__
+    assert info.version == quantred.__version__
 
 
 def test_self_test_reports_discovery_and_disclaims_chat_attachment(child_env, capsys):
@@ -111,7 +111,7 @@ def test_a_keyless_pass_says_bar_tools_will_ask_for_keys(child_env, monkeypatch,
     """The server now starts without keys, so a passing self-test no longer implies it
     can fetch bars; a keyless pass that said nothing read as a working setup. With keys,
     or with --offline, there is nothing to say."""
-    from tradeflow.services import setup
+    from quantred.services import setup
 
     monkeypatch.setattr(setup, "credentials_missing", lambda state=None: ["APCA_API_KEY_ID"])
     args = cli.parse_cli(["mcp", "--self-test"])
@@ -129,7 +129,7 @@ def test_self_test_fails_rather_than_pass_on_a_server_with_no_structured_output(
 ):
     """Structured content first exists in mcp 1.10. A client without it hands back no
     rows, and a check that reports `0 strategies` as a pass has verified nothing."""
-    from tradeflow.mcp import selftest
+    from quantred.mcp import selftest
 
     monkeypatch.setattr(selftest, "_rows", lambda result: [])
     args = cli.parse_cli(["mcp", "--self-test"])
@@ -141,7 +141,7 @@ def test_self_test_fails_rather_than_pass_on_a_server_with_no_structured_output(
 
 
 def test_self_test_fails_when_the_builtin_demo_entries_are_missing(child_env, monkeypatch, capsys):
-    from tradeflow.mcp import selftest
+    from quantred.mcp import selftest
 
     monkeypatch.setattr(selftest, "_rows", lambda result: [{"name": "x", "demo": False}])
     args = cli.parse_cli(["mcp", "--self-test"])
@@ -172,7 +172,7 @@ def test_self_test_names_the_step_and_exits_nonzero_when_the_server_cannot_start
     The check must say where it stopped and show what the child printed, and it must
     still carry the disclaimer - a failure is no more a chat connection than a pass.
     """
-    from tradeflow.mcp import selftest
+    from quantred.mcp import selftest
 
     monkeypatch.setattr(
         selftest,
@@ -208,7 +208,7 @@ def test_the_printed_client_config_carries_a_non_default_state_root_and_never_ke
 
 
 def test_a_default_state_root_adds_no_env_block(monkeypatch):
-    from tradeflow.services import setup
+    from quantred.services import setup
 
     monkeypatch.delenv("TRADEFLOW_HOME", raising=False)
     assert "env" not in setup.mcp_client_config()["mcpServers"][settings.MCP_SERVER_NAME]
@@ -218,7 +218,7 @@ def test_self_test_says_so_when_credentials_came_only_from_the_shell(
     child_env, tmp_path, monkeypatch, capsys
 ):
     """The child inherits the shell's exports; a client launching it would not."""
-    from tradeflow.services import setup
+    from quantred.services import setup
 
     monkeypatch.setattr(setup, "ENV_PATH", tmp_path / "absent.env")
     args = cli.parse_cli(["mcp", "--self-test"])

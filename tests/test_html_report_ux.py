@@ -12,10 +12,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from quantred import cli
+from quantred.marketdata.client import MarketDataClient
+from quantred.utils.timeutils import NEW_YORK
 from tests.fakes import DictMarketData
-from tradeflow import cli
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.utils.timeutils import NEW_YORK
 
 SYMBOLS = ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF", "GGG", "HHH"]
 START, END = "2024-01-02", "2025-08-01"
@@ -44,7 +44,7 @@ def _client():
 
 @pytest.fixture(autouse=True)
 def _isolated(tmp_path, monkeypatch):
-    from tradeflow.services import analysis, audit
+    from quantred.services import analysis, audit
 
     monkeypatch.setattr(analysis, "ARTIFACT_DIR", tmp_path / "artifacts")
     monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", tmp_path / "journal.jsonl")
@@ -59,7 +59,7 @@ def _cli(argv, html):
 
 
 def _mcp(tool, arguments):
-    from tradeflow.mcp import server
+    from quantred.mcp import server
 
     built = server.build_server(data_client=_client())
     content = asyncio.run(built.call_tool(tool, arguments))
@@ -157,8 +157,8 @@ def test_the_verdict_report_states_the_assumed_ic_and_scaling_the_terminal_print
 
 
 def test_the_reason_a_universe_is_low_confidence_reaches_the_verdict_report():
-    from tradeflow.analytics.htmlreport import render_html
-    from tradeflow.services import analysis
+    from quantred.analytics.htmlreport import render_html
+    from quantred.services import analysis
 
     result = analysis.run_verdict(
         _client(), "demo_trend", SYMBOLS, cli._date(START), cli._date(END), journal=False
@@ -238,7 +238,7 @@ def test_the_backtest_report_carries_the_pnl_split_when_the_terminal_prints_it(t
 
 
 def test_a_ratio_with_no_benchmark_is_not_measured_rather_than_zero():
-    from tradeflow.analytics.htmlreport import render_html
+    from quantred.analytics.htmlreport import render_html
 
     metrics = {"treynor_ratio": 0.0, "treynor_available": False, "benchmark_available": True, "beta": 0.01}
     result = {"metrics": metrics, "strategy": "s", "symbols": ["AAA"], "window": {}}

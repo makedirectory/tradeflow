@@ -5,8 +5,7 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
-from tests.fakes import DictMarketData, make_ohlcv
-from tradeflow.analytics.information import (
+from quantred.analytics.information import (
     effective_breadth,
     ic_stats,
     ir_standard_error,
@@ -15,8 +14,9 @@ from tradeflow.analytics.information import (
     predicted_ir,
     rank_ic,
 )
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.services import analysis
+from quantred.marketdata.client import MarketDataClient
+from quantred.services import analysis
+from tests.fakes import DictMarketData, make_ohlcv
 
 
 # --- breadth (the headline trap) ---------------------------------------------
@@ -93,7 +93,7 @@ def test_compute_information_zero_skill_null():
 
 # --- attribution -------------------------------------------------------------
 def test_factor_split_closes():
-    from tradeflow.services.analysis import _factor_split
+    from quantred.services.analysis import _factor_split
 
     rng = np.random.default_rng(0)
     w = rng.normal(0, 1, 8)
@@ -139,8 +139,8 @@ def test_the_documented_info_example_writes_a_report(tmp_path, monkeypatch, caps
     import shlex
     from pathlib import Path
 
+    from quantred import cli, settings
     from tests.fakes import FakeMarketData
-    from tradeflow import cli, settings
 
     page = (Path(settings.PROJECT_ROOT) / "docs" / "content" / "usage" / "information.md").read_text()
     block = re.search(rf"```bash\n({settings.CLI_NAME} info.*?)```", page, re.S).group(1)

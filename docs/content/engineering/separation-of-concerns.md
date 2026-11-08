@@ -53,7 +53,7 @@ the moment third-party code blocks it — including the signal handlers, which a
 delivers as loop callbacks — so the one bound that must always hold lives on a daemon
 thread instead.
 
-`tradeflow/costs/` is importable from the trade clock, and deliberately so: a live run
+`quantred/costs/` is importable from the trade clock, and deliberately so: a live run
 records what the same cost model expected a fill to cost, and a separate live-only
 formula would make that number incomparable with the backtest a candidate was judged on.
 It imports nothing from `services/`, `analytics/`, `optimization/` or `research/`, which

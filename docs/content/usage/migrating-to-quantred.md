@@ -30,7 +30,7 @@ throwaway environments. Anything that was not run that way is labelled.
 
 - **The `tradeflow` command still works.** It is installed next to `quantred` as an
   alias for the same program, so scripts and cron entries keep running.
-- **`import tradeflow`** and the plugin entry-point groups. A private strategy pack
+- **`import quantred`** and the plugin entry-point groups. A private strategy pack
   keeps working without edits.
 - **Your state.** `~/.tradeflow`, `TRADEFLOW_HOME`, the journal, trial store, bar
   cache, saved configs and your `.env` are untouched. In the rehearsal a `.env` written
@@ -39,7 +39,7 @@ throwaway environments. Anything that was not run that way is labelled.
 
 ## The one rule: uninstall the old distribution first
 
-Both distributions own the same `tradeflow/` import tree and the same `tradeflow`
+Both distributions own the same `quantred/` import tree and the same `tradeflow`
 script. Install `quantred` while `tradeflow-engine` is still present and the two
 overwrite each other; remove the old one afterwards and its uninstall deletes files the
 new one needs. Uninstall first, then install.
@@ -96,8 +96,8 @@ editable packs afterwards with `python -m pip install --no-deps -e ./my-pack` (t
 `--no-deps` is explained [below](#if-you-write-or-use-an-extension-pack)).
 
 **If you installed `quantred` first** and then uninstalled the old distribution, the
-environment is left without the engine files (`import tradeflow` fails with `No module
-named tradeflow.cli`) and without the `tradeflow` script. Repair it with
+environment is left without the engine files (`import quantred` fails with `No module
+named quantred.cli`) and without the `tradeflow` script. Repair it with
 `--force-reinstall`:
 
 ```bash
@@ -138,10 +138,10 @@ key in its config. How a given client shows the renamed server was not tested.
 
 Earlier documentation told pack authors they could depend on `tradeflow-engine`, so packs
 that declare it exist. Installing one makes the installer pull the old distribution in
-beside `quantred`, and the two then share one `tradeflow/` tree. Nothing reports it. You
+beside `quantred`, and the two then share one `quantred/` tree. Nothing reports it. You
 notice because:
 
-- every command starts with `Ignoring duplicate tradeflow.strategies contribution
+- every command starts with `Ignoring duplicate quantred.strategies contribution
   'demo_trend' ...` lines, and
 - `quantred --version` may print `tradeflow <version>`, the old name (it depends on which
   copy of the files won).

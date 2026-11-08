@@ -30,7 +30,7 @@ Two tests that each pass do not establish parity — the test has to build the t
 ways and compare.
 
 **Layering.** Dependencies point downward, one concern per module, no vendor SDK above
-`tradeflow/brokers/`, no business logic in an entry point or an MCP tool handler.
+`quantred/brokers/`, no business logic in an entry point or an MCP tool handler.
 
 **Numeric correctness.** NaN handling, index alignment, dtype coercion — in indicators,
 metrics, and anything walk-forward.

@@ -10,8 +10,8 @@ from datetime import datetime
 
 import pytest
 
-from tradeflow import settings
-from tradeflow.services import setup
+from quantred import settings
+from quantred.services import setup
 
 REAL_KEY = "PKTESTKEYID0000001"
 REAL_SECRET = "abcdefghijklmnopqrstuvwxyz0123456789"
@@ -37,7 +37,7 @@ def test_masking_never_reveals_a_usable_secret():
 def test_placeholder_detection_defers_to_the_settings_loader():
     """Two definitions of "filled in" would drift; the one that matters is the
     one the loader enforces."""
-    from tradeflow.settings import _PLACEHOLDERS
+    from quantred.settings import _PLACEHOLDERS
 
     for placeholder in _PLACEHOLDERS:
         assert setup.is_placeholder(placeholder)
@@ -262,7 +262,7 @@ def test_the_doctor_never_prints_a_raw_credential(tmp_path):
 
 # --- the CLI surface --------------------------------------------------------
 def test_cli_check_exits_non_zero_when_credentials_are_missing(tmp_path, monkeypatch, capsys):
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     monkeypatch.setattr(
         setup,
@@ -280,7 +280,7 @@ def test_cli_check_exits_non_zero_when_credentials_are_missing(tmp_path, monkeyp
 
 def test_cli_check_ignores_missing_optional_extras(tmp_path, monkeypatch, capsys):
     """A missing extra is not a broken setup — only the essentials fail the run."""
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     monkeypatch.setattr(
         setup,
@@ -295,7 +295,7 @@ def test_cli_check_ignores_missing_optional_extras(tmp_path, monkeypatch, capsys
 
 
 def test_cli_non_interactive_builds_the_env_from_the_environment(tmp_path, monkeypatch, capsys):
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     monkeypatch.setenv("APCA_API_KEY_ID", REAL_KEY)
     monkeypatch.setenv("APCA_API_SECRET_KEY", REAL_SECRET)
@@ -311,7 +311,7 @@ def test_cli_non_interactive_builds_the_env_from_the_environment(tmp_path, monke
 
 
 def test_cli_non_interactive_refuses_when_there_is_nothing_to_write(tmp_path, monkeypatch):
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     monkeypatch.delenv("APCA_API_KEY_ID", raising=False)
     monkeypatch.delenv("APCA_API_SECRET_KEY", raising=False)
@@ -328,7 +328,7 @@ def test_cli_interactive_skip_path_writes_nothing(tmp_path, monkeypatch, capsys)
     """Pressing Enter at the key prompt leaves a valid keyless demo setup."""
     import getpass
 
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     monkeypatch.setattr(getpass, "getpass", lambda *a, **k: "")
     monkeypatch.setattr("builtins.input", lambda *a, **k: "")  # no model provider
@@ -349,11 +349,11 @@ def test_an_installed_copy_is_told_to_use_its_command(tmp_path, monkeypatch, cap
     instruction matches how the software was reached."""
     import getpass
 
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     monkeypatch.setattr(getpass, "getpass", lambda *a, **k: "")
     monkeypatch.setattr("builtins.input", lambda *a, **k: "")
-    monkeypatch.setattr("tradeflow.settings.running_from_checkout", lambda: False)
+    monkeypatch.setattr("quantred.settings.running_from_checkout", lambda: False)
     args = main.build_parser().parse_args(["init", "--env-path", str(tmp_path / ".env")])
     args.func(args)
 
@@ -363,7 +363,7 @@ def test_an_installed_copy_is_told_to_use_its_command(tmp_path, monkeypatch, cap
 def test_cli_interactive_writes_keys_and_confirms_paper_trading(tmp_path, monkeypatch, capsys):
     import getpass
 
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     answers = iter([REAL_KEY, REAL_SECRET])
     monkeypatch.setattr(getpass, "getpass", lambda *a, **k: next(answers))
@@ -373,7 +373,7 @@ def test_cli_interactive_writes_keys_and_confirms_paper_trading(tmp_path, monkey
     monkeypatch.setattr(
         setup, "check_credentials", lambda *a, **k: setup.CredentialCheck(setup.CREDENTIALS_OK, "fine")
     )
-    monkeypatch.setattr("tradeflow.services.data.build_data_client", lambda *a, **k: object())
+    monkeypatch.setattr("quantred.services.data.build_data_client", lambda *a, **k: object())
 
     path = tmp_path / ".env"
     args = main.build_parser().parse_args(["init", "--env-path", str(path)])
@@ -390,7 +390,7 @@ def test_cli_interactive_requires_a_typed_phrase_to_disable_paper_trading(tmp_pa
     money — and anything other than the exact phrase keeps paper trading."""
     import getpass
 
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     answers = iter([REAL_KEY, REAL_SECRET])
     monkeypatch.setattr(getpass, "getpass", lambda *a, **k: next(answers))
@@ -400,7 +400,7 @@ def test_cli_interactive_requires_a_typed_phrase_to_disable_paper_trading(tmp_pa
     monkeypatch.setattr(
         setup, "check_credentials", lambda *a, **k: setup.CredentialCheck(setup.CREDENTIALS_OK, "fine")
     )
-    monkeypatch.setattr("tradeflow.services.data.build_data_client", lambda *a, **k: object())
+    monkeypatch.setattr("quantred.services.data.build_data_client", lambda *a, **k: object())
 
     path = tmp_path / ".env"
     args = main.build_parser().parse_args(["init", "--env-path", str(path)])
@@ -412,8 +412,8 @@ def test_cli_interactive_requires_a_typed_phrase_to_disable_paper_trading(tmp_pa
 def test_extras_hints_are_phrased_for_the_copy_that_is_running(monkeypatch, tmp_path):
     """An installed copy has no checkout to `uv sync` in - the third place this same
     dead end turned up. The wording itself is covered in `test_extras_map.py`."""
-    from tradeflow import settings
-    from tradeflow.utils import extras
+    from quantred import settings
+    from quantred.utils import extras
 
     monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
     monkeypatch.setattr(settings, "_looks_like_checkout", lambda _p: False)
@@ -428,7 +428,7 @@ def test_extras_hints_are_phrased_for_the_copy_that_is_running(monkeypatch, tmp_
 def test_the_doctor_reports_every_published_extra(tmp_path):
     """`ai` and `openai` were missing from the doctor, so a reader choosing a research
     provider was never told their module was absent."""
-    from tradeflow.utils import extras
+    from quantred.utils import extras
 
     rows = {c.name for c in setup.run_checks(tmp_path / ".env", environ={}) if c.name.startswith("extra:")}
     assert rows == {f"extra: {name}" for name in extras.EXTRAS}
@@ -451,7 +451,7 @@ def test_a_written_settings_value_is_not_masked_in_the_confirmation(tmp_path):
 
 
 # --- readiness per task -------------------------------------------------------
-from tradeflow.utils import extras as _extras  # noqa: E402
+from quantred.utils import extras as _extras  # noqa: E402
 
 GOOD_ENV = f"APCA_API_KEY_ID={REAL_KEY}\nAPCA_API_SECRET_KEY={REAL_SECRET}\n"
 MODEL_KEY = "sk-test-model-key-0123456789"
@@ -559,7 +559,7 @@ def test_an_unwritable_state_root_is_a_permission_failure_not_a_credential_one(t
 
 
 def _run_init(monkeypatch, capsys, *argv):
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     args = main.build_parser().parse_args(["init", *argv])
     code = 0
@@ -615,7 +615,7 @@ def test_a_plain_check_makes_no_network_call(monkeypatch, capsys, keyed_env):
 
     monkeypatch.setattr("urllib.request.urlopen", boom)
     monkeypatch.setattr("socket.create_connection", boom)
-    import tradeflow.research.llm as llm_mod
+    import quantred.research.llm as llm_mod
 
     monkeypatch.setattr(llm_mod, "build_llm_client", boom)
     _stub_state(monkeypatch)
@@ -654,7 +654,7 @@ def wizard(tmp_path, monkeypatch):
     """
     import getpass
 
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     # The wizard asks for keys only when none resolve, and other tests' dotenv loading can
     # leave real-looking ones in the process environment.
@@ -668,7 +668,7 @@ def wizard(tmp_path, monkeypatch):
     monkeypatch.setattr(
         setup, "check_credentials", lambda *a, **k: setup.CredentialCheck(setup.CREDENTIALS_OK, "fine")
     )
-    monkeypatch.setattr("tradeflow.services.data.build_data_client", lambda *a, **k: object())
+    monkeypatch.setattr("quantred.services.data.build_data_client", lambda *a, **k: object())
 
     def run(secrets, replies, existing=None, capsys=None):
         path = tmp_path / ".env"
@@ -737,7 +737,7 @@ def test_init_never_probes_the_model_on_its_own(wizard):
 
 
 def test_init_names_the_missing_sdk_for_a_hosted_provider(wizard, monkeypatch, capsys):
-    monkeypatch.setattr("tradeflow.cli.extras_installed", lambda name: False)
+    monkeypatch.setattr("quantred.cli.extras_installed", lambda name: False)
     wizard(["", MODEL_SECRET], ["anthropic"])
     out = capsys.readouterr().out
     assert "'ai' extra" in out
@@ -774,7 +774,7 @@ def test_build_updates_rejects_a_bad_model_setting_by_name(kwargs, variable):
 
 def test_the_wizard_accepts_exactly_what_the_settings_reader_accepts(tmp_path, monkeypatch):
     """One parser for both, so a value init writes never makes research refuse to start."""
-    from tradeflow import settings
+    from quantred import settings
 
     for value in ("90", "2.5"):
         written = setup.build_updates(ollama_timeout=value)["OLLAMA_TIMEOUT"]
@@ -783,7 +783,7 @@ def test_the_wizard_accepts_exactly_what_the_settings_reader_accepts(tmp_path, m
 
 
 def test_non_interactive_init_accepts_only_a_model_key(tmp_path, monkeypatch, capsys):
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     for name in ("APCA_API_KEY_ID", "APCA_API_SECRET_KEY", "PAPER_TRADE", *MODEL_ENV):
         monkeypatch.delenv(name, raising=False)
@@ -801,7 +801,7 @@ def test_non_interactive_init_accepts_only_a_model_key(tmp_path, monkeypatch, ca
 
 
 def test_non_interactive_init_reads_the_ollama_settings(tmp_path, monkeypatch):
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     for name in ("APCA_API_KEY_ID", "APCA_API_SECRET_KEY", "PAPER_TRADE", *MODEL_ENV):
         monkeypatch.delenv(name, raising=False)
@@ -819,7 +819,7 @@ def test_non_interactive_init_reads_the_ollama_settings(tmp_path, monkeypatch):
 def test_non_interactive_init_copies_model_keys_only_for_the_named_provider(tmp_path, monkeypatch, capsys):
     """Model keys are very often exported for unrelated tools. Copying whatever the shell
     holds put billable keys into a project file nobody asked for."""
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     for name in ("APCA_API_KEY_ID", "APCA_API_SECRET_KEY", "PAPER_TRADE", *MODEL_ENV):
         monkeypatch.delenv(name, raising=False)
@@ -846,7 +846,7 @@ def test_non_interactive_init_copies_model_keys_only_for_the_named_provider(tmp_
 def test_non_interactive_with_only_model_variables_and_no_provider_writes_nothing(
     tmp_path, monkeypatch, capsys
 ):
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     for name in ("APCA_API_KEY_ID", "APCA_API_SECRET_KEY", "PAPER_TRADE", *MODEL_ENV):
         monkeypatch.delenv(name, raising=False)
@@ -860,7 +860,7 @@ def test_non_interactive_with_only_model_variables_and_no_provider_writes_nothin
 
 
 def test_non_interactive_init_refuses_a_bad_model_setting_without_writing(tmp_path, monkeypatch):
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     for name in ("APCA_API_KEY_ID", "APCA_API_SECRET_KEY", "PAPER_TRADE", *MODEL_ENV):
         monkeypatch.delenv(name, raising=False)
@@ -875,8 +875,8 @@ def test_non_interactive_init_refuses_a_bad_model_setting_without_writing(tmp_pa
 
 
 def test_next_steps_say_the_client_launches_the_mcp_server(capsys):
-    from tradeflow import cli as main
-    from tradeflow.settings import DOCS_URL
+    from quantred import cli as main
+    from quantred.settings import DOCS_URL
 
     main._print_next_steps()
     out = " ".join(capsys.readouterr().out.split())
@@ -886,10 +886,10 @@ def test_next_steps_say_the_client_launches_the_mcp_server(capsys):
 
 
 def test_the_private_strategies_link_has_no_docs_prefix(tmp_path, monkeypatch):
-    from tradeflow import cli as main
-    from tradeflow.settings import DOCS_URL
+    from quantred import cli as main
+    from quantred.settings import DOCS_URL
 
-    monkeypatch.setattr("tradeflow.services.setup.example_pack_source", lambda: None)
+    monkeypatch.setattr("quantred.services.setup.example_pack_source", lambda: None)
     args = main.build_parser().parse_args(["init", "--example-pack", str(tmp_path / "pack")])
     with pytest.raises(SystemExit) as exc:
         args.func(args)
@@ -917,7 +917,7 @@ def test_the_launch_command_is_absolute_and_runnable_from_anywhere(monkeypatch, 
 def test_an_installed_launch_command_uses_the_script_beside_the_interpreter(monkeypatch, tmp_path):
     import sys
 
-    from tradeflow import settings
+    from quantred import settings
 
     bindir = tmp_path / "bin"
     bindir.mkdir()
@@ -927,14 +927,14 @@ def test_an_installed_launch_command_uses_the_script_beside_the_interpreter(monk
     monkeypatch.setattr(settings, "_looks_like_checkout", lambda _p: False)
     assert setup.mcp_launch_command() == [str(bindir / settings.CLI_NAME), "mcp"]
     (bindir / settings.CLI_NAME).unlink()
-    assert setup.mcp_launch_command() == [str(bindir / "python"), "-m", "tradeflow.cli", "mcp"]
+    assert setup.mcp_launch_command() == [str(bindir / "python"), "-m", "quantred.cli", "mcp"]
 
 
 def test_a_checkout_launch_command_names_main_py_by_absolute_path(monkeypatch):
     monkeypatch.delenv("TRADEFLOW_HOME", raising=False)
     from pathlib import Path
 
-    from tradeflow import settings
+    from quantred import settings
 
     command = setup.mcp_launch_command()
     assert command[1] == str(settings.PROJECT_ROOT / "main.py") and Path(command[1]).is_file()
@@ -972,7 +972,7 @@ def test_an_ollama_endpoint_the_wizard_wrote_is_unverified_not_absent(tmp_path, 
     is set up", contradicting the file it had just written."""
     for name in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setattr("tradeflow.utils.extras.installed", lambda extra: False)
+    monkeypatch.setattr("quantred.utils.extras.installed", lambda extra: False)
     path = _write(tmp_path, "OLLAMA_BASE_URL=http://gpu-box:11434\n")
     checks = setup.run_checks(path, environ={})
     row = _model_row(checks)
@@ -1001,7 +1001,7 @@ def test_a_probe_result_replaces_not_checked_in_the_provider_row(tmp_path):
 
 # --- init's flags and its probe line --------------------------------------------
 def _init(argv):
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     args = main.parse_cli(["init", *argv])
     args.func(args)
@@ -1044,7 +1044,7 @@ def test_the_probe_line_says_billed_only_for_a_provider_that_bills(monkeypatch, 
 
 
 def test_the_printed_ollama_probe_command_names_the_chosen_model(capsys):
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     main._print_provider_followup(setup, "ollama", model="qwen2.5:7b")
     out = capsys.readouterr().out
@@ -1061,13 +1061,13 @@ def test_the_wizard_passes_a_named_ollama_model_to_the_probe_command(wizard, cap
 def test_importing_the_setup_service_does_not_load_the_research_package():
     """The research package is the agent, its proposer and the provider SDK shims; the
     doctor needs none of it to say whether a key is set. (numpy still arrives through
-    `tradeflow.services.__init__`, which is outside this module.)"""
+    `quantred.services.__init__`, which is outside this module.)"""
     import subprocess
     import sys
 
     code = (
-        "import sys, tradeflow.services.setup; "
-        "bad = [m for m in ('tradeflow.research', 'tradeflow.research.agent') if m in sys.modules]; "
+        "import sys, quantred.services.setup; "
+        "bad = [m for m in ('quantred.research', 'quantred.research.agent') if m in sys.modules]; "
         "print(bad); sys.exit(1 if bad else 0)"
     )
     done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
@@ -1077,7 +1077,7 @@ def test_importing_the_setup_service_does_not_load_the_research_package():
 # --- what the doctor labels, and what exits non-zero ---------------------------
 def test_earlier_checkout_state_is_a_notice_not_a_failure(tmp_path, monkeypatch):
     """It exited non-zero even for `--for demo`, which needs no state at all."""
-    monkeypatch.setattr("tradeflow.settings.orphaned_checkout_state", lambda: tmp_path)
+    monkeypatch.setattr("quantred.settings.orphaned_checkout_state", lambda: tmp_path)
     checks = setup.run_checks(tmp_path / ".env", environ={})
     row = next(c for c in checks if c.name == "earlier state found")
     assert row.status == "not_checked" and row.next_action
@@ -1085,7 +1085,7 @@ def test_earlier_checkout_state_is_a_notice_not_a_failure(tmp_path, monkeypatch)
 
 
 def test_a_row_that_gates_only_another_task_is_not_labelled_blocked(monkeypatch, capsys):
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     rows = [
         setup.Check("extra: mcp", "blocked", "not installed", needed_for=frozenset({"mcp"})),
@@ -1107,7 +1107,7 @@ def test_a_probe_that_cannot_be_sent_says_no_request_was_sent(monkeypatch, capsy
     announced a billed request and then reported a missing package as a provider's
     "unknown" answer."""
     monkeypatch.setattr(setup, "_state_checks", lambda: [])
-    monkeypatch.setattr("tradeflow.utils.extras.installed", lambda name: False)
+    monkeypatch.setattr("quantred.utils.extras.installed", lambda name: False)
     monkeypatch.setattr(
         setup, "probe_model", lambda *a, **k: pytest.fail("a request was attempted without the SDK")
     )
@@ -1122,7 +1122,7 @@ def test_a_probe_that_cannot_be_sent_says_no_request_was_sent(monkeypatch, capsy
 
 
 def test_a_probe_without_a_key_is_not_sent_either(monkeypatch, tmp_path):
-    monkeypatch.setattr("tradeflow.utils.extras.installed", lambda name: True)
+    monkeypatch.setattr("quantred.utils.extras.installed", lambda name: True)
     monkeypatch.setattr(setup, "ENV_PATH", tmp_path / "absent.env")
     assert "ANTHROPIC_API_KEY is not set" in setup.probe_blocker("anthropic", environ={})
     assert setup.probe_blocker("ollama", environ={}) is None
@@ -1136,7 +1136,7 @@ def test_a_ready_check_ends_on_the_next_step_for_the_task_it_checked(task, comma
     """The ready line was one sentence for every task ("`demo` needs nothing; `verdict`
     needs the keys above"), so a reader who had just confirmed the MCP server was told
     about the demo and nothing about connecting a client."""
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     monkeypatch.setattr(settings, "running_from_checkout", lambda: False)
     monkeypatch.setattr(setup, "run_checks", lambda *a, **k: [setup.Check("version", "ready", "ok")])

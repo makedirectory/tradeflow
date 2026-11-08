@@ -12,14 +12,14 @@ from datetime import datetime
 
 import pytest
 
+from quantred.analytics.reporting import format_verdict_report
+from quantred.marketdata.client import MarketDataClient
+from quantred.marketdata.session import SessionBarCache, session_client
+from quantred.marketdata.timeframe import Timeframe
+from quantred.services import analysis, audit
+from quantred.store.trials import TrialStore, db_path_for_journal
+from quantred.utils.timeutils import NEW_YORK
 from tests.fakes import FakeMarketData
-from tradeflow.analytics.reporting import format_verdict_report
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.marketdata.session import SessionBarCache, session_client
-from tradeflow.marketdata.timeframe import Timeframe
-from tradeflow.services import analysis, audit
-from tradeflow.store.trials import TrialStore, db_path_for_journal
-from tradeflow.utils.timeutils import NEW_YORK
 
 # Six names, not three: the default weight cap can't fund a book from three, and
 # the information sampler needs a cross-section wide enough to correlate.
@@ -321,9 +321,9 @@ def test_the_cap_check_has_one_definition():
     the verdict both ways and compare against the optimizer rather than asserting each."""
     import numpy as np
 
-    from tradeflow.alphas.base import Alpha
-    from tradeflow.portfolio.optimizer import MeanVarianceOptimizer, long_only_cap_shortfall
-    from tradeflow.risk.base import RiskMatrix
+    from quantred.alphas.base import Alpha
+    from quantred.portfolio.optimizer import MeanVarianceOptimizer, long_only_cap_shortfall
+    from quantred.risk.base import RiskMatrix
 
     for n in (1, 3, 4, 5, 8):
         for weight in (0.1, 0.25, 0.34, 0.5, 1.0):
@@ -371,7 +371,7 @@ def test_a_participation_cap_is_part_of_the_runs_identity():
 def test_a_real_infeasible_result_renders_in_every_reader():
     """The renderers were written for a run whose sections all exist. An infeasible one
     has no alphas and no information, and must still render rather than crash."""
-    from tradeflow.analytics.htmlreport import render_html
+    from quantred.analytics.htmlreport import render_html
 
     result = _run_three()
     document = render_html(json.loads(json.dumps(result)), "verdict")
@@ -489,7 +489,7 @@ def test_an_unrecorded_runs_count_reads_alike_in_the_terminal_and_the_html(_isol
     """The HTML header printed a real zero as "—" and never said the run was not counted,
     while the terminal said `0 (this run not counted)`. An unreadable store is unknown,
     not zero."""
-    from tradeflow.analytics.htmlreport import render_html
+    from quantred.analytics.htmlreport import render_html
 
     def boom(*args, **kwargs):
         raise RuntimeError("synthetic information failure")
@@ -532,7 +532,7 @@ def test_a_failed_step_is_reported_once_not_logged_as_a_traceback(_isolated_stat
         raise RuntimeError("synthetic information failure")
 
     monkeypatch.setattr(analysis, "compute_information", boom)
-    with caplog.at_level(logging.DEBUG, logger="tradeflow.services.analysis"):
+    with caplog.at_level(logging.DEBUG, logger="quantred.services.analysis"):
         result = _run()
     assert result["steps"]["information"]["status"] == "failed"
     loud = [r for r in caplog.records if r.levelno >= logging.WARNING and r.exc_info]
@@ -686,7 +686,7 @@ def test_report_names_the_cost_model_it_priced_with():
 
 # --- the CLI surface --------------------------------------------------------
 def _cli(monkeypatch, provider, *argv):
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     monkeypatch.setattr(main, "build_research_data", lambda **kwargs: MarketDataClient(provider))
     args = main.build_parser().parse_args(
@@ -740,11 +740,11 @@ def test_cli_exits_non_zero_when_a_step_failed(monkeypatch, capsys):
 def test_provenance_identifies_the_code_even_without_a_git_repository(monkeypatch):
     """A report that outlives its context must say what made it. An installed copy
     has no repository, and "unknown" there defeats the whole provenance block."""
-    import tradeflow
-    from tradeflow.optimization import config_store
+    import quantred
+    from quantred.optimization import config_store
 
     monkeypatch.setattr(config_store, "current_git_sha", lambda: None)
-    assert analysis.code_version() == f"tradeflow {tradeflow.__version__}"
+    assert analysis.code_version() == f"quantred {quantred.__version__}"
 
     monkeypatch.setattr(config_store, "current_git_sha", lambda: "abc1234")
     assert analysis.code_version() == "abc1234"
@@ -759,7 +759,7 @@ def test_the_provenance_line_does_not_claim_provider_access_it_cannot_vouch_for(
     none. Provenance is the one thing a reader cannot check for themselves, so
     overstating where data came from is worse than saying nothing.
     """
-    from tradeflow.analytics.reporting import _fetch_summary
+    from quantred.analytics.reporting import _fetch_summary
 
     summary = _fetch_summary({"requests": 12, "fetches": 3, "distinct": 3})
 
@@ -776,7 +776,7 @@ def test_a_passing_gate_does_not_print_the_failure_that_did_not_happen():
     produced a line that contradicted its own verdict - and a reader who trusts the
     prose over the mark reads a pass as a failure.
     """
-    from tradeflow.analytics.reporting import _verdict_banner_lines
+    from quantred.analytics.reporting import _verdict_banner_lines
 
     lines = _verdict_banner_lines(
         {
@@ -844,8 +844,8 @@ def test_an_offline_verdict_prints_one_warm_command_that_fixes_every_step(tmp_pa
     pytest.importorskip("pyarrow")
     import re
 
-    from tradeflow.store.bars import CachedMarketData
-    from tradeflow.utils.timeutils import parse_market_date
+    from quantred.store.bars import CachedMarketData
+    from quantred.utils.timeutils import parse_market_date
 
     cache_dir = tmp_path / "bars"
 
@@ -895,7 +895,7 @@ def test_the_cli_and_the_service_refuse_an_unknown_scanner_in_the_same_words():
     """One definition below both, so the two cannot drift into different advice."""
     import argparse
 
-    from tradeflow.cli import _scanner
+    from quantred.cli import _scanner
 
     with pytest.raises(argparse.ArgumentTypeError) as cli_error:
         _scanner("demo_volum")

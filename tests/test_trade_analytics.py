@@ -8,8 +8,8 @@ summed as though it were whole.
 
 import pytest
 
-from tradeflow.analytics.reporting import format_exit_concentration
-from tradeflow.analytics.trade_analytics import (
+from quantred.analytics.reporting import format_exit_concentration
+from quantred.analytics.trade_analytics import (
     COMPLETE,
     TRUNCATED,
     UNAVAILABLE,
@@ -238,7 +238,7 @@ def test_a_partial_report_does_not_claim_to_have_no_totals(monkeypatch):
     """Review finding. The "No totals:" guard fired on any status that was not
     `complete`, so a truncated report printed it directly above a full table of
     (partial) totals — contradicting both the table and its own reason string."""
-    from tradeflow.analytics.reporting import format_trial_analysis
+    from quantred.analytics.reporting import format_trial_analysis
 
     report = trade_analytics(_table(WINNERS_AND_LOSERS, total_rows=1200, truncated=True), allow_partial=True)
     report.update(trial_id="x", kind="backtest", strategy="s", accounting=5)
@@ -252,7 +252,7 @@ def test_a_partial_report_does_not_claim_to_have_no_totals(monkeypatch):
 
 def test_an_unavailable_report_still_says_it_has_no_totals():
     """Both directions: the label has to survive where it is true."""
-    from tradeflow.analytics.reporting import format_trial_analysis
+    from quantred.analytics.reporting import format_trial_analysis
 
     report = trade_analytics(None)
     report.update(trial_id="x", kind="backtest", strategy="s", accounting=5)
@@ -268,7 +268,7 @@ def test_the_trades_column_and_the_share_column_agree_about_their_denominator():
     counted every row with that reason, so on a table with any unreadable P&L the
     trades column did not sum to the total while the shares summed to 100% — with
     nothing on screen explaining the gap."""
-    from tradeflow.analytics.reporting import format_exit_concentration
+    from quantred.analytics.reporting import format_exit_concentration
 
     rows = [_row(100.0, "TP"), _row(None, "TP"), _row(-50.0, "SL")]
     report = trade_analytics(_table(rows))
@@ -287,7 +287,7 @@ def test_the_trades_column_and_the_share_column_agree_about_their_denominator():
 def test_a_table_with_every_p_and_l_measured_prints_no_gap_line():
     """Both directions: the explanation must not appear where there is nothing to
     explain."""
-    from tradeflow.analytics.reporting import format_exit_concentration
+    from quantred.analytics.reporting import format_exit_concentration
 
     assert "no P&L recorded" not in format_exit_concentration(trade_analytics(_table(WINNERS_AND_LOSERS)))
 
@@ -299,7 +299,7 @@ def test_the_live_block_does_not_pay_to_serialize_a_frame_it_only_prints(monkeyp
     was no exit_reason column to group by."""
     import pandas as pd
 
-    from tradeflow.services.analysis import trades_payload
+    from quantred.services.analysis import trades_payload
 
     frame = pd.DataFrame(
         {
@@ -316,8 +316,8 @@ def test_the_live_block_does_not_pay_to_serialize_a_frame_it_only_prints(monkeyp
         seen.update(kwargs)
         return real(f, **kwargs)
 
-    monkeypatch.setattr("tradeflow.services.analysis.trades_payload", spy)
-    from tradeflow.cli import _print_exit_concentration
+    monkeypatch.setattr("quantred.services.analysis.trades_payload", spy)
+    from quantred.cli import _print_exit_concentration
 
     class Result:
         trades = frame
@@ -338,13 +338,13 @@ def test_a_result_with_no_exit_reason_column_converts_nothing():
     """The short-circuit the old groupby had and the converged path lost."""
     import pandas as pd
 
-    from tradeflow.cli import _print_exit_concentration
+    from quantred.cli import _print_exit_concentration
 
     class Result:
         trades = pd.DataFrame({"pnl": [1.0, 2.0]})
 
     called = []
-    import tradeflow.services.analysis as analysis_mod
+    import quantred.services.analysis as analysis_mod
 
     original = analysis_mod.trades_payload
     analysis_mod.trades_payload = lambda *a, **k: called.append(1) or original(*a, **k)

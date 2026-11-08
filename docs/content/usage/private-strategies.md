@@ -32,7 +32,7 @@ An installed copy (`uv tool install`, `pip install`) does **not** carry it, and
 `init --example-pack` says so; fetch it and copy it yourself, then install the copy:
 
 ```bash
-git clone https://github.com/makedirectory/tradeflow && cp -R tradeflow/example ./my-signals
+git clone https://github.com/makedirectory/quantred && cp -R quantred/example ./my-signals
 ```
 
 Install the copy for how you installed QuantRed. For a `uv tool` install, the tool
@@ -59,10 +59,10 @@ to anyone reading this project.
 
 ```toml
 # pyproject.toml, in your own package
-[project.entry-points."tradeflow.strategies"]
+[project.entry-points."quantred.strategies"]
 my_breakout = "yourfirm_signals.strategies:BreakoutStrategy"
 
-[project.entry-points."tradeflow.scanners"]
+[project.entry-points."quantred.scanners"]
 my_liquidity = "yourfirm_signals.scanners:LiquidityScanner"
 ```
 

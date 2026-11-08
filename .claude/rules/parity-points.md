@@ -189,7 +189,7 @@ folds scored them at the configured book; `_make_optimizer` now passes it, and
 **Scanner registry ↔ the driver's class attribute** — `services.registry.SCANNERS` and
 `SymbolScanner.SCANNERS` are two dicts holding one answer, kept in step by
 `refresh_registries()`. The class attribute used to be seeded from the scanner package's
-own literal; once the example scanner moved to `tradeflow.demo` that literal went empty,
+own literal; once the example scanner moved to `quantred.demo` that literal went empty,
 so the attribute was empty too and a bare `import symbol_scanner` gave
 `available() == []` — the class worked or not depending on whether some *other* module
 had been imported first. `SymbolScanner._registry()` now delegates (lazily, because
@@ -225,7 +225,7 @@ main.py`, `uv sync`, and `.env.example` do not exist for an installed reader. Us
 `settings.invocation` (`services.setup.invocation` and the CLI's `_invocation` delegate
 to it) rather than a literal — services print instructions too. It lives in `settings`
 because `settings` prints some itself, and the trade clock's flatten report is another;
-neither may import a service. Which copy is running is decided by where the `tradeflow`
+neither may import a service. Which copy is running is decided by where the `quantred`
 package was imported from, never by the working directory: an installed command run inside
 a clone of this repository is still an installed copy, and reading the cwd put a call that
 raises on a deleted directory into the flatten report. Within a checkout, the spelling
@@ -451,7 +451,7 @@ its rebuild.
 ## Finding a new one
 
 ```
-rg -N '^\s*def ([a-zA-Z_]\w*)' -or '$1' tradeflow --sort path | sort | uniq -d
+rg -N '^\s*def ([a-zA-Z_]\w*)' -or '$1' quantred --sort path | sort | uniq -d
 ```
 
 A name defined in two modules is either a delegate (fine) or a parity point (add it

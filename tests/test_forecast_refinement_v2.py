@@ -14,14 +14,14 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
+from quantred.alphas import refine
+from quantred.alphas.base import AlphaContext, refine_alpha
+from quantred.alphas.horizon import effective_sample_size
+from quantred.analytics.information import risk_bucket_diagnostic
+from quantred.data.panel import FeaturePanel
+from quantred.marketdata.client import MarketDataClient
+from quantred.services import analysis
 from tests.fakes import DictMarketData, make_ohlcv
-from tradeflow.alphas import refine
-from tradeflow.alphas.base import AlphaContext, refine_alpha
-from tradeflow.alphas.horizon import effective_sample_size
-from tradeflow.analytics.information import risk_bucket_diagnostic
-from tradeflow.data.panel import FeaturePanel
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.services import analysis
 
 AS_OF = datetime(2024, 6, 1)
 

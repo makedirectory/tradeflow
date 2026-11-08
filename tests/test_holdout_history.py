@@ -12,17 +12,17 @@ from datetime import datetime
 import pandas as pd
 import pytest
 
+from quantred import cli
+from quantred.analytics.reporting import format_campaign_material, format_holdout
+from quantred.marketdata.client import MarketDataClient
+from quantred.services import analysis, audit
+from quantred.services.analysis import walk_forward_recipe
+from quantred.services.audit import holdout_for_trial, holdout_from_record, journal_trial
+from quantred.services.campaign import campaign_material
+from quantred.services.registry import STRATEGIES
+from quantred.store.trials import TrialStore, db_path_for_journal
 from tests.fakes import FakeMarketData
 from tests.test_saved_config_book import _chosen_params
-from tradeflow import cli
-from tradeflow.analytics.reporting import format_campaign_material, format_holdout
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.services import analysis, audit
-from tradeflow.services.analysis import walk_forward_recipe
-from tradeflow.services.audit import holdout_for_trial, holdout_from_record, journal_trial
-from tradeflow.services.campaign import campaign_material
-from tradeflow.services.registry import STRATEGIES
-from tradeflow.store.trials import TrialStore, db_path_for_journal
 
 SYMBOLS = [f"S{i}" for i in range(6)]
 BASE = ["--symbols", ",".join(SYMBOLS), "--scanner", "none", "--start", "2023-01-02", "--end", "2024-09-30"]
@@ -154,7 +154,7 @@ def test_a_reused_result_that_predates_the_field_says_so(_cli, capsys, tmp_path)
 def test_a_reused_walk_forward_report_shows_its_recorded_holdout(_cli):
     """Found in review: the reused payload took the holdout off its not-retained list
     because it was recorded, and the reduced report then showed it nowhere."""
-    from tradeflow.analytics.htmlreport import render_html
+    from quantred.analytics.htmlreport import render_html
 
     client = MarketDataClient(FakeMarketData(SYMBOLS + ["SPY"], n=700, freq="1D"))
     kwargs = {"max_evals": 3, "holdout_days": 60}

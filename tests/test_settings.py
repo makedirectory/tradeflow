@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from tradeflow import settings
-from tradeflow.settings import SettingsError, load_settings
+from quantred import settings
+from quantred.settings import SettingsError, load_settings
 
 
 @pytest.fixture(autouse=True)
@@ -64,7 +64,7 @@ def test_dotenv_file_is_loaded(monkeypatch, tmp_path):
 
 # --- the message a keyless user actually sees -------------------------------
 def _missing_message(monkeypatch, tmp_path, *, checkout: bool):
-    from tradeflow import settings
+    from quantred import settings
 
     monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
     monkeypatch.setattr(settings, "_looks_like_checkout", lambda _p: checkout)

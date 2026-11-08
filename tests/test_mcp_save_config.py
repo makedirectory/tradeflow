@@ -11,11 +11,11 @@ import json
 
 import pytest
 
+from quantred.marketdata.client import MarketDataClient
+from quantred.mcp import server as mcp_server
+from quantred.optimization import config_store
+from quantred.services import analysis, audit
 from tests.fakes import FakeMarketData
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.mcp import server as mcp_server
-from tradeflow.optimization import config_store
-from tradeflow.services import analysis, audit
 
 pytest.importorskip("mcp", reason="the MCP surface needs the 'mcp' extra")
 
@@ -149,7 +149,7 @@ def test_a_documented_behavioural_key_and_a_strategy_specific_key_are_saved(buil
 def test_the_lazily_built_client_is_still_checked_for_a_trading_client(monkeypatch):
     """The keyless start moved construction into the first bar tool; the guard must
     still run there, or a builder that returned something able to trade would be used."""
-    from tradeflow.services import data
+    from quantred.services import data
 
     class Leaky(MarketDataClient):
         broker = object()

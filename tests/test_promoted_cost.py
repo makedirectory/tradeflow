@@ -11,11 +11,11 @@ from datetime import datetime
 
 import pandas as pd
 
+from quantred.cli import apply_run_config, build_cost_model, build_parser
+from quantred.services.analysis import recorded_cost, walk_forward_recipe
+from quantred.services.audit import journal_trial
+from quantred.services.registry import STRATEGIES
 from tests.test_saved_config_book import _chosen_params, _promote
-from tradeflow.cli import apply_run_config, build_cost_model, build_parser
-from tradeflow.services.analysis import recorded_cost, walk_forward_recipe
-from tradeflow.services.audit import journal_trial
-from tradeflow.services.registry import STRATEGIES
 
 COST = {"gross": False, "commission_bps": 7.0, "impact_eta": 0.5, "borrow_bps": 80.0}
 
@@ -53,7 +53,7 @@ def _walkforward(journal):
 
 
 def test_a_promoted_walkforward_prices_trades_at_the_validated_cost(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr("tradeflow.optimization.config_store.DEFAULT_CONFIG_DIR", tmp_path, raising=False)
+    monkeypatch.setattr("quantred.optimization.config_store.DEFAULT_CONFIG_DIR", tmp_path, raising=False)
     journal = tmp_path / "journal.jsonl"
     config = _promote(journal, _walkforward(journal), str(tmp_path / "p.json"), monkeypatch)
 
@@ -79,7 +79,7 @@ def test_a_config_with_no_recorded_cost_says_so_on_the_load_line(tmp_path, capsy
 
 
 def test_a_promoted_config_names_the_scanner_the_way_save_config_does(tmp_path, monkeypatch):
-    monkeypatch.setattr("tradeflow.optimization.config_store.DEFAULT_CONFIG_DIR", tmp_path, raising=False)
+    monkeypatch.setattr("quantred.optimization.config_store.DEFAULT_CONFIG_DIR", tmp_path, raising=False)
     journal = tmp_path / "journal.jsonl"
     config = _promote(journal, _walkforward(journal), str(tmp_path / "s.json"), monkeypatch)
     assert config["scanner"] == "none"
@@ -88,9 +88,9 @@ def test_a_promoted_config_names_the_scanner_the_way_save_config_does(tmp_path, 
 def test_the_mcp_save_config_path_carries_the_campaigns_cost_too(tmp_path, monkeypatch):
     """The other surface that writes a runnable config: with campaign material in its
     provenance it takes the validated cost the way it takes the validated book."""
-    from tradeflow.services import configs
+    from quantred.services import configs
 
-    monkeypatch.setattr("tradeflow.optimization.config_store.DEFAULT_CONFIG_DIR", tmp_path, raising=False)
+    monkeypatch.setattr("quantred.optimization.config_store.DEFAULT_CONFIG_DIR", tmp_path, raising=False)
     campaign = {"recipe": {"folded_into_identity": {"_cost": {**COST, "_vintage": "v"}}}}
     result = configs.save_config(
         "viamcp", strategy="demo_trend", params=_chosen_params(), provenance={"campaign": campaign}
@@ -108,11 +108,11 @@ def test_a_backtest_campaign_block_names_its_cost_so_mcp_save_config_writes_it(t
     """Found in review: a backtest's campaign block has no recipe (its identity is its
     params), so a config written from it over MCP carried no cost where `trials promote`
     did - the two surfaces disagreeing about one trial."""
+    from quantred.marketdata.client import MarketDataClient
+    from quantred.optimization import config_store
+    from quantred.services import analysis, audit, campaign, configs
+    from quantred.utils.timeutils import parse_market_date as day
     from tests.fakes import FakeMarketData
-    from tradeflow.marketdata.client import MarketDataClient
-    from tradeflow.optimization import config_store
-    from tradeflow.services import analysis, audit, campaign, configs
-    from tradeflow.utils.timeutils import parse_market_date as day
 
     monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", tmp_path / "journal.jsonl")
     monkeypatch.setattr(analysis, "ARTIFACT_DIR", tmp_path / "artifacts")

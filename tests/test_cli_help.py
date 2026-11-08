@@ -4,7 +4,7 @@ import argparse
 
 import pytest
 
-from tradeflow import cli
+from quantred import cli
 
 
 def _subcommands():
@@ -43,8 +43,8 @@ def test_the_bare_command_prints_the_map_rather_than_an_error(capsys):
 def test_the_setup_check_keeps_its_columns_and_names_the_state_root_once(capsys, monkeypatch, tmp_path):
     """A long row name pushed its own detail out of the column, and every path under the
     state root repeated the full root, burying the part that differs."""
-    from tradeflow import settings
-    from tradeflow.services.setup import Check
+    from quantred import settings
+    from quantred.services.setup import Check
 
     monkeypatch.setattr(settings, "state_root", lambda: tmp_path)
     checks = [

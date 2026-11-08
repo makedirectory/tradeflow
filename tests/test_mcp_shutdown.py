@@ -23,8 +23,8 @@ import pytest
 
 pytest.importorskip("mcp", reason="the MCP server needs the 'mcp' extra")
 
-from tradeflow import settings  # noqa: E402
-from tradeflow.mcp.selftest import default_command  # noqa: E402
+from quantred import settings  # noqa: E402
+from quantred.mcp.selftest import default_command  # noqa: E402
 
 pytestmark = [
     pytest.mark.slow,
@@ -205,8 +205,8 @@ def test_the_stop_path_exits_even_when_a_log_handler_cannot_flush(monkeypatch):
     before the exit would leave a process nothing but SIGKILL could end."""
     import logging
 
-    from tradeflow.mcp import server as mcp_server
-    from tradeflow.utils import streaming
+    from quantred.mcp import server as mcp_server
+    from quantred.utils import streaming
 
     class Broken(logging.Handler):
         def emit(self, record):

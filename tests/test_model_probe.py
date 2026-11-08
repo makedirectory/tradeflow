@@ -9,11 +9,11 @@ import urllib.error
 
 import pytest
 
-from tradeflow import cli, settings
-from tradeflow.research import llm
-from tradeflow.research.llm import LLMResponse, OllamaClient, OpenAIClient
-from tradeflow.research.provider_errors import ModelProviderError, classify_provider_error
-from tradeflow.services import setup
+from quantred import cli, settings
+from quantred.research import llm
+from quantred.research.llm import LLMResponse, OllamaClient, OpenAIClient
+from quantred.research.provider_errors import ModelProviderError, classify_provider_error
+from quantred.services import setup
 
 FAKE_KEY = "sk-test-0123456789abcdefSECRET"
 
@@ -282,9 +282,9 @@ class _FakeOpenAI:
 
 
 def _run_research_with(monkeypatch, error):
-    from tradeflow.research import agent as agent_mod
-    from tradeflow.research import proposer as proposer_mod
-    from tradeflow.services import data as data_mod
+    from quantred.research import agent as agent_mod
+    from quantred.research import proposer as proposer_mod
+    from quantred.services import data as data_mod
 
     sdk = _FakeOpenAI(error)
     client = OpenAIClient("gpt-x", client=sdk)

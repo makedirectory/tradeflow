@@ -6,11 +6,11 @@ distribution that exposes entry points.
 
 from importlib import metadata
 
-from tradeflow.demo.strategies import DemoTrendStrategy
-from tradeflow.scanners.base import ScannerStrategy
-from tradeflow.scanners.symbol_scanner import BUILTIN_SCANNERS as package_builtin_scanners
-from tradeflow.scanners.symbol_scanner import SymbolScanner
-from tradeflow.services import registry
+from quantred.demo.strategies import DemoTrendStrategy
+from quantred.scanners.base import ScannerStrategy
+from quantred.scanners.symbol_scanner import BUILTIN_SCANNERS as package_builtin_scanners
+from quantred.scanners.symbol_scanner import SymbolScanner
+from quantred.services import registry
 
 
 class PrivateTrendStrategy(DemoTrendStrategy):
@@ -273,7 +273,7 @@ def test_symbol_scanner_resolves_names_without_importing_the_registry_first():
     import sys
 
     probe = (
-        "from tradeflow.scanners.symbol_scanner import SymbolScanner;"
+        "from quantred.scanners.symbol_scanner import SymbolScanner;"
         "names = SymbolScanner.available();"
         "assert 'demo_volume' in names, names;"
         "print('ok')"

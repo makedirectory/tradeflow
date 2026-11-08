@@ -9,8 +9,8 @@ reporting it.
 
 import pytest
 
-from tradeflow.cli import _refuse_contradictory_portfolio_cardinality, build_parser, cmd_live
-from tradeflow.demo.strategies import DemoTrendStrategy
+from quantred.cli import _refuse_contradictory_portfolio_cardinality, build_parser, cmd_live
+from quantred.demo.strategies import DemoTrendStrategy
 
 
 def _strategy(max_positions):
@@ -61,7 +61,7 @@ def test_the_default_live_portfolio_invocation_is_refused_before_the_broker_is_r
     credential check, a market-data fetch and a solve to be told the configuration
     could never have worked.
     """
-    from tradeflow import cli
+    from quantred import cli
 
     def _fail(*args, **kwargs):
         raise AssertionError("the broker was reached before the cardinality check")
@@ -78,11 +78,11 @@ def test_the_default_live_portfolio_invocation_is_refused_before_the_broker_is_r
 def _preflight_output(capsys, monkeypatch, *, paper=True, capital=8_000.0, ledger_path="/tmp/l.jsonl"):
     from unittest import mock
 
+    from quantred import cli
+    from quantred.services.registry import STRATEGIES
     from tests.fakes import FakeBroker
-    from tradeflow import cli
-    from tradeflow.services.registry import STRATEGIES
 
-    monkeypatch.setattr("tradeflow.settings.paper_trade_mode", lambda: paper)
+    monkeypatch.setattr("quantred.settings.paper_trade_mode", lambda: paper)
     strategy = STRATEGIES["demo_trend"].create_with_defaults()
     strategy.config["position_limits"] = {**strategy.position_limits(), "max_positions": 8}
     args = build_parser().parse_args(["live", "--preflight", "--scanner", "none"])
@@ -126,11 +126,11 @@ def test_preflight_names_where_the_telemetry_lands(capsys, monkeypatch):
 
 def test_a_disabled_ledger_says_so_rather_than_printing_nothing(capsys, monkeypatch):
 
+    from quantred import cli
+    from quantred.services.registry import STRATEGIES
     from tests.fakes import FakeBroker
-    from tradeflow import cli
-    from tradeflow.services.registry import STRATEGIES
 
-    monkeypatch.setattr("tradeflow.settings.paper_trade_mode", lambda: True)
+    monkeypatch.setattr("quantred.settings.paper_trade_mode", lambda: True)
     args = build_parser().parse_args(["live", "--no-ledger", "--scanner", "none"])
     cli._print_live_preflight(
         args, STRATEGIES["demo_trend"].create_with_defaults(), FakeBroker(), ["AAA"], None, None
@@ -143,9 +143,9 @@ def test_real_money_is_refused_on_an_environment_variable_alone(monkeypatch):
     """PAPER_TRADE defaults to true, which is right and is also why this exists: a
     default nobody set is indistinguishable from a decision somebody made, until it is
     wrong. A live run must be asserted twice, in two places."""
-    from tradeflow import cli
+    from quantred import cli
 
-    monkeypatch.setattr("tradeflow.settings.paper_trade_mode", lambda: False)
+    monkeypatch.setattr("quantred.settings.paper_trade_mode", lambda: False)
     args = build_parser().parse_args(["live"])
 
     with pytest.raises(SystemExit) as exit_info:
@@ -156,9 +156,9 @@ def test_real_money_is_refused_on_an_environment_variable_alone(monkeypatch):
 
 
 def test_real_money_proceeds_when_said_on_the_command_line_too(monkeypatch, capsys):
-    from tradeflow import cli
+    from quantred import cli
 
-    monkeypatch.setattr("tradeflow.settings.paper_trade_mode", lambda: False)
+    monkeypatch.setattr("quantred.settings.paper_trade_mode", lambda: False)
     cli._refuse_ambiguous_broker_mode(build_parser().parse_args(["live", "--live-money"]))
 
     assert "LIVE MONEY confirmed" in capsys.readouterr().out
@@ -167,17 +167,17 @@ def test_real_money_proceeds_when_said_on_the_command_line_too(monkeypatch, caps
 def test_paper_mode_never_asks_for_an_acknowledgement(monkeypatch):
     """The guard exists for real money. Making paper runs confirm anything would train
     people to pass the flag reflexively."""
-    from tradeflow import cli
+    from quantred import cli
 
-    monkeypatch.setattr("tradeflow.settings.paper_trade_mode", lambda: True)
+    monkeypatch.setattr("quantred.settings.paper_trade_mode", lambda: True)
     cli._refuse_ambiguous_broker_mode(build_parser().parse_args(["live"]))  # must not raise
 
 
 # --- risk limits typed on the command line ---------------------------------------
 def _book(argv, declared=None):
     """Resolve the book limits a `live` invocation would actually trade under."""
-    from tradeflow.cli import _apply_limit_overrides, parse_cli
-    from tradeflow.services.registry import STRATEGIES
+    from quantred.cli import _apply_limit_overrides, parse_cli
+    from quantred.services.registry import STRATEGIES
 
     args = parse_cli(argv)
     strategy = STRATEGIES["demo_trend"].create_with_defaults()
@@ -222,7 +222,7 @@ def test_max_weight_without_portfolio_is_refused_rather_than_ignored():
     """The bug: `--max-weight 0.15` sizes the allocator, so without --portfolio it was
     accepted and discarded. A flag that cannot reach anything stops the run.
     """
-    from tradeflow.cli import _refuse_inert_flags, parse_cli
+    from quantred.cli import _refuse_inert_flags, parse_cli
 
     with pytest.raises(SystemExit) as exit_info:
         _refuse_inert_flags(parse_cli(["live", "--capital", "8000", "--max-weight", "0.15"]))
@@ -235,7 +235,7 @@ def test_max_weight_without_portfolio_is_refused_rather_than_ignored():
 
 def test_the_refusal_offers_a_value_that_pastes_back_into_a_shell():
     """A thousands separator would make the suggested command fail to parse."""
-    from tradeflow.cli import _refuse_inert_flags, parse_cli
+    from quantred.cli import _refuse_inert_flags, parse_cli
 
     with pytest.raises(SystemExit) as exit_info:
         _refuse_inert_flags(parse_cli(["live", "--capital", "80000", "--max-weight", "0.15"]))
@@ -245,14 +245,14 @@ def test_the_refusal_offers_a_value_that_pastes_back_into_a_shell():
 
 def test_max_weight_is_allowed_when_the_allocator_it_sizes_is_running():
     """Both directions: a guard that also rejects the working case rejects everything."""
-    from tradeflow.cli import _refuse_inert_flags, parse_cli
+    from quantred.cli import _refuse_inert_flags, parse_cli
 
     _refuse_inert_flags(parse_cli(["live", "--portfolio", "--max-weight", "0.15"]))
 
 
 def test_a_benchmark_nothing_measures_against_is_refused():
     """`--benchmark` only selects the symbol beta sizing uses."""
-    from tradeflow.cli import _refuse_inert_flags, parse_cli
+    from quantred.cli import _refuse_inert_flags, parse_cli
 
     with pytest.raises(SystemExit) as exit_info:
         _refuse_inert_flags(parse_cli(["live", "--benchmark", "SPY"]))
@@ -261,14 +261,14 @@ def test_a_benchmark_nothing_measures_against_is_refused():
 
 
 def test_a_benchmark_is_allowed_when_beta_sizing_uses_it():
-    from tradeflow.cli import _refuse_inert_flags, parse_cli
+    from quantred.cli import _refuse_inert_flags, parse_cli
 
     _refuse_inert_flags(parse_cli(["live", "--beta-sizing", "--benchmark", "QQQ"]))
 
 
 def test_an_untyped_benchmark_default_is_not_treated_as_typed():
     """--benchmark carries a default of SPY; not typing it must not refuse the run."""
-    from tradeflow.cli import _refuse_inert_flags, parse_cli
+    from quantred.cli import _refuse_inert_flags, parse_cli
 
     _refuse_inert_flags(parse_cli(["live", "--capital", "8000"]))
 
@@ -277,12 +277,12 @@ def test_preflight_shows_gross_exposure_in_dollars_not_only_as_a_fraction(capsys
     """A bare 0.9 is the one limit an operator cannot sanity-check against the book."""
     from unittest import mock
 
+    from quantred import cli
+    from quantred.cli import _apply_limit_overrides, parse_cli
+    from quantred.services.registry import STRATEGIES
     from tests.fakes import FakeBroker
-    from tradeflow import cli
-    from tradeflow.cli import _apply_limit_overrides, parse_cli
-    from tradeflow.services.registry import STRATEGIES
 
-    monkeypatch.setattr("tradeflow.settings.paper_trade_mode", lambda: True)
+    monkeypatch.setattr("quantred.settings.paper_trade_mode", lambda: True)
     args = parse_cli(["live", "--scanner", "none", "--capital", "8000", "--max-gross-exposure", "0.9"])
     strategy = STRATEGIES["demo_trend"].create_with_defaults()
     _apply_limit_overrides(args, strategy)
@@ -305,8 +305,8 @@ def test_typing_the_cardinality_makes_the_two_caps_agree_by_construction():
     """--max-positions now sets the book limit as well as the allocator's, so the pair
     the refusal exists to catch cannot be produced by typing the flag. The refusal
     still stands for an untyped default meeting a smaller declared limit."""
-    from tradeflow.cli import _apply_limit_overrides, _refuse_contradictory_portfolio_cardinality, parse_cli
-    from tradeflow.services.registry import STRATEGIES
+    from quantred.cli import _apply_limit_overrides, _refuse_contradictory_portfolio_cardinality, parse_cli
+    from quantred.services.registry import STRATEGIES
 
     args = parse_cli(["live", "--portfolio", "--max-positions", "8"])
     strategy = STRATEGIES["demo_trend"].create_with_defaults()
@@ -321,12 +321,12 @@ def test_preflight_states_the_feed_including_that_the_defaults_disagree(capsys, 
     the preflight says which feed each half will use before anything connects."""
     from unittest import mock
 
+    from quantred import cli
+    from quantred.cli import parse_cli
+    from quantred.services.registry import STRATEGIES
     from tests.fakes import FakeBroker
-    from tradeflow import cli
-    from tradeflow.cli import parse_cli
-    from tradeflow.services.registry import STRATEGIES
 
-    monkeypatch.setattr("tradeflow.settings.paper_trade_mode", lambda: True)
+    monkeypatch.setattr("quantred.settings.paper_trade_mode", lambda: True)
     monkeypatch.delenv("ALPACA_DATA_FEED", raising=False)
     ledger = mock.Mock()
     ledger.path = "/tmp/l.jsonl"
@@ -353,12 +353,12 @@ def test_preflight_shows_the_two_limits_that_were_enforced_but_never_printed(cap
     run could be throttled by a limit the operator had no way to see."""
     from unittest import mock
 
+    from quantred import cli
+    from quantred.cli import _apply_limit_overrides, parse_cli
+    from quantred.services.registry import STRATEGIES
     from tests.fakes import FakeBroker
-    from tradeflow import cli
-    from tradeflow.cli import _apply_limit_overrides, parse_cli
-    from tradeflow.services.registry import STRATEGIES
 
-    monkeypatch.setattr("tradeflow.settings.paper_trade_mode", lambda: True)
+    monkeypatch.setattr("quantred.settings.paper_trade_mode", lambda: True)
     args = parse_cli(["live", "--scanner", "none", "--max-total-risk", "0.05", "--min-notional", "50"])
     strategy = STRATEGIES["demo_trend"].create_with_defaults()
     _apply_limit_overrides(args, strategy)
@@ -377,12 +377,12 @@ def test_preflight_shows_the_directional_cap_gross_cannot_see(capsys, monkeypatc
     one-directional. The net cap needs its own line or it cannot be confirmed."""
     from unittest import mock
 
+    from quantred import cli
+    from quantred.cli import _apply_limit_overrides, parse_cli
+    from quantred.services.registry import STRATEGIES
     from tests.fakes import FakeBroker
-    from tradeflow import cli
-    from tradeflow.cli import _apply_limit_overrides, parse_cli
-    from tradeflow.services.registry import STRATEGIES
 
-    monkeypatch.setattr("tradeflow.settings.paper_trade_mode", lambda: True)
+    monkeypatch.setattr("quantred.settings.paper_trade_mode", lambda: True)
     args = parse_cli(["live", "--scanner", "none", "--max-net-exposure", "0.3"])
     strategy = STRATEGIES["demo_trend"].create_with_defaults()
     _apply_limit_overrides(args, strategy)
@@ -404,12 +404,12 @@ def _run_cmd_live(monkeypatch, capsys, argv, tmp_path):
     to an argparse field the live parser did not define crashed a real run while 1256
     tests stayed green.
     """
+    from quantred import cli
+    from quantred.marketdata.client import MarketDataClient
     from tests.fakes import DictMarketData, FakeBroker
-    from tradeflow import cli
-    from tradeflow.marketdata.client import MarketDataClient
 
     monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
-    monkeypatch.setattr("tradeflow.settings.paper_trade_mode", lambda: True)
+    monkeypatch.setattr("quantred.settings.paper_trade_mode", lambda: True)
     monkeypatch.setattr(
         cli, "build_data_and_broker", lambda **kwargs: (FakeBroker(), MarketDataClient(DictMarketData({})))
     )

@@ -13,10 +13,10 @@ equivalence needs a test rather than an assumption.
 
 import pytest
 
-from tradeflow.cli import _dedup_params, parse_cli
-from tradeflow.services.analysis import _cost_key as service_cost_key
-from tradeflow.services.analysis import backtest_run_key, limits_key
-from tradeflow.services.registry import STRATEGIES
+from quantred.cli import _dedup_params, parse_cli
+from quantred.services.analysis import _cost_key as service_cost_key
+from quantred.services.analysis import backtest_run_key, limits_key
+from quantred.services.registry import STRATEGIES
 
 _PARAMS = {"fast_ema_period": 10, "slow_ema_period": 30}
 
@@ -30,7 +30,7 @@ def _service_default(name):
     """
     import inspect
 
-    from tradeflow.services import analysis
+    from quantred.services import analysis
 
     return inspect.signature(analysis.run_walk_forward).parameters[name].default
 
@@ -42,7 +42,7 @@ def _cli_key(argv, limits):
 def _backtest_default(name):
     import inspect
 
-    from tradeflow.services import analysis
+    from quantred.services import analysis
 
     return inspect.signature(analysis.run_backtest).parameters[name].default
 
@@ -137,7 +137,7 @@ def test_a_real_strategy_s_limits_round_trip_through_both_surfaces():
 @pytest.mark.parametrize("flag,value", [("--max-positions", "8"), ("--max-gross-exposure", "0.9")])
 def test_a_typed_cli_limit_reaches_the_shared_key(flag, value):
     """The flags only matter if what they set arrives in the identity."""
-    from tradeflow.cli import _apply_limit_overrides
+    from quantred.cli import _apply_limit_overrides
 
     args = parse_cli(["backtest", flag, value])
     strategy = STRATEGIES["demo_trend"].create_with_defaults()
@@ -153,7 +153,7 @@ def test_a_walk_forward_fold_trades_the_book_its_config_asked_for():
     at whatever the strategy class declares, which was one. Validation and deployment
     then describe different books, which is the one thing a walk-forward exists to
     rule out."""
-    from tradeflow.optimization.walk_forward import WalkForwardValidator
+    from quantred.optimization.walk_forward import WalkForwardValidator
 
     cls = STRATEGIES["demo_trend"]
     tuned = {k: cls.create_with_defaults().config[k] for k in cls.PARAM_RANGES}
@@ -170,7 +170,7 @@ def test_a_walk_forward_fold_trades_the_book_its_config_asked_for():
 def test_a_walk_forward_without_config_limits_is_unchanged():
     """Both directions: no config limits must leave the strategy exactly as it was, or
     every existing walk-forward silently re-bases."""
-    from tradeflow.optimization.walk_forward import WalkForwardValidator
+    from quantred.optimization.walk_forward import WalkForwardValidator
 
     cls = STRATEGIES["demo_trend"]
     tuned = {k: cls.create_with_defaults().config[k] for k in cls.PARAM_RANGES}
@@ -184,7 +184,7 @@ def test_a_walk_forward_without_config_limits_is_unchanged():
 def test_config_limits_do_not_leak_between_candidates():
     """Each fold builds its own candidate; a shared mutable limits dict would let one
     candidate's overrides follow the next."""
-    from tradeflow.optimization.walk_forward import WalkForwardValidator
+    from quantred.optimization.walk_forward import WalkForwardValidator
 
     cls = STRATEGIES["demo_trend"]
     tuned = {k: cls.create_with_defaults().config[k] for k in cls.PARAM_RANGES}
@@ -203,8 +203,8 @@ def test_every_mcp_backtest_argument_is_one_the_service_accepts():
     cannot notice a stale signature — it acts on one."""
     import inspect
 
-    from tradeflow.mcp import server as mcp_server
-    from tradeflow.services import analysis
+    from quantred.mcp import server as mcp_server
+    from quantred.services import analysis
 
     source = inspect.getsource(mcp_server)
     start = source.index("def run_backtest(")
@@ -235,7 +235,7 @@ def test_a_screen_knob_the_cli_has_is_reachable_over_mcp(flag):
     reports a distribution for a search nobody asked for."""
     import inspect
 
-    from tradeflow.mcp import server as mcp_server
+    from quantred.mcp import server as mcp_server
 
     source = inspect.getsource(mcp_server)
     start = source.index("def run_screen(")
@@ -249,8 +249,8 @@ def test_every_screen_flag_the_cli_takes_has_an_mcp_counterpart():
     surface and not the other fails here instead of being written down."""
     import inspect
 
-    from tradeflow.cli import build_parser
-    from tradeflow.mcp import server as mcp_server
+    from quantred.cli import build_parser
+    from quantred.mcp import server as mcp_server
 
     screen = next(
         parser
@@ -289,7 +289,7 @@ def test_a_renamed_screen_knob_actually_reaches_the_argument_it_is_renamed_to():
     """The rename table is the loophole in the test above: an entry could excuse a flag
     that reaches nothing. So follow the two that are renamed all the way to the service
     argument and check they arrive."""
-    from tradeflow.cli import _screen_limits
+    from quantred.cli import _screen_limits
 
     args = parse_cli(["screen", "--max-positions", "8"])
     args.config_position_limits = None
@@ -303,7 +303,7 @@ def test_a_renamed_screen_knob_actually_reaches_the_argument_it_is_renamed_to():
 def test_a_configs_book_and_an_explicit_one_do_not_silently_disagree():
     """Both sources exist, so the precedence has to be stated: the flag you typed wins
     over the file, and the file's other limits survive."""
-    from tradeflow.cli import _screen_limits
+    from quantred.cli import _screen_limits
 
     args = parse_cli(["screen", "--max-positions", "8"])
     args.config_position_limits = {"max_positions": 1, "max_gross_exposure": 0.9}
@@ -317,7 +317,7 @@ def test_mcp_exposes_the_fill_assumption_knob():
     stress without a human running the CLI for it."""
     import inspect
 
-    from tradeflow.mcp import server as mcp_server
+    from quantred.mcp import server as mcp_server
 
     assert "take_profit_margin_bps" in inspect.getsource(mcp_server)
 
@@ -329,8 +329,8 @@ def test_no_mcp_description_sends_an_installed_reader_to_a_checkout():
     import inspect
     import re
 
-    from tradeflow.mcp import server as mcp_server
-    from tradeflow.settings import CLI_NAME
+    from quantred.mcp import server as mcp_server
+    from quantred.settings import CLI_NAME
 
     # Backticked commands only — prose like "make validated code available" is not an
     # instruction, and a matcher that cannot tell them apart teaches people to ignore it.
@@ -349,8 +349,8 @@ def test_the_journal_has_one_location():
     in step by a comment. If they diverged the store would index a different file from
     the one being written, and the multiple-testing correction would deflate against
     half its evidence — with nothing erroring, because both paths are valid."""
-    from tradeflow.services.audit import DEFAULT_TRIAL_JOURNAL
-    from tradeflow.store.trials import DEFAULT_JOURNAL_PATH
+    from quantred.services.audit import DEFAULT_TRIAL_JOURNAL
+    from quantred.store.trials import DEFAULT_JOURNAL_PATH
 
     assert DEFAULT_TRIAL_JOURNAL == DEFAULT_JOURNAL_PATH
 
@@ -358,8 +358,8 @@ def test_the_journal_has_one_location():
 # --- a walk-forward is memoized by its recipe, and both surfaces build one ---------
 def _wf_service_key(limits=None, **overrides):
     """Built exactly as `run_walk_forward` builds it."""
-    from tradeflow.services.analysis import walk_forward_recipe
-    from tradeflow.services.registry import STRATEGIES
+    from quantred.services.analysis import walk_forward_recipe
+    from quantred.services.registry import STRATEGIES
 
     kwargs = dict(
         mode="anchored",
@@ -382,7 +382,7 @@ def _wf_service_key(limits=None, **overrides):
 
 
 def _wf_cli_key(argv, limits=None):
-    from tradeflow.cli import _walkforward_recipe
+    from quantred.cli import _walkforward_recipe
 
     args = parse_cli(argv)
     args.strategy = "demo_trend"
@@ -420,8 +420,8 @@ def test_the_default_fold_count_is_one_value_across_every_surface():
     its default fails this instead of quietly disagreeing again."""
     import inspect
 
-    from tradeflow.mcp import server as mcp_server
-    from tradeflow.services import analysis
+    from quantred.mcp import server as mcp_server
+    from quantred.services import analysis
 
     cli_default = parse_cli(["walkforward"]).folds
     assert cli_default == _service_default("n_folds")
@@ -448,7 +448,7 @@ def test_the_two_surfaces_agree_on_the_book_a_walk_forward_validated():
 def test_the_book_actually_changes_a_walk_forward_s_identity():
     """Both directions: an equivalence that folds nothing on either side passes
     trivially, so the fold has to be shown to do something first."""
-    from tradeflow.store.trials import params_hash
+    from quantred.store.trials import params_hash
 
     one = _wf_service_key({"max_positions": 1})
     eight = _wf_service_key({"max_positions": 8})
@@ -485,8 +485,8 @@ def test_every_mcp_argument_is_one_the_service_accepts(tool):
     cannot notice a stale signature — it acts on one."""
     import inspect
 
-    from tradeflow.mcp import server as mcp_server
-    from tradeflow.services import analysis
+    from quantred.mcp import server as mcp_server
+    from quantred.services import analysis
 
     source = inspect.getsource(mcp_server)
     start = source.index(f"def {tool}(")
@@ -509,8 +509,8 @@ def test_a_walk_forward_knob_the_cli_has_is_reachable_over_mcp(flag):
     unevaluated rather than failed, and nothing says so."""
     import inspect
 
-    from tradeflow.mcp import server as mcp_server
-    from tradeflow.services import analysis
+    from quantred.mcp import server as mcp_server
+    from quantred.services import analysis
 
     assert flag in inspect.signature(analysis.run_walk_forward).parameters
 
@@ -530,7 +530,7 @@ def _mcp_signature(name: str) -> str:
     """
     import inspect
 
-    from tradeflow.mcp import server as mcp_server
+    from quantred.mcp import server as mcp_server
 
     source = inspect.getsource(mcp_server)
     start = source.index(f"def {name}(") + len(f"def {name}(")
@@ -562,7 +562,7 @@ def _parameter_names(signature: str) -> set:
 
 
 def _cli_subcommand(name: str):
-    from tradeflow.cli import build_parser
+    from quantred.cli import build_parser
 
     trials = next(
         parser
@@ -605,8 +605,8 @@ def test_the_minimum_overlap_default_is_one_value_across_every_surface():
     found again over the other."""
     import inspect
 
-    from tradeflow.analytics.series_comparison import MIN_OVERLAP
-    from tradeflow.services.analysis import compare_trials
+    from quantred.analytics.series_comparison import MIN_OVERLAP
+    from quantred.services.analysis import compare_trials
 
     cli_default = {a.dest: a.default for a in _cli_subcommand("compare")._actions}["min_overlap"]
     service_default = inspect.signature(compare_trials).parameters["min_overlap"].default
@@ -623,7 +623,7 @@ def test_both_surfaces_refuse_a_partial_trade_table_by_default():
     same question two different ways depending on who asked."""
     import inspect
 
-    from tradeflow.services.analysis import analyze_trial
+    from quantred.services.analysis import analyze_trial
 
     cli_default = {a.dest: a.default for a in _cli_subcommand("analyze")._actions}["allow_partial"]
     service_default = inspect.signature(analyze_trial).parameters["allow_partial"].default
@@ -639,9 +639,9 @@ def test_the_trial_store_is_opened_one_way():
     there being one journal."""
     import inspect
 
-    from tradeflow.cli import _open_trial_store as cli_opener
-    from tradeflow.mcp.server import _trial_store as mcp_opener
-    from tradeflow.services.analysis import _open_trial_store as service_opener
+    from quantred.cli import _open_trial_store as cli_opener
+    from quantred.mcp.server import _trial_store as mcp_opener
+    from quantred.services.analysis import _open_trial_store as service_opener
 
     for opener in (cli_opener, service_opener, mcp_opener):
         assert "open_trial_store" in inspect.getsource(opener), (
@@ -656,10 +656,10 @@ def test_all_three_openers_reach_the_same_journal(tmp_path, monkeypatch):
     `services.audit.DEFAULT_TRIAL_JOURNAL` resolve alike in production and differ the
     moment a journal is redirected, which is every test in this suite.
     """
-    from tradeflow.cli import _open_trial_store as cli_opener
-    from tradeflow.mcp.server import _trial_store as mcp_opener
-    from tradeflow.services import audit
-    from tradeflow.services.analysis import _open_trial_store as service_opener
+    from quantred.cli import _open_trial_store as cli_opener
+    from quantred.mcp.server import _trial_store as mcp_opener
+    from quantred.services import audit
+    from quantred.services.analysis import _open_trial_store as service_opener
 
     journal = tmp_path / "redirected.jsonl"
     journal.write_text("")
@@ -683,7 +683,7 @@ def test_the_audit_record_names_the_knob_that_changed_the_answer():
     decision. `analyze_trial` logs its `allow_partial`; this now matches."""
     import inspect
 
-    from tradeflow.mcp import server as mcp_server
+    from quantred.mcp import server as mcp_server
 
     source = inspect.getsource(mcp_server)
     body = source[source.index("def compare_trials(") : source.index("def best_trials(")]
@@ -713,11 +713,11 @@ def test_a_promoted_config_finds_the_recipe_in_a_redirected_journal(tmp_path, mo
 
     import pandas as pd
 
-    from tradeflow.cli import build_parser
-    from tradeflow.services.analysis import walk_forward_recipe
-    from tradeflow.services.audit import journal_trial
-    from tradeflow.services.registry import STRATEGIES
-    from tradeflow.store.trials import db_path_for_journal
+    from quantred.cli import build_parser
+    from quantred.services.analysis import walk_forward_recipe
+    from quantred.services.audit import journal_trial
+    from quantred.services.registry import STRATEGIES
+    from quantred.store.trials import db_path_for_journal
 
     journal = tmp_path / "elsewhere.jsonl"
     trial_id = journal_trial(
@@ -751,7 +751,7 @@ def test_a_promoted_config_finds_the_recipe_in_a_redirected_journal(tmp_path, mo
     )
     # The default journal is somewhere else entirely, which is the whole point.
     monkeypatch.setattr(
-        "tradeflow.services.audit.DEFAULT_TRIAL_JOURNAL", tmp_path / "default.jsonl", raising=False
+        "quantred.services.audit.DEFAULT_TRIAL_JOURNAL", tmp_path / "default.jsonl", raising=False
     )
     out = tmp_path / "promoted.json"
     args = build_parser().parse_args(
@@ -776,7 +776,7 @@ def test_a_promoted_config_finds_the_recipe_in_a_redirected_journal(tmp_path, mo
 
 # --- verdict: an infeasible answer is only useful if both surfaces can act on it ---------
 def _verdict_parser():
-    from tradeflow.cli import build_parser
+    from quantred.cli import build_parser
 
     return next(
         parser
@@ -826,7 +826,7 @@ def test_the_verdict_defaults_are_the_services_on_both_surfaces():
     own signature rather than restating them here."""
     import inspect
 
-    from tradeflow.services import analysis
+    from quantred.services import analysis
 
     service = inspect.signature(analysis.run_verdict).parameters
     cli_defaults = {a.dest: a.default for a in _verdict_parser()._actions}
@@ -853,11 +853,11 @@ def test_cli_and_mcp_agree_on_an_infeasible_verdict(monkeypatch, tmp_path):
     import json
 
     pytest.importorskip("mcp", reason="the MCP surface needs the 'mcp' extra")
+    from quantred import cli as main
+    from quantred.marketdata.client import MarketDataClient
+    from quantred.mcp import server as mcp_server
+    from quantred.services import analysis, audit
     from tests.fakes import FakeMarketData
-    from tradeflow import cli as main
-    from tradeflow.marketdata.client import MarketDataClient
-    from tradeflow.mcp import server as mcp_server
-    from tradeflow.services import analysis, audit
 
     monkeypatch.setattr(analysis, "ARTIFACT_DIR", tmp_path / "artifacts")
     monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", tmp_path / "journal.jsonl")
@@ -929,8 +929,8 @@ def test_a_date_means_the_same_instant_and_the_same_text_over_both_surfaces(spel
     what a recorded trial is found by, so an equal instant with a different zone
     still splits the identity."""
     pytest.importorskip("mcp", reason="the MCP surface needs the 'mcp' extra")
-    from tradeflow import cli as main
-    from tradeflow.mcp import server as mcp_server
+    from quantred import cli as main
+    from quantred.mcp import server as mcp_server
 
     cli_value, mcp_value = main._date(spelling), mcp_server._parse_date(spelling)
 
@@ -951,11 +951,11 @@ def test_the_same_verdict_over_both_surfaces_is_one_journaled_trial(monkeypatch,
     import json
 
     pytest.importorskip("mcp", reason="the MCP surface needs the 'mcp' extra")
+    from quantred import cli as main
+    from quantred.marketdata.client import MarketDataClient
+    from quantred.mcp import server as mcp_server
+    from quantred.services import analysis, audit
     from tests.fakes import FakeMarketData
-    from tradeflow import cli as main
-    from tradeflow.marketdata.client import MarketDataClient
-    from tradeflow.mcp import server as mcp_server
-    from tradeflow.services import analysis, audit
 
     journal = tmp_path / "journal.jsonl"
     monkeypatch.setattr(analysis, "ARTIFACT_DIR", tmp_path / "artifacts")
@@ -1014,7 +1014,7 @@ def test_no_mcp_tool_reads_a_date_by_itself():
     import inspect
 
     pytest.importorskip("mcp", reason="the MCP surface needs the 'mcp' extra")
-    from tradeflow.mcp import server as mcp_server
+    from quantred.mcp import server as mcp_server
 
     tree = ast.parse(inspect.getsource(mcp_server))
     readers = {
@@ -1034,7 +1034,7 @@ def test_every_mcp_date_parameter_reaches_the_service_only_through_parse_date():
     import inspect
 
     pytest.importorskip("mcp", reason="the MCP surface needs the 'mcp' extra")
-    from tradeflow.mcp import server as mcp_server
+    from quantred.mcp import server as mcp_server
 
     date_names = {"start", "end", "as_of", "scan_as_of", "since", "until"}
     tree = ast.parse(inspect.getsource(mcp_server))
@@ -1064,8 +1064,8 @@ def test_the_cli_memo_lookup_is_the_service_lookup(monkeypatch):
     """The two were identical copies, so a filter added to one - `require_trade_table`
     was added to both by hand - would have left a trial findable over one surface only.
     The CLI now forwards every argument to the service's lookup."""
-    from tradeflow import cli
-    from tradeflow.services import analysis
+    from quantred import cli
+    from quantred.services import analysis
 
     seen = []
     monkeypatch.setattr(analysis, "_find_cached_trial", lambda *a, **k: seen.append((a, k)) or {"id": "t"})
@@ -1083,8 +1083,8 @@ def test_the_cli_worker_data_spec_is_the_service_rule(workers, tmp_path, capsys)
     kept its own copy, which handed workers the cache directory in a different type."""
     from argparse import Namespace
 
-    from tradeflow import cli
-    from tradeflow.services import analysis
+    from quantred import cli
+    from quantred.services import analysis
 
     args = Namespace(workers=workers, cache=False, offline=False, cache_dir=tmp_path)
     assert cli._worker_data_spec(args) == analysis._worker_data_spec(workers, tmp_path, False)

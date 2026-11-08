@@ -12,8 +12,8 @@ from html.parser import HTMLParser
 
 import pytest
 
-from tradeflow.analytics.htmlreport import KINDS, ReportKindError, render_html, write_html
-from tradeflow.services.analysis import VERDICT_SCHEMA
+from quantred.analytics.htmlreport import KINDS, ReportKindError, render_html, write_html
+from quantred.services.analysis import VERDICT_SCHEMA
 
 #: Any attribute that could pull a resource from off the machine.
 _EXTERNAL = re.compile(r"""(?:src|href)\s*=\s*["'](?!data:|#)[^"']*|url\(\s*(?!['"]?data:)""", re.I)
@@ -285,7 +285,7 @@ def test_charts_embed_as_data_uris_when_plotting_is_available():
 
 def test_the_report_renders_without_the_plotting_extra(monkeypatch):
     """The chart slot explains itself; the run does not fail."""
-    from tradeflow.analytics import charts
+    from quantred.analytics import charts
 
     def missing(*args, **kwargs):
         raise RuntimeError("Charting needs the 'viz' extra.")
@@ -344,9 +344,9 @@ def test_a_backtest_report_carries_the_execution_check_the_terminal_prints(tmp_p
     which fails `book_breadth`."""
     from datetime import datetime
 
+    from quantred.marketdata.client import MarketDataClient
+    from quantred.services import analysis
     from tests.fakes import FakeMarketData
-    from tradeflow.marketdata.client import MarketDataClient
-    from tradeflow.services import analysis
 
     monkeypatch.setattr(analysis, "ARTIFACT_DIR", tmp_path / "artifacts")
     client = MarketDataClient(FakeMarketData(["AAA", "BBB", "CCC", "SPY"], n=400, freq="1D"))

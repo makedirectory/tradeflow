@@ -10,9 +10,9 @@ import json
 
 import pytest
 
+from quantred import cli
+from quantred.brokers.base import Position
 from tests.fakes import FakeBroker
-from tradeflow import cli
-from tradeflow.brokers.base import Position
 
 
 def _position(symbol="AAA"):
@@ -129,11 +129,11 @@ def test_the_provenance_line_stays_config_when_no_limit_flag_was_typed(tmp_path,
 # --- the book a run checks against ----------------------------------------------
 def _wired_dry_run(monkeypatch):
     """The CLI wired to the real data client over a fake provider, with no broker."""
+    from quantred.marketdata.client import MarketDataClient
     from tests.fakes import FakeMarketData
-    from tradeflow.marketdata.client import MarketDataClient
 
     monkeypatch.setattr(
-        "tradeflow.services.data.build_data_client",
+        "quantred.services.data.build_data_client",
         lambda **kw: MarketDataClient(FakeMarketData(["AAA", "BBB"], n=200, freq="1D")),
     )
     monkeypatch.setattr(cli, "build_data_and_broker", lambda *a, **k: pytest.fail("broker factory reached"))
@@ -227,7 +227,7 @@ def test_the_live_preflight_says_a_default_ceiling_is_not_the_account(monkeypatc
     """Without a config, `max position size $100,000.00` sat beside `capital this run the
     whole account` and read as though the account were the cap. It is the strategy
     class's own default."""
-    from tradeflow.services.registry import STRATEGIES
+    from quantred.services.registry import STRATEGIES
 
     strategy = STRATEGIES["demo_trend"].create_with_defaults()
     args = cli.parse_cli(["live", "--symbols", "AAA,BBB", "--scanner", "none", "--preflight"])

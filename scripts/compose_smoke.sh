@@ -53,7 +53,7 @@ fi
 #    this used to backtest a strategy that no longer exists, ignore the failure, and
 #    compare "Rows: 0" with "Rows: 0" - a pass that tested nothing.
 docker compose run --rm --no-deps -T --entrypoint uv trials run python -c \
-    "from datetime import datetime; from tradeflow.services.audit import journal_trial; \
+    "from datetime import datetime; from quantred.services.audit import journal_trial; \
 journal_trial('backtest', strategy='compose_smoke', symbols=['AAA'], start=datetime(2024, 1, 2), \
 end=datetime(2024, 6, 1), params={'smoke': 1}, metrics={'sharpe_ratio': 0.0})" \
     >/tmp/tf-journal.log 2>&1 || fail "could not journal a trial - see /tmp/tf-journal.log"

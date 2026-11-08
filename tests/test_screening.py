@@ -13,7 +13,7 @@ only against itself is another confident number.
 import numpy as np
 import pytest
 
-from tradeflow.analytics.screening import (
+from quantred.analytics.screening import (
     gradients,
     noise_baseline,
     parameter_gradient,

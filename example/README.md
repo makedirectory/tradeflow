@@ -20,7 +20,7 @@ quantred init --check                       # lists it under "private packs inst
 installed package does not carry this directory. From an installed copy:
 
 ```bash
-git clone https://github.com/makedirectory/tradeflow && cp -R tradeflow/example ./my-signals
+git clone https://github.com/makedirectory/quantred && cp -R quantred/example ./my-signals
 ```
 
 Then install the copy for how you installed QuantRed:

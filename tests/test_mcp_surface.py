@@ -14,14 +14,14 @@ from datetime import datetime
 
 import pytest
 
+from quantred import settings
+from quantred.marketdata.client import MarketDataClient
+from quantred.mcp import server as mcp_server
+from quantred.mcp.server import EVIDENCE_GATED, EXPOSED_TOOLS, FORBIDDEN_TOOLS, JOURNALING_TOOLS
+from quantred.services import analysis, audit
+from quantred.store.trials import TrialStore
 from tests.fakes import FakeMarketData
 from tests.test_research import _VALID_CODE, _VALID_SCANNER_CODE
-from tradeflow import settings
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.mcp import server as mcp_server
-from tradeflow.mcp.server import EVIDENCE_GATED, EXPOSED_TOOLS, FORBIDDEN_TOOLS, JOURNALING_TOOLS
-from tradeflow.services import analysis, audit
-from tradeflow.store.trials import TrialStore
 
 pytest.importorskip("mcp", reason="the MCP surface needs the 'mcp' extra")
 
@@ -99,7 +99,7 @@ def test_the_server_module_never_imports_a_trading_path():
     """A layering violation here is a safety violation: the wall is the *absence*
     of the capability, so an import that could reach one is review-blocking."""
     source = __import__("pathlib").Path(mcp_server.__file__).read_text()
-    for forbidden in ("tradeflow.execution", "engine.live", "build_broker", "TradingClient"):
+    for forbidden in ("quantred.execution", "engine.live", "build_broker", "TradingClient"):
         assert forbidden not in source
 
 
@@ -147,7 +147,7 @@ def test_tools_exposing_an_evidence_gated_feature_name_the_gate(built):
 
 def test_metric_vocabulary_comes_from_the_glossary_not_a_restatement(built):
     """One definition with two readers cannot drift; two descriptions will."""
-    from tradeflow.services.glossary import definitions_for
+    from quantred.services.glossary import definitions_for
 
     canonical = definitions_for(["deflated_sharpe_ratio"])["deflated_sharpe_ratio"]
     description = _tools(built)["run_backtest"].description
@@ -160,7 +160,7 @@ def test_run_verdict_description_does_not_restate_the_services_defaults(built):
     is stale the day the service changes, and an agent acts on it as fact."""
     import inspect
 
-    from tradeflow.services import analysis
+    from quantred.services import analysis
 
     description = _tools(built)["run_verdict"].description
     params = inspect.signature(analysis.run_verdict).parameters
@@ -268,7 +268,7 @@ def test_render_report_returns_a_self_contained_document(built):
 def test_render_report_shares_the_cli_renderer_rather_than_a_second_route(built):
     """030's escaping and self-containment rules apply here because it is literally
     the same function — there is no unescaped MCP render path to audit separately."""
-    from tradeflow.analytics.htmlreport import render_html
+    from quantred.analytics.htmlreport import render_html
 
     result = analysis.run_verdict(
         MarketDataClient(FakeMarketData([*SYMBOLS, "SPY"], n=600, freq="1D")),
@@ -436,7 +436,7 @@ def test_trial_store_maintenance_is_deliberately_not_an_mcp_tool():
     Distinct from the trading wall — these are not dangerous capabilities, they are
     somebody else's decision.
     """
-    from tradeflow.mcp import server as mcp_server
+    from quantred.mcp import server as mcp_server
 
     assert mcp_server.OPERATOR_ONLY
     for name in ("archive", "mark_contaminated", "mark-contaminated"):
@@ -453,7 +453,7 @@ def test_the_mode_that_can_place_real_orders_is_unreachable_over_mcp(built):
     behalf. An agent that thinks execution telemetry is worth gathering should say so
     and let a person start the run.
     """
-    from tradeflow.mcp import server as mcp_server
+    from quantred.mcp import server as mcp_server
 
     registered = set(_tools(built))
     for name in ("small_real", "run_small_real", "start_small_real"):
@@ -516,7 +516,7 @@ def test_every_service_knob_is_exposed_or_deliberately_deferred(built, tool_name
     list, so a parameter added to the service later fails here instead of quietly
     becoming unreachable — which is exactly how the gap this closes opened.
     """
-    from tradeflow.services import analysis
+    from quantred.services import analysis
 
     exposed = _tool_params(built, tool_name)
     service = _service_params(getattr(analysis, service_name))
@@ -609,7 +609,7 @@ def test_an_exposed_knob_actually_reaches_the_service(monkeypatch):
     """
     import asyncio
 
-    from tradeflow.services import analysis
+    from quantred.services import analysis
 
     seen = {}
 
@@ -688,7 +688,7 @@ def test_an_omitted_knob_is_not_forwarded_at_all(monkeypatch):
     step, and the two would drift silently."""
     import asyncio
 
-    from tradeflow.services import analysis
+    from quantred.services import analysis
 
     seen = {}
     monkeypatch.setattr(analysis, "construct_portfolio", lambda *a, **k: seen.update(k) or {"ok": True})
@@ -720,7 +720,7 @@ def test_documented_mcp_configs_use_the_server_name():
     import pathlib
     import re
 
-    from tradeflow.mcp import server
+    from quantred.mcp import server
 
     assert server.SERVER_NAME == settings.MCP_SERVER_NAME
     pages = [pathlib.Path("README.md"), *pathlib.Path("docs/content").rglob("*.md")]
@@ -800,7 +800,7 @@ def test_the_audit_log_records_the_knobs_a_proposal_was_made_with(tmp_path, monk
     import asyncio
     import json
 
-    from tradeflow.services import audit
+    from quantred.services import audit
 
     monkeypatch.setattr(audit, "DEFAULT_AUDIT_PATH", tmp_path / "audit.jsonl")
     built = mcp_server.build_server(
@@ -1013,7 +1013,7 @@ def test_a_verdict_knob_actually_reaches_the_service(monkeypatch):
     """An infeasible verdict names `max_weight`/`max_names` as the way out. A parameter
     in the schema that the forwarding dict drops would leave an agent re-running the same
     infeasible book and being told, each time, to change a knob it already changed."""
-    from tradeflow.services import analysis
+    from quantred.services import analysis
 
     seen = {}
     monkeypatch.setattr(analysis, "run_verdict", lambda *a, **k: seen.update(k) or {"ok": True})
@@ -1048,7 +1048,7 @@ def test_a_verdict_knob_actually_reaches_the_service(monkeypatch):
 
 
 def test_an_omitted_verdict_knob_is_not_forwarded_at_all(monkeypatch):
-    from tradeflow.services import analysis
+    from quantred.services import analysis
 
     seen = {}
     monkeypatch.setattr(analysis, "run_verdict", lambda *a, **k: seen.update(k) or {"ok": True})
@@ -1180,7 +1180,7 @@ def test_record_trades_is_forwarded_only_when_set(built, monkeypatch, tool):
 def test_the_cli_record_trades_flag_has_an_mcp_parameter_and_service_argument(command, tool):
     import inspect
 
-    from tradeflow.cli import build_parser
+    from quantred.cli import build_parser
 
     parser = next(
         p

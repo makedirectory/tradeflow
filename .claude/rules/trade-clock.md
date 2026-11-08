@@ -1,8 +1,8 @@
 ---
 paths:
-  - "tradeflow/engine/**/*.py"
-  - "tradeflow/execution/**/*.py"
-  - "tradeflow/brokers/**/*.py"
+  - "quantred/engine/**/*.py"
+  - "quantred/execution/**/*.py"
+  - "quantred/brokers/**/*.py"
 ---
 
 # The trade clock
@@ -15,7 +15,7 @@ defect on the other until checked.
 
 - **Import nothing from the research clock** — not `services/`, `analytics/`,
   `optimization/`, or `research/`. A structural test asserts this; keep it true.
-- **No vendor SDK above `tradeflow/brokers/`.** The broker layer is the only place
+- **No vendor SDK above `quantred/brokers/`.** The broker layer is the only place
   `alpaca` is imported.
 - **Guards reject; they never repair.** No interpolation, gap-filling, or correction
   of an input. The moment the live path fixes its inputs it stops being the thing the

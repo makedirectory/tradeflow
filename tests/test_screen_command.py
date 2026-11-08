@@ -12,9 +12,9 @@ from datetime import datetime
 
 import pytest
 
+from quantred.marketdata.client import MarketDataClient
+from quantred.services import analysis
 from tests.fakes import FakeMarketData
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.services import analysis
 
 _SYMBOLS = [f"S{i}" for i in range(5)]
 _START, _END = datetime(2024, 1, 2), datetime(2024, 12, 31)
@@ -43,8 +43,8 @@ def journal(tmp_path, monkeypatch):
     this follows it rather than inventing a second way that works in isolation and not
     in a run.
     """
-    from tradeflow.services import audit
-    from tradeflow.store import trials
+    from quantred.services import audit
+    from quantred.store import trials
 
     path = tmp_path / "research_journal.jsonl"
     monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", path)
@@ -155,7 +155,7 @@ def test_narrowing_a_parameter_the_strategy_does_not_declare_is_refused(journal)
 def test_narrowing_only_one_bound_keeps_the_rest_of_the_declaration(journal):
     """An override supplies what it names and inherits the rest, so narrowing an axis
     cannot silently change a parameter's type or drop its default."""
-    from tradeflow.demo.strategies import DemoTrendStrategy
+    from quantred.demo.strategies import DemoTrendStrategy
 
     ranges = analysis.screen_ranges(DemoTrendStrategy, {"fast_ema_period": {"max": 9}})
 
@@ -167,7 +167,7 @@ def test_narrowing_only_one_bound_keeps_the_rest_of_the_declaration(journal):
 
 
 def test_an_empty_narrowed_range_is_refused_rather_than_screened(journal):
-    from tradeflow.demo.strategies import DemoTrendStrategy
+    from quantred.demo.strategies import DemoTrendStrategy
 
     with pytest.raises(ValueError, match="empty"):
         analysis.screen_ranges(DemoTrendStrategy, {"fast_ema_period": {"min": 15, "max": 6}})
@@ -228,7 +228,7 @@ def test_a_confirmed_point_is_the_same_trial_a_backtest_of_it_would_be(journal):
 def test_the_cli_can_only_confirm_a_point_the_screen_actually_evaluated(journal):
     """`--confirm` reads its point back out of the screen's own rows. There is no way
     to spell a set, and no way to confirm something that was never scored."""
-    from tradeflow.cli import _screen_confirm_target
+    from quantred.cli import _screen_confirm_target
 
     report, _ = _screen()
 
@@ -238,7 +238,7 @@ def test_the_cli_can_only_confirm_a_point_the_screen_actually_evaluated(journal)
 
 
 def test_confirming_the_best_names_the_same_point_the_report_did(journal):
-    from tradeflow.cli import _screen_confirm_target
+    from quantred.cli import _screen_confirm_target
 
     report, _ = _screen()
 

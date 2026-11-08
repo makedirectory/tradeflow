@@ -11,12 +11,12 @@ from datetime import datetime
 
 import pytest
 
+from quantred import cli as main
+from quantred.analytics.htmlreport import render_html
+from quantred.analytics.performance import LOW_SAMPLE_TRADES
+from quantred.marketdata.client import MarketDataClient
+from quantred.services import analysis, audit
 from tests.fakes import FakeMarketData
-from tradeflow import cli as main
-from tradeflow.analytics.htmlreport import render_html
-from tradeflow.analytics.performance import LOW_SAMPLE_TRADES
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.services import analysis, audit
 
 SYMBOLS = ["AAA", "BBB"]
 START, END = "2024-01-02", "2024-06-01"
@@ -141,7 +141,7 @@ def test_asking_the_cli_for_a_trade_table_is_not_answered_by_a_memo_without_one(
     """`--record-trades` over an identical trial that kept no table was served from the
     memo, so nothing was recorded and the reader was told nothing was missing. The service
     gained this rule with its own test; this is the CLI side of the same rule."""
-    from tradeflow.store.trials import TrialStore, db_path_for_journal
+    from quantred.store.trials import TrialStore, db_path_for_journal
 
     _cli_payload(monkeypatch, capsys)
     argv = ["backtest", "--strategy", "demo_trend", "--scanner", "none", "--symbols", "AAA,BBB"]
@@ -172,7 +172,7 @@ def test_asking_a_cli_walk_forward_for_its_trade_table_is_not_answered_by_a_memo
 ):
     """The walk-forward half of the rule above: without it, deleting the CLI walk-forward's
     require_trade_table passed the whole suite."""
-    from tradeflow.store.trials import TrialStore, db_path_for_journal
+    from quantred.store.trials import TrialStore, db_path_for_journal
 
     base = ["walkforward", "--strategy", "demo_trend", "--scanner", "none", "--symbols", "AAA,BBB"]
     base += ["--start", "2024-01-02", "--end", "2024-12-31", "--folds", "2", "--max-evals", "2"]

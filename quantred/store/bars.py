@@ -1,0 +1,660 @@
+"""The bar cache: a persistent OHLCV cache behind ``MarketDataProvider``.
+
+Two pieces, mirroring the derived/rebuildable-index philosophy ``quantred/store/trials.py``
+already established for the research journal:
+
+- :class:`BarCoverage` — a small SQLite index of *which* ``(symbol, timeframe)``
+  windows have actually been fetched from upstream. Derived, safe to delete: it can
+  be rebuilt (approximately) from the Parquet store it indexes.
+- :class:`CachedMarketData` — a :class:`~tradeflow.marketdata.base.MarketDataProvider` that
+  wraps an upstream provider with :class:`~tradeflow.data.store.ParquetBarStore`
+  (the columnar substrate) and a :class:`BarCoverage`, so ``get_bars`` becomes
+  *check cache, fetch only the missing sub-ranges, write back, return*. A run can pin
+  to cache-only (``offline=True``) for a byte-reproducible, network-free result.
+
+Bars are never assumed present just because a date range was requested before -
+weekends/holidays genuinely have no bars, so "covered" is tracked independently of
+"has rows": every fetch, even an empty one, is recorded, or a market-closed gap would
+be re-queried forever.
+"""
+
+import logging
+import sqlite3
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Tuple
+
+import pandas as pd
+
+from quantred.marketdata.base import BarHandler, MarketDataProvider
+from quantred.marketdata.client import TimeframeLike
+from quantred.marketdata.timeframe import Timeframe
+from quantred.settings import invocation, state_root
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from quantred.data.store import ParquetBarStore
+
+logger = logging.getLogger(__name__)
+
+#: Default cache location (gitignored, alongside logs/).
+DEFAULT_CACHE_ROOT = state_root() / "cache" / "bars"
+DEFAULT_COVERAGE_DB = state_root() / "cache" / "bars_coverage.db"
+
+#: "Read everything" sentinels for the read-merge-write path: ParquetBarStore.scan()
+#: takes an (as_of, lookback_days) window, not an arbitrary [start, end] range, so a
+#: full-history read uses a lookback and an as_of far past anything real data can
+#: reach - the same idiom tests/test_store.py already uses with lookback_days=10_000,
+#: just wide enough to never truncate a merge.
+_FAR_FUTURE = datetime(2100, 1, 1, tzinfo=timezone.utc)
+_FULL_HISTORY_LOOKBACK_DAYS = 100_000
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS fetches (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  symbol      TEXT NOT NULL,
+  timeframe   TEXT NOT NULL,
+  start       TEXT NOT NULL,
+  end         TEXT NOT NULL,
+  adjustment  TEXT NOT NULL,
+  fetched_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_fetches_symbol ON fetches(symbol, timeframe);
+"""
+
+
+#: Printed beside an offline cache miss that includes the gap the date-contract
+#: change leaves. A bare date now means that market date in New York, so coverage
+#: recorded when a naive date was read as UTC stops a few hours short of what the same
+#: command asks for today. The window is genuinely uncached under the new reading - the
+#: fix is a re-warm, not a tolerance - and saying so turns an unexplained miss on data
+#: the user knows they have into provenance.
+DATE_CONTRACT_NOTICE = (
+    "Note: a bare date now means that market date in America/New_York, not UTC midnight. "
+    "Coverage recorded under the older naive-date reading is a few hours short of the same "
+    "window today, so daily windows warmed before that change need one re-warm."
+)
+
+
+class CacheMiss(RuntimeError):
+    """Raised in ``--offline`` mode when a requested window isn't fully cached.
+
+    One miss covers every symbol of the request, and its warm command covers the whole
+    missing window. It used to stop at the first symbol and print a warm command with no
+    dates: running it fixed one name, the rerun failed on the next, and the warm's default
+    window need not include the request at all.
+    """
+
+    def __init__(
+        self,
+        missing: Dict[str, List[Tuple[pd.Timestamp, pd.Timestamp]]],
+        timeframe: str,
+        *,
+        date_shortfall: bool = False,
+        cache_dir: Optional[Path] = None,
+        why: Optional[str] = None,
+    ):
+        import shlex
+
+        self.missing = missing
+        self.timeframe = timeframe
+        self.date_shortfall = date_shortfall
+        self.cache_dir = cache_dir
+        symbols = list(missing)
+        first = min(s for gaps in missing.values() for s, _ in gaps)
+        last = max(e for gaps in missing.values() for _, e in gaps)
+        start_day, end_day = _warm_window(first, last)
+        shown = ", ".join(symbols[:8]) + (f" +{len(symbols) - 8} more" if len(symbols) > 8 else "")
+        warm = f"cache warm --symbols {','.join(symbols)} --timeframe {timeframe} --start {start_day} --end {end_day}"
+        # A run against its own cache directory has to warm that one; the default would
+        # fill a cache the rerun never reads, and it would miss again.
+        if cache_dir is not None and Path(cache_dir) != DEFAULT_CACHE_ROOT:
+            warm += f" --cache-dir {shlex.quote(str(cache_dir))}"
+        command = invocation(warm)
+        message = (
+            f"--offline: no cached {timeframe} bars for {shown} between {start_day} and {end_day}. "
+            f"Run `{command}` first."
+        )
+        if why:
+            message += f"\n{why}"
+        if date_shortfall:
+            message += f"\n{DATE_CONTRACT_NOTICE}"
+        super().__init__(message)
+
+
+def _is_date_shortfall(gap: Tuple[pd.Timestamp, pd.Timestamp]) -> bool:
+    """Whether a gap is the sliver the date-contract change left, rather than real absence.
+
+    A bound recorded under the old naive-date reading stopped at UTC midnight, where the
+    same date now means New York midnight, so the gap runs exactly from one to the other
+    on one date. The note used to fire for any symbol with any coverage, so warming one
+    month and asking for another explained a re-warm that had nothing to do with dates.
+    """
+    from quantred.utils.timeutils import NEW_YORK
+
+    start, end = (_to_utc(t) for t in gap)
+    local_end = end.tz_convert(NEW_YORK)
+    return (
+        start == start.normalize()
+        and local_end == local_end.normalize()
+        and local_end.date() == start.date()
+        and start < end
+    )
+
+
+def combine_misses(misses: List[CacheMiss]) -> List[CacheMiss]:
+    """One miss per timeframe covering every miss given, for a run that caught several.
+
+    A verdict runs its steps independently, so each one missed with its own window and
+    printed its own warm command; the reader had to work out that only the widest
+    sufficed. The combined miss names every symbol and the union of the windows.
+    """
+    by_timeframe: Dict[str, List[CacheMiss]] = {}
+    for miss in misses:
+        by_timeframe.setdefault(miss.timeframe, []).append(miss)
+    combined = []
+    for timeframe, group in by_timeframe.items():
+        missing: Dict[str, List[Tuple[pd.Timestamp, pd.Timestamp]]] = {}
+        for miss in group:
+            for symbol, gaps in miss.missing.items():
+                missing.setdefault(symbol, []).extend(gaps)
+        combined.append(
+            CacheMiss(
+                missing,
+                timeframe,
+                date_shortfall=any(m.date_shortfall for m in group),
+                cache_dir=group[0].cache_dir,
+            )
+        )
+    return combined
+
+
+def _warm_window(first: pd.Timestamp, last: pd.Timestamp) -> Tuple[str, str]:
+    """The market dates a ``cache warm`` needs to cover ``[first, last]``.
+
+    Both flags parse a bare date as New York midnight, so the start is the date ``first``
+    falls on and the end is the date ``last`` falls on, or the next one when ``last`` is
+    later in the day — an end on the day itself would stop at its midnight.
+    """
+    from datetime import timedelta
+
+    from quantred.utils.timeutils import NEW_YORK
+
+    begin = first.tz_convert(NEW_YORK)
+    finish = last.tz_convert(NEW_YORK)
+    end_day = finish.date() if finish.time() == datetime.min.time() else finish.date() + timedelta(days=1)
+    return begin.date().isoformat(), end_day.isoformat()
+
+
+def _to_utc(value: Any) -> pd.Timestamp:
+    ts = pd.Timestamp(value)
+    return ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")
+
+
+def _iso(ts: pd.Timestamp) -> str:
+    return ts.isoformat()
+
+
+def _normalize_index_utc(frame: pd.DataFrame) -> pd.DataFrame:
+    """Localize/convert a bar frame's index to UTC - upstream providers may
+    return NY-localized bars (see ``AlpacaMarketData``); normalizing before any
+    comparison/concat avoids relying on pandas to reconcile mixed timezones."""
+    idx = frame.index
+    if idx.tz is None:
+        frame = frame.tz_localize("UTC")
+    elif str(idx.tz) != "UTC":
+        frame = frame.tz_convert("UTC")
+    return frame
+
+
+class BarCoverage:
+    """A derived SQLite index of which ``(symbol, timeframe)`` windows have been
+    fetched from upstream. Safe to delete: :meth:`rebuild` reconstructs it
+    (approximately) from a :class:`~tradeflow.data.store.ParquetBarStore`."""
+
+    def __init__(self, db_path: Optional[Any] = None):
+        self.db_path = Path(db_path) if db_path else DEFAULT_COVERAGE_DB
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._conn = sqlite3.connect(str(self.db_path), timeout=5.0)
+        self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA busy_timeout=5000")
+        self._conn.executescript(_SCHEMA)
+        self._conn.commit()
+
+    def close(self) -> None:
+        self._conn.close()
+
+    def __enter__(self) -> "BarCoverage":
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        self.close()
+
+    # ------------------------------------------------------------------ #
+    # Writing
+    # ------------------------------------------------------------------ #
+    def record_fetch(
+        self,
+        symbol: str,
+        timeframe: str,
+        start: Any,
+        end: Any,
+        adjustment: str,
+        fetched_at: Optional[Any] = None,
+    ) -> None:
+        """Record that ``[start, end]`` was queried from upstream for ``symbol`` -
+        even when the response was empty (a weekend must never look "not yet
+        checked" and get re-queried forever)."""
+        stamp = _to_utc(fetched_at) if fetched_at is not None else pd.Timestamp.now(tz="UTC")
+        self._conn.execute(
+            "INSERT INTO fetches (symbol, timeframe, start, end, adjustment, fetched_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (symbol, timeframe, _iso(_to_utc(start)), _iso(_to_utc(end)), adjustment, _iso(stamp)),
+        )
+        self._conn.commit()
+
+    def forget(self, symbol: str, timeframe: str) -> None:
+        """Delete all fetch rows for ``(symbol, timeframe)`` - used by ``refresh()``
+        so a corporate-action re-fetch is never treated as "already covered"."""
+        self._conn.execute("DELETE FROM fetches WHERE symbol = ? AND timeframe = ?", (symbol, timeframe))
+        self._conn.commit()
+
+    # ------------------------------------------------------------------ #
+    # Reading
+    # ------------------------------------------------------------------ #
+    def covered_intervals(self, symbol: str, timeframe: str) -> List[Tuple[pd.Timestamp, pd.Timestamp]]:
+        """Merge-on-read: the stored fetch rows for ``(symbol, timeframe)``, sorted
+        and coalesced into non-overlapping, non-touching intervals."""
+        rows = self._conn.execute(
+            "SELECT start, end FROM fetches WHERE symbol = ? AND timeframe = ? ORDER BY start",
+            (symbol, timeframe),
+        ).fetchall()
+        merged: List[Tuple[pd.Timestamp, pd.Timestamp]] = []
+        for row in rows:
+            s, e = _to_utc(row["start"]), _to_utc(row["end"])
+            if merged and s <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], e))
+            else:
+                merged.append((s, e))
+        return merged
+
+    def gaps(
+        self, symbol: str, timeframe: str, start: Any, end: Any
+    ) -> List[Tuple[pd.Timestamp, pd.Timestamp]]:
+        """The sub-ranges of ``[start, end]`` not yet covered by a recorded fetch.
+
+        Cached ``[b, c]``, requested ``[a, d]`` -> ``[(a, b), (c, d)]`` - only the
+        genuinely missing pieces, never a full refetch of an already-cached window.
+        """
+        start, end = _to_utc(start), _to_utc(end)
+        if end <= start:
+            return []
+        covered = self.covered_intervals(symbol, timeframe)
+        out: List[Tuple[pd.Timestamp, pd.Timestamp]] = []
+        cursor = start
+        for s, e in covered:
+            if e <= cursor or s >= end:
+                continue
+            if s > cursor:
+                out.append((cursor, min(s, end)))
+            cursor = max(cursor, e)
+            if cursor >= end:
+                break
+        if cursor < end:
+            out.append((cursor, end))
+        return out
+
+    def vintage(self, symbols: Iterable[str], timeframe: str, start: Any, end: Any) -> Optional[str]:
+        """The data-vintage stamp for this exact window: ``max(fetched_at)`` over
+        every recorded fetch overlapping ``[start, end]``, across ``symbols``.
+
+        Deterministic and stable across repeated warm/offline calls to the same
+        window (no new fetch happens -> the same rows cover it -> the same stamp);
+        it only changes when :meth:`~CachedMarketData.refresh` forces a real
+        re-fetch. ``None`` when nothing has been recorded yet for this window.
+        """
+        start, end = _to_utc(start), _to_utc(end)
+        latest: Optional[pd.Timestamp] = None
+        for symbol in dict.fromkeys(symbols):
+            rows = self._conn.execute(
+                "SELECT start, end, fetched_at FROM fetches WHERE symbol = ? AND timeframe = ?",
+                (symbol, timeframe),
+            ).fetchall()
+            for row in rows:
+                s, e = _to_utc(row["start"]), _to_utc(row["end"])
+                if e <= start or s >= end:
+                    continue
+                stamp = _to_utc(row["fetched_at"])
+                if latest is None or stamp > latest:
+                    latest = stamp
+        return _iso(latest) if latest is not None else None
+
+    # ------------------------------------------------------------------ #
+    # Derived-store precedent: rebuild + drift check
+    # ------------------------------------------------------------------ #
+    def rebuild(
+        self, bar_store: "ParquetBarStore", symbols: Iterable[str], timeframe: str, adjustment: str
+    ) -> Dict[str, int]:
+        """Reconstruct coverage from the Parquet store alone.
+
+        An approximation, not an exact replay (the Parquet store has no record of
+        *when* something was fetched, or of a queried-but-empty range): each
+        symbol's coverage becomes a single interval spanning
+        ``[min(ts), max(ts)]`` of whatever is on disk, stamped with the rebuild
+        time. This assumes no internal fetch gap inside that span - true unless a
+        corporate-action refresh carved one out - the same honesty tradeoff
+        ``TrialStore.rebuild()`` already accepts for its own derived index.
+        """
+        self._conn.execute("DELETE FROM fetches")
+        self._conn.commit()
+        n_symbols = 0
+        for symbol in dict.fromkeys(symbols):
+            scanned = bar_store.scan(
+                [symbol], timeframe, _FAR_FUTURE, lookback_days=_FULL_HISTORY_LOOKBACK_DAYS
+            )
+            frame = scanned.get(symbol)
+            if frame is None or frame.empty:
+                continue
+            self.record_fetch(symbol, str(timeframe), frame.index.min(), frame.index.max(), adjustment)
+            n_symbols += 1
+        return {"symbols": n_symbols}
+
+    def status(self, bar_store: Optional["ParquetBarStore"] = None) -> Dict[str, Any]:
+        """Row counts, plus (when ``bar_store`` is given) a drift check: does the
+        Parquet store actually still hold data for what coverage claims is cached?
+        """
+        rows = self._conn.execute(
+            "SELECT symbol, timeframe, MIN(start) AS lo, MAX(end) AS hi, MAX(fetched_at) AS last_fetch "
+            "FROM fetches GROUP BY symbol, timeframe ORDER BY symbol, timeframe"
+        ).fetchall()
+        entries = [dict(r) for r in rows]
+        drift: List[str] = []
+        if bar_store is not None:
+            for entry in entries:
+                scanned = bar_store.scan(
+                    [entry["symbol"]],
+                    entry["timeframe"],
+                    _FAR_FUTURE,
+                    lookback_days=_FULL_HISTORY_LOOKBACK_DAYS,
+                )
+                if entry["symbol"] not in scanned or scanned[entry["symbol"]].empty:
+                    drift.append(f"{entry['symbol']} ({entry['timeframe']})")
+        return {"db_path": str(self.db_path), "entries": entries, "drift": drift}
+
+
+def _as_timeframe(timeframe: TimeframeLike) -> Timeframe:
+    """The parsed form, from either spelling a caller may hand in.
+
+    Callers used to write this out and immediately stringify it, then `_fill_gaps`
+    parsed the string back - so a value was parsed, flattened and re-parsed on the way
+    to the provider that declares it wants the parsed form.
+    """
+    return Timeframe.parse(timeframe) if isinstance(timeframe, str) else timeframe
+
+
+class CachedMarketData(MarketDataProvider):
+    """A :class:`MarketDataProvider` that transparently caches OHLCV bars on the
+    Parquet/DuckDB substrate, fetching only missing date ranges.
+
+    ``offline=True`` forbids any network call: a request touching an uncached
+    range raises :class:`CacheMiss` instead of falling through to ``upstream`` -
+    the byte-reproducible, cache-only mode.
+    """
+
+    def __init__(
+        self,
+        upstream: MarketDataProvider,
+        cache_dir: Optional[Any] = None,
+        *,
+        coverage_db: Optional[Any] = None,
+        offline: bool = False,
+        adjustment: str = "split",
+    ):
+        from quantred.data.store import ParquetBarStore
+        from quantred.utils.extras import require_extra
+
+        # Here, at the start of the capability: the Parquet libraries are imported only
+        # on the first read or write, so following an offline miss's own `cache warm`
+        # hint without the extra ended in a pyarrow traceback.
+        require_extra("The bar cache (--cache, --offline, cache warm)", "store")
+        self.upstream = upstream
+        self.offline = offline
+        self.adjustment = adjustment
+        self.cache_dir = Path(cache_dir) if cache_dir else DEFAULT_CACHE_ROOT
+        self.store = ParquetBarStore(self.cache_dir)
+        self.coverage = BarCoverage(
+            coverage_db or self.cache_dir.parent / f"{self.cache_dir.name}_coverage.db"
+        )
+
+    def close(self) -> None:
+        self.coverage.close()
+
+    def __enter__(self) -> "CachedMarketData":
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        self.close()
+
+    # ------------------------------------------------------------------ #
+    # MarketDataProvider
+    # ------------------------------------------------------------------ #
+    def get_bars(
+        self, symbols: List[str], timeframe: TimeframeLike, start: datetime, end: datetime
+    ) -> Dict[str, pd.DataFrame]:
+        tf_obj = _as_timeframe(timeframe)
+        tf = str(tf_obj)
+        start_ts, end_ts = _to_utc(start), _to_utc(end)
+        if self.offline:
+            self._refuse_uncached(list(dict.fromkeys(symbols)), tf, start_ts, end_ts)
+        result: Dict[str, pd.DataFrame] = {}
+        for symbol in dict.fromkeys(symbols):
+            self._fill_gaps(symbol, tf_obj, start_ts, end_ts)
+            scanned = self.store.scan(
+                [symbol], tf, end_ts.to_pydatetime(), lookback_days=self._lookback_days(start_ts, end_ts)
+            )
+            frame = scanned.get(symbol)
+            if frame is not None and not frame.empty:
+                frame = frame.loc[(frame.index >= start_ts) & (frame.index <= end_ts)]
+                if not frame.empty:
+                    result[symbol] = frame
+        return result
+
+    async def stream_bars(self, symbols: List[str], handler: BarHandler) -> None:
+        if self.offline:
+            raise RuntimeError("--offline: live streaming needs a network connection")
+        await self.upstream.stream_bars(symbols, handler)
+
+    def supports_streaming(self) -> bool:
+        return False if self.offline else self.upstream.supports_streaming()
+
+    # ------------------------------------------------------------------ #
+    # Gap-fill (the core of the cache)
+    # ------------------------------------------------------------------ #
+    def _fill_gaps(self, symbol: str, timeframe: Timeframe, start: pd.Timestamp, end: pd.Timestamp) -> None:
+        # Takes the parsed form and derives the storage key from it, rather than
+        # taking the key and re-parsing: the caller has already done the work, and a
+        # second parse is a second chance for the two to disagree about what they name.
+        key = str(timeframe)
+        gaps = self.coverage.gaps(symbol, key, start, end)
+        if not gaps:
+            return
+        if self.offline:
+            self._refuse_uncached([symbol], key, start, end)
+
+        fetched_frames: List[pd.DataFrame] = []
+        for gap_start, gap_end in gaps:
+            fetched = self.upstream.get_bars(
+                [symbol], timeframe, gap_start.to_pydatetime(), gap_end.to_pydatetime()
+            )
+            frame = fetched.get(symbol)
+            if frame is not None and not frame.empty:
+                frame = _normalize_index_utc(frame)
+                # Defend against an upstream that returns more than asked (e.g. a
+                # fake/test provider that ignores the window): only what falls
+                # inside this exact gap is authoritative for what we mark covered.
+                sliced = frame.loc[(frame.index >= gap_start) & (frame.index <= gap_end)]
+                if not sliced.empty:
+                    fetched_frames.append(sliced)
+            self.coverage.record_fetch(symbol, key, gap_start, gap_end, self.adjustment)
+
+        if fetched_frames:
+            self._merge_write(symbol, key, fetched_frames)
+
+    def _refuse_uncached(
+        self, symbols: List[str], timeframe: str, start: pd.Timestamp, end: pd.Timestamp
+    ) -> None:
+        """Raise one :class:`CacheMiss` naming every symbol with a gap, before any is read."""
+        self.refuse_uncached_reads([(symbols, timeframe, start, end)])
+
+    def is_cached(self, symbols: List[str], timeframe: TimeframeLike, start: datetime, end: datetime) -> bool:
+        """Whether every one of ``symbols`` is covered over ``[start, end]``."""
+        tf = str(_as_timeframe(timeframe))
+        start_ts, end_ts = _to_utc(start), _to_utc(end)
+        return not any(self.coverage.gaps(s, tf, start_ts, end_ts) for s in dict.fromkeys(symbols))
+
+    def refuse_uncached_reads(
+        self,
+        reads: List[Tuple[List[str], TimeframeLike, datetime, datetime]],
+        *,
+        why: Optional[str] = None,
+    ) -> None:
+        """Raise one :class:`CacheMiss` over several reads a command will make, offline.
+
+        Each read is ``(symbols, timeframe, start, end)``. Reads of one timeframe share a
+        miss, so a command that reads two windows is told about both at once rather than
+        one per rerun. ``why`` is a line saying why the miss asks for what it does.
+        """
+        if not self.offline:
+            return
+        by_timeframe: Dict[str, Dict[str, List[Tuple[pd.Timestamp, pd.Timestamp]]]] = {}
+        for symbols, timeframe, start, end in reads:
+            tf = str(_as_timeframe(timeframe))
+            start_ts, end_ts = _to_utc(start), _to_utc(end)
+            for symbol in dict.fromkeys(symbols):
+                gaps = self.coverage.gaps(symbol, tf, start_ts, end_ts)
+                if gaps:
+                    by_timeframe.setdefault(tf, {}).setdefault(symbol, []).extend(gaps)
+        # One timeframe per miss: a warm command takes one, so a command reading two
+        # would need two rounds whatever the message said.
+        for tf, missing in by_timeframe.items():
+            shortfall = any(_is_date_shortfall(gap) for gaps in missing.values() for gap in gaps)
+            raise CacheMiss(missing, tf, date_shortfall=shortfall, cache_dir=self.cache_dir, why=why)
+
+    def _merge_write(self, symbol: str, timeframe: str, new_frames: List[pd.DataFrame]) -> None:
+        """Read the symbol's full existing history, merge in the newly-fetched
+        frames, and write the union back.
+
+        Required because ``ParquetBarStore.write()`` replaces a symbol's *entire*
+        subtree on every call (by design - no stale year partitions survive a
+        rewrite); writing only the new gap would silently delete every other
+        year already cached for this symbol.
+        """
+        existing = self.store.scan(
+            [symbol], timeframe, _FAR_FUTURE, lookback_days=_FULL_HISTORY_LOOKBACK_DAYS
+        )
+        parts = [existing[symbol]] if symbol in existing and not existing[symbol].empty else []
+        parts.extend(new_frames)
+        if not parts:
+            return
+        merged = pd.concat(parts)
+        merged = merged[~merged.index.duplicated(keep="last")].sort_index()
+        self.store.write({symbol: merged}, timeframe)
+
+    @staticmethod
+    def _lookback_days(start: pd.Timestamp, end: pd.Timestamp) -> int:
+        return max(int((end - start) / pd.Timedelta(days=1)) + 2, 1)
+
+    # ------------------------------------------------------------------ #
+    # CLI-facing helpers
+    # ------------------------------------------------------------------ #
+    def vintage_stamp(
+        self, symbols: List[str], timeframe: TimeframeLike, start: datetime, end: datetime
+    ) -> Optional[str]:
+        """Ensure ``[start, end]`` is cached for ``symbols`` (gap-filling exactly as
+        :meth:`get_bars` would), then return the data-vintage stamp for that
+        window - suitable for folding into a trial's dedup key."""
+        tf_obj = _as_timeframe(timeframe)
+        tf = str(tf_obj)
+        start_ts, end_ts = _to_utc(start), _to_utc(end)
+        if self.offline:
+            # Up front, as in get_bars: backtest, optimize and walkforward stamp the
+            # vintage before reading any bars, so this is where their miss is raised.
+            self._refuse_uncached(list(dict.fromkeys(symbols)), tf, start_ts, end_ts)
+        for symbol in dict.fromkeys(symbols):
+            self._fill_gaps(symbol, tf_obj, start_ts, end_ts)
+        return self.coverage.vintage(symbols, tf, start_ts, end_ts)
+
+    def warm(
+        self, symbols: List[str], timeframe: TimeframeLike, start: datetime, end: datetime
+    ) -> Dict[str, Any]:
+        """Explicit prefetch for ``cache warm``: fetch and cache ``[start, end]``
+        for ``symbols``, returning a summary of what was already covered vs.
+        newly fetched."""
+        tf_obj = _as_timeframe(timeframe)
+        tf = str(tf_obj)
+        start_ts, end_ts = _to_utc(start), _to_utc(end)
+        summary: Dict[str, Any] = {}
+        for symbol in dict.fromkeys(symbols):
+            gaps_before = self.coverage.gaps(symbol, tf, start_ts, end_ts)
+            self._fill_gaps(symbol, tf_obj, start_ts, end_ts)
+            summary[symbol] = {"already_cached": not gaps_before, "gaps_fetched": len(gaps_before)}
+        return summary
+
+    def refresh(
+        self,
+        symbols: List[str],
+        timeframe: TimeframeLike,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+    ) -> Dict[str, Any]:
+        """Invalidate and re-fetch ``symbols`` - the corporate-action lever: a
+        split/dividend backfill since the original fetch is never silently
+        served stale. Re-fetches ``[start, end]`` if given, otherwise the
+        symbol's previously-known covered extent (or is a no-op if neither is
+        available)."""
+        tf_obj = _as_timeframe(timeframe)
+        tf = str(tf_obj)
+        summary: Dict[str, Any] = {}
+        for symbol in dict.fromkeys(symbols):
+            window = self._resolve_refresh_window(symbol, tf, start, end)
+            self.store.delete_symbol(symbol, tf)
+            self.coverage.forget(symbol, tf)
+            if window is None:
+                summary[symbol] = {
+                    "refreshed": False,
+                    "reason": "no prior coverage and no --start/--end given",
+                }
+                continue
+            self._fill_gaps(symbol, tf_obj, window[0], window[1])
+            summary[symbol] = {"refreshed": True, "start": _iso(window[0]), "end": _iso(window[1])}
+        return summary
+
+    def _resolve_refresh_window(
+        self, symbol: str, timeframe: str, start: Optional[datetime], end: Optional[datetime]
+    ) -> Optional[Tuple[pd.Timestamp, pd.Timestamp]]:
+        if start is not None and end is not None:
+            return _to_utc(start), _to_utc(end)
+        covered = self.coverage.covered_intervals(symbol, timeframe)
+        if not covered:
+            return None
+        return covered[0][0], covered[-1][1]
+
+    def status(
+        self, symbols: Optional[List[str]] = None, timeframe: Optional[TimeframeLike] = None
+    ) -> Dict[str, Any]:
+        """Coverage summary for ``cache status`` - all cached symbols/timeframes,
+        or a filtered subset, plus a drift check against the Parquet store."""
+        info = self.coverage.status(self.store)
+        entries = info["entries"]
+        if symbols is not None:
+            wanted = set(symbols)
+            entries = [e for e in entries if e["symbol"] in wanted]
+        if timeframe is not None:
+            tf = str(_as_timeframe(timeframe))
+            entries = [e for e in entries if e["timeframe"] == tf]
+        return {
+            "db_path": info["db_path"],
+            "cache_dir": str(self.cache_dir),
+            "entries": entries,
+            "drift": info["drift"],
+        }

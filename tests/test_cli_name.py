@@ -18,10 +18,10 @@ from typing import Iterator, List, Tuple
 
 import pytest
 
-from tradeflow import cli, settings
-from tradeflow.services import setup
+from quantred import cli, settings
+from quantred.services import setup
 
-PACKAGE = Path(settings.PROJECT_ROOT) / "tradeflow"
+PACKAGE = Path(settings.PROJECT_ROOT) / "quantred"
 
 # Literals allowed to spell the name, as (path relative to the package, enclosing
 # function) -> why. The import package, entry-point groups, ``TRADEFLOW_HOME`` and
@@ -32,9 +32,8 @@ ALLOWED = {
         "compares an import's root module against the import package name"
     ),
     ("services/analysis.py", "code_version"): (
-        "stamps `tradeflow <version>` as the engine's code identity - the import "
-        "package, which a rename of the executable does not touch - so provenance "
-        "written before and after compares as the same code"
+        "stamps `quantred <version>` as the engine's code identity - the import "
+        "package, which a rename of the executable does not touch"
     ),
 }
 
@@ -92,8 +91,8 @@ def _strings(path: Path) -> Iterator[Tuple[int, str, str]]:
 def hard_coded_names(root: Path = PACKAGE) -> List[str]:
     verbs = "|".join(re.escape(v) for v in _verbs())
     # `tradeflow <verb>`, `tradeflow --flag`, `tradeflow \0` (an interpolated verb),
-    # `tradeflow: error` (argparse's own prefix) - but not `tradeflow.module`,
-    # `tradeflow/dir`, `~/.tradeflow` or `.tradeflow/`, where a separator precedes or follows.
+    # `tradeflow: error` (argparse's own prefix) - but not `quantred.module`,
+    # `quantred/dir`, `~/.tradeflow` or `.tradeflow/`, where a separator precedes or follows.
     # Every spelling of the executable, the current one and the alias: a literal
     # `quantred demo` is as much a hard-coded name as a `tradeflow demo` left behind.
     names = "|".join(re.escape(n) for n in (settings.CLI_NAME, *settings.LEGACY_CLI_NAMES))
@@ -125,7 +124,7 @@ def test_the_scan_sees_a_hard_coded_instruction(tmp_path):
         'def hint(verb):\n    return f"run tradeflow {verb} now"\n\n'
         'def fixed():\n    print("tradeflow demo")\n\n'
         'def prog():\n    return "tradeflow"\n\n'
-        'def ok():\n    """Run ``tradeflow demo``."""\n    return "import tradeflow.cli; ~/.tradeflow"\n'
+        'def ok():\n    """Run ``tradeflow demo``."""\n    return "import quantred.cli; ~/.tradeflow"\n'
     )
     found = hard_coded_names(tmp_path)
     assert sorted(int(p.split(":")[1]) for p in found) == [2, 5, 8]
@@ -158,7 +157,7 @@ def test_the_mcp_launch_command_finds_the_script_by_its_current_then_legacy_name
     monkeypatch.setattr(settings, "CLI_NAME", "renamed")
     monkeypatch.setattr(settings, "LEGACY_CLI_NAMES", ("older",))
 
-    assert setup.mcp_launch_command() == [str(python), "-m", "tradeflow.cli", "mcp"]
+    assert setup.mcp_launch_command() == [str(python), "-m", "quantred.cli", "mcp"]
     (bin_dir / "older").write_text("")
     assert setup.mcp_launch_command() == [str(bin_dir / "older"), "mcp"]
     (bin_dir / "renamed").write_text("")
@@ -166,7 +165,7 @@ def test_the_mcp_launch_command_finds_the_script_by_its_current_then_legacy_name
 
 
 def test_the_mcp_server_name_is_one_definition():
-    from tradeflow.mcp import server
+    from quantred.mcp import server
 
     assert server.SERVER_NAME == settings.MCP_SERVER_NAME
     assert list(setup.mcp_client_config()["mcpServers"]) == [settings.MCP_SERVER_NAME]
@@ -201,7 +200,7 @@ def test_the_brand_scan_sees_the_old_name(tmp_path):
 def test_a_report_and_the_top_level_help_say_the_brand():
     """What a user reads, rendered rather than scanned: the report title and footer and
     the help description are built from settings.BRAND, so renaming it renames all."""
-    from tradeflow.analytics.htmlreport import _footer, _title
+    from quantred.analytics.htmlreport import _footer, _title
 
     assert settings.BRAND == "QuantRed"
     assert _title({"strategy": "s"}, "verdict").startswith(settings.BRAND)
@@ -213,13 +212,13 @@ def test_a_report_and_the_top_level_help_say_the_brand():
 def test_the_demo_does_not_bury_its_scorecard_in_progress_logging(caplog, capsys):
     """A new user's first command used to print a hundred INFO lines before the
     result; warnings still show, and the engine's log level is put back."""
-    engine_log = logging.getLogger("tradeflow")
+    engine_log = logging.getLogger("quantred")
     before = engine_log.level
     caplog.set_level(logging.INFO)
 
     cli.cmd_demo(argparse.Namespace(seed=7, chart=None, html=None))
 
-    noisy = [r for r in caplog.records if r.name.startswith("tradeflow") and r.levelno < logging.WARNING]
+    noisy = [r for r in caplog.records if r.name.startswith("quantred") and r.levelno < logging.WARNING]
     assert noisy == []
     assert "Verdict:" in capsys.readouterr().out
     assert engine_log.level == before

@@ -18,8 +18,8 @@ from pathlib import Path
 
 import pytest
 
-from tradeflow import settings
-from tradeflow.settings import (
+from quantred import settings
+from quantred.settings import (
     DISTRIBUTION_NAME,
     PROJECT_ROOT,
     git_worktree_containing,
@@ -34,10 +34,10 @@ def _no_inherited_home(monkeypatch):
     # while the suite's throwaway TRADEFLOW_HOME is still set, keeps a later first
     # import from happening with it removed and binding a module to the real home
     # for every test file that runs after this one.
-    import tradeflow.cli  # noqa: F401
-    import tradeflow.mcp.server  # noqa: F401
-    import tradeflow.services.audit  # noqa: F401
-    import tradeflow.services.setup  # noqa: F401
+    import quantred.cli  # noqa: F401
+    import quantred.mcp.server  # noqa: F401
+    import quantred.services.audit  # noqa: F401
+    import quantred.services.setup  # noqa: F401
 
     monkeypatch.delenv("TRADEFLOW_HOME", raising=False)
 
@@ -167,7 +167,7 @@ def test_nothing_is_reported_when_the_checkout_is_the_active_root(monkeypatch, t
 def test_the_setup_check_states_where_evidence_lands(monkeypatch, tmp_path):
     """A user who arrived over MCP or from PyPI has no reason to know the file model.
     This is the one command that exists to explain it."""
-    from tradeflow.services.setup import run_checks
+    from quantred.services.setup import run_checks
 
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     names = {check.name for check in run_checks(path=tmp_path / ".env")}
@@ -180,7 +180,7 @@ def test_the_setup_check_states_where_evidence_lands(monkeypatch, tmp_path):
 
 def test_the_setup_check_fails_when_state_sits_in_a_repository(monkeypatch, tmp_path):
     """It is a real hazard, so it is a failed check rather than a note."""
-    from tradeflow.services.setup import run_checks
+    from quantred.services.setup import run_checks
 
     (tmp_path / ".git").mkdir()
     monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
@@ -215,7 +215,7 @@ def _import_probe(body: str, home: Path):
 
 @pytest.mark.parametrize(
     "module",
-    ["tradeflow.store.trials", "tradeflow.services.audit", "tradeflow.research.agent"],
+    ["quantred.store.trials", "quantred.services.audit", "quantred.research.agent"],
 )
 def test_importing_a_journal_module_does_not_create_the_state_root(tmp_path, module):
     """It did. The journal's location converged onto `settings.trial_journal_path()`,
@@ -241,8 +241,8 @@ def test_the_journal_constants_still_resolve_on_access(tmp_path):
     still name one file, and reaching either one creates the directory it needs."""
     home = tmp_path / "on-demand"
     probe = (
-        "from tradeflow.store.trials import DEFAULT_JOURNAL_PATH;"
-        "from tradeflow.services.audit import DEFAULT_TRIAL_JOURNAL;"
+        "from quantred.store.trials import DEFAULT_JOURNAL_PATH;"
+        "from quantred.services.audit import DEFAULT_TRIAL_JOURNAL;"
         "import os;"
         "assert DEFAULT_JOURNAL_PATH == DEFAULT_TRIAL_JOURNAL, (DEFAULT_JOURNAL_PATH, DEFAULT_TRIAL_JOURNAL);"
         f"print(os.path.isdir(os.path.dirname(str(DEFAULT_JOURNAL_PATH))), str(DEFAULT_JOURNAL_PATH).startswith(r'{home}'))"
@@ -254,8 +254,8 @@ def test_the_journal_constants_still_resolve_on_access(tmp_path):
 def test_an_unknown_attribute_still_raises_attribute_error():
     """A module `__getattr__` that answers every name turns a typo into a silent
     wrong value, which is worse than the import-time cost it replaced."""
-    from tradeflow.services import audit
-    from tradeflow.store import trials
+    from quantred.services import audit
+    from quantred.store import trials
 
     for module in (trials, audit):
         with pytest.raises(AttributeError):
@@ -293,7 +293,7 @@ def test_a_checkout_started_as_the_installed_command_is_told_that_command(starte
     it was told `python main.py cache warm ...`, which fails outside the repository root.
     The instruction now echoes how the process started; the alias is answered with the
     current name."""
-    from tradeflow import cli
+    from quantred import cli
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "argv", [started.format(cli=settings.CLI_NAME), "verdict"])
@@ -308,7 +308,7 @@ def test_a_checkout_started_as_the_installed_command_is_told_that_command(starte
 @pytest.mark.parametrize("started", ["main.py", "/repo/main.py"])
 def test_a_checkout_started_through_the_shim_keeps_make_and_main_py(started, monkeypatch):
     """The other direction: `python main.py` and every make target start here."""
-    from tradeflow import cli
+    from quantred import cli
 
     monkeypatch.setattr(sys, "argv", [started, "verdict"])
 
@@ -325,8 +325,8 @@ def test_messages_still_render_when_the_working_directory_is_gone(monkeypatch, t
     messages are printed after the halt and the closes have already happened."""
     if sys.platform == "win32":
         pytest.skip("a process cannot delete its own working directory on Windows")
-    from tradeflow import cli
-    from tradeflow.execution.flatten import CLOSED, FlattenReport
+    from quantred import cli
+    from quantred.execution.flatten import CLOSED, FlattenReport
 
     _installed_copy(monkeypatch, tmp_path)
     monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path / "home"))
@@ -372,7 +372,7 @@ def test_the_project_image_is_told_it_is_not_a_checkout(monkeypatch, tmp_path):
     """The image carries main.py and pyproject.toml, so it read as a checkout and told a
     container user to run `make init` and copy `.env.example` - neither is in the image -
     and `init` could not write the .env compose mounts read-only."""
-    from tradeflow import cli
+    from quantred import cli
 
     monkeypatch.setenv(settings.CONTAINER_ENV, "1")
     monkeypatch.setattr(sys, "argv", ["main.py", "demo"])
@@ -400,4 +400,4 @@ def test_the_build_context_is_an_allowlist_that_keeps_secrets_out():
     assert ignore[[line.strip() for line in ignore].index("*")] == "*"
     allowed = {line[1:].rstrip("/") for line in ignore if line.startswith("!")}
     assert not allowed & {".env", "specs", "configs", "logs", "cache", ".git", ".venv"}
-    assert {"tradeflow", "main.py", "pyproject.toml"} <= allowed
+    assert {"quantred", "main.py", "pyproject.toml"} <= allowed

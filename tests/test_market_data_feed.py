@@ -11,9 +11,9 @@ from unittest import mock
 
 import pytest
 
-from tradeflow.brokers.alpaca.market_data import AlpacaMarketData
-from tradeflow.marketdata.timeframe import Timeframe
-from tradeflow.settings import SettingsError, data_feed
+from quantred.brokers.alpaca.market_data import AlpacaMarketData
+from quantred.marketdata.timeframe import Timeframe
+from quantred.settings import SettingsError, data_feed
 
 
 def _provider(feed=None):
@@ -45,7 +45,7 @@ def test_a_pinned_feed_reaches_the_stream_too():
     """Both halves, or the mismatch this exists to close simply moves."""
     provider, _ = _provider("iex")
 
-    with mock.patch("tradeflow.brokers.alpaca.market_data.StockDataStream") as stream:
+    with mock.patch("quantred.brokers.alpaca.market_data.StockDataStream") as stream:
         provider._new_stream()
 
     assert stream.call_args.kwargs["feed"].value == "iex"
@@ -54,7 +54,7 @@ def test_a_pinned_feed_reaches_the_stream_too():
 def test_an_unpinned_stream_is_constructed_exactly_as_before():
     provider, _ = _provider(None)
 
-    with mock.patch("tradeflow.brokers.alpaca.market_data.StockDataStream") as stream:
+    with mock.patch("quantred.brokers.alpaca.market_data.StockDataStream") as stream:
         provider._new_stream()
 
     assert "feed" not in stream.call_args.kwargs
@@ -92,7 +92,7 @@ def test_a_failed_fetch_raises_instead_of_returning_no_bars():
     facts. Returning `{}` for both made them the same one: absent is not zero, and
     unreachable is not absent.
     """
-    from tradeflow.brokers.errors import BrokerError
+    from quantred.brokers.errors import BrokerError
 
     provider, historical = _provider()
     historical.get_stock_bars.side_effect = ConnectionError("Temporary failure in name resolution")

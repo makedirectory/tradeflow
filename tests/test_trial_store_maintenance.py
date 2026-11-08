@@ -16,9 +16,9 @@ from datetime import datetime
 
 import pytest
 
-from tradeflow.engine.backtest import ACCOUNTING_VERSION
-from tradeflow.services import audit, maintenance
-from tradeflow.store.trials import TrialStore, db_path_for_journal
+from quantred.engine.backtest import ACCOUNTING_VERSION
+from quantred.services import audit, maintenance
+from quantred.store.trials import TrialStore, db_path_for_journal
 
 _SYMBOLS = ["AAA", "BBB"]
 _START, _END = datetime(2024, 1, 2), datetime(2024, 6, 28)
@@ -27,7 +27,7 @@ _START, _END = datetime(2024, 1, 2), datetime(2024, 6, 28)
 @pytest.fixture
 def journal(tmp_path, monkeypatch):
     """A journal, its sibling store, and a state root of this test's own."""
-    from tradeflow.store import trials as trials_module
+    from quantred.store import trials as trials_module
 
     path = tmp_path / "logs" / "research_journal.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -338,7 +338,7 @@ def test_a_listing_says_how_much_history_the_accounting_filter_is_hiding(journal
     disappearance."""
     from types import SimpleNamespace
 
-    from tradeflow.cli import _print_trials_list
+    from quantred.cli import _print_trials_list
 
     _seed(journal, n=2)
     args = SimpleNamespace(
@@ -369,7 +369,7 @@ def test_a_listing_that_hides_nothing_says_nothing(journal, capsys):
     """Both directions: a notice on every listing is noise, and noise gets skipped."""
     from types import SimpleNamespace
 
-    from tradeflow.cli import _print_trials_list
+    from quantred.cli import _print_trials_list
 
     _seed(journal, n=2)
     args = SimpleNamespace(
@@ -395,7 +395,7 @@ def test_a_listing_that_hides_nothing_says_nothing(journal, capsys):
 
 
 def _run_archive_cli(monkeypatch, capsys, *extra):
-    from tradeflow.cli import main
+    from quantred.cli import main
 
     monkeypatch.setattr("sys.argv", ["cli", "trials", "archive", "--reason", "checking", *extra])
     main()
