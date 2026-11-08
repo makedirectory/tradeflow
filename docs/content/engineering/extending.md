@@ -112,6 +112,10 @@ and expose them with entry points. QuantRed loads entry points at startup, but
 built-in names are reserved, so a private package cannot silently replace
 `demo_trend` or `demo_volume`.
 
+The groups used to be `tradeflow.strategies` and `tradeflow.scanners`. Those are still
+read, so a pack declared against them keeps registering, but its imports must resolve
+against `quantred`, and new packs should declare the `quantred.*` groups.
+
 A private package can also return several contributions from one entry point:
 
 ```toml

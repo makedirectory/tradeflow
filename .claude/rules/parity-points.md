@@ -239,7 +239,7 @@ the one definition (argparse's `prog`, the version banner, the MCP launch lookup
 every instruction read it) and `settings.MCP_SERVER_NAME` is the server's. A literal
 `tradeflow <verb>` in a string is a place a rename leaves behind with no signal, since
 the old name keeps working. `code_version()` is the one deliberate exception: it names
-the engine's code, not the command. `tests/test_cli_name.py` scans every string literal
+the engine's code (`quantred <version>` for an installed copy), not the command. `tests/test_cli_name.py` scans every string literal
 in the package against an explicit, justified allowlist.
 
 The same goes for *install and recovery* text: it has one definition,

@@ -66,6 +66,11 @@ my_breakout = "yourfirm_signals.strategies:BreakoutStrategy"
 my_liquidity = "yourfirm_signals.scanners:LiquidityScanner"
 ```
 
+The groups were `tradeflow.strategies` and `tradeflow.scanners` before the import
+package was renamed. Those names are still read, but the pack's own imports must change
+from `tradeflow` to `quantred`; see
+[migrating to QuantRed](migrating-to-quantred#update-a-private-pack).
+
 The names on the left are what you type at `--strategy` and `--scanner`. They come from
 the entry points, not from the class names, and they only have to avoid colliding with a
 built-in — the engine refuses a pack rather than shadowing one if they do.

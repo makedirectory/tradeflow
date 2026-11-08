@@ -137,15 +137,20 @@ backtests included, though most never touched a boundary - drop out of the defau
 
 ### Rename
 
-- The distribution is `quantred` (was `tradeflow-engine`) and the main command is
-  `quantred`. The `tradeflow` command remains as an alias; the import package, plugin
-  groups, `TRADEFLOW_HOME` and `~/.tradeflow` are unchanged, so private packs and all
-  recorded history carry over.
+- The distribution is `quantred` (was `tradeflow-engine`), the import package is
+  `quantred` (was `tradeflow`), and the main command is `quantred`. A private pack must
+  change `from tradeflow...` imports to `from quantred...`.
+- The plugin entry-point groups are `quantred.strategies` and `quantred.scanners`. The old
+  `tradeflow.strategies` and `tradeflow.scanners` groups are still read, so a pack declared
+  against them keeps registering (its imports must still resolve).
+- Unchanged: `TRADEFLOW_HOME` and `~/.tradeflow`, so recorded history carries over, and
+  the `tradeflow` command, which remains as an alias. An installed copy's provenance code
+  identity now reads `quantred <version>` (was `tradeflow <version>`).
 - MCP clients now see the server as `quantred`. Existing entries keep launching.
 - **Upgrading in place:** uninstall `tradeflow-engine` first, then install `quantred`;
-  in a shared virtual environment, the other order breaks it. A pack
-  that still depends on `tradeflow-engine` needs installing without it. Steps,
-  symptoms and recovery are in [migrating to QuantRed](usage/migrating-to-quantred).
+  both install a `tradeflow` command. A pack that still depends on `tradeflow-engine`
+  needs installing without it. Steps, symptoms and recovery are in
+  [migrating to QuantRed](usage/migrating-to-quantred).
 
 ### Getting started
 

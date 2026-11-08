@@ -10,12 +10,12 @@ The project was called TradeFlow and was distributed as `tradeflow-engine`. It i
 is for anyone who already has the old distribution installed. If you are installing for
 the first time, you do not need it: see [installation](installation).
 
-`tradeflow-engine` 2.3.1 is the last release under the old name. It behaves exactly as
-2.3.0 did, except that at a terminal it prints a note pointing here; QuantRed 2.4.0 is
-the first release as `quantred`.
+`tradeflow-engine` 2.3.1 is the last release under the old name; QuantRed 2.4.0 is the
+first release as `quantred`.
 
-Commands below were run with local wheels standing in for the package index, in
-throwaway environments. Anything that was not run that way is labelled.
+Some steps below were first rehearsed with local wheels standing in for the package
+index, in throwaway environments, before the import package was renamed. Where a step
+describes a collision that no longer exists, it says so.
 
 ## What changed
 
@@ -24,25 +24,58 @@ throwaway environments. Anything that was not run that way is labelled.
 | Display name | TradeFlow | QuantRed |
 | Distribution (what you install) | `tradeflow-engine` | `quantred` |
 | Main command | `tradeflow` | `quantred` |
+| Import package | `tradeflow` | `quantred` |
+| Plugin entry-point groups | `tradeflow.strategies`, `tradeflow.scanners` | `quantred.strategies`, `quantred.scanners` (the old groups are still read) |
+| Provenance code identity (installed copy) | `tradeflow <version>` | `quantred <version>` |
 | MCP server name (what a client sees) | `tradeflow` | `quantred` |
 
 ## What did not change
 
 - **The `tradeflow` command still works.** It is installed next to `quantred` as an
   alias for the same program, so scripts and cron entries keep running.
-- **`import quantred`** and the plugin entry-point groups. A private strategy pack
-  keeps working without edits.
+- **Old entry-point groups still register.** A pack declared against
+  `tradeflow.strategies` or `tradeflow.scanners` keeps registering. Its imports do
+  change, though: see [Update a private pack](#update-a-private-pack).
 - **Your state.** `~/.tradeflow`, `TRADEFLOW_HOME`, the journal, trial store, bar
   cache, saved configs and your `.env` are untouched. In the rehearsal a `.env` written
   by the old install was found by the new one at the same state root.
-- The documentation address and the GitHub repository.
+- The documentation address.
 
-## The one rule: uninstall the old distribution first
+## Uninstall the old distribution first
 
-Both distributions own the same `quantred/` import tree and the same `tradeflow`
-script. Install `quantred` while `tradeflow-engine` is still present and the two
-overwrite each other; remove the old one afterwards and its uninstall deletes files the
-new one needs. Uninstall first, then install.
+The two distributions no longer share a package directory (`tradeflow/` against
+`quantred/`), but both currently install a `tradeflow` command. With both present, which
+one answers `tradeflow` depends on the installer, and uninstalling the old one afterwards
+can delete the script the new one needs. Uninstall first, then install.
+
+## Update a private pack
+
+A pack that imports the engine has to change its imports, because the import package is
+now `quantred`:
+
+```bash
+grep -rl 'tradeflow' src/ | xargs sed -i.bak -E 's/\b(from|import) tradeflow\b/\1 quantred/'
+```
+
+(`sed -i.bak` works on both GNU and macOS sed; delete the `.bak` files afterwards, and
+read the diff, since this does not touch strings that mention the old name.) Then
+change the dependency in the pack's `pyproject.toml` and, optionally, the entry-point
+groups:
+
+```toml
+[project]
+dependencies = ["quantred"]            # was "tradeflow-engine"
+
+[project.entry-points."quantred.strategies"]   # was "tradeflow.strategies"
+my_breakout = "yourfirm_signals.strategies:BreakoutStrategy"
+
+[project.entry-points."quantred.scanners"]     # was "tradeflow.scanners"
+my_liquidity = "yourfirm_signals.scanners:LiquidityScanner"
+```
+
+The group rename is optional for now: the engine reads both the old and the new group
+names, so a pack that only fixes its imports keeps registering. Declare the new names in
+anything you maintain.
 
 ## If you installed with `uv tool`
 
@@ -69,7 +102,9 @@ example `my-signalsfile:///work/my-signals`); re-add it with `--with-editable
 /work/my-signals`, using the path. If a pack declares a dependency on `tradeflow-engine`,
 see [If you write or use an extension pack](#if-you-write-or-use-an-extension-pack)
 before installing. Afterwards `quantred --version` and `tradeflow --version` both
-print `quantred <version>` and show the same state root as before.
+print `quantred <version>` and show the same state root as before. (Checked before the
+import package was renamed; the `tradeflow` alias is the same program, so it should
+still hold, but it was not re-run.)
 
 Running the new install first does not damage anything, but does not work either: uv
 builds the new environment, then stops with `error: Executable already exists:
@@ -96,9 +131,8 @@ editable packs afterwards with `python -m pip install --no-deps -e ./my-pack` (t
 `--no-deps` is explained [below](#if-you-write-or-use-an-extension-pack)).
 
 **If you installed `quantred` first** and then uninstalled the old distribution, the
-environment is left without the engine files (`import quantred` fails with `No module
-named quantred.cli`) and without the `tradeflow` script. Repair it with
-`--force-reinstall`:
+environment may be left without the `tradeflow` script (the engine's own files are no
+longer shared, so `import quantred` still works). Repair it with `--force-reinstall`:
 
 ```bash
 python -m pip install --force-reinstall --no-deps quantred
@@ -138,17 +172,13 @@ key in its config. How a given client shows the renamed server was not tested.
 
 Earlier documentation told pack authors they could depend on `tradeflow-engine`, so packs
 that declare it exist. Installing one makes the installer pull the old distribution in
-beside `quantred`, and the two then share one `quantred/` tree. Nothing reports it. You
-notice because:
-
-- every command starts with `Ignoring duplicate quantred.strategies contribution
-  'demo_trend' ...` lines, and
-- `quantred --version` may print `tradeflow <version>`, the old name (it depends on which
-  copy of the files won).
-
-(In the rehearsals the files were sometimes the old code and sometimes the new, so
-behaviour is unpredictable.) If you own the pack, change its dependency to `quantred` or
-drop it; the engine is always present where a pack runs. If you cannot edit it, install
+beside `quantred`. The two no longer overwrite each other's files, but the old
+distribution installs its own `tradeflow` command and its own copy of the engine, so
+`tradeflow` may run the old code while `quantred` runs the new, and the pack still has to
+import from `quantred`. If you own the pack, change its dependency to `quantred` or drop
+it; the engine is always present where a pack runs. The exclusion recipes below were
+rehearsed while the two distributions still shared a directory, which is the worse case;
+they keep the old distribution out and still apply. If you cannot edit it, install
 it so the old distribution is kept out:
 
 - **uv tool.** Name the old distribution in a file and exclude it. The command records the
@@ -175,9 +205,9 @@ it so the old distribution is kept out:
   normally.
 
 - **Checkout.** `uv pip install -e` of such a pack pulls `tradeflow-engine` into the
-  checkout's environment, and `uv run quantred` then runs the old code (it prints
-  `tradeflow <version>`) while `python main.py` runs the checkout's. Install it without
-  the old distribution:
+  checkout's environment, and `uv run quantred` and `tradeflow` may then
+  disagree about which code they run (the old one prints `tradeflow <version>`), while
+  `python main.py` runs the checkout's. Install it without the old distribution:
 
   ```bash
   uv pip install --no-deps -e ./my-pack
@@ -202,7 +232,7 @@ command above; uv rebuilds the tool environment without the old distribution.
 virtual environment with `python -m pip`, where the repair left one `quantred`
 distribution with both scripts present.)
 
-Entry-point groups and imports are unchanged, so nothing else in a pack needs editing.
+The pack's own imports are covered in [Update a private pack](#update-a-private-pack).
 
 ## Availability
 
