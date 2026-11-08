@@ -28,6 +28,15 @@ index; they are tagged in the repository.
 
 ---
 
+## 2.4.1 — 2026-11-08
+
+- **No false "a pack imports the old name" line when launched through the old name.**
+  `python -m tradeflow.cli ...` - the form MCP client configs written before the rename
+  use, working through `tradeflow-engine` 2.3.1 - imports the old name itself before
+  discovery runs, and the check read that as a pack using it, printing the warning on
+  every launch. It now warns only when the old name first appears while packs are
+  loading.
+
 ## 2.4.0 — 2026-11-07
 
 TradeFlow is now **QuantRed**, and a first session works from install to a result

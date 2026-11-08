@@ -32,7 +32,7 @@ ALLOWED = {
     ("research/sandbox.py", "_guarded_import"): (
         "compares an import's root module against the import package name"
     ),
-    ("services/registry.py", "_warn_if_a_pack_imports_the_old_name"): (
+    ("services/registry.py", "_old_import_name_loaded"): (
         "looks for the old *import package* in sys.modules - the alias a pack loaded - "
         "not the command a reader types"
     ),
