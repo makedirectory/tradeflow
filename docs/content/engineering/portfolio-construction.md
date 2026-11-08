@@ -61,10 +61,13 @@ optimum, and `TC · IR*` equals the book's own `predicted_ir` by construction. (
 correlation of α with the weights ignores Σ and satisfies neither property: on a
 capped ten-name book it overstated the retained IR several-fold.)
 
-So tightening the cardinality cap or the position limit lowers TC and the predicted
-IR — a far more honest knob than "maximize score." A regression test pins this
-monotonicity. The report also surfaces predicted TE, predicted IR, value added, and
-turnover.
+TC is at most 1 for any constraint set and equals 1 only at the unconstrained optimum, so
+it shows how much of the achievable IR the constraints leave on the table. It is a ratio
+of IRs, and the optimizer maximizes utility at a fixed risk aversion rather than the
+ratio, so it is not guaranteed to fall monotonically as a cap tightens: a more
+concentrated book can read a higher TC than a more diversified one with higher utility.
+Read it against `IR*`, not as a score to maximize. The report also surfaces predicted TE,
+predicted IR, value added, and turnover.
 
 ## Cost inside the objective (cost-aware by default)
 
