@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "tradeflow",
+  "name": "quantred",
   "compatibility_date": "2026-06-20",
   "observability": {
     "enabled": true
