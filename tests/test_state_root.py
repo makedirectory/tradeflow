@@ -287,6 +287,19 @@ def test_a_checkout_is_detected_from_anywhere_it_is_run(monkeypatch, tmp_path):
     assert settings.invocation("demo") == "python main.py demo"
 
 
+@pytest.mark.parametrize("on_path", [False, True])
+def test_an_installed_copy_started_by_the_old_name_is_told_the_name_it_has(on_path, monkeypatch, tmp_path):
+    """A `uv tool` install upgraded in place exposes only `tradeflow`; telling its reader to run
+    `quantred init` names a command their shell lacks. When `quantred` is also on PATH the
+    current name is the instruction."""
+    _installed_copy(monkeypatch, tmp_path)
+    monkeypatch.setattr(sys, "argv", ["/home/u/.local/bin/tradeflow", "demo"])
+    monkeypatch.setattr(settings.shutil, "which", lambda name: "/bin/quantred" if on_path else None)
+
+    expected = settings.CLI_NAME if on_path else "tradeflow"
+    assert settings.invocation("init") == f"{expected} init"
+
+
 @pytest.mark.parametrize("started", ["/venv/bin/{cli}", "/venv/bin/{cli}.exe", "/venv/bin/tradeflow"])
 def test_a_checkout_started_as_the_installed_command_is_told_that_command(started, monkeypatch, tmp_path):
     """A checkout's environment carries the installed command too, and someone who typed
@@ -297,6 +310,7 @@ def test_a_checkout_started_as_the_installed_command_is_told_that_command(starte
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "argv", [started.format(cli=settings.CLI_NAME), "verdict"])
+    monkeypatch.setattr(settings.shutil, "which", lambda name: "/bin/" + name)  # both names exist
 
     assert running_from_checkout() is True
     assert settings.invocation("demo") == f"{settings.CLI_NAME} demo"

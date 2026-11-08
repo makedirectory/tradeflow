@@ -182,29 +182,52 @@ def _uv_tool_command(wanted: List[str], extra_flags: Tuple[str, ...] = ()):
     what to add by hand.
     """
     import quantred
-    from quantred.settings import DISTRIBUTION_NAME, is_own_distribution
+    from quantred.settings import (
+        DISTRIBUTION_NAME,
+        LEGACY_DISTRIBUTION_NAMES,
+        invoked_legacy_name,
+        is_own_distribution,
+    )
 
     receipt = _tool_receipt()
     requirements = list(((receipt or {}).get("tool") or {}).get("requirements") or [])
     recorded: set = set()
+    installed_as = None
     for req in requirements:
-        if is_own_distribution(str(req.get("name", ""))):
+        name = str(req.get("name", ""))
+        if is_own_distribution(name):
             recorded.update(req.get("extras") or ())
+            installed_as = installed_as or name.lower().replace("_", "-")
+    if installed_as is None and invoked_legacy_name():
+        installed_as = LEGACY_DISTRIBUTION_NAMES[0]
     union = sorted({*installed_extras(), *recorded, *wanted})
-    command = f"uv tool install --force '{DISTRIBUTION_NAME}[{','.join(union)}]=={quantred.__version__}'"
+    spec = f"[{','.join(union)}]"
+    if installed_as in LEGACY_DISTRIBUTION_NAMES:
+        # The tool that exists is the one installed under the old name; installing
+        # `quantred` would build a second tool and leave this one without the extra.
+        # That release forwards every extra to quantred and requires a current one, so
+        # its own version is not the running engine's and is not pinned to it.
+        command = f"uv tool install --force '{installed_as}{spec}>=2.3.1'"
+    else:
+        command = f"uv tool install --force '{DISTRIBUTION_NAME}{spec}=={quantred.__version__}'"
     note = None
     if receipt is not None:
         excludes = [str(name) for name in ((receipt.get("tool") or {}).get("excludes") or [])]
         flags = [*_with_flags(requirements), *extra_flags]
         prefix = ""
         if excludes:
-            # Restated for the same reason as the extras: the tool environment is rebuilt,
-            # and a pack that still declares the old engine would otherwise bring it
-            # straight back beside this one. uv takes exclusions from a file, not inline,
-            # so the command creates the file first - pasted from any directory it runs.
+            # Restated for the same reason as the extras: the tool environment is rebuilt
+            # and would otherwise lose a choice the reader made. It is their choice, not
+            # ours, so it is carried and then described. uv takes exclusions from a file,
+            # not inline, so the command creates the file first - pasted from anywhere.
             flags.append(f"--excludes {EXCLUDES_FILE}")
             names = " ".join(_quote(name) for name in excludes)
             prefix = f"printf '%s\\n' {names} > {EXCLUDES_FILE} && "
+            if any(name.lower().replace("_", "-") in LEGACY_DISTRIBUTION_NAMES for name in excludes):
+                note = (
+                    "(this keeps your exclusion of the old tradeflow-engine; a pack that still imports "
+                    "`tradeflow` needs it installed, so drop that exclusion for such a pack)"
+                )
         command = prefix + " ".join([command, *flags])
     else:
         packs = _pack_distributions()
@@ -217,11 +240,14 @@ def _uv_tool_command(wanted: List[str], extra_flags: Tuple[str, ...] = ()):
     return command, receipt, note
 
 
-#: Said under a pack install command: the pack's own dependency on the old distribution
-#: name is what pulls it in over this one, and the cure belongs in the pack.
+#: Said under a pack install command. The old distribution's final release is a thin
+#: alias, so keeping it is harmless, and a pack nobody can edit still imports `tradeflow`.
 _OLD_ENGINE_NOTE = (
-    "If the pack declares a dependency on the old tradeflow-engine, change that to {dist}. "
-    "Only for a pack you cannot edit, {skip}; that also skips the pack's other dependencies."
+    "Keep tradeflow-engine>=2.3.1 installed: a pack that still imports `tradeflow` works through "
+    "the alias it provides, and without it that pack is dropped. If the pack pins an older "
+    "tradeflow-engine, override the pin rather than excluding it (a pin below 2.3.1 would install "
+    "the whole previous engine, whose classes this one rejects). Excluding it, or {skip}, is only "
+    "for a pack that never imports `tradeflow`; {skip} also skips the pack's other dependencies."
 )
 
 
@@ -230,23 +256,21 @@ def pack_install_hint(path: str) -> str:
 
     A checkout installs it into its own environment (additive). A ``uv tool`` copy has
     to rebuild the tool environment, so the command carries everything it already had
-    (including the exclusion of the old engine, created first so the line runs anywhere).
-    Elsewhere it is pip, and either of those is followed by what to do about a pack that
-    still depends on the old distribution name.
+    (including any exclusion the reader chose, created first so the line runs anywhere).
+    Elsewhere it is pip. Each is followed by what to do about a pack that still depends
+    on the old distribution name.
     """
-    from quantred.settings import DISTRIBUTION_NAME, running_from_checkout
+    from quantred.settings import running_from_checkout
 
     quoted = shlex.quote(path)
     if running_from_checkout():
         command = f"uv pip install -e {quoted}"
-        skip = "add --no-deps"
     else:
         command, receipt, note = _uv_tool_command([], (f"--with-editable {quoted}",))
         if receipt is not None:
-            return command
+            return f"{command}\n{note}" if note else command
         command = f"python -m pip install -e {quoted}"
-        skip = "add --no-deps"
-    return f"{command}\n({_OLD_ENGINE_NOTE.format(dist=DISTRIBUTION_NAME, skip=skip)})"
+    return f"{command}\n({_OLD_ENGINE_NOTE.format(skip='--no-deps')})"
 
 
 def install_hint(*extras: str) -> str:

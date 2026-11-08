@@ -18,6 +18,7 @@ does this credential come from?"
 import logging
 import os
 import re
+import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -153,8 +154,23 @@ def invocation(command: str, *, make_target: Optional[str] = None) -> str:
     ``services.setup.invocation`` and the CLI's ``_invocation`` delegate here.
     """
     if not started_from_checkout_shim():
-        return f"{CLI_NAME} {command}"
+        return f"{invoked_legacy_name() or CLI_NAME} {command}"
     return f"make {make_target}" if make_target else f"python main.py {command}"
+
+
+def invoked_legacy_name() -> Optional[str]:
+    """The old command name this process was started as, when it is the only one on PATH.
+
+    A ``uv tool`` install upgraded in place from the old distribution exposes only
+    ``tradeflow``: the reader types it, and an instruction saying ``quantred init``
+    names a command their shell does not have. So the instruction echoes the name that
+    ran - but only while :data:`CLI_NAME` is genuinely absent, so a reader who has both
+    is told the current name. ``None`` otherwise.
+    """
+    started = Path(sys.argv[0]).stem if sys.argv and sys.argv[0] else ""
+    if started in LEGACY_CLI_NAMES and shutil.which(CLI_NAME) is None:
+        return started
+    return None
 
 
 def started_from_checkout_shim() -> bool:

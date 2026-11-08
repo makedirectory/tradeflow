@@ -32,7 +32,7 @@ those are marked *not verified*.
 
 - **A. Upgrade in place and move at your own pace.** Upgrade `tradeflow-engine` the way
   you always have. It pulls in `quantred` and keeps old scripts, cron entries, MCP client
-  configs and private packs importing `tradeflow` working, with a deprecation warning.
+  configs and private packs importing `tradeflow` working (the alias warns with a `DeprecationWarning`, visible under `-W default` or in test runs, and QuantRed logs one line when a pack used it).
   Move each of those across when it suits you, then drop the transition package.
 - **B. Move fully now.** Install `quantred`, change the names yourself (below), and
   remove `tradeflow-engine`.
@@ -157,7 +157,7 @@ old shared-directory layout, which no longer exists, so it is *not verified*.
 
 A pack that imports the engine has to change its imports eventually, because the import
 package is now `quantred`. Until it does, `from tradeflow...` keeps working only while
-`tradeflow-engine` 2.3.1 is installed, with a deprecation warning:
+`tradeflow-engine` 2.3.1 is installed, with a `DeprecationWarning` (visible under `-W default` or in test runs):
 
 ```bash
 grep -rl 'tradeflow' src/ | xargs sed -i.bak -E 's/\b(from|import) tradeflow\b/\1 quantred/'
@@ -204,17 +204,24 @@ shows the renamed server was not tested.
 Earlier documentation told pack authors they could depend on `tradeflow-engine`, so packs
 that declare it exist. Installing one pulls `tradeflow-engine` in beside `quantred`. That
 no longer collides, because the two share no files; with 2.3.1 it is the transition
-package, which only depends on `quantred`, so the pack works and its `tradeflow` imports
-warn. Two cases are worth knowing:
+package, which only depends on `quantred` and provides the `tradeflow` import alias, so
+the pack works and its `tradeflow` imports raise a `DeprecationWarning` (Python hides it
+by default outside `__main__`; it shows under `-W default` or in a test run, and QuantRed
+also logs one line when a loaded pack used the old name). Keep that package installed
+(`tradeflow-engine>=2.3.1`) for any pack you cannot edit, because the alias is what makes
+its `from tradeflow...` imports resolve; without it the pack is dropped. Two cases are
+worth knowing:
 
-- **`tradeflow-engine` 2.3.0 is still installed** (the last release with engine code).
-  Installing `quantred` beside it does not collide either, but the two run different
-  code: `tradeflow` runs the old engine and `quantred` the new. QuantRed quietly ignores
-  the old distribution's demo entry points. Upgrade `tradeflow-engine` to 2.3.1 or
-  uninstall it.
-- **You want the old distribution kept out entirely.** If you own the pack, change its
-  dependency to `quantred` or drop it; the engine is always present where a pack runs.
-  If you cannot edit it:
+- **`tradeflow-engine` 2.3.0 is still installed, or a pack pins it below 2.3.1.** 2.3.0
+  is the last release with engine code. A pack that pins `tradeflow-engine<2.3.1` (or
+  `==2.3.0`) pulls that whole engine in, and its classes are subclasses of the old
+  package's `Strategy`, not `quantred`'s, so the registry rejects them. Override the pin
+  (a uv `--overrides` file, or pip constraint, naming `tradeflow-engine>=2.3.1`), or
+  better, loosen it in the pack. QuantRed quietly ignores the old distribution's demo
+  entry points, so a stale 2.3.0 beside it is not noisy, only wrong for packs.
+- **A pack that never imports `tradeflow`.** If you own the pack, change its dependency
+  to `quantred` or drop it; the engine is always present where a pack runs. Only for a
+  pack that does not import the old name may you keep `tradeflow-engine` out entirely:
 
   - *uv tool.* Name the distribution in a file and exclude it; the exclusion is
     recorded and survives rebuilds of the tool environment:
@@ -227,11 +234,14 @@ warn. Two cases are worth knowing:
   - *Virtual environment or checkout.* Skip the pack's dependencies:
     `python -m pip install --no-deps -e ./my-pack` (checkout:
     `uv pip install --no-deps -e ./my-pack`). This also skips the pack's *other*
-    dependencies, so it is only for a pack you cannot edit.
+    dependencies.
 
-These exclusion recipes were rehearsed while the two distributions still shared a
+  Do not do either for a pack that still imports `tradeflow`: with no alias installed
+  it fails to import and is dropped.
+
+The exclusion recipes were rehearsed while the two distributions still shared a
 directory, a worse case than today's; they are *not verified* against the transition
-package.
+package, and the override of a low pin was not run at all.
 
 Anyone who still needs the old `tradeflow` command keeps `tradeflow-engine` 2.3.1
 installed: a plain `quantred` install, `uv tool install quantred` included, has no

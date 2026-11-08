@@ -7,7 +7,7 @@ surfaces working, so an existing environment, script or MCP client configuration
 break on upgrade:
 
 - `import tradeflow` (and `tradeflow.<submodule>`) resolves to the same modules as
-  `quantred`, and emits a `DeprecationWarning`.
+  `quantred`, and emits a `DeprecationWarning` (hidden by default filters unless raised from `__main__`; shown under `-W default` or in test runs).
 - the `tradeflow` command runs the same program as `quantred`.
 
 Your state directory (`~/.tradeflow`, `TRADEFLOW_HOME`) is unchanged, and packs that

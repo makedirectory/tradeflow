@@ -2,7 +2,8 @@
 
 A reader is told what to type in help text, error messages, hints and the MCP
 client configuration. Each of those that hard-codes ``tradeflow <verb>`` is a place a
-rename leaves behind, and it gives no signal: the old name keeps working, so every
+rename leaves behind, and it gives no signal: the old name keeps working only while `tradeflow-engine`
+2.3.1 is installed, so every
 test stays green while the instructions go stale. This scans the package's string
 literals rather than a list somebody remembered.
 """

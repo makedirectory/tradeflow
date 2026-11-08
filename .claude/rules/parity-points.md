@@ -232,13 +232,20 @@ raises on a deleted directory into the flatten report. Within a checkout, the sp
 echoes how the process started (`settings.started_from_checkout_shim`): a checkout's
 environment carries the installed command too, and someone who typed it was told
 `python main.py ...`, which fails outside the repository root.
-*Guarded by* `tests/test_state_root.py`.
+
+The same holds for the *name*: a `uv tool` install upgraded in place from the old distribution
+exposes only `tradeflow`, so an instruction saying `quantred init` names a command the
+reader's shell does not have. `settings.invoked_legacy_name` echoes the old name when the
+process was started under it and `quantred` is not on PATH, and `utils.extras` rebuilds a
+`uv tool` environment under the requirement name its receipt records (`tradeflow-engine`
+forwards every extra to `quantred`) rather than installing a second `quantred` tool.
+*Guarded by* `tests/test_state_root.py`, `tests/test_extras_map.py`.
 
 The executable's *name* is the same hazard from the other side: `settings.CLI_NAME` is
 the one definition (argparse's `prog`, the version banner, the MCP launch lookup and
 every instruction read it) and `settings.MCP_SERVER_NAME` is the server's. A literal
 `tradeflow <verb>` in a string is a place a rename leaves behind with no signal, since
-the old name keeps working. `code_version()` is the one deliberate exception: it names
+the old name keeps working (while `tradeflow-engine` 2.3.1 is installed). `code_version()` is the one deliberate exception: it names
 the engine's code (`quantred <version>` for an installed copy), not the command. `tests/test_cli_name.py` scans every string literal
 in the package against an explicit, justified allowlist.
 

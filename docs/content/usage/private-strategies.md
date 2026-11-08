@@ -40,9 +40,10 @@ environment is rebuilt, so restate your extras:
 `uv tool install --force 'quantred[mcp,viz]' --with-editable ./my-signals`. In an
 activated virtual environment: `python -m pip install -e ./my-signals`. From a checkout
 of the repository: `uv pip install -e ./my-signals`. If a pack of yours still depends on
-the old `tradeflow-engine`, change that dependency to `quantred`; if you cannot edit it,
-see [migrating to QuantRed](migrating-to-quantred#if-you-write-or-use-an-extension-pack)
-for `--no-deps` and `--excludes`, which keep the old distribution out.
+the old `tradeflow-engine`, change that dependency to `quantred`. If you cannot edit it,
+leave it be and keep `tradeflow-engine>=2.3.1` installed: it provides the `tradeflow`
+import alias the pack uses. Excluding it is only for a pack that never imports the old
+name; see [migrating to QuantRed](migrating-to-quantred#if-you-write-or-use-an-extension-pack).
 
 That gives you a strategy, a scanner, a saved config, a `.gitignore`, and a
 `pyproject.toml` with the entry points already declared — a starting point to edit

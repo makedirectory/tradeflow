@@ -15,7 +15,7 @@ requires-python = ">=3.11"
 # Deliberately no dependency on `quantred` (the engine, formerly published as
 # tradeflow-engine - depend on neither). A pack is installed *beside* the engine, not on
 # top of it, and naming the engine from here would let a pack decide which engine its
-# owner runs; the old name would even pull a second copy of it in.
+# owner runs, and the old name would pull in the alias package for nothing.
 dependencies = ["pandas>=2.0"]
 
 # The two groups the engine discovers. The names on the left are what you type at

@@ -213,13 +213,40 @@ def test_the_uv_tool_command_restates_what_the_receipt_was_built_from(monkeypatc
     monkeypatch.setattr(extras, "installed_extras", lambda: [])
     hint = extras.install_hint("mcp")
     command = next(line for line in hint.splitlines() if "uv tool install" in line)
-    assert f"'{settings.DISTRIBUTION_NAME}[mcp,viz]=={__version__}'" in command
+    # The receipt's requirement is the old distribution name: that is the tool which
+    # exists, so that is the one to rebuild (a `quantred` install would be a second tool).
+    assert "'tradeflow-engine[mcp,viz]>=2.3.1'" in command
+    assert "'quantred" not in command
     assert "--with tqdm" in command
     assert "--with 'requests>=2'" in command
     assert "--with /work/packdir" in command
     assert "--with-editable /work/packdir" in command
     assert "(detected)" in hint
     assert "re-add any packs" not in hint  # nothing left for the reader to remember
+
+
+@_needs_tomllib
+def test_a_tool_installed_as_quantred_is_rebuilt_as_quantred(monkeypatch, tmp_path):
+    receipt = RECEIPT.replace(
+        'name = "tradeflow-engine", extras = ["viz"], specifier = "==2.3.0"',
+        'name = "quantred", extras = ["viz"]',
+    )
+    (tmp_path / "uv-receipt.toml").write_text(receipt)
+    monkeypatch.setattr(settings, "running_from_checkout", lambda: False)
+    monkeypatch.setattr(sys, "prefix", str(tmp_path))
+    monkeypatch.setattr(extras, "installed_extras", lambda: [])
+    command = next(line for line in extras.install_hint("mcp").splitlines() if "uv tool install" in line)
+    assert f"'quantred[mcp,viz]=={__version__}'" in command
+    assert "tradeflow-engine" not in command
+
+
+def test_without_a_receipt_a_legacy_launch_still_targets_the_installed_tool(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "running_from_checkout", lambda: False)
+    monkeypatch.setattr(sys, "prefix", str(tmp_path))  # no receipt
+    monkeypatch.setattr(extras, "installed_extras", lambda: [])
+    monkeypatch.setattr(sys, "argv", ["/home/u/.local/bin/tradeflow"])
+    monkeypatch.setattr(settings.shutil, "which", lambda name: None)
+    assert "'tradeflow-engine[mcp]>=2.3.1'" in extras.install_hint("mcp")
 
 
 @_needs_tomllib
@@ -267,25 +294,26 @@ def test_a_pack_install_command_is_additive(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "running_from_checkout", lambda: True)
     checkout = extras.pack_install_hint("/p")
     assert checkout.splitlines()[0] == "uv pip install -e /p"
-    assert "--no-deps" in checkout and "old tradeflow-engine" in checkout
+    assert "--no-deps" in checkout and "Keep tradeflow-engine>=2.3.1 installed" in checkout
     monkeypatch.setattr(settings, "running_from_checkout", lambda: False)
     monkeypatch.setattr(sys, "prefix", str(tmp_path))
     command = extras.pack_install_hint("/p")
     assert "--with-editable /p" in command and "--with tqdm" in command
 
 
-def test_the_pack_install_fallback_says_when_not_to_skip_dependencies(monkeypatch, tmp_path):
-    """With no receipt the command is a plain pip one, and pip resolves a pack's
-    dependency on the old distribution name by installing it over this one. The cure is
-    in the pack; --no-deps is for one that cannot be edited, and the hint says it also
-    skips the pack's other dependencies."""
+def test_the_pack_install_fallback_says_to_keep_the_alias(monkeypatch, tmp_path):
+    """A pack nobody can edit still imports `tradeflow`; without tradeflow-engine 2.3.1 there
+    is no alias and the pack is dropped. Excluding it or `--no-deps` is only for a pack that
+    never imports the old name, and a pin below 2.3.1 is the real hazard."""
     monkeypatch.setattr(settings, "running_from_checkout", lambda: False)
     monkeypatch.setattr(sys, "prefix", str(tmp_path))  # no receipt here
     lines = extras.pack_install_hint("/p").splitlines()
     assert lines[0] == "python -m pip install -e /p"
     note = " ".join(lines[1:])
-    assert "--no-deps" in note and "cannot edit" in note and "other dependencies" in note
-    assert "change that to quantred" in note
+    assert "Keep tradeflow-engine>=2.3.1 installed" in note
+    assert "never imports `tradeflow`" in note and "other dependencies" in note
+    assert "below 2.3.1" in note
+    assert "change that to" not in note
 
 
 @_needs_tomllib
@@ -297,6 +325,8 @@ def test_the_uv_tool_pack_command_creates_the_exclusions_it_names(monkeypatch, t
     command = extras.pack_install_hint("/p")
     assert command.startswith("printf ") and "> excludes.txt && uv tool install" in command
     assert "--with-editable /p" in command and "--excludes excludes.txt" in command
+    # The reader's own exclusion is carried, and the line says what it costs.
+    assert "needs it installed" in command
 
 
 def test_installed_hint_never_names_an_interpreter_path(monkeypatch):

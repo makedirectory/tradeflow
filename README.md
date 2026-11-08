@@ -106,7 +106,7 @@ The distribution and the command are both **`quantred`**; the importable package
 `quantred`; no `tradeflow` command is installed with it. If you installed the older
 `tradeflow-engine`, its final release (2.3.1) is a transition package that depends on
 `quantred`, so upgrading it moves you across without breaking old scripts, MCP configs or
-packs importing `tradeflow` (with a deprecation warning). A private pack needs its imports
+packs importing `tradeflow` (the alias raises a `DeprecationWarning`, shown under `-W default` or in test runs). A private pack needs its imports
 changed from `tradeflow` to `quantred` before you drop it. The steps are in
 [migrating to QuantRed](https://tradeflow.mk-dir.com/usage/migrating-to-quantred).
 
@@ -417,8 +417,8 @@ absolute `main.py`:
 
 ```json
 { "mcpServers": { "quantred": {
-    "command": "/path/to/tradeflow/.venv/bin/python",
-    "args": ["/path/to/tradeflow/main.py", "mcp"] } } }
+    "command": "/path/to/quantred/.venv/bin/python",
+    "args": ["/path/to/quantred/main.py", "mcp"] } } }
 ```
 
 An installed copy and a checkout share one state root, `~/.tradeflow`, unless

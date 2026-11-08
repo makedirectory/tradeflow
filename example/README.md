@@ -35,8 +35,9 @@ uv pip install -e ./my-signals
 ```
 
 If a pack of yours depends on the old `tradeflow-engine` and you cannot change that to
-`quantred`, add `--no-deps` (it also skips the pack's other dependencies); see the
-migration page in the documentation.
+`quantred`, keep `tradeflow-engine>=2.3.1` installed: it provides the `tradeflow` import
+alias the pack uses. `--no-deps` or an exclusion is only for a pack that never imports the
+old name; see the migration page in the documentation.
 
 ## Make it yours
 

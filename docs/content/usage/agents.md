@@ -236,6 +236,6 @@ absolute path to `main.py` - no `uv` on the client's `PATH` and no `cwd` needed.
 
 ```json
 { "mcpServers": { "quantred": {
-    "command": "/path/to/tradeflow/.venv/bin/python",
-    "args": ["/path/to/tradeflow/main.py", "mcp"] } } }
+    "command": "/path/to/quantred/.venv/bin/python",
+    "args": ["/path/to/quantred/main.py", "mcp"] } } }
 ```

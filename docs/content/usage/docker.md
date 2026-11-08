@@ -95,7 +95,7 @@ listening port:
 
 ```json
 {"mcpServers": {"quantred": {"command": "docker",
-  "args": ["compose", "-f", "/path/to/tradeflow/docker-compose.yml", "run", "--rm", "mcp"]}}}
+  "args": ["compose", "-f", "/path/to/quantred/docker-compose.yml", "run", "--rm", "mcp"]}}}
 ```
 
 A TCP/SSE transport would add a port mapping and nothing else; it is not built.

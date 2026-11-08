@@ -107,7 +107,7 @@ def test_other_valid_spellings_of_the_name_line_still_count(tmp_path, spelling):
     assert settings._looks_like_checkout(tmp_path)
 
 
-def test_the_wheel_installs_both_executables(tmp_path):
+def test_the_wheel_installs_only_the_quantred_executable(tmp_path):
     """Read from the built artifact, not from pyproject.toml: the declaration is not
     what an installer reads."""
     import shutil

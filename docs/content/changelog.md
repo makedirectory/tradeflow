@@ -149,7 +149,7 @@ backtests included, though most never touched a boundary - drop out of the defau
 - `quantred` installs no `tradeflow` command. `tradeflow-engine` 2.3.1, published after
   this release, is the final release under the old name: a transition package with no
   engine code that depends on `quantred`, provides the `tradeflow` command and a
-  `tradeflow` import shim (same objects as `quantred.*`, with a `DeprecationWarning`),
+  `tradeflow` import shim (same objects as `quantred.*`; its `DeprecationWarning` shows under `-W default` or in test runs),
   and keeps `python -m tradeflow.cli` working.
 - MCP clients now see the server as `quantred`. Entries that launch `tradeflow` or
   `python -m tradeflow.cli` keep working only while `tradeflow-engine` 2.3.1 is installed.

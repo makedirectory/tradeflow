@@ -127,7 +127,7 @@ From a checkout, the equivalent is the script it wraps:
 
 ```json
 {"mcpServers": {"quantred": {"command": "uv",
-  "args": ["run", "--project", "/path/to/tradeflow", "python", "main.py", "mcp"]}}}
+  "args": ["run", "--project", "/path/to/quantred", "python", "main.py", "mcp"]}}}
 ```
 
 **One prerequisite, and a lazy second.** The server needs the `mcp` extra; without it
