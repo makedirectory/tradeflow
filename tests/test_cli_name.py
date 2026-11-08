@@ -32,6 +32,10 @@ ALLOWED = {
     ("research/sandbox.py", "_guarded_import"): (
         "compares an import's root module against the import package name"
     ),
+    ("services/registry.py", "_warn_if_a_pack_imports_the_old_name"): (
+        "looks for the old *import package* in sys.modules - the alias a pack loaded - "
+        "not the command a reader types"
+    ),
     ("services/analysis.py", "code_version"): (
         "stamps `quantred <version>` as the engine's code identity - the import "
         "package, which a rename of the executable does not touch"
