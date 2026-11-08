@@ -342,3 +342,55 @@ def test_qlike_known_answers():
     # ratio 2 each: 2 - ln 2 - 1
     assert qlike_loss(2 * f, f) == pytest.approx(1 - math.log(2), rel=1e-12)
     assert math.isnan(qlike_loss(np.array([-1.0]), np.array([1.0])))  # nothing admissible
+
+
+# --------------------------------------------------------------------------- #
+# Streaming factor model carries the intercept factor, as the batch one does
+# --------------------------------------------------------------------------- #
+def test_streaming_factor_model_matches_batch_with_the_intercept_on_a_one_factor_world(tmp_path):
+    """Defect guarded: the streaming estimator could drop the constant factor (only
+    ``tests/test_risk_streaming.py`` noticed). The world has a large market-wide move
+    every period plus one style factor with known loadings, so without an intercept the
+    common move is pushed into the diagonal residuals and the factor covariance is
+    wrong. The reference is a plain per-period least squares in numpy."""
+    pytest.importorskip("pyarrow")
+    pytest.importorskip("polars")
+    from quantred.data import ParquetBarStore
+    from quantred.risk import streaming_factor_risk_matrix
+
+    rng = np.random.default_rng(21)
+    t, n = 400, 8
+    names = [f"S{i}" for i in range(n)]
+    beta = np.linspace(-1.0, 1.0, n)
+    market = rng.normal(0.0, 0.01, t)  # common to every name: the intercept factor's return
+    style = rng.normal(0.0, 0.006, t)
+    rets = market[:, None] + style[:, None] * beta[None, :] + rng.normal(0.0, 0.004, (t, n))
+    idx = pd.date_range("2024-01-02 09:30", periods=t + 1, freq="1D", tz="America/New_York")
+    bars = {}
+    for j, name in enumerate(names):
+        close = 100.0 * np.concatenate([[1.0], np.cumprod(1.0 + rets[:, j])])
+        bars[name] = pd.DataFrame(
+            {"open": close, "high": close, "low": close, "close": close, "volume": 1e5}, index=idx
+        )
+    store = ParquetBarStore(tmp_path)
+    store.write(bars, timeframe="1Day")
+    as_of = idx[-1].to_pydatetime()
+
+    exposures = pd.DataFrame({"style": beta}, index=names)
+    got = streaming_factor_risk_matrix(
+        store, names, "1Day", as_of, exposures, lookback_days=10_000, periods_per_year=252.0, min_obs=60
+    )
+    assert got is not None and INTERCEPT in got.factor_names
+
+    # independent reference: realised returns from the closes, f_t by lstsq, ddof=1 moments
+    realised = np.array([bars[s]["close"].pct_change().dropna().to_numpy() for s in names]).T
+    x = np.column_stack([np.ones(n), beta])
+    f = np.array([np.linalg.lstsq(x, row, rcond=None)[0] for row in realised])
+    resid = realised - f @ x.T
+    f_cov = np.cov(f, rowvar=False) * 252
+    spec = resid.var(axis=0, ddof=1) * 252
+    ref_sigma = x @ f_cov @ x.T + np.diag(spec)
+    assert got.sigma == pytest.approx(ref_sigma, rel=1e-8, abs=1e-12)
+    assert got.specific_var == pytest.approx(spec, rel=1e-8)
+    # the world is built so this matters: the market factor's variance is about 252 * 1e-4
+    assert f_cov[0, 0] == pytest.approx(252 * 0.01**2, rel=0.3)
