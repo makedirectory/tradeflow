@@ -82,8 +82,10 @@ jobs:
         # reproducible and no third-party code runs with the workflow token.
         env:
           GITLEAKS_VERSION: 8.30.1
+        # Retried: a release-asset 504 from GitHub once failed this required check
+        # twice in a row while nothing was wrong with the change under test.
         run: |
-          curl -sSfL -o /tmp/gitleaks.tar.gz \
+          curl -sSfL --retry 5 --retry-all-errors --retry-delay 15 -o /tmp/gitleaks.tar.gz \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
           tar -xzf /tmp/gitleaks.tar.gz -C /usr/local/bin gitleaks
           gitleaks version
