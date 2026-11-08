@@ -287,7 +287,8 @@ def _warn_if_a_pack_imports_the_old_name(already_loaded: bool) -> None:
     import finder are present) rather than from any one pack, and only when the module
     appeared while packs were loading: with ``already_loaded`` the process itself was
     launched through the old name, and blaming a pack for that printed a false line on
-    every launch from an old MCP client config.
+    every launch from an old MCP client config. Accepted blind spot: when the process
+    itself was launched through the old name, a pack that also imports it is not named.
     """
     global _WARNED_OLD_IMPORT
     if _WARNED_OLD_IMPORT or already_loaded or not _old_import_name_loaded():

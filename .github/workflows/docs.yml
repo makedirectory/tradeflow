@@ -92,7 +92,7 @@ jobs:
             echo "::error title=Missing deploy credentials::CLOUDFLARE_API_TOKEN is not set."
             echo ""
             echo "The docs site cannot deploy without it, so quantred.mk-dir.com will"
-            echo "keep serving whatever was last published by hand."
+            echo "keep serving the version that is already deployed (if any); nothing new is published."
             echo ""
             echo "Add it at: Settings -> Secrets and variables -> Actions"
             echo "  CLOUDFLARE_API_TOKEN    a token with the Workers Scripts:Edit permission"

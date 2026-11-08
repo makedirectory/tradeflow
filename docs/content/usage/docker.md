@@ -85,8 +85,9 @@ nothing would error. `scripts/compose_smoke.sh` tests exactly that: journal a tr
 as `tradeflow_tradeflow-logs` and so on. That is deliberate: they hold the recorded trial
 history, a renamed volume is a new empty one, and an unpinned project name would follow
 the checkout directory, so a fresh clone into `quantred/` would not find a journal that a
-clone into `tradeflow/` wrote. The containers and image carry the QuantRed name; the
-volumes keep the old one on purpose.
+clone into `tradeflow/` wrote. The containers and image carry the QuantRed name (the containers were renamed
+`quantred-mcp` and `quantred-docs` in 2.4.1, so anything that names `tradeflow-mcp` or
+`tradeflow-docs` needs updating); the volumes keep the old name on purpose.
 
 **Ownership.** The image runs as a pinned non-root uid (1000) and creates each mount
 point *in the image* so the named volumes inherit that ownership. Docker seeds a
