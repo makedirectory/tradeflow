@@ -6,6 +6,8 @@ distribution that exposes entry points.
 
 from importlib import metadata
 
+import pytest
+
 from quantred.demo.strategies import DemoTrendStrategy
 from quantred.scanners.base import ScannerStrategy
 from quantred.scanners.symbol_scanner import BUILTIN_SCANNERS as package_builtin_scanners
@@ -67,6 +69,33 @@ def test_refresh_registries_loads_private_entry_points(monkeypatch):
         assert registry.STRATEGIES["private_trend"] is PrivateTrendStrategy
         assert registry.SCANNERS["private_scan"] is PrivateScanner
         assert "private_scan" in registry.SymbolScanner.available()
+    finally:
+        monkeypatch.setattr(metadata, "entry_points", real_entry_points)
+        registry.refresh_registries()
+
+
+@pytest.mark.parametrize(
+    "legacy_group, registry_name, expected",
+    [
+        ("tradeflow.strategies", "STRATEGIES", PrivateTrendStrategy),
+        ("tradeflow.scanners", "SCANNERS", PrivateScanner),
+    ],
+)
+def test_a_pack_still_registered_under_the_old_group_name_is_discovered(
+    monkeypatch, legacy_group, registry_name, expected
+):
+    """A pack built before the rename declares `tradeflow.*` groups and must keep working.
+
+    The literal group strings are spelled out on purpose: deriving them from the
+    constant under test would agree with a lookup that had dropped the legacy group.
+    """
+    real_entry_points = metadata.entry_points
+    entry_points = _FakeEntryPoints([_FakeEntryPoint("legacy_pack_entry", legacy_group, expected)])
+    monkeypatch.setattr(metadata, "entry_points", lambda: entry_points)
+
+    registry.refresh_registries()
+    try:
+        assert getattr(registry, registry_name)["legacy_pack_entry"] is expected
     finally:
         monkeypatch.setattr(metadata, "entry_points", real_entry_points)
         registry.refresh_registries()

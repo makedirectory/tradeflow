@@ -127,6 +127,38 @@ def test_this_distributions_own_entry_points_are_not_reported_as_packs():
     assert settings.DISTRIBUTION_NAME.lower() not in {n.lower() for n in extras._pack_distributions()}
 
 
+def test_a_pack_registered_under_the_old_group_names_is_still_named_as_a_pack(monkeypatch):
+    """A pack that has not been rebuilt since the rename still has to be restated.
+
+    Leaving it out of the recovery text is the silent removal the hint exists to prevent.
+    The old group strings are written out, not derived, so a lookup that dropped the
+    legacy names cannot agree with the test.
+    """
+    from importlib import metadata
+
+    class _Dist:
+        def __init__(self, name):
+            self.name = name
+
+    class _EP:
+        def __init__(self, group, dist):
+            self.group = group
+            self.dist = _Dist(dist)
+
+    eps = [
+        _EP("tradeflow.strategies", "acme-signals"),
+        _EP("tradeflow.scanners", "acme-scans"),
+        _EP("tradeflow.strategies", "tradeflow-engine"),
+    ]
+
+    class _EPs(list):
+        def select(self, *, group):
+            return [ep for ep in self if ep.group == group]
+
+    monkeypatch.setattr(metadata, "entry_points", lambda: _EPs(eps))
+    assert extras._pack_distributions() == ["acme-scans", "acme-signals"]
+
+
 def test_a_checkout_hint_adds_without_removing(monkeypatch):
     """Plain `uv sync` is exact: it uninstalled the dev tools and an editable pack when
     the printed command was run. `--inexact` only adds, so the extras already present
