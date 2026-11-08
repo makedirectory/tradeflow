@@ -414,8 +414,13 @@ def _benchmark_returns(closes, equity_times) -> Optional[pd.Series]:
     returns = aligned.pct_change()
     if returns.notna().sum() < 2:
         return None
-    # Drop the index: the pairing is by position against the equity curve's own steps.
-    return pd.Series(returns.to_numpy(), dtype="float64")
+    # Label each return by the equity-curve step whose interval it covers. The curve's
+    # returns (`pct_change().dropna()`) are labelled 1..m, step j being the interval
+    # ending at equity_times[j]; this series' first entry is that same step 1. A
+    # 0-based index here paired every strategy return with the *next* bar's benchmark
+    # return, so a strategy holding the benchmark itself regressed on a series one bar
+    # ahead of it and reported a near-zero beta.
+    return pd.Series(returns.to_numpy(), index=pd.RangeIndex(1, len(returns) + 1), dtype="float64")
 
 
 @dataclass

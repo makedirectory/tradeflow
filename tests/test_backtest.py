@@ -504,6 +504,53 @@ def test_a_supplied_benchmark_reaches_the_metrics():
     assert result.metrics["beta"] != 0.0
 
 
+def _hold_the_benchmark_run():
+    """Fully invested in the benchmark symbol itself from the first fill to the end."""
+    import numpy as np
+
+    rng = np.random.default_rng(3)
+    n = 120
+    close = 100 * np.exp(np.cumsum(rng.normal(0, 0.01, n)))
+    opens = np.r_[100, close[:-1]]
+    frame = _frame(
+        [
+            {"open": o, "high": max(o, c) * 1.001, "low": min(o, c) * 0.999, "close": c, "volume": 1e6}
+            for o, c in zip(opens, close)
+        ]
+    )
+    strategy = ScriptedStrategy(
+        ["BUY"] + ["HOLD"] * (n - 1),
+        {
+            "stop_loss": 0.95,
+            "take_profit": 50.0,
+            "risk_per_trade": 0.9,
+            "position_limits": {"max_positions": 1, "max_position_size": 1e9, "max_total_risk": 5.0},
+        },
+    )
+    engine = BacktestEngine(strategy, MarketDataClient(DictMarketData({"SPY": frame})))
+    return engine.run(["SPY"], datetime(2024, 1, 2), datetime(2024, 12, 31), 100_000, benchmark="SPY")
+
+
+def test_a_strategy_holding_the_benchmark_has_beta_near_one():
+    """The benchmark series was labelled from 0 while the strategy's returns are
+    labelled from 1, so each strategy return was regressed on the *next* bar's benchmark
+    return. A book holding the benchmark itself (about 94% invested here) reported a beta
+    near zero and an R-squared near zero instead of about 0.94 and 1.
+    """
+    result = _hold_the_benchmark_run()
+
+    assert result.metrics["beta"] == pytest.approx(0.94, abs=0.05)
+    assert result.metrics["r_squared"] > 0.99
+
+
+def test_headline_beta_agrees_with_the_leg_beta_for_a_single_leg_book():
+    """The leg betas pair by position and were right; the headline paired by label and
+    was not, so one run printed two betas that disagreed about the same book."""
+    result = _hold_the_benchmark_run()
+
+    assert result.legs["long"]["beta"] == pytest.approx(result.metrics["beta"], abs=0.06)
+
+
 def test_no_benchmark_still_says_so():
     """The other direction: the flag means something, so its absence must too."""
     result = _bench_run(None)
