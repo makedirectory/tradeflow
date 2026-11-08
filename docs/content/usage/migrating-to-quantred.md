@@ -22,8 +22,11 @@ keeps working too.
 `quantred` itself installs no `tradeflow` command. That command exists only while
 `tradeflow-engine` 2.3.1 is installed.
 
-The transition release is still being verified against the published packages. Steps
-marked *expected* below describe the design, not something observed.
+The upgrade paths below were run with locally built wheels of `quantred` 2.4.0 and
+`tradeflow-engine` 2.3.1 standing in for the package index, starting from the real
+`tradeflow-engine` 2.3.0 from PyPI, on Python 3.12. The published packages themselves,
+Windows, the checkout swap and the `--excludes` / `--no-deps` recipes were not checked;
+those are marked *not verified*.
 
 ## Which path
 
@@ -62,21 +65,28 @@ distribution removed first for correctness.
 
 Upgrade `tradeflow-engine` with whatever installed it.
 
-**pip or `uv pip`, in a virtual environment** (expected):
+**pip or `uv pip`, in a virtual environment:**
 
 ```bash
 python -m pip install -U tradeflow-engine      # or: uv pip install -U tradeflow-engine
 ```
 
-This installs `quantred` and the transition package; `tradeflow` and `quantred` both run
-afterwards. Extras you had were declared on `tradeflow-engine`, so run
-`quantred init --check` and look for an `[ok] extra:` row per extra, then re-add any that
-are missing with `python -m pip install 'quantred[mcp,viz]'`.
+From 2.3.0 this ended with `quantred` 2.4.0 and `tradeflow-engine` 2.3.1 installed,
+`pip check` clean, both `quantred` and `tradeflow` on the path printing
+`quantred 2.4.0`, and `import tradeflow.strategies.base` working (the same objects as
+`quantred`'s) with a `DeprecationWarning`. Extras carry over: the transition package
+forwards every `quantred` extra, so `tradeflow-engine[mcp]` resolves to `quantred[mcp]`,
+and pip does not remove packages an extra installed earlier.
 
-**`uv tool`.** `uv tool` exposes only the executables of the package you installed. So
-`uv tool upgrade tradeflow-engine` gives you the `tradeflow` command from the transition
-package but *not* `quantred` (expected; being verified). To get `quantred`, switch tools
-as in Path B.
+**`uv tool`.** `uv tool` exposes only the executables of the package you installed.
+`uv tool upgrade tradeflow-engine` moved a tool installed as `tradeflow-engine[mcp]` to
+2.3.1 with `quantred` 2.4.0 and kept the `mcp` extra, and `tradeflow --version` printed
+`quantred 2.4.0`. But only the `tradeflow` command is exposed: `quantred` is *not* on the
+path from that tool. To get `quantred`, switch tools as in Path B.
+
+A tool installed with a pin (`tradeflow-engine==2.3.0`) does not move on
+`uv tool upgrade`, which reports it as pinned; `uv tool install --reinstall
+tradeflow-engine` (no pin) moves it.
 
 Whichever installer, when you are ready to finish the move, follow Path B.
 
@@ -112,7 +122,7 @@ example `my-signalsfile:///work/my-signals`); re-add it with `--with-editable
 /work/my-signals`, using the path. If a pack declares a dependency on `tradeflow-engine`,
 see [If you write or use an extension pack](#if-you-write-or-use-an-extension-pack).
 Afterwards `quantred --version` should print `quantred <version>` and the same state
-root as before (expected; being verified against the published packages). `tradeflow`
+root as before (not verified end to end). `tradeflow`
 is gone from the path, so update anything that called it.
 
 ### If you installed into a virtual environment
@@ -141,8 +151,7 @@ uv run --extra dev --reinstall-package quantred python main.py --version
 
 Do not use `uv sync` without `--inexact`: it removes editable packs installed by hand.
 An earlier version of this page described rehearsing this swap, but that was against the
-old shared-directory layout, which no longer exists, so treat it as expected rather than
-re-verified.
+old shared-directory layout, which no longer exists, so it is *not verified*.
 
 ## Update a private pack
 
@@ -221,8 +230,12 @@ warn. Two cases are worth knowing:
     dependencies, so it is only for a pack you cannot edit.
 
 These exclusion recipes were rehearsed while the two distributions still shared a
-directory, a worse case than today's; they were not re-run against the transition
+directory, a worse case than today's; they are *not verified* against the transition
 package.
+
+Anyone who still needs the old `tradeflow` command keeps `tradeflow-engine` 2.3.1
+installed: a plain `quantred` install, `uv tool install quantred` included, has no
+`tradeflow` command.
 
 The pack's own imports are covered in [Update a private pack](#update-a-private-pack).
 
