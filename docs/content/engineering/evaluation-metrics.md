@@ -60,8 +60,11 @@ annualizes its per-bar mark-to-market returns at the merged timeline's own step 
 (`_step_periods_per_year`), the strategy's timeframe rate scaled by observed density —
 see [annualizing per-step quantities](engine.md#annualizing-per-step-quantities).
 Only `build_equity_curve`, the closed-trade curve behind a walk-forward's
-out-of-sample aggregate, resamples to calendar days; that is the case where
-`TRADING_DAYS_PER_YEAR` (252) applies. `Timeframe.periods_per_year()` exists for
+out-of-sample aggregate, resamples to trading (business) days; that is the case where
+`TRADING_DAYS_PER_YEAR` (252) applies. The curve carries no weekend rows: a calendar-day
+index would put a zero-return Saturday and Sunday in every week, shrinking the per-period
+standard deviation by about the square root of 5/7 and the annualized Sharpe with it. The
+Deflated Sharpe's trial variance is converted to per-trading-day units to match. `Timeframe.periods_per_year()` exists for
 callers that work on bar-frequency returns directly.
 
 ## Known limitation (flagged in the glossary)

@@ -13,7 +13,7 @@ trades shouldn't crash; it should just quietly tell you it found nothing.
 A note on annualization: the headline ratios take a
 ``periods_per_year`` so they annualize to the *sampling frequency of the series
 passed in*. The backtest equity curve is resampled to daily P&L
-(:func:`quantred.analytics.performance.build_equity_curve`), so its returns are daily
+(:func:`quantred.analytics.performance.build_equity_curve`) on trading days, so its returns are daily
 and ``TRADING_DAYS_PER_YEAR`` is the correct factor; intraday or weekly series
 pass their own factor via :meth:`quantred.marketdata.timeframe.Timeframe.periods_per_year`.
 """

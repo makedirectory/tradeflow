@@ -980,11 +980,11 @@ class WalkForwardValidator:
         produced them (see :meth:`_aggregate_oos`).
         """
         # The two curve sources run on different clocks: the engine samples per bar,
-        # the realized-P&L fallback resamples to calendar days. Annualize accordingly.
+        # the realized-P&L fallback resamples to trading (business) days. Annualize accordingly.
         if equity is None:
             equity = performance.build_equity_curve(trades, self.initial_capital)
             periods_per_year = TRADING_DAYS_PER_YEAR
-            # A rebuilt curve runs on a different clock (calendar days, not bars), so a
+            # A rebuilt curve runs on a different clock (trading days, not bars), so a
             # series aligned to the engine's curve no longer lines up with it. Dropped
             # rather than misaligned: a positional pairing that silently slips is worse
             # than an absent benchmark, because it still produces a number.
