@@ -2043,7 +2043,7 @@ def run_cost_stress(
             borrow_bps=borrow_bps * scale_borrow,
             # The spread is a toll on turnover like commission and impact, and was the one
             # that stayed put: at "3x" the linear cost rose by commission alone, about
-            # 1.7x the cost, so the curve understated where an edge dies.
+            # 1.6x the cost, so the curve understated where an edge dies.
             spread_bps=DEFAULT_SPREAD_BPS * scale_turnover,
             journal=False,
             force=True,

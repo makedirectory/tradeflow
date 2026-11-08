@@ -2,7 +2,7 @@
 
 `Trade.spread` defaulted to 5 bp and the engine never passed one, so
 `ParametricCostModel(default_spread_bps=...)` was dead in `cost()`, and a stress that
-scaled commission, impact and borrow but not the spread priced "3x" at about 1.7x.
+scaled commission, impact and borrow but not the spread priced "3x" at about 1.6x.
 """
 
 from datetime import datetime
@@ -56,7 +56,7 @@ def test_a_trade_that_names_its_spread_still_overrides_the_model():
 def test_a_cost_stress_of_three_triples_the_linear_cost():
     """With impact and borrow off every cost term is linear in the multiple, so the 3x
     point has to cost 3x (within the sizing drift of a slightly poorer book). It rose
-    by about 1.7x while the spread stayed put."""
+    by about 1.6x while the spread stayed put."""
     from quantred.services import analysis
 
     symbols = ["S0", "S1", "S2", "S3"]
@@ -141,3 +141,16 @@ def test_a_command_without_the_cap_flag_gets_the_models_default():
     model = build_cost_model(Namespace(gross=False, commission_bps=1.0, impact_eta=0.3, borrow_bps=50.0))
 
     assert model.participation_cap == ParametricCostModel().participation_cap
+
+
+def test_the_cli_cost_key_is_the_services_for_every_cost_shape(monkeypatch):
+    """Parity point: the CLI key delegates, so a spread branch added to the service cannot
+    be missed by the surface that has no spread flag."""
+    from quantred import cli
+    from quantred.services.analysis import _cost_key as service_key
+
+    for gross in (True, False):
+        args = cli.parse_cli(["backtest", "--gross"] if gross else ["backtest"])
+        assert cli._cost_key(args, "v1") == service_key(
+            args.gross, args.commission_bps, args.impact_eta, args.borrow_bps, "v1"
+        )

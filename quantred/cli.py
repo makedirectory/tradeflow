@@ -136,6 +136,26 @@ def build_cost_model(args):
     )
 
 
+def _live_cost_model(args):
+    """The cost model a live run records its estimates with: the service's one
+    construction, fed from the same flags a backtest reads.
+
+    ``getattr`` throughout, because a caller that builds args without the cost flags
+    should get the model's own defaults rather than an AttributeError on the way into
+    the order path.
+    """
+    from quantred.costs.parametric import DEFAULT_PARTICIPATION_CAP
+    from quantred.services.analysis import build_cost_model as _build
+
+    return _build(
+        False,
+        getattr(args, "commission_bps", 1.0),
+        getattr(args, "impact_eta", 0.3),
+        getattr(args, "participation_cap", DEFAULT_PARTICIPATION_CAP),
+        getattr(args, "borrow_bps", 50.0),
+    )
+
+
 def _cost_key(args, vintage: Optional[str] = None) -> Dict[str, Any]:
     """The cost-model assumptions (plus, when given, a data-vintage stamp) folded
     into a trial's dedup key (see :func:`_dedup_params`) - two runs differing only
@@ -145,19 +165,11 @@ def _cost_key(args, vintage: Optional[str] = None) -> Dict[str, Any]:
     original run). ``vintage`` is omitted whenever the data client isn't
     cache-backed (see :func:`_vintage_stamp`), so a non-cached run's dedup hash is
     byte-identical to before this existed - a non-breaking addition."""
-    key = (
-        {"gross": True}
-        if args.gross
-        else {
-            "gross": False,
-            "commission_bps": args.commission_bps,
-            "impact_eta": args.impact_eta,
-            "borrow_bps": args.borrow_bps,
-        }
-    )
-    if vintage is not None:
-        key["_vintage"] = vintage
-    return key
+    from quantred.services.analysis import _cost_key as _key
+
+    # One definition with the service: this was a second copy that did not follow it
+    # when it gained a spread branch. The CLI has no spread flag, so it keys at the default.
+    return _key(args.gross, args.commission_bps, args.impact_eta, args.borrow_bps, vintage)
 
 
 def _dedup_params(
@@ -4832,7 +4844,6 @@ def _latest_signal(strategy, bars, fetch_failure=None):
 
 
 def cmd_live(args) -> None:
-    from quantred.costs.parametric import ParametricCostModel
     from quantred.engine.live import SHUTDOWN_TIMEOUT, BlindStartError, LiveEngine
     from quantred.execution.live_trader import LiveTrader
     from quantred.services.sizing import build_beta_sizer, build_portfolio_weight_sizer
@@ -4914,11 +4925,7 @@ def cmd_live(args) -> None:
             # getattr, not attribute access: a caller that builds args without the
             # cost flags gets the model's own defaults rather than an AttributeError
             # on the way into the order path.
-            cost_model=ParametricCostModel(
-                commission_bps=getattr(args, "commission_bps", 1.0),
-                impact_eta=getattr(args, "impact_eta", 0.3),
-                annual_borrow_bps=getattr(args, "borrow_bps", 50.0),
-            ),
+            cost_model=_live_cost_model(args),
         ),
         bar_filter=bar_filter,
         ledger=ledger,
@@ -5004,7 +5011,6 @@ def cmd_small_real(args) -> None:
     one rule rather than adjusted by hand, no flag here can move a cap, real money has
     to be said twice, and the preflight is unconditional.
     """
-    from quantred.costs.parametric import ParametricCostModel
     from quantred.engine.live import SHUTDOWN_TIMEOUT, BlindStartError, LiveEngine
     from quantred.execution.ledger import PositionLedger
     from quantred.execution.live_trader import LiveTrader
@@ -5154,11 +5160,7 @@ def cmd_small_real(args) -> None:
             broker,
             strategy,
             capital=capital,
-            cost_model=ParametricCostModel(
-                commission_bps=getattr(args, "commission_bps", 1.0),
-                impact_eta=getattr(args, "impact_eta", 0.3),
-                annual_borrow_bps=getattr(args, "borrow_bps", 50.0),
-            ),
+            cost_model=_live_cost_model(args),
         ),
         bar_filter=bar_filter,
         ledger=ledger,

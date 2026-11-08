@@ -6,7 +6,7 @@ Related existing tests: ``tests/test_costs.py``, ``tests/test_cost_spread.py``,
 Defects this module guards:
 
 * the configured spread was dead in the cost model (every trade priced at 5 bp whatever
-  the model was built with), so a "3x" cost stress cost about 1.7x;
+  the model was built with), so a "3x" cost stress cost about 1.6x;
 * a cost stress that did not scale every linear term by the same multiple.
 """
 
@@ -125,7 +125,7 @@ def test_linear_turnover_rate_and_alpha_haircut():
 def test_cost_stress_service_scales_total_cost_with_the_multiple():
     """Run the service sweep with impact and borrow off: every term is linear in the
     multiple, so cost at k x is k x the base (to within the sizing drift of a poorer book).
-    It rose ~1.7x at 3x while the spread stayed put."""
+    It rose ~1.6x at 3x while the spread stayed put."""
     symbols = ["S0", "S1", "S2", "S3"]
     client = MarketDataClient(FakeMarketData([*symbols, "SPY"], n=500, freq="1D"))
     report = analysis.run_cost_stress(
