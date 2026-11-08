@@ -2012,12 +2012,19 @@ def _print_walkforward(result, objective: str) -> None:
             f"CAGR {result.holdout.get('cagr', 0):.2f}%  trades {result.holdout.get('total_trades', 0)}"
         )
     if result.pbo is not None:
-        print(f"\nPBO (prob. of backtest overfitting): {format_gate_value('pbo', result.pbo)}")
+        print(
+            "\nIS-best fold OOS rank-failure rate (heuristic, not a probability of backtest "
+            f"overfitting): {format_gate_value('pbo', result.pbo)}"
+        )
     if result.monte_carlo:
         mc = result.monte_carlo
-        print(
-            f"Monte Carlo OOS Sharpe p05/p50: {mc.get('sharpe_p05', 0):.3f} / {mc.get('sharpe_p50', 0):.3f}"
-        )
+        if mc.get("samples"):
+            print(
+                f"Monte Carlo OOS annualized Sharpe p05/p50 (block-resampled daily P&L, "
+                f"{mc['periods']} days): {mc['sharpe_p05']:.3f} / {mc['sharpe_p50']:.3f}"
+            )
+        else:
+            print(f"Monte Carlo: not run - only {mc.get('periods', 0)} OOS trading days of P&L")
 
     report = result.gate_report()
     print("\n--- Promotion gates ---")
@@ -2178,7 +2185,7 @@ def _print_bootstrap_skill(report: Dict[str, Any]) -> None:
         print(f"  {report['verdict']}")
         return
     print(
-        f"  this config: IR {own['ir_observed']:+.2f}, p={own['p_value']:.3f} (own, "
+        f"  this config: Sharpe {own['ir_observed']:+.2f}, p={own['p_value']:.3f} (own, "
         f"B={own['B']}, L={own['block_length']:.1f}, SE(p)≈{own['p_se']:.3f})"
     )
     family = report["family"]
@@ -7662,12 +7669,17 @@ def build_parser() -> argparse.ArgumentParser:
         const=None,
         help="Skip the cost stress (it re-runs the chosen config once per multiple)",
     )
-    wf.add_argument("--pbo", action="store_true", help="Estimate probability of backtest overfitting")
+    wf.add_argument(
+        "--pbo",
+        action="store_true",
+        help="Estimate the IS-best fold OOS rank-failure rate (a heuristic over folds, not a true "
+        "probability of backtest overfitting)",
+    )
     wf.add_argument(
         "--monte-carlo",
         dest="monte_carlo",
         action="store_true",
-        help="Block-bootstrap the OOS trade sequence",
+        help="Block-bootstrap the OOS daily P&L for the 5th-percentile annualized Sharpe",
     )
     wf.add_argument(
         "--param-sensitivity",

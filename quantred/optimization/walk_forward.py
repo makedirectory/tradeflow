@@ -130,7 +130,7 @@ class WalkForwardResult:
     n_trials_total: int
     objective: str
     pbo: Optional[float] = None
-    monte_carlo: Optional[Dict[str, float]] = None
+    monte_carlo: Optional[Dict[str, Any]] = None
     diagnostics: Dict[str, Any] = field(default_factory=dict)
     #: The concatenated OOS per-period return series (dated, daily-resampled -
     #: same construction as the aggregate's realized-P&L fallback), when any OOS
@@ -1163,37 +1163,48 @@ class WalkForwardValidator:
 
     def monte_carlo(
         self, oos_trade_frames, n_resamples: int = 1000, block: int = 20, seed: int = 0
-    ) -> Dict[str, float]:
-        """Block-bootstrap the OOS trade sequence -> distribution of outcomes.
+    ) -> Dict[str, Any]:
+        """Block-bootstrap the OOS daily P&L -> distribution of annualized Sharpe.
 
-        Reports the 5th-percentile Sharpe ("how bad is a plausibly unlucky run").
+        Resamples blocks of *trading days* (the aggregate's own clock) and reports the
+        5th-percentile and median annualized Sharpe (``sqrt(252)·mean/std`` of a
+        resample's daily P&L) - "how bad is a plausibly unlucky run". It is a real
+        Sharpe, so it does not depend on how many trades produced a day's P&L: the
+        previous form, ``sqrt(N_trades)·mean/std`` of per-trade P&L, was a t-statistic
+        that grew with trade count whatever the strategy earned per year.
         """
         trades = _concat_trades(oos_trade_frames)
-        pnl = trades["pnl"].to_numpy() if not trades.empty else np.array([])
+        equity = performance.build_dated_equity_curve(trades, self.initial_capital)
+        pnl = np.diff(equity.to_numpy()) if len(equity) > 1 else np.array([])
         if len(pnl) < block:
-            return {"samples": 0}
+            return {"samples": 0, "periods": int(len(pnl))}
         rng = np.random.default_rng(seed)
         sharpes, returns = [], []
         n_blocks = math.ceil(len(pnl) / block)
         for _ in range(n_resamples):
             starts = rng.integers(0, len(pnl) - block + 1, size=n_blocks)
             sample = np.concatenate([pnl[s : s + block] for s in starts])[: len(pnl)]
-            std = sample.std()
-            sharpes.append(math.sqrt(len(sample)) * sample.mean() / std if std > 0 else 0.0)
+            std = sample.std(ddof=1)
+            sharpes.append(math.sqrt(TRADING_DAYS_PER_YEAR) * sample.mean() / std if std > 0 else 0.0)
             returns.append(sample.sum())
         return {
             "samples": n_resamples,
+            "periods": int(len(pnl)),
+            "basis": "annualized Sharpe of resampled daily P&L (trading days)",
             "sharpe_p05": float(np.percentile(sharpes, 5)),
             "sharpe_p50": float(np.percentile(sharpes, 50)),
             "return_p05": float(np.percentile(returns, 5)),
         }
 
     def estimate_pbo(self, oos_trade_frames, fold_results, objective) -> Optional[float]:
-        """Probability of backtest overfitting via a simple CSCV-style estimate.
+        """Heuristic: how often the in-sample-best fold fails to beat the OOS median.
 
-        Splits folds into IS/OOS halves over all combinations; PBO is the fraction
-        of splits where the IS-best fold ranks below the OOS median. Needs >= 4
-        folds to be meaningful.
+        Splits the *folds* into halves over all combinations and reports the fraction
+        of splits where the fold with the best in-sample score ranks below the
+        out-of-sample median of the other half. Each fold has its own tuned parameters
+        and a different window, so this ranks folds, not competing configurations
+        across symmetric partitions of one return matrix - it is a rough indicator of
+        selection decay, not the probability of backtest overfitting. Needs >= 4 folds.
         """
         from itertools import combinations
 

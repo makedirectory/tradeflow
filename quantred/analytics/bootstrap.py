@@ -11,8 +11,8 @@ Two questions, two functions:
 
 1. **Is this one track record skill?** :func:`bootstrap_null` imposes the null
    (demean by the estimated alpha), block-resamples the residual with the
-   Politis-Romano stationary bootstrap (never i.i.d. - active returns are
-   autocorrelated), and reports the realized IR's rank in the empirical null
+   Politis-Romano stationary bootstrap (never i.i.d. - returns are
+   autocorrelated), and reports the realized Sharpe's rank in the empirical null
    distribution: an *own* p-value with no assumption about the return
    distribution's shape.
 2. **Is the best of the K configs actually tried skill?** :func:`reality_check`
@@ -187,7 +187,12 @@ def bootstrap_null(
     periods_per_year: float = TRADING_DAYS_PER_YEAR,
     alpha: Optional[float] = None,
 ) -> Dict[str, Any]:
-    """Zero-alpha stationary block bootstrap for one active-return track record.
+    """Zero-alpha stationary block bootstrap for one return track record.
+
+    The statistic is the annualized Sharpe (mean/std) of whatever series is passed in;
+    it is an information ratio only when the caller passes returns already net of a
+    benchmark. The walk-forward feeds raw OOS returns, so there it is a Sharpe test of
+    "is the mean return different from zero", not of skill relative to a benchmark.
 
     Demeans by the full-sample estimated alpha (Fama-French: ``r_tilde = r_a -
     alpha_hat``; ``alpha_hat`` defaults to the sample mean - pass ``alpha=`` for a

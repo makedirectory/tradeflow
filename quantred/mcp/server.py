@@ -929,7 +929,8 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         the holdout score (if holdout_days>0), the Deflated Sharpe (corrected for
         all configs tried), and the PROMOTION-GATE verdict (pass/fail per gate +
         overall "promotable"). A config advances only if it is promotable - never
-        on in-sample Sharpe. include_pbo is expensive; leave it off unless needed.
+        on in-sample Sharpe. include_pbo adds a heuristic IS-best fold OOS rank-failure rate (not a true
+        probability of backtest overfitting) and is expensive; leave it off unless needed.
         NET of transaction cost by default, in-sample and out (pass gross=True to
         disable) — gross validation systematically promotes turnover the
         strategy could not afford live.
