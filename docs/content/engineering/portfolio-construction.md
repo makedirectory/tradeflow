@@ -52,8 +52,14 @@ Constraints (and cost) pull the implemented portfolio away from `w*`. The **tran
 coefficient** measures the damage, and the achievable IR degrades exactly as:
 
 ```
-TC = corr(α, Σ-adjusted active weights) ∈ [-1, 1]        IR_achieved = TC · IR*
+TC = αᵀw_a / ( √(αᵀΣ⁻¹α) · √(w_aᵀΣw_a) )              IR_achieved = TC · IR*
 ```
+
+Here `w_a` is the active weight vector and `√(αᵀΣ⁻¹α)` is `IR*`, so TC is simply the
+book's predicted IR divided by the unconstrained bound: exactly 1 at the unconstrained
+optimum, and `TC · IR*` equals the book's own `predicted_ir` by construction. (A plain
+correlation of α with the weights ignores Σ and satisfies neither property: on a
+capped ten-name book it overstated the retained IR several-fold.)
 
 So tightening the cardinality cap or the position limit lowers TC and the predicted
 IR — a far more honest knob than "maximize score." A regression test pins this
