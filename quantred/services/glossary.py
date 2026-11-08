@@ -74,7 +74,7 @@ _DEFS: Dict[str, str] = {
     "information_ratio": "Annualized active return / tracking error vs benchmark.",
     "skew": "Skewness of returns. Negative => occasional large losses.",
     "kurtosis": "Excess kurtosis. High => fat tails (more extreme moves than normal).",
-    "downside_deviation": "Annualized std of negative returns only (%).",
+    "downside_deviation": "Annualized downside deviation about a zero target, sqrt(mean(min(r, 0)^2)) over all periods (%).",
     "tail_ratio": "abs(95th pct) / abs(5th pct) of returns. >1 => right tail dominates.",
     "omega_ratio": "Probability-weighted gains / losses about a threshold.",
     "best_period": "Best single-period return (%).",
