@@ -17,6 +17,8 @@ from typing import Dict, List, Sequence
 import numpy as np
 import pandas as pd
 
+from quantred.utils.numeric import is_flat
+
 #: Below this many rebalances the IC volatility - and so the t-stat - is meaningless.
 MIN_PERIODS = 12
 
@@ -24,7 +26,7 @@ MIN_PERIODS = 12
 def pearson_ic(forecast: pd.Series, realized: pd.Series) -> float:
     """Cross-sectional Pearson correlation between a forecast and the realized return."""
     aligned = pd.concat([forecast, realized], axis=1).dropna()
-    if len(aligned) < 2 or aligned.iloc[:, 0].std() == 0 or aligned.iloc[:, 1].std() == 0:
+    if len(aligned) < 2 or is_flat(aligned.iloc[:, 0]) or is_flat(aligned.iloc[:, 1]):
         return float("nan")
     return float(aligned.iloc[:, 0].corr(aligned.iloc[:, 1]))
 
@@ -35,7 +37,7 @@ def rank_ic(forecast: pd.Series, realized: pd.Series) -> float:
     if len(aligned) < 2:
         return float("nan")
     ranked = aligned.rank()
-    if ranked.iloc[:, 0].std() == 0 or ranked.iloc[:, 1].std() == 0:
+    if is_flat(ranked.iloc[:, 0]) or is_flat(ranked.iloc[:, 1]):
         return float("nan")
     return float(ranked.iloc[:, 0].corr(ranked.iloc[:, 1]))
 
@@ -50,7 +52,7 @@ def ic_stats(ics: Sequence[float]) -> Dict[str, float]:
     p = len(arr)
     mean = float(arr.mean()) if p else 0.0
     vol = float(arr.std(ddof=1)) if p > 1 else 0.0
-    tstat = float(mean / (vol / math.sqrt(p))) if vol > 0 and p > 1 else 0.0
+    tstat = float(mean / (vol / math.sqrt(p))) if p > 1 and not is_flat(arr) else 0.0
     return {"mean_ic": mean, "ic_vol": vol, "ic_tstat": tstat, "periods": p}
 
 

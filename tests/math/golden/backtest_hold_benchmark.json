@@ -26,6 +26,7 @@
   "metrics.expectancy": -97.72530318383488,
   "metrics.exposure": 5.212620027434842,
   "metrics.gain_to_pain_ratio": -1.0,
+  "metrics.information_ratio": 0.0,
   "metrics.kelly_criterion": 0.0,
   "metrics.kurtosis": -0.16227383107650573,
   "metrics.largest_loss": 97.72530318383488,

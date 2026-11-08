@@ -114,9 +114,7 @@ def test_golden_backtest_holding_the_benchmark():
     assert result.metrics["r_squared"] == pytest.approx(1.0, abs=1e-9)
     assert result.metrics["alpha"] == pytest.approx(0.0, abs=1e-12)
     _independent_backtest_checks(result)
-    # information_ratio of an exactly tracking book is float noise (see the strict xfail in
-    # test_engine_accounting.py), so it is not part of the pin
-    metrics = {k: v for k, v in result.metrics.items() if k != "information_ratio"}
+    metrics = result.metrics
     pins.check(
         "backtest_hold_benchmark",
         "one long held to the end on the benchmark's own bars, whole capital",

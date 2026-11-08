@@ -42,6 +42,7 @@ from quantred.marketdata.client import MarketDataClient
 from quantred.marketdata.timeframe import Timeframe
 from quantred.optimization.optimizer import ParameterOptimizer
 from quantred.strategies.base import Strategy, build_with_limits
+from quantred.utils.numeric import is_flat
 from quantred.utils.timeutils import shift_days
 
 logger = logging.getLogger(__name__)
@@ -1200,7 +1201,9 @@ class WalkForwardValidator:
             starts = rng.integers(0, len(pnl) - block + 1, size=n_blocks)
             sample = np.concatenate([pnl[s : s + block] for s in starts])[: len(pnl)]
             std = sample.std(ddof=1)
-            sharpes.append(math.sqrt(TRADING_DAYS_PER_YEAR) * sample.mean() / std if std > 0 else 0.0)
+            sharpes.append(
+                math.sqrt(TRADING_DAYS_PER_YEAR) * sample.mean() / std if not is_flat(sample) else 0.0
+            )
             returns.append(sample.sum())
         return {
             "samples": n_resamples,

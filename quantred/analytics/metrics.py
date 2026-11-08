@@ -24,6 +24,8 @@ from typing import Sequence, Tuple, Union
 import numpy as np
 import pandas as pd
 
+from quantred.utils.numeric import is_flat
+
 #: US trading days per year, used to annualize daily-return ratios.
 TRADING_DAYS_PER_YEAR = 252
 
@@ -161,7 +163,7 @@ def downside_deviation(returns: Numbers, periods_per_year: int = TRADING_DAYS_PE
 def sharpe_ratio(returns: Numbers, periods_per_year: int = TRADING_DAYS_PER_YEAR) -> float:
     """Annualized Sharpe ratio (risk-free rate assumed 0)."""
     r = _as_series(returns)
-    if len(r) < 2 or r.std() == 0:
+    if len(r) < 2 or is_flat(r):
         return 0.0
     return float(np.sqrt(periods_per_year) * r.mean() / r.std())
 
@@ -355,7 +357,7 @@ def probabilistic_sharpe_ratio(returns: Numbers, benchmark_sr: float = 0.0) -> f
     """
     r = _as_series(returns)
     n = len(r)
-    if n < 3 or r.std() == 0:
+    if n < 3 or is_flat(r):
         return 0.0
     sr = float(r.mean() / r.std())  # per-period Sharpe estimate
     skew = skewness(r)
@@ -389,7 +391,7 @@ def deflated_sharpe_ratio(returns: Numbers, n_trials: int, var_of_trial_sr: floa
     """
     r = _as_series(returns)
     n = len(r)
-    if n < 3 or r.std() == 0 or n_trials < 1:
+    if n < 3 or is_flat(r) or n_trials < 1:
         return 0.0
     if var_of_trial_sr is None:
         var_of_trial_sr = 1.0 / (n - 1)
@@ -460,7 +462,7 @@ def kelly_criterion(pnl: Numbers) -> float:
 def system_quality_number(pnl: Numbers) -> float:
     """Van Tharp's SQN: ``sqrt(n) * mean(pnl) / std(pnl)`` (expectancy quality)."""
     p = _as_series(pnl)
-    if len(p) < 2 or p.std() == 0:
+    if len(p) < 2 or is_flat(p):
         return 0.0
     return float(np.sqrt(len(p)) * p.mean() / p.std())
 
@@ -494,7 +496,7 @@ def alpha_beta(returns: Numbers, benchmark_returns: Numbers) -> Tuple[float, flo
     if len(paired) < 3:
         return 0.0, 0.0, 0.0
     benchmark_var = paired["b"].var()
-    if benchmark_var == 0:
+    if is_flat(paired["b"]):
         return 0.0, 0.0, 0.0
     beta = float(paired["r"].cov(paired["b"]) / benchmark_var)
     alpha = float(paired["r"].mean() - beta * paired["b"].mean())
@@ -511,6 +513,6 @@ def information_ratio(
     if len(paired) < 2:
         return 0.0
     active = paired["r"] - paired["b"]
-    if active.std() == 0:
+    if is_flat(active):
         return 0.0
     return float(np.sqrt(periods_per_year) * active.mean() / active.std())

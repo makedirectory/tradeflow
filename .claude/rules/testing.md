@@ -84,6 +84,8 @@ moving another.
   the predicted IR, Σ trade P&L is the book change, a blend beats a grid) sit beside the
   known answers. Degenerate inputs assert the documented "unavailable" value, never a
   silent `NaN` or `inf` in a printed metric.
+  Zero dispersion is tested with `utils.numeric.is_flat`, never `std == 0` or `std > 0`: the
+  std of a constant series is float noise, not zero, and a Sharpe divides it into ~1e17.
 - **Golden pins** (`test_golden_pins.py`, files in `tests/math/golden/`) store the full
   numeric output of a few seeded scenarios. Each scenario is first checked against the
   reference identities, so a pin never freezes a wrong number. Tolerance is relative

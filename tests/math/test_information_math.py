@@ -70,11 +70,6 @@ def test_ic_stats_known_answer():
     assert out["ic_tstat"] == pytest.approx(mean / (vol / 2), rel=1e-12)  # sqrt(4) = 2
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="a constant IC series has float-noise std (~1e-18), so the vol > 0 guard passes "
-    "and the t-stat reads ~1e16 instead of the documented 0.0",
-)
 def test_ic_stats_with_a_constant_series_has_zero_tstat():
     assert info.ic_stats([0.05] * 6)["ic_tstat"] == 0.0
 

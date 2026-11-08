@@ -222,11 +222,6 @@ def test_reality_check_small_panels_are_flagged_not_scored():
     assert bs.reality_check(np.zeros(5))["insufficient_data"] is True
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="a constant non-zero series has float-noise std (~1e-18), so the zero-variance guard "
-    "misses it: Sharpe reads ~1e17 and the probabilistic/deflated Sharpe read ~1.0",
-)
 def test_a_constant_nonzero_series_is_unavailable_not_a_perfect_sharpe():
     series = [0.01] * 20
     assert m.sharpe_ratio(series) == 0.0

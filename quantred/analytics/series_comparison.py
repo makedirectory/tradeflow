@@ -32,6 +32,7 @@ from typing import Any, Dict, List, Optional, Sequence
 import numpy as np
 
 from quantred.analytics import metrics
+from quantred.utils.numeric import is_flat
 
 #: Shared dates below which a pair is refused rather than reported. Matches the trial
 #: store's own panel default: the number that makes a joint resampling meaningful is
@@ -166,7 +167,7 @@ def _pair(
             "correlation over that little is an error bar, not a measurement"
         )
         return out
-    if float(np.std(x)) == 0.0 or float(np.std(y)) == 0.0:
+    if is_flat(x, ddof=0) or is_flat(y, ddof=0):
         out["reason"] = "one series does not vary over the shared dates, so nothing can correlate"
         return out
 

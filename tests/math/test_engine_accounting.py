@@ -310,11 +310,6 @@ def test_a_book_holding_the_benchmark_has_beta_one_alpha_zero_and_r_squared_one(
     assert bench.to_numpy() == pytest.approx(strat, abs=1e-12)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="a book that tracks its benchmark exactly has float-noise active returns (~1e-17), so "
-    "the zero-tracking-error guard misses and the information ratio is noise of order 1",
-)
 def test_zero_tracking_error_information_ratio_is_unavailable():
     frame = _hold_world()
     overrides = {

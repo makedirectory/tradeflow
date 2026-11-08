@@ -37,7 +37,7 @@ from quantred.marketdata.client import MarketDataClient
 from quantred.marketdata.timeframe import Timeframe
 from quantred.strategies import signals
 from quantred.strategies.base import Strategy
-from quantred.utils.numeric import round_quantity
+from quantred.utils.numeric import is_flat, round_quantity
 
 logger = logging.getLogger(__name__)
 
@@ -404,7 +404,7 @@ def _leg_betas(legs: Dict[str, Any], benchmark_returns) -> None:
             axis=1,
             keys=["leg", "bench"],
         ).dropna()
-        if len(paired) < 2 or paired["bench"].std() == 0 or paired["leg"].std() == 0:
+        if len(paired) < 2 or is_flat(paired["bench"]) or is_flat(paired["leg"]):
             leg["beta"] = None
             leg["benchmark_correlation"] = None
             continue

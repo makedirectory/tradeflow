@@ -33,6 +33,7 @@ from typing import Any, Dict, Optional, Sequence, Union
 import numpy as np
 
 from quantred.analytics.metrics import TRADING_DAYS_PER_YEAR
+from quantred.utils.numeric import FLAT_RTOL
 
 Numbers = Union[Sequence[float], np.ndarray]
 
@@ -53,8 +54,11 @@ def _annualized_ir(x: np.ndarray, periods_per_year: float, axis: int = -1) -> np
     0 (never inf/nan - a null distribution must stay finite to rank against)."""
     mean = x.mean(axis=axis)
     std = x.std(axis=axis, ddof=1)
+    # The vectorised form of utils.numeric.is_flat, which has to run per slice of a large
+    # resampled panel; same tolerance, same scale.
+    flat = std <= FLAT_RTOL * np.maximum(1.0, np.abs(x).mean(axis=axis))
     with np.errstate(invalid="ignore", divide="ignore"):
-        ir = np.where(std > 0, mean / std * math.sqrt(periods_per_year), 0.0)
+        ir = np.where(~flat, mean / std * math.sqrt(periods_per_year), 0.0)
     return np.asarray(ir, dtype=float)
 
 

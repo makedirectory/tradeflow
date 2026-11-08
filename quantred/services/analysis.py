@@ -50,6 +50,7 @@ from quantred.services.registry import resolve_strategy_class, scanner_refusal
 from quantred.settings import state_root
 from quantred.strategies.base import build_with_limits, refuse_undeclared_params, refuse_unknown_limits
 from quantred.utils.errors import RunRefused, no_bars_refusal
+from quantred.utils.numeric import is_flat
 from quantred.utils.timeutils import shift_days
 
 logger = logging.getLogger(__name__)
@@ -3153,7 +3154,7 @@ def compute_information(
         # Realized return of the paper alpha portfolio: standardized-alpha-weighted
         # residual return (scale cancels in the IR).
         z = aligned["alpha"] - aligned["alpha"].mean()
-        if z.std() > 0:
+        if not is_flat(z):
             w = z / z.std()
             last_weights = w  # mean-zero ⇒ already an active book
             portfolio_returns.append(float(w @ aligned["resid"]))
@@ -4148,7 +4149,7 @@ def compute_attribution(
 
         alpha = _alpha_cross_section(universe_bars, bench, scorer, periods_per_year, t, ctx)
         z = alpha - alpha.mean()
-        if z.std() == 0 or z.dropna().empty:
+        if is_flat(z) or z.dropna().empty:
             skipped["alpha cross-section had no spread (all scores equal or missing)"] += 1
             continue
         w_active = z / z.std()
@@ -4426,7 +4427,7 @@ def _signal_cross_section(bars_t: Dict[str, pd.DataFrame], scorer) -> pd.Series:
         if val is not None and val == val:
             raw[sym] = float(val)
     s = pd.Series(raw)
-    if len(s) < 2 or s.std() == 0:
+    if len(s) < 2 or is_flat(s):
         return pd.Series(dtype=float)
     return refine.zscore(refine.winsorize(s))
 
@@ -4501,7 +4502,7 @@ def run_scaling_ab(
             if len(aligned) < 5:
                 continue
             z = aligned["a"] - aligned["a"].mean()
-            if z.std() > 0:
+            if not is_flat(z):
                 returns[kind].append(float((z / z.std()) @ aligned["r"]))
 
     def _ir(r: List[float]) -> float:
@@ -4614,16 +4615,16 @@ def compute_horizon(
     for j in points:
         t = window[j]
         alpha = _alpha_cross_section(universe_bars, bench, scorer, periods_per_year, t, ctx)
-        if alpha.dropna().std() == 0 or alpha.dropna().empty:
+        if is_flat(alpha) or alpha.dropna().empty:
             continue
         for n in range(1, max_lag + 1):
             resid = _forward_residual_return(universe_bars, bench, t, window[j + n], indicators)
             pair = pd.concat([alpha, resid], axis=1).dropna()
-            if len(pair) >= 5 and pair.iloc[:, 1].std() > 0:
+            if len(pair) >= 5 and not is_flat(pair.iloc[:, 1]):
                 ic_by_lag[n].append(float(pair.iloc[:, 0].corr(pair.iloc[:, 1])))
         if prev_alpha is not None:
             joint = pd.concat([alpha, prev_alpha], axis=1).dropna()
-            if len(joint) >= 5 and joint.iloc[:, 0].std() > 0 and joint.iloc[:, 1].std() > 0:
+            if len(joint) >= 5 and not is_flat(joint.iloc[:, 0]) and not is_flat(joint.iloc[:, 1]):
                 autocorrs.append(float(joint.iloc[:, 0].corr(joint.iloc[:, 1])))
         prev_alpha = alpha
 
@@ -6015,7 +6016,7 @@ def _run_case_test(universe_bars, scorer, residual_vol: pd.Series, price_derived
             c_g = refine.case_scale_factor(g, vol)
             scale = c_g if (c_g == c_g) else float(vol.mean())
             a1, a2 = vol * z, scale * z  # IC cancels in the correlation
-            if a1.std() > 0 and a2.std() > 0:
+            if not is_flat(a1) and not is_flat(a2):
                 corr = float(a1.corr(a2))
     diag["candidate_correlation"] = corr
     diag["c_g"] = c_g

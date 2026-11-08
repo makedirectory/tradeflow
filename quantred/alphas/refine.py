@@ -20,6 +20,8 @@ import math
 import numpy as np
 import pandas as pd
 
+from quantred.utils.numeric import is_flat
+
 
 def winsorize(scores: pd.Series, lower: float = 0.025, upper: float = 0.975) -> pd.Series:
     """Clip scores to their ``[lower, upper]`` cross-sectional quantiles.
@@ -57,7 +59,7 @@ def zscore(scores: pd.Series) -> pd.Series:
         return scores
     centered = scores - scores.mean()
     std = scores.std(ddof=0)
-    if std == 0 or not np.isfinite(std):
+    if is_flat(scores, ddof=0) or not np.isfinite(std):
         return centered * 0.0
     return centered / std
 
@@ -294,7 +296,7 @@ def cap(alpha: pd.Series, n_std: float = 3.0) -> pd.Series:
     if alpha.empty:
         return alpha
     std = alpha.std(ddof=0)
-    if std == 0 or not np.isfinite(std):
+    if is_flat(alpha, ddof=0) or not np.isfinite(std):
         return alpha
     bound = n_std * std
     return alpha.clip(lower=-bound, upper=bound)

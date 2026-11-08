@@ -12,6 +12,8 @@ Series/DataFrames out, leaving the inputs untouched.
 
 import pandas as pd
 
+from quantred.utils.numeric import is_flat
+
 
 def calculate_sma(data: pd.Series, period: int) -> pd.Series:
     """Simple Moving Average."""
@@ -79,7 +81,7 @@ def calculate_beta(symbol_close: pd.Series, benchmark_close: pd.Series) -> float
 
     returns = prices.pct_change().dropna()
     benchmark_var = returns["benchmark"].var()
-    if benchmark_var == 0 or returns.empty:
+    if is_flat(returns["benchmark"]) or returns.empty:
         return 1.0
 
     covariance = returns["symbol"].cov(returns["benchmark"])
