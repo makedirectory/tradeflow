@@ -17,7 +17,7 @@ import pytest
 
 from quantred import settings
 
-PACKAGE_DIR = settings.PROJECT_ROOT / "packaging" / "tradeflow-engine"
+PACKAGE_DIR = settings.PROJECT_ROOT / "legacy" / "tradeflow-engine"
 
 pytestmark = pytest.mark.skipif(not PACKAGE_DIR.is_dir(), reason="not a source checkout")
 

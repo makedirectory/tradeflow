@@ -10,7 +10,8 @@ The project was called TradeFlow and was distributed as `tradeflow-engine`. It i
 is for anyone who already has the old distribution installed. If you are installing for
 the first time, you do not need it: see [installation](installation).
 
-Two releases carry the move. QuantRed 2.4.0 is the first release published as `quantred`.
+Two releases carry the move (QuantRed 2.4.1 is a later fix, described under
+[MCP clients](#mcp-clients)). QuantRed 2.4.0 is the first release published as `quantred`.
 `tradeflow-engine` 2.3.1 is the last release under the old name and is published after
 it: a transition package with no engine code of its own. It depends on `quantred`, still
 provides the `tradeflow` command (which runs QuantRed's command line), and ships a
@@ -190,7 +191,8 @@ A client entry written under the old name launches `tradeflow` or
 installed, and stop once it is removed (Path B). An entry whose command is a path
 *inside* the old tool's environment (for example
 `.../uv/tools/tradeflow-engine/bin/tradeflow`) stops working as soon as that tool is
-uninstalled.
+uninstalled. From quantred 2.4.1, a launch through `python -m tradeflow.cli` no longer
+prints a spurious "a pack imports the old name" warning.
 
 To move a client across, run `quantred mcp --self-test` and paste the absolute command
 and block it prints, which uses the key and command `quantred`. The server now reports

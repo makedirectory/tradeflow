@@ -97,16 +97,16 @@ demo_volume = "quantred.demo.scanners:DemoVolumeScanner"
 # have to be kept in agreement.
 quantred = "quantred.cli:main"
 # No `tradeflow` alias here. The previous command is provided by the final
-# `tradeflow-engine` release (packaging/tradeflow-engine), which depends on this
+# `tradeflow-engine` release (legacy/tradeflow-engine), which depends on this
 # distribution: two distributions that both install `bin/tradeflow` would have the
 # upgrade or uninstall of one delete the other's copy.
 
 [project.urls]
-Homepage = "https://tradeflow.mk-dir.com/"
-Documentation = "https://tradeflow.mk-dir.com/"
+Homepage = "https://quantred.mk-dir.com/"
+Documentation = "https://quantred.mk-dir.com/"
 Source = "https://github.com/makedirectory/quantred"
 Issues = "https://github.com/makedirectory/quantred/issues"
-Changelog = "https://tradeflow.mk-dir.com/changelog"
+Changelog = "https://quantred.mk-dir.com/changelog"
 
 [build-system]
 requires = ["hatchling"]
@@ -144,7 +144,7 @@ exclude = [
     "/docs/node_modules",
     "/docs/build",
     "/dist",
-    "/packaging",
+    "/legacy",
     "*.csv",
     "/.env",
 ]

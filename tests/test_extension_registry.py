@@ -13,6 +13,7 @@ from quantred.scanners.base import ScannerStrategy
 from quantred.scanners.symbol_scanner import BUILTIN_SCANNERS as package_builtin_scanners
 from quantred.scanners.symbol_scanner import SymbolScanner
 from quantred.services import registry
+from quantred.strategies.base import Strategy
 
 
 class PrivateTrendStrategy(DemoTrendStrategy):
@@ -494,8 +495,8 @@ def test_a_pack_using_the_old_import_name_is_said_once(monkeypatch, caplog):
     monkeypatch.setattr(sys, "meta_path", [_AliasFinder(), *sys.meta_path])
     monkeypatch.setattr(registry, "_WARNED_OLD_IMPORT", False)
     with caplog.at_level(logging.WARNING, logger=registry.logger.name):
-        registry._warn_if_a_pack_imports_the_old_name()
-        registry._warn_if_a_pack_imports_the_old_name()
+        registry._warn_if_a_pack_imports_the_old_name(already_loaded=False)
+        registry._warn_if_a_pack_imports_the_old_name(already_loaded=False)
     said = [r for r in caplog.records if "old `tradeflow` name" in r.getMessage()]
     assert len(said) == 1
 
@@ -507,5 +508,51 @@ def test_no_old_name_message_without_the_alias(monkeypatch, caplog):
     monkeypatch.delitem(sys.modules, "tradeflow", raising=False)
     monkeypatch.setattr(registry, "_WARNED_OLD_IMPORT", False)
     with caplog.at_level(logging.WARNING, logger=registry.logger.name):
-        registry._warn_if_a_pack_imports_the_old_name()
+        registry._warn_if_a_pack_imports_the_old_name(already_loaded=False)
     assert not caplog.records
+
+
+class _AliasFinder:  # stands in for the shim's finder, which is recognised by name
+    def find_spec(self, *args, **kwargs):
+        return None
+
+
+class _PackImportingTheOldName:
+    """An entry point whose loading imports `tradeflow`, as a pack written against it does."""
+
+    name = "old_import_pack"
+    group = "quantred.strategies"
+    dist = None
+
+    def load(self):
+        import sys
+
+        sys.modules.setdefault("tradeflow", sys)
+        return {}
+
+
+def _discover_with(monkeypatch, caplog, old_name_loaded_first):
+    import logging
+    import sys
+
+    if old_name_loaded_first:
+        monkeypatch.setitem(sys.modules, "tradeflow", sys)
+    else:
+        monkeypatch.delitem(sys.modules, "tradeflow", raising=False)
+    monkeypatch.setattr(sys, "meta_path", [_AliasFinder(), *sys.meta_path])
+    monkeypatch.setattr(registry, "_WARNED_OLD_IMPORT", False)
+    monkeypatch.setattr(registry, "_select_entry_points", lambda group: [_PackImportingTheOldName()])
+    with caplog.at_level(logging.WARNING, logger=registry.logger.name):
+        registry._entry_point_classes("quantred.strategies", Strategy)
+    return [r for r in caplog.records if "old `tradeflow` name" in r.getMessage()]
+
+
+def test_a_pack_that_imports_the_old_name_while_loading_is_said(monkeypatch, caplog):
+    assert len(_discover_with(monkeypatch, caplog, old_name_loaded_first=False)) == 1
+
+
+def test_launching_through_the_old_name_does_not_blame_a_pack(monkeypatch, caplog):
+    """`python -m tradeflow.cli` imports the old name before discovery runs. The check
+    read that as a pack using it and printed a false line on every such launch - the form
+    MCP client configs written before the rename use."""
+    assert _discover_with(monkeypatch, caplog, old_name_loaded_first=True) == []

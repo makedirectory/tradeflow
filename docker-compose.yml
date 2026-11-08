@@ -17,6 +17,14 @@
 #
 # Live trading is NEVER started by `up`. See the `live` service at the bottom.
 
+# The project name is pinned, not derived from the checkout directory's name. Compose
+# prefixes every volume with it, and it was `tradeflow` for everyone whose clone was
+# called that: the journal lives in `tradeflow_tradeflow-logs`. A clone now made from the
+# renamed repository lands in a `quantred/` directory, and an unpinned name would have
+# pointed it at new, empty volumes. Pinned, every checkout - old directory or new -
+# attaches to the same ones. Container and image names carry the new name; these do not.
+name: tradeflow
+
 x-app: &app
   build:
     context: .
@@ -41,7 +49,7 @@ services:
   # ---------------------------------------------------------------- surfaces --
   mcp:
     <<: *app
-    container_name: tradeflow-mcp
+    container_name: quantred-mcp
     # The server speaks stdio, so this is attach-oriented rather than a listening
     # port: an MCP client runs `docker compose run --rm mcp`. A TCP/SSE transport
     # would add a port mapping here and nothing else.
@@ -64,7 +72,7 @@ services:
   docs:
     profiles: ["docs"]
     image: node:24-slim
-    container_name: tradeflow-docs
+    container_name: quantred-docs
     working_dir: /site
     volumes:
       - ./docs:/site

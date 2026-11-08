@@ -21,4 +21,4 @@ a manual human step.
 
 #: The single source of truth for the version — packaging reads it from here, so a
 #: published artifact and what `quantred --version` reports cannot drift apart.
-__version__ = "2.4.0"
+__version__ = "2.4.1"
