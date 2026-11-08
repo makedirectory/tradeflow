@@ -80,6 +80,14 @@ resetting the campaign count that every multiple-testing correction depends on â
 nothing would error. `scripts/compose_smoke.sh` tests exactly that: journal a trial (no keys needed),
 `down`, and check the trial is still there.
 
+**Names.** The volumes are still called `tradeflow-logs`, `tradeflow-cache` and
+`tradeflow-configs`, and the compose project is pinned as `tradeflow`, so Docker sees them
+as `tradeflow_tradeflow-logs` and so on. That is deliberate: they hold the recorded trial
+history, a renamed volume is a new empty one, and an unpinned project name would follow
+the checkout directory, so a fresh clone into `quantred/` would not find a journal that a
+clone into `tradeflow/` wrote. The containers and image carry the QuantRed name; the
+volumes keep the old one on purpose.
+
 **Ownership.** The image runs as a pinned non-root uid (1000) and creates each mount
 point *in the image* so the named volumes inherit that ownership. Docker seeds a
 volume's ownership from the image directory at that path and makes it root-owned

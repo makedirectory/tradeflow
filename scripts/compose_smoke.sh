@@ -70,6 +70,8 @@ fi
 
 # 5. The volume is readable by the host user without sudo — mixed native/container
 #    work against one journal is certain, and a root-owned journal breaks it.
+# The project name is pinned to `tradeflow` in docker-compose.yml, so this is the same
+# name in every checkout directory.
 VOLUME=$(docker volume inspect tradeflow_tradeflow-logs --format '{{.Mountpoint}}' 2>/dev/null || echo "")
 if [[ -n "$VOLUME" ]]; then
     pass "logs volume exists ($VOLUME)"
