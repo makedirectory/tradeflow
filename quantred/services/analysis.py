@@ -4683,7 +4683,7 @@ def compute_horizon(
         "blend_superseded_by": "the aim-in-front partial-adjustment policy "
         "('allocate --policy aim'): this lagged-blend recommendation is a special case "
         "of that policy's per-signal decay discount (a two-point blend vs a continuous "
-        "κ/(κ+φ) discount) - prefer --policy aim for new work; this report stays "
+        "κ/(1 − e^(−φ)(1−κ)) discount) - prefer --policy aim for new work; this report stays "
         "accurate on its own terms either way.",
         "note": "δ is the per-period IC decay (HL = half-life, with a "
         "half_life_lower/half_life_upper confidence band from the fit's own slope SE). "
@@ -5000,7 +5000,7 @@ def construct_portfolio(
     ``policy="aim"`` (default ``None`` / off until validated OOS net of cost
     against the plain myopic solve above - see ``info --policy-ab``) replaces the
     myopic "jump to this period's optimum" with an aim-in-front-of-the-target
-    partial adjustment: the alpha is discounted by ``κ/(κ+φ)`` (``φ`` the
+    partial adjustment: the alpha is discounted by ``κ/(1 − e^(−φ)(1−κ))`` (``φ`` the
     strategy's own measured decay rate, conservatively from the *upper* half-life
     confidence bound over the trailing ``decay_lookback_days``), the aim portfolio
     is the cost-aware solve on that discounted alpha with cost zeroed, and the

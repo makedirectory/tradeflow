@@ -7532,7 +7532,8 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["aim"],
         default=None,
         help="'aim' replaces the myopic jump-to-target with "
-        "Gârleanu-Pedersen partial adjustment - alpha discounted by κ/(κ+φ) (φ from "
+        "partial adjustment toward an aim portfolio - alpha discounted by "
+        "κ/(1 − e^(−φ)(1−κ)) (φ from "
         "the strategy's own measured decay), aim solved cost-free, traded κ of the "
         "gap each rebalance, banded by the optimizer's own no-trade band. Default off until "
         "validated OOS net of cost — see 'info --policy-ab'. Long-only only; "
