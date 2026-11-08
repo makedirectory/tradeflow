@@ -410,3 +410,78 @@ def test_factor_model_is_unavailable_when_names_leave_no_residual(n_names, expec
     assert (got is not None) is expect_model
     if got is not None:
         assert float(got.specific_var.min()) > 1e-6  # genuine residual, not float dust
+
+
+# --------------------------------------------------------------------------- #
+# Conditional risk: Sigma_t rebuilt from the documented formula
+# --------------------------------------------------------------------------- #
+def _ewma_final(x, lam, min_obs):
+    """Documented recursion: seed with the raw mean square of the first ``min_obs`` rows,
+    then ``v = lam * v + (1 - lam) * r**2`` row by row. Written as a plain loop."""
+    v = [sum(x[i] ** 2 for i in range(min_obs)) / min_obs]
+    for i in range(min_obs, len(x)):
+        v.append(lam * v[-1] + (1 - lam) * x[i] ** 2)
+    return v[-1]
+
+
+def test_conditioned_intercept_factor_matrix_matches_the_documented_formula():
+    """Intercept-only factor model: the factor return each bar is the cross-sectional mean,
+    ``F_t`` is its EWMA variance (annualised), each name's specific variance is the EWMA of
+    its squared deviation from that mean, and ``Sigma_t = F_t * 1 1' + diag(specific_t)``.
+    Guards a conditioned matrix that conditions the factor and not the specifics (or the
+    reverse), which mis-splits market from stock-specific risk."""
+    from quantred.risk.conditional import condition_risk_matrix
+
+    rng = np.random.default_rng(12)
+    t, n, min_obs, lam, ppy = 300, 6, 60, 0.94, 252.0
+    # a volatility regime shift in the last stretch, so conditioning moves the answer
+    scale = np.where(np.arange(t) < 240, 1.0, 2.5)[:, None]
+    names = [f"N{i}" for i in range(n)]
+    data = (rng.normal(0.0, 0.01, (t, 1)) + rng.normal(0.0, 0.008, (t, n))) * scale
+    returns = pd.DataFrame(data, columns=names)
+
+    base = estimate_factor_model(returns, pd.DataFrame(index=names), ppy)
+    got = condition_risk_matrix(base, returns, "ewma", ppy, min_obs=min_obs, lambda_=lam)
+
+    mean_ret = [sum(row) / n for row in data.tolist()]
+    resid = [[data[i][j] - mean_ret[i] for j in range(n)] for i in range(t)]
+    f_var = _ewma_final(mean_ret, lam, min_obs) * ppy
+    spec = [_ewma_final([resid[i][j] for i in range(t)], lam, min_obs) * ppy for j in range(n)]
+    expected = [[f_var + (spec[i] if i == j else 0.0) for j in range(n)] for i in range(n)]
+
+    assert got.factor_cov[0, 0] == pytest.approx(f_var, rel=1e-10)
+    assert got.specific_var == pytest.approx(spec, rel=1e-10)
+    assert got.sigma == pytest.approx(np.array(expected), rel=1e-10)
+    # conditioning did something: the late regime is louder than the whole-window estimate
+    assert f_var > 1.5 * base.factor_cov[0, 0]
+
+
+def test_conditioned_shrinkage_matrix_holds_the_correlation_and_takes_the_ewma_diagonal():
+    """``Sigma_t = D_t R D_t``: every entry is the base entry rescaled by the ratio of
+    conditional to unconditional volatilities of its two names."""
+    from quantred.risk.conditional import condition_risk_matrix
+
+    rng = np.random.default_rng(13)
+    t, n, min_obs, lam, ppy = 300, 5, 60, 0.97, 52.0
+    names = [f"M{i}" for i in range(n)]
+    data = rng.normal(0.0, 0.01, (t, 1)) + rng.normal(0.0, 0.01, (t, n)) * (1 + np.arange(n))
+    returns = pd.DataFrame(data, columns=names)
+    sigma, _ = SampleCovariance().estimate(returns)
+    base = RiskMatrix(names, sigma * ppy)
+    got = condition_risk_matrix(base, returns, "ewma", ppy, min_obs=min_obs, lambda_=lam)
+
+    cond = [_ewma_final(data[:, j].tolist(), lam, min_obs) * ppy for j in range(n)]
+    uncond = np.diag(base.sigma)
+    expected = np.array(
+        [
+            [
+                base.sigma[i, j] * math.sqrt(cond[i] * cond[j]) / math.sqrt(uncond[i] * uncond[j])
+                for j in range(n)
+            ]
+            for i in range(n)
+        ]
+    )
+    assert got.sigma == pytest.approx(expected, rel=1e-10)
+    assert np.diag(got.sigma) == pytest.approx(cond, rel=1e-10)
+    corr = lambda s: s / np.sqrt(np.outer(np.diag(s), np.diag(s)))  # noqa: E731
+    assert corr(got.sigma) == pytest.approx(corr(base.sigma), abs=1e-12)  # the correlation is untouched
