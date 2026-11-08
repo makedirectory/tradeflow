@@ -72,6 +72,12 @@ jobs:
           BUILT=$(ls dist/tradeflow_engine-*.tar.gz | sed -E 's/.*-([0-9][^-]*)\.tar\.gz/\1/')
           echo "tag=$TAG built=$BUILT"
           test "$TAG" = "$BUILT"
+      # PyPI cannot replace a version. Publishing this before the engine release it
+      # requires exists would leave a permanent release whose dependency cannot be
+      # installed, so the order of the two tags is checked, not remembered.
+      - name: The engine release this requires is on PyPI
+        if: startsWith(github.ref, 'refs/tags/tradeflow-engine-v')
+        run: uv run --no-project --with packaging python .github/scripts/require_published_dependency.py packaging/tradeflow-engine/pyproject.toml
       - uses: actions/upload-artifact@v7
         with:
           name: dist
