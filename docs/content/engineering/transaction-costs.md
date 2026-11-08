@@ -60,7 +60,10 @@ profitable when it isn't.
 
 - **Backtest** (`engine/backtest.py`): every fill is charged on **both legs** (entry
   and exit), using a **trailing** (as-of) ADV and volatility so a past trade's cost
-  never depends on future volume. Metrics become net; `total_cost` and the gross
+  never depends on future volume. The windows end at the *previous* bar: a fill happens at
+  a bar's open (or, for the end-of-period close, before that bar's own volume is
+  knowable), so a window that included the bar itself priced the fill with information
+  from after it. Metrics become net; `total_cost` and the gross
   final capital are reported alongside for the haircut attribution. **Net is the
   default** at the service/CLI layer; `--gross` disables the charge.
 - **Portfolio construction** ([engineering](./portfolio-construction#cost-inside-the-objective-cost-aware-by-default)):

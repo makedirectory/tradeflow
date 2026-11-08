@@ -103,6 +103,36 @@ def test_the_cli_and_the_service_build_the_same_cost_model():
     assert build_cost_model(Namespace(**{**vars(args), "gross": True})) is None
 
 
+def _same_bar_fill_cost(volume, close):
+    """Cost of a fill at bar 25's open (entered on the signal of bar 24, stopped out on
+    the same bar), with bar 25's own volume and close set by the caller."""
+    n = 40
+    index = pd.date_range("2024-01-02", periods=n, freq="D", tz=NEW_YORK)
+    closes = [100.0 + (i % 2) for i in range(n)]
+    rows = [{"open": c, "high": c + 0.5, "low": c - 0.5, "close": c, "volume": 1e6} for c in closes]
+    rows[25] = {"open": 100.0, "high": 140.0, "low": 90.0, "close": close, "volume": volume}
+    strategy = ScriptedStrategy(["HOLD"] * 24 + [signals.BUY] + ["HOLD"] * 15, {"stop_loss": 0.03})
+    client = MarketDataClient(DictMarketData({"AAA": pd.DataFrame(rows, index=index)}))
+    result = BacktestEngine(strategy, client, cost_model=ParametricCostModel()).run(
+        ["AAA"], datetime(2024, 1, 2), datetime(2024, 3, 1), 100_000.0
+    )
+    assert len(result.trades) == 1
+    trade = result.trades.iloc[0]
+    assert trade["exit_reason"] == "STOP_LOSS" and trade["entry_time"] == trade["exit_time"]
+    return float(trade["cost"])
+
+
+def test_a_fills_cost_does_not_depend_on_its_own_bars_volume_or_close():
+    """ADV and volatility were rolling windows ending at the fill's own bar, but the fill
+    is at that bar's open: a spike in the bar's own volume or close moved the cost of the same fill, and the
+    docs called the windows trailing as-of. Both legs of this trade fill at bar 25."""
+    quiet = _same_bar_fill_cost(volume=1e6, close=100.0)
+    spiked = _same_bar_fill_cost(volume=5e7, close=130.0)
+
+    assert quiet > 0
+    assert spiked == pytest.approx(quiet, rel=1e-12)
+
+
 def test_a_command_without_the_cap_flag_gets_the_models_default():
     from argparse import Namespace
 

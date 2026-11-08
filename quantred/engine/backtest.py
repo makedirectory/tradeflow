@@ -757,8 +757,12 @@ class BacktestEngine:
             score = np.zeros(len(data), dtype=float)
 
         if self.cost_model is not None and "volume" in data:
-            adv = data["volume"].rolling(self.ADV_WINDOW).mean().fillna(0.0).to_numpy()
-            vol = data["close"].pct_change().rolling(self.VOL_WINDOW).std().fillna(0.0).to_numpy()
+            # Trailing as of the *previous* bar. A fill at bar i's open is priced before
+            # bar i's volume and close exist, so a window ending at i let the cost of a
+            # fill depend on the very bar it transacted in (a volume or close spike on i moved the
+            # cost of the same fill). Shifted, adv[i] and vol[i] use bars up to i-1 only.
+            adv = data["volume"].rolling(self.ADV_WINDOW).mean().shift(1).fillna(0.0).to_numpy()
+            vol = data["close"].pct_change().rolling(self.VOL_WINDOW).std().shift(1).fillna(0.0).to_numpy()
         else:
             adv = vol = None
 
