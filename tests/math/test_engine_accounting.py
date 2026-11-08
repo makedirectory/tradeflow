@@ -196,7 +196,7 @@ def test_round_trip_is_charged_on_both_legs_with_the_models_own_spread():
 
 def test_costs_scale_exactly_with_the_linear_terms_when_there_is_no_impact():
     """Cost stress k x: commission and spread both scaled by k, impact off. The total must
-    be exactly k times the base (the spread used to stay put, so 3x cost ~1.7x)."""
+    be exactly k times the base (the spread used to stay put, so 3x cost ~1.6x)."""
     flat = _bars([(100, 100, 100, 100, 1)] * 5)
     sig = [B, H, CB, H, H]
     base = _run({"AAA": flat}, sig, cost_model=ParametricCostModel(1.0, 5.0, 0.0)).total_cost
@@ -341,3 +341,102 @@ def test_benchmark_buy_hold_is_compounded_over_the_measured_steps():
 def test_metrics_are_absent_without_a_benchmark_not_zero_alpha():
     result = _run({"AAA": _hold_world()}, [B] + [H] * 39, {"stop_loss": 0.5, "take_profit": 50.0})
     assert result.metrics["benchmark_available"] is False and result.metrics["treynor_available"] is False
+
+
+# --------------------------------------------------------------------------- #
+# Which level fills first when a bar spans both
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    "bar, price, reason, pnl",
+    [
+        (
+            (115, 116, 85, 100),
+            115.0,
+            "TAKE_PROFIT",
+            150.0,
+        ),  # opens past the target: that fills, not the later stop
+        (
+            (85, 120, 84, 100),
+            85.0,
+            "STOP_LOSS",
+            -150.0,
+        ),  # opens past the stop: that fills, not the later target
+        ((100, 115, 85, 100), 90.0, "STOP_LOSS", -100.0),  # opens inside both, touches both: stop first
+    ],
+)
+def test_long_bar_spanning_both_levels(bar, price, reason, pnl):
+    """Defect: the stop was tested before the open, so a long whose target had already
+    filled at a 115 open booked a -100 stop instead of +150."""
+    trade = _run({"AAA": _bars([ENTRY_BAR, ENTRY_BAR, bar, ENTRY_BAR])}, [B, H, H, H]).trades.iloc[0]
+    assert trade["exit_reason"] == reason
+    assert (trade["exit_price"], trade["pnl"]) == pytest.approx((price, pnl))
+
+
+@pytest.mark.parametrize(
+    "bar, price, reason, pnl",
+    [
+        ((85, 120, 84, 100), 85.0, "TAKE_PROFIT", 150.0),  # opens past the short's target
+        ((115, 116, 85, 100), 115.0, "STOP_LOSS", -150.0),  # opens past the short's stop
+        ((100, 115, 85, 100), 110.0, "STOP_LOSS", -100.0),  # inside both, touches both: stop first
+    ],
+)
+def test_short_bar_spanning_both_levels(bar, price, reason, pnl):
+    trade = _run({"AAA": _bars([ENTRY_BAR, ENTRY_BAR, bar, ENTRY_BAR])}, [signals.SELL, H, H, H]).trades.iloc[
+        0
+    ]
+    assert trade["exit_reason"] == reason
+    assert (trade["exit_price"], trade["pnl"]) == pytest.approx((price, pnl))
+
+
+# --------------------------------------------------------------------------- #
+# An exit inside a bar cannot fund an entry at that bar's open
+# --------------------------------------------------------------------------- #
+_ONE_SLOT = {"position_limits": {"max_positions": 1, "max_position_size": 1000.0, "max_total_risk": 1.0}}
+_FLAT = (100, 100, 100, 100)
+
+
+def _slot_run(aaa_bar3, aaa_script, bbb_script):
+    frames = {
+        "AAA": _bars([_FLAT, _FLAT, _FLAT, aaa_bar3, _FLAT, _FLAT]),
+        "BBB": _bars([_FLAT] * 6),
+    }
+    strategy = _PerSymbolStrategy({"AAA": aaa_script, "BBB": bbb_script}, _ONE_SLOT)
+    return BacktestEngine(strategy, MarketDataClient(DictMarketData(frames))).run(
+        ["AAA", "BBB"], START, END, 100_000.0
+    )
+
+
+def _day(n):
+    return pd.Timestamp("2024-01-02", tz=NEW_YORK) + pd.Timedelta(days=n)
+
+
+@pytest.mark.parametrize("bar3_low", [85.0, 91.0])
+def test_a_stop_hit_inside_the_bar_does_not_free_the_slot_for_the_same_open(bar3_low):
+    """Defect: AAA (stop 90) held, one slot, BBB signals on bar 2. Admission at bar 3's open
+    depended on whether bar 3's LOW later broke the stop - a price after the open. Live
+    refuses BBB (the slot is occupied when the entry is decided), so BBB is never admitted
+    at bar 3's open whichever way the low falls."""
+    trades = _slot_run((95, 96, bar3_low, 94), [B, H, H, H, H, H], [H, H, B, H, H, H]).trades
+    assert trades[trades["symbol"] == "BBB"].empty
+
+
+def test_a_stop_hit_inside_the_bar_frees_the_slot_from_the_next_bar():
+    """The other direction: once the stop has been seen the slot is usable."""
+    trades = _slot_run((95, 96, 85, 94), [B, H, H, H, H, H], [H, H, B, B, H, H]).trades.set_index("symbol")
+    assert trades.loc["AAA", "exit_reason"] == "STOP_LOSS" and trades.loc["AAA", "exit_time"] == _day(3)
+    assert trades.loc["BBB", "entry_time"] == _day(4)
+
+
+def test_a_gapped_stop_does_not_free_the_slot_for_the_same_open_either():
+    """Decision: a stop that gaps through still fills at the open, but that was not known
+    when the entry was decided, so the slot opens from the next bar (conservative)."""
+    trades = _slot_run((80, 82, 78, 79), [B, H, H, H, H, H], [H, H, B, H, H, H]).trades.set_index("symbol")
+    assert trades.loc["AAA", "exit_price"] == pytest.approx(80.0)
+    assert "BBB" not in trades.index
+
+
+def test_a_signal_exit_does_free_the_slot_for_the_same_open():
+    """The exit signal came from the previous close, before the open, so it is known when
+    the next entry is decided - and the live trader has the close ordered by then too."""
+    trades = _slot_run(_FLAT, [B, H, H, CB, H, H], [H, H, B, B, H, H]).trades.set_index("symbol")
+    assert trades.loc["AAA", "exit_time"] == _day(4) and trades.loc["BBB", "entry_time"] == _day(4)

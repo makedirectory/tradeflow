@@ -102,7 +102,11 @@ logger = logging.getLogger(__name__)
 #: * **7** — the current model. Five things the engine computes changed, each of which
 #:   moves recorded numbers. A stop or target fills at the open when the bar opens beyond
 #:   it (a long stopped at 97 on a bar opening at 90 lost 10, not 3), and the bar an entry
-#:   fills on is checked against that position's own stop and target. Costs are priced
+#:   fills on is checked against that position's own stop and target. A bar that opens
+#:   beyond one level fills that level at the open even if its range later spans the other,
+#:   and a stop or target hit during a bar frees its capital and slot only from the next
+#:   bar (it used to be reusable at that same bar's open, which let admission depend on
+#:   a later price). Costs are priced
 #:   with the liquidity known *before* the fill's bar (the ADV and volatility windows
 #:   end at the previous bar), and the configured spread is the one charged - it was dead
 #:   in the cost model, so a "3x" cost stress cost about 1.6x. The benchmark return
@@ -433,7 +437,10 @@ def _benchmark_returns(closes, equity_times) -> Optional[pd.Series]:
         return None
     # Label each return by the equity-curve step whose interval it covers. The curve's
     # returns (`pct_change().dropna()`) are labelled 1..m, step j being the interval
-    # ending at equity_times[j]; this series' first entry is that same step 1. A
+    # ending at equity_times[j]. This series is labelled the same way, but its first
+    # entry (step 1) is NaN - a benchmark return needs a prior close, and the curve's
+    # first interval starts at the initial capital, before any bar - so step 2 is the
+    # first real pairing. A
     # 0-based index here paired every strategy return with the *next* bar's benchmark
     # return, so a strategy holding the benchmark itself regressed on a series one bar
     # ahead of it and reported a near-zero beta.
@@ -863,7 +870,16 @@ class BacktestEngine:
                 pos["lowest"] = min(pos["lowest"], panel.lows[i])
                 pos["highest"] = max(pos["highest"], panel.highs[i])
 
-            # 2. Exits first, so the capital they free is reusable this same bar.
+            # 2. Exits that were already decided when the bar opened, so the capital and
+            #    the slot they free are reusable by an entry at this same open.
+            #
+            # Only a signal exit qualifies. It was emitted at the previous close, before
+            # the open, which is exactly when the live trader sizes and admits the next
+            # entries: it knows the position is being closed. A stop or target is a
+            # resting order whose outcome is not known until the bar trades - even one
+            # that gaps through at the open, because the live decision is made before
+            # that print exists. Freeing the slot for those would let admission depend
+            # on a price later than the open, so they are applied after admission (below).
             for symbol in order:
                 pos = book.positions.get(symbol)
                 if pos is None:
@@ -872,10 +888,12 @@ class BacktestEngine:
                 i = panel.rows[k]
                 if i < 0:
                     continue
+                decided_signal, _ = self._decided(panel, i)
+                if not self._signal_exits(pos, decided_signal):
+                    continue
                 exit_cost = self._trade_cost(
                     symbol, pos["size"], panel.opens[i], panel.adv, panel.vol, i
                 ) + self._carry(pos, k)
-                decided_signal, _ = self._decided(panel, i)
                 closed = self._maybe_close(
                     pos,
                     decided_signal,
@@ -884,6 +902,7 @@ class BacktestEngine:
                     panel.lows[i],
                     panel.timestamps[i],
                     exit_cost,
+                    intrabar=False,
                 )
                 if closed is not None:
                     trades.append(closed)
@@ -914,7 +933,6 @@ class BacktestEngine:
             if candidates:
                 candidates.sort(key=lambda c: (-c[0], c[1]))
                 equity_now = book.equity()
-                admitted: List[str] = []
                 for _, symbol, i, decided_signal in candidates:
                     if len(book.positions) >= max_positions:
                         break
@@ -939,39 +957,45 @@ class BacktestEngine:
                     pos["entry_k"] = k
                     book.cash -= pos["notional"] + pos["entry_cost"]
                     book.positions[symbol] = pos
-                    admitted.append(symbol)
 
-                # The bar an entry filled on is also a bar the position was held through:
-                # its bracket was resting from the open, so a low beyond the stop stops it
-                # out this same bar. Causal - the signal came from the previous close and
-                # the range after the open was unknown to the decision. Done after the
-                # whole admission pass, not inside it: every entry fills at the same
-                # instant, the open, so a slot an intra-bar exit frees was not free when
-                # the next candidate was considered. Stop/target only; the signal that
-                # opened a position cannot also close it. Until now the first bar was
-                # never checked, so an entry whose very bar breached its stop carried on
-                # as if it had not.
-                for symbol in admitted:
-                    pos = book.positions[symbol]
-                    panel = panels[symbol]
-                    i = panel.rows[k]
+            # 5. Stops and targets, after admission. Every position still held was
+            #    resting a bracket through this bar, new entries included: their
+            #    bracket rested from the open, so a low beyond the stop stops them out
+            #    this same bar (the signal came from the previous close, the range after
+            #    the open was unknown to the decision). A level the bar opened beyond
+            #    fills at the open; one only touched inside the bar fills at the level.
+            #    Cash and slots freed here are available from the NEXT bar - had they
+            #    been freed before admission, whether BBB was admitted at the open would
+            #    have depended on where the bar traded afterwards. Stop/target only; the
+            #    signal that opened a position cannot also close it.
+            for symbol in order:
+                pos = book.positions.get(symbol)
+                if pos is None:
+                    continue
+                panel = panels[symbol]
+                i = panel.rows[k]
+                if i < 0:
+                    continue
+                if pos["entry_k"] == k:
                     pos["lowest"] = min(pos["lowest"], panel.lows[i])
                     pos["highest"] = max(pos["highest"], panel.highs[i])
-                    exit_cost = self._trade_cost(symbol, pos["size"], panel.opens[i], panel.adv, panel.vol, i)
-                    closed = self._maybe_close(
-                        pos,
-                        signals.HOLD,
-                        panel.opens[i],
-                        panel.highs[i],
-                        panel.lows[i],
-                        panel.timestamps[i],
-                        exit_cost,
-                    )
-                    if closed is not None:
-                        trades.append(closed)
-                        realized_by_side[pos["side"]] += closed["pnl"]
-                        book.cash += pos["notional"] + closed["gross_pnl"] - exit_cost
-                        del book.positions[symbol]
+                exit_cost = self._trade_cost(symbol, pos["size"], panel.opens[i], panel.adv, panel.vol, i)
+                if pos["entry_k"] != k:
+                    exit_cost += self._carry(pos, k)
+                closed = self._maybe_close(
+                    pos,
+                    signals.HOLD,
+                    panel.opens[i],
+                    panel.highs[i],
+                    panel.lows[i],
+                    panel.timestamps[i],
+                    exit_cost,
+                )
+                if closed is not None:
+                    trades.append(closed)
+                    realized_by_side[pos["side"]] += closed["pnl"]
+                    book.cash += pos["notional"] + closed["gross_pnl"] - exit_cost
+                    del book.positions[symbol]
 
             if trading:
                 # Now the close: everything that transacts on this bar has happened, so
@@ -1215,40 +1239,71 @@ class BacktestEngine:
             return signals.HOLD, 0.0
         return panel.sig[i - 1], panel.score[i - 1]
 
+    @staticmethod
+    def _signal_exits(position: Dict[str, Any], signal: str) -> bool:
+        """Whether the previous bar's signal asks to close this position."""
+        if position["side"] == signals.BUY:
+            return signal in (signals.SELL, signals.CLOSE_BUY)
+        return signal in (signals.BUY, signals.CLOSE_SELL)
+
     def _maybe_close(
-        self, position: Dict[str, Any], signal: str, price_open, high, low, timestamp, exit_cost: float = 0.0
+        self,
+        position: Dict[str, Any],
+        signal: str,
+        price_open,
+        high,
+        low,
+        timestamp,
+        exit_cost: float = 0.0,
+        intrabar: bool = True,
     ) -> Optional[Dict[str, Any]]:
         """Return a closed-trade record if an exit triggers this bar, else None.
 
-        A stop or target is a resting order, so a bar that *opens* beyond it fills at the
-        open, not at the level: a long stopped at 97 on a bar opening at 90 lost 10, not
-        3. Recording the level instead understated every gap loss. A target gapped
-        through fills at the better open, never worse than the level. ``min``/``max``
-        against the open is the whole rule; inside the bar the level is the price.
+        Order of events, which is the order of time:
+
+        1. A level the bar *opens* beyond fills at the open. A stop or target is a
+           resting order, so a long stopped at 97 on a bar opening at 90 lost 10, not 3,
+           and a target gapped through fills at the better open. If the open is beyond
+           the stop that is the stop; beyond the target, the target - the open is the
+           first print, so it decides which level was reached first even when the same
+           bar's range later spans the other one.
+        2. The signal from the previous close, executed at the open.
+        3. Only if ``intrabar``: a level the bar traded through after an open that was
+           inside both fills at the level. When one bar touches both, the stop is taken
+           first. The range does not say which came first; the pessimistic order is the
+           convention (the same one a backtest on bars cannot do better than).
+
+        ``intrabar=False`` is the part of the bar that is known at the open, used to
+        decide what the entries at that open may rely on.
         """
         margin = self.take_profit_margin_bps / 1e4
+        stop, take = position["stop_loss"], position["take_profit"]
         if position["side"] == signals.BUY:
-            if low <= position["stop_loss"]:
-                return self._close(
-                    position, min(price_open, position["stop_loss"]), timestamp, "STOP_LOSS", exit_cost
-                )
-            if high >= position["take_profit"] * (1.0 + margin):
-                return self._close(
-                    position, max(price_open, position["take_profit"]), timestamp, "TAKE_PROFIT", exit_cost
-                )
+            trigger = take * (1.0 + margin)
+            if price_open <= stop:
+                return self._close(position, price_open, timestamp, "STOP_LOSS", exit_cost)
+            if price_open >= trigger:
+                return self._close(position, price_open, timestamp, "TAKE_PROFIT", exit_cost)
             if signal in (signals.SELL, signals.CLOSE_BUY):
                 return self._close(position, price_open, timestamp, "SIGNAL", exit_cost)
+            if intrabar:
+                if low <= stop:
+                    return self._close(position, stop, timestamp, "STOP_LOSS", exit_cost)
+                if high >= trigger:
+                    return self._close(position, max(price_open, take), timestamp, "TAKE_PROFIT", exit_cost)
         else:  # short
-            if high >= position["stop_loss"]:
-                return self._close(
-                    position, max(price_open, position["stop_loss"]), timestamp, "STOP_LOSS", exit_cost
-                )
-            if low <= position["take_profit"] * (1.0 - margin):
-                return self._close(
-                    position, min(price_open, position["take_profit"]), timestamp, "TAKE_PROFIT", exit_cost
-                )
+            trigger = take * (1.0 - margin)
+            if price_open >= stop:
+                return self._close(position, price_open, timestamp, "STOP_LOSS", exit_cost)
+            if price_open <= trigger:
+                return self._close(position, price_open, timestamp, "TAKE_PROFIT", exit_cost)
             if signal in (signals.BUY, signals.CLOSE_SELL):
                 return self._close(position, price_open, timestamp, "SIGNAL", exit_cost)
+            if intrabar:
+                if high >= stop:
+                    return self._close(position, stop, timestamp, "STOP_LOSS", exit_cost)
+                if low <= trigger:
+                    return self._close(position, min(price_open, take), timestamp, "TAKE_PROFIT", exit_cost)
         return None
 
     @staticmethod
