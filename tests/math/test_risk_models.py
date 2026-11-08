@@ -118,16 +118,30 @@ def _lw_reference(x):
                     + math.sqrt(s[i, i] / s[j, j]) * theta(j, i, j)
                 )
     gamma_hat = float(((f - s) ** 2).sum())
-    delta = max(0.0, min(1.0, (pi_hat - rho_hat) / gamma_hat / t))
-    return delta * f + (1 - delta) * s, delta
+    raw = (pi_hat - rho_hat) / gamma_hat / t
+    delta = max(0.0, min(1.0, raw))
+    return delta * f + (1 - delta) * s, delta, raw
 
 
 @pytest.mark.parametrize("seed, t, n", [(0, 60, 4), (1, 40, 6), (2, 200, 3)])
 def test_ledoit_wolf_matches_the_element_loop_reference(seed, t, n):
     x = _panel(t, n, seed).to_numpy()
-    ref, ref_delta = _lw_reference(x)
+    ref, ref_delta, _ = _lw_reference(x)
     sigma, delta = LedoitWolfCovariance().estimate(pd.DataFrame(x))
     assert delta == pytest.approx(ref_delta, rel=1e-10, abs=1e-14)
+    assert sigma == pytest.approx(ref, rel=1e-10, abs=1e-16)
+
+
+@pytest.mark.parametrize("seed, t, n", [(1, 500, 4), (0, 1000, 3), (1, 2000, 6), (0, 300, 5)])
+def test_ledoit_wolf_intensity_matches_the_reference_when_it_is_interior(seed, t, n):
+    """The cases above all clamp the intensity to 1, so a wrong intensity formula passed:
+    the output was the target whatever the estimate said. Here the raw intensity sits
+    strictly inside (0, 1), so the estimator's own value is what the reference checks."""
+    x = _panel(t, n, seed).to_numpy()
+    ref, ref_delta, raw = _lw_reference(x)
+    assert 0.05 < raw < 0.95  # not clamped: the intensity itself is exercised
+    sigma, delta = LedoitWolfCovariance().estimate(pd.DataFrame(x))
+    assert delta == pytest.approx(raw, rel=1e-10)
     assert sigma == pytest.approx(ref, rel=1e-10, abs=1e-16)
 
 
