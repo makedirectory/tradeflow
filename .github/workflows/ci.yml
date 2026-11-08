@@ -82,12 +82,19 @@ jobs:
         # reproducible and no third-party code runs with the workflow token.
         env:
           GITLEAKS_VERSION: 8.30.1
-        # Retried: a release-asset 504 from GitHub once failed this required check
-        # twice in a row while nothing was wrong with the change under test.
+        # GitHub's release-asset download once returned 504 for long enough to fail this
+        # required check repeatedly while nothing was wrong with the change under test.
+        # The fallback builds the same pinned version from the Go module proxy, whose
+        # checksum database verifies what it serves - an independent path to the
+        # identical release.
         run: |
-          curl -sSfL --retry 5 --retry-all-errors --retry-delay 15 -o /tmp/gitleaks.tar.gz \
-            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-          tar -xzf /tmp/gitleaks.tar.gz -C /usr/local/bin gitleaks
+          if curl -sSfL --retry 3 --retry-all-errors --retry-delay 10 -o /tmp/gitleaks.tar.gz \
+              "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"; then
+            tar -xzf /tmp/gitleaks.tar.gz -C /usr/local/bin gitleaks
+          else
+            echo "Release download failed; building v${GITLEAKS_VERSION} from the Go module proxy"
+            GOBIN=/usr/local/bin go install "github.com/zricethezav/gitleaks/v8@v${GITLEAKS_VERSION}"
+          fi
           gitleaks version
 
       - name: Scan history for secrets
