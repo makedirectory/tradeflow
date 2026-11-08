@@ -5,13 +5,13 @@ title: Information horizon (decay & cadence)
 
 # Information horizon (decay & cadence)
 
-`python main.py horizon` measures how fast a strategy's alpha **decays** and
+`quantred horizon` measures how fast a strategy's alpha **decays** and
 turns that into a recommended rebalance cadence and a current/lagged blend. It
 is **read-only** — a diagnostic over an existing alpha's decay structure, never
 a control input.
 
 ```bash
-python main.py horizon \
+quantred horizon \
   --strategy demo_trend \
   --symbols NVDA,AAPL,META,AMD,TSLA,GOOG,MSFT,AMZN \
   --start 2024-01-01 --end 2024-12-31
@@ -21,7 +21,7 @@ python main.py horizon \
 Information horizon: 'demo_trend' 2024-01-01..2025-02-05
   IC by lag: 1:-0.084  2:+0.090  3:+0.012  4:-0.024  5:-0.029  6:+0.007  7:+0.027  8:+0.072  9:+0.113  10:+0.126
   decay δ 1.177  half-life ∞ (no decay detected)  fit R² 0.18
-    CI (±1.96 SE on the fit): [4.8, ∞] periods — the multi-period trading policy
+    CI (±1.96 SE on the fit): [4.8, ∞] periods — the aim policy
     discounts using the upper bound (conservative against killing a good signal)
   recommended cadence: every 2 periods  (best return horizon ≈ inf)
   lagged blend [diversify]: w_now +0.39  w_lagged +0.61  (ρ 0.28, cost 2.70%/yr → not worth the turnover cost)
@@ -63,3 +63,9 @@ why the discount formula needs the confidence band this report now surfaces.
 
 The same computation is available to agents as the read-only MCP tool
 `compute_horizon`.
+
+## From a source checkout (contributors)
+
+The commands above are the installed `quantred` command. In a checkout, run them as
+`uv run python main.py <command> ...`. The Makefile shortcut for this page is `make horizon`. Extras are installed with `uv sync --inexact --extra <name>`
+(see [optional extras](extras)).

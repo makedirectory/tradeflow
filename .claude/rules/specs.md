@@ -6,13 +6,15 @@ paths:
 # Working with specs
 
 `specs/` is gitignored and local-only — it never passes through CI, so the folder
-itself is the only signal and has to be trustworthy.
+itself is the only signal and has to be trustworthy. Nothing committed links into it
+(see [writing](writing.md)); the record of what was built and why lives here instead.
 
 - **A spec moves to `complete/` only when its §Testing items exist and pass.** Not
   when the design feels finished.
 - **Moving one means four things**: update its `Status:` header, update all three
   indexes (`specs/README.md`, `complete/README.md`, `planning/README.md`), and run
-  `make check-links` — a move breaks every sibling-relative link in both directions.
+  `make check-spec-links` — a move breaks every sibling-relative link in both
+  directions. Specs are outside `make check-links`, which covers only tracked Markdown.
 - **Record deviations under *Implementation notes*.** Anything that shipped
   differently from the design, and anything deferred, so the next reader learns it
   from the spec rather than from the code.

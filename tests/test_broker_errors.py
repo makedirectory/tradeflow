@@ -12,9 +12,8 @@ from datetime import datetime
 
 import pytest
 
-from tests.fakes import FailingBroker
-from tradeflow.brokers.alpaca.broker import classify_error
-from tradeflow.brokers.errors import (
+from quantred.brokers.alpaca.broker import classify_error
+from quantred.brokers.errors import (
     AuthenticationError,
     BrokerError,
     BrokerUnavailableError,
@@ -23,9 +22,10 @@ from tradeflow.brokers.errors import (
     OrderRejectedError,
     RateLimitedError,
 )
-from tradeflow.demo.strategies import DemoTrendStrategy
-from tradeflow.execution.live_trader import LiveTrader
-from tradeflow.strategies import signals
+from quantred.demo.strategies import DemoTrendStrategy
+from quantred.execution.live_trader import LiveTrader
+from quantred.strategies import signals
+from tests.fakes import FailingBroker
 
 
 class _APIErrorish(Exception):
@@ -53,7 +53,7 @@ class _APIErrorish(Exception):
 @pytest.fixture(autouse=True)
 def _api_error(monkeypatch):
     """Classify against our stand-in rather than importing the vendor's class."""
-    monkeypatch.setattr("tradeflow.brokers.alpaca.broker.APIError", _APIErrorish)
+    monkeypatch.setattr("quantred.brokers.alpaca.broker.APIError", _APIErrorish)
 
 
 # --- classification ---------------------------------------------------------
@@ -72,6 +72,19 @@ def _api_error(monkeypatch):
 )
 def test_a_vendor_error_is_classified_by_what_the_caller_should_do(message, status, expected):
     assert isinstance(classify_error(_APIErrorish(message, status)), expected)
+
+
+def test_a_rejected_key_is_said_to_be_the_key_and_says_what_to_do():
+    """The gateway answers a bad key with a bare HTML page; that page used to be the
+    entire error, with no mention of credentials."""
+    html = "<html>\n<head><title>401 Authorization Required</title></head>\n</html>"
+    error = classify_error(_APIErrorish(html, 401))
+    assert isinstance(error, AuthenticationError)
+    assert "rejected these credentials (HTTP 401)" in str(error)
+    assert "Paper Account" in str(error) and " init`" in str(error)
+    assert "<html" not in str(error)
+    # Plain text from the vendor is kept, since it may be the only specific thing said.
+    assert "forbidden." in str(classify_error(_APIErrorish("forbidden.", 403)))
 
 
 def test_a_connection_failure_is_unavailability_not_rejection():
@@ -145,7 +158,7 @@ def test_an_unreadable_account_stops_the_entry_rather_than_guessing_a_size():
 def test_a_position_that_could_not_be_closed_stays_in_the_book():
     """Dropping it would leave the strategy holding a position it is no longer
     entitled to exit — the exact failure the book was hydrated to prevent."""
-    from tradeflow.brokers.base import Position
+    from quantred.brokers.base import Position
 
     broker = FailingBroker({"close_position": BrokerUnavailableError("timeout")})
     broker.positions["AAA"] = Position(
@@ -168,7 +181,7 @@ def test_a_position_that_could_not_be_closed_stays_in_the_book():
 def test_an_unreadable_broker_never_empties_the_book():
     """`list_positions` returning [] on failure would mean "you are flat", and the
     book would be wiped — silently un-exiting every real position."""
-    from tradeflow.brokers.base import Position
+    from quantred.brokers.base import Position
 
     broker = FailingBroker()
     broker.positions["AAA"] = Position(

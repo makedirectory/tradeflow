@@ -11,7 +11,7 @@ Alpaca is one implementation of each.
 
 ## The two interfaces
 
-### `Broker` (`tradeflow/brokers/base.py`)
+### `Broker` (`quantred/brokers/base.py`)
 
 Account reads, the order types the engine uses, and position/order lifecycle:
 
@@ -57,9 +57,9 @@ order check remains, but only as a cheap way to avoid a pointless round trip.
 
 The same bar redelivered after a reconnect hashes to the same id and is refused;
 the same symbol on the next bar hashes differently and trades normally. See
-`tradeflow/execution/order_id.py`.
+`quantred/execution/order_id.py`.
 
-### `MarketDataProvider` (`tradeflow/marketdata/base.py`)
+### `MarketDataProvider` (`quantred/marketdata/base.py`)
 
 ```python
 class MarketDataProvider(ABC):
@@ -68,7 +68,7 @@ class MarketDataProvider(ABC):
     def supports_streaming(self) -> bool: ...
 ```
 
-## Typed failure (`tradeflow/brokers/errors.py`)
+## Typed failure (`quantred/brokers/errors.py`)
 
 Every broker call used to fail the same way — `None`, or `False`. A rate limit, an
 expired token, insufficient buying power, a closed market, and an order the venue
@@ -126,7 +126,7 @@ and two of those fields need care from any adapter:
 
 ## The Alpaca adapter
 
-`tradeflow/brokers/alpaca/` is the **only** place `import alpaca` appears
+`quantred/brokers/alpaca/` is the **only** place `import alpaca` appears
 (`AlpacaBroker`, `AlpacaMarketData`, and `factory.py`, whose `build_broker` /
 `build_market_data` construct them from credentials — entry points call the
 factories and never touch SDK clients). `AlpacaMarketData` also converts the
@@ -150,7 +150,12 @@ coroutine that wrapper wraps instead.
 ## Dropping in another broker
 
 1. Implement `Broker` (and optionally `MarketDataProvider`) for the new venue.
-2. Construct it in `main.build_data_and_broker()` instead of the Alpaca classes.
+2. Construct it in `quantred.cli.build_data_and_broker` (`main.py` is only a shim) instead of the Alpaca classes.
+
+Research commands do not go through that function: they build a data client only via
+`cli.build_research_data` → `services.data.build_data_client`, which constructs no
+trading client and needs no keys under `--offline`. A research run is therefore
+structurally unable to place an order — the same wall the MCP server has.
 
 That's it — `engine/`, `execution/`, `strategies/`, `scanners/`, and the optimizer
 are untouched because they only ever knew the interface. The test suite proves

@@ -9,7 +9,7 @@ A scanner answers a different question than a strategy: *which symbols are worth
 trading right now?* It scores a symbol's recent bars and emits a per-symbol scan
 signal.
 
-## `ScannerStrategy` (`tradeflow/scanners/base.py`)
+## `ScannerStrategy` (`quantred/scanners/base.py`)
 
 Scanners operate on **one symbol's OHLCV frame at a time** — the `SymbolScanner`
 iterates the universe — which keeps the interface simple and avoids MultiIndex
@@ -26,7 +26,7 @@ bookkeeping.
 Scan signals (`SCANNER_BUY` / `SCANNER_SELL` / `SCANNER_HOLD`) are deliberately
 **distinct** from trade signals so the two can never be confused.
 
-## `SymbolScanner` (`tradeflow/scanners/symbol_scanner.py`)
+## `SymbolScanner` (`quantred/scanners/symbol_scanner.py`)
 
 The driver. It fetches a lookback window sized to the scanner's
 `required_data_points()`, runs the scanner per symbol, and returns the flagged
@@ -43,7 +43,7 @@ dependencies goal.
 
 ## The demo scanner
 
-`DemoVolumeScanner` (`tradeflow/demo/scanners.py`, registered as `demo_volume`) flags
+`DemoVolumeScanner` (`quantred/demo/scanners.py`, registered as `demo_volume`) flags
 a symbol when its latest bar shows volume well above its moving-average baseline
 **and** a meaningful price move — a simple liquidity/attention filter. All pure
 pandas/numpy. It reaches the registry by entry point like any pack's would.

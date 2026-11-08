@@ -10,11 +10,11 @@ against the backtest engine and the live trader.
 
 import pytest
 
+from quantred.execution.live_trader import LiveTrader
+from quantred.services.registry import STRATEGIES
+from quantred.strategies import signals
+from quantred.strategies.base import DEFAULT_POSITION_LIMITS
 from tests.fakes import FakeBroker
-from tradeflow.execution.live_trader import LiveTrader
-from tradeflow.services.registry import STRATEGIES
-from tradeflow.strategies import signals
-from tradeflow.strategies.base import DEFAULT_POSITION_LIMITS
 
 
 def _trader(limits, positions=None):
@@ -31,7 +31,7 @@ def _held(side, qty, price):
 
 
 def _account(equity=10_000.0):
-    from tradeflow.brokers.base import AccountSnapshot
+    from quantred.brokers.base import AccountSnapshot
 
     return AccountSnapshot(cash=equity, equity=equity, buying_power=equity, portfolio_value=equity)
 
@@ -108,7 +108,7 @@ def test_the_default_limits_leave_it_off():
 
 # --- research clock ---------------------------------------------------------------
 def _book(positions):
-    from tradeflow.engine.backtest import _Book
+    from quantred.engine.backtest import _Book
 
     book = _Book(cash=10_000.0)
     for symbol, (side, size, price) in positions.items():

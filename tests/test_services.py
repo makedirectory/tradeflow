@@ -13,12 +13,12 @@ from datetime import datetime
 
 import pytest
 
+from quantred.analytics.performance import FLAG_KEYS, METRIC_KEYS
+from quantred.marketdata.client import MarketDataClient
+from quantred.services import analysis, audit, glossary, registry
+from quantred.services.audit import audit_log
 from tests.fakes import FakeMarketData
 from tests.test_research import _VALID_CODE, _VALID_SCANNER_CODE
-from tradeflow.analytics.performance import FLAG_KEYS, METRIC_KEYS
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.services import analysis, audit, glossary, registry
-from tradeflow.services.audit import audit_log
 
 SYMBOLS = ["AAA", "BBB"]
 START, END = datetime(2024, 1, 2), datetime(2025, 6, 1)
@@ -106,6 +106,34 @@ def test_glossary_covers_every_metric():
     assert g["global_caveats"]  # the over-trust warnings are present
 
 
+def test_the_glossary_states_the_equity_basis_each_result_actually_uses(monkeypatch):
+    """The glossary said every equity curve was rebuilt from closed-trade P&L, so intra-trade
+    drawdown was invisible everywhere. A backtest and each walk-forward fold are marked to
+    market at bar closes; only a walk-forward's aggregate across folds is rebuilt. The
+    caveat names both, and this pins it to the code: the closed-trade rebuild runs once per
+    walk-forward (the aggregate) and never for a backtest."""
+    from quantred.analytics import performance
+    from quantred.optimization.walk_forward import WalkForwardValidator
+
+    caveat = " ".join(glossary.metrics_glossary()["global_caveats"])
+    assert "marked to market at every bar's close" in caveat
+    assert "AGGREGATE" in caveat and "CLOSED-trade" in caveat
+
+    rebuilt = []
+    original = performance.build_equity_curve
+    monkeypatch.setattr(
+        performance, "build_equity_curve", lambda *a, **k: rebuilt.append(1) or original(*a, **k)
+    )
+    client = MarketDataClient(FakeMarketData(["AAA", "BBB"], n=400, freq="1D"))
+    start, end = datetime(2024, 1, 2), datetime(2025, 1, 31)
+    analysis.run_backtest(client, "demo_trend", ["AAA", "BBB"], start, end, journal=False, force=True)
+    assert rebuilt == []
+
+    validator = WalkForwardValidator(registry.STRATEGIES["demo_trend"], client)
+    validator.run(["AAA", "BBB"], start, end, n_folds=2, max_evals=2)
+    assert len(rebuilt) == 1
+
+
 # --- audit ------------------------------------------------------------------
 def test_audit_log_appends_one_record(tmp_path):
     path = tmp_path / "audit.jsonl"
@@ -121,8 +149,8 @@ def test_audit_log_appends_one_record(tmp_path):
 
 
 def test_journal_trial_records_a_normalized_trial(tmp_path):
-    from tradeflow.engine.backtest import ACCOUNTING_VERSION
-    from tradeflow.services.audit import journal_trial
+    from quantred.engine.backtest import ACCOUNTING_VERSION
+    from quantred.services.audit import journal_trial
 
     path = tmp_path / "journal.jsonl"
     journal_trial(
@@ -149,7 +177,7 @@ def test_journal_trial_records_a_normalized_trial(tmp_path):
 
 
 def test_journal_trial_records_the_objective_when_given(tmp_path):
-    from tradeflow.services.audit import journal_trial
+    from quantred.services.audit import journal_trial
 
     path = tmp_path / "journal.jsonl"
     journal_trial(
@@ -169,7 +197,7 @@ def test_journal_trial_records_the_objective_when_given(tmp_path):
 
 # --- the safety wall -----------------------------------------
 def test_no_live_or_order_tool_is_exposed():
-    from tradeflow.mcp import server
+    from quantred.mcp import server
 
     assert set(server.EXPOSED_TOOLS).isdisjoint(server.FORBIDDEN_TOOLS)
     forbidden_substrings = ("order", "live", "cancel", "close_position", "paper_trade", "account")
@@ -178,7 +206,7 @@ def test_no_live_or_order_tool_is_exposed():
 
 
 def test_server_refuses_non_data_client():
-    from tradeflow.mcp import server
+    from quantred.mcp import server
 
     class FakeBrokered:
         broker = object()  # smells like a trading-capable client
@@ -189,7 +217,7 @@ def test_server_refuses_non_data_client():
 
 def test_build_server_smoke():
     pytest.importorskip("mcp")
-    from tradeflow.mcp import server
+    from quantred.mcp import server
 
     built = server.build_server(data_client=_client())
     assert built is not None
@@ -198,13 +226,13 @@ def test_build_server_smoke():
 # --- CLI trial journaling -------------------------------------------------------
 def _fake_cli_env(monkeypatch, tmp_path, symbols):
     """Point the CLI at fake data and a temp journal; return the journal path."""
+    from quantred import cli as main
+    from quantred.marketdata.client import MarketDataClient
+    from quantred.services import audit
     from tests.fakes import FakeMarketData
-    from tradeflow import cli as main
-    from tradeflow.marketdata.client import MarketDataClient
-    from tradeflow.services import audit
 
     client = MarketDataClient(FakeMarketData(symbols, n=400, freq="1D"))
-    monkeypatch.setattr(main, "build_data_and_broker", lambda **kwargs: (None, client))
+    monkeypatch.setattr(main, "build_research_data", lambda **kwargs: client)
     journal = tmp_path / "journal.jsonl"
     monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", journal)
     return journal
@@ -217,7 +245,7 @@ def _trials(journal):
 
 
 def test_cli_backtest_journals_one_trial(monkeypatch, tmp_path):
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     journal = _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB"])
     args = main.build_parser().parse_args(
@@ -244,7 +272,7 @@ def test_cli_backtest_journals_one_trial(monkeypatch, tmp_path):
 
 
 def test_cli_optimize_journals_one_trial_per_config(monkeypatch, tmp_path):
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     journal = _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB"])
     args = main.build_parser().parse_args(
@@ -278,7 +306,7 @@ def test_cli_optimize_journals_one_trial_per_config(monkeypatch, tmp_path):
 
 
 def test_cli_no_journal_flag_records_nothing(monkeypatch, tmp_path):
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     journal = _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB"])
     args = main.build_parser().parse_args(
@@ -302,7 +330,7 @@ def test_cli_no_journal_flag_records_nothing(monkeypatch, tmp_path):
 
 
 def test_cli_walkforward_journals_one_validated_trial(monkeypatch, tmp_path):
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     journal = _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB"])
     args = main.build_parser().parse_args(
@@ -341,7 +369,7 @@ def test_cli_walkforward_journals_one_validated_trial(monkeypatch, tmp_path):
 
 
 def test_cli_alphas_journals_a_readonly_trial(monkeypatch, tmp_path):
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     journal = _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB", "CCC"])
     args = main.build_parser().parse_args(
@@ -377,9 +405,9 @@ def test_cli_backtest_also_populates_the_trial_store(monkeypatch, tmp_path):
     """Every journaled trial is dual-written into the sibling trial store, so a
     campaign's n_trials can be counted from an index instead of replaying JSONL
     by hand on every query."""
-    from tradeflow import cli as main
-    from tradeflow.engine.backtest import ACCOUNTING_VERSION
-    from tradeflow.store.trials import TrialStore, db_path_for_journal
+    from quantred import cli as main
+    from quantred.engine.backtest import ACCOUNTING_VERSION
+    from quantred.store.trials import TrialStore, db_path_for_journal
 
     journal = _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB"])
     args = main.build_parser().parse_args(
@@ -413,14 +441,14 @@ def test_walkforward_gate_report_is_unaffected_by_a_broken_trial_store(monkeypat
     run with a working trial store and one where the store is entirely broken must
     produce the identical printed gate report - the dual-write is one-way and can
     never feed back into a verdict."""
+    from quantred import cli as main
+    from quantred.marketdata.client import MarketDataClient
+    from quantred.services import audit
+    from quantred.store import trials as trials_mod
     from tests.fakes import FakeMarketData
-    from tradeflow import cli as main
-    from tradeflow.marketdata.client import MarketDataClient
-    from tradeflow.services import audit
-    from tradeflow.store import trials as trials_mod
 
     client = MarketDataClient(FakeMarketData(["AAA", "BBB"], n=400, freq="1D"))
-    monkeypatch.setattr(main, "build_data_and_broker", lambda **kwargs: (None, client))
+    monkeypatch.setattr(main, "build_research_data", lambda **kwargs: client)
 
     def _run(journal_path):
         monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", journal_path)
@@ -477,8 +505,8 @@ _BT_ARGV = [
 
 
 def test_cli_backtest_memoizes_identical_run_without_resimulating(monkeypatch, tmp_path, capsys):
-    from tradeflow import cli as main
-    from tradeflow.engine.backtest import BacktestEngine
+    from quantred import cli as main
+    from quantred.engine.backtest import BacktestEngine
 
     journal = _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB"])
     args1 = main.build_parser().parse_args(_BT_ARGV)
@@ -507,7 +535,7 @@ def test_cli_backtest_memoizes_identical_run_without_resimulating(monkeypatch, t
 def test_cli_backtest_commission_bps_change_is_a_distinct_trial(monkeypatch, tmp_path):
     """Regression test: two runs differing only in a cost flag must not collide
     as 'the same trial'."""
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     journal = _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB"])
     args1 = main.build_parser().parse_args(_BT_ARGV + ["--commission-bps", "1.0"])
@@ -518,7 +546,7 @@ def test_cli_backtest_commission_bps_change_is_a_distinct_trial(monkeypatch, tmp
 
 
 def test_cli_backtest_force_reruns_and_appends_rather_than_overwrites(monkeypatch, tmp_path):
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     journal = _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB"])
     args1 = main.build_parser().parse_args(_BT_ARGV)
@@ -539,21 +567,21 @@ def _fake_cli_env_with_cache(monkeypatch, tmp_path, symbols, cache_dir=None):
     """Like _fake_cli_env, but the injected data client is cache-backed
     (CachedMarketData wrapping FakeMarketData), so --cache/vintage wiring can be
     exercised without needing real Alpaca settings."""
-    from tradeflow import cli as main
-    from tradeflow.services import audit
-    from tradeflow.store.bars import CachedMarketData
+    from quantred import cli as main
+    from quantred.services import audit
+    from quantred.store.bars import CachedMarketData
 
     cache_dir = cache_dir or (tmp_path / "cache" / "bars")
     provider = CachedMarketData(FakeMarketData(symbols, n=400, freq="1D"), cache_dir=cache_dir)
     client = MarketDataClient(provider)
-    monkeypatch.setattr(main, "build_data_and_broker", lambda **kwargs: (None, client))
+    monkeypatch.setattr(main, "build_research_data", lambda **kwargs: client)
     journal = tmp_path / "journal.jsonl"
     monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", journal)
     return journal, provider
 
 
 def test_cli_backtest_with_cache_records_vintage_and_reuse_is_vintage_safe(monkeypatch, tmp_path, capsys):
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     journal, _ = _fake_cli_env_with_cache(monkeypatch, tmp_path, ["AAA", "BBB"])
     args1 = main.build_parser().parse_args(_BT_ARGV + ["--cache"])
@@ -572,7 +600,7 @@ def test_cli_backtest_with_cache_records_vintage_and_reuse_is_vintage_safe(monke
 
 
 def test_cli_backtest_refresh_between_cache_runs_is_a_new_trial(monkeypatch, tmp_path):
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     journal, provider = _fake_cli_env_with_cache(monkeypatch, tmp_path, ["AAA", "BBB"])
     args1 = main.build_parser().parse_args(_BT_ARGV + ["--cache"])
@@ -588,7 +616,7 @@ def test_cli_backtest_refresh_between_cache_runs_is_a_new_trial(monkeypatch, tmp
 
 
 def test_cli_backtest_without_cache_keeps_the_no_vintage_caveat(monkeypatch, tmp_path, capsys):
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB"])
     args1 = main.build_parser().parse_args(_BT_ARGV)
@@ -603,8 +631,8 @@ def test_cli_backtest_without_cache_keeps_the_no_vintage_caveat(monkeypatch, tmp
 def test_build_data_client_cache_flag_wraps_provider(monkeypatch, tmp_path):
     monkeypatch.setenv("APCA_API_KEY_ID", "fake")
     monkeypatch.setenv("APCA_API_SECRET_KEY", "fake")
-    from tradeflow.services.data import build_data_client
-    from tradeflow.store.bars import CachedMarketData
+    from quantred.services.data import build_data_client
+    from quantred.store.bars import CachedMarketData
 
     cached = build_data_client(cache=True, cache_dir=tmp_path / "bars")
     assert isinstance(cached.provider, CachedMarketData)
@@ -616,8 +644,8 @@ def test_build_data_client_cache_flag_wraps_provider(monkeypatch, tmp_path):
 def test_build_data_and_broker_forwards_cache_flags(monkeypatch, tmp_path):
     monkeypatch.setenv("APCA_API_KEY_ID", "fake")
     monkeypatch.setenv("APCA_API_SECRET_KEY", "fake")
-    from tradeflow import cli as main
-    from tradeflow.store.bars import CachedMarketData
+    from quantred import cli as main
+    from quantred.store.bars import CachedMarketData
 
     _, client = main.build_data_and_broker(cache=True, cache_dir=tmp_path / "bars")
     assert isinstance(client.provider, CachedMarketData)
@@ -628,7 +656,7 @@ def test_build_data_and_broker_forwards_cache_flags(monkeypatch, tmp_path):
 
 # --- `cache` CLI subcommand ------------------------------------------------
 def test_cache_status_on_empty_dir_prints_a_sane_empty_state(tmp_path, capsys):
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     args = main.build_parser().parse_args(["cache", "status", "--cache-dir", str(tmp_path / "bars")])
     args.func(args)
@@ -638,18 +666,18 @@ def test_cache_status_on_empty_dir_prints_a_sane_empty_state(tmp_path, capsys):
 
 
 def _mock_cached_build_data_client(monkeypatch, cache_dir, symbols=("AAA",)):
-    from tradeflow.store.bars import CachedMarketData
+    from quantred.store.bars import CachedMarketData
 
     def _build(cache=False, offline=False, cache_dir=None):
         return MarketDataClient(
             CachedMarketData(FakeMarketData(list(symbols), n=200, freq="1D"), cache_dir=cache_dir)
         )
 
-    monkeypatch.setattr("tradeflow.services.data.build_data_client", _build)
+    monkeypatch.setattr("quantred.services.data.build_data_client", _build)
 
 
 def test_cache_warm_then_status_round_trips(monkeypatch, tmp_path, capsys):
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     cache_dir = tmp_path / "bars"
     _mock_cached_build_data_client(monkeypatch, cache_dir)
@@ -679,7 +707,7 @@ def test_cache_warm_then_status_round_trips(monkeypatch, tmp_path, capsys):
 
 
 def test_cache_refresh_reports_per_symbol(monkeypatch, tmp_path, capsys):
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     cache_dir = tmp_path / "bars"
     _mock_cached_build_data_client(monkeypatch, cache_dir)
@@ -703,8 +731,8 @@ def test_cache_refresh_reports_per_symbol(monkeypatch, tmp_path, capsys):
 
 
 def test_walkforward_memoizes_identical_recipe_without_rerunning(monkeypatch, tmp_path, capsys):
-    from tradeflow import cli as main
-    from tradeflow.optimization.walk_forward import WalkForwardValidator
+    from quantred import cli as main
+    from quantred.optimization.walk_forward import WalkForwardValidator
 
     journal = _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB"])
     wf_argv = [
@@ -753,7 +781,7 @@ def test_walkforward_memoizes_identical_recipe_without_rerunning(monkeypatch, tm
 
 
 def test_walkforward_save_config_then_backtest_config_round_trips(monkeypatch, tmp_path):
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     journal = _fake_cli_env(monkeypatch, tmp_path, ["AAA", "BBB"])
     config_path = tmp_path / "cfg.json"
@@ -820,8 +848,8 @@ def test_backtest_config_out_of_range_param_fails_loudly(tmp_path):
     top of a CLI is a stack trace, and this loader is shared with `live` and
     `small-real`, where a stack trace tells an operator nothing about whether an order
     was sent."""
-    from tradeflow import cli as main
-    from tradeflow.services.registry import resolve_strategy_class
+    from quantred import cli as main
+    from quantred.services.registry import resolve_strategy_class
 
     cls = resolve_strategy_class("demo_trend")
     params = {name: spec["default"] for name, spec in cls.PARAM_RANGES.items()}
@@ -946,7 +974,7 @@ def test_a_validator_that_breaks_does_not_blame_the_draft(monkeypatch):
     Reporting a defect in the validator as `invalid_draft` sends an agent rewriting
     source that was never the problem - and it would keep rewriting it.
     """
-    from tradeflow.research import sandbox
+    from quantred.research import sandbox
 
     def _explode(*args, **kwargs):
         raise RuntimeError("validator fell over")

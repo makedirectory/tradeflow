@@ -1,8 +1,8 @@
 ---
 paths:
-  - "tradeflow/store/**/*.py"
-  - "tradeflow/services/audit.py"
-  - "tradeflow/execution/ledger.py"
+  - "quantred/store/**/*.py"
+  - "quantred/services/audit.py"
+  - "quantred/execution/ledger.py"
 ---
 
 # Durable records

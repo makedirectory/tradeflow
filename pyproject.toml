@@ -1,10 +1,12 @@
 [project]
-# The distribution name. The bare `tradeflow` is taken on PyPI by an unrelated
-# package (autocorrelated time-series simulation), so the project ships as
-# `tradeflow-engine` while the importable package stays `tradeflow`. Installing both
-# would collide at import; nothing prevents that, so it is called out in the README.
-name = "tradeflow-engine"
-# Read from tradeflow/__init__.py — one place, so the packaged version and the one
+# The distribution name, and the import package's. The project was previously published
+# as `tradeflow-engine` with the import package `tradeflow`; the state root
+# (`~/.tradeflow`, `TRADEFLOW_HOME`) keeps that name so recorded history carries over,
+# and the old plugin entry-point groups are still read. Because the two distributions
+# no longer share a package directory, the old one's final release can depend on this
+# one without an upgrade deleting files out from under it.
+name = "quantred"
+# Read from quantred/__init__.py — one place, so the packaged version and the one
 # `--version` prints can never disagree.
 dynamic = ["version"]
 license = "MIT"
@@ -24,6 +26,8 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Office/Business :: Financial :: Investment",
     "Topic :: Scientific/Engineering :: Information Analysis",
 ]
@@ -40,13 +44,16 @@ dependencies = [
 optimize = ["scikit-learn>=1.4"]
 # Constraint-solver portfolio allocation (Google OR-Tools).
 portfolio = ["ortools>=9.8"]
-# Expose TradeFlow to an agent over MCP. Opt-in; base install unchanged.
+# Expose QuantRed to an agent over MCP. Opt-in; base install unchanged.
 # Pinned below 2.0: the SDK's 2.x line removed `mcp.server.fastmcp.FastMCP`, which
-# this server is built on, so an unconstrained `mcp>=1.0` resolves to a version the
+# this server is built on, so an unconstrained `mcp` resolves to a version the
 # server cannot import. Porting to the 2.x API is real work and tracked separately;
-# until then the constraint is what makes `tradeflow-engine[mcp]` actually install a
+# until then the constraint is what makes `quantred[mcp]` actually install a
 # working server.
-mcp = ["mcp>=1.0,<2"]
+# The 1.22 floor is where the SDK imports under current pydantic; earlier 1.x releases
+# fail with an ImportError on `eval_type_backport` whenever something else holds `mcp`
+# down while pydantic resolves to a recent version.
+mcp = ["mcp>=1.22,<2"]
 # Autonomous research agent with Claude as the default proposer. Opt-in.
 ai = ["anthropic>=0.40"]
 # Use OpenAI models as the research proposer instead of Claude. Opt-in.
@@ -65,7 +72,7 @@ dev = [
     "pyarrow>=14", "polars>=1.25", "duckdb>=1.0",
     # The MCP SDK is in dev so CI resolves it the same way a user does, rather than
     # only ever seeing whatever the lockfile happens to hold.
-    "mcp>=1.0,<2",
+    "mcp>=1.22,<2",
     # The build backend, in dev so a test can build the sdist's real file list rather
     # than assert something about the exclude patterns. Asserting the config is what
     # let an unanchored `configs` ship an example pack with no configs in it.
@@ -78,23 +85,27 @@ dev = [
 # by tests. The registry also holds these two directly - enumeration order across
 # distributions is undefined, and a reserved name is worth nothing if which class
 # answers to it is a coin flip - so this declaration is the path, not the source.
-[project.entry-points."tradeflow.strategies"]
-demo_trend = "tradeflow.demo.strategies:DemoTrendStrategy"
+[project.entry-points."quantred.strategies"]
+demo_trend = "quantred.demo.strategies:DemoTrendStrategy"
 
-[project.entry-points."tradeflow.scanners"]
-demo_volume = "tradeflow.demo.scanners:DemoVolumeScanner"
+[project.entry-points."quantred.scanners"]
+demo_volume = "quantred.demo.scanners:DemoVolumeScanner"
 
 [project.scripts]
 # The installed entry point. `python main.py` from a checkout reaches the same
 # `main`, so the two are one code path found two ways rather than two things that
 # have to be kept in agreement.
-tradeflow = "tradeflow.cli:main"
+quantred = "quantred.cli:main"
+# No `tradeflow` alias here. The previous command is provided by the final
+# `tradeflow-engine` release (packaging/tradeflow-engine), which depends on this
+# distribution: two distributions that both install `bin/tradeflow` would have the
+# upgrade or uninstall of one delete the other's copy.
 
 [project.urls]
 Homepage = "https://tradeflow.mk-dir.com/"
 Documentation = "https://tradeflow.mk-dir.com/"
-Source = "https://github.com/makedirectory/tradeflow"
-Issues = "https://github.com/makedirectory/tradeflow/issues"
+Source = "https://github.com/makedirectory/quantred"
+Issues = "https://github.com/makedirectory/quantred/issues"
 Changelog = "https://tradeflow.mk-dir.com/changelog"
 
 [build-system]
@@ -102,14 +113,14 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.version]
-path = "tradeflow/__init__.py"
+path = "quantred/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 # Only the package ships. `main.py` is a checkout convenience, and the tests, docs,
 # and scripts are not something an installed copy has any use for.
-# `tradeflow.demo` rides along as a subpackage; it holds what `demo` runs on and what a
-# bare install defaults to, so `tradeflow/strategies/` can hold only the framework.
-packages = ["tradeflow"]
+# `quantred.demo` rides along as a subpackage; it holds what `demo` runs on and what a
+# bare install defaults to, so `quantred/strategies/` can hold only the framework.
+packages = ["quantred"]
 
 [tool.hatch.build.targets.sdist]
 # The sdist carries the repo (tests and CI are useful to a packager), minus local
@@ -133,6 +144,7 @@ exclude = [
     "/docs/node_modules",
     "/docs/build",
     "/dist",
+    "/packaging",
     "*.csv",
     "/.env",
 ]
@@ -157,4 +169,4 @@ ignore = ["E501"]
 [tool.ruff.lint.isort]
 # Classify the application package as first-party so import ordering is stable
 # across a local checkout and CI.
-known-first-party = ["tradeflow"]
+known-first-party = ["quantred", "tradeflow"]

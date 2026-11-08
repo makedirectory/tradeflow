@@ -14,7 +14,7 @@ from typing import Any, ClassVar, Dict
 
 import pandas as pd
 
-from tradeflow.scanners.base import ScannerStrategy
+from quantred.scanners.base import ScannerStrategy
 
 
 class LiquidityScanner(ScannerStrategy):

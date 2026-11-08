@@ -13,11 +13,11 @@ from datetime import datetime, timedelta, timezone  # noqa: E402
 
 import pandas as pd  # noqa: E402
 
+from quantred.data.store import ParquetBarStore  # noqa: E402
+from quantred.marketdata.base import MarketDataProvider  # noqa: E402
+from quantred.marketdata.timeframe import Timeframe  # noqa: E402
+from quantred.store.bars import BarCoverage, CachedMarketData, CacheMiss  # noqa: E402
 from tests.fakes import make_ohlcv  # noqa: E402
-from tradeflow.data.store import ParquetBarStore  # noqa: E402
-from tradeflow.marketdata.base import MarketDataProvider  # noqa: E402
-from tradeflow.marketdata.timeframe import Timeframe  # noqa: E402
-from tradeflow.store.bars import BarCoverage, CachedMarketData, CacheMiss  # noqa: E402
 
 SYMBOLS = ["AAA", "BBB"]
 
@@ -134,6 +134,341 @@ def test_offline_raises_cache_miss_on_empty_cache(tmp_path):
     with pytest.raises(CacheMiss):
         cached.get_bars(["AAA"], "1Day", start, end)
     assert upstream.calls == []
+
+
+@pytest.mark.parametrize(
+    "checkout, expected, absent",
+    [
+        (False, "`quantred cache warm --symbols AAA", "main.py"),
+        (True, "`python main.py cache warm --symbols AAA", "quantred cache"),
+    ],
+)
+def test_the_miss_names_the_warm_command_of_the_copy_that_is_running(
+    tmp_path, monkeypatch, checkout, expected, absent
+):
+    """An installed copy has no main.py, so telling its user to run it is a dead end."""
+    from quantred import settings
+
+    monkeypatch.setattr(settings, "running_from_checkout", lambda: checkout)
+    cached, upstream = _cache(tmp_path, offline=True)
+    start, end = _full_window(upstream)
+    with pytest.raises(CacheMiss) as miss:
+        cached.get_bars(["AAA"], "1Day", start, end)
+    assert expected in str(miss.value)
+    assert absent not in str(miss.value)
+
+
+def test_one_miss_names_every_missing_symbol_and_a_warm_command_that_fixes_it(tmp_path):
+    """The miss used to stop at the first symbol and print `cache warm --symbols AAA` with
+    no window: running it fixed one name, the rerun failed on the next, and the default
+    warm window need not cover the request at all. Running the printed command has to be
+    enough for the same offline request to succeed."""
+    import re
+
+    from quantred.utils.timeutils import parse_market_date
+
+    cached, upstream = _cache(tmp_path, offline=True)
+    start, end = _full_window(upstream)
+    with pytest.raises(CacheMiss) as miss:
+        cached.get_bars(SYMBOLS, "1Day", start, end)
+    message = str(miss.value)
+    assert message.count("cache warm") == 1
+    command = re.search(r"`[^`]*cache warm ([^`]*)`", message).group(1)
+    flags = dict(re.findall(r"--(\w+) (\S+)", command))
+    assert flags["symbols"].split(",") == SYMBOLS
+
+    online = CachedMarketData(WindowedFakeProvider(SYMBOLS), cache_dir=tmp_path / "bars")
+    online.warm(
+        flags["symbols"].split(","),
+        flags["timeframe"],
+        parse_market_date(flags["start"]),
+        parse_market_date(flags["end"]),
+    )
+    online.close()
+    again = CachedMarketData(WindowedFakeProvider(SYMBOLS), cache_dir=tmp_path / "bars", offline=True)
+    assert set(again.get_bars(SYMBOLS, "1Day", start, end)) == set(SYMBOLS)
+
+
+def _warm_from(miss, cache_dir, symbols=SYMBOLS):
+    """Run the warm command a miss printed, the way a user would."""
+    import re
+
+    from quantred.utils.timeutils import parse_market_date
+
+    command = re.search(r"`[^`]*cache warm ([^`]*)`", str(miss)).group(1)
+    flags = dict(re.findall(r"--(\w+) (\S+)", command))
+    online = CachedMarketData(WindowedFakeProvider(symbols), cache_dir=cache_dir)
+    online.warm(
+        flags["symbols"].split(","),
+        flags["timeframe"],
+        parse_market_date(flags["start"]),
+        parse_market_date(flags["end"]),
+    )
+    online.close()
+    return flags
+
+
+def _run_window():
+    from quantred.utils.timeutils import parse_market_date
+
+    return parse_market_date("2024-03-01"), parse_market_date("2024-12-31")
+
+
+def test_a_scan_first_command_needs_one_warm_not_two(tmp_path):
+    """A command that scans first missed on the scan's short lookback, and only once that
+    was warmed did it miss again on its own window: two rounds for one command. When the
+    scan cannot run, the miss covers the scan and the run for every candidate, so running
+    the printed command once is enough for both reads."""
+    from quantred.marketdata.client import MarketDataClient
+    from quantred.services.data import resolve_universe
+
+    start, end = _run_window()
+    cached, _ = _cache(tmp_path, offline=True)
+    with pytest.raises(CacheMiss) as miss:
+        resolve_universe(
+            MarketDataClient(cached),
+            "demo_volume",
+            SYMBOLS,
+            as_of=end,
+            then_reads=[(SYMBOLS, "1Day", start, end)],
+        )
+    assert "every candidate" in str(miss.value)
+    cached.close()
+
+    flags = _warm_from(miss.value, tmp_path / "bars")
+    assert flags["symbols"].split(",") == SYMBOLS
+
+    again = CachedMarketData(WindowedFakeProvider(SYMBOLS), cache_dir=tmp_path / "bars", offline=True)
+    universe = resolve_universe(
+        MarketDataClient(again), "demo_volume", SYMBOLS, as_of=end, then_reads=[(SYMBOLS, "1Day", start, end)]
+    )
+    assert again.vintage_stamp(universe, "1Day", start, end) is not None
+
+
+def test_a_run_on_another_timeframe_is_left_to_its_own_miss(tmp_path):
+    """One warm command takes one timeframe, so the run's read on a different timeframe
+    from the scanner's cannot join the scan's miss; it must not be claimed in its
+    explanation either."""
+    from quantred.marketdata.client import MarketDataClient
+    from quantred.services.data import resolve_universe
+
+    start, end = _run_window()
+    cached, _ = _cache(tmp_path, offline=True)
+    with pytest.raises(CacheMiss) as miss:
+        resolve_universe(
+            MarketDataClient(cached),
+            "demo_volume",
+            SYMBOLS,
+            as_of=end,
+            then_reads=[(SYMBOLS, "1Hour", start, end)],
+        )
+    assert miss.value.timeframe == "1day"
+    assert "every candidate" not in str(miss.value)
+    assert "--start 2024-03-01" not in str(miss.value)
+
+
+def test_a_runnable_scan_is_not_widened_to_every_candidate(tmp_path):
+    """Once the scan can run, the names it keeps are checked on their own: asking for every
+    candidate over the run window would warm names the scanner then drops."""
+    from quantred.marketdata.client import MarketDataClient
+    from quantred.scanners.symbol_scanner import SymbolScanner
+    from quantred.services.data import resolve_universe
+
+    start, end = _run_window()
+    online, _ = _cache(tmp_path)
+    scan_tf, scan_start, scan_end = SymbolScanner(MarketDataClient(online), "demo_volume").scan_window(end)
+    online.warm(SYMBOLS, scan_tf, scan_start, scan_end)
+    online.close()
+
+    cached = CachedMarketData(WindowedFakeProvider(SYMBOLS), cache_dir=tmp_path / "bars", offline=True)
+    resolve_universe(
+        MarketDataClient(cached),
+        "demo_volume",
+        SYMBOLS,
+        as_of=end,
+        then_reads=[(SYMBOLS, "1Day", start, end)],
+    )
+
+
+def _offline_command(monkeypatch, cache_dir, argv):
+    """Run a CLI command offline against a cache dir, returning its miss or None."""
+    from quantred import cli
+    from quantred.marketdata.client import MarketDataClient
+
+    cached = CachedMarketData(WindowedFakeProvider([*SYMBOLS, "SPY"]), cache_dir=cache_dir, offline=True)
+    monkeypatch.setattr(cli, "build_research_data", lambda **kw: MarketDataClient(cached))
+    args = cli.build_parser().parse_args(argv)
+    try:
+        getattr(cli, f"cmd_{argv[0]}")(args)
+    except CacheMiss as miss:
+        return miss
+    finally:
+        cached.close()
+    return None
+
+
+_WINDOW = [
+    "--symbols",
+    ",".join(SYMBOLS),
+    "--start",
+    "2024-03-01",
+    "--end",
+    "2024-12-31",
+    "--offline",
+    "--force",
+]
+
+
+@pytest.mark.parametrize("scanner", ["none", "demo_volume"])
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["walkforward", "--strategy", "demo_trend", "--benchmark", "SPY", "--folds", "2", "--max-evals", "2"],
+        ["walkforward", "--strategy", "demo_trend", "--folds", "2", "--max-evals", "2"],
+        ["backtest", "--strategy", "demo_trend"],
+        ["backtest", "--strategy", "demo_trend", "--beta-sizing"],
+        ["optimize", "--strategy", "demo_trend", "--max-evals", "2"],
+        ["screen", "--strategy", "demo_trend", "--max-evals", "2"],
+    ],
+    ids=["walkforward-benchmark", "walkforward", "backtest", "backtest-beta-sizing", "optimize", "screen"],
+)
+def test_one_warm_fixes_an_offline_command_that_reads_beyond_its_window(tmp_path, monkeypatch, argv, scanner):
+    """A walk-forward reads an indicator warmup before --start, and its benchmark, in a
+    fetch that comes after the up-front check of [start, end]: warming the first printed
+    command left that read uncached, so the rerun missed again. A backtest's benchmark was
+    a quieter version: offline it degraded the run to no alpha or beta. The first miss
+    now covers every read, so the printed command is enough."""
+    cache_dir = tmp_path / "bars"
+    argv = [*argv, "--scanner", scanner, *_WINDOW]
+    first = _offline_command(monkeypatch, cache_dir, argv)
+    assert first is not None
+    if argv[0] == "backtest" or "--benchmark" in argv:
+        assert "SPY" in first.missing
+    _warm_from(first, cache_dir, symbols=[*SYMBOLS, "SPY"])
+    assert _offline_command(monkeypatch, cache_dir, argv) is None
+
+
+def test_beta_sizing_lookback_joins_the_first_miss_and_only_with_the_flag(tmp_path, monkeypatch):
+    """--beta-sizing reads a trailing window before --start, after the memo lookup, so the
+    first printed command covered only [start, end] and the rerun missed again. The miss
+    now reaches back by the sizer's own lookback; without the flag it asks for nothing
+    extra."""
+    from quantred.services.sizing import beta_read
+
+    plain = ["backtest", "--strategy", "demo_trend", "--scanner", "none", *_WINDOW]
+    miss = _offline_command(monkeypatch, tmp_path / "plain", plain)
+    assert miss is not None and "--start 2024-03-01" in str(miss) and "--beta-sizing" not in str(miss)
+
+    _, _, lookback_start, _ = beta_read(SYMBOLS, as_of=_run_window()[0])
+    miss = _offline_command(monkeypatch, tmp_path / "beta", [*plain, "--beta-sizing"])
+    assert miss is not None
+    assert f"--start {lookback_start:%Y-%m-%d}" in str(miss)
+    assert "--beta-sizing reads a lookback" in str(miss)
+
+
+def test_a_cached_window_is_not_widened_for_reads_that_may_not_happen(tmp_path, monkeypatch):
+    """With [start, end] cached the run may be a memo that reads nothing more, so the up-front
+    check asks for nothing extra; the validation's own fetch names what it lacks."""
+    from quantred.utils.timeutils import parse_market_date
+
+    online, _ = _cache(tmp_path)
+    online.warm(SYMBOLS, "1Day", parse_market_date("2024-03-01"), parse_market_date("2024-12-31"))
+    online.close()
+    argv = [
+        "walkforward",
+        "--strategy",
+        "demo_trend",
+        "--scanner",
+        "none",
+        "--folds",
+        "2",
+        "--max-evals",
+        "2",
+        *_WINDOW,
+    ]
+    miss = _offline_command(monkeypatch, tmp_path / "bars", argv)
+    assert miss is not None and "warmup" not in str(miss)
+    assert "--start 2024-03-01" not in str(miss)
+
+
+def test_the_explanation_appears_only_when_a_read_widened_the_miss(tmp_path, monkeypatch):
+    """With no benchmark the backtest's second read is its first, and the line saying the
+    miss also covers "the benchmark None" described a read that added nothing."""
+    argv = ["backtest", "--strategy", "demo_trend", "--scanner", "none", "--benchmark", "", *_WINDOW]
+    miss = _offline_command(monkeypatch, tmp_path / "bars", argv)
+    assert miss is not None
+    assert "benchmark" not in str(miss)
+
+
+def test_the_vintage_stamp_miss_also_names_every_symbol(tmp_path):
+    """Found in review: only get_bars checked every symbol first. Backtest, optimize and
+    walkforward stamp the vintage before reading bars, and that path still stopped at the
+    first symbol — the defect the consolidated miss was meant to remove."""
+    cached, upstream = _cache(tmp_path, offline=True)
+    start, end = _full_window(upstream)
+    with pytest.raises(CacheMiss) as miss:
+        cached.vintage_stamp(SYMBOLS, "1Day", start, end)
+    assert f"--symbols {','.join(SYMBOLS)} " in str(miss.value)
+
+
+def test_a_miss_in_a_custom_cache_directory_warms_that_directory(tmp_path):
+    """Found in review: the warm command dropped --cache-dir, so a run against its own
+    cache directory was told to fill the default one and missed again on the rerun."""
+    custom = tmp_path / "elsewhere bars"
+    cached = CachedMarketData(WindowedFakeProvider(SYMBOLS), cache_dir=custom, offline=True)
+    start, end = _full_window(cached.upstream)
+    with pytest.raises(CacheMiss) as miss:
+        cached.get_bars(["AAA"], "1Day", start, end)
+    assert f"--cache-dir '{custom}'" in str(miss.value)
+
+
+def test_a_miss_in_the_default_cache_directory_does_not_name_it(tmp_path, monkeypatch):
+    """The other direction: the default needs no flag, and naming the path would put a
+    machine-specific directory into a command meant to be copied."""
+    from quantred.store import bars
+
+    monkeypatch.setattr(bars, "DEFAULT_CACHE_ROOT", tmp_path / "bars")
+    cached, upstream = _cache(tmp_path, offline=True)
+    start, end = _full_window(upstream)
+    with pytest.raises(CacheMiss) as miss:
+        cached.get_bars(["AAA"], "1Day", start, end)
+    assert "--cache-dir" not in str(miss.value)
+
+
+def test_the_date_note_appears_only_for_the_gap_the_date_change_left(tmp_path):
+    """The note explains coverage recorded under the old date reading, which stops at UTC
+    midnight where the same date now means New York midnight. It was printed beside every
+    miss — six times in one verdict — and then beside any miss on a symbol with any
+    coverage at all, so warming one month and asking for another blamed the dates."""
+    from quantred.store.bars import DATE_CONTRACT_NOTICE
+    from quantred.utils.timeutils import parse_market_date
+
+    start, end = parse_market_date("2024-03-01"), parse_market_date("2024-06-03")
+
+    cached, _ = _cache(tmp_path, offline=True)
+    with pytest.raises(CacheMiss) as cold:
+        cached.get_bars(["AAA"], "1Day", start, end)
+    assert DATE_CONTRACT_NOTICE not in str(cold.value)
+    cached.close()
+
+    online, _ = _cache(tmp_path)
+    online.get_bars(["AAA"], "1Day", start, start + (end - start) / 2)
+    online.close()
+    partly, _ = _cache(tmp_path, offline=True)
+    with pytest.raises(CacheMiss) as unrelated:
+        partly.get_bars(["AAA"], "1Day", start, end)
+    assert DATE_CONTRACT_NOTICE not in str(unrelated.value)
+    partly.close()
+
+    # Recorded as the old reading did: through UTC midnight of the end date.
+    old_end = datetime(2024, 6, 3, tzinfo=timezone.utc)
+    online, _ = _cache(tmp_path)
+    online.get_bars(["BBB"], "1Day", start, old_end)
+    online.close()
+    shortfall, _ = _cache(tmp_path, offline=True)
+    with pytest.raises(CacheMiss) as sliver:
+        shortfall.get_bars(["BBB"], "1Day", start, end)
+    assert DATE_CONTRACT_NOTICE in str(sliver.value)
 
 
 def test_offline_serves_warm_cache_with_zero_upstream_calls(tmp_path):
@@ -270,3 +605,60 @@ def test_warm_reports_already_cached_on_second_call(tmp_path):
 
     second = cached.warm(["AAA"], "1Day", start, end)
     assert second["AAA"]["already_cached"] is True
+
+
+def test_a_walk_forward_without_a_benchmark_does_not_stress_against_one(tmp_path, monkeypatch, caplog):
+    """The cost stress after a walk-forward fell back to the service's SPY default, so a
+    run that asked for no benchmark fetched one anyway; offline, each stressed run then
+    logged that SPY was unavailable after a warm that had covered everything asked for."""
+    import logging
+
+    cache_dir = tmp_path / "bars"
+    argv = [
+        "walkforward",
+        "--strategy",
+        "demo_trend",
+        "--scanner",
+        "none",
+        "--folds",
+        "2",
+        "--max-evals",
+        "2",
+        *_WINDOW,
+    ]
+    first = _offline_command(monkeypatch, cache_dir, argv)
+    assert "SPY" not in first.missing
+    _warm_from(first, cache_dir, symbols=[*SYMBOLS, "SPY"])
+    with caplog.at_level(logging.WARNING):
+        assert _offline_command(monkeypatch, cache_dir, argv) is None
+    assert "Benchmark SPY unavailable" not in caplog.text
+
+
+def test_a_cached_run_over_the_cli_and_over_the_service_is_one_trial(monkeypatch, tmp_path):
+    """Found in the final review: the CLI folds the cache's data-vintage stamp into a
+    run's identity and the service did not, so once the MCP server could read the cache
+    (`mcp --offline`) the same backtest over the two surfaces could never match - two
+    journaled trials, the family count inflated, the memo never served. Builds the run
+    both ways against one cache and requires a single trial."""
+    from quantred import cli
+    from quantred.marketdata.client import MarketDataClient
+    from quantred.services import analysis, audit
+
+    journal = tmp_path / "journal.jsonl"
+    monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", journal)
+    monkeypatch.setattr(analysis, "ARTIFACT_DIR", tmp_path / "artifacts")
+    client = MarketDataClient(
+        CachedMarketData(WindowedFakeProvider([*SYMBOLS, "SPY"]), cache_dir=tmp_path / "bars")
+    )
+    monkeypatch.setattr(cli, "build_research_data", lambda **kw: client)
+
+    argv = ["backtest", "--strategy", "demo_trend", "--scanner", "none", "--symbols", ",".join(SYMBOLS)]
+    argv += ["--start", "2024-01-02", "--end", "2024-06-01", "--cache"]
+    args = cli.parse_cli(argv)
+    args.func(args)
+    reused = analysis.run_backtest(
+        client, "demo_trend", list(SYMBOLS), args.start, args.end, capital=args.capital
+    )
+    assert reused.get("memoized") is True
+    trials = [line for line in journal.read_text().splitlines() if '"trial:backtest"' in line]
+    assert len(trials) == 1

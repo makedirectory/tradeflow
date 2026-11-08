@@ -1,6 +1,6 @@
 # example — a private pack you can copy
 
-This is what your own work looks like from TradeFlow's side: a separate package with its
+This is what your own work looks like from QuantRed's side: a separate package with its
 own `pyproject.toml`, registering strategies and a scanner through two entry-point
 groups. The engine imports nothing from here and knows nothing about it beyond the base
 interface.
@@ -12,10 +12,32 @@ engine's side these *are* demonstrations. Renaming both is the first thing you d
 the next section says how.
 
 ```bash
-tradeflow init --example-pack ./my-signals   # the destination is yours to name
-cd my-signals && uv pip install -e .
-tradeflow init --check                       # lists it under "private packs installed"
+quantred init --example-pack ./my-signals   # the destination is yours to name
+quantred init --check                       # lists it under "private packs installed"
 ```
+
+`--example-pack` needs a checkout or an unpacked source distribution, because the
+installed package does not carry this directory. From an installed copy:
+
+```bash
+git clone https://github.com/makedirectory/quantred && cp -R quantred/example ./my-signals
+```
+
+Then install the copy for how you installed QuantRed:
+
+```bash
+# uv tool: the tool environment is rebuilt, so restate your extras
+uv tool install --force 'quantred[mcp,viz]' --with-editable ./my-signals
+# virtual environment (activated)
+python -m pip install -e ./my-signals
+# a checkout of this repository
+uv pip install -e ./my-signals
+```
+
+If a pack of yours depends on the old `tradeflow-engine` and you cannot change that to
+`quantred`, keep `tradeflow-engine>=2.3.1` installed: it provides the `tradeflow` import
+alias the pack uses. `--no-deps` or an exclusion is only for a pack that never imports the
+old name; see the migration page in the documentation.
 
 ## Make it yours
 
@@ -30,8 +52,8 @@ Three renames, none of them optional if you plan to keep this:
    type at `--strategy` and `--scanner`. The only rule is that they must not collide
    with a name the engine reserves, and it refuses the pack rather than shadowing one.
 
-Then `uv pip install -e .` again, and `tradeflow init --check` to confirm they are
-discovered.
+Then install it again with the command above, and `quantred init --check` to confirm they
+are discovered.
 
 ## Layout
 
@@ -55,7 +77,7 @@ name a stable import path while files stay free to move. Everything is written t
 breakout level is shifted by a bar, why the scanner ranks rather than only flags, why
 dispersion is guarded before dividing by it.
 
-**Two strategies on purpose.** A long-only book cannot exercise half of what TradeFlow
+**Two strategies on purpose.** A long-only book cannot exercise half of what QuantRed
 measures. Leg diagnostics, `max_net_exposure`, the directional-tilt derivation and the
 short-borrow side of the cost model only mean anything for a book that trades both
 sides. `pairs_reversion` is there so those surfaces have something to act on.
@@ -70,7 +92,7 @@ Substitute your own dates and symbols.
 ### 1. Does it run, and where did the money come from?
 
 ```bash
-tradeflow backtest --config configs/breakout.json --start 2023-01-02 --end 2025-01-02
+quantred backtest --config configs/breakout.json --start 2023-01-02 --end 2025-01-02
 ```
 
 The weakest evidence this system produces, and worth exactly one thing: confirming the
@@ -81,8 +103,8 @@ fill assumption.
 ### 2. What is the result actually resting on?
 
 ```bash
-tradeflow backtest --config configs/breakout.json --start ... --end ... --fill-stress
-tradeflow backtest --config configs/breakout.json --start ... --end ... --cost-stress
+quantred backtest --config configs/breakout.json --start ... --end ... --fill-stress
+quantred backtest --config configs/breakout.json --start ... --end ... --cost-stress
 ```
 
 `--fill-stress` requires the price to trade progressively further *through* each
@@ -97,7 +119,7 @@ how you choose a cap from the strategy's own history instead of picking a number
 ### 3. Which parameters, and how many did you try?
 
 ```bash
-tradeflow optimize --strategy example_breakout --scanner example_liquidity \
+quantred optimize --strategy example_breakout --scanner example_liquidity \
   --symbols AAPL,MSFT,NVDA,AMD --start 2023-01-02 --end 2025-01-02 \
   --method grid --max-evals 40
 ```
@@ -108,7 +130,7 @@ a search is not free — it raises the bar for everything in that family afterwa
 ### 4. Does it survive out of sample?
 
 ```bash
-tradeflow walkforward --strategy example_breakout --scanner example_liquidity \
+quantred walkforward --strategy example_breakout --scanner example_liquidity \
   --symbols AAPL,MSFT,NVDA,AMD --start 2020-01-02 --end 2025-01-02 \
   --folds 4 --save-config configs/breakout_validated.json
 ```
@@ -120,7 +142,7 @@ limits and a provenance block recording how they were arrived at.
 ### 5. How would it sit in a portfolio?
 
 ```bash
-tradeflow allocate --strategy example_breakout --symbols AAPL,MSFT,NVDA,AMD \
+quantred allocate --strategy example_breakout --symbols AAPL,MSFT,NVDA,AMD \
   --capital 25000 --objective utility
 ```
 
@@ -130,7 +152,8 @@ by default. `--objective weights` for a plain mean-variance allocation.
 ### 6. One verdict across the pipeline
 
 ```bash
-tradeflow verdict --strategy example_breakout --symbols AAPL,MSFT,NVDA,AMD \
+quantred verdict --strategy example_breakout --scanner none \
+  --symbols AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,JPM,XOM,UNH,COST,WMT \
   --start 2023-01-02 --end 2025-01-02
 ```
 
@@ -141,7 +164,7 @@ says nothing about the others, and the report keeps them apart.
 ### 7. Paper, and only then
 
 ```bash
-tradeflow live --config configs/breakout_validated.json \
+quantred live --config configs/breakout_validated.json \
   --capital 8000 --feed iex --preflight
 ```
 
@@ -153,13 +176,13 @@ output is boring.
 Afterwards:
 
 ```bash
-tradeflow execution-report --orders     # slippage, latency, refusals by kind
-tradeflow reconcile                     # ledger against the broker
+quantred execution-report --orders     # slippage, latency, refusals by kind
+quantred reconcile                     # ledger against the broker
 ```
 
 ## Where your evidence goes
 
-Nowhere near here. TradeFlow writes its journal, trial store, saved configs and position
+Nowhere near here. QuantRed writes its journal, trial store, saved configs and position
 ledger under one state root — `~/.tradeflow` by default, `TRADEFLOW_HOME` to move it —
 deliberately outside any working tree, so a private strategy's results are not sitting in
 a git repository waiting for an ignore-file mistake.
@@ -177,7 +200,7 @@ one if they do.
 
 ## Then read
 
-- [Your own strategies](https://tradeflow.mk-dir.com/docs/usage/private-strategies)
-- [Run configs](https://tradeflow.mk-dir.com/docs/usage/run-configs)
-- [Validation diagnostics](https://tradeflow.mk-dir.com/docs/usage/validation-diagnostics)
-- [Extending](https://tradeflow.mk-dir.com/docs/engineering/extending) — the interface reference
+- [Your own strategies](https://tradeflow.mk-dir.com/usage/private-strategies)
+- [Run configs](https://tradeflow.mk-dir.com/usage/run-configs)
+- [Validation diagnostics](https://tradeflow.mk-dir.com/usage/validation-diagnostics)
+- [Extending](https://tradeflow.mk-dir.com/engineering/extending) — the interface reference

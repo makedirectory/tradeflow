@@ -10,12 +10,12 @@ from datetime import datetime
 import numpy as np
 import pytest
 
+from quantred.alphas.base import Alpha
+from quantred.marketdata.client import MarketDataClient
+from quantred.portfolio.optimizer import MeanVarianceOptimizer
+from quantred.risk.base import RiskMatrix
+from quantred.services import analysis
 from tests.fakes import DictMarketData, make_ohlcv
-from tradeflow.alphas.base import Alpha
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.portfolio.optimizer import MeanVarianceOptimizer
-from tradeflow.risk.base import RiskMatrix
-from tradeflow.services import analysis
 
 AS_OF = datetime(2024, 6, 1)
 SYMS = ["A", "B", "C", "D"]
@@ -118,8 +118,8 @@ def test_min_weight_must_not_exceed_max_weight():
 
 # --- capacity ------------------------------------------------------------------
 def test_capacity_is_liquidity_sensitive():
+    from quantred.services.analysis import _capacity
     from tests.fakes import make_ohlcv
-    from tradeflow.services.analysis import _capacity
 
     syms = [f"S{i}" for i in range(6)]
     weights = {s: 1.0 / len(syms) for s in syms}
@@ -128,8 +128,9 @@ def test_capacity_is_liquidity_sensitive():
 
     cap_liquid = _capacity(weights, liquid, gross_alpha=0.05, holding_period_years=1 / 12)
     cap_illiquid = _capacity(weights, illiquid, gross_alpha=0.05, holding_period_years=1 / 12)
-    assert cap_liquid > cap_illiquid  # deeper liquidity → more capacity before cost bites
-    assert _capacity(weights, liquid, gross_alpha=0.0, holding_period_years=1 / 12) == 0.0  # no edge
+    assert cap_liquid[1] == cap_illiquid[1] == "measured"
+    assert cap_liquid[0] > cap_illiquid[0]  # deeper liquidity → more capacity before cost bites
+    assert _capacity(weights, liquid, gross_alpha=0.0, holding_period_years=1 / 12) == (None, "no_edge")
 
 
 # --- integration / leakage ---------------------------------------------------
@@ -166,7 +167,7 @@ def test_reduction_no_benchmark_matches_todays_behavior():
 
 def test_round_trip_implied_returns_recovers_the_benchmark():
     """optimize(implied_returns(w_B, Σ, μ_B), Σ, w_B) -> w = w_B."""
-    from tradeflow.portfolio.benchmark import implied_returns
+    from quantred.portfolio.benchmark import implied_returns
 
     mu = implied_returns(W_B, _risk(), mu_b=0.05)
     result = MeanVarianceOptimizer(max_weight=1.0).optimize(
@@ -315,7 +316,7 @@ def test_construct_portfolio_file_benchmark_reports_partial_coverage(tmp_path):
 
 # --- CLI --------------------------------------------------------------------------
 def test_cli_allocate_utility_with_benchmark_holdings(monkeypatch, tmp_path, capsys):
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     symbols = [f"S{i}" for i in range(8)]
     bars = {s: make_ohlcv(n=400, seed=i, freq="1D") for i, s in enumerate([*symbols, "SPY"])}
@@ -324,7 +325,7 @@ def test_cli_allocate_utility_with_benchmark_holdings(monkeypatch, tmp_path, cap
     # `**kwargs`, like every other stub of this: a no-argument stub only accepts the
     # call shape that existed when it was written, so it fails the day a caller
     # starts passing the cache flags rather than the day the behaviour breaks.
-    monkeypatch.setattr(main, "build_data_and_broker", lambda **kwargs: (None, client))
+    monkeypatch.setattr(main, "build_research_data", lambda **kwargs: client)
 
     args = main.build_parser().parse_args(
         [

@@ -11,14 +11,14 @@ from datetime import datetime
 
 import pytest
 
+from quantred.marketdata.client import MarketDataClient
+from quantred.optimization import config_store
+from quantred.research import sandbox
+from quantred.research.agent import ResearchAgent, ResearchConfig
+from quantred.research.proposer import FixedProposer, Proposal, ProposalContext
+from quantred.services import registry
 from tests.fakes import FakeMarketData
 from tests.test_walk_forward import PeriodicStrategy
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.optimization import config_store
-from tradeflow.research import sandbox
-from tradeflow.research.agent import ResearchAgent, ResearchConfig
-from tradeflow.research.proposer import FixedProposer, Proposal, ProposalContext
-from tradeflow.services import registry
 
 SYMBOLS = ["AAA", "BBB"]
 START, END = datetime(2024, 1, 2), datetime(2025, 6, 1)
@@ -49,7 +49,7 @@ def _agent(tmp_path, proposer, **overrides):
         goal="test",
         n_folds=3,
         embargo_days=2,
-        holdout_days=60,
+        holdout_days=overrides.pop("holdout_days", 60),
         method="grid",
         max_trials=overrides.pop("max_trials", 10),
         max_dry_rounds=overrides.pop("max_dry_rounds", 5),
@@ -101,7 +101,7 @@ def test_hygiene_rejects_missing_hypothesis_and_too_many_params():
 # --- code sandbox -----------------------------------------------------------
 _VALID_CODE = '''
 import pandas as pd
-from tradeflow.strategies.base import Strategy
+from quantred.strategies.base import Strategy
 
 class GenStrat(Strategy):
     """Always-long. Hypothesis: the synthetic series drifts up."""
@@ -139,7 +139,7 @@ def test_sandbox_loads_valid_strategy_code():
 
 _VALID_SCANNER_CODE = '''
 import pandas as pd
-from tradeflow.scanners.base import SCANNER_BUY, SCANNER_HOLD, ScannerStrategy
+from quantred.scanners.base import SCANNER_BUY, SCANNER_HOLD, ScannerStrategy
 
 class GenScanner(ScannerStrategy):
     """Flags up bars. Hypothesis: attention follows simple upward pressure."""
@@ -178,9 +178,23 @@ def test_sandbox_requires_scanner_signal_strength():
 def test_sandbox_blocks_disallowed_imports():
     # `os` is denied outright; the broker layer is a real module that is simply not
     # on the allowlist — generated code may reach the strategy base, never a venue.
-    bad = "import os\nfrom tradeflow.brokers.base import Broker\n"
+    bad = "import os\nfrom quantred.brokers.base import Broker\n"
     with pytest.raises(sandbox.HygieneError):
         sandbox.load_strategy_from_code(bad)
+
+
+def test_a_draft_importing_the_old_package_name_is_told_to_use_the_new_one():
+    """Drafts written from older prompts still say `from tradeflow...`.
+
+    The refusal used to read "may not import 'tradeflow.strategies.base'", which sends a
+    model looking for a permissions problem when the module simply moved. The message
+    has to name the replacement, and the same line under the new name must still load.
+    """
+    old = _VALID_CODE.replace("from quantred.strategies.base", "from tradeflow.strategies.base")
+    assert old != _VALID_CODE
+    with pytest.raises(sandbox.HygieneError, match=r"tradeflow\.strategies\.base.*import from `quantred`"):
+        sandbox.load_strategy_from_code(old)
+    assert sandbox.load_strategy_from_code(_VALID_CODE) is not None
 
 
 def test_a_malformed_strategy_param_spec_is_a_rejection_not_a_crash():
@@ -306,7 +320,7 @@ def test_duplicate_tune_proposal_is_deduped_via_the_trial_store(tmp_path):
 
 
 def test_research_trials_are_recorded_in_the_trial_store(tmp_path):
-    from tradeflow.engine.backtest import ACCOUNTING_VERSION
+    from quantred.engine.backtest import ACCOUNTING_VERSION
 
     agent = _agent(tmp_path, FixedProposer([_tune(3), _tune(5)]))
     agent.run(SYMBOLS, START, END)
@@ -368,7 +382,7 @@ def test_proposer_context_excludes_holdout(tmp_path):
 
 # --- provider-agnostic LLM layer --------------------------------------------
 def test_build_llm_client_defaults_per_provider():
-    from tradeflow.research.llm import build_llm_client
+    from quantred.research.llm import build_llm_client
 
     assert build_llm_client("anthropic").model == "claude-opus-4-8"
     assert build_llm_client("openai").model == "gpt-4o"
@@ -379,8 +393,8 @@ def test_build_llm_client_defaults_per_provider():
 
 
 def test_llm_proposer_parses_json_from_any_client():
-    from tradeflow.research.llm import LLMResponse
-    from tradeflow.research.proposer import LLMProposer
+    from quantred.research.llm import LLMResponse
+    from quantred.research.proposer import LLMProposer
 
     class StubClient:
         model = "stub"
@@ -400,9 +414,9 @@ def test_llm_proposer_parses_json_from_any_client():
     assert proposal.tokens_used == 11
 
 
-def test_llm_proposer_returns_none_on_unparseable_output():
-    from tradeflow.research.llm import LLMResponse
-    from tradeflow.research.proposer import LLMProposer
+def test_llm_proposer_marks_unparseable_output_as_a_malformed_proposal():
+    from quantred.research.llm import LLMResponse
+    from quantred.research.proposer import LLMProposer
 
     class JunkClient:
         model = "stub"
@@ -413,12 +427,15 @@ def test_llm_proposer_returns_none_on_unparseable_output():
     ctx = ProposalContext(
         goal="g", strategy="periodic", param_ranges={}, history=[], incumbent=None, round_index=0
     )
-    assert LLMProposer(JunkClient()).propose(ctx) is None
+    proposal = LLMProposer(JunkClient()).propose(ctx)
+    # None would read as "nothing more to try" and end the session on one bad reply.
+    assert proposal is not None and proposal.malformed == "unparseable reply"
+    assert proposal.tokens_used == 3
 
 
 def test_build_proposer_accepts_injected_client():
-    from tradeflow.research.llm import LLMResponse
-    from tradeflow.research.proposer import build_proposer
+    from quantred.research.llm import LLMResponse
+    from quantred.research.proposer import build_proposer
 
     class StubClient:
         model = "stub"
@@ -447,8 +464,8 @@ def test_sandbox_rejects_strategy_missing_execution_config():
 
 def test_llm_proposer_emits_code_proposals_when_enabled():
     """With code-gen on, a ``kind: "code"`` response becomes a code proposal."""
-    from tradeflow.research.llm import LLMResponse
-    from tradeflow.research.proposer import LLMProposer
+    from quantred.research.llm import LLMResponse
+    from quantred.research.proposer import LLMProposer
 
     class CodeClient:
         model = "stub"
@@ -467,8 +484,8 @@ def test_llm_proposer_emits_code_proposals_when_enabled():
 
 
 def test_llm_proposer_still_parses_tune_proposals_with_code_gen_enabled():
-    from tradeflow.research.llm import LLMResponse
-    from tradeflow.research.proposer import LLMProposer
+    from quantred.research.llm import LLMResponse
+    from quantred.research.proposer import LLMProposer
 
     class TuneClient:
         model = "stub"
@@ -527,14 +544,14 @@ def _shipped_strategies():
     empty, because the demo strategy arrives by entry point exactly as a pack's
     would. Reading it here checked the contract against nothing at all.
     """
-    from tradeflow.services import registry
+    from quantred.services import registry
 
     registry.refresh_registries()
     return {n: c for n, c in registry.STRATEGIES.items() if registry.is_demo(c)}
 
 
 def _shipped_scanners():
-    from tradeflow.services import registry
+    from quantred.services import registry
 
     registry.refresh_registries()
     return {n: c for n, c in registry.SCANNERS.items() if registry.is_demo(c)}

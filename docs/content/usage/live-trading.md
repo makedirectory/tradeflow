@@ -9,9 +9,7 @@ Live mode warms up the strategy with recent history, subscribes to the Alpaca
 real-time bar stream, and routes signals to the broker as bracket orders.
 
 ```bash
-make live
-# or
-uv run python main.py live --strategy demo_trend --scanner demo_volume --symbols NVDA,META,TSLA
+quantred live --strategy demo_trend --scanner demo_volume --symbols NVDA,META,TSLA
 ```
 
 :::warning
@@ -51,9 +49,7 @@ config (`RiskBasedSizer`). Add `--portfolio` to instead size positions by
 across the universe rather than sized per trade:
 
 ```bash
-make live-portfolio
-# or
-uv run python main.py live --scanner demo_volume --symbols NVDA,META,TSLA \
+quantred live --scanner demo_volume --symbols NVDA,META,TSLA \
     --portfolio --max-positions 5 --max-weight 0.25
 ```
 
@@ -66,17 +62,18 @@ benchmark (default `SPY`) — higher-beta names get smaller positions, evening o
 risk:
 
 ```bash
-make live-beta
-# or
-uv run python main.py live --scanner demo_volume --symbols NVDA,META,TSLA --beta-sizing --benchmark SPY
+quantred live --scanner demo_volume --symbols NVDA,META,TSLA --beta-sizing --benchmark SPY
 ```
 
 ## Managing the account
 
 ```bash
-make cancel-orders      # cancel all open orders
-make close-positions    # liquidate all positions (also cancels orders)
+quantred flatten --confirm --reason "end of test"   # halt, cancel all orders, close all positions
 ```
+
+See [stopping](stopping) for the smaller levels. There is no separate "cancel all orders" or
+"close all positions" command: `flatten` does both after halting, records them in the
+ledger and verifies the account is flat, which a bare cancel or close did not.
 
 The full real-time path is described in **[The Engine](../engineering/engine)** and
 **[Broker Abstraction](../engineering/broker-abstraction)**.
@@ -110,9 +107,9 @@ loudly. A guard quietly eating a third of the feed looks, from the strategy's si
 exactly like a quiet market.
 
 ```bash
-python main.py live --symbols NVDA,AAPL             # guards on
-python main.py live --symbols NVDA --max-bar-return 0.15   # stricter
-python main.py live --symbols NVDA --no-bar-checks         # off (not recommended)
+quantred live --symbols NVDA,AAPL             # guards on
+quantred live --symbols NVDA --max-bar-return 0.15   # stricter
+quantred live --symbols NVDA --no-bar-checks         # off (not recommended)
 ```
 
 ## Position reconciliation
@@ -126,15 +123,23 @@ The live loop now keeps an append-only ledger of **intent** (what was submitted)
 account state on a timer. Check it any time:
 
 ```bash
-python main.py reconcile          # or: reconcile --json
+quantred reconcile          # or: reconcile --json
 ```
 
 ```
+broker mode: PAPER
+ledger: /…/logs/position_ledger.jsonl (live-session ledger)
 RECONCILIATION FOUND 2 DIVERGENCE(S):
   [quantity_drift] NVDA: ledger expects +10, broker holds +4 — likely a partial fill
   [unexpected] TSLA: broker holds +7 that this ledger never ordered — opened manually
 The broker's state is authoritative. Nothing has been corrected automatically.
 ```
+
+The text and `--json` forms both lead with the broker mode (`PAPER` or `LIVE - REAL MONEY`)
+and the ledger they opened. `--ledger PATH` is refused when the file does not exist
+(`reconcile` and `execution-report` alike), since an empty read looked like a clean book;
+the default ledger lives under the state root and, when none has been written yet, is
+labelled `[no ledger written yet]`.
 
 Three rules govern it, and the first two are what keep it safe:
 
@@ -176,7 +181,7 @@ mid-trend should hold the trend rather than sit flat until the next crossing.
 If you would rather wait for a fresh edge:
 
 ```bash
-tradeflow live --strategy demo_trend --no-reaffirm-entries
+quantred live --strategy demo_trend --no-reaffirm-entries
 ```
 
 or set `reaffirm_entries: false` in a strategy config. **Exits are never gated by
@@ -213,8 +218,8 @@ trace.
 ## Dry run: what would this trade?
 
 ```bash
-tradeflow live --config configs/breakout.json --dry-run
-tradeflow live --config configs/breakout.json --dry-run --json
+quantred live --config ~/.tradeflow/configs/breakout.json --dry-run
+quantred live --config ~/.tradeflow/configs/breakout.json --dry-run --json
 ```
 
 > **Dry-run answers: what would this contract try to do right now?**
@@ -235,9 +240,17 @@ what would have happened.
 === DRY RUN — broker has no trading capability; no orders can be submitted ===
 
   capital             $8,000.00 (from config)
-  starting book       flat
+  starting book       assumed flat (a dry run cannot see the account)
   universe            4 symbol(s)
   evaluated           3  (1 could not be evaluated)
+
+  book checked against:
+    max positions         4
+    max position size     $900.00
+    max gross exposure    0.8 (80% of capital = $6,400.00)
+    max net exposure      unset
+    max total risk        0.05 (5% of capital = $400.00)
+    min notional          $50.00
 
   WOULD SUBMIT — orders this contract would have sent: 1
     AAA       buy 25 @ 100.00 (stop 97.00 / target 106.00)
@@ -277,8 +290,12 @@ order path: a flag can be forgotten on one branch or inverted in a refactor, and
 capability cannot. It is the same guarantee the [MCP server](../engineering/mcp-server)
 gets from building only a data client.
 
-The broker factory is never called at all, so a dry run needs **no broker credentials** —
-which is the point, since the mode is most useful before an account exists.
+The broker factory is never called at all, so a dry run builds **no trading client** and
+needs no trading permission. It does read market data to evaluate the universe, through
+the same data-only client the MCP server uses, so it still needs the Alpaca API key pair
+that client authenticates with (`APCA_API_KEY_ID` and `APCA_API_SECRET_KEY`); without
+them it stops at `Missing Alpaca credentials` before evaluating anything. Dry run has no
+`--offline` mode.
 
 ### Capital must be stated
 
@@ -295,6 +312,17 @@ nothing, so it observes none of them — that is what a small-real session is fo
 is journaled either: a dry run measures nothing, so recording it would spend the family's
 multiple-testing budget on a rehearsal.
 
+The `book checked against` block is the same rows the live preflight prints, so
+`WOULD BIND: 0` can be read against the caps there were to bind (`--json` carries them as
+`position_limits`). When the declared book cannot place any order - a per-position
+ceiling or a gross cap below `min_notional`, or a capital below it - the block ends in a
+`WARNING` line saying every entry would be refused; the live preflight prints the same
+warning. It is reported, never repaired. A ceiling that is the strategy's own default,
+rather than one typed or configured, is labelled `(strategy default, not set for this
+run)`.
+
+`--dry-run` refuses `--preflight` as well as `--live-money`: a preflight reads the account
+through a broker and a dry run builds none, so combining them would silently drop one.
 `--dry-run` refuses `--live-money` rather than ignoring it, and `--json` is refused
 outside a dry run: a live session streams for as long as it runs and has no single report
 to serialize.
@@ -302,9 +330,9 @@ to serialize.
 ## Small-real: what happens when the broker tries to do it
 
 ```bash
-tradeflow small-real --config configs/candidate.json --scale 0.05 --preflight
-tradeflow small-real --config configs/candidate.json --scale 0.05
-tradeflow execution-report --small-real
+quantred small-real --config ~/.tradeflow/configs/candidate.json --scale 0.05 --preflight
+quantred small-real --config ~/.tradeflow/configs/candidate.json --scale 0.05
+quantred execution-report --small-real
 ```
 
 > **This is the one mode that places real orders.** Everything else here reads or
@@ -427,11 +455,13 @@ nobody chose. Passing both is refused even when they agree — two sources for o
 is a thing to keep in step, and the arithmetic that checks they agree is the arithmetic
 that would be wrong.
 
-`--scale` needs a config that records the capital it was validated at, since otherwise
-there is nothing to take a fraction of; the refusal names `--capital` as the way out. And
-where no ratio is known, a dollar ceiling **cannot** be restated, so a config recording
-no capital but declaring a `max_position_size` is refused rather than run with a limit
-gone quietly inert.
+Both need a config that records the capital it was validated at. `--scale` is a fraction
+of it, and `--capital` is restated against it: where no ratio is known a dollar ceiling
+**cannot** be restated, so a config recording no capital but declaring a
+`max_position_size` is refused rather than run with a limit gone quietly inert. Every
+strategy's book carries that ceiling, so `--capital` is not a way around a config with no
+recorded capital; both refusals say so and name the one way forward, a config that
+records the capital it was validated at.
 
 ### It cannot be reached by composing live flags
 
@@ -529,6 +559,7 @@ Every live run prints what it is about to do, before any order logic runs:
   capital this run      $25,000.00
   universe              40 symbols (replayed)
   data feed             iex
+  cost model            1 bps commission, eta 0.3, borrow 50 bps  (recorded, not charged)
   max positions         8
   max position size     $2,500.00
   max gross exposure    0.8 (80% of capital = $20,000.00)
@@ -538,9 +569,10 @@ Every live run prints what it is about to do, before any order logic runs:
   entries               re-affirmed
   bar guards            on
   reconcile every       300s
-  ledger                ~/.tradeflow/logs/positions.jsonl
+  ledger                ~/.tradeflow/logs/position_ledger.jsonl
   journal               ~/.tradeflow/logs/research_journal.jsonl
   halt state            ~/.tradeflow/logs/halts.json
+  state root            ~/.tradeflow
 
   warm-up coverage      40 of 40 symbols have history
                         39 of 40 have the full 120-bar lookback (1 short)
@@ -766,7 +798,7 @@ side to buy, so their numbers cannot be recovered. Archive the file and start fr
 ## Execution quality
 
 The ledger records enough to reconstruct the whole life of an order: what the strategy
-decided, what was submitted, and what the venue did with it. `tradeflow
+decided, what was submitted, and what the venue did with it. `quantred
 execution-report` rolls that up; `--orders` lists every lifecycle, `--json` emits it
 whole. Both are read-only.
 
@@ -894,10 +926,16 @@ again. To stop trading in a way that *sticks*, and to close everything in an
 emergency, see [Stopping trading](./stopping.md).
 
 ```bash
-tradeflow halts                                  # what is currently halted
-tradeflow halt all --reason "why"                # refuse new entries
-tradeflow flatten --confirm --reason "why"       # halt, cancel, close everything
+quantred halts                                  # what is currently halted
+quantred halt all --reason "why"                # refuse new entries
+quantred flatten --confirm --reason "why"       # halt, cancel, close everything
 ```
 
 Halts block entries and never block exits, so pulling the switch can never trap the
 book.
+
+## From a source checkout (contributors)
+
+The commands above are the installed `quantred` command. In a checkout, run them as
+`uv run python main.py <command> ...`. The Makefile shortcut for this page is `make live`. Extras are installed with `uv sync --inexact --extra <name>`
+(see [optional extras](extras)).

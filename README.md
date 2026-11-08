@@ -1,6 +1,6 @@
-# TradeFlow
+# QuantRed
 
-[![CI](https://github.com/makedirectory/tradeflow/actions/workflows/ci.yml/badge.svg)](https://github.com/makedirectory/tradeflow/actions/workflows/ci.yml)
+[![CI](https://github.com/makedirectory/quantred/actions/workflows/ci.yml/badge.svg)](https://github.com/makedirectory/quantred/actions/workflows/ci.yml)
 [![Docs](https://img.shields.io/badge/docs-tradeflow.mk--dir.com-blue)](https://tradeflow.mk-dir.com/)
 
 A small, **layered**, **broker-agnostic** algorithmic-trading **research
@@ -34,7 +34,7 @@ Designed to be easy to try and easy to read:
 
 > ⚠️ Educational software. Trading is risky; use paper trading. No warranty.
 
-![TradeFlow demo — an in-sample equity curve that looks tradeable, beside the walk-forward verdict that refuses to promote it](https://raw.githubusercontent.com/makedirectory/tradeflow/main/docs/static/img/demo.png)
+![QuantRed demo — an in-sample equity curve that looks tradeable, beside the walk-forward verdict that refuses to promote it](https://raw.githubusercontent.com/makedirectory/quantred/main/docs/static/img/demo.png)
 
 *`make demo` runs the whole pipeline on synthetic data (no keys, no network) and
 renders this: a strategy that looks profitable in-sample, and the out-of-sample
@@ -43,7 +43,7 @@ for any run — pass `--chart PATH` to `backtest` or `walkforward`.*
 
 ## The mental model: two clocks
 
-The one idea that explains everything else — TradeFlow runs on **two clocks that
+The one idea that explains everything else — QuantRed runs on **two clocks that
 never touch**:
 
 - **Research clock** (offline, slow, exploratory): backtest → optimize →
@@ -80,32 +80,46 @@ Either way you'll need free Alpaca **paper-trading** API keys from the
 No clone needed — install the command and run the offline demo:
 
 ```bash
-uv tool install tradeflow-engine        # or: pipx install tradeflow-engine
-tradeflow demo                          # full pipeline on synthetic data, no keys
-tradeflow init                        # add your free Alpaca paper keys when ready
-tradeflow verdict --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-31
+uv tool install 'quantred[mcp,viz]'   # or: python -m pip install 'quantred[mcp,viz]'
+quantred demo                          # full pipeline on synthetic data, no keys
+quantred init                          # your free Alpaca paper keys, and optionally a model
+                                        # provider for `research` (skipping it is fine)
+quantred init --check                  # what is ready, for which task, and the next step
+quantred init --probe-model --provider anthropic --for research   # optional: one tiny billed request
+quantred verdict --scanner none --symbols AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,JPM,XOM,UNH,COST,WMT \
+    --start 2024-01-01 --end 2024-12-31
+claude mcp add quantred -- quantred mcp   # connect an MCP client; it launches the server
+quantred mcp --self-test               # confirm discovery works without a chat client
 ```
 
-Optional capabilities are extras: `uv tool install "tradeflow-engine[viz,store]"`.
+Optional capabilities are extras (charts, the MCP server, the model SDKs). Adding one
+later with `uv tool` replaces the environment, so list every extra you want — the
+[extras guide](https://tradeflow.mk-dir.com/usage/extras) has the table and the exact
+commands. `quantred init --check --for <task>` prints the one you need for that task, and a
+command that needs a missing extra prints it with your current extras filled in.
 
 **→ [Getting started](https://tradeflow.mk-dir.com/usage/getting-started)** walks the
 whole path: install → keys → your first real result → Claude connected. Six steps,
 the first two with no keys and no network.
 
-The distribution is **`tradeflow-engine`** (the bare `tradeflow` on PyPI is an
-unrelated package); the command and the importable package are both `tradeflow`.
+The distribution and the command are both **`quantred`**; the importable package is
+`quantred`; no `tradeflow` command is installed with it. If you installed the older
+`tradeflow-engine`, its final release (2.3.1) is a transition package that depends on
+`quantred`, so upgrading it moves you across without breaking old scripts, MCP configs or
+packs importing `tradeflow` (the alias raises a `DeprecationWarning`, shown under `-W default` or in test runs). A private pack needs its imports
+changed from `tradeflow` to `quantred` before you drop it. The steps are in
+[migrating to QuantRed](https://tradeflow.mk-dir.com/usage/migrating-to-quantred).
 
 State (the research journal, trial store, bar cache, promoted configs) lives in
-`~/.tradeflow` for an installed copy, or in the repo when you run from a checkout.
-`tradeflow --version` prints which copy is running and where its state is; override
-with `TRADEFLOW_HOME`.
+`~/.tradeflow` — for an installed copy and for a checkout alike. `quantred --version`
+prints which copy is running and where its state is; override with `TRADEFLOW_HOME`.
 
 ## Quickstart (from a checkout)
 
 ```bash
 # 1. Install uv:  https://docs.astral.sh/uv/
 # 2. Install dependencies
-make install                          # uv sync
+make install                          # uv sync --inexact
 
 # 3. See it work — no keys, no network
 make demo                             # full pipeline on synthetic data + verdict
@@ -131,7 +145,9 @@ make up                               # MCP + persistent state. Never starts tra
 make down                             # stop; your trial history survives
 
 docker compose run --rm demo          # offline, no keys
-docker compose run --rm verdict --symbols NVDA,META --start 2024-01-02 --end 2024-04-01
+docker compose run --rm verdict --scanner none \
+  --symbols AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,JPM,XOM,UNH,COST,WMT \
+  --start 2024-01-02 --end 2024-12-31
 ```
 
 `live` is profile-gated and is never started by `up` — turning the machine on must
@@ -160,7 +176,7 @@ it's that the **refusal to promote a noise strategy is the product**:
 $ make demo
 
 ======================================================================
-  TradeFlow demo — synthetic data, no API keys, no network
+  QuantRed demo — synthetic data, no API keys, no network
   (a seeded random walk: realistic-looking, no actual edge)
 ======================================================================
 
@@ -174,22 +190,22 @@ $ make demo
 2) Walk-forward validation of 'demo_trend' (the honest scorecard)
    Optimize in-sample, score out-of-sample across folds, then gate it.
 
-   OOS Sharpe (median): -0.26   efficiency (OOS/IS): -0.17   OOS trades: 25
+   OOS Sharpe (median): -0.27   efficiency (OOS/IS): -0.19   OOS trades: 25
 
    Promotion gates:
-     [FAIL] oos_sharpe:                  -0.26  (threshold 1.20)
+     [FAIL] oos_sharpe:                  -0.27  (threshold 1.20)
      [FAIL] oos_profit_factor:            0.74  (threshold 1.30)
-     [FAIL] walk_forward_efficiency:     -0.17  (threshold 0.40)
-     [PASS] oos_drawdown_vs_is:          10.59  (threshold 13.94)
+     [FAIL] walk_forward_efficiency:     -0.19  (threshold 0.40)
+     [PASS] oos_drawdown_vs_is:         10.59%  (threshold 15.41%)
      [FAIL] min_oos_trades:                 25  (threshold 100)
-     [FAIL] deflated_sharpe:              0.00  (threshold 0.50)
+     [FAIL] deflated_sharpe:            <0.001  (threshold 0.500)
 
    Verdict: NOT promotable
 
    No edge in a random walk → the gates refuse to promote it. That refusal
-   is the product. Point TradeFlow at real data:
-     tradeflow init       add your free Alpaca paper keys
-     tradeflow verdict    then run the whole pipeline on real market data
+   is the product. Point QuantRed at real data:
+     quantred init       add your free Alpaca paper keys
+     quantred verdict    then run the whole pipeline on real market data
 ```
 
 That is one strategy because a bare install ships one. Anything you install
@@ -229,9 +245,9 @@ $ make demo-agent
        [PASS] oos_sharpe                     1.39   threshold 1.00
        [PASS] oos_profit_factor              1.92   threshold 1.30
        [PASS] walk_forward_efficiency        0.76   threshold 0.40
-       [FAIL] oos_drawdown_vs_is             0.18   threshold 0.09
+       [FAIL] oos_drawdown_vs_is           18.40%   threshold 13.50%
        [FAIL] min_oos_trades                   52   threshold 100
-       [PASS] deflated_sharpe                0.58   threshold 0.50
+       [PASS] deflated_sharpe               0.580   threshold 0.500
      Verdict     NOT promotable — discarded
 ```
 
@@ -285,7 +301,7 @@ promoted automatically — is what stays constant.
 | `horizon` | Measure alpha decay / half-life; recommend rebalance cadence + current/lagged blend (read-only) |
 | `walkforward` | Out-of-sample validation: optimize in-sample, score out-of-sample across folds, with a sacred holdout and promotion gates |
 | `trials` | Browse the campaign's memory: `list` (filters, sorting, paging), `show` (one trial in full), `best` (a DSR-ranked leaderboard that always shows the family's `n_trials`) — read-only; `archive` retires a whole era by moving the journal and its index aside **together** (a store left beside a fresh journal keeps reporting a trial count for evidence that is gone); `mark-contaminated` quarantines a suspect subset with an appended event — history intact, reason on the record |
-| `mcp` | Serve TradeFlow over MCP so an agent (Claude Code / Desktop) can drive verdict/scan/backtest/optimize/walk-forward/alphas/risk/portfolio/info — read-only, no live trading |
+| `mcp` | Serve QuantRed over MCP so an agent (Claude Code / Desktop) can drive verdict/scan/backtest/optimize/walk-forward/alphas/risk/portfolio/info — read-only, no live trading |
 
 One strategy ships, and it is a demonstration rather than a candidate:
 
@@ -293,7 +309,7 @@ One strategy ships, and it is a demonstration rather than a candidate:
   whose sign crossings are the golden / death cross (daily). Paired with the
   `demo_volume` scanner.
 
-It exists so `tradeflow demo` has something to run and so the interface has a
+It exists so `quantred demo` has something to run and so the interface has a
 worked example, not because it is an edge — the demo above spends its whole output
 showing that it is not. **The strategies you would actually trade go in your own
 package**, installed beside the engine and discovered by entry point, which keeps
@@ -304,36 +320,39 @@ clock's `BUY/SELL/HOLD` and the
 [continuous alpha](https://tradeflow.mk-dir.com/engineering/alphas) are both
 derived from it — one source of truth.
 
-`example` is a complete working pack to copy — `tradeflow init
+`example` is a complete working pack to copy — `quantred init
 --example-pack ./my-signals` writes it out. See
-[Your own strategies](https://tradeflow.mk-dir.com/docs/usage/private-strategies)
+[Your own strategies](https://tradeflow.mk-dir.com/usage/private-strategies)
 and [Extending](https://tradeflow.mk-dir.com/engineering/extending).
 
 ### Using it from your own code
 
-`tradeflow.services.*` is the supported surface — the same JSON-returning functions
+`quantred.services.*` is the supported surface — the same JSON-returning functions
 the CLI renders and the MCP server exposes, so you get identical numbers by
 construction:
 
 ```python
-from tradeflow.services.analysis import run_verdict
-from tradeflow.services.data import build_data_client
+from quantred.services.analysis import run_verdict
+from quantred.services.data import build_data_client
 
 result = run_verdict(build_data_client(), "demo_trend", ["NVDA", "AAPL"], start, end)
 print(result["verdict"]["summary"])
 ```
 
 Everything outside `services/` is internal and moves without notice. See
-[Using TradeFlow as a library](https://tradeflow.mk-dir.com/engineering/embedding).
+[Using QuantRed as a library](https://tradeflow.mk-dir.com/engineering/embedding).
 
 ### Optional features
 
 Capabilities are optional extras so the base install stays lean:
 
+Installed: see the [extras guide](https://tradeflow.mk-dir.com/usage/extras). In a
+checkout:
+
 ```bash
 make install-optimize     # scikit-learn, for `optimize --method bayesian`
 make install-portfolio    # Google OR-Tools, for `allocate`
-uv sync --extra mcp       # the MCP SDK, for `python main.py mcp`
+uv sync --inexact --extra mcp   # the MCP SDK, for `python main.py mcp`
 ```
 
 ## Project status
@@ -364,13 +383,13 @@ that the code is untested. Everything ships with offline tests.
 
 > **AI-assisted research without AI-controlled trading.**
 
-`python main.py mcp` exposes TradeFlow's deterministic capabilities to any MCP
+`quantred mcp` exposes QuantRed's deterministic capabilities to any MCP
 client (Claude Code / Claude Desktop) as tools: discovery, `run_verdict`,
 `run_scan`, `run_backtest`, `run_optimization`, `run_walk_forward`, the research
 chain (`compute_alphas`, `construct_portfolio`, `compute_information`, ...),
 `render_report`, read-only trial-store access (`list_trials`, `get_trial`,
 `best_trials`), `get_metrics_glossary`, and `save_config`/`load_config`/
-`list_configs`. Every call is logged to `logs/mcp_audit.jsonl` for replay.
+`list_configs`. Every call is appended to the audit log (`logs/mcp_audit.jsonl` under the state root) for replay.
 
 **The safety model is structural.** The server constructs only a *data* client —
 no trading client, no broker — so it is incapable of placing an order. There is
@@ -379,32 +398,37 @@ config to live is a manual human step outside MCP. The capability simply isn't
 wired in, so it can't be prompt-injected around. The agent works on the
 *research clock* (offline, exploratory); the live order path stays LLM-free.
 
-Register it with a client. Installed (`uv tool install --force "tradeflow-engine[mcp]"`):
+Register it with a client. The server needs the `mcp` extra, which the quickstart above
+installs; on a copy that lacks it, `quantred init --check --for mcp` prints the one command
+that adds it and keeps your other extras and packs:
 
 ```bash
-claude mcp add tradeflow -- tradeflow mcp     # Claude Code
+claude mcp add quantred -- quantred mcp     # Claude Code
 ```
 
 ```json
-{ "mcpServers": { "tradeflow": { "command": "tradeflow", "args": ["mcp"] } } }
+{ "mcpServers": { "quantred": { "command": "quantred", "args": ["mcp"] } } }
 ```
 
-From a checkout, point it at the script instead:
+A desktop client often has a smaller `PATH` than a terminal, so `quantred init` prints
+this block with the absolute command for your copy, and `quantred mcp --self-test`
+runs exactly that command (printing the block again when it passes). From a checkout it is the checkout's interpreter and the
+absolute `main.py`:
 
 ```json
-{ "mcpServers": { "tradeflow": {
-    "command": "uv",
-    "args": ["run", "--extra", "mcp", "python", "main.py", "mcp"],
-    "cwd": "/path/to/tradeflow" } } }
+{ "mcpServers": { "quantred": {
+    "command": "/path/to/quantred/.venv/bin/python",
+    "args": ["/path/to/quantred/main.py", "mcp"] } } }
 ```
 
-Note the two resolve **different state roots** (`~/.tradeflow` vs. the checkout), so
-point an agent and yourself at the same one — or set `TRADEFLOW_HOME` — if they
-should share a campaign's history.
+An installed copy and a checkout share one state root, `~/.tradeflow`, unless
+`TRADEFLOW_HOME` is set, so an agent and you see the same campaign history. If you set
+`TRADEFLOW_HOME`, the config block printed by `init` carries it too; a desktop client does
+not inherit your shell's exports.
 
 ## Research agent (optional)
 
-`python main.py research` runs a bounded, offline loop that proposes hypotheses,
+`quantred research` runs a bounded, offline loop that proposes hypotheses,
 validates them out-of-sample with walk-forward, and writes a shortlist of
 provenance-stamped candidate configs to `configs/` for a human to review. It never
 promotes anything to live trading.
@@ -413,21 +437,26 @@ The proposer is **provider-agnostic** — choose with `--provider`:
 
 | Provider | Install | Default model | Credential |
 |----------|---------|---------------|------------|
-| `anthropic` (default) | `uv sync --extra ai` | `claude-opus-4-8` | `ANTHROPIC_API_KEY` |
-| `openai` | `uv sync --extra openai` | `gpt-4o` | `OPENAI_API_KEY` |
+| `anthropic` (default) | extra `ai` | `claude-opus-4-8` | `ANTHROPIC_API_KEY` |
+| `openai` | extra `openai` | `gpt-4o` | `OPENAI_API_KEY` |
 | `ollama` (local) | none | `llama3.1` | none |
 
-Set the credential in `.env` (alongside your Alpaca keys — see `.env.example`)
-or as the standard environment variable. Ollama runs locally and needs no key.
+`quantred init --check --for research --provider anthropic` prints the exact command that
+adds the extra to your copy. Set the credential in `.env` (alongside your Alpaca keys; `quantred init`
+writes it) or as the standard environment variable. Ollama runs locally and needs no key.
 
 ```bash
-uv run python main.py research --provider ollama --model llama3.1 \
+quantred research --provider ollama --model llama3.1 \
   --symbols NVDA,AAPL --start 2024-01-01 --end 2025-12-31 \
   --goal "improve OOS Sharpe without raising max drawdown" --holdout-days 60
 ```
 
 See the [docs](https://tradeflow.mk-dir.com/) (Usage → *AI agents*) for the full
 tool surface, guardrails, and provider setup.
+
+*Contributors, from a checkout:* the same commands run as `python main.py mcp` and
+`python main.py research`, and extras are added with `uv sync --inexact --extra ai`
+(`--inexact` keeps the dev tools and any editable pack).
 
 ## Architecture
 
@@ -457,7 +486,7 @@ marketdata/     MarketDataProvider interface, Timeframe, MarketDataClient
 indicators/     Pure pandas/numpy technical indicators
 strategies/     Strategy base + signals (score -> BUY/SELL/HOLD, sizing, risk)
 scanners/       ScannerStrategy base + SymbolScanner (universe resolution)
-demo/           The one strategy + scanner a bare install ships, for `tradeflow demo`
+demo/           The one strategy + scanner a bare install ships, for `quantred demo`
 execution/      LiveTrader (signals -> broker orders)
 analytics/      Performance metrics + reporting
 engine/         BacktestEngine + LiveEngine (orchestration only)
@@ -508,7 +537,7 @@ uv run ruff format --check . # format
 strategy or scanner, an additional broker/data adapter, an LLM provider, docs, or
 just a feature request or suggestion. If you have an idea, open an issue to start
 the conversation; if you have a fix, open a PR. No contribution is too small, and
-feedback on what would make TradeFlow more useful is always appreciated.
+feedback on what would make QuantRed more useful is always appreciated.
 
 And hey — don't be greedy: share your algos, let's make money together. 📈 (Worst
 case, we lose money together, which is basically friendship.)
@@ -532,11 +561,6 @@ make flatten REASON="why"             # halt, cancel everything, close everythin
 Halt state is a file under the state root, not a database — the order path holds no
 connection to anything that can be down, so the switch still works when the engine
 does not. See [Stopping trading](https://tradeflow.mk-dir.com/usage/stopping).
-
-```bash
-make cancel-orders         # cancel all open orders
-make close-positions       # liquidate all positions (and cancel orders)
-```
 
 ## ☕ Coffee?
 

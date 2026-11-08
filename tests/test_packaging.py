@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from tradeflow import settings
+from quantred import settings
 
 #: Built from the real distribution name rather than hand-written. A literal here
 #: kept passing after the distribution was renamed, while checkout detection had
@@ -24,7 +24,7 @@ PYPROJECT = f'name = "{settings.DISTRIBUTION_NAME}"\n'
 
 # --- the entry point --------------------------------------------------------
 def test_the_console_script_target_exists_and_is_callable():
-    from tradeflow.cli import main
+    from quantred.cli import main
 
     assert callable(main)
 
@@ -32,7 +32,7 @@ def test_the_console_script_target_exists_and_is_callable():
 def test_the_checkout_shim_and_the_installed_command_are_the_same_code():
     """Two behaviors reachable two ways is the confusion this is meant to avoid."""
     import main as shim
-    from tradeflow.cli import main as packaged
+    from quantred.cli import main as packaged
 
     assert shim.main is packaged
 
@@ -40,17 +40,22 @@ def test_the_checkout_shim_and_the_installed_command_are_the_same_code():
 def test_the_declared_entry_point_matches_reality():
     """A console script that names a function nobody kept is only discovered at
     install time, by a user."""
-    import tomllib
+    tomllib = pytest.importorskip("tomllib")  # 3.11+; the package still supports 3.10
 
     manifest = tomllib.loads(Path("pyproject.toml").read_text())
-    assert manifest["project"]["scripts"]["tradeflow"] == "tradeflow.cli:main"
-    assert manifest["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == ["tradeflow"]
+    scripts = manifest["project"]["scripts"]
+    assert scripts[settings.CLI_NAME] == "quantred.cli:main"
+    # The old command is the transition package's. Two distributions installing the same
+    # script means one's upgrade or uninstall deletes the other's copy.
+    for legacy in settings.LEGACY_CLI_NAMES:
+        assert legacy not in scripts
+    assert manifest["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == ["quantred"]
 
 
 def test_the_repo_itself_is_recognized_as_a_checkout(monkeypatch):
     """The regression guard for the rename that broke detection once. It no longer
     decides where state goes — it decides which *instructions* make sense, `make demo`
-    against `tradeflow demo`. Getting it wrong now sends a contributor an install
+    against `quantred demo`. Getting it wrong now sends a contributor an install
     command instead of a Makefile target.
 
     Drops the suite's own TRADEFLOW_HOME: the override is what every other test wants
@@ -66,22 +71,83 @@ def test_the_repo_itself_is_recognized_as_a_checkout(monkeypatch):
 def test_the_distribution_name_matches_what_is_packaged():
     """Checkout detection reads this out of pyproject.toml; if the two disagree,
     every state path silently relocates."""
-    import tomllib
+    tomllib = pytest.importorskip("tomllib")  # 3.11+; the package still supports 3.10
 
     manifest = tomllib.loads(Path("pyproject.toml").read_text())
     assert manifest["project"]["name"] == settings.DISTRIBUTION_NAME
 
 
+def _manifest_dir(tmp_path, name: str, line: str = "") -> Path:
+    (tmp_path / "pyproject.toml").write_text(f'[project]\nname = "{name}"{line}\nversion = "1"\n')
+    return tmp_path
+
+
+def test_an_older_checkout_is_still_recognised(tmp_path):
+    """A working copy from before the rename declares the old distribution name.
+
+    Failing to recognise it would put that checkout's state in the wrong place without
+    a word - the split-campaign failure the state root exists to prevent."""
+    # The one place the historical name is spelled out: it is a fact about what was
+    # published, not something the code can derive, and every old checkout declares it.
+    assert "tradeflow-engine" in settings.LEGACY_DISTRIBUTION_NAMES
+    for legacy in settings.LEGACY_DISTRIBUTION_NAMES:
+        assert settings._looks_like_checkout(_manifest_dir(tmp_path, legacy))
+
+
+def test_a_similarly_named_project_is_not_a_checkout(tmp_path):
+    """The name line is matched whole: a project merely starting with ours is not ours."""
+    for name in (f"{settings.DISTRIBUTION_NAME}-extras", f"{settings.LEGACY_DISTRIBUTION_NAMES[0]}-tools"):
+        assert not settings._looks_like_checkout(_manifest_dir(tmp_path, name))
+    assert settings._looks_like_checkout(_manifest_dir(tmp_path, settings.DISTRIBUTION_NAME, "  # ours"))
+
+
+@pytest.mark.parametrize("spelling", ['  name = "{n}"', "name = '{n}'", 'name="{n}"'])
+def test_other_valid_spellings_of_the_name_line_still_count(tmp_path, spelling):
+    (tmp_path / "pyproject.toml").write_text(f"[project]\n{spelling.format(n=settings.DISTRIBUTION_NAME)}\n")
+    assert settings._looks_like_checkout(tmp_path)
+
+
+def test_the_wheel_installs_only_the_quantred_executable(tmp_path):
+    """Read from the built artifact, not from pyproject.toml: the declaration is not
+    what an installer reads."""
+    import shutil
+    import zipfile
+
+    uv = shutil.which("uv")
+    if uv is None:
+        pytest.skip("uv is not available to build the wheel")
+    built = subprocess.run(
+        [uv, "build", "--wheel", "-o", str(tmp_path), str(settings.PROJECT_ROOT)],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    if built.returncode != 0:
+        pytest.skip(f"the wheel could not be built here (offline?): {built.stderr[-200:]}")
+    wheel = next(tmp_path.glob("*.whl"))
+    with zipfile.ZipFile(wheel) as archive:
+        entry_points = next(n for n in archive.namelist() if n.endswith("entry_points.txt"))
+        metadata = next(n for n in archive.namelist() if n.endswith(".dist-info/METADATA"))
+        scripts = archive.read(entry_points).decode()
+        name_line = next(
+            line for line in archive.read(metadata).decode().splitlines() if line.startswith("Name:")
+        )
+    assert name_line == f"Name: {settings.DISTRIBUTION_NAME}"
+    assert f"{settings.CLI_NAME} = quantred.cli:main" in scripts
+    for legacy in settings.LEGACY_CLI_NAMES:
+        assert f"{legacy} =" not in scripts
+
+
 def test_the_version_has_exactly_one_source():
     """A packaged version and a printed version that can disagree will."""
-    import tomllib
+    tomllib = pytest.importorskip("tomllib")  # 3.11+; the package still supports 3.10
 
-    import tradeflow
+    import quantred
 
     manifest = tomllib.loads(Path("pyproject.toml").read_text())
     assert "version" in manifest["project"].get("dynamic", []), "version must be dynamic"
-    assert manifest["tool"]["hatch"]["version"]["path"] == "tradeflow/__init__.py"
-    assert tradeflow.__version__
+    assert manifest["tool"]["hatch"]["version"]["path"] == "quantred/__init__.py"
+    assert quantred.__version__
 
 
 def test_help_exits_clean_through_the_shim():
@@ -104,10 +170,10 @@ def test_version_reports_which_copy_is_running_and_where_its_state_is():
 
 
 def test_the_package_root_imports_nothing_heavy():
-    """`tradeflow --help` must not pay for pandas, the vendor SDK, or an optional
+    """`quantred --help` must not pay for pandas, the vendor SDK, or an optional
     extra it is not using."""
-    source = Path("tradeflow/__init__.py").read_text()
-    for heavy in ("import pandas", "import numpy", "from tradeflow.", "import alpaca"):
+    source = Path("quantred/__init__.py").read_text()
+    for heavy in ("import pandas", "import numpy", "from quantred.", "import alpaca"):
         assert heavy not in source
 
 
@@ -163,11 +229,11 @@ def test_state_path_creates_its_parent(tmp_path, monkeypatch):
 def test_every_kind_of_state_lands_under_one_root():
     """One campaign, one root — the split-journal failure has no error to catch it,
     so the only defense is that nothing resolves its own path."""
-    from tradeflow.optimization.config_store import DEFAULT_CONFIG_DIR
-    from tradeflow.services.analysis import ARTIFACT_DIR
-    from tradeflow.services.audit import DEFAULT_AUDIT_PATH, DEFAULT_TRIAL_JOURNAL
-    from tradeflow.store.bars import DEFAULT_CACHE_ROOT, DEFAULT_COVERAGE_DB
-    from tradeflow.store.trials import DEFAULT_DB_PATH, DEFAULT_JOURNAL_PATH
+    from quantred.optimization.config_store import DEFAULT_CONFIG_DIR
+    from quantred.services.analysis import ARTIFACT_DIR
+    from quantred.services.audit import DEFAULT_AUDIT_PATH, DEFAULT_TRIAL_JOURNAL
+    from quantred.store.bars import DEFAULT_CACHE_ROOT, DEFAULT_COVERAGE_DB
+    from quantred.store.trials import DEFAULT_DB_PATH, DEFAULT_JOURNAL_PATH
 
     root = settings.state_root()
     for path in (
@@ -188,8 +254,8 @@ def test_every_kind_of_state_lands_under_one_root():
 def test_the_journal_and_the_trial_store_agree_on_where_the_journal_is():
     """Two modules naming the same file separately is how a campaign silently
     becomes two campaigns."""
-    from tradeflow.services.audit import DEFAULT_TRIAL_JOURNAL
-    from tradeflow.store.trials import DEFAULT_JOURNAL_PATH
+    from quantred.services.audit import DEFAULT_TRIAL_JOURNAL
+    from quantred.store.trials import DEFAULT_JOURNAL_PATH
 
     assert Path(DEFAULT_TRIAL_JOURNAL) == Path(DEFAULT_JOURNAL_PATH)
 
@@ -208,7 +274,7 @@ def test_demo_runs_against_an_empty_state_root(tmp_path):
         [sys.executable, "main.py", "demo"], capture_output=True, text=True, timeout=600, env=env
     )
     assert result.returncode == 0, result.stderr[-2000:]
-    assert "TradeFlow demo" in result.stdout
+    assert f"{settings.BRAND} demo" in result.stdout
 
 
 # --- what the source distribution actually carries --------------------------
@@ -247,3 +313,50 @@ def test_the_sdist_leaves_repo_local_state_behind():
     roots = {p.split("/", 1)[0] for p in paths}
 
     assert not roots & {"configs", "logs", "cache", "specs", "dist", ".claude", ".vscode", ".venv"}
+
+
+def test_a_receipt_or_entry_point_under_the_old_name_is_this_project():
+    """Evidence written while the project had its previous name describes this copy,
+    not a pack someone installed; counting it as one would advise re-adding the engine."""
+    assert settings.is_own_distribution(settings.DISTRIBUTION_NAME)
+    for legacy in settings.LEGACY_DISTRIBUTION_NAMES:
+        assert settings.is_own_distribution(legacy.upper().replace("-", "_"))
+    assert not settings.is_own_distribution("some-pack")
+
+
+def test_the_example_pack_fetch_command_is_the_one_the_docs_show(monkeypatch):
+    """An installed copy has no example pack, so the refusal prints a clone-and-copy
+    command and the private-strategies guide prints it too. Two hand-written copies of
+    one command drift with nothing failing, and a renamed repository would leave a `cp`
+    of a directory the clone never made. The guide's command must be the CLI's, and
+    the directory it copies must be one the repository actually has."""
+    import re
+
+    from quantred import cli
+    from quantred.services import setup
+
+    monkeypatch.setattr(setup, "example_pack_source", lambda: None)
+    with pytest.raises(SystemExit) as refused:
+        cli._scaffold_example_pack("./my-signals")
+    command = next(line.strip() for line in str(refused.value.code).splitlines() if "git clone" in line)
+
+    guide = (Path(__file__).resolve().parents[1] / "docs/content/usage/private-strategies.md").read_text()
+    assert command in guide
+
+    copied = re.search(r"cp -R (\S+)/(\S+) ", command)
+    assert copied.group(1) == settings.REPOSITORY_URL.rstrip("/").rsplit("/", 1)[-1]
+    assert (Path(__file__).resolve().parents[1] / copied.group(2) / "pyproject.toml").is_file()
+
+
+def test_the_example_pack_fetch_command_follows_a_renamed_repository(monkeypatch):
+    """The copied directory is the one the clone creates, whatever the repository is called."""
+    from quantred import cli
+    from quantred.services import setup
+
+    monkeypatch.setattr(setup, "example_pack_source", lambda: None)
+    monkeypatch.setattr(cli, "REPOSITORY_URL", "https://example.invalid/acme/renamed")
+    with pytest.raises(SystemExit) as refused:
+        cli._scaffold_example_pack("./my-signals")
+    assert "git clone https://example.invalid/acme/renamed && cp -R renamed/example " in str(
+        refused.value.code
+    )

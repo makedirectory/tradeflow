@@ -7,7 +7,7 @@ title: Architecture
 
 ## The mental model: two clocks
 
-Before the layers, the one idea that explains the most: TradeFlow runs on **two
+Before the layers, the one idea that explains the most: QuantRed runs on **two
 clocks**, and they never touch.
 
 ```mermaid
@@ -31,7 +31,7 @@ human-approved config and nothing else.
 - **The research clock** is where intelligence and non-determinism live —
   parameter search, walk-forward validation, and the optional AI research agent.
   It only ever *proposes*: it writes provenance-stamped candidate configs to disk.
-- **The trade clock** (`tradeflow/engine/live.py` → `tradeflow/execution/`) is deliberately
+- **The trade clock** (`quantred/engine/live.py` → `quantred/execution/`) is deliberately
   dumb: a live bar produces a signal produces an order. No model sits in the order
   path, so there's nothing to prompt-inject and nothing non-deterministic to debug
   when real money is at stake.

@@ -12,15 +12,14 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from tests.fakes import make_ohlcv
-from tradeflow.risk import (
+from quantred.risk import (
     LedoitWolfCovariance,
     SampleCovariance,
     build_factor_risk_matrix,
     build_risk_matrix,
     estimate_factor_model,
 )
-from tradeflow.risk.conditional import (
+from quantred.risk.conditional import (
     condition_risk_matrix,
     evaluate_vol_forecasts,
     ewma_covariance_path,
@@ -31,7 +30,8 @@ from tradeflow.risk.conditional import (
     qlike_loss,
     turnover_risk_share,
 )
-from tradeflow.risk.factor import FactorRiskMatrix
+from quantred.risk.factor import FactorRiskMatrix
+from tests.fakes import make_ohlcv
 
 PPY = 252.0
 
@@ -299,7 +299,7 @@ def test_ewma_covariance_matches_variance_path_on_the_diagonal():
 
 
 def test_turnover_risk_share_is_zero_when_sigma_is_unchanged():
-    from tradeflow.portfolio.optimizer import MeanVarianceOptimizer
+    from quantred.portfolio.optimizer import MeanVarianceOptimizer
 
     symbols = ["A", "B", "C", "D"]
     sigma = np.eye(4) * 0.04
@@ -314,7 +314,7 @@ def test_turnover_risk_share_is_zero_when_sigma_is_unchanged():
 
 
 def test_turnover_risk_share_is_positive_when_sigma_moves():
-    from tradeflow.portfolio.optimizer import MeanVarianceOptimizer
+    from quantred.portfolio.optimizer import MeanVarianceOptimizer
 
     symbols = ["A", "B", "C", "D"]
     sigma_prev = np.eye(4) * 0.04
@@ -332,7 +332,7 @@ def test_turnover_risk_share_is_positive_when_sigma_moves():
 
 
 def _matrix(symbols, sigma):
-    from tradeflow.risk import RiskMatrix
+    from quantred.risk import RiskMatrix
 
     return RiskMatrix(symbols=symbols, sigma=sigma)
 
@@ -340,6 +340,6 @@ def _matrix(symbols, sigma):
 def _alpha(symbol: str, alpha: float, z: float):
     from datetime import datetime
 
-    from tradeflow.alphas import Alpha
+    from quantred.alphas import Alpha
 
     return Alpha(symbol=symbol, alpha=alpha, as_of=datetime(2024, 1, 1), residual_vol=0.2, ic=0.05, raw_z=z)

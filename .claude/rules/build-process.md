@@ -21,7 +21,7 @@ never silently.
    [specs](specs.md) governs the ones that become files.
 2. **Implement** in the correct layer. Domain meaning lives in a strategy, scanner,
    engine or service; reusable mechanics live in `utils/` or `analytics/`. No vendor SDK
-   above `tradeflow/brokers/`. Where behavior turns on a library, use the
+   above `quantred/brokers/`. Where behavior turns on a library, use the
    **dependency-truth** skill rather than recalling what it does.
 3. **Test** offline and deterministically through `tests/fakes.py` — see
    [testing](testing.md). Unit coverage for the mechanic, integration coverage for the

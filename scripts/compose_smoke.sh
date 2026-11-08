@@ -16,7 +16,7 @@ fail() { printf '  [FAIL] %s\n' "$1"; FAILED=1; }
 FAILED=0
 
 echo
-echo "TradeFlow compose smoke test"
+echo "QuantRed compose smoke test"
 echo
 
 # 1. The YAML is valid and `up` starts nothing that trades.
@@ -34,7 +34,7 @@ fi
 docker compose build mcp >/dev/null
 pass "image builds"
 
-DEFAULT_CMD=$(docker image inspect tradeflow:local --format '{{json .Config.Cmd}}')
+DEFAULT_CMD=$(docker image inspect quantred:local --format '{{json .Config.Cmd}}')
 if grep -q '"live"' <<<"$DEFAULT_CMD"; then
     fail "image CMD defaults to live: $DEFAULT_CMD"
 else
@@ -49,18 +49,23 @@ else
 fi
 
 # 4. State survives container replacement. This is the whole point of the volumes.
-docker compose run --rm --no-deps -T backtest \
-    --strategy ma_crossover --scanner none --symbols AAA,BBB \
-    --start 2024-01-02 --end 2024-06-01 >/tmp/tf-backtest.log 2>&1 || true
+#    A trial is journaled through the application's own writer, which needs no keys:
+#    this used to backtest a strategy that no longer exists, ignore the failure, and
+#    compare "Rows: 0" with "Rows: 0" - a pass that tested nothing.
+docker compose run --rm --no-deps -T --entrypoint uv trials run python -c \
+    "from datetime import datetime; from quantred.services.audit import journal_trial; \
+journal_trial('backtest', strategy='compose_smoke', symbols=['AAA'], start=datetime(2024, 1, 2), \
+end=datetime(2024, 6, 1), params={'smoke': 1}, metrics={'sharpe_ratio': 0.0})" \
+    >/tmp/tf-journal.log 2>&1 || fail "could not journal a trial - see /tmp/tf-journal.log"
 
 BEFORE=$(docker compose run --rm --no-deps -T trials status 2>/dev/null | grep -E '^Rows' || echo "Rows: ?")
 docker compose down >/dev/null 2>&1
 AFTER=$(docker compose run --rm --no-deps -T trials status 2>/dev/null | grep -E '^Rows' || echo "Rows: ?")
 
-if [[ "$BEFORE" == "$AFTER" && "$BEFORE" != "Rows: ?" ]]; then
+if [[ "$BEFORE" == "$AFTER" && "$BEFORE" != "Rows: ?" && "$BEFORE" != *": 0" ]]; then
     pass "state survives 'down' ($BEFORE)"
 else
-    fail "state did not survive 'down' (before='$BEFORE' after='$AFTER')"
+    fail "state did not survive 'down', or nothing was recorded (before='$BEFORE' after='$AFTER')"
 fi
 
 # 5. The volume is readable by the host user without sudo — mixed native/container

@@ -5,10 +5,10 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
+from quantred.data import ClientBarSource, FeaturePanel, add_risk_features, add_score_feature
+from quantred.data.scan import slice_to_as_of
+from quantred.marketdata.client import MarketDataClient
 from tests.fakes import DictMarketData, make_ohlcv
-from tradeflow.data import ClientBarSource, FeaturePanel, add_risk_features, add_score_feature
-from tradeflow.data.scan import slice_to_as_of
-from tradeflow.marketdata.client import MarketDataClient
 
 SYMBOLS = ["AAA", "BBB", "SPY"]
 

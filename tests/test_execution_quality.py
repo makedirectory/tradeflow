@@ -8,7 +8,7 @@ rendered as zero, and a modelled cost must never be added to an observed one.
 
 import pytest
 
-from tradeflow.analytics.execution_quality import (
+from quantred.analytics.execution_quality import (
     cost_summary,
     decline_summary,
     execution_report,
@@ -16,8 +16,8 @@ from tradeflow.analytics.execution_quality import (
     latency_summary,
     slippage_summary,
 )
-from tradeflow.execution import decision as decisions
-from tradeflow.execution.ledger import CUMULATIVE, PositionLedger, slippage_bps
+from quantred.execution import decision as decisions
+from quantred.execution.ledger import CUMULATIVE, PositionLedger, slippage_bps
 
 
 @pytest.fixture
@@ -381,7 +381,7 @@ def test_pre_code_rows_fold_into_the_same_family_as_new_ones(ledger):
 )
 def test_every_limit_message_this_project_has_written_is_recognised(reason, family):
     """Each of these was emitted before codes existed, so each has history on disk."""
-    from tradeflow.execution.decision import reason_family
+    from quantred.execution.decision import reason_family
 
     assert reason_family({"reason": reason}) == family
 
@@ -389,14 +389,14 @@ def test_every_limit_message_this_project_has_written_is_recognised(reason, fami
 def test_a_message_with_no_family_keeps_its_own_text():
     """Both directions. A fixed phrase with no numbers never fragmented, and forcing it
     into a family it may not belong to would lose the only thing it says."""
-    from tradeflow.execution.decision import reason_family
+    from quantred.execution.decision import reason_family
 
     assert reason_family({"reason": "market is closed"}) == "market is closed"
 
 
 def test_an_unrecognised_message_is_not_swallowed_as_unknown():
     """Grouping must not become a way to lose refusals nobody has categorised yet."""
-    from tradeflow.execution.decision import reason_family
+    from quantred.execution.decision import reason_family
 
     assert reason_family({"reason": "broker refused: insufficient day trading buying power"}).startswith(
         "broker refused"
@@ -405,7 +405,7 @@ def test_an_unrecognised_message_is_not_swallowed_as_unknown():
 
 def test_a_code_still_wins_over_the_message():
     """The map is a fallback for history, not a re-derivation of what a row already says."""
-    from tradeflow.execution.decision import reason_family
+    from quantred.execution.decision import reason_family
 
     assert (
         reason_family({"reason_code": decisions.NET_EXPOSURE, "reason": "book is full: 3 of 3"})

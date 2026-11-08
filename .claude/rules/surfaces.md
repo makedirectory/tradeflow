@@ -1,9 +1,9 @@
 ---
 paths:
-  - "tradeflow/cli.py"
-  - "tradeflow/mcp/**/*.py"
-  - "tradeflow/services/**/*.py"
-  - "tradeflow/settings.py"
+  - "quantred/cli.py"
+  - "quantred/mcp/**/*.py"
+  - "quantred/services/**/*.py"
+  - "quantred/settings.py"
 ---
 
 # Surfaces: CLI, MCP, and the installed package

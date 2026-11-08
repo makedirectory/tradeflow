@@ -6,9 +6,10 @@ pointing at it, and nothing complains until a reader clicks. Anchors are worse,
 because a link to a renamed heading still resolves as a file and just lands in the
 wrong place.
 
-Scope note: ``specs/`` is gitignored, so CI never sees it. Run this locally (``make
-check-links``) to cover the specs too — it checks whatever of the roots below exist,
-so the same command is correct in both places.
+Scope: the repository's own Markdown. ``specs/`` is gitignored and local-only, so it
+is not a default root, and a committed link *into* it is itself a problem: a reader of
+the repository cannot follow it. Check the specs on their own with ``make
+check-spec-links`` (``check_links.py specs``).
 
 Usage:
     python scripts/check_links.py [root ...]     # defaults to the roots below
@@ -21,10 +22,9 @@ import sys
 from pathlib import Path
 from typing import Iterable, List, Set, Tuple
 
-#: Checked when present. specs/ is local-only; the rest are tracked.
+#: The tracked Markdown. Checked when present.
 DEFAULT_ROOTS = (
     "docs/content",
-    "specs",
     ".claude/rules",
     ".claude/skills",
     ".claude/commands",
@@ -34,6 +34,9 @@ DEFAULT_ROOTS = (
 )
 
 SKIP_DIRS = {"node_modules", ".venv", "build", ".git", "__pycache__", ".pytest_cache"}
+
+#: Gitignored and local-only: nothing tracked may link into it.
+LOCAL_ONLY = "specs"
 
 #: [text](target) — the target stops at whitespace so titles like (path "t") are cut.
 LINK = re.compile(r"\[(?P<text>[^\]]*)\]\((?P<target>[^)\s]+)(?:\s+\"[^\"]*\")?\)")
@@ -87,12 +90,25 @@ def markdown_files(roots: Iterable[str]) -> List[Path]:
     for raw in roots:
         root = Path(raw)
         if not root.exists():
-            continue  # specs/ is absent in CI; that is expected, not an error
+            continue  # a root absent here (e.g. specs/ in CI) is expected, not an error
         if root.is_file():
             found.append(root)
             continue
         found.extend(p for p in root.rglob("*.md") if not SKIP_DIRS & set(p.parts))
     return sorted(found)
+
+
+def _links_into_local_only(source: Path, target: Path) -> bool:
+    """Whether a tracked file links into the local-only folder.
+
+    Resolved against the working directory, which is the repository root for every
+    caller. A spec linking to a sibling spec is fine; only a link crossing from tracked
+    Markdown into ``specs/`` is refused - it resolves on the author's machine and
+    nowhere else, so the ordinary missing-file check passes locally.
+    """
+    local = Path(LOCAL_ONLY).resolve()
+    inside = lambda p: p == local or local in p.parents  # noqa: E731
+    return not inside(source.resolve()) and inside(target.resolve())
 
 
 def check(roots: Iterable[str]) -> List[str]:
@@ -108,6 +124,11 @@ def check(roots: Iterable[str]) -> List[str]:
                 continue
 
             file_part, _, anchor = target.partition("#")
+            if file_part and _links_into_local_only(path, path.parent / file_part):
+                problems.append(
+                    f"{path}: links into gitignored {LOCAL_ONLY}/ → [{match.group('text')}]({target})"
+                )
+                continue
             if not file_part:
                 resolved = path  # same-page anchor
             else:

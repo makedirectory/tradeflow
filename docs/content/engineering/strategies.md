@@ -5,7 +5,7 @@ title: Strategies
 
 # Strategies
 
-A `Strategy` (`tradeflow/strategies/base.py`) is responsible for three things and no
+A `Strategy` (`quantred/strategies/base.py`) is responsible for three things and no
 more:
 
 1. **Indicators** — `process_data(df)` returns the OHLCV frame plus the columns
@@ -67,7 +67,7 @@ See [live trading](../usage/live-trading.md) for the operational side.
 
 ## The signal vocabulary
 
-The derived signals are plain strings, defined once in `tradeflow/strategies/signals.py`
+The derived signals are plain strings, defined once in `quantred/strategies/signals.py`
 so every layer agrees:
 
 ```python
@@ -129,7 +129,7 @@ One ships, built on the pure [indicators](indicators):
 |--------------|-------|--------------------------|
 | `demo_trend` | Trend (daily, long-only) | Normalized EMA gap `(fast − slow) / slow` — sign crossings are the golden / death cross. |
 
-It lives in `tradeflow/demo/` rather than `tradeflow/strategies/`, and registers
+It lives in `quantred/demo/` rather than `quantred/strategies/`, and registers
 through the same entry-point group a private pack uses — so the engine discovers its
 own demonstration by the path yours will travel, and that path is exercised by every
 install rather than only by a test fixture.

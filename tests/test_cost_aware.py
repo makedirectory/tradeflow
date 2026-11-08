@@ -14,13 +14,13 @@ from datetime import datetime
 import numpy as np
 import pytest
 
+from quantred.alphas.base import Alpha
+from quantred.costs import ParametricCostModel
+from quantred.costs.base import CostModel, Trade
+from quantred.marketdata.client import MarketDataClient
+from quantred.portfolio.optimizer import CostInputs, MeanVarianceOptimizer
+from quantred.risk.base import RiskMatrix
 from tests.fakes import DictMarketData, make_ohlcv
-from tradeflow.alphas.base import Alpha
-from tradeflow.costs import ParametricCostModel
-from tradeflow.costs.base import CostModel, Trade
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.portfolio.optimizer import CostInputs, MeanVarianceOptimizer
-from tradeflow.risk.base import RiskMatrix
 
 AS_OF = datetime(2024, 6, 1)
 SYMS = ["A", "B", "C", "D"]
@@ -311,7 +311,7 @@ def test_impact_coefficient_formula_and_missing_data():
 def test_base_cost_model_has_zero_cost_defaults():
     class Null(CostModel):
         def cost(self, trade):  # pragma: no cover - trivial
-            from tradeflow.costs.base import TradeCost
+            from quantred.costs.base import TradeCost
 
             return TradeCost(0, 0, 0, 0, capped=False)
 
@@ -322,7 +322,7 @@ def test_base_cost_model_has_zero_cost_defaults():
 
 # --- spread proxy ------------------------------------------------------------
 def test_spread_proxy_is_monotone_in_range_and_clamped():
-    from tradeflow.services.analysis import _spread_proxy
+    from quantred.services.analysis import _spread_proxy
 
     model = ParametricCostModel()
     tight = make_ohlcv(n=60, seed=1, freq="1D")
@@ -344,7 +344,7 @@ def _universe():
 
 
 def test_construct_portfolio_cost_aware_reports_the_cost_split():
-    from tradeflow.services import analysis
+    from quantred.services import analysis
 
     symbols, dc = _universe()
     res = analysis.construct_portfolio(dc, "demo_trend", symbols, AS_OF, capital=1_000_000.0, cost_aware=True)
@@ -364,7 +364,7 @@ def test_construct_portfolio_cost_aware_reports_the_cost_split():
 
 
 def test_construct_portfolio_gross_objective_uses_ex_post_drag():
-    from tradeflow.services import analysis
+    from quantred.services import analysis
 
     symbols, dc = _universe()
     res = analysis.construct_portfolio(

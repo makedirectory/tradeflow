@@ -5,7 +5,7 @@ title: Changelog
 
 # Changelog
 
-TradeFlow started in June 2023 as a personal project and has been rebuilt more than
+QuantRed (TradeFlow until the rename below) started in June 2023 as a personal project and has been rebuilt more than
 once since. It is not a product, and it has never managed real money — it exists
 partly for the pleasure of building it, and partly to demonstrate something worth
 demonstrating: **the machinery serious quantitative research runs on is buildable by
@@ -25,6 +25,432 @@ and gate thresholds may still change, and it has no production users or live cap
 
 Dates are release dates. Versions before 2.0.0 were never published to a package
 index; they are tagged in the repository.
+
+---
+
+## 2.4.0 — 2026-11-07
+
+TradeFlow is now **QuantRed**, and a first session works from install to a result
+without guessing. The history below keeps the old name as it was written.
+
+### Research agent
+
+- `research` prints one line per round (evaluated with its median-across-folds OOS Sharpe,
+  or rejected with the journaled reason). A session where nothing was evaluated says so;
+  it used to end "No candidate cleared the promotion gates". The trial count is worded as
+  this session's own.
+- `--max-trials` counts evaluated trials, not proposals. `--max-trials 0`, `--max-dry-rounds 0`,
+  `--holdout-days 0` and a holdout larger than the range are refused with a message; the
+  budget flags have help text with units.
+- A model reply that is not a proposal, or has the wrong types (`params` a list or null, a
+  string for a number, `10.5` for an integer parameter, a boolean), is a rejected round with
+  its reason journaled instead of ending the session or crashing after `session_start`. A
+  started session always writes its `session_end`, including when the provider fails.
+- Candidates are compared and ranked on the per-fold median Sharpe the promotion gate uses;
+  the incumbent comparison mixed it with the stitched aggregate.
+- `research` is net of costs by default like every other command, with `--gross` and the
+  cost flags; the basis is printed and enters each round's identity and the saved config.
+  `demo-agent` takes `--gross` too (replacing `--no-costs`). Research trials gain a `_cost`
+  key in their recorded params, so earlier research memos miss once.
+- A config saved from generated code names the `draft:<Class>:<hash>` identity and carries the
+  source in `provenance.generated_code` (also on the round's journal line). Loading it is
+  refused everywhere, `live` included; generated code is never run by loading a config. Code
+  proposals are deduplicated by hash and window, and `demo-agent --no-journal` keeps a demo
+  out of the campaign.
+- A holdout that was not scored is no longer printed as if it were; a holdout an earlier
+  session already scored gets a warning. Provider failures say whether a retry happened (a
+  `Retry-After` over 30 s is not retried), announce retries, and report the rounds already
+  journaled and that no holdout was scored. Non-finite metrics in saved provenance are
+  written as `"inf"`/`"nan"`. A strategy that raises prints one line, not a traceback per
+  symbol.
+
+### HTML reports say what the terminal says
+
+- A reused walk-forward renders as a reduced report on both surfaces (`walkforward --html`
+  used to write nothing and say nothing; `render_report` rejected the payload it had just
+  been handed).
+- The verdict report carries the alphas heading and thin-universe reason; the backtest
+  report carries the Verdicts block, the survivorship statement and the P&L-by-exit block;
+  the holdout table uses the same units as the aggregate; a ratio that was never measured
+  reads "not measured" instead of 0.
+- A reused backtest's header names the benchmark and timeframe as requested; a journaled
+  walk-forward shows its trial id and campaign count; the verdict report's generation time
+  is UTC like the rest.
+- The walk-forward prerequisites block no longer glues a long check name to its value.
+
+### Accounting v6
+
+`ACCOUNTING_VERSION` is **6**. Window boundaries computed by adding days to a market
+date - walk-forward folds, the holdout, warmup starts, scanner and beta lookbacks, the
+research agent's holdout - kept January's offset, so from March to November they sat at
+01:00 New York instead of midnight. Daily bars are stamped at midnight, so a window
+starting on a summer day skipped that day's bar: every such out-of-sample fold began a
+bar late. There was no look-ahead (the gap between in-sample and out-of-sample only grew),
+but the windows were not the ones asked for, so v5 walk-forwards are not comparable with
+v6 ones. Consecutive out-of-sample folds no longer share their boundary bar either (its
+return counted in both). The version is one stamp for every kind, so all earlier trials -
+backtests included, though most never touched a boundary - drop out of the default
+`trials list` (it says how many); `trials archive` retires the era.
+
+- **A walk-forward's in-sample search runs at the configured book.** It built every
+  candidate at the strategy class's default (one position) while the out-of-sample folds
+  used the book the config asked for, so parameters were chosen for one book and
+  validated on another. The search, the holdout fit and the parallel workers now take the
+  validator's book.
+- **Optimize candidates are keyed on capital and book.** A stored per-candidate result
+  was found by params and costs alone, so a search at one capital (or book) answered a
+  request at another with the first's numbers. The key now carries the same capital and
+  book shapes backtests use, so candidates stored at a different capital or book miss
+  once and are recomputed; the journal line and the lookup share one definition. The
+  walk-forward's inner search shares the key.
+
+### Honest labels
+
+- **Capacity** says which bound it hit instead of a sentinel: `capacity_capital` is
+  null with a `capacity_status` (`no_edge`, `below_search_floor`,
+  `above_search_ceiling`) when no capital was solved for, and the CLI, HTML report
+  and MCP payload say it in words rather than `$1,000` or `0`.
+- **Attribution** counts why rebalances were skipped (too few names, covariance not
+  buildable, no benchmark weights, no spread) and names the dominant reasons, rather
+  than blaming insufficient history. `info --attribution` prints the IC report and
+  then the attribution result instead of replacing the first with the second.
+- **HTML metrics table**: an undeflated Sharpe is labelled `PSR, undeflated (1 trial)`
+  as the terminal already did; percent, money, day and hour metrics carry their units
+  (declared beside the gate-value table). `run_optimization` states that its rows'
+  `deflated_sharpe_ratio` is not deflated.
+- **A walk-forward with no out-of-sample trades** no longer passes the drawdown gate
+  vacuously (it fails with a note), and the payload carries `no_oos_trades_note`.
+- **`optimize`** ends with an in-sample warning, as the MCP payload always did: the
+  best of N configs scored on the data that chose it, with a `deflated_sharpe_ratio`
+  column that is not deflated. `allocate --scanner none` allocates across the candidates
+  as given instead of crashing, and a scanner that flags nothing says so.
+- **Walk-forward evidence over MCP**: an unknown `cost_stress` is refused (it used to
+  scale nothing, so the cost prerequisite passed on an unstressed run), and a result with
+  no evidence says why in `evidence_unavailable` (reused, draft, or not computed).
+- **MCP results are always valid JSON**: non-finite numbers are spelled `"nan"`, `"inf"`
+  or `"-inf"` everywhere; some tools emitted bare `NaN` / `Infinity`, which strict
+  clients cannot parse.
+- **Verdict and alpha output** says how many names a list cut, shows tiny alphas in
+  scientific notation instead of `+0.0000`, carries the thin-universe reason in the
+  payload (`low_confidence_reason`), and no longer journals a `trial:alpha` for a
+  run that scored no names.
+
+### Rename
+
+- The distribution is `quantred` (was `tradeflow-engine`), the import package is
+  `quantred` (was `tradeflow`), and the main command is `quantred`. A private pack must
+  change `from tradeflow...` imports to `from quantred...`.
+- The plugin entry-point groups are `quantred.strategies` and `quantred.scanners`. The old
+  `tradeflow.strategies` and `tradeflow.scanners` groups are still read, so a pack declared
+  against them keeps registering (its imports must still resolve).
+- Unchanged: `TRADEFLOW_HOME` and `~/.tradeflow`, so recorded history carries over. An
+  installed copy's provenance code identity now reads `quantred <version>` (was
+  `tradeflow <version>`).
+- `quantred` installs no `tradeflow` command. `tradeflow-engine` 2.3.1, published after
+  this release, is the final release under the old name: a transition package with no
+  engine code that depends on `quantred`, provides the `tradeflow` command and a
+  `tradeflow` import shim (same objects as `quantred.*`; its `DeprecationWarning` shows under `-W default` or in test runs),
+  and keeps `python -m tradeflow.cli` working.
+- MCP clients now see the server as `quantred`. Entries that launch `tradeflow` or
+  `python -m tradeflow.cli` keep working only while `tradeflow-engine` 2.3.1 is installed.
+- **Upgrading in place is safe:** the two distributions share no file, so
+  `pip install -U tradeflow-engine` moves an existing install to `quantred`. (Under
+  `uv tool` that gives you `tradeflow` but not `quantred`; reinstall as `quantred`.)
+  Steps are in
+  [migrating to QuantRed](usage/migrating-to-quantred).
+
+### Getting started
+
+- The Docker image no longer re-syncs its environment at container start (every start needed the network, and could rebuild without the extras the image carries); a `.dockerignore` allowlist keeps `.env`, `specs/`, `configs/`, `logs/` and `.git` out of the build context; inside the container, instructions name `quantred` and the host `.env` rather than `make` targets; the compose MCP healthcheck no longer needs keys. Verified by building and running the smoke checks on a Linux amd64 host.
+- Tested on Python 3.10, 3.11, 3.12, 3.13 and 3.14; the classifiers now list all five. A trial timestamp printed as raw UTC text on 3.10, whose ISO parser is stricter.
+- The bar cache without the `store` extra stops with the install command instead of a `pyarrow` traceback (following an offline miss's own `cache warm` hint used to crash). `mcp` without its extra says so before logging anything, and `init --check` leaves no directory behind.
+- `init --check` says what is ready for which task (demo, data, research, MCP) instead
+  of one pass/fail and names the missing capability. `init --check --for <task>` prints
+  the single install command for that task, and the command that needs an extra prints
+  it when it is missing.
+- `init` can set up a model provider for autonomous research and test the connection
+  (`--probe-model`); `.env` is written readable by you only.
+- A new [extras guide](usage/extras) says which optional capability each command needs.
+- Install hints match how you installed (uv tool, virtual environment, checkout),
+  and keep the packs you added with `--with`.
+- `--offline` no longer asks for broker keys: a cache-only run never reaches the
+  vendor, and research commands no longer build a trading client at all. Without keys,
+  an uncached window now says which bars are missing instead of asking for credentials.
+- Common mistakes are refused up front with what to type instead: a reversed or
+  future `--start`/`--end` (over MCP too, where a verdict over a reversed window used
+  to be recorded as a trial), a mistyped `--scanner` (with a suggestion), a malformed
+  date (the expected format), and a zero or negative `--capital` or `--max-positions`.
+  Rejected keys end the command with their fix instead of a stack trace.
+
+### Verdicts and examples
+
+- A book that cannot be built under its own constraints is reported as **infeasible**
+  with the binding constraint named, not as "needs more data". Too little history is
+  still reported as a data problem.
+- The documented verdict examples use a starter universe that is feasible with its
+  defaults, and a test keeps every documented example that way.
+- A verdict that came back **incomplete** (a step failed, for example an offline run
+  before the cache was warm) is no longer served back as "reused" when you repeat the
+  command after fixing the cause; it runs again. Complete verdicts are reused as before.
+- An incomplete verdict in which no step measured an IC no longer counts as a trial, so
+  a failed attempt does not raise the campaign's multiple-testing total. The report says
+  `Not recorded as a trial` and why, and its `campaign trials` count leaves the run out.
+- Deflated and probabilistic Sharpe and PBO print as probabilities with three decimals
+  everywhere (terminal, chart, HTML report, `trials list/show/best`), and a very small one
+  as `<0.001`. Before, the terminal printed `0.00` (which reads as a probability of zero),
+  the chart `4.4e-04`, and a failing 0.496 printed the same as the 0.5 gate. An
+  unrecorded metric on a reused walk-forward prints `—`, not `0`. A one-trial backtest
+  labels its undeflated value `PSR, undeflated (1 trial)` - it is a probability, not the
+  Sharpe ratio the old `Sharpe (undeflated)` label suggested.
+- `quantred demo` prints its scorecard without the hundred progress lines above it, and
+  an offline cache miss names `quantred cache warm`, not a script an installed copy
+  does not have.
+- An offline cache miss names every missing symbol (the benchmark included) and one
+  `cache warm` command with the dates and the `--cache-dir` that cover the request that
+  missed. Before, it named only the first symbol and no window, and the rerun failed on
+  the next one. When `backtest`, `optimize`, `walkforward` or `screen` cannot even run
+  its scanner from the cache, the one command covers the scan and the run for every
+  candidate, so a single warm is enough; before, it missed on the scan's short lookback
+  and then again on its own window. The same goes for reads past the request's own
+  window: `walkforward` also reads an indicator warmup before `--start` and its
+  `--benchmark`, and `backtest` its `--benchmark` (which offline used to drop alpha and
+  beta with only a warning), and `backtest --beta-sizing` the trailing lookback before
+  `--start`; a cold miss now asks for those too, the lookback only when the flag is on.
+  `--causality`, `--cost-stress` and the walk-forward's `--leakage-probe`,
+  `--param-sensitivity` and `--monte-carlo` were checked and read nothing beyond the
+  run's own reads. Still a second round: a scanner on a different timeframe from the
+  strategy (one warm covers one timeframe). The note about the
+  market-date change appears only for the few-hour gap that change leaves (coverage
+  recorded through UTC midnight, asked for through New York midnight), not on every miss
+  or on any symbol that happens to have some coverage.
+  An offline `verdict` whose steps miss prints one warm command covering every step,
+  instead of one per step with a different window each.
+- `quantred --help`, and the bare `quantred`, show the commands grouped by what you are
+  trying to do - start here, evaluate an idea, history and data, agents, trading - with
+  `init` and `demo` first. They were one long list in definition order with live trading
+  near the top and every name repeated in a brace above it; the bare command was an
+  error.
+- The metrics glossary states which equity curve a result's risk figures come from: a
+  backtest and each walk-forward fold are marked to market at bar closes, and only a
+  walk-forward's aggregate across folds is rebuilt from closed-trade P&L. It used to say
+  every curve was closed-trade, so a backtest's drawdown read as missing open-position
+  losses it actually includes.
+- `trials best` / `best_trials` no longer rank a plain backtest by default. It is one pass
+  over its window, never validated out of sample, yet it was ranked under "validated runs
+  only" with its full-window Sharpe in the out-of-sample column. `--include-in-sample`
+  shows it, labelled.
+- An HTML backtest report shows the execution-viability check the terminal prints, with
+  a warning above the metrics when the book is not executable at its capital. A reused
+  result, which does not carry the check, says it was not recorded.
+- A backtest is reused only for the same capital, benchmark, beta sizing and take-profit
+  margin, and a walk-forward only for the same capital and benchmark. None of these was
+  part of what makes two runs "the same", so a run at $100,000 answered a request at
+  $4,000. Backtests and walk-forwards recorded before this change are re-run once rather
+  than reused.
+- A memoized backtest, over the CLI or MCP,
+  now carries `not_recorded` (total cost, execution checks, excursion, trades CSV,
+  resolved config, and so on), `from_request` and `derived` lists, and how to recover
+  the missing fields (`--force` / `force=true`). The HTML Run card shows "not
+  recorded" instead of a blank or a zero, and `low_sample` is derived from the stored
+  trade count. Both surfaces build the payload through one function.
+- A verdict step that fails is reported in the verdict's step list; its traceback is
+  logged only at debug level instead of filling the screen above the report.
+- A request that Alpaca refuses for the credentials now says so ("Alpaca rejected these
+  credentials", where the keys come from, and `quantred init`) in place of printing the
+  gateway's raw HTML page.
+- The MCP allocation tool exposes the construction knobs that are not gated on
+  evidence, so an agent can state the same book the command line does.
+
+### Trial history
+
+- `trials promote` carries the cost model the trial was validated under. A walk-forward
+  or verdict keeps it in its recipe rather than its params, so promoting one wrote a
+  config with no `cost` and a run from it priced trades at the cheaper defaults. The
+  config load line now says which costs it applied, or that none were recorded. A
+  promoted config also names its scanner the way `walkforward --save-config` does
+  (`none` for a replayed book) instead of `null`; over MCP, `save_config` takes the cost
+  from the campaign block in its provenance.
+- `trials list`, `trials show` and `trials campaign` say what a Sharpe is for each kind
+  (walk-forward aggregate, research median fold, backtest full window, optimize best of
+  N) instead of calling all of them out-of-sample. `--sort sharpe|dsr` and `--min-sharpe`
+  leave in-sample kinds out unless `--include-in-sample` (the same flag, and MCP
+  `list_trials` argument, `trials best` has), and count what they hid. A backtest's
+  campaign is headed "not validated out of sample", and promoting an ungated run no
+  longer says it "did not clear its gates".
+- `trials best` no longer lists a row that has no value for the metric it ranks by (a
+  verdict, which records neither a Sharpe nor a DSR, appeared at #5 of a five-row board)
+  and reports how many it left out. Rows carry a `BASIS` cell, and the board says what a
+  family `n_trials` is and why DSRs from runs of different size are not comparable.
+- Research-agent rounds read honestly in the history. A `kind: code` round is recorded
+  as `draft:<Class>:<hash>` (the identity the draft walk-forward already uses) instead of
+  the base strategy it was proposed beside, so `--strategy <base>` no longer mixes
+  generated and base code, and such rounds form their own (usually one-trial) families
+  rather than raising the base strategy's count; the identity is written into the round's journal line, so a
+  rebuild reproduces it (lines written earlier carry none and read as the session's
+  strategy, as before). `trials campaign` on a round finds its `research:trial` line and
+  says a round has no recipe of its own, instead of "could not be read"; a research
+  row's EVIDENCE notes that its Sharpe is the aggregate while `list`/`show` print the
+  median fold; benchmark metrics of a run with no benchmark print "not measured" rather
+  than `0.00`.
+- A walk-forward's holdout is visible from the history. The result was printed once and
+  then lost: `trials show`, `trials campaign` and a reused result never mentioned it.
+  The journal line now carries it (`holdout`: days, metrics, chosen params, written
+  whenever a holdout was asked for), and `show`, `campaign`, the CLI's reused report
+  and the MCP `get_trial` / reused-walk-forward payloads read it back. The field is new
+  and absent from older lines, so those say "requested (N days) but its result was not
+  retained" rather than printing nothing; a run that asked for no holdout says "none
+  requested". No schema change: the index never held it. `trials list` carries no
+  holdout marker - a row per trial has no room for one, and reading the journal for
+  every listed row is the cost it is built to avoid.
+- `trials show` lists a trial's proposed book - symbols and weights, largest first,
+  with active weights when stored - instead of only "8 names", which is where a verdict's
+  next step sends the reader. Past 25 names it says how many it left out; `--json`
+  carries all of them.
+- `trials compare` names each series' kind in its header (`walkforward: stitched
+  out-of-sample folds`, `backtest: full-window, in-sample`) and flags a pair of unlike
+  series, instead of correlating a stitched out-of-sample series with a full-window
+  in-sample one as though they measured the same thing. The MCP `compare_trials` payload
+  carries `kinds_differ` and each pair's `unlike_basis`.
+- `trials show` prints drawdown and trade counts in the units `trials campaign` uses.
+- `trials list --since/--until` says how many rows it excluded because their recorded
+  time is unknown, rather than dropping them silently.
+- A refused `trials promote` points at `trials campaign`, which exists, instead of
+  telling the reader to re-run `trials show`, which shows only the verdict.
+- `trials list --since/--until` read a date as the New York market date and include
+  the whole of it. Before, `--until` dropped trials recorded on the day it named and
+  `--since` could admit the previous evening's. `trials mark-contaminated --before`
+  had the same fault and could miss a trial recorded the evening before the cut-off.
+- `trials list` and `trials show` print when a trial was recorded in New York time, the
+  zone the date filters read, instead of its UTC text.
+- Trade tables can be recorded over MCP: `run_backtest` and `run_walk_forward` take
+  `record_trades`, the counterpart of `--record-trades`. `analyze_trial` answered "re-run
+  it with --record-trades" to an agent that had no way to pass it. A prior identical trial
+  that kept no table no longer answers a request for one, on either surface: the run is
+  repeated and a new trial recorded, instead of reporting success and leaving the caller
+  without the table. That trial counts toward the multiple-testing total; for a
+  walk-forward it adds the whole inner search again, so ask on the first run.
+- A unique trial-id prefix (four or more characters) works wherever an id is taken, on
+  both surfaces; an ambiguous one is refused with the candidates. `trials status` on a
+  fresh setup no longer reports the journal as unreadable, `compare` refuses a single
+  id, `mark-contaminated --id` refuses an id that matches nothing (and `--id` beside a
+  filter, which used to ignore the filter), and `archive --dry-run` names what it would
+  move.
+
+### MCP
+
+- **Descriptions and behaviour agree.** `run_verdict` lists candidates it dropped for having
+  no bars (`dropped_symbols`, also printed by the CLI report) and its description says which
+  runs journal none: an incomplete run that measured no IC, and an infeasible one refused by
+  the allocation preflight. Every memoized answer says
+  `journaled: false` (`confirm_screen_point` and the draft walk-forward said `true`), and the
+  shared "one trial per evaluated config" sentence now sits on `run_optimization` alone.
+  `run_backtest` journals its dated return series as the CLI always did, so two MCP backtests
+  can be compared with `compare_trials` (earlier MCP backtests have none); the descriptions
+  say which kinds store a series. `analyze_trial` names a tool that can record trades for the
+  trial's own kind.
+- **Walk-forward cost stress trades the validated book.** It re-ran the chosen params at the
+  strategy's default book, so its executability described a different book than the folds.
+  Both surfaces now pass the run's `position_limits`. Where the MCP tool takes no bootstrap
+  input, the family-bootstrap note says that rather than "0 available".
+- **Refused instead of silently accepted:** `confirm_screen_point` params the strategy does not
+  declare (a screen's `best_point` now carries `params` for this), screen ranges wider than
+  the declared bounds (CLI `--range` too), `compute_alphas` scaling outside case1/case2/auto,
+  `book="market_neutral"` without `gross_leverage` and `gross_leverage` without it (CLI too),
+  an unknown `risk_model`, and an unknown `list_trials` kind. A thin universe's
+  `low_confidence_reason` names the neutralization and case choice it skipped.
+- `compute_horizon` no longer points an agent at the CLI's evidence-gated `--policy aim`;
+  the not-deflated caveat now sits on the tools whose Sharpe is a single trial; `load_config`
+  lists `symbols`, `capital` and `position_limits`.
+- A fresh `run_backtest` result names the trial it recorded (`trial_id`, `journaled`), as a reused one already did. A config written with `save_config` from a backtest's campaign block now carries the cost model it was validated under, as `trials promote` does. A reused walk-forward's holdout is `holdout_record` (with its state), so `holdout` keeps one shape: the metrics of a fresh run.
+- The `mcp` extra needs the SDK at 1.22 or later; earlier releases do not import
+  under current pydantic.
+- The server reports the application's version to a client, not the MCP SDK's.
+- A date passed to any MCP tool is read in the exchange's time zone, exactly as the
+  CLI reads `--start`/`--end`. Before, the same verdict over the CLI and then over MCP
+  was recorded as two trials and the second was not served from the first, which
+  counted one experiment twice toward the multiple-testing total. MCP-recorded trials
+  from before this change will be re-run once rather than found.
+- `list_strategies` and `list_scanners` work in a real client; they failed output
+  validation before. `mcp --self-test` now exercises discovery over a real connection.
+- Ctrl-C, closing the client and SIGTERM stop the server promptly with a one-line
+  message; before, the first Ctrl-C could hang and repeated ones could abort with a
+  traceback.
+- The printed client configuration carries `TRADEFLOW_HOME` when you set it, and the
+  self-test says when credentials came only from your shell.
+- `run_walk_forward` returns the same promotion prerequisites, evidence completeness and
+  per-fold excess return the CLI prints, in an `evidence` block beside `gate_report`,
+  and echoes the `benchmark`. Before, an agent saw `promotable` with no sign that
+  prerequisites existed or had failed. `promotable` is the statistical gates only;
+  `evidence.clear` is the one to read. The tool takes `cost_stress` (on by default, as
+  on the CLI); the family bootstrap is not run over MCP and stays unevaluated.
+  `oos_aggregate` still carries no benchmark figures by design: the benchmark is scored
+  per fold. The walk-forward and information HTML reports name the benchmark, timeframe
+  and universe in their header and carry the prerequisites.
+- The server starts without broker keys: catalogue and trial-history tools work, and a
+  tool that needs bars says keys are missing and how to add them, where a client used to
+  see only "Connection closed". `mcp --offline` serves from the local bar cache with no
+  keys; the self-test and the printed client configuration carry it.
+- Bad input to the trial and config tools (an unknown or ambiguous trial id, fewer than
+  two trials to compare, an unknown config name) is a tool error naming the tool to use,
+  instead of a successful response carrying an `error` field.
+- `save_config` and `load_config` take a plain name and stay inside the configs
+  directory (a name like `../x` wrote outside it), and an existing config is not
+  replaced unless `overwrite=true`. `save_config` checks the strategy,
+  scanner, parameters and limits before writing, so a config that could not run is
+  never saved; an unknown provenance field lists the accepted ones.
+- Arguments no run can mean are refused before anything is read or journaled, on both
+  surfaces: an unknown `mode`, `method` or `objective` (an unknown objective scored every
+  candidate equally, so the "best" was arbitrary; the search always maximises, so a
+  lower-is-better objective such as `max_drawdown` picked the worst candidate and is now
+  refused too), negative `holdout_days`,
+  `max_evals` below one, a non-positive `capital`, an empty universe, a misspelt
+  parameter name (it used to run at the default) and a position limit nothing enforces.
+  A backtest that read no bars for any symbol is refused instead of reported as all
+  zeros. Each of these used to cost a journaled trial.
+- Walk-forward gates say what they are computed over (median across folds, total
+  across folds, or the stitched out-of-sample aggregate), so a gate value no longer
+  looks like it contradicts the aggregate metric of the same name.
+- Calmar and Sterling ratios are negative for a losing run; they took the magnitude of
+  the whole ratio, so a loss read as a reward. Results stored before accounting v6
+  carry the old sign and are retired with that era, so both remain valid search
+  objectives; neither feeds a gate or a leaderboard.
+- VaR and CVaR are losses, and 0 when even the tail is a gain; they took the magnitude of
+  the tail return, so a series whose worst 5% still gained reported that gain as a loss.
+  Display-only, like Calmar; values already stored keep the old reading.
+
+### Model providers
+
+- Provider failures are classified (authentication, credit exhausted, rate limited,
+  model not found, unavailable, unreachable, timeout) and reported in plain words.
+- Rate-limited, unavailable and unreachable calls are retried a bounded number of
+  times; authentication, credit and model errors never are.
+
+### Trading commands report the run they are about to affect
+
+- `make cancel-orders` / `make close-positions` and their scripts are retired: they bypassed the halt state and the ledger, and installed copies could not reach them. `flatten --confirm` halts, cancels, closes, records and verifies.
+- `flatten` and `reconcile` (text and `--json`) state the broker mode, and the `flatten`
+  refusal names the account. The default ledger is labelled `(live-session ledger)`,
+  which can no longer be read as the live account.
+- The `Config ...` provenance line names the limits typed on the command line
+  (`position_limits=<config + --max-positions, --max-position-size given>`) instead of
+  claiming `<config>` beside a table of overridden caps.
+- `live --dry-run` prints the book it checks against (the preflight's own rows, and
+  `position_limits` in `--json`) and words the flat starting book as an assumption.
+  `--preflight` with `--dry-run` is refused instead of dropping one of them.
+- The preflight and the dry run warn when the declared book cannot place an order
+  (`max_position_size`, a gross cap or the capital below `min_notional`), and label a
+  ceiling that is only the strategy's default.
+- `small-real` no longer gives circular advice on a config with no recorded capital:
+  `--scale` and `--capital` are both refused with the same way forward (a config that
+  records the capital it was validated at), and the `--capital` help says so. The scaling
+  rule itself is unchanged.
+- `reconcile --ledger` and `execution-report --ledger` refuse a path that does not exist
+  instead of reporting an empty ledger as a clean book; a default ledger not yet written
+  is labelled, and the `--ledger` help says the default is under the state root.
+- `resume` lists the halts still in force after lifting one, and only says trading may
+  resume when none remain.
+- The dry-run docs no longer say it needs no credentials: it builds no trading client,
+  but it reads market data and so needs the data API key pair.
 
 ---
 

@@ -12,8 +12,8 @@ from html.parser import HTMLParser
 
 import pytest
 
-from tradeflow.analytics.htmlreport import KINDS, ReportKindError, render_html, write_html
-from tradeflow.services.analysis import VERDICT_SCHEMA
+from quantred.analytics.htmlreport import KINDS, ReportKindError, render_html, write_html
+from quantred.services.analysis import VERDICT_SCHEMA
 
 #: Any attribute that could pull a resource from off the machine.
 _EXTERNAL = re.compile(r"""(?:src|href)\s*=\s*["'](?!data:|#)[^"']*|url\(\s*(?!['"]?data:)""", re.I)
@@ -204,6 +204,33 @@ def test_an_incomplete_run_says_so_before_anything_else():
     assert "Do not act on the sections below" in document
 
 
+def test_an_infeasible_verdict_renders_as_a_failure_banner():
+    result = _verdict_result()
+    result["portfolio"] = {"feasible": False, "binding_constraint": "max_weight*3 < 1", "preflight": True}
+    result["alphas"] = None
+    result["information"] = None
+    result["verdict"] = {
+        "verdict": "infeasible",
+        "promotable": False,
+        "summary": "infeasible — no book satisfies the constraints: max_weight*3 < 1.",
+        "failed_steps": [],
+        "checks": {
+            "portfolio_feasible": {
+                "value": False,
+                "threshold": True,
+                "passed": False,
+                "note": "max_weight*3 < 1",
+            }
+        },
+    }
+    document = render_html(result, "verdict")
+
+    assert "INFEASIBLE" in document
+    assert "More dates will not change this" in document
+    assert 'class="verdict fail"' in document
+    assert document.index("INFEASIBLE") < document.index("Portfolio")
+
+
 def test_a_default_off_feature_being_enabled_is_banner_worthy():
     result = _verdict_result()
     result["portfolio"]["conditional"] = "ewma"
@@ -258,16 +285,16 @@ def test_charts_embed_as_data_uris_when_plotting_is_available():
 
 def test_the_report_renders_without_the_plotting_extra(monkeypatch):
     """The chart slot explains itself; the run does not fail."""
-    from tradeflow.analytics import charts
+    from quantred.analytics import charts
 
     def missing(*args, **kwargs):
-        raise RuntimeError("Charting needs matplotlib. Install the viz extra: `uv sync --extra viz`.")
+        raise RuntimeError("Charting needs the 'viz' extra.")
 
     monkeypatch.setattr(charts, "render_gate_png", missing)
     monkeypatch.setattr(charts, "render_bars_png", missing)
     document = render_html(_verdict_result(), "verdict")
 
-    assert "install the viz extra" in document.lower()
+    assert "viz extra is not installed" in document.lower()
     assert "data:image/png;base64," not in document
     assert "mixed" in document  # the report is still complete in text
 
@@ -308,3 +335,52 @@ def test_write_html_writes_the_document_it_rendered(tmp_path):
     written = write_html(_verdict_result(), "verdict", str(path))
     assert written == str(path)
     assert path.read_text(encoding="utf-8") == render_html(_verdict_result(), "verdict")
+
+
+def test_a_backtest_report_carries_the_execution_check_the_terminal_prints(tmp_path, monkeypatch):
+    """The terminal printed an execution failure and the HTML report of the same run did
+    not, so a forwarded report of a book that cannot be traded at its capital read as
+    clean. Driven through the real service payload: the demo book holds one position,
+    which fails `book_breadth`."""
+    from datetime import datetime
+
+    from quantred.marketdata.client import MarketDataClient
+    from quantred.services import analysis
+    from tests.fakes import FakeMarketData
+
+    monkeypatch.setattr(analysis, "ARTIFACT_DIR", tmp_path / "artifacts")
+    client = MarketDataClient(FakeMarketData(["AAA", "BBB", "CCC", "SPY"], n=400, freq="1D"))
+    result = analysis.run_backtest(
+        client,
+        "demo_trend",
+        ["AAA", "BBB", "CCC"],
+        datetime(2024, 1, 2),
+        datetime(2025, 1, 31),
+        journal=False,
+    )
+    assert result["executability"]["executable"] is False
+
+    document = render_html(result, "backtest")
+    assert "NOT EXECUTABLE at this capital — failed checks: book_breadth" in document
+    assert document.index("NOT EXECUTABLE") < document.index("Metrics")
+    assert "Execution viability" in document
+    assert "the book holds at most 1 of 3 candidates" in document
+
+
+def test_a_reused_backtest_report_says_the_execution_check_was_not_recorded():
+    """A reused result does not carry the check; leaving the card out reads as nothing to
+    report, which is the clean reading the check exists to prevent."""
+    result = {
+        "strategy": "demo_trend",
+        "symbols": ["AAA"],
+        "window": {"start": "2024-01-02T00:00:00", "end": "2024-12-31T00:00:00"},
+        "initial_capital": 100_000.0,
+        "final_capital": 101_000.0,
+        "metrics": {"sharpe_ratio": 0.4},
+        "memoized": True,
+        "trial_id": "t-1",
+        "trial_ts": "2024-01-01T00:00:00+00:00",
+    }
+    document = render_html(result, "backtest")
+    assert "Execution viability" in document
+    assert "Not recorded for this result" in document

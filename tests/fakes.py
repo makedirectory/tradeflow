@@ -12,12 +12,12 @@ from typing import Any, ClassVar, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-from tradeflow.brokers.base import AccountSnapshot, Broker, MarketStatus, OrderResult, OrderSide, Position
-from tradeflow.brokers.errors import DuplicateOrderError
-from tradeflow.marketdata.base import BarHandler, MarketDataProvider
-from tradeflow.marketdata.timeframe import Timeframe
-from tradeflow.strategies.base import Strategy
-from tradeflow.utils.timeutils import NEW_YORK
+from quantred.brokers.base import AccountSnapshot, Broker, MarketStatus, OrderResult, OrderSide, Position
+from quantred.brokers.errors import DuplicateOrderError
+from quantred.marketdata.base import BarHandler, MarketDataProvider
+from quantred.marketdata.timeframe import Timeframe
+from quantred.strategies.base import Strategy
+from quantred.utils.timeutils import NEW_YORK
 
 
 def make_ohlcv(n: int = 600, seed: int = 0, freq: str = "5min") -> pd.DataFrame:
@@ -194,7 +194,7 @@ class StreamingFakeMarketData(FakeMarketData):
     async def stream_bars(self, symbols, handler):
         import asyncio
 
-        from tradeflow.marketdata.base import BarEvent
+        from quantred.marketdata.base import BarEvent
 
         for i in range(self._bars_to_emit):
             for symbol in symbols:
@@ -279,7 +279,7 @@ def bar_event(
     day=2,
 ):
     """One well-formed BarEvent, with any field overridable to make it malformed."""
-    from tradeflow.marketdata.base import BarEvent
+    from quantred.marketdata.base import BarEvent
 
     return BarEvent(
         symbol=symbol,

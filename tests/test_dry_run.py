@@ -13,14 +13,14 @@ from datetime import datetime
 
 import pytest
 
+from quantred.brokers.base import AccountSnapshot, Position
+from quantred.brokers.dryrun import BANNER, DryRunBroker, DryRunTradingAttempted
+from quantred.brokers.errors import BrokerError
+from quantred.execution import decision as decisions
+from quantred.execution.live_trader import LiveTrader
+from quantred.services import dryrun
+from quantred.strategies import signals
 from tests.fakes import ScriptedStrategy
-from tradeflow.brokers.base import AccountSnapshot, Position
-from tradeflow.brokers.dryrun import BANNER, DryRunBroker, DryRunTradingAttempted
-from tradeflow.brokers.errors import BrokerError
-from tradeflow.execution import decision as decisions
-from tradeflow.execution.live_trader import LiveTrader
-from tradeflow.services import dryrun
-from tradeflow.strategies import signals
 
 CAPITAL = 250_000.0
 
@@ -51,7 +51,7 @@ def test_a_signal_that_would_submit_never_reaches_a_real_submit_path(monkeypatch
 
     Asserting the report says "dry run" would prove nothing: a report is a string.
     """
-    from tradeflow.brokers import base as broker_base
+    from quantred.brokers import base as broker_base
 
     reached = []
 
@@ -313,7 +313,7 @@ def test_the_dry_run_branch_never_calls_the_broker_factory(monkeypatch, capsys):
 
     cli = _dry_run_cli(monkeypatch)
     monkeypatch.setattr(cli, "build_data_and_broker", _never)
-    monkeypatch.setattr("tradeflow.brokers.alpaca.factory.build_broker", _never, raising=False)
+    monkeypatch.setattr("quantred.brokers.alpaca.factory.build_broker", _never, raising=False)
 
     args = cli.build_parser().parse_args(
         ["live", "--dry-run", "--strategy", "demo_trend", "--symbols", "AAA", "--capital", "8000"]
@@ -350,12 +350,12 @@ def _dry_run_cli(monkeypatch, symbols=("AAA",), n=200):
     arguments the caller happens to pass, so it agrees with a wrong call and the test
     proves only that the caller is consistent with itself.
     """
+    from quantred import cli
+    from quantred.marketdata.client import MarketDataClient
     from tests.fakes import FakeMarketData
-    from tradeflow import cli
-    from tradeflow.marketdata.client import MarketDataClient
 
     monkeypatch.setattr(
-        "tradeflow.services.data.build_data_client",
+        "quantred.services.data.build_data_client",
         lambda **kw: MarketDataClient(FakeMarketData(list(symbols), n=n, freq="1D")),
     )
     monkeypatch.setattr(cli, "build_data_and_broker", lambda *a, **k: pytest.fail("broker factory reached"))
@@ -392,9 +392,9 @@ def test_a_dry_run_asks_for_the_window_the_live_path_would_ask_for(monkeypatch):
     """Same timeframe, same lookback derivation — otherwise the rehearsal reads a
     different tape from the run it rehearses, and a short window looks like a strategy
     with no opinion."""
-    from tradeflow import cli
-    from tradeflow.engine.live import LiveEngine
-    from tradeflow.marketdata.timeframe import Timeframe
+    from quantred import cli
+    from quantred.engine.live import LiveEngine
+    from quantred.marketdata.timeframe import Timeframe
 
     strategy = ScriptedStrategy({"pivot": 100.0, "risk_per_trade": 0.02, "stop_loss": 0.03})
     strategy.config["timeframe"] = "1Day"
@@ -421,8 +421,8 @@ def test_a_failed_history_request_is_reported_and_a_broken_call_is_not_swallowed
     """Both directions of the same handler. A feed that could not answer is a fact about
     every symbol and belongs in the report; a call this code got wrong is a defect and
     must not wear the feed's clothes."""
-    from tradeflow import cli
-    from tradeflow.brokers.errors import BrokerError
+    from quantred import cli
+    from quantred.brokers.errors import BrokerError
 
     strategy = ScriptedStrategy({"pivot": 100.0, "risk_per_trade": 0.02, "stop_loss": 0.03})
     strategy.config["timeframe"] = "1Day"
@@ -454,9 +454,9 @@ def test_a_config_that_records_a_capital_is_enough_to_dry_run(tmp_path, monkeypa
     """
     import json
 
+    from quantred import cli
+    from quantred.marketdata.client import MarketDataClient
     from tests.fakes import FakeMarketData
-    from tradeflow import cli
-    from tradeflow.marketdata.client import MarketDataClient
 
     config = tmp_path / "validated.json"
     config.write_text(
@@ -480,7 +480,7 @@ def test_a_config_that_records_a_capital_is_enough_to_dry_run(tmp_path, monkeypa
     # The real client over a fake provider, not a stub of the client: a hand-written
     # stub agrees with however the caller happens to be calling it.
     monkeypatch.setattr(
-        "tradeflow.services.data.build_data_client",
+        "quantred.services.data.build_data_client",
         lambda **kw: MarketDataClient(FakeMarketData(["AAA"], n=200, freq="1D")),
     )
     monkeypatch.setattr(cli, "build_data_and_broker", lambda *a, **k: pytest.fail("broker factory reached"))
@@ -498,7 +498,7 @@ def test_dry_run_and_live_money_together_are_refused():
     """Refused rather than ignored: someone who typed --live-money believes this run can
     trade, and silently honouring --dry-run leaves them right about the intent and wrong
     about the run."""
-    from tradeflow.cli import _refuse_inert_flags, build_parser
+    from quantred.cli import _refuse_inert_flags, build_parser
 
     args = build_parser().parse_args(["live", "--dry-run", "--live-money"])
     args.flags_given = {"dry_run", "live_money"}
@@ -509,7 +509,7 @@ def test_dry_run_and_live_money_together_are_refused():
 
 def test_dry_run_alone_is_accepted():
     """Both directions: the guard must not reject the flag it exists to permit."""
-    from tradeflow.cli import _refuse_inert_flags, build_parser
+    from quantred.cli import _refuse_inert_flags, build_parser
 
     args = build_parser().parse_args(["live", "--dry-run"])
     args.flags_given = {"dry_run"}
@@ -541,7 +541,7 @@ def test_a_symbol_with_too_little_history_is_reported_not_dropped():
 def test_the_shortfall_reaches_the_summary_not_only_the_detail():
     """A count buried in a section somebody has to scroll to is still easy to miss, and
     "12 symbols evaluated" and "12 symbols, 7 evaluated" are different runs."""
-    from tradeflow.analytics.reporting import format_dry_run
+    from quantred.analytics.reporting import format_dry_run
 
     report = dryrun.dry_run_report(
         [_decision("no signal")],
@@ -561,7 +561,7 @@ def test_the_shortfall_reaches_the_summary_not_only_the_detail():
 
 def test_a_fully_evaluated_run_says_nothing_about_a_shortfall():
     """Both directions: the summary must not carry a caveat it did not earn."""
-    from tradeflow.analytics.reporting import format_dry_run
+    from quantred.analytics.reporting import format_dry_run
 
     report = dryrun.dry_run_report(
         [_decision("no signal")],
@@ -582,10 +582,10 @@ def test_a_short_history_symbol_reaches_the_unevaluated_bucket_through_the_cli(m
     this one existed."""
     import pandas as pd
 
+    from quantred import cli
+    from quantred.marketdata.client import MarketDataClient
+    from quantred.utils.timeutils import NEW_YORK
     from tests.fakes import DictMarketData
-    from tradeflow import cli
-    from tradeflow.marketdata.client import MarketDataClient
-    from tradeflow.utils.timeutils import NEW_YORK
 
     def _frame(periods):
         index = pd.date_range("2024-01-02", periods=periods, freq="D", tz=NEW_YORK)
@@ -598,7 +598,7 @@ def test_a_short_history_symbol_reaches_the_unevaluated_bucket_through_the_cli(m
     # client will actually accept.
     client = MarketDataClient(DictMarketData({"AAA": _frame(60), "XYZ": _frame(3)}))
     monkeypatch.setattr(cli, "build_data_and_broker", lambda *a, **k: pytest.fail("broker built"))
-    monkeypatch.setattr("tradeflow.services.data.build_data_client", lambda **kw: client)
+    monkeypatch.setattr("quantred.services.data.build_data_client", lambda **kw: client)
     monkeypatch.setattr(cli, "resolve_universe", lambda *a, **k: ["AAA", "XYZ"])
 
     args = cli.build_parser().parse_args(

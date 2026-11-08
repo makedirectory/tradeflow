@@ -9,15 +9,15 @@ The analytics layer turns a table of closed trades plus an equity curve into a
 metrics dict honest enough to **rank thousands of configs by a single number**.
 The layering is deliberate:
 
-- `tradeflow/analytics/metrics.py` — pure, defensive primitives. One canonical
+- `quantred/analytics/metrics.py` — pure, defensive primitives. One canonical
   definition per metric, shared by the backtest analytics and the scanner base
   class so "Sharpe" or "max drawdown" mean the same thing everywhere. Empty or
   degenerate inputs return `0.0` (or `inf` for a zero-denominator ratio) rather
   than raising.
-- `tradeflow/analytics/performance.py` — `compute_backtest_metrics(...)` composes those
+- `quantred/analytics/performance.py` — `compute_backtest_metrics(...)` composes those
   primitives over the trade table and equity curve into a flat, JSON-serializable
   dict keyed by `METRIC_KEYS` (+ the `FLAG_KEYS` flags).
-- `tradeflow/analytics/reporting.py` — human-readable, sectioned rendering, kept
+- `quantred/analytics/reporting.py` — human-readable, sectioned rendering, kept
   separate from computation so the numbers stay machine-consumable.
 
 ## Metric tiers
@@ -55,18 +55,30 @@ zeroed and `benchmark_available` is `False`.
 
 ## Annualization
 
-Headline ratios take a `periods_per_year`. The backtest equity curve is resampled
-to daily P&L, so its returns are daily and `TRADING_DAYS_PER_YEAR` (252) is the
-correct factor. `Timeframe.periods_per_year()` exists for callers that work on
-bar-frequency returns directly.
+Headline ratios take a `periods_per_year`. The backtest does not resample: it
+annualizes its per-bar mark-to-market returns at the merged timeline's own step rate
+(`_step_periods_per_year`), the strategy's timeframe rate scaled by observed density —
+see [annualizing per-step quantities](engine.md#annualizing-per-step-quantities).
+Only `build_equity_curve`, the closed-trade curve behind a walk-forward's
+out-of-sample aggregate, resamples to calendar days; that is the case where
+`TRADING_DAYS_PER_YEAR` (252) applies. `Timeframe.periods_per_year()` exists for
+callers that work on bar-frequency returns directly.
 
 ## Known limitation (flagged in the glossary)
 
-`build_equity_curve` accumulates **closed-trade** P&L resampled to daily, so
-intra-trade (mark-to-market) drawdown is invisible — `max_drawdown`,
-`ulcer_index`, and volatility *understate* true risk during long holds. The metric
-glossary surfaces this so agents don't over-trust the numbers. A mark-to-market
-equity curve from bar data is a future enhancement.
+The risk metrics depend on which equity curve they were computed from, and two are
+in use:
+
+- **Bar-close marks.** A backtest, and each walk-forward fold, use the engine's own
+  curve, marked to market at every bar's close and annualized at the step rate above. A loss inside an open position counts,
+  but only as of bar closes: a fall and recovery within one bar is not seen.
+- **Closed-trade P&L.** A walk-forward's out-of-sample aggregate across folds has no
+  single simulation behind it, so `build_equity_curve` rebuilds one from realized P&L
+  resampled to daily (annualized at 252). Intra-trade drawdown is invisible there, and `max_drawdown`,
+  `ulcer_index` and volatility *understate* risk during long holds.
+
+The metric glossary states which basis applies where, so an agent does not read one
+as the other.
 
 ## Sample-size guard
 
@@ -77,7 +89,7 @@ handful of trades are noise, not edge.
 
 PSR/DSR are parametric: they assume the Sharpe estimator's asymptotic
 distribution, and DSR needs an *assumed* effective trial count and trial-Sharpe
-variance to approximate "the best of K configs tried." `tradeflow/analytics/bootstrap.py`
+variance to approximate "the best of K configs tried." `quantred/analytics/bootstrap.py`
 is the heavier, definitive check behind `--bootstrap-skill` — it **simulates the
 null instead of assuming it** — not a replacement for PSR/DSR, always shown
 alongside them.

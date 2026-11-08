@@ -10,8 +10,7 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
-from tests.fakes import DictMarketData, make_ohlcv
-from tradeflow.alphas import (
+from quantred.alphas import (
     AlphaContext,
     panel_to_alphas,
     refine,
@@ -19,12 +18,13 @@ from tradeflow.alphas import (
     signal_scorer,
     strategy_scorer,
 )
-from tradeflow.alphas.base import DEFAULT_MIN_UNIVERSE, Alpha
-from tradeflow.data.panel import FeaturePanel
-from tradeflow.demo.strategies import DemoTrendStrategy
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.services import analysis
-from tradeflow.strategies import signals
+from quantred.alphas.base import DEFAULT_MIN_UNIVERSE, Alpha
+from quantred.data.panel import FeaturePanel
+from quantred.demo.strategies import DemoTrendStrategy
+from quantred.marketdata.client import MarketDataClient
+from quantred.services import analysis
+from quantred.strategies import signals
+from tests.fakes import DictMarketData, make_ohlcv
 
 AS_OF = datetime(2024, 6, 1)
 
@@ -188,7 +188,7 @@ def test_refine_unusable_exposures_fall_back_to_beta():
 def test_producer_writes_nothing_on_short_history():
     """An exposure build qualifying <2 names writes no columns, so refinement can
     fall back to beta instead of regressing on all-NaN exposures."""
-    from tradeflow.data.features import add_factor_exposure_features
+    from quantred.data.features import add_factor_exposure_features
 
     names = [f"S{i}" for i in range(12)]
     bars = {s: make_ohlcv(n=40, seed=i, freq="1D") for i, s in enumerate(names)}  # < 61 bars

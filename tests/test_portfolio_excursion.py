@@ -16,13 +16,13 @@ from typing import Dict, List, Optional
 import pandas as pd
 import pytest
 
+from quantred.analytics.excursion import excursion_lines, portfolio_excursion
+from quantred.engine.backtest import BacktestEngine
+from quantred.marketdata.client import MarketDataClient
+from quantred.strategies import signals
+from quantred.strategies.base import Strategy
+from quantred.utils.timeutils import NEW_YORK
 from tests.fakes import DictMarketData
-from tradeflow.analytics.excursion import excursion_lines, portfolio_excursion
-from tradeflow.engine.backtest import BacktestEngine
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.strategies import signals
-from tradeflow.strategies.base import Strategy
-from tradeflow.utils.timeutils import NEW_YORK
 
 #: Wide stops on purpose. The point of these fixtures is a bar the book rides *through*
 #: — a stop that fires closes the position, which bounds the excursion and measures the
@@ -241,7 +241,7 @@ def test_marking_at_a_price_override_agrees_with_the_book_s_own_mark():
     """`equity_at` exists so a diagnostic can ask what the book was worth at some other
     price without a second copy of the sum. With no override it must be the same
     number, or the diagnostic and the engine are measuring different books."""
-    from tradeflow.engine.backtest import _Book
+    from quantred.engine.backtest import _Book
 
     book = _Book(cash=50_000.0)
     book.positions["AAA"] = {

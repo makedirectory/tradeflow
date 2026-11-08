@@ -10,9 +10,9 @@ from pathlib import Path
 
 import pytest
 
-from tradeflow.engine.backtest import ACCOUNTING_VERSION
-from tradeflow.services.audit import audit_log, journal_trial
-from tradeflow.store.trials import (
+from quantred.engine.backtest import ACCOUNTING_VERSION
+from quantred.services.audit import audit_log, journal_trial
+from quantred.store.trials import (
     _REBUILD_SENTINEL,
     SCHEMA_VERSION,
     TrialStore,
@@ -679,3 +679,97 @@ def test_an_empty_index_with_no_journal_is_a_fresh_store_not_a_broken_one(tmp_pa
     everyone starts, and flagging it would make the check noise."""
     with TrialStore(tmp_path / "trials.db", journal_path=tmp_path / "absent.jsonl") as store:
         assert store.status()["drift"] is False
+
+
+# --- date filters ---------------------------------------------------------------
+def _dated_store(tmp_path):
+    """Three trials stamped the way the journal stamps them: UTC instants with an offset.
+
+    The two late-evening/after-midnight rows straddle the New York day boundary, which is
+    exactly where comparing a UTC string against a New York one lexically goes wrong.
+    """
+    store = TrialStore(tmp_path / "trials.db")
+    stamps = {
+        "morning": "2026-11-06T15:00:00.123456+00:00",  # 10:00 New York, 6 Nov
+        "evening": "2026-11-07T03:00:00.500000+00:00",  # 22:00 New York, 6 Nov
+        "next_day": "2026-11-07T06:00:00.000001+00:00",  # 01:00 New York, 7 Nov
+    }
+    for i, (name, ts) in enumerate(stamps.items()):
+        store.record(
+            id=name,
+            kind="backtest",
+            strategy="s",
+            symbols=["A"],
+            params={"x": i},
+            accounting=ACCOUNTING_VERSION,
+            ts=ts,
+        )
+    return store
+
+
+def test_until_a_date_includes_every_trial_recorded_on_that_market_date(tmp_path):
+    """``--until 2026-11-06`` dropped that day's own trials.
+
+    The bound reached the store as ``2026-11-06T00:00:00-05:00`` and was compared as text
+    against UTC stamps, so it meant "before midnight UTC-ish", not "on or before the 6th".
+    """
+    from quantred.utils.timeutils import parse_market_date
+
+    store = _dated_store(tmp_path)
+    ids = {r["id"] for r in store.list_trials(until=parse_market_date("2026-11-06"))}
+    assert ids == {"morning", "evening"}
+    assert store.count_trials(until=parse_market_date("2026-11-06")) == 2
+
+
+def test_since_a_date_starts_at_that_market_date_not_at_utc_midnight(tmp_path):
+    """A trial at 22:00 New York on the 6th sorted after ``2026-11-07T00:00:00-05:00`` as
+    text (its UTC stamp reads the 7th), so ``--since 2026-11-07`` included it."""
+    from quantred.utils.timeutils import parse_market_date
+
+    store = _dated_store(tmp_path)
+    ids = {r["id"] for r in store.list_trials(since=parse_market_date("2026-11-07"))}
+    assert ids == {"next_day"}
+
+
+def test_an_explicit_instant_bound_is_an_instant(tmp_path):
+    """Only a bare market date widens to the whole day; a time of day is taken as given."""
+    from quantred.utils.timeutils import parse_market_date
+
+    store = _dated_store(tmp_path)
+    ids = {r["id"] for r in store.list_trials(until=parse_market_date("2026-11-06T12:00:00"))}
+    assert ids == {"morning"}
+
+
+def test_a_quarantine_before_a_date_names_exactly_the_trials_recorded_earlier(tmp_path):
+    """``mark-contaminated --before`` compared the same way, so a late-evening trial on the
+    day before the cut-off escaped the quarantine it was meant to be in."""
+    from quantred.services.maintenance import select_trials
+    from quantred.utils.timeutils import parse_market_date
+
+    journal = tmp_path / "journal.jsonl"
+    store = _dated_store(tmp_path)
+    store.close()
+    (tmp_path / "trials.db").rename(db_path_for_journal(journal))
+    rows = select_trials(journal_path=journal, before=parse_market_date("2026-11-07"))
+    assert {r["id"] for r in rows} == {"morning", "evening"}
+
+
+@pytest.mark.parametrize(
+    "day, next_midnight_utc",
+    [
+        ("2026-11-01", "2026-11-02T05:00:00+00:00"),  # 25-hour day: clocks fall back
+        ("2026-03-08", "2026-03-09T04:00:00+00:00"),  # 23-hour day: clocks spring forward
+        ("2026-06-15", "2026-06-16T04:00:00+00:00"),
+    ],
+)
+def test_a_whole_day_bound_ends_at_the_next_new_york_midnight_across_dst(day, next_midnight_utc):
+    """Adding 24 hours to an aware midnight lands an hour off on the two DST days, which
+    would drop (or admit) an hour of trials at the edge of ``--until``."""
+    from datetime import date
+
+    from quantred.store.trials import _recorded_bound
+    from quantred.utils.timeutils import parse_market_date
+
+    assert _recorded_bound(parse_market_date(day), whole_day=True) == next_midnight_utc
+    # A plain date object means the same bare date (the public API accepted one before).
+    assert _recorded_bound(date.fromisoformat(day), whole_day=True) == next_midnight_utc

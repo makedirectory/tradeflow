@@ -44,8 +44,38 @@ asserting each clock separately — the backtest's own test passed throughout.
 
 **CLI ↔ service dedup identity** — `cli._cost_key` and `services.analysis._cost_key` are
 two implementations that must produce the same shape, because a trial recorded over one
-surface has to be found by the other. The CLI additionally folds a bar-cache vintage.
-*Guarded by* `tests/test_surface_parity.py`.
+surface has to be found by the other. Both fold the bar cache's data-vintage stamp whenever the client reads the cache, through one definition, `services.data.vintage_stamp`: only the CLI did, which was harmless until `mcp --offline` let the service read the cache too - then the same run over the two surfaces could never match. *Also guarded by* `tests/test_bar_cache.py`.
+A backtest's run shape - capital, benchmark, beta sizing, take-profit margin - is one
+definition, `services.analysis.backtest_run_key`, which both call. It was missing from the
+key entirely, so a run at $100,000 answered a request at $4,000; adding it changed every
+backtest's identity, so their memos miss once. `walk_forward_recipe` takes capital and
+benchmark as required arguments for the same reason.
+
+The optimizer's per-candidate memo is a third key of the same kind, and it held params
+and costs only, so a search at one capital was served to a request at another.
+`ParameterOptimizer.candidate_identity` is its one definition (cost, the resolved book
+via `limits_key`, the capital via `backtest_run_key`); the lookup, `cmd_optimize`, and
+`run_optimization` all read it, and the walk-forward's inner search inherits it. Candidates
+stored before this miss once.
+*Guarded by* `tests/test_surface_parity.py`, `tests/test_optimizer_book.py`.
+
+**A request's window ↔ the surface that parsed it** — *converged*. The CLI read
+`--start/--end` as exchange-zone instants and the MCP tool's own `_parse_date` left them
+naive. The window's *text* is part of a trial's dedup identity, so one identical request
+over the two surfaces journaled two trials (`...T00:00:00-05:00` against `...T00:00:00`):
+the multiple-testing family count inflated by one for every cross-surface repeat, and the
+memoized answer was never served to the other surface. Now one definition,
+`utils.timeutils.parse_market_date`, which `cli._date` and `mcp.server._parse_date`
+delegate to; it applies to every MCP tool that takes a date, not only `run_verdict`. The
+CLI's aware form is canonical because it is what recorded history already carries, so
+CLI-recorded trials keep their identity. **MCP-recorded trials of the old naive form will
+miss memo once**; replay is unaffected, since a rebuild reads each journal line's own
+recorded window. `ACCOUNTING_VERSION` is not bumped: what the engine computes given a window is
+unchanged; only how an MCP date is read moved, from a naive value (read as UTC by the bar
+store, as New York by the scanner) to the exchange-zone instant the CLI always used.
+*Guarded by* `tests/test_surface_parity.py`, which compares the two parsers on one set of
+spellings, runs the same verdict over both surfaces against one journal and requires a
+single trial, and scans the MCP module for any tool reading a date itself.
 
 **A walk-forward's memoization recipe** — *converged*. It was three copies of one dict
 (CLI, service, draft-service). `limits_key` was folded into `run_backtest`'s key and into
@@ -128,6 +158,20 @@ further test follows both all the way to the service argument. A rename may only
 that two surfaces reach the same argument — never excuse a knob one surface lacks.
 *Guarded by* `tests/test_surface_parity.py`.
 
+**Verdict knobs across CLI and MCP** — `verdict` / `run_verdict`. An `infeasible`
+verdict tells the caller to widen the universe or change `max_weight` / `max_names`;
+the MCP tool took none of the allocation knobs, so an agent was handed an answer it had
+no way to act on. Enumerated from the parser, as `screen` is: every flag needs a
+counterpart in the tool's signature or an entry in the exclusion table with a reason
+(transport plumbing only). `journal` is the one service parameter withheld on purpose —
+`mcp.server.WITHHELD_PARAMS`, per tool, so it stays distinct from the evidence-gated
+`DEFERRED_PARAMS`. Both surfaces forward a knob only when it was set, and the CLI's
+defaults are compared against the service signature. The cap check itself is one
+function, `portfolio.optimizer.long_only_cap_shortfall`, called by the optimizer and by
+the verdict preflight.
+*Guarded by* `tests/test_surface_parity.py`, `tests/test_mcp_surface.py`,
+`tests/test_verdict.py`.
+
 **Config ↔ what actually got validated** — *converged*. A config's `position_limits` is
 not a tunable param, so anything reconstructing a strategy from params alone drops it. A
 config asking for eight positions was walk-forward validated at one. Every sweep over a
@@ -135,12 +179,17 @@ parameter space needs the same three lines, and each one that wrote its own was 
 the book could go missing again, so it is now
 `strategies.base.build_with_limits` — used by the walk-forward validator, the parameter
 optimizer, and the screen.
-*Guarded by* `tests/test_surface_parity.py`.
+
+The walk-forward validator's *inner* optimizer was the one construction site that did not
+receive the book, so the in-sample search chose parameters at the class default while the
+folds scored them at the configured book; `_make_optimizer` now passes it, and
+`EvalRequest` carries it to parallel workers.
+*Guarded by* `tests/test_surface_parity.py`, `tests/test_optimizer_book.py`.
 
 **Scanner registry ↔ the driver's class attribute** — `services.registry.SCANNERS` and
 `SymbolScanner.SCANNERS` are two dicts holding one answer, kept in step by
 `refresh_registries()`. The class attribute used to be seeded from the scanner package's
-own literal; once the example scanner moved to `tradeflow.demo` that literal went empty,
+own literal; once the example scanner moved to `quantred.demo` that literal went empty,
 so the attribute was empty too and a bare `import symbol_scanner` gave
 `available() == []` — the class worked or not depending on whether some *other* module
 had been imported first. `SymbolScanner._registry()` now delegates (lazily, because
@@ -163,13 +212,58 @@ the environment the sdist carries the pack *for*, and the one nothing was lookin
 
 Anchor anything naming repo-root state, and test by building the file list rather than
 reading the manifest — reading it is exactly what missed this.
+
+The other side of the same idea is the copy that does *not* carry the pack: an installed
+copy's refusal prints a clone-and-copy command, and the private-strategies guide prints it
+too. The `cp` path is the directory `git clone` creates, so it is derived from
+`settings.REPOSITORY_URL` rather than written out, and the guide's line is compared with the
+CLI's.
 *Guarded by* `tests/test_packaging.py`.
 
 **Installed copy ↔ checkout** — every instruction printed to a user. `make`, `python
 main.py`, `uv sync`, and `.env.example` do not exist for an installed reader. Use
-`services.setup.invocation` (the CLI's `_invocation` delegates to it) rather than a
-literal — services print instructions too.
-*Guarded by* `tests/test_setup.py`, `tests/test_surface_parity.py`.
+`settings.invocation` (`services.setup.invocation` and the CLI's `_invocation` delegate
+to it) rather than a literal — services print instructions too. It lives in `settings`
+because `settings` prints some itself, and the trade clock's flatten report is another;
+neither may import a service. Which copy is running is decided by where the `quantred`
+package was imported from, never by the working directory: an installed command run inside
+a clone of this repository is still an installed copy, and reading the cwd put a call that
+raises on a deleted directory into the flatten report. Within a checkout, the spelling
+echoes how the process started (`settings.started_from_checkout_shim`): a checkout's
+environment carries the installed command too, and someone who typed it was told
+`python main.py ...`, which fails outside the repository root.
+
+The same holds for the *name*: a `uv tool` install upgraded in place from the old distribution
+exposes only `tradeflow`, so an instruction saying `quantred init` names a command the
+reader's shell does not have. `settings.invoked_legacy_name` echoes the old name when the
+process was started under it and `quantred` is not on PATH, and `utils.extras` rebuilds a
+`uv tool` environment under the requirement name its receipt records (`tradeflow-engine`
+forwards every extra to `quantred`) rather than installing a second `quantred` tool.
+*Guarded by* `tests/test_state_root.py`, `tests/test_extras_map.py`.
+
+The executable's *name* is the same hazard from the other side: `settings.CLI_NAME` is
+the one definition (argparse's `prog`, the version banner, the MCP launch lookup and
+every instruction read it) and `settings.MCP_SERVER_NAME` is the server's. A literal
+`tradeflow <verb>` in a string is a place a rename leaves behind with no signal, since
+the old name keeps working (while `tradeflow-engine` 2.3.1 is installed). `code_version()` is the one deliberate exception: it names
+the engine's code (`quantred <version>` for an installed copy), not the command. `tests/test_cli_name.py` scans every string literal
+in the package against an explicit, justified allowlist.
+
+The same goes for *install and recovery* text: it has one definition,
+`utils.extras.install_hint`, and `cli._missing_extra_message` was its second copy (five
+more guards printed a bare `uv sync`). The copy that ships has to be right for three
+environments at once, and `uv tool install --force 'pkg[X]'` is wrong in the common one —
+it rebuilds the tool with only `X`, silently removing every other extra and `--with` pack —
+so the hint carries the extras already installed and pins the running version. For a
+`uv tool` copy it reads the tool's own `uv-receipt.toml` and restates every `--with`
+package, because naming the packs in a parenthetical was the same silent removal one step
+removed. A checkout gets `uv sync --inexact --extra X`: plain `uv sync` is exact, and
+running the printed command uninstalled the dev tools and an editable pack. A diagnostic
+prints **one** command over every missing extra, never one per row, since each form
+replaces the environment and two of them undo one another. An HTML report carries no
+install text at all (it is attached and forwarded, and the text names the reader's packs). The map of
+extras to the modules each provides is checked against `pyproject.toml`, not remembered.
+*Guarded by* `tests/test_setup.py`, `tests/test_surface_parity.py`, `tests/test_extras_map.py`.
 
 **Strategy convention ↔ engine execution** — `generate_signals` keys a signal at the bar
 whose close produced it, and the engine must execute it on the bar after. Neither side
@@ -250,6 +344,14 @@ definition and the CLI block is a renderer over it, reaching it through
 than being assumed so.
 *Guarded by* `tests/test_trade_analytics.py`.
 
+**The return series a backtest journals** — *converged*. The CLI journaled a backtest's dated
+return series and the service path did not, so every backtest recorded over MCP had
+`returns: null` and could never be put through `compare_trials` or a Reality Check family
+panel - the same trial kind carrying evidence or not depending on which surface ran it.
+`services.analysis.backtest_returns` is the one construction both call. Backtests recorded
+over MCP before this have no series and stay without one.
+*Guarded by* `tests/test_mcp_description_truth.py`.
+
 **Trial-analytics knobs across CLI and MCP** — `trials analyze` / `analyze_trial` and
 `trials compare` / `compare_trials`. Both surfaces enumerate their flags from the parser
 and must have a counterpart in the MCP signature, and both *defaults* are compared too:
@@ -296,6 +398,8 @@ all. `services.analysis.recorded_book` is the one resolver, and it takes several
 because the book is not in the same place for every kind: a walk-forward keeps it in its
 recipe, a backtest in its params, since a backtest's dedup identity *is* its params.
 
+The cost model is the same hazard one field over: `_cost` is folded into every kind's identity, in the params for a backtest and in the recipe for a walk-forward or verdict, and `trials promote` read only the first, so a promoted walk-forward traded under default (cheaper) costs. `services.analysis.recorded_cost` is the sibling of `recorded_book`; a backtest's campaign block names its folded cost and book too, so the MCP `save_config` path reaches them. *Also guarded by* `tests/test_promoted_cost.py`.
+
 *Guarded by* `tests/test_saved_config_book.py`, which enumerates the `save_config` call
 sites from the AST rather than from a list somebody remembered, and promotes a trial then
 reloads the file and builds the strategy to check the number that arrives at the far end.
@@ -311,11 +415,24 @@ by accident rather than by decision.
 *Guarded by* `tests/test_campaign_material.py`, which writes a config over each surface
 and reads the same block back, and checks a pre-campaign config still loads.
 
+**The environment the self-test ran in ↔ the environment a client launches** — the
+launch *command* is one definition (`services.setup.mcp_launch_command`); the
+*environment* is a second half of the same idea. The self-test child inherits the whole
+shell, a desktop client inherits none of it, so a pass could mean "works with
+`TRADEFLOW_HOME` and exported keys" while the client journals to the default root or
+cannot authenticate. `mcp_client_config` therefore carries `TRADEFLOW_HOME` whenever it
+is set (never a credential), and a pass that relied on shell-exported keys says so.
+The launch command also carries `--offline` and `--cache-dir` when asked
+(`mcp_launch_command(offline=..., cache_dir=...)`): a keyless, cache-only server checked
+by the self-test and the one printed for a client are the same command. A shell-keys note
+is skipped for it, since nothing there needs keys.
+*Guarded by* `tests/test_mcp_stdio.py`, `tests/test_mcp_keyless.py`.
+
 **How to invoke this copy** — *converged*. `cli._invocation` was the helper the
 installed-copy-vs-checkout entry names, and it lived in the CLI, so a *service* that
 needed to print an instruction — a config's campaign block naming the command that
 reads its stored trades — had nowhere to get the answer but a second copy. Now
-`services.setup.invocation`, with the CLI delegating.
+`settings.invocation`, with `services.setup.invocation` and the CLI delegating.
 *Guarded by* `tests/test_setup.py`, `tests/test_surface_parity.py`,
 `tests/test_campaign_material.py`.
 
@@ -330,14 +447,18 @@ differ under a redirected journal, which is every test in the suite.
 *Guarded by* `tests/test_surface_parity.py`, which opens all three under a redirect and
 compares the paths they reach, rather than three tests that each pass.
 
-Still parallel and **unguarded**: `cli._find_cached_trial` / `services._find_cached_trial`,
-`cli._worker_data_spec` / `services._worker_data_spec`, `parallel._build_cost_model` /
-`services._build_cost_model`. Each is a candidate for delegation.
+**The memo lookup and the worker data spec** — *converged*. `cli._find_cached_trial` and
+`cli._worker_data_spec` were identical copies of the service's; both now delegate (the
+CLI keeps only its line saying workers implied the cache). `parallel._build_cost_model`
+is not a copy but the far end of a round trip - a worker rebuilds the model from
+`cost_spec` - so it is guarded by comparing every field of a service-built model with
+its rebuild.
+*Guarded by* `tests/test_surface_parity.py`, `tests/test_parallel_trials.py`.
 
 ## Finding a new one
 
 ```
-rg -N '^\s*def ([a-zA-Z_]\w*)' -or '$1' tradeflow --sort path | sort | uniq -d
+rg -N '^\s*def ([a-zA-Z_]\w*)' -or '$1' quantred --sort path | sort | uniq -d
 ```
 
 A name defined in two modules is either a delegate (fine) or a parity point (add it

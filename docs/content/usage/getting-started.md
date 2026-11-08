@@ -8,7 +8,7 @@ title: Getting started
 :::note The shipped strategies are examples
 
 `demo_trend` and the `demo_volume` scanner exist to demonstrate the interface and give
-`tradeflow demo` something to run. Neither is an edge, and a bare install ships nothing
+`quantred demo` something to run. Neither is an edge, and a bare install ships nothing
 else. Your own work belongs in a private package — see
 [your own strategies](private-strategies.md).
 
@@ -24,14 +24,16 @@ You need a terminal. Steps 1–2 need nothing else — no keys, no account, no n
 ## 1. Install it
 
 ```bash
-uv tool install tradeflow-engine
+uv tool install 'quantred[mcp,viz]'
 ```
 
 No `uv`? [Install it first](https://docs.astral.sh/uv/getting-started/installation/),
-or use `pipx install tradeflow-engine`. This gives you a `tradeflow` command.
+or use `python -m pip install 'quantred[mcp,viz]'` in a virtual environment. The two extras
+are the MCP server (step 5) and charts in HTML reports (step 4); the demo needs neither, and
+[optional extras](extras) has the rest. This gives you a `quantred` command.
 
 ```bash
-tradeflow --version
+quantred --version
 ```
 
 That prints the version, which copy is running, and — worth noting now — **where its
@@ -41,12 +43,12 @@ in `~/.tradeflow`.
 ## 2. See it work, with no keys at all
 
 ```bash
-tradeflow demo
+quantred demo
 ```
 
 This runs the entire pipeline on synthetic data: it backtests every bundled
-strategy, picks the one that looks best, walk-forward validates it, and refuses to
-promote it.
+strategy, walk-forward validates `demo_trend` (fixed in advance, not chosen by its
+in-sample result), and refuses to promote it.
 
 **The refusal is the point.** The synthetic series is a seeded random walk with no
 edge in it, and a strategy that looks profitable in-sample gets called noise
@@ -68,17 +70,32 @@ You want the **paper** keys. Paper and live credentials are different, and this 
 defaults to paper for a reason.
 
 ```bash
-tradeflow init
+quantred init
 ```
 
 The wizard prompts for both (hidden — nothing lands in your shell history), checks
 them against Alpaca with one cheap request, confirms paper trading is on, and offers
 to warm a small local data cache. It writes `~/.tradeflow/.env`.
 
+It then asks whether to set up a model provider for `research` (Anthropic, OpenAI or a
+local Ollama). Skipping is fine: the demo, backtest, verdict and MCP server need no
+model. A key is read hidden and an existing one is never blanked; for Ollama it asks
+for the endpoint, a response timeout and an optional context length. It does not test
+the connection for you - it prints the `init --check --for research --provider <name>
+--probe-model` command to run when you are ready (a hosted provider bills one tiny
+request). With `--non-interactive --provider <name>` the same choices come from that
+provider's variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `OLLAMA_BASE_URL`,
+`OLLAMA_TIMEOUT` and `OLLAMA_NUM_CTX`) in the environment; without `--provider`, model
+variables are not copied.
+
+The closing steps also say how an MCP client attaches: the client launches
+`quantred mcp` itself over stdio, so you add it to the client's configuration rather
+than running it in a terminal ([AI agents](agents.md)).
+
 Check it any time:
 
 ```bash
-tradeflow init --check
+quantred init --check
 ```
 
 That reports every setting independently — what is set, what is missing, whether
@@ -87,8 +104,15 @@ optional extras are installed — and writes nothing.
 ## 4. Your first real result
 
 ```bash
-tradeflow verdict --symbols NVDA,AAPL,META,AMD,TSLA --start 2024-01-01 --end 2024-12-31
+quantred verdict --scanner none --symbols AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,JPM,XOM,UNH,COST,WMT \
+    --start 2024-01-01 --end 2024-12-31
 ```
+
+Twelve names and no scanner is deliberate: a long-only book capped at 25% per name
+needs at least four names to be fully invested, and a scanner may flag fewer than
+that, in which case the verdict is `infeasible` (see
+[reading the verdict](verdict#an-infeasible-book)). The list is a usability example —
+well-known, liquid names — not a validated universe.
 
 One command runs the whole cross-sectional pipeline — scan, alphas, portfolio
 construction, information analysis — over one universe, one window, and one cost
@@ -109,7 +133,8 @@ value and its threshold, so you can see exactly which part failed:
 Want it as a file you can keep or share?
 
 ```bash
-tradeflow verdict --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-31 --html result.html
+quantred verdict --scanner none --symbols AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,JPM,XOM,UNH,COST,WMT \
+    --start 2024-01-01 --end 2024-12-31 --html result.html
 ```
 
 That writes one self-contained page — charts embedded, no external requests when
@@ -117,24 +142,33 @@ opened.
 
 ## 5. Connect Claude
 
+The server needs the `mcp` extra, which step 1 installed. On a copy that lacks it,
+`quantred init --check --for mcp` prints the one command that adds it and keeps the extras
+and packs you already have (a bare `uv tool install --force "quantred[mcp]"` would drop them).
+
+Check the server starts and answers discovery, then register it with your MCP client:
+
 ```bash
-uv tool install --force "tradeflow-engine[mcp]"
+quantred mcp --self-test
 ```
 
-Then register the server with your MCP client.
+It prints the exact block below with the **absolute** command for your copy (and the
+`TRADEFLOW_HOME` it needs, when you set one). Use that block rather than typing the bare
+command: a desktop client often has a smaller `PATH` than your terminal.
 
 **Claude Code:**
 
 ```bash
-claude mcp add tradeflow -- tradeflow mcp
+claude mcp add quantred -- quantred mcp
 ```
 
-**Claude Desktop** — add to `claude_desktop_config.json`:
+**Claude Desktop** — add to `claude_desktop_config.json` (paste what `--self-test` printed;
+the bare command is shown here for shape):
 
 ```json
 {
   "mcpServers": {
-    "tradeflow": { "command": "tradeflow", "args": ["mcp"] }
+    "quantred": { "command": "quantred", "args": ["mcp"] }
   }
 }
 ```
@@ -143,8 +177,8 @@ Restart the client and ask it something:
 
 > *What has this campaign already tried, and what was the best result?*
 >
-> *Run a verdict on NVDA, AAPL and META for 2024 and tell me honestly whether there's
-> an edge.*
+> *Run a verdict on twelve large US stocks for 2024, with no scanner, and tell me
+> honestly whether there's an edge.*
 >
 > *Explain what the deflated Sharpe ratio is correcting for.*
 

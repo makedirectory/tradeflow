@@ -13,7 +13,7 @@ import json
 
 import pytest
 
-from tradeflow.execution.ledger import CUMULATIVE, INCREMENTAL, PositionLedger
+from quantred.execution.ledger import CUMULATIVE, INCREMENTAL, PositionLedger
 
 
 @pytest.fixture
@@ -402,7 +402,7 @@ def test_every_record_carries_the_shape_it_was_written_in(ledger):
     each cost a live session before it was noticed. A version is what stops the third
     being improvised: a reader can ask what shape it is looking at rather than inferring
     it from which keys happen to be present."""
-    from tradeflow.execution.ledger import LEDGER_VERSION
+    from quantred.execution.ledger import LEDGER_VERSION
 
     ledger.record_fill("AAA", "buy", 1, order_id="o1", basis=CUMULATIVE)
     ledger.record_intent("AAA", "buy", 1, order_id="o1")
@@ -416,7 +416,7 @@ def test_every_record_carries_the_shape_it_was_written_in(ledger):
 def test_a_pre_version_record_is_counted_apart(ledger):
     """A file that mixes shapes is the normal case for anything append-only, and the
     counts are what let an operator decide whether to archive rather than guess."""
-    from tradeflow.execution.ledger import LEDGER_VERSION
+    from quantred.execution.ledger import LEDGER_VERSION
 
     ledger.path.write_text('{"event": "fill", "symbol": "AAA", "side": "buy", "qty": 8}\n')
     ledger.record_fill("BBB", "sell", 2, order_id="o1", basis=CUMULATIVE)
@@ -467,7 +467,7 @@ def test_lifecycles_and_the_replay_read_a_fill_the_same_way(ledger, basis, repor
 
 def test_a_fully_filled_incremental_order_is_not_counted_as_short(ledger):
     """What the divergence cost downstream: `fill_summary` reads these rows."""
-    from tradeflow.analytics.execution_quality import fill_summary
+    from quantred.analytics.execution_quality import fill_summary
 
     ledger.record_intent("COP", "buy", 8, order_id="o1")
     for qty in (3, 3, 2):
@@ -478,7 +478,7 @@ def test_a_fully_filled_incremental_order_is_not_counted_as_short(ledger):
 
 def test_a_genuinely_short_incremental_fill_is_still_short(ledger):
     """Both directions: the fix must not make every order look complete."""
-    from tradeflow.analytics.execution_quality import fill_summary
+    from quantred.analytics.execution_quality import fill_summary
 
     ledger.record_intent("COP", "buy", 8, order_id="o1")
     ledger.record_fill("COP", "buy", 3, order_id="o1", basis=INCREMENTAL)
@@ -558,7 +558,7 @@ def test_a_session_header_carries_the_current_version_stamp(ledger):
     it from which keys happen to be present."""
     import json
 
-    from tradeflow.execution.ledger import LEDGER_VERSION
+    from quantred.execution.ledger import LEDGER_VERSION
 
     ledger.record_session("small_real", {"capital": 1.0})
 
@@ -570,14 +570,14 @@ def test_the_small_real_ledger_is_a_different_file_from_the_live_one(tmp_path, m
     """Averaging fills from a book at full size with fills from the same book at a
     twentieth of it produces a number describing neither, and the whole reason the small
     run exists is that its execution is different."""
-    from tradeflow.execution.ledger import default_ledger_path, small_real_ledger_path
+    from quantred.execution.ledger import default_ledger_path, small_real_ledger_path
 
     monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
 
     assert small_real_ledger_path() != default_ledger_path()
     # And neither is the research journal: a run that measures its own execution has
     # searched nothing, so it must not reach the multiple-testing total.
-    from tradeflow.settings import trial_journal_path
+    from quantred.settings import trial_journal_path
 
     assert small_real_ledger_path() != trial_journal_path()
 
@@ -597,7 +597,7 @@ def test_a_session_context_cannot_change_what_kind_of_record_it_is(ledger):
     """
     import json
 
-    from tradeflow.execution.ledger import LEDGER_VERSION
+    from quantred.execution.ledger import LEDGER_VERSION
 
     ledger.record_session(
         "small_real",
@@ -624,7 +624,7 @@ def test_a_session_outcome_attaches_to_the_header_before_it(tmp_path):
     """Paired by position, which is what an append-only file makes true. Two runs in one
     file must not swap endings — a refused run wearing a later run's `started` would say
     the opposite of what happened."""
-    from tradeflow.execution.ledger import PositionLedger
+    from quantred.execution.ledger import PositionLedger
 
     ledger = PositionLedger(tmp_path / "l.jsonl")
     ledger.record_session("small_real", {"capital": 200.0})
@@ -648,8 +648,8 @@ def test_a_header_written_before_outcomes_existed_reports_neither_state(tmp_path
     """Absence is not a state. A session that began and traded nothing and one that
     never began are indistinguishable from silence, and they are opposite facts — which
     is the whole reason the outcome is recorded rather than inferred."""
-    from tradeflow.cli import _session_outcome_line
-    from tradeflow.execution.ledger import PositionLedger
+    from quantred.cli import _session_outcome_line
+    from quantred.execution.ledger import PositionLedger
 
     ledger = PositionLedger(tmp_path / "l.jsonl")
     ledger.record_session("small_real", {"capital": 200.0})
@@ -666,7 +666,7 @@ def test_an_outcome_with_no_header_to_attach_to_is_not_written(tmp_path):
     there would belong to no run — and a reader pairing by position would hang it on
     whichever session came next. Refused at the writer, so the orphan cannot exist
     rather than having to be dropped by every reader."""
-    from tradeflow.execution.ledger import PositionLedger
+    from quantred.execution.ledger import PositionLedger
 
     ledger = PositionLedger(tmp_path / "l.jsonl")
     ledger.record_session_outcome(PositionLedger.SESSION_STARTED)
@@ -679,7 +679,7 @@ def test_a_session_outcome_moves_no_position(tmp_path):
     """The property every new event in this file has to clear: `_replay` and
     `lifecycles` dispatch on the event name, so a name neither knows must move nothing
     whatever fields it carries."""
-    from tradeflow.execution.ledger import PositionLedger
+    from quantred.execution.ledger import PositionLedger
 
     ledger = PositionLedger(tmp_path / "l.jsonl")
     ledger.record_session("small_real", {"capital": 200.0})
@@ -700,8 +700,8 @@ def test_a_session_written_by_the_previous_ledger_version_reads_as_unrecorded(tm
     the file says nothing either way."""
     import json
 
-    from tradeflow.cli import _session_outcome_line
-    from tradeflow.execution.ledger import PositionLedger
+    from quantred.cli import _session_outcome_line
+    from quantred.execution.ledger import PositionLedger
 
     path = tmp_path / "v2.jsonl"
     path.write_text(

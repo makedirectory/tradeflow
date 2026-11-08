@@ -5,7 +5,7 @@ title: Your own strategies
 
 # Your own strategies
 
-**The strategies and scanners that ship with TradeFlow are examples.** One strategy
+**The strategies and scanners that ship with QuantRed are examples.** One strategy
 and one scanner, there to demonstrate what the interface expects and to give the demo
 something to run. They are not the product, and neither is an edge.
 
@@ -20,13 +20,30 @@ data. For the interface reference — every method, every contract — see
 
 ## Start from a working pack
 
-There is a complete one in the repository, and `init` will copy it somewhere you own:
+There is a complete one in the repository under `example/`. A checkout or an unpacked
+source distribution carries it, and `init` copies it somewhere you own:
 
 ```bash
-tradeflow init --example-pack ./my-signals
-cd my-signals && uv pip install -e .
-tradeflow init --check          # lists it under "private packs installed"
+quantred init --example-pack ./my-signals
+quantred init --check          # lists it under "private packs installed"
 ```
+
+An installed copy (`uv tool install`, `pip install`) does **not** carry it, and
+`init --example-pack` says so; fetch it and copy it yourself, then install the copy:
+
+```bash
+git clone https://github.com/makedirectory/quantred && cp -R quantred/example ./my-signals
+```
+
+Install the copy for how you installed QuantRed. For a `uv tool` install, the tool
+environment is rebuilt, so restate your extras:
+`uv tool install --force 'quantred[mcp,viz]' --with-editable ./my-signals`. In an
+activated virtual environment: `python -m pip install -e ./my-signals`. From a checkout
+of the repository: `uv pip install -e ./my-signals`. If a pack of yours still depends on
+the old `tradeflow-engine`, change that dependency to `quantred`. If you cannot edit it,
+leave it be and keep `tradeflow-engine>=2.3.1` installed: it provides the `tradeflow`
+import alias the pack uses. Excluding it is only for a pack that never imports the old
+name; see [migrating to QuantRed](migrating-to-quantred#if-you-write-or-use-an-extension-pack).
 
 That gives you a strategy, a scanner, a saved config, a `.gitignore`, and a
 `pyproject.toml` with the entry points already declared — a starting point to edit
@@ -43,12 +60,17 @@ to anyone reading this project.
 
 ```toml
 # pyproject.toml, in your own package
-[project.entry-points."tradeflow.strategies"]
+[project.entry-points."quantred.strategies"]
 my_breakout = "yourfirm_signals.strategies:BreakoutStrategy"
 
-[project.entry-points."tradeflow.scanners"]
+[project.entry-points."quantred.scanners"]
 my_liquidity = "yourfirm_signals.scanners:LiquidityScanner"
 ```
+
+The groups were `tradeflow.strategies` and `tradeflow.scanners` before the import
+package was renamed. Those names are still read, but the pack's own imports must change
+from `tradeflow` to `quantred`; see
+[migrating to QuantRed](migrating-to-quantred#update-a-private-pack).
 
 The names on the left are what you type at `--strategy` and `--scanner`. They come from
 the entry points, not from the class names, and they only have to avoid colliding with a
@@ -60,8 +82,9 @@ fills, execution, limits and metrics come for free, because they only ever depen
 the base interface.
 
 ```bash
-uv pip install -e ../yourfirm-signals     # or from your private index
-tradeflow init --check                    # confirms which packs are installed
+uv pip install -e ../yourfirm-signals     # in a venv or checkout; with uv tool, use --with-editable
+                                          # (a pack that depends on tradeflow-engine: see the migration page)
+quantred init --check                    # confirms which packs are installed
 ```
 
 `init --check` lists them under **private packs installed**. If your strategy is not
@@ -95,7 +118,7 @@ Each step answers a different question, and passing one says nothing about the o
 **1. Does it run at all?**
 
 ```bash
-tradeflow backtest --strategy my_breakout --symbols AAPL,MSFT,NVDA \
+quantred backtest --strategy my_breakout --symbols AAPL,MSFT,NVDA \
   --start 2024-01-02 --end 2025-01-02
 ```
 
@@ -106,8 +129,8 @@ worth exactly one thing: confirming the strategy executes and trades. Read the
 **2. Does it survive out of sample?**
 
 ```bash
-tradeflow walkforward --strategy my_breakout --symbols AAPL,MSFT,NVDA \
-  --start 2020-01-02 --end 2025-01-02 --folds 4 --save-config configs/breakout.json
+quantred walkforward --strategy my_breakout --symbols AAPL,MSFT,NVDA \
+  --start 2020-01-02 --end 2025-01-02 --folds 4 --save-config breakout.json
 ```
 
 Walk-forward searches parameters inside each fold and scores them on data the search
@@ -125,7 +148,7 @@ result, and what the book was actually exposed to.
 **4. Paper, then a long look.**
 
 ```bash
-tradeflow live --config configs/breakout.json --capital 8000 --feed iex --preflight
+quantred live --config ~/.tradeflow/configs/breakout.json --capital 8000 --feed iex --preflight
 ```
 
 `--preflight` prints the contract and exits without starting the order path. Read
@@ -152,7 +175,7 @@ against half the evidence, with nothing erroring.
 is just a normalized EMA gap. Read it for the shape of the interface, not for the idea.
 
 For anything past that shape, read `example` instead — it is a real
-installable pack, and `tradeflow init --example-pack ./my-signals` writes you a copy.
+installable pack, and `quantred init --example-pack ./my-signals` writes you a copy.
 Its `example_reversion` is long/short, which is what the leg diagnostics and the
 directional cap exist for, and none of that is exercisable by a long-only book.
 

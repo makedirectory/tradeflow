@@ -5,7 +5,7 @@ title: Feature panel & scan
 
 # Feature panel & scan
 
-`tradeflow/data/` is the cross-sectional data substrate — **all the data in one place, as
+`quantred/data/` is the cross-sectional data substrate — **all the data in one place, as
 of one moment**. Every research-clock module that reasons across names at a rebalance
 (alphas today; risk, costs, portfolio construction, information analysis next) reads
 from and writes to the same table, instead of each assembling its own.
@@ -30,7 +30,7 @@ pushdown** — the `as_of` window is a Parquet filter, so a point-in-time scan
 *physically never reads rows after `as_of`*. It implements the same `BarSource`
 contract as the in-memory `ClientBarSource`, so it's a **drop-in**: the alpha, risk,
 and portfolio layers never learn where the data lives, and pandas appears only at the
-edge (the returned per-symbol frames). It's opt-in (`uv sync --extra store`, pure
+edge (the returned per-symbol frames). It's opt-in (`uv sync --inexact --extra store`, pure
 `pyarrow` wheels — the no-compiler promise holds).
 
 This is the concrete meaning of *"design for scale, start small"*: the seam exists from

@@ -3,8 +3,8 @@
 import pandas as pd
 import pytest
 
-from tradeflow.demo.strategies import DemoTrendStrategy
-from tradeflow.strategies import signals
+from quantred.demo.strategies import DemoTrendStrategy
+from quantred.strategies import signals
 
 
 def _strategy():
@@ -124,7 +124,7 @@ def test_pinned_parameter_skips_range_validation():
     """
     import pandas as pd
 
-    from tradeflow.strategies.base import Strategy
+    from quantred.strategies.base import Strategy
 
     class Pinned(Strategy):
         PARAM_RANGES = {

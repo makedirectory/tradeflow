@@ -8,12 +8,12 @@ from datetime import datetime
 
 import pytest
 
+from quantred.demo.strategies import DemoTrendStrategy
+from quantred.engine.backtest import BacktestEngine
+from quantred.marketdata.client import MarketDataClient
+from quantred.services.registry import STRATEGIES
+from quantred.strategies import signals
 from tests.fakes import FakeMarketData, make_ohlcv
-from tradeflow.demo.strategies import DemoTrendStrategy
-from tradeflow.engine.backtest import BacktestEngine
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.services.registry import STRATEGIES
-from tradeflow.strategies import signals
 
 _VALID_SIGNALS = {signals.BUY, signals.SELL, signals.CLOSE_BUY, signals.CLOSE_SELL, signals.HOLD}
 

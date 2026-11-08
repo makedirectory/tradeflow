@@ -14,8 +14,12 @@ separate artefact with its own page: [run configs](run-configs.md).
 :::
 
 :::tip No keys needed to explore
-Want to see TradeFlow work before signing up for anything? Run `make demo` — it
+Want to see QuantRed work before signing up for anything? Run `quantred demo` — it
 runs the whole pipeline (backtest + walk-forward) on synthetic data, offline.
+
+The research commands read real market bars, so they need keys to fetch them. Once bars
+are in the local cache (`quantred cache warm`), `--offline` reads only the cache and
+needs no keys at all.
 :::
 
 Credentials live in a `.env` file, which is **gitignored** so your keys are never
@@ -38,7 +42,7 @@ Get paper keys from the [Alpaca dashboard](https://app.alpaca.markets/) under
 
 ## Where settings come from
 
-Every credential is resolved through one place (`tradeflow/settings.py`) in a fixed
+Every credential is resolved through one place (`quantred/settings.py`) in a fixed
 order, so there's never any ambiguity:
 
 1. **Environment variables** — the standard, 12-factor way (`export APCA_API_KEY_ID=…`).
@@ -196,10 +200,16 @@ without silently changing what it meant for every trial already recorded.
 ## Run-time options
 
 Everything else (symbols, dates, capital, strategy, scanner) is passed per run on
-the command line or via Make variables — nothing else needs editing:
+the command line — nothing else needs editing:
 
 ```bash
-make backtest SYMBOLS=AAPL,MSFT START=2024-06-01 END=2024-09-01 CAPITAL=50000
+quantred backtest --symbols AAPL,MSFT --start 2024-06-01 --end 2024-09-01 --capital 50000
 ```
 
 See the individual workflow pages for the full option list.
+
+## From a source checkout (contributors)
+
+The commands above are the installed `quantred` command. In a checkout, run them as
+`uv run python main.py <command> ...`. Extras are installed with `uv sync --inexact --extra <name>`
+(see [optional extras](extras)).

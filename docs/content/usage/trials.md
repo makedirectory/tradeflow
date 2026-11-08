@@ -14,34 +14,44 @@ It is deliberately a **CLI browser, not a UI** — the store is SQLite, the quer
 are cheap, and what was missing was filters, a detail view, and honest
 presentation.
 
-Everything here is **read-only**. There is no delete, no edit, no annotate: the
-journal is append-only history, and the browser must not make corrupting it
-convenient. (`trials rebuild` already exists to reconstruct the index from the
-journal.)
+The browse commands are **read-only**: `list`, `show`, `best`, `campaign`, `analyze`,
+`compare`, `status` and `archives` change nothing. There is no delete and no edit of a
+trial: the journal is append-only history, and the browser must not make corrupting it
+convenient. The commands that do write are named where they appear: `promote` writes a
+config file, `mark-contaminated` records a quarantine and `archive` retires the journal to a manifest (see
+[Maintenance](#maintenance-quarantine-a-subset-or-retire-an-era)), and `rebuild`
+reconstructs the derived index from the journal.
 
 ## `trials list` — what have we tried?
 
 ```bash
-python main.py trials list --strategy demo_trend --min-sharpe 1.0 --sort dsr --limit 20
+quantred trials list --strategy demo_trend --min-sharpe 1.0 --sort dsr --limit 20
 ```
 
 ```
-ID            KIND        STRATEGY           SHARPE     DSR  PROMO  ACCT  TS
-a1b2c3d4e5f6  walkforward demo_trend        1.512   0.903    yes     3  2025-03-01T09:14:22
-b2c3d4e5f6a1  backtest    demo_trend        2.104   0.201     no     3  2025-02-01T11:02:07
+ID            KIND        STRATEGY           SHARPE BASIS          DSR  PROMO  ACCT  TS
+a1b2c3d4e5f6  walkforward demo_trend          1.512 oos agg      0.903    yes     3  2025-03-01 09:14:22 EST
 …
 
 Showing 20 of 4318 matching trials (use --limit/--offset for more).
+3 in-sample row(s) (optimize/backtest/alpha) left out of this ranking — none was validated out of sample. Pass --include-in-sample to see them.
 ```
+
+The `SHARPE` column is not one quantity. `BASIS` says which: `oos agg` is a walk-forward's
+out-of-sample aggregate over its folds, `oos median` a research round's median fold, and
+`IN-SAMPLE` is either a backtest's one pass over the whole window or an optimize row's
+best-of-N candidate. `trials show` spells the basis out in full, and `--json` rows carry
+`sharpe_basis` and `in_sample`.
 
 | Flag | Meaning |
 |---|---|
 | `--strategy` / `--kind` | Filter to one strategy, or one kind (`backtest`, `optimize`, `walkforward`, `alpha`, `research`, `verdict`) |
 | `--symbols` | Filter to one universe — matched on the **normalized** universe, so `NVDA,MSFT` and `msft, nvda` find the same trials |
-| `--since` / `--until` | Filter by when the trial was recorded |
-| `--min-sharpe` | Only trials with a recorded OOS Sharpe at or above this |
+| `--since` / `--until` | Filter by when the trial was recorded. A date is a New York market date and both ends include it: `--until 2026-08-01` includes trials from that evening |
+| `--min-sharpe` | Only trials with a recorded Sharpe at or above this; in-sample kinds are left out unless `--include-in-sample` |
 | `--gates-passed` | Only trials recorded as promotable |
-| `--sort date\|sharpe\|dsr` | Sort order (default `date`) |
+| `--sort date\|sharpe\|dsr` | Sort order (default `date`). Sorting by `sharpe` or `dsr` is a ranking, so optimize, backtest and alpha rows are left out of it unless `--include-in-sample`, as `trials best` does |
+| `--include-in-sample` | Rank in-sample rows too. They stay marked `IN-SAMPLE`. Naming one with `--kind optimize` shows exactly those rows without it |
 | `--limit` / `--offset` | Paging — done in SQL, so a store with tens of thousands of rows stays fast |
 | `--accounting` / `--all-accounting` | Stay within one accounting version (default), or span them deliberately |
 | `--json` | Emit the rows as JSON |
@@ -53,14 +63,29 @@ Two rules the listing follows:
   persist returns, and a forecast did not score a Sharpe of 0.00.
 - **Truncation is never silent.** The footer always says how many rows matched
   versus how many were shown.
+- **Exclusions are counted.** A ranking says how many in-sample rows it left out, and a
+  `--since`/`--until` filter says how many rows it could not place because their
+  recorded time is unknown. Those rows are not guessed a date; drop the bound to see
+  them.
+
+Rows from the research agent are worth reading with that in mind. Their `SHARPE` is the
+**median fold**, while `trials campaign` prints the aggregate over all folds under
+EVIDENCE, and says so. A round that proposed new code is listed under
+`draft:<Class>:<hash>` as its strategy, never the base strategy's name.
 
 `trials query` still works as an alias for `trials list` for one release.
 
 ## `trials show` — what did trial X actually run?
 
 ```bash
-python main.py trials show a1b2c3d4e5f6
+quantred trials show a1b2c3d4e5f6
+quantred trials show a1b2          # a unique prefix of at least four characters works too
 ```
+
+Anywhere a trial id is taken - `show`, `analyze`, `compare`, `campaign`, `promote`,
+`mark-contaminated --id`, and the MCP tools - a unique prefix of four or more characters
+stands for the full id. A prefix two trials share is refused with both listed, never
+guessed.
 
 Prints everything the store knows about one trial: its full params (including the
 folded `_cost`, `_limits` and data-vintage keys that make up its dedup identity —
@@ -73,7 +98,7 @@ alongside it —
   Stored alongside this trial:
     return series : 361 periods, 2024-01-27 → 2025-01-21
     proposed book : 4 names, with factor exposures
-    trade table   : — (not recorded — pass --record-trades on the run)
+    trade table   : — (not recorded — re-run with --record-trades, or record_trades=true over MCP)
 
   Reused by 2 later trial(s) with the same identity:
     c3d4e5f6a1b2  2025-04-02T08:11:40  (backtest)
@@ -82,6 +107,17 @@ alongside it —
 That last section is the reverse of the memoization lookup: a number served from
 the store is traceable in both directions, from the reuse back to its origin and
 from the origin forward to everything it was reused for.
+
+For a trial that proposed a portfolio (a `verdict`), `show` lists the **proposed book**
+itself — each symbol and its weight, largest first, plus active weights when stored — and
+says how many names it left out past 25. `--json` carries the whole book.
+
+A walk-forward's `show` and `campaign` also report its **holdout**, read from the
+journal (the index never kept it): the days, Sharpe, CAGR and trade count it was scored
+at, or one of three honest absences — `none requested`, `requested but produced no
+result`, or `requested (N days) but its result was not retained` for a trial recorded
+before the journal kept holdout results. A reused walk-forward (CLI, or the MCP tool's
+`holdout` key) repeats the same statement rather than dropping it.
 
 An unknown id exits non-zero with a plain message.
 
@@ -95,11 +131,13 @@ question.
 `trials promote` reads the recorded trial instead:
 
 ```bash
-tradeflow trials promote 50fd06209f49 --save-config configs/alpha.json
+quantred trials promote 50fd06209f49 --save-config alpha.json
 ```
 
 ```
-Promoted trial 50fd06209f49 -> configs/alpha.json
+Promoted trial 50fd06209f49 -> ~/.tradeflow/configs/alpha.json
+  recipe   : embargo_days=5, holdout_days=0, max_evals=50, method=grid, mode=anchored, objective=sharpe_ratio, seed=42, test_days=63, train_days=252
+  evidence : accounting v6, 1 trial id(s), family has tried 50
   strategy 'demo_trend'  universe 61 symbols resolved from 85 candidates
   Saving a config never trades it - a human promotes it to live.
 ```
@@ -112,7 +150,11 @@ means what it says.
 
 A trial that did not clear its gates is **refused**, because promoting one silently
 would put a config on disk whose own provenance says it failed. `--force` saves it
-anyway with that verdict recorded in the file.
+anyway with that verdict recorded in the file, and prints
+`WARNING: this trial did not clear its gates; the config records that verdict.` (a trial
+that was never gated, such as a backtest, gets its own warning saying it was not validated
+out of sample). A bare `--save-config` filename lands in `configs/` under the state root, as
+for [`walkforward`](run-configs.md#producing-one).
 
 The universe comes from the **journal**, not the store: the store records a universe
 *hash*, not the symbols. That keeps the store passive and derived, and means a trial
@@ -123,14 +165,18 @@ and `--re-resolve-universe` will tell you it has no candidates to re-scan.
 ## `trials best` — the honest leaderboard
 
 ```bash
-python main.py trials best --strategy demo_trend
+quantred trials best --strategy demo_trend
 ```
 
 ```
-  Top 5 by deflated Sharpe:
-    #  ID            STRATEGY             DSR   SHARPE    FAMILY n_trials
-    1  a1b2c3d4e5f6  demo_trend       0.903    1.512                 87
+  Top 5 by deflated Sharpe (validated runs only):
+    #  ID            KIND        STRATEGY             DSR   SHARPE BASIS       FAMILY n_trials
+    1  a1b2c3d4e5f6  walkforward demo_trend         0.903    1.512 oos agg                 87
     …
+
+  FAMILY n_trials = configs tried so far on this row's strategy over its universe (this
+  accounting version), counted now. A row's DSR was deflated by the trials of its own run,
+  so two rows' DSRs are not comparable when their runs searched different amounts.
 
   Ranked by DEFLATED Sharpe, which already discounts for how many configs the
   family tried. Each row's family n_trials is shown: the larger it is, the more
@@ -148,13 +194,23 @@ worse coming from our own tooling, which lends it authority. So:
 - Ranking is by **deflated** Sharpe by default.
 - **In-sample rows are excluded.** An `optimize` row is the winner of a search —
   best-of-N by construction — so ranking one ranks the selection bias rather than
-  any skill. `--include-in-sample` opts back in and says plainly what that means;
+  any skill. A plain `backtest` is excluded too: it is one pass over its window, never
+  split into a part it was fitted on and a part it was judged on, so its Sharpe is
+  description rather than out-of-sample evidence. `--include-in-sample` opts back in and says plainly what that means;
   either way the count of excluded rows is reported, so the exclusion is never
   silent.
 - **Every row names its kind**, because a validated walk-forward and a search's
   winning candidate look identical as numbers and mean opposite things as evidence.
 - Every row shows its family's `n_trials`, and a large count gets its own warning
-  line.
+  line. That count is the configs tried so far on the row's strategy over its universe,
+  read now; a row's DSR was deflated by the trials of its *own* run, so two rows' DSRs
+  are not comparable when their runs searched different amounts. This is why a row from
+  a short research round can outrank a longer walk-forward on DSR while showing a worse
+  Sharpe: the ranking is by the recorded DSR, and each row also carries a `BASIS` cell
+  saying what its Sharpe measures.
+- **A row with nothing to rank by is not listed.** A verdict records neither a Sharpe nor
+  a DSR; it used to sort last but still sit in the table. The count of such rows is
+  reported (`unranked_excluded`).
 - `--rank-by sharpe` is available and prints a caveat saying, in as many words,
   that the ordering does not correct for how many configs were tried.
 
@@ -165,7 +221,7 @@ sees the same context a human reads on screen.
 ## `trials campaign` — what validated this?
 
 ```bash
-tradeflow trials campaign a1b2c3d4e5f6
+quantred trials campaign a1b2c3d4e5f6
 ```
 
 A walk-forward is not one row. It is a **validation recipe** — the folds, the embargo,
@@ -189,39 +245,60 @@ showing a default.
 
   RECIPE — how it was validated. Survives an accounting bump.
     window          2024-01-01 → 2024-06-29
-    train_days      252
-    test_days       63
     embargo_days    5
+    holdout_days    0
+    max_evals       50
     method          grid
+    mode            anchored
     objective       sharpe_ratio
     seed            42
+    test_days       63
+    train_days      252
+    _cost           {'gross': False, 'commission_bps': 1.0, 'impact_eta': 0.3, 'borrow_bps': 50.0}   (folded into its identity)
     _limits         {'max_positions': 8}   (folded into its identity)
+    _run            {'capital': 100000.0, 'benchmark': None}   (folded into its identity)
     universe        8 symbol(s): AAA, BBB, CCC, DDD, EEE, FFF, GGG, HHH
     considered      31 candidate(s) before the scan
 
-  EVIDENCE — what was measured, under accounting v5. Valid only there.
+  SET UP WITH — how the run was configured. Not part of its identity.
+    capital         100,000.00
+    scanner         none
+    scan_as_of      2024-06-29T00:00:00-04:00
+    cache           cache=False, offline=False, workers=1
+
+  EVIDENCE — what was measured, under accounting v6. Valid only there.
+    deflated_sharpe_ratio 0.903
+    max_drawdown    4.10%
+    profit_factor   1.31
     sharpe_ratio    1.12
+    total_return    9.40%
     total_trades    88
+    Holdout : none requested (--holdout-days 0)
     promotable      yes
     family n_trials 50
+    trial ids       a1b2c3d4e5f6
+    probes          — not recorded
 
   METADATA — about the record, not about the strategy.
-    recorded        2026-03-01T09:14:22
+    recorded        2026-03-01 09:14:22 EST
     git             a1b2c3d
     seed            42   (from the validation recipe)
-    return series   tradeflow trials compare a1b2c3d4e5f6 <other-trial-id>
+    notes           — not recorded
+    return series   quantred trials compare a1b2c3d4e5f6 <other-trial-id>
     trade table     — not recorded
+    proposed book   — not recorded
 ```
 
 *(Illustrative figures.)*
 
-**The three labels are the feature.** They age differently, and a reader who cannot
+**The four labels are the feature.** They age differently, and a reader who cannot
 tell them apart will carry a stale number forward beside a recipe that is still
 perfectly good:
 
 | Section | What it is | What an accounting bump does to it |
 | --- | --- | --- |
 | `recipe` | How it was validated | Nothing — it stays true |
+| `set up with` | How the run was configured (capital, scanner, cache) | Nothing — it records context (capital also keys the run, through its own identity; see below) |
 | `evidence` | What was measured | Invalidates all of it |
 | `metadata` | About the record | Nothing |
 
@@ -236,16 +313,18 @@ Beside the recipe, a trial records the context it ran under — the capital, the
 and as-of clock its universe was resolved through, the cache policy its bars came under,
 the probes that ran and what they said, and any note left on the run.
 
-None of it is part of the trial's identity. Two runs differing only in capital are still
-one trial to the memo, exactly as before; recording these facts changed no dedup key and
-invalidated nothing.
+Recording these facts changed no dedup key and invalidated nothing. Capital is the
+exception that keys a run anyway, through the run's own identity rather than this record:
+whole-share rounding makes a run at $4,000 a different book from one at $100,000, so a
+backtest or walk-forward at one capital is never served for a request at another.
 
-Every fact reports whether it was **recorded**, not just its value:
+Every fact reports whether it was **recorded**, not just its value. A recorded fact prints
+as its value; one that was not prints as `— not recorded`:
 
 ```
-  capital     recorded, 250,000
-  scanner     — not recorded
-  cache       — not recorded
+  capital         250,000.00
+  scanner         — not recorded
+  cache           — not recorded
 ```
 
 A trial written before this existed reads as *not recorded* for all of them, which is
@@ -274,7 +353,7 @@ existed load unchanged and read as *not materialised from a campaign*.
 Promotion also warns at promotion time, rather than only when the file is later loaded:
 
 ```
-  WARNING: this trial was measured under accounting v3 and this engine is v5. The recipe still
+  WARNING: this trial was measured under accounting v3 and this engine is v6. The recipe still
   applies; the recorded metrics do not, and must not be compared with a fresh run.
 ```
 
@@ -284,8 +363,8 @@ to `save_config` verbatim — one schema on both surfaces.
 ## `trials analyze` — what did those trades actually do?
 
 ```bash
-tradeflow trials analyze a1b2c3d4e5f6
-tradeflow trials analyze a1b2c3d4e5f6 --json
+quantred trials analyze a1b2c3d4e5f6
+quantred trials analyze a1b2c3d4e5f6 --json
 ```
 
 Exit-reason P&L, win and loss by reason, holding period, and per-trade excursion for
@@ -293,7 +372,7 @@ one recorded run — the questions that otherwise mean opening SQLite.
 
 ```
 === Trades of a1b2c3d4e5f6 (backtest) ===
-  strategy demo_trend | accounting v5 | recorded 2026-03-01T09:14:22
+  strategy demo_trend | accounting v6 | recorded 2026-03-01T09:14:22
   table    : 40 trades
 
   Overall:
@@ -339,13 +418,13 @@ Three things it will not do:
 ## `trials compare` — are these two results one result?
 
 ```bash
-tradeflow trials compare a1b2c3d4e5f6 b2c3d4e5f6a1
+quantred trials compare a1b2c3d4e5f6 b2c3d4e5f6a1
 ```
 
 ```
 === Return-series comparison ===
-  a1b2c3d4e5f6     300 periods, 2024-01-02 → 2024-10-27  (v5, demo_trend)
-  b2c3d4e5f6a1     300 periods, 2024-01-02 → 2024-10-27  (v5, demo_trend)
+  a1b2c3d4e5f6     300 periods, 2024-01-02 → 2024-10-27  (v5, demo_trend, walkforward: stitched out-of-sample folds)
+  b2c3d4e5f6a1     300 periods, 2024-01-02 → 2024-10-27  (v5, demo_trend, walkforward: stitched out-of-sample folds)
 
   a1b2c3d4e5f6 vs b2c3d4e5f6a1  overlap 300 periods, 2024-01-02..2024-10-27
       correlation +0.98 [+0.98, +0.99]
@@ -356,7 +435,10 @@ tradeflow trials compare a1b2c3d4e5f6 b2c3d4e5f6a1
   parameterised — promoting both counts a single result as two.
 ```
 
-*(Illustrative figures.)* Two candidates that correlate near 1.0 are one candidate. A
+*(Illustrative figures.)* Each series names its kind, and a pair of unlike series — a
+stitched out-of-sample walk-forward against a full-window in-sample backtest — is flagged
+`UNLIKE SERIES`, because the overlap between them is arithmetic over two different
+things. Two candidates that correlate near 1.0 are one candidate. A
 campaign that promotes both believes it has two findings and has one.
 
 **Pairs get refused, not caveated.** A correlation is a claim about a relationship and
@@ -385,7 +467,7 @@ trade table (entries, exits, per-trade P&L, costs, MAE/MFE) with its trial so
 `trials show` can render it.
 
 ```bash
-python main.py backtest --symbols NVDA,AAPL --start 2024-01-01 --end 2024-12-31 --record-trades
+quantred backtest --symbols NVDA,AAPL --start 2024-01-01 --end 2024-12-31 --record-trades
 ```
 
 It is **opt-in** on purpose: a long optimization campaign multiplying thousands of
@@ -393,6 +475,17 @@ candidates by hundreds of trades each is exactly the storage nobody asked for. U
 it for the runs you intend to open again. Without the flag, the trial row is
 identical to what it would otherwise have been, and `show` reports the trade table
 as *not recorded* — never as zero trades.
+
+Over MCP the same opt-in is `record_trades=true` on `run_backtest` and
+`run_walk_forward`; `analyze_trial` and `compare_trials` then read the table.
+
+Asking for the table is not answered by a memo that has none: if an identical prior
+trial exists without a stored table, the run is repeated and a new trial recorded.
+That trial counts toward the multiple-testing total like any other: a backtest adds one,
+and a walk-forward adds every configuration its inner search evaluated, so asking a
+large validation for its table after the fact raises the deflation bar for its whole
+family. Pass `--record-trades` on the first run you intend to open again. An identical
+prior trial that did store one is still served.
 
 Persistence follows the same journal-first pattern as the return series and the
 proposed book: the journal is the source of truth, and `trials rebuild`
@@ -405,7 +498,7 @@ A trade table has four states and they never render alike:
 
 | What `trials show` prints | What it means |
 | --- | --- |
-| `— (not recorded — pass --record-trades on the run)` | The run did not opt in. Nothing is known about its trades |
+| `— (not recorded — re-run with --record-trades, or record_trades=true over MCP)` | The run did not opt in. Nothing is known about its trades |
 | `0 trades` | It opted in and made none |
 | `1,204 trades` | All of them |
 | `5,000 of 18,432 trades — TRUNCATED at the storage cap…` | A prefix. Any total over these rows is short by the rest |
@@ -434,9 +527,14 @@ that used a stale universe, a vendor's data correction, a config that turned out
 be the one you thought.
 
 ```bash
-tradeflow trials mark-contaminated --reason "vendor split adjustment was wrong"     --strategy demo_trend --before 2026-08-01 --dry-run
-tradeflow trials mark-contaminated --reason "vendor split adjustment was wrong" --id abc123def456
+quantred trials mark-contaminated --reason "vendor split adjustment was wrong"     --strategy demo_trend --before 2026-08-01 --dry-run
+quantred trials mark-contaminated --reason "vendor split adjustment was wrong" --id abc123def456
 ```
+
+Select by `--id` or by filters, not both: ids name trials outright, and combining them is
+refused. An `--id` that matches no trial is refused (exit 1, naming the id, nothing
+written even for the other ids beside it); a filter that matches nothing is an ordinary
+empty answer.
 
 `--reason` is required. Rows excluded from every leaderboard with nothing saying why
 cannot be judged later, which is worse than not excluding them.
@@ -465,9 +563,9 @@ bump changes what the engine computes, so every stored metric was measured with 
 different instrument; that is not a subset and no annotation fixes it.
 
 ```bash
-tradeflow trials archive --reason "accounting v5 invalidated v4 metrics" --label pre-v5 --dry-run
-tradeflow trials archive --reason "accounting v5 invalidated v4 metrics" --label pre-v5
-tradeflow trials archives     # what has been retired, and why
+quantred trials archive --reason "accounting v6 invalidated v5 walk-forwards" --label pre-v6 --dry-run
+quantred trials archive --reason "accounting v6 invalidated v5 walk-forwards" --label pre-v6
+quantred trials archives     # what has been retired, and why
 ```
 
 **Both files move together, always.** The store is an index over the journal, so moving
@@ -508,7 +606,7 @@ tables instead of recreating them.
 One case it will not repair, on purpose:
 
 ```
-$ tradeflow trials rebuild
+$ quantred trials rebuild
 418 recorded trial(s) are indexed here but the journal they came from
 (~/.tradeflow/logs/research_journal.jsonl) cannot be read. Rebuilding would replace
 them with an empty index and the journal is the only other copy. Restore the journal,
@@ -526,3 +624,9 @@ Retention and pruning are deliberately out of scope — append-only history is t
 point. `trials status` and `trials rebuild` handle index health, and the maintenance
 commands above never delete; see the [walk-forward](walk-forward) page for what the
 store's campaign count feeds.
+
+## From a source checkout (contributors)
+
+The commands above are the installed `quantred` command. In a checkout, run them as
+`uv run python main.py <command> ...`. Extras are installed with `uv sync --inexact --extra <name>`
+(see [optional extras](extras)).

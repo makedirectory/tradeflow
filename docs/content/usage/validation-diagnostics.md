@@ -18,10 +18,10 @@ Printed by every backtest, no flag required.
 
 ```
 === Where the P&L came from ===
-  exit              trades   share       net P&L
-  TAKE_PROFIT         1130   57.9%$      581,923
-  SIGNAL               787   40.3%$     -118,444
-  STOP_LOSS             30    1.5%$      -47,112
+  exit              trades   share       net P&L  win rate
+  TAKE_PROFIT         1130   57.9%      $581,923     71.2%
+  SIGNAL               787   40.3%     -$118,444     38.0%
+  STOP_LOSS             30    1.5%      -$47,112      0.0%
   Nearly all of the gain comes from TAKE_PROFIT. The result is a bet on that exit's
   fill assumption - stress it before believing the headline.
 ```
@@ -33,7 +33,7 @@ the summary metrics distinguishes it from one whose edge is spread across exits.
 ## Take-profit fill stress
 
 ```bash
-tradeflow backtest --config configs/breakout.json --start ... --end ... --fill-stress
+quantred backtest --config ~/.tradeflow/configs/breakout.json --start ... --end ... --fill-stress
 ```
 
 The engine closes a position at its target the moment a bar's high reaches it — a
@@ -92,7 +92,7 @@ Read-only, over the live ledger rather than a backtest. This is what a paper ses
 produces.
 
 ```bash
-tradeflow execution-report --orders
+quantred execution-report --orders
 ```
 
 ```
@@ -120,7 +120,7 @@ session left no other trace, and "why did nothing happen" is answerable only her
 ## Cost stress
 
 ```bash
-tradeflow backtest --config configs/breakout.json --start ... --end ... --cost-stress
+quantred backtest --config ~/.tradeflow/configs/breakout.json --start ... --end ... --cost-stress
 ```
 
 Re-runs under progressively worse cost assumptions. An edge that clears at 1bp and
@@ -130,7 +130,7 @@ assumed cost, and a single cost assumption reports both as a pass.
 ## Portfolio excursion
 
 ```bash
-tradeflow backtest --config configs/breakout.json --start ... --end ... --excursion
+quantred backtest --config ~/.tradeflow/configs/breakout.json --start ... --end ... --excursion
 ```
 
 The equity curve is marked at each bar's **close**. Everything inside the bar — the
@@ -180,9 +180,7 @@ this exists to separate out. Nothing is gated on any of it, and the figures are 
 ## Causality probes
 
 ```bash
-tradeflow backtest --config configs/breakout.json --start ... --end ... --causality
-# or
-make causality
+quantred backtest --config ~/.tradeflow/configs/breakout.json --start ... --end ... --causality
 ```
 
 Asks one question about the *mechanism* rather than about the strategy: **could each
@@ -236,8 +234,8 @@ did not have.
 ## Inspecting the trades
 
 ```bash
-tradeflow trials show <trial-id> --trades-limit 25
-tradeflow trials show <trial-id> --json --trades-limit 25
+quantred trials show <trial-id> --trades-limit 25
+quantred trials show <trial-id> --json --trades-limit 25
 ```
 
 Trade tables are stored only for runs recorded with them — a search evaluating thousands
@@ -252,6 +250,10 @@ command below go through one function, so a live result and a recorded one canno
 to disagree about where a run's P&L came from. See [the trial store](trials) for both
 commands.
 
+## On a reused backtest
+
+If an identical backtest is already in the trial store, the run is reused rather than repeated. `--causality`, `--cost-stress` and `--fill-stress` still run, because each re-runs its own unjournaled backtests. `--excursion` does not: it is read from the run's own simulation, which a reused result does not keep, and the output says to re-run with `--force` (which records another trial).
+
 ## None of this is journaled
 
 The stress runs and the causality probes record nothing. They are one candidate under stated assumptions, not new
@@ -261,3 +263,9 @@ deflated Sharpe deflates against.
 That also means you can run them freely. Exploring the parameter neighbourhood with
 `--no-journal` costs nothing statistically; a walk-forward search costs family budget
 permanently.
+
+## From a source checkout (contributors)
+
+The commands above are the installed `quantred` command. In a checkout, run them as
+`uv run python main.py <command> ...`. The Makefile shortcut for this page is `make causality`. Extras are installed with `uv sync --inexact --extra <name>`
+(see [optional extras](extras)).

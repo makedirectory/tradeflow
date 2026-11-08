@@ -5,7 +5,7 @@ title: Design philosophy
 
 # Design philosophy
 
-TradeFlow makes a handful of opinionated bets that explain almost every decision
+QuantRed makes a handful of opinionated bets that explain almost every decision
 in the codebase. They are worth stating plainly, because the hard part of an
 algorithmic-trading system is not the trading — it is *not fooling yourself*, and
 these principles are how the design defends against that.

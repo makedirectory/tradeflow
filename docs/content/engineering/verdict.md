@@ -24,7 +24,7 @@ report that results *looks* joined-up while potentially describing four differen
 universes over four different windows — a failure that is harder to spot than four
 obviously separate reports, not easier.
 
-`run_verdict` (`tradeflow/services/analysis.py`) closes that by construction:
+`run_verdict` (`quantred/services/analysis.py`) closes that by construction:
 
 1. Resolve the universe **once**, from one scan (or the candidates as given, when
    the scanner flags nothing or is disabled). Every later step receives that list,
@@ -40,7 +40,7 @@ obviously separate reports, not easier.
 
 Steps repeat each other's bar requests constantly — the scan, the alpha panel, the
 covariance lookback, and the information sampler all want overlapping frames.
-`SessionBarCache` (`tradeflow/marketdata/session.py`) wraps the data client's provider for
+`SessionBarCache` (`quantred/marketdata/session.py`) wraps the data client's provider for
 the lifetime of one composite run and serves a repeat from memory.
 
 It is deliberately **exact-match only**: a response is reused for an identical
@@ -78,6 +78,17 @@ Three rules keep the one-line answer honest:
   whatever the completed sections say — a report where the portfolio printed but the
   information analysis did not is an invitation to act on unvalidated weights. The
   CLI exits non-zero so a script can tell the two apart.
+- **An unfundable book is not a data problem.** Right after the universe is resolved
+  the run asks `portfolio.optimizer.long_only_cap_shortfall` - the same function the
+  optimizer refuses with, so the two cannot disagree - whether the caps can fund a
+  fully invested long-only book at all. If not, the later steps are skipped and the
+  verdict is `infeasible` with the binding constraint, ahead of `needs more data`
+  (which would suggest that more dates help). A solve that fails after the preflight
+  passes - alphas can drop names - lands on the same verdict. Caps are never relaxed
+  on the caller's behalf. No metric arithmetic changed, so `ACCOUNTING_VERSION` did
+  not: only the label and the skipped steps of runs that could never have been
+  promotable. A verdict recorded earlier keeps whatever string it was written with;
+  readers fall back to a neutral banner for a string they do not know.
 - **No evidence is not weak evidence.** An information step that ran but measured
   nothing produces `needs more data`, never a pass earned by the portfolio alone.
 

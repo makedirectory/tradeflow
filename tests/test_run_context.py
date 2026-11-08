@@ -1,8 +1,8 @@
 """What a run was set up with, recorded beside what it measured.
 
 The capital, the scanner and as-of clock, the cache policy, the probes that ran and the
-note somebody left are facts about how a trial was produced. None of them is part of its
-identity, so recording them changes no dedup key and invalidates no memo — and every
+note somebody left are facts about how a trial was produced. Recording them changes no
+dedup key and invalidates no memo (capital also keys a run, through its own key) — and every
 trial written before them reads as *not recorded* rather than being backfilled with a
 default nobody chose.
 
@@ -17,26 +17,26 @@ from datetime import datetime
 import pandas as pd
 import pytest
 
-from tests.fakes import DictMarketData
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.services import analysis
-from tradeflow.services.audit import (
+from quantred.marketdata.client import MarketDataClient
+from quantred.services import analysis
+from quantred.services.audit import (
     cache_policy,
     journal_record_for_trial,
     journal_trial,
     probe_verdicts,
     run_context,
 )
-from tradeflow.services.campaign import campaign_material
-from tradeflow.store.trials import TrialStore, db_path_for_journal, params_hash
-from tradeflow.utils.timeutils import NEW_YORK
+from quantred.services.campaign import campaign_material
+from quantred.store.trials import TrialStore, db_path_for_journal, params_hash
+from quantred.utils.timeutils import NEW_YORK
+from tests.fakes import DictMarketData
 
 
 @pytest.fixture
 def _isolated_state(tmp_path, monkeypatch):
     """Journal and artifacts under tmp_path, so a test never memoizes against whatever
     somebody ran yesterday."""
-    from tradeflow.services import audit
+    from quantred.services import audit
 
     monkeypatch.setattr(analysis, "ARTIFACT_DIR", tmp_path / "artifacts")
     monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", tmp_path / "journal.jsonl")
@@ -109,13 +109,11 @@ def test_the_context_lands_under_inputs_and_leaves_the_identity_alone(_isolated_
     assert params_hash(json.loads(row["params_json"])) == row["params_hash"]
 
 
-def test_two_runs_differing_only_in_context_share_one_identity(_isolated_state):
-    """The other half of "no identity change": context is deliberately *not* part of
-    what makes a repeat a repeat, so two runs differing only in capital still key alike.
-
-    Asserted on the identity rather than on whether the second was served from the
-    first — memoization additionally requires a stored trade table, so a run without
-    `--record-trades` misses the cache for reasons that have nothing to do with this."""
+def test_capital_is_recorded_as_context_and_also_keys_the_run(_isolated_state):
+    """Capital used to be context only, so two runs differing only in capital keyed alike
+    and a run at $999,000 could answer a request at $250,000 - a different book once
+    whole-share rounding applies. Recording context still changes no key; capital keys the
+    run through the backtest's own run-shape key, and is recorded in the context too."""
     _one_backtest(capital=250_000.0)
     _one_backtest(capital=999_000.0)
     journal = _isolated_state / "journal.jsonl"
@@ -124,8 +122,8 @@ def test_two_runs_differing_only_in_context_share_one_identity(_isolated_state):
         rows = store.query(limit=5)
         capitals = {journal_record_for_trial(r["id"], journal)["inputs"]["context"]["capital"] for r in rows}
 
-    assert capitals == {250_000.0, 999_000.0}  # the context genuinely differs
-    assert len({r["params_hash"] for r in rows}) == 1  # and the identity does not
+    assert capitals == {250_000.0, 999_000.0}
+    assert len({r["params_hash"] for r in rows}) == 2
 
 
 # --- absent stays absent -------------------------------------------------------------
@@ -211,7 +209,7 @@ def test_the_cli_adapter_and_the_service_builder_produce_one_shape():
     schemas for one fact, and the campaign material reading them would need both."""
     from argparse import Namespace
 
-    from tradeflow.cli import _run_context
+    from quantred.cli import _run_context
 
     args = Namespace(
         capital=250_000.0,
@@ -243,7 +241,7 @@ def test_the_cli_adapter_records_nothing_a_command_does_not_have():
     empty context rather than an error or a row of Nones."""
     from argparse import Namespace
 
-    from tradeflow.cli import _run_context
+    from quantred.cli import _run_context
 
     assert _run_context(Namespace()) == {}
 
@@ -252,7 +250,7 @@ def test_the_cli_adapter_records_nothing_a_command_does_not_have():
 def test_capital_survives_from_the_run_to_a_promoted_config(_isolated_state, monkeypatch):
     """The payoff. The journal never held a run's capital, so a promoted config could
     not state what it was validated at — it inherited whatever the next run passed."""
-    from tradeflow.cli import build_parser
+    from quantred.cli import build_parser
 
     _one_backtest(capital=250_000.0)
     journal = _isolated_state / "journal.jsonl"
@@ -285,7 +283,7 @@ def test_capital_survives_from_the_run_to_a_promoted_config(_isolated_state, mon
 def test_a_trial_with_no_recorded_capital_promotes_without_one(tmp_path):
     """Absent stays absent all the way to the file. A promoted config with no capital is
     honest; one defaulted to 100,000 states a number nobody chose."""
-    from tradeflow.cli import build_parser
+    from quantred.cli import build_parser
 
     journal = tmp_path / "journal.jsonl"
     trial_id = journal_trial(
@@ -328,7 +326,7 @@ def test_the_rendered_campaign_shows_every_context_fact_and_its_status():
     `metadata.notes`; the formatter rendered none of them — and the usage docs showed a
     sample of output the code never produced. The tests asserted the JSON and never the
     rendered text, which is exactly how a fabricated example survives."""
-    from tradeflow.analytics.reporting import format_campaign_material
+    from quantred.analytics.reporting import format_campaign_material
 
     material = {
         "available": True,
@@ -362,18 +360,19 @@ def test_the_rendered_campaign_shows_every_context_fact_and_its_status():
     assert "paper week two" in printed  # so do notes
 
 
-def test_capital_cannot_contradict_the_campaign_it_was_given():
+def test_capital_cannot_contradict_the_campaign_it_was_given(tmp_path, monkeypatch):
     """R2. `_reconcile_book` guarded the book and nothing else, so a caller could hand
     over campaign material recording 250,000 and write a config saying 1. Guarding one
     runnable field and not the next leaves the same contradiction one column over."""
-    import tempfile
 
-    from tradeflow.services import configs
+    from quantred.services import configs
+
+    monkeypatch.setattr("quantred.optimization.config_store.DEFAULT_CONFIG_DIR", tmp_path)
 
     material = {"recipe": {"context": {"capital": {"recorded": True, "value": 250_000.0}}}}
-    with tempfile.TemporaryDirectory() as tmp, pytest.raises(ValueError, match="disagrees"):
+    with pytest.raises(ValueError, match="disagrees"):
         configs.save_config(
-            f"{tmp}/bad.json",
+            "bad.json",
             strategy="demo_trend",
             params={"fast_ema_period": 9},
             capital=1.0,
@@ -381,50 +380,50 @@ def test_capital_cannot_contradict_the_campaign_it_was_given():
         )
 
 
-def test_an_omitted_capital_is_filled_from_the_campaign_and_an_agreeing_one_passes():
+def test_an_omitted_capital_is_filled_from_the_campaign_and_an_agreeing_one_passes(tmp_path, monkeypatch):
     """R2, both directions. The guard must fill what the caller left out and accept the
     value it was drawn to protect — a guard that only refuses is indistinguishable from
     one that refuses everything."""
-    import tempfile
 
-    from tradeflow.services import configs
+    from quantred.services import configs
+
+    monkeypatch.setattr("quantred.optimization.config_store.DEFAULT_CONFIG_DIR", tmp_path)
 
     material = {"recipe": {"context": {"capital": {"recorded": True, "value": 250_000.0}}}}
-    with tempfile.TemporaryDirectory() as tmp:
-        filled = configs.save_config(
-            f"{tmp}/filled.json",
-            strategy="demo_trend",
-            params={"fast_ema_period": 9},
-            provenance={"campaign": material},
-        )
-        assert json.loads(open(filled["path"]).read())["capital"] == pytest.approx(250_000.0)
+    filled = configs.save_config(
+        "filled.json",
+        strategy="demo_trend",
+        params={"fast_ema_period": 9},
+        provenance={"campaign": material},
+    )
+    assert json.loads(open(filled["path"]).read())["capital"] == pytest.approx(250_000.0)
 
-        agreeing = configs.save_config(
-            f"{tmp}/ok.json",
-            strategy="demo_trend",
-            params={"fast_ema_period": 9},
-            capital=250_000.0,
-            provenance={"campaign": material},
-        )
-        assert json.loads(open(agreeing["path"]).read())["capital"] == pytest.approx(250_000.0)
+    agreeing = configs.save_config(
+        "ok.json",
+        strategy="demo_trend",
+        params={"fast_ema_period": 9},
+        capital=250_000.0,
+        provenance={"campaign": material},
+    )
+    assert json.loads(open(agreeing["path"]).read())["capital"] == pytest.approx(250_000.0)
 
 
-def test_a_campaign_with_no_recorded_capital_leaves_the_callers_value_alone():
+def test_a_campaign_with_no_recorded_capital_leaves_the_callers_value_alone(tmp_path, monkeypatch):
     """R2, the absent case. Nothing to reconcile against means nothing is invented and
     nothing is refused."""
-    import tempfile
 
-    from tradeflow.services import configs
+    from quantred.services import configs
 
-    with tempfile.TemporaryDirectory() as tmp:
-        saved = configs.save_config(
-            f"{tmp}/plain.json",
-            strategy="demo_trend",
-            params={"fast_ema_period": 9},
-            capital=7.0,
-            provenance={"campaign": {"recipe": {"context": {}}}},
-        )
-        assert json.loads(open(saved["path"]).read())["capital"] == pytest.approx(7.0)
+    monkeypatch.setattr("quantred.optimization.config_store.DEFAULT_CONFIG_DIR", tmp_path)
+
+    saved = configs.save_config(
+        "plain.json",
+        strategy="demo_trend",
+        params={"fast_ema_period": 9},
+        capital=7.0,
+        provenance={"campaign": {"recipe": {"context": {}}}},
+    )
+    assert json.loads(open(saved["path"]).read())["capital"] == pytest.approx(7.0)
 
 
 def test_campaign_material_reads_back_the_universe_it_claims_to(tmp_path):
@@ -500,7 +499,7 @@ def test_the_effective_scanner_clock_is_recorded_and_marked_as_defaulted():
     decides whether the universe could have seen the future."""
     from argparse import Namespace
 
-    from tradeflow.cli import _run_context
+    from quantred.cli import _run_context
 
     defaulted = _run_context(Namespace(scanner="volume_spike", scan_as_of=None, end=datetime(2024, 6, 1)))
     assert defaulted["scan_as_of"].startswith("2024-06-01")
@@ -518,7 +517,7 @@ def test_a_run_with_no_scanner_records_no_scanner_clock():
     recording the window end as one would invent a resolution that never happened."""
     from argparse import Namespace
 
-    from tradeflow.cli import _run_context
+    from quantred.cli import _run_context
 
     context = _run_context(Namespace(scanner=None, scan_as_of=None, end=datetime(2024, 6, 1)))
 
@@ -533,11 +532,11 @@ def test_every_journalling_path_that_can_record_context_does(_isolated_state):
     about."""
     import ast
 
-    import tradeflow.cli
-    import tradeflow.services.analysis
+    import quantred.cli
+    import quantred.services.analysis
 
     missing = []
-    for module in (tradeflow.cli, tradeflow.services.analysis):
+    for module in (quantred.cli, quantred.services.analysis):
         tree = ast.parse(open(module.__file__).read())
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):

@@ -8,12 +8,13 @@ title: Transaction costs
 Until a cost model charges trading, every Sharpe and equity curve is **gross** — and
 gross results are the most reliable way to fool yourself, because the strategies that
 look best in-sample are very often the highest-turnover ones that costs destroy.
-`tradeflow/costs/` prices the cost of changing a position so research metrics are **net by
+`quantred/costs/` prices the cost of changing a position so research metrics are **net by
 default**.
 
 :::note Research clock only
-This models cost for *simulation*. The live path gets real fills from the broker; it
-imports no cost model.
+This models cost for *simulation*. The live path gets real fills from the broker and
+never charges the model: it uses `quantred.costs.base` only to record an expected cost
+beside the venue's fill (see the last section), and imports nothing from `services/`.
 :::
 
 ## The decomposition
@@ -80,7 +81,7 @@ Long-side margin financing and leverage costs remain out of scope.
 
 ## Where it runs
 
-`ParametricCostModel` in `tradeflow/costs/` — the single source of the √-impact
+`ParametricCostModel` in `quantred/costs/` — the single source of the √-impact
 coefficient, shared by the backtest and the [cost-aware
 optimizer](./portfolio-construction#cost-inside-the-objective-cost-aware-by-default)
 so the two price the same model. Surfaced as backtest flags (`--gross`,
@@ -90,7 +91,7 @@ so the two price the same model. Surfaced as backtest flags (`--gross`,
 tool both return net metrics + `total_cost`.
 
 **Live runs use it too, to record rather than to charge.** The venue prices the fill;
-the model says what the fill was *expected* to cost, and `tradeflow execution-report`
+the model says what the fill was *expected* to cost, and `quantred execution-report`
 shows the two side by side. That comparison is only meaningful if both came from the
 same parameters, so `live` takes the same cost flags and a saved config's `cost` block
 fills them the same way — a second, live-only cost formula would make the number look

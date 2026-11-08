@@ -14,13 +14,14 @@ from datetime import datetime
 
 import pytest
 
+from quantred import settings
+from quantred.marketdata.client import MarketDataClient
+from quantred.mcp import server as mcp_server
+from quantred.mcp.server import EVIDENCE_GATED, EXPOSED_TOOLS, FORBIDDEN_TOOLS, JOURNALING_TOOLS
+from quantred.services import analysis, audit
+from quantred.store.trials import TrialStore
 from tests.fakes import FakeMarketData
 from tests.test_research import _VALID_CODE, _VALID_SCANNER_CODE
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.mcp import server as mcp_server
-from tradeflow.mcp.server import EVIDENCE_GATED, EXPOSED_TOOLS, FORBIDDEN_TOOLS, JOURNALING_TOOLS
-from tradeflow.services import analysis, audit
-from tradeflow.store.trials import TrialStore
 
 pytest.importorskip("mcp", reason="the MCP surface needs the 'mcp' extra")
 
@@ -65,6 +66,28 @@ def test_the_registered_surface_is_exactly_the_declared_one(built):
     assert set(_tools(built)) == set(EXPOSED_TOOLS)
 
 
+def test_discovery_tools_declare_a_boolean_demo_field(built):
+    """The declared output schema must match the rows, or a validating client rejects them.
+
+    The rows used to be declared as string-to-string maps while `demo` is a boolean.
+    The in-process `call_tool` never validates against the schema, so this reads the
+    schema itself.
+    """
+    tools = _tools(built)
+
+    def row_props(name):
+        schema = tools[name].outputSchema
+        items = schema["properties"]["result"]["items"]
+        if "$ref" in items:
+            items = schema["$defs"][items["$ref"].rsplit("/", 1)[-1]]
+        return items["properties"]
+
+    for name in ("list_strategies", "list_scanners"):
+        assert row_props(name)["demo"]["type"] == "boolean"
+    timeframe = row_props("list_strategies")["timeframe"]
+    assert {"type": "null"} in timeframe["anyOf"]
+
+
 def test_the_read_only_wall_still_holds(built):
     registered = set(_tools(built))
     assert not (registered & FORBIDDEN_TOOLS)
@@ -76,7 +99,7 @@ def test_the_server_module_never_imports_a_trading_path():
     """A layering violation here is a safety violation: the wall is the *absence*
     of the capability, so an import that could reach one is review-blocking."""
     source = __import__("pathlib").Path(mcp_server.__file__).read_text()
-    for forbidden in ("tradeflow.execution", "engine.live", "build_broker", "TradingClient"):
+    for forbidden in ("quantred.execution", "engine.live", "build_broker", "TradingClient"):
         assert forbidden not in source
 
 
@@ -104,6 +127,14 @@ def test_non_journaling_tools_do_not_claim_to_journal(built):
         assert "Journals one trial" not in tools[name].description
 
 
+def test_the_verdict_tool_states_its_own_journaling_rule(built):
+    """The shared note said "journals one trial per evaluated config" under a docstring
+    saying an incomplete run journals none; an agent reads both as fact."""
+    description = _tools(built)["run_verdict"].description
+    assert "per evaluated config" not in description
+    assert "journals none" in description
+
+
 def test_tools_exposing_an_evidence_gated_feature_name_the_gate(built):
     tools = _tools(built)
     for name in ("construct_portfolio", "compute_risk", "run_verdict"):
@@ -116,12 +147,28 @@ def test_tools_exposing_an_evidence_gated_feature_name_the_gate(built):
 
 def test_metric_vocabulary_comes_from_the_glossary_not_a_restatement(built):
     """One definition with two readers cannot drift; two descriptions will."""
-    from tradeflow.services.glossary import definitions_for
+    from quantred.services.glossary import definitions_for
 
     canonical = definitions_for(["deflated_sharpe_ratio"])["deflated_sharpe_ratio"]
     description = _tools(built)["run_backtest"].description
     assert canonical in description
     assert "get_metrics_glossary" in description
+
+
+def test_run_verdict_description_does_not_restate_the_services_defaults(built):
+    """A default written into a description is a second definition no test compares: it
+    is stale the day the service changes, and an agent acts on it as fact."""
+    import inspect
+
+    from quantred.services import analysis
+
+    description = _tools(built)["run_verdict"].description
+    params = inspect.signature(analysis.run_verdict).parameters
+    for name in ("max_weight", "lookback_days", "participation_cap", "n_points"):
+        default = params[name].default
+        assert f"`{name}` defaults to {default}" not in description
+        assert f"{name}` to {default}" not in description
+    assert "defaults to" not in description.split("allocation knobs")[1]
 
 
 def test_the_leaderboard_tool_warns_in_its_own_description(built):
@@ -221,7 +268,7 @@ def test_render_report_returns_a_self_contained_document(built):
 def test_render_report_shares_the_cli_renderer_rather_than_a_second_route(built):
     """030's escaping and self-containment rules apply here because it is literally
     the same function — there is no unescaped MCP render path to audit separately."""
-    from tradeflow.analytics.htmlreport import render_html
+    from quantred.analytics.htmlreport import render_html
 
     result = analysis.run_verdict(
         MarketDataClient(FakeMarketData([*SYMBOLS, "SPY"], n=600, freq="1D")),
@@ -261,7 +308,7 @@ def _seed_store(tmp_path):
         for i, (sharpe, dsr) in enumerate([(0.4, 0.1), (2.1, 0.2), (1.5, 0.9)], start=1):
             store.record(
                 id=f"t{i}",
-                kind="backtest",
+                kind="walkforward",
                 strategy="demo_trend",
                 symbols=SYMBOLS,
                 params={"fast": i},
@@ -286,9 +333,10 @@ def test_get_trial_reports_companions_as_null_not_zero(built, _isolated_state):
     assert trial["returns"] is None and trial["weights"] is None and trial["trades"] is None
 
 
-def test_get_trial_on_an_unknown_id_explains_rather_than_crashes(built, _isolated_state):
+def test_get_trial_on_an_unknown_id_is_a_tool_error_that_explains(built, _isolated_state):
     _seed_store(_isolated_state)
-    assert "No trial with id" in _call(built, "get_trial", trial_id="nope")["error"]
+    with pytest.raises(Exception, match="No trial with id.*list_trials"):
+        _call(built, "get_trial", trial_id="nope")
 
 
 def test_the_leaderboard_rules_survive_serialization(built, _isolated_state):
@@ -325,11 +373,15 @@ def test_the_declared_mcp_constraint_excludes_the_incompatible_major():
     because the lockfile held a 1.x that worked."""
     from pathlib import Path
 
-    import tomllib
+    tomllib = pytest.importorskip("tomllib")
 
     manifest = tomllib.loads(Path("pyproject.toml").read_text())
     constraint = manifest["project"]["optional-dependencies"]["mcp"]
-    assert constraint == ["mcp>=1.0,<2"], constraint
+    assert constraint == ["mcp>=1.22,<2"], constraint
+    # `structuredContent` / `outputSchema` first exist in 1.10, but releases below 1.22 do
+    # not import under current pydantic, so the floor is where a server can start. The dev
+    # extra must agree with it.
+    assert "mcp>=1.22,<2" in manifest["project"]["optional-dependencies"]["dev"]
 
 
 def test_the_installed_sdk_satisfies_that_constraint():
@@ -384,7 +436,7 @@ def test_trial_store_maintenance_is_deliberately_not_an_mcp_tool():
     Distinct from the trading wall — these are not dangerous capabilities, they are
     somebody else's decision.
     """
-    from tradeflow.mcp import server as mcp_server
+    from quantred.mcp import server as mcp_server
 
     assert mcp_server.OPERATOR_ONLY
     for name in ("archive", "mark_contaminated", "mark-contaminated"):
@@ -401,7 +453,7 @@ def test_the_mode_that_can_place_real_orders_is_unreachable_over_mcp(built):
     behalf. An agent that thinks execution telemetry is worth gathering should say so
     and let a person start the run.
     """
-    from tradeflow.mcp import server as mcp_server
+    from quantred.mcp import server as mcp_server
 
     registered = set(_tools(built))
     for name in ("small_real", "run_small_real", "start_small_real"):
@@ -448,6 +500,7 @@ def _service_params(fn):
         ("construct_portfolio", "construct_portfolio"),
         ("compute_alphas", "compute_alphas"),
         ("compute_attribution", "compute_attribution"),
+        ("run_verdict", "run_verdict"),
     ],
 )
 def test_every_service_knob_is_exposed_or_deliberately_deferred(built, tool_name, service_name):
@@ -463,11 +516,12 @@ def test_every_service_knob_is_exposed_or_deliberately_deferred(built, tool_name
     list, so a parameter added to the service later fails here instead of quietly
     becoming unreachable — which is exactly how the gap this closes opened.
     """
-    from tradeflow.services import analysis
+    from quantred.services import analysis
 
     exposed = _tool_params(built, tool_name)
     service = _service_params(getattr(analysis, service_name))
-    unreachable = service - exposed - set(mcp_server.DEFERRED_PARAMS)
+    withheld = set(mcp_server.WITHHELD_PARAMS.get(tool_name, {}))
+    unreachable = service - exposed - set(mcp_server.DEFERRED_PARAMS) - withheld
 
     assert not unreachable, (
         f"{tool_name} cannot set {sorted(unreachable)}.\n"
@@ -513,7 +567,9 @@ def test_the_deferred_knobs_are_absent_from_every_registered_tool(built):
 
     for tool in asyncio.run(built.list_tools()):
         params = set((tool.inputSchema.get("properties") or {}).keys())
-        leaked = params & set(mcp_server.DEFERRED_PARAMS)
+        leaked = params & (
+            set(mcp_server.DEFERRED_PARAMS) | set(mcp_server.WITHHELD_PARAMS.get(tool.name, {}))
+        )
         assert not leaked, f"{tool.name} exposes deferred knob(s) {sorted(leaked)}"
 
 
@@ -553,7 +609,7 @@ def test_an_exposed_knob_actually_reaches_the_service(monkeypatch):
     """
     import asyncio
 
-    from tradeflow.services import analysis
+    from quantred.services import analysis
 
     seen = {}
 
@@ -632,7 +688,7 @@ def test_an_omitted_knob_is_not_forwarded_at_all(monkeypatch):
     step, and the two would drift silently."""
     import asyncio
 
-    from tradeflow.services import analysis
+    from quantred.services import analysis
 
     seen = {}
     monkeypatch.setattr(analysis, "construct_portfolio", lambda *a, **k: seen.update(k) or {"ok": True})
@@ -652,6 +708,35 @@ def test_an_omitted_knob_is_not_forwarded_at_all(monkeypatch):
 
 
 # --- connection and discovery ------------------------------------------------------
+def test_documented_mcp_configs_use_the_server_name():
+    """The key a client config is written under is the name the server reports.
+
+    A client may namespace tools by the config key rather than by the server's own
+    name, so a page that registers the server under a different spelling teaches a
+    reader names the server never uses. Read from every page rather than a remembered
+    list, and both spellings of a registration are covered: the JSON key and the
+    `claude mcp add` argument.
+    """
+    import pathlib
+    import re
+
+    from quantred.mcp import server
+
+    assert server.SERVER_NAME == settings.MCP_SERVER_NAME
+    pages = [pathlib.Path("README.md"), *pathlib.Path("docs/content").rglob("*.md")]
+    seen = 0
+    for page in pages:
+        if page.name == "changelog.md":
+            continue  # history records what was true when each release shipped
+        text = page.read_text()
+        keys = re.findall(r'"mcpServers":\s*\{\s*"([^"]+)"', text)
+        keys += re.findall(r"claude mcp add\s+(?:--\S+\s+)*([\w-]+)\s+--", text)
+        for key in keys:
+            seen += 1
+            assert key == settings.MCP_SERVER_NAME, f"{page} registers the server as {key!r}"
+    assert seen >= 4, "the scan found almost no registrations - is it stale?"
+
+
 def test_every_documented_connection_recipe_covers_both_kinds_of_copy():
     """The installed-copy-versus-checkout point, applied to connection instructions.
 
@@ -685,7 +770,7 @@ def test_every_documented_connection_recipe_covers_both_kinds_of_copy():
         if not re.search(r'"command":\s*"uv"', text):
             continue
         checked += 1
-        assert re.search(r'"command":\s*"tradeflow"', text), (
+        assert re.search(rf'"command":\s*"{re.escape(settings.CLI_NAME)}"', text), (
             f"{page} offers a checkout recipe with no installed-copy one beside it. "
             "`uv run python main.py` sends an installed reader to a file that was "
             "never there."
@@ -694,10 +779,10 @@ def test_every_documented_connection_recipe_covers_both_kinds_of_copy():
 
 
 def test_the_prerequisites_are_stated_where_a_client_is_registered():
-    """Both prerequisites fail the same way from a client — the server exits before
-    answering, and the client shows only that it would not start. Verified by
-    handshaking an installed copy with no credentials: the pipe closes before the first
-    response. So the pages that tell someone to register it have to say so."""
+    """A missing extra makes the server exit before answering, and the client shows only
+    that it would not start. Credentials used to fail the same way and no longer do (the
+    data client is built lazily), but the page that tells someone to register it still
+    has to say what each one costs."""
     import pathlib
 
     guide = pathlib.Path("docs/content/engineering/mcp-server.md").read_text().lower()
@@ -715,7 +800,7 @@ def test_the_audit_log_records_the_knobs_a_proposal_was_made_with(tmp_path, monk
     import asyncio
     import json
 
-    from tradeflow.services import audit
+    from quantred.services import audit
 
     monkeypatch.setattr(audit, "DEFAULT_AUDIT_PATH", tmp_path / "audit.jsonl")
     built = mcp_server.build_server(
@@ -921,3 +1006,190 @@ def test_the_refusal_says_the_call_did_not_run(built):
 
     assert "Refused rather than ignored" in message
     assert "believing it was applied" in message
+
+
+# --- run_verdict: the allocation knobs an infeasible verdict tells the caller to change ---
+def test_a_verdict_knob_actually_reaches_the_service(monkeypatch):
+    """An infeasible verdict names `max_weight`/`max_names` as the way out. A parameter
+    in the schema that the forwarding dict drops would leave an agent re-running the same
+    infeasible book and being told, each time, to change a knob it already changed."""
+    from quantred.services import analysis
+
+    seen = {}
+    monkeypatch.setattr(analysis, "run_verdict", lambda *a, **k: seen.update(k) or {"ok": True})
+    built = mcp_server.build_server(
+        data_client=MarketDataClient(FakeMarketData([*SYMBOLS, "SPY"], n=200, freq="1D"))
+    )
+
+    asyncio.run(
+        built.call_tool(
+            "run_verdict",
+            {
+                "strategy": "demo_trend",
+                "symbols": SYMBOLS,
+                "start": "2024-01-02",
+                "end": "2025-06-01",
+                "max_weight": 0.5,
+                "max_names": 4,
+                "lookback_days": 200,
+                "neutralize_factors": ["market"],
+                "participation_cap": 0.05,
+                "n_points": 12,
+            },
+        )
+    )
+
+    assert seen["max_weight"] == 0.5
+    assert seen["max_names"] == 4
+    assert seen["lookback_days"] == 200
+    assert seen["neutralize_factors"] == ["market"]
+    assert seen["participation_cap"] == 0.05
+    assert seen["n_points"] == 12
+
+
+def test_an_omitted_verdict_knob_is_not_forwarded_at_all(monkeypatch):
+    from quantred.services import analysis
+
+    seen = {}
+    monkeypatch.setattr(analysis, "run_verdict", lambda *a, **k: seen.update(k) or {"ok": True})
+    built = mcp_server.build_server(
+        data_client=MarketDataClient(FakeMarketData([*SYMBOLS, "SPY"], n=200, freq="1D"))
+    )
+
+    asyncio.run(
+        built.call_tool(
+            "run_verdict",
+            {"strategy": "demo_trend", "symbols": SYMBOLS, "start": "2024-01-02", "end": "2025-06-01"},
+        )
+    )
+
+    for absent in ("max_weight", "max_names", "lookback_days", "neutralize_factors", "participation_cap"):
+        assert absent not in seen, f"{absent} was forwarded despite not being set"
+    assert "n_points" not in seen
+
+
+def test_the_verdict_description_names_the_infeasible_verdict_and_its_recovery(built):
+    description = _tools(built)["run_verdict"].description
+    assert "infeasible" in description
+    assert "max_weight" in description
+    assert "more dates" in description.lower()
+
+
+# --- record_trades over MCP --------------------------------------------------
+def _dates():
+    return {"start": START.strftime("%Y-%m-%d"), "end": END.strftime("%Y-%m-%d")}
+
+
+def _latest_trial_id(kind):
+    with audit.open_trial_store() as store:
+        rows = store.query(kind=kind, limit=1)
+        return rows[0]["id"], store.trades_for(rows[0]["id"])
+
+
+def test_a_backtest_records_no_trade_table_unless_asked(built):
+    """The default must stay opt-in (a campaign's worth of tables is storage nobody asked
+    for), and the answer an agent then gets from `analyze_trial` must name the argument
+    it can actually pass over this surface, not a CLI flag it has no way to use."""
+    _call(built, "run_backtest", strategy="demo_trend", symbols=SYMBOLS, **_dates())
+    trial_id, table = _latest_trial_id("backtest")
+
+    assert table is None
+    report = _call(built, "analyze_trial", trial_id=trial_id)
+    assert report["status"] == "unavailable"
+    assert "record_trades=true" in report["reason"]
+
+
+def test_a_backtest_run_with_record_trades_stores_a_table_analyze_trial_reads(built):
+    """Before this, an agent told to re-run with the CLI flag had no argument to pass:
+    the MCP tool journaled every trial without a table."""
+    _call(built, "run_backtest", strategy="demo_trend", symbols=SYMBOLS, record_trades=True, **_dates())
+    trial_id, table = _latest_trial_id("backtest")
+
+    assert table is not None and table["rows"]
+    report = _call(built, "analyze_trial", trial_id=trial_id)
+    assert report["status"] == "complete"
+
+
+def test_the_stored_table_is_the_one_the_cli_helper_builds(built):
+    """Same serialization as the CLI: the table is `trades_payload` of the run's trades,
+    so the row count recorded is the run's own trade count."""
+    result = _call(
+        built, "run_backtest", strategy="demo_trend", symbols=SYMBOLS, record_trades=True, **_dates()
+    )
+    _, table = _latest_trial_id("backtest")
+
+    assert table["total_rows"] == result["total_trades"] == len(table["rows"])
+    assert table["truncated"] is False
+
+
+def test_asking_for_trades_is_not_answered_by_a_memo_that_has_none(built):
+    """A trial with no table used to stand in for a request that wanted one: the call
+    reported success (`memoized`) and the caller was exactly where it started."""
+    _call(built, "run_backtest", strategy="demo_trend", symbols=SYMBOLS, **_dates())
+    first_id, first_table = _latest_trial_id("backtest")
+    assert first_table is None
+
+    second = _call(
+        built, "run_backtest", strategy="demo_trend", symbols=SYMBOLS, record_trades=True, **_dates()
+    )
+    second_id, second_table = _latest_trial_id("backtest")
+    assert not second.get("memoized")
+    assert second_id != first_id and second_table is not None
+
+    # Both directions: a trial that kept its table is still served, and a plain request
+    # is still memoized.
+    third = _call(
+        built, "run_backtest", strategy="demo_trend", symbols=SYMBOLS, record_trades=True, **_dates()
+    )
+    assert third["memoized"] is True and third["trial_id"] == second_id
+    plain = _call(built, "run_backtest", strategy="demo_trend", symbols=SYMBOLS, **_dates())
+    assert plain["memoized"] is True
+
+
+def test_a_walk_forward_run_with_record_trades_stores_its_oos_table(built):
+    kwargs = dict(strategy="demo_trend", symbols=SYMBOLS, n_folds=2, max_evals=2, **_dates())
+    _call(built, "run_walk_forward", **kwargs)
+    first_id, first_table = _latest_trial_id("walkforward")
+    assert first_table is None
+
+    again = _call(built, "run_walk_forward", record_trades=True, **kwargs)
+    second_id, table = _latest_trial_id("walkforward")
+    assert not again.get("memoized")
+    assert second_id != first_id and table is not None
+
+    served = _call(built, "run_walk_forward", record_trades=True, **kwargs)
+    assert served["memoized"] is True and served["trial_id"] == second_id
+
+
+@pytest.mark.parametrize("tool", ["run_backtest", "run_walk_forward"])
+def test_record_trades_is_forwarded_only_when_set(built, monkeypatch, tool):
+    """An omitted knob is not forwarded: restating the default here would be a second
+    definition of it. Set, it must reach the service."""
+    seen = []
+    monkeypatch.setattr(analysis, tool, lambda *a, **k: seen.append(k) or {})
+    base = dict(strategy="demo_trend", symbols=SYMBOLS, **_dates())
+
+    _call(built, tool, **base)
+    _call(built, tool, record_trades=True, **base)
+
+    assert "record_trades" not in seen[0]
+    assert seen[1]["record_trades"] is True
+
+
+@pytest.mark.parametrize("command,tool", [("backtest", "run_backtest"), ("walkforward", "run_walk_forward")])
+def test_the_cli_record_trades_flag_has_an_mcp_parameter_and_service_argument(command, tool):
+    import inspect
+
+    from quantred.cli import build_parser
+
+    parser = next(
+        p
+        for action in build_parser()._subparsers._group_actions
+        for name, p in action.choices.items()
+        if name == command
+    )
+    assert "record_trades" in {a.dest for a in parser._actions}
+    assert "record_trades" in inspect.signature(getattr(analysis, tool)).parameters
+    source = inspect.getsource(mcp_server)
+    begin = source.index(f"def {tool}(")
+    assert "record_trades:" in source[begin : source.index(") -> Dict[str, Any]:", begin)]

@@ -13,10 +13,10 @@ from datetime import datetime
 
 import pytest
 
-from tradeflow.cli import apply_run_config, build_parser, parse_cli
-from tradeflow.optimization import config_store
+from quantred.cli import apply_run_config, build_parser, parse_cli
+from quantred.optimization import config_store
 
-_MA_RANGES = __import__("tradeflow.services.registry", fromlist=["x"]).STRATEGIES["demo_trend"].PARAM_RANGES
+_MA_RANGES = __import__("quantred.services.registry", fromlist=["x"]).STRATEGIES["demo_trend"].PARAM_RANGES
 
 _PARAMS = {
     "fast_ema_period": 18,
@@ -116,8 +116,8 @@ def test_a_strategy_that_contradicts_the_config_is_refused(saved, monkeypatch):
     contradiction is not expressible against the built-in registry alone — and a test
     naming the same strategy on both sides would pass while checking nothing.
     """
+    from quantred.services.registry import STRATEGIES
     from tests.fakes import ScriptedStrategy
-    from tradeflow.services.registry import STRATEGIES
 
     monkeypatch.setitem(STRATEGIES, "other_strategy", ScriptedStrategy)
     args = parse_cli(["backtest", "--config", saved, "--strategy", "other_strategy"])
@@ -159,9 +159,9 @@ def test_the_tuned_params_reach_the_service_not_just_the_namespace(monkeypatch):
     """
     from datetime import datetime
 
+    from quantred.marketdata.client import MarketDataClient
+    from quantred.services import analysis
     from tests.fakes import FakeMarketData
-    from tradeflow.marketdata.client import MarketDataClient
-    from tradeflow.services import analysis
 
     seen = []
     real = analysis._strategy
@@ -237,7 +237,7 @@ def test_backtest_takes_its_universe_from_the_config(saved):
     fetched RIVN. `verdict` handled the same file correctly, which is what made it
     look scanner-specific rather than a whole command left on the old path.
     """
-    from tradeflow.cli import DEFAULT_UNIVERSE
+    from quantred.cli import DEFAULT_UNIVERSE
 
     args = parse_cli(["backtest", "--config", saved, "--start", "2024-01-02", "--end", "2024-06-01"])
 
@@ -263,7 +263,7 @@ def test_every_command_with_config_shares_one_layering_path():
     behaviour per command would not have caught it; asserting there is one path does."""
     import inspect
 
-    from tradeflow import cli
+    from quantred import cli
 
     for command in ("cmd_backtest", "cmd_live", "cmd_verdict", "cmd_alphas", "cmd_info", "cmd_horizon"):
         source = inspect.getsource(getattr(cli, command))
@@ -275,7 +275,7 @@ def test_every_command_with_config_shares_one_layering_path():
 @pytest.fixture
 def with_universe(tmp_path):
     """A config recording both universes: 61 resolved from 85 candidates."""
-    from tradeflow.services.registry import STRATEGIES
+    from quantred.services.registry import STRATEGIES
 
     path = tmp_path / "universe.json"
     path.write_text(
@@ -327,7 +327,7 @@ def test_an_older_config_without_candidates_says_what_it_can_only_do(tmp_path, c
     """Configs saved before candidates were recorded can only re-scan the resolved
     book. That is a second filter, so it has to be named rather than passed off as a
     re-resolution."""
-    from tradeflow.services.registry import STRATEGIES
+    from quantred.services.registry import STRATEGIES
 
     path = tmp_path / "old.json"
     path.write_text(
@@ -387,8 +387,8 @@ def test_without_a_config_nothing_about_scanning_changes(capsys):
 # --- promoting a validated trial into a portable config ------------------------
 def _journaled_trial(tmp_path, monkeypatch, promotable=True, candidates=None):
     """One journaled trial plus a store rebuilt from it, as a real run leaves behind."""
-    from tradeflow.services import audit
-    from tradeflow.store.trials import TrialStore, db_path_for_journal
+    from quantred.services import audit
+    from quantred.store.trials import TrialStore, db_path_for_journal
 
     journal = tmp_path / "journal.jsonl"
     monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", journal)
@@ -415,7 +415,7 @@ def _journaled_trial(tmp_path, monkeypatch, promotable=True, candidates=None):
 
 
 def _promote(store, trial_id, out, force=False):
-    from tradeflow.cli import _promote_trial
+    from quantred.cli import _promote_trial
 
     argv = ["trials", "promote", trial_id, "--save-config", str(out)] + (["--force"] if force else [])
     _promote_trial(store, build_parser().parse_args(argv))
@@ -524,7 +524,7 @@ def test_forcing_a_failed_trial_records_the_verdict_in_the_config(tmp_path, monk
 def test_provenance_names_the_source_and_the_scan_clock():
     """A 61-name large-cap list is not "the market", and a report that leaves the
     universe in the background invites it to be read as one."""
-    from tradeflow.analytics.reporting import format_universe_provenance
+    from quantred.analytics.reporting import format_universe_provenance
 
     rendered = "\n".join(
         format_universe_provenance(
@@ -546,7 +546,7 @@ def test_provenance_names_the_source_and_the_scan_clock():
 def test_provenance_distinguishes_a_replay_from_a_fresh_resolution():
     """The distinction 042 §2.2 exists for, carried into the report so a reader never
     has to infer which happened."""
-    from tradeflow.analytics.reporting import format_universe_provenance
+    from quantred.analytics.reporting import format_universe_provenance
 
     replayed = "\n".join(
         format_universe_provenance(
@@ -568,7 +568,7 @@ def test_provenance_states_survivorship_rather_than_measuring_it():
     ingest. Saying a hand-supplied list is survivorship-prone by construction is
     honest; computing a number from a list that has none would not be.
     """
-    from tradeflow.analytics.reporting import format_universe_provenance
+    from quantred.analytics.reporting import format_universe_provenance
 
     rendered = "\n".join(
         format_universe_provenance(
@@ -587,7 +587,7 @@ def test_provenance_states_survivorship_rather_than_measuring_it():
 
 # --- a frozen config states what it risks --------------------------------------
 def _frozen(tmp_path, limits):
-    from tradeflow.services.registry import STRATEGIES
+    from quantred.services.registry import STRATEGIES
 
     path = tmp_path / "frozen.json"
     path.write_text(
@@ -613,7 +613,7 @@ def test_a_config_s_risk_limits_reach_the_strategy(tmp_path, capsys):
     config exists to prevent - a 61-name config quietly holding one position is a defect
     already found in backtests, and a live run would repeat it with money.
     """
-    from tradeflow.cli import _strategy_from
+    from quantred.cli import _strategy_from
 
     path = _frozen(tmp_path, {"max_positions": 8, "max_position_size": 1200.0, "min_notional": 25.0})
     args = parse_cli(["backtest", "--config", path])
@@ -630,7 +630,7 @@ def test_a_config_s_risk_limits_reach_the_strategy(tmp_path, capsys):
 def test_limits_absent_from_an_older_config_fall_back_to_the_defaults(tmp_path, capsys):
     """Merged, not replaced: a config written before limits were recorded still gets
     the strategy's own values for keys it never carried."""
-    from tradeflow.cli import _strategy_from
+    from quantred.cli import _strategy_from
 
     args = parse_cli(["backtest", "--config", _frozen(tmp_path, None)])
     tuned = apply_run_config(args)
@@ -643,7 +643,7 @@ def test_limits_absent_from_an_older_config_fall_back_to_the_defaults(tmp_path, 
 
 
 def test_a_partial_limits_block_keeps_the_rest(tmp_path, capsys):
-    from tradeflow.cli import _strategy_from
+    from quantred.cli import _strategy_from
 
     args = parse_cli(["backtest", "--config", _frozen(tmp_path, {"max_positions": 12})])
     tuned = apply_run_config(args)
@@ -657,8 +657,8 @@ def test_a_partial_limits_block_keeps_the_rest(tmp_path, capsys):
 
 def test_a_saved_config_records_its_limits_in_full(tmp_path):
     """So the file says what it risks rather than resolving it at start-up."""
-    from tradeflow.optimization.config_store import load_config, save_config
-    from tradeflow.services.registry import STRATEGIES
+    from quantred.optimization.config_store import load_config, save_config
+    from quantred.services.registry import STRATEGIES
 
     path = save_config(
         tmp_path / "c.json",
@@ -680,7 +680,7 @@ def test_walkforward_accepts_a_saved_config(tmp_path):
     """
     import json
 
-    from tradeflow.cli import apply_run_config, parse_cli
+    from quantred.cli import apply_run_config, parse_cli
 
     path = tmp_path / "c.json"
     path.write_text(
@@ -714,7 +714,7 @@ def test_walkforward_replays_a_saved_universe_rather_than_re_scanning(tmp_path):
     the validated book and the re-validated one are different books."""
     import json
 
-    from tradeflow.cli import apply_run_config, parse_cli
+    from quantred.cli import apply_run_config, parse_cli
 
     path = tmp_path / "c.json"
     path.write_text(
@@ -748,7 +748,7 @@ def test_a_trial_that_traded_nothing_is_not_served_to_a_backtest(tmp_path, monke
     The journal keeps that record — it is append-only and the attempt is a fact. This
     governs only whether it may stand in for a real answer.
     """
-    from tradeflow.store.trials import TrialStore
+    from quantred.store.trials import TrialStore
 
     monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
     store = TrialStore(tmp_path / "trials.db")
@@ -769,7 +769,7 @@ def test_a_trial_kind_that_never_trades_is_still_served(tmp_path, monkeypatch):
     """Both directions, and the bug the first version of this caused: an `alpha` trial
     is a read-only forecast with no trades by design, and excluding those would be a
     second defect wearing the first one's clothes."""
-    from tradeflow.store.trials import TrialStore
+    from quantred.store.trials import TrialStore
 
     monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
     store = TrialStore(tmp_path / "trials.db")
@@ -787,8 +787,8 @@ def test_a_trial_kind_that_never_trades_is_still_served(tmp_path, monkeypatch):
 
 # --- book limits on the research clock --------------------------------------------
 def _backtest_limits(argv, declared=None):
-    from tradeflow.cli import _apply_limit_overrides, parse_cli
-    from tradeflow.services.registry import STRATEGIES
+    from quantred.cli import _apply_limit_overrides, parse_cli
+    from quantred.services.registry import STRATEGIES
 
     args = parse_cli(argv)
     strategy = STRATEGIES["demo_trend"].create_with_defaults()
@@ -820,7 +820,7 @@ def test_limits_change_the_cache_identity_of_a_run():
     went through no identity at all. Two runs of the same strategy over the same window
     differing only in max_gross_exposure hashed alike, and the second was answered from
     the first."""
-    from tradeflow.cli import _dedup_params, parse_cli
+    from quantred.cli import _dedup_params, parse_cli
 
     args = parse_cli(["backtest"])
     loose = _dedup_params({"fast_ema_period": 10}, args, None, {"max_gross_exposure": None})
@@ -832,7 +832,7 @@ def test_limits_change_the_cache_identity_of_a_run():
 def test_a_config_with_no_limits_keys_like_one_that_has_no_such_concept():
     """Unset limits are omitted rather than recorded as null, or every historical trial
     would re-key and stop matching itself."""
-    from tradeflow.cli import _dedup_params, parse_cli
+    from quantred.cli import _dedup_params, parse_cli
 
     args = parse_cli(["backtest"])
     absent = _dedup_params({"x": 1}, args, None, None)

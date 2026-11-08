@@ -10,19 +10,19 @@ make up          # docker compose up -d — MCP + persistent state
 make down        # stop; your trial history survives
 ```
 
-**This is a local development stack, not an easier way to try TradeFlow.** Docker is
+**This is a local development stack, not an easier way to try QuantRed.** Docker is
 itself a prerequisite, so if you just want to run this, [installing the
 command](installation#as-a-command-no-clone) is strictly simpler:
 
 ```bash
-uv tool install tradeflow-engine && tradeflow demo
+uv tool install quantred && quantred demo
 ```
 
 What compose adds is the volume and environment wiring people get wrong by hand, a
 long-running MCP server and docs site, and the seam a database service would attach
 to later without changing how anything boots.
 
-Honest framing: TradeFlow is a single-process application with file-backed state, so
+Honest framing: QuantRed is a single-process application with file-backed state, so
 most of the compose file is volumes and named entrypoints rather than service
 orchestration.
 
@@ -46,12 +46,12 @@ Same image, same state, different verb — arguments pass straight through:
 
 ```bash
 docker compose run --rm demo
-docker compose run --rm verdict --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-31
+docker compose run --rm verdict --scanner none --symbols AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,JPM,XOM,UNH,COST,WMT --start 2024-01-01 --end 2024-12-31
 docker compose run --rm backtest --symbols NVDA --start 2024-01-01 --end 2024-06-01
 docker compose run --rm trials best
 ```
 
-Or via the Makefile: `make compose-run CMD="verdict --symbols NVDA"`.
+Or via the Makefile: `make compose-run CMD="verdict --scanner none"`.
 
 The documentation site runs under its own profile:
 
@@ -64,12 +64,20 @@ docker compose --profile docs up docs      # http://localhost:3000
 Three named volumes hold everything the application writes — the research journal
 and trial store (`/state/logs`), the bar cache (`/state/cache`), and promoted
 configs (`/state/configs`). `.env` is bind-mounted **read-only** from the host: a
-container should not be able to rewrite the keys it was given.
+container should not be able to rewrite the keys it was given, so keys go in the `.env`
+beside `docker-compose.yml`, not through `init` inside the container (the container's
+own messages say so).
+
+Nothing else from the checkout reaches the image: `.dockerignore` is an allowlist of
+the package, the example pack and the project metadata, so `.env`, `specs/`, `configs/`,
+`logs/`, `cache/` and `.git` stay out of the build context. The image's environment is
+built once with the extras it carries and is not re-synced at start, so a container
+runs without network access.
 
 This is the part worth getting right. A compose setup that looks fine while
 journaling trials into the container layer would discard them on `down`, silently
 resetting the campaign count that every multiple-testing correction depends on — and
-nothing would error. `scripts/compose_smoke.sh` tests exactly that: run a backtest,
+nothing would error. `scripts/compose_smoke.sh` tests exactly that: journal a trial (no keys needed),
 `down`, and check the trial is still there.
 
 **Ownership.** The image runs as a pinned non-root uid (1000) and creates each mount
@@ -86,8 +94,8 @@ The server speaks stdio, so the `mcp` service is attach-oriented rather than a
 listening port:
 
 ```json
-{"mcpServers": {"tradeflow": {"command": "docker",
-  "args": ["compose", "-f", "/path/to/tradeflow/docker-compose.yml", "run", "--rm", "mcp"]}}}
+{"mcpServers": {"quantred": {"command": "docker",
+  "args": ["compose", "-f", "/path/to/quantred/docker-compose.yml", "run", "--rm", "mcp"]}}}
 ```
 
 A TCP/SSE transport would add a port mapping and nothing else; it is not built.

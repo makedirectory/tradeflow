@@ -10,13 +10,21 @@ name: Release
 #      repository, on a tag. A leaked secret cannot publish because there is no
 #      secret.
 #
-# Set up once at https://pypi.org/manage/project/tradeflow-engine/settings/publishing/
-#   owner: makedirectory   repository: tradeflow
+# Set up once at https://pypi.org/manage/project/quantred/settings/publishing/ (a new
+# project name needs its own trusted publisher; the one registered for the previous
+# distribution name does not carry over)
+#   owner: makedirectory   repository: quantred
 #   workflow: release.yml  environment: pypi
+#
+# A tag `v*` publishes the engine from the repository root. A tag `tradeflow-engine-v*`
+# publishes the final transition release of the old distribution name from
+# packaging/tradeflow-engine instead. That project's trusted publisher must name the
+# repository as it is now called (`quantred`, renamed from the old one) and the same
+# workflow `release.yml` and environment `pypi`.
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["v*", "tradeflow-engine-v*"]
   workflow_dispatch:
 
 jobs:
@@ -40,7 +48,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
-      - run: uv build
+      - name: Build the engine (tag v*, or a manual run)
+        if: ${{ !startsWith(github.ref, 'refs/tags/tradeflow-engine-v') }}
+        run: uv build
+      - name: Build the transition package (tag tradeflow-engine-v*)
+        if: startsWith(github.ref, 'refs/tags/tradeflow-engine-v')
+        run: uv build packaging/tradeflow-engine -o dist
       # Catches a malformed README or bad metadata before it is permanent.
       - run: uvx twine check dist/*
       # The tag and the packaged version must agree, or the release notes describe
@@ -52,6 +65,19 @@ jobs:
           BUILT=$(ls dist/*.tar.gz | sed -E 's/.*-([0-9][^-]*)\.tar\.gz/\1/')
           echo "tag=$TAG built=$BUILT"
           test "$TAG" = "$BUILT"
+      - name: Tag matches the transition package's version
+        if: startsWith(github.ref, 'refs/tags/tradeflow-engine-v')
+        run: |
+          TAG="${GITHUB_REF_NAME#tradeflow-engine-v}"
+          BUILT=$(ls dist/tradeflow_engine-*.tar.gz | sed -E 's/.*-([0-9][^-]*)\.tar\.gz/\1/')
+          echo "tag=$TAG built=$BUILT"
+          test "$TAG" = "$BUILT"
+      # PyPI cannot replace a version. Publishing this before the engine release it
+      # requires exists would leave a permanent release whose dependency cannot be
+      # installed, so the order of the two tags is checked, not remembered.
+      - name: The engine release this requires is on PyPI
+        if: startsWith(github.ref, 'refs/tags/tradeflow-engine-v')
+        run: uv run --no-project --with packaging python .github/scripts/require_published_dependency.py packaging/tradeflow-engine/pyproject.toml
       - uses: actions/upload-artifact@v7
         with:
           name: dist

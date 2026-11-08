@@ -10,14 +10,24 @@ attachable, and readable a month later without the context that produced it. It 
 available on the four commands that end in a result worth keeping:
 
 ```bash
-python main.py verdict     --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-31 --html verdict.html
-python main.py backtest    --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-31 --html backtest.html
-python main.py walkforward --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-31 --html wf.html
-python main.py info        --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-31 --html info.html
+quantred verdict     --scanner none --symbols AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,JPM,XOM,UNH,COST,WMT \
+    --start 2024-01-01 --end 2024-12-31 --html verdict.html
+quantred backtest    --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-31 --html backtest.html
+quantred walkforward --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-31 --html wf.html
+quantred info        --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-31 --html info.html
 ```
 
-It composes with everything else: `--json` and `--html` can both be given, and a
-memoized run renders its reuse warning rather than hiding it.
+`--html` is independent of the other output flags. Of these four commands only
+`verdict` also has `--json PATH` (the structured result object), and there the two can
+both be given; `backtest`, `walkforward` and `info` have `--html` only. A memoized run
+renders its reuse warning in the report rather than hiding it. A reused walk-forward renders
+as a reduced report - the stored out-of-sample aggregate, the original trial's id and age, and
+a list of what a reused result does not retain (per-fold detail, promotion prerequisites,
+the individual gate checks, and the holdout only when the original run did not record one)
+- over both the CLI and `render_report`. When the original run did record a holdout, the
+report shows it in a "Holdout (from the original run)" section instead of listing it as
+missing; re-run with force for the full one. A reused backtest's header names the benchmark and timeframe as
+requested.
 
 ## Self-contained means self-contained
 
@@ -43,12 +53,26 @@ as prominent banners above every section:
 | `INCOMPLETE — no verdict` | A pipeline step failed; nothing below is safe to act on |
 | Gate failures | Any verdict check or promotion gate that did not pass, named |
 | `NOT PROMOTABLE` | A walk-forward whose promotion gates did not clear |
+| `PROMOTABLE` is the statistical gates only | A walk-forward whose gates passed but whose promotion prerequisites are unmet or unknown; the verdict is not drawn as clear |
 | Leakage probe FAILED | The result is not trustworthy at all |
 | Non-default configuration | An evidence-gated, default-off feature (conditional risk, the aim trading policy, the Black–Litterman posterior) was enabled |
 
 **Then the sections**, per kind: a verdict's five stages and its gate scorecard; a
 backtest's metrics and equity curve; a walk-forward's per-fold table, out-of-sample
-aggregate, and holdout; an information report's IC, breadth, and IR reconciliation.
+aggregate, holdout (formatted with the same units as the aggregate), and the promotion
+prerequisites with evidence completeness and excess return by fold (the same block the
+terminal prints); an information report's IC, breadth, and IR reconciliation.
+
+The terminal's caveats are carried too, from the same functions rather than a second
+phrasing: a verdict's alphas heading (scaling, assumed IC, name count, thin-universe
+warning); a backtest's Verdicts block (statistical validation and evidence completeness
+"not assessed here" - a backtest is an in-sample replay), its universe provenance
+including the survivorship statement, and "Where the P&L came from" with the
+exit-concentration warning (for a reused backtest, which kept no trades, the card says so);
+a walk-forward's Verdicts block. A metric stored as a placeholder zero beside a flag that
+it was unavailable (Treynor with a near-zero beta; alpha, beta and the information ratio
+without a benchmark) reads "not measured". A journaled walk-forward names its trial id and
+the campaign's trial count; timestamps are UTC.
 
 ## It renders, it does not compute
 
@@ -69,10 +93,14 @@ MCP, say — shows the metrics table without the curve.
 Charts need matplotlib (the `viz` extra). Without it the report still renders
 completely in text and each chart slot says how to install it:
 
-```bash
-uv sync --extra viz
-```
+Install the `viz` extra (see [optional extras](extras)).
 
 Charts are rendered at a deliberately modest resolution — an embedded PNG costs
 about 4/3 its own size once base64-encoded, and a report should stay well under a
 few megabytes.
+
+## From a source checkout (contributors)
+
+The commands above are the installed `quantred` command. In a checkout, run them as
+`uv run python main.py <command> ...`. Extras are installed with `uv sync --inexact --extra <name>`
+(see [optional extras](extras)).

@@ -10,14 +10,14 @@ from datetime import datetime
 import pandas as pd
 import pytest
 
+from quantred.analytics import metrics
+from quantred.demo.strategies import DemoTrendStrategy
+from quantred.engine.backtest import BacktestEngine
+from quantred.indicators import indicators
+from quantred.marketdata.client import MarketDataClient
+from quantred.optimization.optimizer import ParameterOptimizer
+from quantred.scanners.symbol_scanner import SymbolScanner
 from tests.fakes import FakeMarketData, make_ohlcv
-from tradeflow.analytics import metrics
-from tradeflow.demo.strategies import DemoTrendStrategy
-from tradeflow.engine.backtest import BacktestEngine
-from tradeflow.indicators import indicators
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.optimization.optimizer import ParameterOptimizer
-from tradeflow.scanners.symbol_scanner import SymbolScanner
 
 SYMBOLS = ["AAA", "BBB", "CCC"]
 START, END = datetime(2024, 1, 2), datetime(2024, 2, 1)
@@ -58,7 +58,7 @@ def test_backtest_metrics_complete_and_json_serializable():
     """Every declared metric key is present and the dict survives JSON round-trip."""
     import json
 
-    from tradeflow.analytics.performance import FLAG_KEYS, METRIC_KEYS
+    from quantred.analytics.performance import FLAG_KEYS, METRIC_KEYS
 
     data_client = MarketDataClient(FakeMarketData(SYMBOLS))
     strategy = DemoTrendStrategy.create_with_defaults()
@@ -73,7 +73,7 @@ def test_backtest_metrics_complete_and_json_serializable():
 
 
 def test_empty_metrics_has_all_keys():
-    from tradeflow.analytics.performance import FLAG_KEYS, METRIC_KEYS, empty_metrics
+    from quantred.analytics.performance import FLAG_KEYS, METRIC_KEYS, empty_metrics
 
     empty = empty_metrics()
     for key in (*METRIC_KEYS, *FLAG_KEYS):

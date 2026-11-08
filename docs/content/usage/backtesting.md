@@ -10,9 +10,7 @@ reports performance. It answers "would this have worked?" — a useful question,
 long as you remember it's not the same as "will this work?"
 
 ```bash
-make backtest
-# or
-uv run python main.py backtest \
+quantred backtest \
     --strategy demo_trend --scanner demo_volume \
     --symbols NVDA,META,TSLA --start 2024-01-02 --end 2024-04-01 --capital 100000
 ```
@@ -33,19 +31,28 @@ The engine prints a metrics block, for example:
 
 ```
 === Backtest Results ===
-Capital                 $100,000.00 -> $103,420.00
-Total Return            3.42%
-Buy & Hold Return       2.10%
-Sharpe Ratio            1.24
-Max Drawdown            4.80%
-Total Trades            37
-Win Rate                54.05%
-Profit Factor           1.61
+Capital                     $100,000.00 -> $103,420.00
+--- Returns ---
+Total Return                3.42%
+CAGR                        3.42%
+Buy & Hold (universe)       2.10%
+Buy & Hold (benchmark)      1.85%
+--- Risk-adjusted ---
+Sharpe Ratio                1.24
+--- Drawdown & tail ---
+Max Drawdown                4.80%
+--- Trades ---
+Total Trades                37
+Win Rate                    54.05%
+Profit Factor               1.61
 ...
 ```
 
-- **Total Return** vs **Buy & Hold** shows whether the strategy beat simply
-  holding the symbols.
+(Illustrative figures; the full report has more rows in each section.)
+
+- **Total Return** against the two **Buy & Hold** rows shows whether the strategy beat
+  simply holding the symbols it traded (`universe`) and holding the benchmark
+  (`benchmark`). The benchmark row is absent when no benchmark series was available.
 - **Sharpe / Max Drawdown / Profit Factor** describe risk-adjusted quality.
 
 How fills and P&L are simulated is documented in **[The Engine](../engineering/engine)**;
@@ -98,6 +105,31 @@ A verdict this command cannot assess is printed as **not assessed here**, naming
 command that would assess it. An unknown left blank is an unknown a reader fills in
 optimistically.
 
+## Execution and cost
+
+Between the capital line and the metrics, a backtest prints an `Execution & cost` block
+whenever the book that could be traded differs from the one the sizer asked for - whole
+shares rounded away, entries that never opened, or a check failing:
+
+```
+--- Execution & cost (!) ---
+Intended notional           $34,583.55
+Filled notional             $32,721.56
+  [PASS] rounding_drag         5.38% vs 10.00%
+  [PASS] unfillable_entries    0.00% vs 5.00%
+  [FAIL] book_breadth          1 vs 2
+  [PASS] cost_share_of_gross  12.40% vs 40.00%
+  entries never opened      4 (4 rounded to zero, 0 below min notional)
+  Not the book that was validated - see the failing check above.
+```
+
+(Illustrative figures.) Each check is `PASS` or `FAIL` with the measured value beside its
+threshold, in that check's own unit: `rounding_drag` is the share of intended notional
+whole-share rounding removed, `book_breadth` the position cap (it fails at 1, the shipped default, when the universe is larger), `unfillable_entries` the
+share of entries that never opened. `(!)` marks a failing check and `(i)` an informational
+block. A `FAIL` here is what the Verdicts block above reports as `Execution viability`.
+See [configuration](configuration.md) for how these arise at small capital.
+
 ## Net of transaction cost
 
 Backtest metrics are **net of transaction cost by default** — commission + half-spread
@@ -144,7 +176,7 @@ A single cost assumption produces a single number, and no way to tell how much o
 result was the assumption. `--cost-stress` re-runs the same config under scaled costs:
 
 ```bash
-uv run python main.py backtest --strategy demo_trend --symbols NVDA,META,TSLA \
+quantred backtest --strategy demo_trend --symbols NVDA,META,TSLA \
     --cost-stress
 ```
 
@@ -181,7 +213,7 @@ for asking how robust your strategy is.
 Each run records one **trial** — the config it evaluated, on this universe and
 window — to `logs/research_journal.jsonl`, and is dual-written into the
 [trial store](../engineering/walk-forward#the-trial-store) (`logs/trials.db`) so
-`trials query` can report the real campaign-wide trial count on demand — the
+`trials list` can report the real campaign-wide trial count on demand — the
 gate itself still counts only the current run (see the
 [open item](../engineering/walk-forward#n_trials-still-counts-a-run-at-gate-time-not-a-campaign)).
 Pass `--no-journal` to keep a throwaway or reproducibility run out of that total.
@@ -248,7 +280,26 @@ Nothing is journaled: these are one candidate under stated assumptions, not new
 candidates, and recording them would inflate the multiple-testing count the deflated
 Sharpe deflates against.
 
+The block under the Verdicts shows the same split for every backtest:
+
+```
+=== Where the P&L came from ===
+  exit              trades   share       net P&L  win rate
+  SIGNAL                15   93.8%          $129     33.3%
+  END_OF_PERIOD          1    6.2%           $22    100.0%
+```
+
+(Illustrative figures.) `win rate` is the share of that exit's trades that made money,
+which separates an exit that earns by being right often from one that earns on a few
+large winners.
+
 ## Tuning the strategy
 
 Once a backtest runs, search for better parameters with
 **[Optimization](optimization)**.
+
+## From a source checkout (contributors)
+
+The commands above are the installed `quantred` command. In a checkout, run them as
+`uv run python main.py <command> ...`. The Makefile shortcut for this page is `make backtest`. Extras are installed with `uv sync --inexact --extra <name>`
+(see [optional extras](extras)).

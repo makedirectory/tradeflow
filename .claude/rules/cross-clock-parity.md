@@ -1,9 +1,9 @@
 ---
 paths:
-  - "tradeflow/engine/**/*.py"
-  - "tradeflow/execution/**/*.py"
-  - "tradeflow/strategies/base.py"
-  - "tradeflow/cli.py"
+  - "quantred/engine/**/*.py"
+  - "quantred/execution/**/*.py"
+  - "quantred/strategies/base.py"
+  - "quantred/cli.py"
 ---
 
 # Cross-clock parity
@@ -28,9 +28,9 @@ whether the other clock is now silently different.
 
 ## What "both" means
 
-- `tradeflow/engine/backtest.py` and `tradeflow/execution/live_trader.py` — the two
+- `quantred/engine/backtest.py` and `quantred/execution/live_trader.py` — the two
   places a book is sized, admitted, limited and exited.
-- `tradeflow/engine/live.py` for anything about the loop, the book, or reconciliation.
+- `quantred/engine/live.py` for anything about the loop, the book, or reconciliation.
 - Both CLI surfaces. A flag that only one command accepts is a difference in what can
   be expressed, which becomes a difference in what gets run.
 

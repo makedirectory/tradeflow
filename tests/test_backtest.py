@@ -11,12 +11,12 @@ from typing import Dict, List, Optional
 import pandas as pd
 import pytest
 
+from quantred.engine.backtest import BacktestEngine
+from quantred.marketdata.client import MarketDataClient
+from quantred.strategies import signals
+from quantred.strategies.base import Strategy
+from quantred.utils.timeutils import NEW_YORK
 from tests.fakes import DictMarketData
-from tradeflow.engine.backtest import BacktestEngine
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.strategies import signals
-from tradeflow.strategies.base import Strategy
-from tradeflow.utils.timeutils import NEW_YORK
 
 # stop_loss/take_profit = 10%; size resolves to 10 shares at $100 (see notional cap).
 _CONFIG = {
@@ -120,10 +120,10 @@ def test_end_of_period_exit():
 
 
 def test_backtest_honors_injected_sizer():
+    from quantred.engine.backtest import BacktestEngine
+    from quantred.execution.sizing import PortfolioWeightSizer
+    from quantred.marketdata.client import MarketDataClient
     from tests.fakes import DictMarketData
-    from tradeflow.engine.backtest import BacktestEngine
-    from tradeflow.execution.sizing import PortfolioWeightSizer
-    from tradeflow.marketdata.client import MarketDataClient
 
     rows = [
         {"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1},
@@ -161,7 +161,7 @@ def test_all_symbols_failing_raises_instead_of_reporting_no_trades():
     Swallowing it would let a broken strategy be scored as "no edge" by the
     promotion gates - a false negative the validation engine must not have.
     """
-    from tradeflow.engine.backtest import BacktestError
+    from quantred.engine.backtest import BacktestError
 
     rows = [{"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1}] * 3
     data_client = MarketDataClient(DictMarketData({"AAA": _frame(rows)}))
@@ -480,8 +480,8 @@ def test_a_net_cap_still_counts_shorts_by_magnitude():
 
 # --- the benchmark actually reaches the metrics -------------------------------
 def _bench_run(benchmark):
+    from quantred.services.registry import STRATEGIES
     from tests.fakes import FakeMarketData
-    from tradeflow.services.registry import STRATEGIES
 
     client = MarketDataClient(FakeMarketData(["AAA", "BBB", "SPY"], n=400, freq="1D"))
     engine = BacktestEngine(STRATEGIES["demo_trend"].create_with_defaults(), client)
@@ -522,8 +522,8 @@ def test_the_benchmark_is_aligned_to_the_curve_positionally():
     """
     import pandas as pd
 
+    from quantred.engine.backtest import _benchmark_returns
     from tests.fakes import FakeMarketData
-    from tradeflow.engine.backtest import _benchmark_returns
 
     client = MarketDataClient(FakeMarketData(["SPY"], n=120, freq="1D"))
     closes = client.get_bars(["SPY"], "1Day", datetime(2024, 1, 2), datetime(2024, 6, 1))["SPY"]["close"]
@@ -554,7 +554,7 @@ def test_buy_and_hold_names_what_it_holds():
     benchmark does. The number was right and the label said only "Buy & Hold Return",
     which reads as the benchmark's return to anyone who just passed `--benchmark`.
     """
-    from tradeflow.analytics.reporting import format_backtest_report
+    from quantred.analytics.reporting import format_backtest_report
 
     rendered = format_backtest_report(
         {"buy_hold_return": 95.56, "benchmark_buy_hold_return": 41.2, "benchmark_available": True},
@@ -570,8 +570,8 @@ def test_buy_and_hold_names_what_it_holds():
 
 def test_the_two_buy_and_holds_differ_and_only_one_tracks_the_benchmark():
     """The property the label now promises, asserted end to end rather than by name."""
+    from quantred.services.registry import STRATEGIES
     from tests.fakes import FakeMarketData
-    from tradeflow.services.registry import STRATEGIES
 
     client = MarketDataClient(FakeMarketData(["AAA", "BBB", "SPY", "QQQ"], n=400, freq="1D"))
     engine = BacktestEngine(STRATEGIES["demo_trend"].create_with_defaults(), client)
@@ -592,7 +592,7 @@ def test_treynor_is_suppressed_rather_than_unbounded_at_a_near_zero_beta():
     beta* has no meaning for a book with no market exposure, and `--beta-sizing` puts
     books in that regime deliberately - so this is the common case, not an edge one.
     """
-    from tradeflow.analytics import metrics as m
+    from quantred.analytics import metrics as m
 
     returns = [0.001] * 250
 
@@ -609,8 +609,8 @@ def test_a_suppressed_treynor_is_distinguishable_from_a_real_zero():
     `benchmark_available`: the benchmark here is present and fine."""
     import pandas as pd
 
-    from tradeflow.analytics.performance import compute_backtest_metrics
-    from tradeflow.analytics.reporting import format_backtest_report
+    from quantred.analytics.performance import compute_backtest_metrics
+    from quantred.analytics.reporting import format_backtest_report
 
     trades = pd.DataFrame({"pnl": [1.0, -0.5, 2.0]})
     curve = [100.0 + i * 0.01 for i in range(300)]
@@ -626,8 +626,8 @@ def test_a_suppressed_treynor_is_distinguishable_from_a_real_zero():
 
 # --- execution at small capital ----------------------------------------------
 def _small_account_run(capital, min_notional=None):
+    from quantred.services.registry import STRATEGIES
     from tests.fakes import FakeMarketData
-    from tradeflow.services.registry import STRATEGIES
 
     symbols = [f"S{i}" for i in range(8)]
     client = MarketDataClient(FakeMarketData(symbols, n=300, freq="1D"))
@@ -682,7 +682,7 @@ def test_a_min_notional_floor_refuses_orders_a_venue_would():
 def test_the_default_leaves_the_floor_off():
     """Absent is not zero: a config that never mentioned a venue minimum keeps the
     behaviour it was validated under."""
-    from tradeflow.strategies.base import DEFAULT_POSITION_LIMITS
+    from quantred.strategies.base import DEFAULT_POSITION_LIMITS
 
     assert DEFAULT_POSITION_LIMITS["min_notional"] is None
     assert _small_account_run(4_000.0).execution["positions_below_min_notional"] == 0
@@ -692,7 +692,7 @@ def test_executability_is_judged_separately_from_the_edge():
     """A verdict on whether the book can be traded at this capital, kept apart from
     whether the edge was real - collapsing the two would make one number mean two
     things and silently redefine `promotable` for every trial already recorded."""
-    from tradeflow.analytics.performance import execution_verdict
+    from quantred.analytics.performance import execution_verdict
 
     assert execution_verdict(_small_account_run(100_000.0).execution)["executable"] is True
 
@@ -705,7 +705,7 @@ def test_executability_is_judged_separately_from_the_edge():
 def test_nothing_attempted_is_not_the_same_as_passing():
     """`executable: None` rather than True, or a run that never tried to open anything
     would read as one that traded cleanly."""
-    from tradeflow.analytics.performance import execution_verdict
+    from quantred.analytics.performance import execution_verdict
 
     verdict = execution_verdict({})
 
@@ -714,7 +714,7 @@ def test_nothing_attempted_is_not_the_same_as_passing():
 
 
 def test_the_report_shows_the_gap_and_names_the_failing_check():
-    from tradeflow.analytics.reporting import format_backtest_report
+    from quantred.analytics.reporting import format_backtest_report
 
     result = _small_account_run(500.0)
     rendered = format_backtest_report(result.metrics, 500.0, result.final_capital, execution=result.execution)
@@ -727,7 +727,7 @@ def test_the_report_shows_the_gap_and_names_the_failing_check():
 
 def test_a_healthy_run_does_not_grow_an_execution_section():
     """A diagnostic that always fires is one people learn to skip."""
-    from tradeflow.analytics.reporting import format_backtest_report
+    from quantred.analytics.reporting import format_backtest_report
 
     result = _small_account_run(100_000.0)
     rendered = format_backtest_report(result.metrics, 100_000.0, result.final_capital, execution=None)
@@ -742,10 +742,10 @@ def test_cost_is_judged_against_gross_profit_not_capital():
     a small one. Measuring against capital would call a strategy that spent its entire
     edge on commission "3% of capital in cost" and pass it.
     """
+    from quantred.analytics.performance import execution_verdict
+    from quantred.costs.parametric import ParametricCostModel
+    from quantred.services.registry import STRATEGIES
     from tests.fakes import FakeMarketData
-    from tradeflow.analytics.performance import execution_verdict
-    from tradeflow.costs.parametric import ParametricCostModel
-    from tradeflow.services.registry import STRATEGIES
 
     symbols = [f"S{i}" for i in range(8)]
     client = MarketDataClient(FakeMarketData(symbols, n=300, freq="1D"))
@@ -771,7 +771,7 @@ def test_cost_is_judged_against_gross_profit_not_capital():
 def test_no_gross_profit_means_no_cost_ratio_rather_than_a_guessed_one():
     """A ratio against a non-positive denominator is arithmetic, not a fact: there was
     no edge for cost to eat, and reporting a number would imply there was."""
-    from tradeflow.analytics.performance import execution_verdict
+    from quantred.analytics.performance import execution_verdict
 
     verdict = execution_verdict(
         {"positions_filled": 3, "gross_profit": -50.0, "total_cost": 20.0, "rounding_drag_pct": 0.0}
@@ -782,8 +782,8 @@ def test_no_gross_profit_means_no_cost_ratio_rather_than_a_guessed_one():
 
 
 def _breadth_run(max_positions, n_symbols=20):
+    from quantred.services.registry import STRATEGIES
     from tests.fakes import FakeMarketData
-    from tradeflow.services.registry import STRATEGIES
 
     symbols = [f"S{i}" for i in range(n_symbols)]
     client = MarketDataClient(FakeMarketData(symbols, n=400, freq="1D"))
@@ -806,7 +806,7 @@ def test_a_one_position_book_over_a_wide_universe_is_flagged():
     candidates ever touches nine of them. The result is correct and describes a
     different strategy from the one the user thinks they are testing.
     """
-    from tradeflow.analytics.performance import execution_verdict
+    from quantred.analytics.performance import execution_verdict
 
     result = _breadth_run(1)
     check = execution_verdict(result.execution)["checks"]["book_breadth"]
@@ -822,7 +822,7 @@ def test_a_deliberately_concentrated_book_is_not_flagged():
     Concentrating in the best five of twenty is a legitimate design, and a gate that
     called it a defect would be one people learn to switch off.
     """
-    from tradeflow.analytics.performance import execution_verdict
+    from quantred.analytics.performance import execution_verdict
 
     check = execution_verdict(_breadth_run(5).execution)["checks"]["book_breadth"]
 
@@ -832,7 +832,7 @@ def test_a_deliberately_concentrated_book_is_not_flagged():
 def test_breadth_is_not_judged_on_a_single_name_universe():
     """A one-position book over one candidate is the only book available, so there is
     nothing to flag and a check that fired would be noise."""
-    from tradeflow.analytics.performance import execution_verdict
+    from quantred.analytics.performance import execution_verdict
 
     assert "book_breadth" not in execution_verdict(_breadth_run(1, n_symbols=1).execution)["checks"]
 
@@ -846,7 +846,7 @@ def test_a_command_says_which_verdicts_it_did_not_assess():
     A backtest can speak to execution and to nothing else, and saying so is the point -
     an unknown rendered as a blank is an unknown a reader fills in optimistically.
     """
-    from tradeflow.analytics.reporting import format_verdicts
+    from quantred.analytics.reporting import format_verdicts
 
     rendered = "\n".join(format_verdicts(execution="PASS"))
 
@@ -858,7 +858,7 @@ def test_a_command_says_which_verdicts_it_did_not_assess():
 
 def test_the_three_verdicts_are_never_merged_into_one():
     """Each carries its own answer; none is derived from another."""
-    from tradeflow.analytics.reporting import format_verdicts
+    from quantred.analytics.reporting import format_verdicts
 
     rendered = "\n".join(
         format_verdicts(statistical="FAIL - min_oos_sharpe", execution="PASS", evidence="2 of 3 evaluated")
@@ -876,8 +876,8 @@ def test_one_trial_reports_an_undeflated_sharpe_by_that_name():
     correction that was never applied. The number was always right."""
     import pandas as pd
 
-    from tradeflow.analytics.performance import compute_backtest_metrics
-    from tradeflow.analytics.reporting import format_backtest_report
+    from quantred.analytics.performance import compute_backtest_metrics
+    from quantred.analytics.reporting import format_backtest_report
 
     curve = [100.0 + i * 0.01 for i in range(300)]
     trades = pd.DataFrame({"pnl": [1.0, -0.5, 2.0]})
@@ -887,7 +887,10 @@ def test_one_trial_reports_an_undeflated_sharpe_by_that_name():
 
     assert alone["deflation_applied"] is False
     assert campaign["deflation_applied"] is True
-    assert "Sharpe (undeflated)" in format_backtest_report(alone, 100.0, 103.0, title="t")
+    rendered = format_backtest_report(alone, 100.0, 103.0, title="t")
+    assert "PSR, undeflated (1 trial)" in rendered
+    # The value is a probability; a label reading "Sharpe" had it taken for a Sharpe ratio.
+    assert "Sharpe (undeflated)" not in rendered
     assert "Deflated Sharpe" in format_backtest_report(campaign, 100.0, 103.0, title="t")
 
 
@@ -896,7 +899,7 @@ def test_the_undeflated_number_itself_is_unchanged():
     different defect."""
     import numpy as np
 
-    from tradeflow.analytics.metrics import deflated_sharpe_ratio, probabilistic_sharpe_ratio
+    from quantred.analytics.metrics import deflated_sharpe_ratio, probabilistic_sharpe_ratio
 
     returns = np.random.default_rng(7).normal(0.0004, 0.01, 300)
 
@@ -912,8 +915,8 @@ def _tracking_feed(n=120):
     near zero and prove nothing about direction."""
     import numpy as np
 
+    from quantred.utils.timeutils import NEW_YORK
     from tests.fakes import DictMarketData
-    from tradeflow.utils.timeutils import NEW_YORK
 
     index = pd.date_range("2024-01-02", periods=n, freq="D", tz=NEW_YORK)
     close = 100.0 * np.exp(np.cumsum(np.random.default_rng(3).normal(0, 0.01, n)))
@@ -980,7 +983,7 @@ def test_leg_curves_are_marked_not_only_realized():
 def test_a_long_only_run_has_nothing_to_decompose():
     """The block is shown only when both sides traded: a table with an empty short row
     is noise, and noise teaches readers to skip the block that matters."""
-    from tradeflow.analytics.reporting import format_backtest_report
+    from quantred.analytics.reporting import format_backtest_report
 
     result = _one_sided_run("BUY", 120)
     rendered = format_backtest_report(result.metrics, 100_000.0, result.final_capital, legs=result.legs)
@@ -992,7 +995,7 @@ def test_a_long_only_run_has_nothing_to_decompose():
 def test_two_cancelling_legs_are_called_out():
     """+0.92 and -0.89 netting to 0.03 is the case this exists for, and the report says
     so rather than leaving a reader to compare two columns."""
-    from tradeflow.analytics.reporting import format_backtest_report
+    from quantred.analytics.reporting import format_backtest_report
 
     legs = {
         "long": {
@@ -1024,7 +1027,7 @@ def test_two_cancelling_legs_are_called_out():
 def test_genuinely_neutral_legs_are_not_called_out():
     """The other direction. A warning that fires on every long/short book is one nobody
     reads."""
-    from tradeflow.analytics.reporting import format_backtest_report
+    from quantred.analytics.reporting import format_backtest_report
 
     legs = {
         name: {

@@ -11,14 +11,14 @@ import json
 
 import pytest
 
+from quantred.brokers.base import Position
+from quantred.brokers.errors import BrokerUnavailableError
+from quantred.demo.strategies import DemoTrendStrategy
+from quantred.execution.flatten import flatten
+from quantred.execution.halt import ALL, HaltState
+from quantred.execution.live_trader import LiveTrader
+from quantred.strategies import signals
 from tests.fakes import FailingBroker, FakeBroker
-from tradeflow.brokers.base import Position
-from tradeflow.brokers.errors import BrokerUnavailableError
-from tradeflow.demo.strategies import DemoTrendStrategy
-from tradeflow.execution.flatten import flatten
-from tradeflow.execution.halt import ALL, HaltState
-from tradeflow.execution.live_trader import LiveTrader
-from tradeflow.strategies import signals
 
 
 @pytest.fixture
@@ -226,7 +226,7 @@ def test_a_queued_close_is_not_reported_as_a_closed_position(halts):
     """The defect this exists to stop: `positions_closed` was set when the *request*
     returned, so a flatten whose orders merely queued printed a complete report and a
     reassuring next step, while the book was untouched."""
-    from tradeflow.execution.flatten import PENDING
+    from quantred.execution.flatten import PENDING
 
     broker = QueueingBroker(positions=[_position()])
 
@@ -250,7 +250,7 @@ def test_a_confirmed_flatten_says_flat_and_names_when_it_looked(halts):
     """Both directions: the guard must still recognise the case it exists to permit,
     and the confirmation has to carry the instant it was taken — a flat report with no
     timestamp is a claim with no evidence behind it."""
-    from tradeflow.execution.flatten import CLOSED
+    from quantred.execution.flatten import CLOSED
 
     report = flatten(FakeBroker(positions=[_position()]), reason="drill", halt_state=halts)
 
@@ -266,7 +266,7 @@ def test_a_confirmed_flatten_says_flat_and_names_when_it_looked(halts):
 def test_an_unreadable_account_is_never_reported_as_flat(halts):
     """Absent is not zero, in the place it would hurt most. A confirming read that
     failed must not render as a clean book."""
-    from tradeflow.execution.flatten import UNKNOWN
+    from quantred.execution.flatten import UNKNOWN
 
     broker = FailingBroker(positions=[_position()])
     broker.failures["list_positions"] = BrokerUnavailableError("timeout")
@@ -282,7 +282,7 @@ def test_an_unreadable_account_is_never_reported_as_flat(halts):
 def test_a_failed_close_is_distinguished_from_a_queued_one(halts):
     """`no` and `pending` are different operator situations: one means the venue never
     took the request, the other means it took it and has not filled it."""
-    from tradeflow.execution.flatten import NOT_CLOSED
+    from quantred.execution.flatten import NOT_CLOSED
 
     broker = FailingBroker(positions=[_position()])
     broker.failures["close_all_positions"] = BrokerUnavailableError("timeout")
@@ -317,7 +317,7 @@ def test_a_flatten_that_could_not_record_its_halt_is_not_complete(halts, monkeyp
 def test_a_broker_that_returns_no_position_list_is_not_read_as_flat(halts):
     """`or []` turned "I don't know" into "nothing is open" — in the one function whose
     whole purpose is refusing to call an unobserved book flat."""
-    from tradeflow.execution.flatten import UNKNOWN
+    from quantred.execution.flatten import UNKNOWN
 
     class Silent(FakeBroker):
         def list_positions(self):
@@ -335,7 +335,7 @@ def test_any_failure_of_the_confirming_read_still_returns_a_report(halts):
     path — the operator loses not just the confirmation but the fact that the halt was
     set and the closes were sent. Reproduced with `TimeoutError`, which is not a
     `BrokerError` and escaped the original narrow catch."""
-    from tradeflow.execution.flatten import UNKNOWN
+    from quantred.execution.flatten import UNKNOWN
 
     class Rude(FakeBroker):
         def list_positions(self):
@@ -353,7 +353,7 @@ def test_a_broker_refusing_the_close_is_not_recorded_as_having_accepted_it(halts
     """`close_all_positions()` returns a bool and it was discarded, so a broker saying
     "I did not take this" was recorded as submitted — the same lie this change exists to
     remove, one line above the fix."""
-    from tradeflow.execution.flatten import NOT_CLOSED
+    from quantred.execution.flatten import NOT_CLOSED
 
     class Refusing(FakeBroker):
         def close_all_positions(self, cancel_orders: bool = True) -> bool:
@@ -383,7 +383,7 @@ def test_resting_orders_are_observed_not_assumed(halts):
     """The cancel is a submitted fact too. A resting order the cancel missed can refill
     the book after the instant the read was taken, so a verifiably empty account with
     orders still working is not a terminal state."""
-    from tradeflow.brokers.base import OrderResult
+    from quantred.brokers.base import OrderResult
 
     class StillResting(FakeBroker):
         def list_open_orders(self, symbol=None):
@@ -399,7 +399,7 @@ def test_resting_orders_are_observed_not_assumed(halts):
 
 # --- the surface, which had no test at all ------------------------------------------
 def _flatten_args(**overrides):
-    from tradeflow.cli import build_parser
+    from quantred.cli import build_parser
 
     args = build_parser().parse_args(["flatten", "--confirm", "--reason", "drill"])
     for key, value in overrides.items():
@@ -435,7 +435,7 @@ def test_the_command_exits_non_zero_when_the_book_is_not_observed_flat(
     """`cmd_flatten` had no test at all: the re-check block, the `--json` branch and the
     non-zero exit could each be deleted without failing anything. This is the contract a
     script actually keys on."""
-    from tradeflow import cli
+    from quantred import cli
 
     class Queueing(FakeBroker):
         def close_all_positions(self, cancel_orders: bool = True) -> bool:
@@ -462,7 +462,7 @@ def test_the_json_report_carries_the_observed_fields(isolated_halt_state, monkey
     """A machine reader has to be able to tell submitted from observed too."""
     import json
 
-    from tradeflow import cli
+    from quantred import cli
 
     monkeypatch.setattr(
         cli, "build_data_and_broker", lambda *a, **k: (FakeBroker(positions=[_position()]), None)
@@ -484,7 +484,7 @@ def test_a_halt_file_that_is_valid_json_but_not_an_object_reads_as_no_halt(tmp_p
     JSON, and each one used to raise AttributeError out of `_read` — reaching the trade
     clock through the per-signal entry check, so a mistyped file during an incident
     crashed the decision path instead of answering it."""
-    from tradeflow.execution.halt import HaltState
+    from quantred.execution.halt import HaltState
 
     for document in ("null", "5", "[]", '[{"scope": "all"}]', '"halted"'):
         path = tmp_path / "halts.json"
@@ -509,7 +509,7 @@ def _own_halts(tmp_path):
 
 
 def _ledger_holding(tmp_path, *symbols):
-    from tradeflow.execution.ledger import CUMULATIVE, PositionLedger
+    from quantred.execution.ledger import CUMULATIVE, PositionLedger
 
     ledger = PositionLedger(tmp_path / "ledger.jsonl")
     for i, symbol in enumerate(symbols):
@@ -524,7 +524,7 @@ def test_a_confirmed_flatten_stops_reconcile_calling_those_positions_missing(tmp
     `missing` — "a fill may have been missed" — for good. The wording is honest and the
     file is useless: a book that can never reconcile clean cannot tell "something is
     wrong" from "the operator meant it"."""
-    from tradeflow.execution.flatten import flatten
+    from quantred.execution.flatten import flatten
 
     ledger = _ledger_holding(tmp_path, "AAA", "BBB")
     assert set(ledger.expected_positions()) == {"AAA", "BBB"}
@@ -544,7 +544,7 @@ def test_a_flatten_that_is_only_pending_records_nothing(tmp_path):
     accepted and nothing has confirmed they filled — recording a terminal fact there
     would assert an exit nobody has observed, which is the submitted-versus-observed
     confusion this whole module exists to end."""
-    from tradeflow.execution.flatten import flatten
+    from quantred.execution.flatten import flatten
 
     class Queueing(FakeBroker):
         def close_all_positions(self, cancel_orders: bool = True) -> bool:
@@ -565,7 +565,7 @@ def test_a_flatten_invents_no_fill(tmp_path):
     much. A flatten submits market orders whose fills the ledger genuinely did not see,
     and manufacturing them would put fabricated prices into the file that exists to be
     evidence."""
-    from tradeflow.execution.flatten import flatten
+    from quantred.execution.flatten import flatten
 
     ledger = _ledger_holding(tmp_path, "AAA")
     before = ledger.lifecycles()
@@ -587,7 +587,7 @@ def test_a_flatten_is_distinguishable_from_an_engine_close(tmp_path):
     Both zero the expectation, and collapsing them would make an operator's emergency
     exit indistinguishable from an ordinary one in the record that exists to tell them
     apart."""
-    from tradeflow.execution.flatten import flatten
+    from quantred.execution.flatten import flatten
 
     ledger = _ledger_holding(tmp_path, "AAA", "BBB")
     ledger.record_close("AAA")
@@ -603,7 +603,7 @@ def test_a_flatten_with_no_ledger_still_flattens(tmp_path):
     """The path has to work when the engine is wedged, so a ledger is optional and its
     absence is reported rather than guessed at: `None` says nobody was told, an empty
     list says there was nothing this ledger still expected."""
-    from tradeflow.execution.flatten import flatten
+    from quantred.execution.flatten import flatten
 
     report = flatten(FakeBroker(), reason="drill", actor="cli", halt_state=_own_halts(tmp_path))
 
@@ -614,8 +614,8 @@ def test_a_flatten_with_no_ledger_still_flattens(tmp_path):
 
 def test_a_ledger_that_cannot_be_written_does_not_fail_the_flatten(tmp_path):
     """A bookkeeping failure must never be the reason a book stays open."""
-    from tradeflow.execution.flatten import flatten
-    from tradeflow.execution.ledger import PositionLedger
+    from quantred.execution.flatten import flatten
+    from quantred.execution.ledger import PositionLedger
 
     class Exploding(PositionLedger):
         def record_flatten(self, *args, **kwargs):

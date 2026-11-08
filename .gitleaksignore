@@ -1,0 +1,5 @@
+# Fake API keys in test fixtures, already in history. Each test plants one to check that
+# a key is never printed or written; neither has ever been a real credential. The lines
+# themselves now carry `gitleaks:allow`, which covers them from here on.
+27eb2eebf0dbce4dda8ed77f70f6be45f763dcef:tests/test_setup.py:generic-api-key:640
+c8a28fbac456371971c76681942d2a36c7c9cabf:tests/test_model_probe.py:generic-api-key:18

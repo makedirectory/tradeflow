@@ -13,13 +13,13 @@ they reach the same verdict, including at the boundary.
 
 import pytest
 
+from quantred.brokers.base import AccountSnapshot
+from quantred.execution import decision as decisions
+from quantred.execution.live_trader import LiveTrader
+from quantred.execution.sizing import below_min_notional
+from quantred.services.registry import STRATEGIES
+from quantred.strategies import signals
 from tests.fakes import FakeBroker
-from tradeflow.brokers.base import AccountSnapshot
-from tradeflow.execution import decision as decisions
-from tradeflow.execution.live_trader import LiveTrader
-from tradeflow.execution.sizing import below_min_notional
-from tradeflow.services.registry import STRATEGIES
-from tradeflow.strategies import signals
 
 # One order, priced so the arithmetic is checkable by eye: 6 shares at $100 is $600.
 QTY, PRICE = 6.0, 100.0
@@ -123,7 +123,7 @@ def test_a_floor_refusal_reaches_the_binding_bucket_and_a_rounding_one_does_not(
     A declared floor refusing an order is a configured limit refusing it, which is what
     WOULD BIND means. A size rounding to zero is share granularity, which is not.
     """
-    from tradeflow.services import dryrun
+    from quantred.services import dryrun
 
     floor = _trader(min_notional=5_000.0).handle_signal("AAA", signals.BUY, price=PRICE)
     rounding = _trader(min_notional=None, capital=100.0).handle_signal("AAA", signals.BUY, price=50_000.0)
@@ -140,7 +140,7 @@ def test_the_backtest_admission_path_calls_the_shared_rule():
     """
     import pathlib
 
-    from tradeflow.engine import backtest
+    from quantred.engine import backtest
 
     source = pathlib.Path(backtest.__file__).read_text()
     assert "below_min_notional(size, price, min_notional)" in source

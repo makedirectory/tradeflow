@@ -12,15 +12,15 @@ from datetime import datetime
 
 import pytest
 
-from tradeflow.analytics.reporting import (
+from quantred.analytics.reporting import (
     NOT_RECORDED,
     format_leaderboard,
     format_trial_detail,
     format_trials_table,
 )
-from tradeflow.engine.backtest import ACCOUNTING_VERSION
-from tradeflow.services.audit import journal_trial
-from tradeflow.store.trials import TrialStore, db_path_for_journal
+from quantred.engine.backtest import ACCOUNTING_VERSION
+from quantred.services.audit import journal_trial
+from quantred.store.trials import TrialStore, db_path_for_journal
 
 # Read from the engine, never copied: a hardcoded number here is a fixture that agrees
 # with a *past* accounting version, and it goes quietly stale the moment one is bumped.
@@ -36,12 +36,13 @@ def store(tmp_path):
 def _record(store, trial_id, **kwargs):
     defaults = {
         "id": trial_id,
-        "kind": "backtest",
+        # A kind the leaderboard ranks by default; a plain backtest is not one.
+        "kind": "walkforward",
         "strategy": "demo_trend",
         "symbols": ["AAA", "BBB"],
         "params": {"fast": 5},
         "accounting": ACCOUNTING,
-        "ts": "2025-01-01T00:00:00",
+        "ts": "2025-01-01T15:00:00+00:00",  # as the journal stamps: UTC, with its offset
         "window_start": "2024-01-02T00:00:00",
         "window_end": "2024-12-31T00:00:00",
     }
@@ -51,14 +52,16 @@ def _record(store, trial_id, **kwargs):
 
 
 def _populate(store):
-    _record(store, "t1", ts="2025-01-01T00:00:00", oos_sharpe=0.4, deflated_sharpe=0.1, promotable=False)
-    _record(store, "t2", ts="2025-02-01T00:00:00", oos_sharpe=2.1, deflated_sharpe=0.2, promotable=True)
-    _record(store, "t3", ts="2025-03-01T00:00:00", oos_sharpe=1.5, deflated_sharpe=0.9, promotable=True)
+    _record(
+        store, "t1", ts="2025-01-01T15:00:00+00:00", oos_sharpe=0.4, deflated_sharpe=0.1, promotable=False
+    )
+    _record(store, "t2", ts="2025-02-01T15:00:00+00:00", oos_sharpe=2.1, deflated_sharpe=0.2, promotable=True)
+    _record(store, "t3", ts="2025-03-01T15:00:00+00:00", oos_sharpe=1.5, deflated_sharpe=0.9, promotable=True)
     # A different family, and a kind with no Sharpe at all.
     _record(
         store,
         "t4",
-        ts="2025-04-01T00:00:00",
+        ts="2025-04-01T15:00:00+00:00",
         strategy="another_strategy",
         symbols=["CCC"],
         oos_sharpe=3.0,
@@ -67,7 +70,7 @@ def _populate(store):
     _record(
         store,
         "t5",
-        ts="2025-05-01T00:00:00",
+        ts="2025-05-01T15:00:00+00:00",
         kind="alpha",
         params={"fast": 9},
         oos_sharpe=None,
@@ -249,7 +252,7 @@ def test_an_unknown_ranking_is_refused(store):
 # --- trade-table persistence ------------------------------------------------
 def test_trades_round_trip_through_the_journal_alone(tmp_path):
     """The journal is the source of truth: a rebuild must reconstruct the table."""
-    from tradeflow.services import audit
+    from quantred.services import audit
 
     journal = tmp_path / "journal.jsonl"
     trial_id = audit.journal_trial(
@@ -263,7 +266,7 @@ def test_trades_round_trip_through_the_journal_alone(tmp_path):
         trades={"columns": ["symbol", "pnl"], "rows": [["AAA", 1.5], ["AAA", -0.5]]},
         path=journal,
     )
-    from tradeflow.store.trials import db_path_for_journal
+    from quantred.store.trials import db_path_for_journal
 
     with TrialStore(db_path_for_journal(journal), journal_path=journal) as s:
         assert s.trades_for(trial_id)["rows"] == [["AAA", 1.5], ["AAA", -0.5]]
@@ -272,8 +275,8 @@ def test_trades_round_trip_through_the_journal_alone(tmp_path):
 
 
 def test_without_the_flag_a_trial_stores_no_trade_table(tmp_path):
-    from tradeflow.services import audit
-    from tradeflow.store.trials import db_path_for_journal
+    from quantred.services import audit
+    from quantred.store.trials import db_path_for_journal
 
     journal = tmp_path / "journal.jsonl"
     trial_id = audit.journal_trial(
@@ -294,7 +297,7 @@ def test_a_truncated_trade_table_says_so(tmp_path):
     """A ceiling on stored rows is fine; a silent one is not."""
     import pandas as pd
 
-    from tradeflow.services.analysis import trades_payload
+    from quantred.services.analysis import trades_payload
 
     frame = pd.DataFrame({"symbol": ["AAA"] * 10, "pnl": range(10)})
     payload = trades_payload(frame, max_rows=4)
@@ -325,8 +328,8 @@ def test_a_truncated_trade_table_is_still_truncated_after_the_store_writes_it(tm
     """
     import pandas as pd
 
-    from tradeflow.services.analysis import trades_payload
-    from tradeflow.store.trials import TrialStore
+    from quantred.services.analysis import trades_payload
+    from quantred.store.trials import TrialStore
 
     frame = pd.DataFrame({"symbol": ["AAA"] * 10, "pnl": range(10)})
     with TrialStore(tmp_path / "trials.db", journal_path=tmp_path / "j.jsonl") as store:
@@ -347,7 +350,7 @@ def test_a_trade_table_stored_before_the_count_existed_is_unknown_not_complete(t
     """A row written before the store kept a total did not *prove* it held every
     trade, and rendering it as complete would put a confident claim on the one thing
     the record cannot support. Absent is not false."""
-    from tradeflow.store.trials import TrialStore
+    from quantred.store.trials import TrialStore
 
     with TrialStore(tmp_path / "trials.db", journal_path=tmp_path / "j.jsonl") as store:
         store.record_trades("old", {"columns": ["symbol", "pnl"], "rows": [["AAA", 1.0]]})
@@ -362,9 +365,9 @@ def test_the_completeness_of_a_stored_table_survives_a_rebuild(tmp_path):
     index holds — that is the rule a derived store lives by."""
     import pandas as pd
 
-    from tradeflow.services.analysis import trades_payload
-    from tradeflow.services.audit import journal_trial
-    from tradeflow.store.trials import TrialStore, db_path_for_journal
+    from quantred.services.analysis import trades_payload
+    from quantred.services.audit import journal_trial
+    from quantred.store.trials import TrialStore, db_path_for_journal
 
     journal = tmp_path / "journal.jsonl"
     frame = pd.DataFrame({"symbol": ["AAA"] * 10, "pnl": range(10)})
@@ -389,7 +392,7 @@ def test_the_completeness_of_a_stored_table_survives_a_rebuild(tmp_path):
 
 def test_a_capped_table_is_described_as_capped_wherever_it_is_described(tmp_path):
     """The user-facing half. `trials show` printed "4 trades" for a run that made ten."""
-    from tradeflow.analytics.reporting import describe_trade_table
+    from quantred.analytics.reporting import describe_trade_table
 
     capped = {"columns": [], "rows": [[]] * 4, "total_rows": 10, "truncated": True}
     whole = {"columns": [], "rows": [[]] * 4, "total_rows": 4, "truncated": False}
@@ -408,14 +411,14 @@ def test_a_capped_table_is_described_as_capped_wherever_it_is_described(tmp_path
 
 # --- the CLI surface --------------------------------------------------------
 def _cli(monkeypatch, tmp_path, *argv):
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     args = main.build_parser().parse_args(["trials", *argv, "--db", str(tmp_path / "trials.db")])
     args.func(args)
 
 
 def test_cli_list_show_and_best_round_trip_as_json(monkeypatch, tmp_path, capsys):
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     with TrialStore(tmp_path / "trials.db", journal_path=tmp_path / "journal.jsonl") as s:
         _populate(s)
@@ -434,7 +437,7 @@ def test_cli_list_show_and_best_round_trip_as_json(monkeypatch, tmp_path, capsys
 
 
 def test_cli_show_on_an_unknown_id_exits_non_zero(tmp_path):
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     with TrialStore(tmp_path / "trials.db", journal_path=tmp_path / "journal.jsonl"):
         pass
@@ -445,7 +448,7 @@ def test_cli_show_on_an_unknown_id_exits_non_zero(tmp_path):
 
 
 def test_query_remains_an_alias_for_list(tmp_path, capsys):
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     with TrialStore(tmp_path / "trials.db", journal_path=tmp_path / "journal.jsonl") as s:
         _populate(s)
@@ -470,10 +473,39 @@ def test_in_sample_kinds_are_excluded_from_the_leaderboard_by_default(store):
     assert board["in_sample_included"] is False
 
 
+def test_a_plain_backtest_is_not_ranked_as_validated_evidence(store):
+    """A backtest stored its full-window Sharpe as `oos_sharpe` and was ranked beside
+    walk-forwards under "validated runs only", so a novice read one pass over a window
+    as out-of-sample evidence. It is shown only when asked for, and labelled then."""
+    _record(store, "bt", kind="backtest", oos_sharpe=2.0, deflated_sharpe=0.9)
+    _record(store, "wf", kind="walkforward", oos_sharpe=1.1, deflated_sharpe=0.6)
+
+    board = store.best(accounting=ACCOUNTING)
+    assert [r["id"] for r in board["rows"]] == ["wf"]
+    assert board["in_sample_excluded"] == 1
+
+    opted_in = store.best(accounting=ACCOUNTING, include_in_sample=True)
+    assert [r["id"] for r in opted_in["rows"]] == ["bt", "wf"]
+    assert "never validated out of sample" in format_leaderboard(opted_in)
+
+
+def test_a_store_full_of_backtests_still_ranks_its_validated_row(store):
+    """Found in review: the exclusion was applied to an over-fetched page, so with plain
+    backtests now excluded, twenty of them and one walk-forward ranked by raw Sharpe gave
+    an empty board and reported 16 exclusions instead of 20."""
+    for i in range(20):
+        _record(store, f"bt{i}", kind="backtest", oos_sharpe=5.0 + i, deflated_sharpe=None)
+    _record(store, "wf", kind="walkforward", oos_sharpe=1.1, deflated_sharpe=0.6)
+
+    board = store.best(accounting=ACCOUNTING, rank_by="sharpe", limit=2)
+    assert [r["id"] for r in board["rows"]] == ["wf"]
+    assert board["in_sample_excluded"] == 20
+
+
 def test_the_header_names_the_population_not_just_the_sort_key(store):
     """ "Top 3 by deflated Sharpe" still reads as "the best of everything I have run"
     unless it says what it ranked over."""
-    _record(store, "real", kind="backtest", oos_sharpe=1.1, deflated_sharpe=0.6)
+    _record(store, "real", kind="walkforward", oos_sharpe=1.1, deflated_sharpe=0.6)
     assert "validated runs only" in format_leaderboard(store.best(accounting=ACCOUNTING))
     assert "validated runs only" not in format_leaderboard(
         store.best(accounting=ACCOUNTING, include_in_sample=True)
@@ -482,14 +514,14 @@ def test_the_header_names_the_population_not_just_the_sort_key(store):
 
 def test_the_exclusion_is_reported_rather_than_silent(store):
     _record(store, "opt", kind="optimize", oos_sharpe=9.9, deflated_sharpe=1.0)
-    _record(store, "real", kind="backtest", oos_sharpe=1.1, deflated_sharpe=0.6)
+    _record(store, "real", kind="walkforward", oos_sharpe=1.1, deflated_sharpe=0.6)
     rendered = format_leaderboard(store.best(accounting=ACCOUNTING))
     assert "1 in-sample row(s) excluded" in rendered
 
 
 def test_opting_in_ranks_them_but_says_what_that_means(store):
     _record(store, "opt", kind="optimize", oos_sharpe=9.9, deflated_sharpe=1.0)
-    _record(store, "real", kind="backtest", oos_sharpe=1.1, deflated_sharpe=0.6)
+    _record(store, "real", kind="walkforward", oos_sharpe=1.1, deflated_sharpe=0.6)
 
     board = store.best(accounting=ACCOUNTING, include_in_sample=True)
     assert board["rows"][0]["id"] == "opt"
@@ -502,11 +534,11 @@ def test_excluding_in_sample_rows_does_not_shorten_the_board(store):
     for i in range(12):
         _record(store, f"opt{i}", kind="optimize", oos_sharpe=9.0, deflated_sharpe=0.99)
     for i in range(5):
-        _record(store, f"real{i}", kind="backtest", oos_sharpe=1.0 + i, deflated_sharpe=0.5 + i / 100)
+        _record(store, f"real{i}", kind="walkforward", oos_sharpe=1.0 + i, deflated_sharpe=0.5 + i / 100)
 
     board = store.best(accounting=ACCOUNTING, limit=5)
     assert len(board["rows"]) == 5
-    assert all(r["kind"] == "backtest" for r in board["rows"])
+    assert all(r["kind"] == "walkforward" for r in board["rows"])
 
 
 def test_the_rendered_leaderboard_names_each_row_s_kind(store):
@@ -529,17 +561,17 @@ def test_the_rendered_leaderboard_names_each_row_s_kind(store):
 )
 def test_json_output_still_exits_non_zero_when_there_is_no_answer(monkeypatch, tmp_path, capsys, argv, why):
     """Review finding. All three commands returned from the `--json` branch *before*
-    the exit-code check, so `tradeflow trials analyze $ID --json || alert` saw success
+    the exit-code check, so `quantred trials analyze $ID --json || alert` saw success
     on a trial that was never recorded with --record-trades. `--json` is the form a
     script reads, so an exit code only the human-readable path sets is set for nobody.
     """
     import json as json_mod
 
-    from tradeflow import cli as main
+    from quantred import cli as main
 
     journal = tmp_path / "journal.jsonl"
     journal.write_text("")
-    monkeypatch.setattr("tradeflow.services.audit.DEFAULT_TRIAL_JOURNAL", journal, raising=False)
+    monkeypatch.setattr("quantred.services.audit.DEFAULT_TRIAL_JOURNAL", journal, raising=False)
 
     args = main.build_parser().parse_args(["trials", *argv, "--json", "--db", str(tmp_path / "trials.db")])
     if argv[0] == "analyze":
@@ -570,8 +602,8 @@ def test_json_output_exits_zero_when_there_is_an_answer(monkeypatch, tmp_path, c
     """Both directions: the exit code must not fire on a successful report."""
     import pandas as pd
 
-    from tradeflow import cli as main
-    from tradeflow.services.analysis import trades_payload
+    from quantred import cli as main
+    from quantred.services.analysis import trades_payload
 
     journal = tmp_path / "journal.jsonl"
     trial_id = journal_trial(
@@ -585,10 +617,172 @@ def test_json_output_exits_zero_when_there_is_an_answer(monkeypatch, tmp_path, c
         trades=trades_payload(pd.DataFrame({"pnl": [1.0, -2.0], "exit_reason": ["TP", "SL"]})),
         path=journal,
     )
-    monkeypatch.setattr("tradeflow.services.audit.DEFAULT_TRIAL_JOURNAL", journal, raising=False)
+    monkeypatch.setattr("quantred.services.audit.DEFAULT_TRIAL_JOURNAL", journal, raising=False)
 
     args = main.build_parser().parse_args(
         ["trials", "analyze", trial_id, "--json", "--db", str(db_path_for_journal(journal))]
     )
     args.func(args)  # no SystemExit
     assert json.loads(capsys.readouterr().out)["status"] == "complete"
+
+
+# --- what the trials commands say when an id or a journal is not there -------------
+def _run_trials(monkeypatch, tmp_path, *argv):
+    from quantred import cli as main
+
+    journal = tmp_path / "journal.jsonl"
+    monkeypatch.setattr("quantred.services.audit.DEFAULT_TRIAL_JOURNAL", journal, raising=False)
+    args = main.build_parser().parse_args(["trials", *argv, "--db", str(tmp_path / "trials.db")])
+    args.func(args)
+
+
+def test_a_fresh_state_root_is_not_reported_as_a_lost_journal(monkeypatch, tmp_path, capsys):
+    """`trials status` on a root where nothing had been run printed `Journal : UNREADABLE
+    - ... restore it`, then `OK`. A journal never written beside an empty index is where
+    everyone starts, not data loss."""
+    journal = tmp_path / "journal.jsonl"
+    _run_trials(monkeypatch, tmp_path, "status", "--journal", str(journal))
+    out = capsys.readouterr().out
+    assert "UNREADABLE" not in out
+    assert "none yet" in out
+    assert "OK" in out
+
+
+def test_a_missing_journal_under_indexed_rows_still_raises_the_alarm(monkeypatch, tmp_path, capsys):
+    """The other direction: rows whose source is gone are the real loss, and the fresh
+    root exemption must not swallow them."""
+    journal = tmp_path / "journal.jsonl"
+    with TrialStore(tmp_path / "trials.db", journal_path=journal) as s:
+        _record(s, "t1")
+    _run_trials(monkeypatch, tmp_path, "status", "--journal", str(journal))
+    out = capsys.readouterr().out
+    assert "UNREADABLE" in out
+    assert "DRIFT DETECTED" in out
+
+
+def test_analyze_names_the_cli_command_and_the_service_names_neither(monkeypatch, tmp_path):
+    """The shared service said `Use list_trials` - an MCP tool name - to a CLI user.
+    The service now names no surface; each surface appends its own pointer."""
+    from quantred.services.analysis import analyze_trial
+
+    with pytest.raises(SystemExit) as exc:
+        _run_trials(monkeypatch, tmp_path, "analyze", "abc123")
+    message = str(exc.value.code)
+    assert "abc123" in message and "trials list" in message and "list_trials" not in message
+
+    with TrialStore(tmp_path / "t2.db", journal_path=tmp_path / "j2.jsonl") as s:
+        assert "list_trials" not in analyze_trial(s, "abc123")["error"]
+
+
+@pytest.mark.parametrize("ids", [("abc",), ("abc", "def")])
+def test_comparing_unknown_or_too_few_ids_gives_a_refusal_not_an_empty_report(monkeypatch, tmp_path, ids):
+    """`trials compare abc def` printed the whole `=== Return-series comparison ===`
+    scaffold ending `0 of 0 pair(s) compared`. One id is a usage error; unknown ids are
+    named with a pointer to the listing."""
+    with pytest.raises(SystemExit) as exc:
+        _run_trials(monkeypatch, tmp_path, "compare", *ids)
+    message = str(exc.value.code)
+    assert "Return-series comparison" not in message
+    if len(ids) == 1:
+        assert "at least two" in message
+    else:
+        assert "'abc'" in message and "'def'" in message and "trials list" in message
+
+
+def test_campaign_for_an_unknown_id_points_at_the_listing(monkeypatch, tmp_path, capsys):
+    with pytest.raises(SystemExit) as exc:
+        _run_trials(monkeypatch, tmp_path, "campaign", "abc123")
+    assert exc.value.code == 1
+    assert "trials list" in capsys.readouterr().out
+
+
+def test_quarantining_an_id_that_matches_no_trial_fails_and_writes_nothing(monkeypatch, tmp_path, capsys):
+    """`mark-contaminated --id <typo>` printed `Selected: 0 ... Nothing selected.` and
+    exited 0. An explicitly named id is a claim the trial exists, so it is a typo signal;
+    a filter matching nothing stays an ordinary empty answer."""
+    from quantred import cli as main
+
+    journal = tmp_path / "journal.jsonl"
+    real = journal_trial(
+        "backtest",
+        strategy="s",
+        symbols=["AAA"],
+        start=datetime(2024, 1, 1),
+        end=datetime(2024, 6, 1),
+        params={"fast": 5},
+        metrics={"sharpe_ratio": 1.0},
+        path=journal,
+    )
+    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
+    before = journal.read_text()
+
+    def run(*extra):
+        args = main.build_parser().parse_args(
+            ["trials", "mark-contaminated", "--reason", "t", "--journal", str(journal), *extra]
+        )
+        args.func(args)
+
+    with pytest.raises(SystemExit) as exc:
+        run("--id", "abc", "--id", real)
+    assert "'abc'" in str(exc.value.code) and "trials list" in str(exc.value.code)
+    assert journal.read_text() == before  # the good id beside the typo was not applied either
+
+    run("--strategy", "no_such_strategy")  # a filter matching nothing: exit 0
+    assert "Selected" in capsys.readouterr().out
+
+
+def test_ids_and_filters_together_are_refused_rather_than_the_filters_ignored(tmp_path):
+    """Found in review: beside `--id`, `--strategy`/`--kind`/`--accounting`/`--before`
+    were silently ignored, so `--id X --strategy other` quarantined X anyway."""
+    from quantred import cli as main
+
+    journal = tmp_path / "journal.jsonl"
+    real = journal_trial(
+        "backtest",
+        strategy="s",
+        symbols=["AAA"],
+        start=datetime(2024, 1, 1),
+        end=datetime(2024, 6, 1),
+        params={"fast": 5},
+        metrics={"sharpe_ratio": 1.0},
+        path=journal,
+    )
+    before = journal.read_text()
+    args = main.build_parser().parse_args(
+        ["trials", "mark-contaminated", "--reason", "t", "--journal", str(journal), "--id", real]
+        + ["--strategy", "other"]
+    )
+    with pytest.raises(SystemExit) as exc:
+        args.func(args)
+    assert "either ids or filters" in str(exc.value.code)
+    assert journal.read_text() == before
+
+    # The other direction: an id alone still quarantines.
+    args = main.build_parser().parse_args(
+        ["trials", "mark-contaminated", "--reason", "t", "--journal", str(journal), "--id", real]
+    )
+    args.func(args)
+    assert journal.read_text() != before
+
+
+def test_ids_that_are_all_typos_select_nothing_rather_than_the_whole_store(tmp_path):
+    """Found in review: when no typed id resolved, the empty id list read as "no ids, no
+    filters", so the report said every trial in the store would be quarantined. Only
+    the unmatched-id guard stood between that and a whole-store quarantine."""
+    from quantred.services.maintenance import mark_contaminated
+
+    journal = tmp_path / "journal.jsonl"
+    for fast in (5, 6, 7):
+        journal_trial(
+            "backtest",
+            strategy="s",
+            symbols=["AAA"],
+            start=datetime(2024, 1, 1),
+            end=datetime(2024, 6, 1),
+            params={"fast": fast},
+            metrics={"sharpe_ratio": 1.0},
+            path=journal,
+        )
+    report = mark_contaminated(reason="t", journal_path=journal, trial_ids=["zzzz9999"])
+    assert report["selected"] == 0 and report["trial_ids"] == []
+    assert report["unmatched_ids"] == ["zzzz9999"]

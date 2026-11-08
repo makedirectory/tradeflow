@@ -15,10 +15,10 @@ from datetime import datetime
 
 import pytest
 
+from quantred.engine.backtest import BacktestEngine
+from quantred.marketdata.client import MarketDataClient
+from quantred.services.registry import BUILTIN_SCANNERS, BUILTIN_STRATEGIES, SCANNERS, STRATEGIES
 from tests.fakes import FakeMarketData
-from tradeflow.engine.backtest import BacktestEngine
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.services.registry import BUILTIN_SCANNERS, BUILTIN_STRATEGIES, SCANNERS, STRATEGIES
 
 STRATEGY = "example_breakout"
 REVERSION = "example_reversion"
@@ -48,7 +48,7 @@ def test_the_pack_is_not_mistaken_for_a_built_in():
     assert STRATEGY not in BUILTIN_STRATEGIES
     assert SCANNER not in BUILTIN_SCANNERS
 
-    from tradeflow.services.registry import list_strategies
+    from quantred.services.registry import list_strategies
 
     row = next(r for r in list_strategies() if r["name"] == STRATEGY)
     assert row["demo"] is False
@@ -156,8 +156,8 @@ def test_the_scanner_ranks_rather_than_only_flagging():
 def test_the_packs_config_loads_and_carries_a_full_book():
     """The config is the artefact everything downstream reads. One that omitted limits
     would describe a different book from the one its evidence came from."""
-    from tradeflow.optimization.config_store import load_config
-    from tradeflow.services.setup import example_pack_source
+    from quantred.optimization.config_store import load_config
+    from quantred.services.setup import example_pack_source
 
     source = example_pack_source()
     if source is None:
@@ -257,8 +257,8 @@ def test_a_flat_series_does_not_produce_infinite_conviction():
 def test_the_long_short_config_carries_what_a_long_only_one_does_not():
     """The two configs exist to be compared. A long/short book needs a directional cap
     and a borrow rate that actually applies."""
-    from tradeflow.optimization.config_store import load_config
-    from tradeflow.services.setup import example_pack_source
+    from quantred.optimization.config_store import load_config
+    from quantred.services.setup import example_pack_source
 
     source = example_pack_source()
     if source is None:
@@ -277,7 +277,7 @@ def test_the_shipped_configs_are_in_version_control():
     have copied that hole out to a user."""
     import subprocess
 
-    from tradeflow.services.setup import example_pack_source
+    from quantred.services.setup import example_pack_source
 
     source = example_pack_source()
     if source is None:

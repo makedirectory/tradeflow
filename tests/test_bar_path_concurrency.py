@@ -13,14 +13,14 @@ entries reading the book at once can both pass a limit only one of them fits ins
 import asyncio
 import time
 
+from quantred.engine.live import LiveEngine
+from quantred.execution.live_trader import LiveTrader
+from quantred.marketdata.base import BarEvent
+from quantred.marketdata.client import MarketDataClient
+from quantred.services.registry import STRATEGIES
+from quantred.strategies import signals
+from quantred.utils.timeutils import NEW_YORK
 from tests.fakes import RecordingBroker, ScriptedFeed
-from tradeflow.engine.live import LiveEngine
-from tradeflow.execution.live_trader import LiveTrader
-from tradeflow.marketdata.base import BarEvent
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.services.registry import STRATEGIES
-from tradeflow.strategies import signals
-from tradeflow.utils.timeutils import NEW_YORK
 
 
 def _engine(handle_signal):
@@ -54,7 +54,7 @@ def _bar(symbol):
 def test_a_blocking_broker_call_does_not_stall_the_loop():
     """The bug: `handle_signal` ran inline on the loop, so a slow submission froze bar
     delivery, fill handling and reconciliation for its whole duration."""
-    from tradeflow.execution import decision as decisions
+    from quantred.execution import decision as decisions
 
     def slow(symbol, signal, price, bar_timestamp=None):
         time.sleep(0.3)  # a blocking HTTP round trip
@@ -90,7 +90,7 @@ def test_a_blocking_broker_call_does_not_stall_the_loop():
 def test_entries_never_overlap():
     """One slot, deliberately. Two entries checking the book at once can both pass a
     gross-exposure limit that only one of them fits inside."""
-    from tradeflow.execution import decision as decisions
+    from quantred.execution import decision as decisions
 
     overlapping = []
     inside = []
@@ -120,7 +120,7 @@ def test_submission_order_follows_arrival_order():
     several symbols print on the same bar — sequential awaits would pass whatever the
     lock did.
     """
-    from tradeflow.execution import decision as decisions
+    from quantred.execution import decision as decisions
 
     submitted = []
 
@@ -146,7 +146,7 @@ def test_the_book_is_not_replaced_underneath_an_entry():
     """The reconciliation sweep replaces the position book wholesale. Doing that under
     an entry that has already checked the book would let it act on one that no longer
     exists, so both take the same lock."""
-    from tradeflow.execution import decision as decisions
+    from quantred.execution import decision as decisions
 
     events = []
 

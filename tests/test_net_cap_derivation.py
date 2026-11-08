@@ -8,7 +8,7 @@ changed the book that was validated.
 
 import pandas as pd
 
-from tradeflow.analytics.exposure import MIN_SAMPLES, derive_net_cap, format_net_cap
+from quantred.analytics.exposure import MIN_SAMPLES, derive_net_cap, format_net_cap
 
 
 def _exposure(values, gross_max=0.8):
@@ -18,7 +18,7 @@ def _exposure(values, gross_max=0.8):
     actually produces, and then every assertion here would be about a shape nothing
     emits.
     """
-    from tradeflow.analytics.exposure import candidate_caps
+    from quantred.analytics.exposure import candidate_caps
 
     series = pd.Series(values, dtype="float64")
     stats = {

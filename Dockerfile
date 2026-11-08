@@ -8,6 +8,17 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1
+# The environment is built once, below, with exactly the extras this image carries.
+# Without this every `uv run` re-synced it at container start to uv's own defaults -
+# the dev group, none of the extras - so each start needed the network (an offline
+# container failed to start at all) and could rebuild the environment without the
+# MCP server and bar cache the image exists to carry.
+ENV UV_NO_SYNC=1
+# Tells the application it is in this image rather than a checkout, so the
+# instructions it prints name `quantred` (on PATH below) instead of `make` targets and
+# an `.env.example` the image does not contain.
+ENV QUANTRED_CONTAINER=1
+ENV PATH="/app/.venv/bin:$PATH"
 
 # Which optional capabilities this image carries. `uv sync --no-dev` would exclude
 # them all, leaving the MCP server and the bar cache unable to import — so the
@@ -18,7 +29,7 @@ ARG EXTRAS="mcp,store,viz"
 
 # Install dependencies first so this layer caches across source changes.
 COPY pyproject.toml README.md ./
-COPY tradeflow ./tradeflow
+COPY quantred ./quantred
 RUN uv sync --no-dev $(echo "$EXTRAS" | tr ',' '\n' | sed 's/^/--extra /' | tr '\n' ' ')
 
 # Application source.
@@ -39,13 +50,13 @@ ENV TRADEFLOW_HOME=/state
 # creates it root-owned when there is nothing there to copy. Creating only /state
 # leaves every subdirectory below it unwritable by this user, which surfaces as
 # "unable to open database file" the first time anything journals.
-RUN useradd --uid 1000 --create-home tradeflow \
+RUN useradd --uid 1000 --create-home quantred \
     && mkdir -p /state/logs /state/cache /state/configs \
-    && chown -R tradeflow:tradeflow /state /app
-USER tradeflow
+    && chown -R quantred:quantred /state /app
+USER quantred
 
 # A safe default. This image previously defaulted to `live`, so `docker run` with no
 # arguments started a paper-trading loop — turning the machine on must not turn
 # trading on. Override with any verb:
-#   docker run --rm tradeflow uv run python main.py demo
+#   docker run --rm quantred uv run python main.py demo
 CMD ["uv", "run", "python", "main.py", "--help"]

@@ -9,7 +9,7 @@ import asyncio
 import pytest
 from alpaca.data.historical import StockHistoricalDataClient
 
-from tradeflow.brokers.alpaca.market_data import AlpacaMarketData
+from quantred.brokers.alpaca.market_data import AlpacaMarketData
 
 
 class _FakeStream:
@@ -66,7 +66,7 @@ def test_stream_returns_on_normal_completion():
 def test_supports_trade_updates_requires_credentials():
     from alpaca.trading.client import TradingClient
 
-    from tradeflow.brokers.alpaca.broker import AlpacaBroker
+    from quantred.brokers.alpaca.broker import AlpacaBroker
 
     with_keys = AlpacaBroker(TradingClient("k", "s", paper=True), "k", "s", paper=True)
     without_keys = AlpacaBroker(TradingClient("k", "s", paper=True))
@@ -75,12 +75,12 @@ def test_supports_trade_updates_requires_credentials():
 
 
 def test_live_engine_runs_market_and_trade_update_streams():
+    from quantred.brokers.base import TradeUpdate
+    from quantred.demo.strategies import DemoTrendStrategy
+    from quantred.engine.live import LiveEngine
+    from quantred.execution.live_trader import LiveTrader
+    from quantred.marketdata.client import MarketDataClient
     from tests.fakes import StreamingFakeMarketData, TradeUpdateFakeBroker
-    from tradeflow.brokers.base import TradeUpdate
-    from tradeflow.demo.strategies import DemoTrendStrategy
-    from tradeflow.engine.live import LiveEngine
-    from tradeflow.execution.live_trader import LiveTrader
-    from tradeflow.marketdata.client import MarketDataClient
 
     symbols = ["AAA"]
     market_data = StreamingFakeMarketData(symbols, bars_to_emit=1)

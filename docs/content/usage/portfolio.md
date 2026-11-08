@@ -11,17 +11,11 @@ rather than ad-hoc rules. It maximizes total expected score subject to hard
 constraints.
 
 ```bash
-make allocate
-# or
-uv run python main.py allocate --scanner demo_volume --symbols NVDA,META,TSLA,AMD \
+quantred allocate --scanner demo_volume --symbols NVDA,META,TSLA,AMD \
     --capital 100000 --max-positions 5 --max-weight 0.25
 ```
 
-Requires the optional extra:
-
-```bash
-make install-portfolio    # or: uv sync --extra portfolio
-```
+Requires the `portfolio` extra (see [optional extras](extras)).
 
 ## What it solves
 
@@ -57,7 +51,7 @@ the **risk-adjusted, cost-aware** portfolio from a strategy's [alpha](alphas) an
 error. It is a **read-only research proposal** (it places no orders):
 
 ```bash
-python main.py allocate --objective utility \
+quantred allocate --objective utility \
   --strategy demo_trend --symbols NVDA,AAPL,META,AMD,TSLA,GOOG,MSFT,AMZN \
   --as-of 2025-06-01 --target-te 0.04 --max-names 20 --capital 1000000
 ```
@@ -85,6 +79,12 @@ into linear (commission + spread) and square-root impact. See
 [Portfolio construction (engineering)](../engineering/portfolio-construction) for
 the math.
 
+The **capacity** line is a number only when one was solved for. When the expected
+gross alpha is not positive, or does not cover cost even at the smallest capital
+searched, or still covers it at the largest, the line says which of those happened
+in words (the payload carries `capacity_status` and a null `capacity_capital`) -
+never `$0` or a search bound that reads as a measured capital.
+
 **Cost-aware is the default** — with `--capital` set, the objective carries a
 name-specific linear turnover cost and a square-root market-impact term, and a
 no-trade band *emerges* from each name's own cost (cheap, liquid names trade
@@ -106,7 +106,7 @@ error, alpha neutralization, and the transfer coefficient all move into **active
 space** (`w_a = w − w_B`):
 
 ```bash
-python main.py allocate --objective utility --strategy demo_trend \
+quantred allocate --objective utility --strategy demo_trend \
   --symbols NVDA,AAPL,META,AMD,TSLA,GOOG,MSFT,AMZN --as-of 2025-06-01 \
   --benchmark-holdings equal --benchmark-premium 0.05
 ```
@@ -127,7 +127,7 @@ cap is then **mandatory** (an unconstrained long/short book on a noisy Σ is a
 leverage machine):
 
 ```bash
-python main.py allocate --objective utility --strategy demo_trend \
+quantred allocate --objective utility --strategy demo_trend \
   --symbols NVDA,AAPL,META,AMD,TSLA,GOOG,MSFT,AMZN --as-of 2025-06-01 \
   --book market-neutral --gross-leverage 2.0 --short-max-weight 0.25
 ```
@@ -154,7 +154,7 @@ prior, so names outside your alpha's coverage get a real, correlation-propagated
 posterior instead of being silently excluded:
 
 ```bash
-python main.py allocate --objective utility --strategy demo_trend \
+quantred allocate --objective utility --strategy demo_trend \
   --symbols NVDA,AAPL,META,AMD,TSLA,GOOG,MSFT,AMZN --as-of 2025-06-01 \
   --benchmark-holdings equal --posterior bl --posterior-t-eff 60
 ```
@@ -172,7 +172,7 @@ before the book finishes trading into them, and the book moves a derived
 fraction `κ` of the gap each rebalance instead of all of it:
 
 ```bash
-python main.py allocate --objective utility --strategy demo_trend \
+quantred allocate --objective utility --strategy demo_trend \
   --symbols NVDA,AAPL,META,AMD,TSLA,GOOG,MSFT,AMZN --as-of 2025-06-01 \
   --capital 1000000 --policy aim
 ```
@@ -186,7 +186,7 @@ python main.py allocate --objective utility --strategy demo_trend \
 whether it's worth turning on with the net-of-cost A/B:
 
 ```bash
-python main.py info --policy-ab --strategy demo_trend \
+quantred info --policy-ab --strategy demo_trend \
   --symbols NVDA,AAPL,META,AMD,TSLA,GOOG,MSFT,AMZN --start 2024-01-01 --end 2024-12-31
 ```
 
@@ -194,3 +194,9 @@ which walks the same alpha book forward under the myopic policy and the aim
 policy and reports which one actually won net of cost — not a preference. See
 [Multi-period trading (engineering)](../engineering/multi-period-trading) for
 the derivation.
+
+## From a source checkout (contributors)
+
+The commands above are the installed `quantred` command. In a checkout, run them as
+`uv run python main.py <command> ...`. The Makefile shortcut for this page is `make allocate`. Extras are installed with `uv sync --inexact --extra <name>`
+(see [optional extras](extras)).

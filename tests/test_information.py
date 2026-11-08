@@ -5,8 +5,7 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
-from tests.fakes import DictMarketData, make_ohlcv
-from tradeflow.analytics.information import (
+from quantred.analytics.information import (
     effective_breadth,
     ic_stats,
     ir_standard_error,
@@ -15,8 +14,9 @@ from tradeflow.analytics.information import (
     predicted_ir,
     rank_ic,
 )
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.services import analysis
+from quantred.marketdata.client import MarketDataClient
+from quantred.services import analysis
+from tests.fakes import DictMarketData, make_ohlcv
 
 
 # --- breadth (the headline trap) ---------------------------------------------
@@ -93,7 +93,7 @@ def test_compute_information_zero_skill_null():
 
 # --- attribution -------------------------------------------------------------
 def test_factor_split_closes():
-    from tradeflow.services.analysis import _factor_split
+    from quantred.services.analysis import _factor_split
 
     rng = np.random.default_rng(0)
     w = rng.normal(0, 1, 8)
@@ -127,3 +127,35 @@ def test_compute_information_independent_of_post_end_bars():
     assert a["mean_ic"] == b["mean_ic"]
     assert a["predicted_ir"] == b["predicted_ir"]
     assert a["realized_ir"] == b["realized_ir"]
+
+
+def test_the_documented_info_example_writes_a_report(tmp_path, monkeypatch, capsys):
+    """Run the first command on the information page, as written, against fixture bars.
+
+    The page's example is what a reader pastes first; this is the only thing that proves
+    it still runs to a report rather than only that its flags parse.
+    """
+    import re
+    import shlex
+    from pathlib import Path
+
+    from quantred import cli, settings
+    from tests.fakes import FakeMarketData
+
+    page = (Path(settings.PROJECT_ROOT) / "docs" / "content" / "usage" / "information.md").read_text()
+    block = re.search(rf"```bash\n({settings.CLI_NAME} info.*?)```", page, re.S).group(1)
+    tokens = shlex.split(block.replace("\\\n", " "))
+    symbols = tokens[tokens.index("--symbols") + 1].split(",")
+
+    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path / "home"))
+    # The default benchmark is part of what the command fetches.
+    client = MarketDataClient(FakeMarketData([*symbols, "SPY"], n=300, freq="1D"))
+    monkeypatch.setattr(cli, "build_research_data", lambda **kwargs: client)
+    out = tmp_path / "info.html"
+    args = cli.parse_cli(tokens[1:] + ["--html", str(out)])
+    cli.cmd_info(args)
+
+    html = out.read_text(encoding="utf-8")
+    title = re.search(r"<title>(.*?)</title>", html, re.S)
+    assert title and title.group(1).strip()
+    assert "Information report" in capsys.readouterr().out

@@ -12,6 +12,8 @@ const sidebars = {
       items: [
         'usage/getting-started',
         'usage/installation',
+        'usage/migrating-to-quantred',
+        'usage/extras',
         'usage/first-run',
         'usage/configuration',
         'usage/brokers',

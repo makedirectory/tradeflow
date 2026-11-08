@@ -12,19 +12,19 @@ from datetime import datetime
 import numpy as np
 import pytest
 
-from tests.fakes import DictMarketData, make_ohlcv
-from tradeflow.alphas.base import Alpha
-from tradeflow.alphas.refine import level_shrink_factor
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.portfolio.optimizer import MeanVarianceOptimizer
-from tradeflow.portfolio.posterior import (
+from quantred.alphas.base import Alpha
+from quantred.alphas.refine import level_shrink_factor
+from quantred.marketdata.client import MarketDataClient
+from quantred.portfolio.optimizer import MeanVarianceOptimizer
+from quantred.portfolio.posterior import (
     black_litterman,
     black_litterman_from_ic,
     calibration_gap,
     expected_single_view_weight,
     view_variance,
 )
-from tradeflow.risk.base import RiskMatrix
+from quantred.risk.base import RiskMatrix
+from tests.fakes import DictMarketData, make_ohlcv
 
 AS_OF = datetime(2024, 6, 1)
 SYMS = ["A", "B", "C", "D"]
@@ -181,7 +181,7 @@ def _universe():
 
 
 def test_construct_portfolio_bl_requires_t_eff():
-    from tradeflow.services import analysis
+    from quantred.services import analysis
 
     symbols, dc = _universe()
     with pytest.raises(ValueError, match="posterior_t_eff"):
@@ -189,7 +189,7 @@ def test_construct_portfolio_bl_requires_t_eff():
 
 
 def test_construct_portfolio_bl_shrink_chain_applies_ic_uncertainty_once():
-    from tradeflow.services import analysis
+    from quantred.services import analysis
 
     symbols, dc = _universe()
     res = analysis.construct_portfolio(dc, "demo_trend", symbols, AS_OF, posterior="bl", posterior_t_eff=60.0)
@@ -203,7 +203,7 @@ def test_construct_portfolio_bl_shrink_chain_applies_ic_uncertainty_once():
 
 
 def test_construct_portfolio_bl_reports_posterior_section():
-    from tradeflow.services import analysis
+    from quantred.services import analysis
 
     symbols, dc = _universe()
     res = analysis.construct_portfolio(dc, "demo_trend", symbols, AS_OF, posterior="bl", posterior_t_eff=60.0)
@@ -220,7 +220,7 @@ def test_construct_portfolio_bl_reports_posterior_section():
 
 
 def test_construct_portfolio_without_posterior_omits_section():
-    from tradeflow.services import analysis
+    from quantred.services import analysis
 
     symbols, dc = _universe()
     res = analysis.construct_portfolio(dc, "demo_trend", symbols, AS_OF)

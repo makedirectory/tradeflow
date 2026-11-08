@@ -6,11 +6,13 @@ distribution that exposes entry points.
 
 from importlib import metadata
 
-from tradeflow.demo.strategies import DemoTrendStrategy
-from tradeflow.scanners.base import ScannerStrategy
-from tradeflow.scanners.symbol_scanner import BUILTIN_SCANNERS as package_builtin_scanners
-from tradeflow.scanners.symbol_scanner import SymbolScanner
-from tradeflow.services import registry
+import pytest
+
+from quantred.demo.strategies import DemoTrendStrategy
+from quantred.scanners.base import ScannerStrategy
+from quantred.scanners.symbol_scanner import BUILTIN_SCANNERS as package_builtin_scanners
+from quantred.scanners.symbol_scanner import SymbolScanner
+from quantred.services import registry
 
 
 class PrivateTrendStrategy(DemoTrendStrategy):
@@ -67,6 +69,33 @@ def test_refresh_registries_loads_private_entry_points(monkeypatch):
         assert registry.STRATEGIES["private_trend"] is PrivateTrendStrategy
         assert registry.SCANNERS["private_scan"] is PrivateScanner
         assert "private_scan" in registry.SymbolScanner.available()
+    finally:
+        monkeypatch.setattr(metadata, "entry_points", real_entry_points)
+        registry.refresh_registries()
+
+
+@pytest.mark.parametrize(
+    "legacy_group, registry_name, expected",
+    [
+        ("tradeflow.strategies", "STRATEGIES", PrivateTrendStrategy),
+        ("tradeflow.scanners", "SCANNERS", PrivateScanner),
+    ],
+)
+def test_a_pack_still_registered_under_the_old_group_name_is_discovered(
+    monkeypatch, legacy_group, registry_name, expected
+):
+    """A pack built before the rename declares `tradeflow.*` groups and must keep working.
+
+    The literal group strings are spelled out on purpose: deriving them from the
+    constant under test would agree with a lookup that had dropped the legacy group.
+    """
+    real_entry_points = metadata.entry_points
+    entry_points = _FakeEntryPoints([_FakeEntryPoint("legacy_pack_entry", legacy_group, expected)])
+    monkeypatch.setattr(metadata, "entry_points", lambda: entry_points)
+
+    registry.refresh_registries()
+    try:
+        assert getattr(registry, registry_name)["legacy_pack_entry"] is expected
     finally:
         monkeypatch.setattr(metadata, "entry_points", real_entry_points)
         registry.refresh_registries()
@@ -273,7 +302,7 @@ def test_symbol_scanner_resolves_names_without_importing_the_registry_first():
     import sys
 
     probe = (
-        "from tradeflow.scanners.symbol_scanner import SymbolScanner;"
+        "from quantred.scanners.symbol_scanner import SymbolScanner;"
         "names = SymbolScanner.available();"
         "assert 'demo_volume' in names, names;"
         "print('ok')"
@@ -322,3 +351,161 @@ def test_a_pack_subclassing_the_demo_is_not_itself_reported_as_demo():
     """
     assert registry.is_demo(DemoTrendStrategy)
     assert not registry.is_demo(PrivateTrendStrategy)
+
+
+class _FakeDist:
+    def __init__(self, name):
+        self.name = name
+
+
+class _FakeDistEntryPoint(_FakeEntryPoint):
+    def __init__(self, name, group, value, dist_name):
+        super().__init__(name, group, value)
+        self.dist = _FakeDist(dist_name)
+
+
+def test_the_previous_distribution_beside_this_one_is_not_warned_about(monkeypatch, caplog):
+    """`tradeflow-engine` 2.3.0 may stay installed next to `quantred` and declares the demo
+    pair under the old groups, as a *different* class object (its own copy of the package).
+    That must not trip the 'built-in names cannot be overridden' warning on every command."""
+    import logging
+
+    class OldCopyOfDemo(DemoTrendStrategy):
+        """Stands in for the old package's own copy of the demo class."""
+
+    monkeypatch.setattr(
+        metadata,
+        "entry_points",
+        lambda: _FakeEntryPoints(
+            [_FakeDistEntryPoint("demo_trend", "tradeflow.strategies", OldCopyOfDemo, "tradeflow-engine")]
+        ),
+    )
+    try:
+        with caplog.at_level(logging.DEBUG, logger=registry.logger.name):
+            registry.refresh_registries()
+        assert registry.STRATEGIES["demo_trend"] is DemoTrendStrategy
+        # Checked before the restoring refresh below, which enumerates the real
+        # environment: a broken pack installed there would warn, and that is not this.
+        assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+    finally:
+        monkeypatch.undo()
+        registry.refresh_registries()
+
+
+def test_a_pack_with_a_distribution_of_its_own_is_still_discovered(monkeypatch):
+    """The skip is for this project's distributions only, not for anything with a `dist`."""
+    monkeypatch.setattr(
+        metadata,
+        "entry_points",
+        lambda: _FakeEntryPoints(
+            [
+                _FakeDistEntryPoint(
+                    "pack_trend", registry.STRATEGY_ENTRY_POINT_GROUP, PrivateTrendStrategy, "some-pack"
+                )
+            ]
+        ),
+    )
+    try:
+        registry.refresh_registries()
+        assert registry.STRATEGIES["pack_trend"] is PrivateTrendStrategy
+    finally:
+        monkeypatch.undo()
+        registry.refresh_registries()
+
+
+class _CountingEntryPoint(_FakeDistEntryPoint):
+    def __init__(self, *args):
+        super().__init__(*args)
+        self.loads = 0
+
+    def load(self):
+        self.loads += 1
+        return super().load()
+
+
+def test_this_distributions_own_entry_points_go_through_the_load_path(monkeypatch):
+    """The root manifest declares the demo pair so every install exercises discovery.
+
+    Skipping every entry point of the engine's own distribution made that declaration
+    decorative: the pair arrived only through the seeded built-ins. Only the previous
+    distribution is skipped.
+    """
+    ours = _CountingEntryPoint(
+        "demo_trend", registry.STRATEGY_ENTRY_POINT_GROUP, DemoTrendStrategy, "quantred"
+    )
+    old = _CountingEntryPoint("demo_trend", "tradeflow.strategies", DemoTrendStrategy, "tradeflow-engine")
+    monkeypatch.setattr(metadata, "entry_points", lambda: _FakeEntryPoints([ours, old]))
+    try:
+        registry.refresh_registries()
+    finally:
+        monkeypatch.undo()
+        registry.refresh_registries()
+    assert ours.loads == 1
+    assert old.loads == 0
+
+
+def test_the_installed_demo_declarations_are_found_by_discovery():
+    """Against the real installed metadata: the demo pair is reachable as an entry point of
+    this distribution, and is not filtered out before it loads."""
+    found = {ep.name for ep in registry._select_entry_points(registry.STRATEGY_ENTRY_POINT_GROUP)}
+    assert "demo_trend" in found
+    ours = [
+        ep
+        for ep in registry._select_entry_points(registry.STRATEGY_ENTRY_POINT_GROUP)
+        if ep.name == "demo_trend"
+    ]
+    assert not any(registry._from_legacy_distribution(ep) for ep in ours)
+    assert (
+        registry._entry_point_classes(registry.STRATEGY_ENTRY_POINT_GROUP, registry.Strategy)["demo_trend"]
+        is DemoTrendStrategy
+    )
+
+
+def test_a_failure_names_the_group_the_pack_declared_not_the_canonical_one(monkeypatch, caplog):
+    import logging
+
+    class Broken(_FakeDistEntryPoint):
+        def load(self):
+            raise ImportError("boom")
+
+    monkeypatch.setattr(
+        metadata,
+        "entry_points",
+        lambda: _FakeEntryPoints([Broken("old_pack", "tradeflow.strategies", None, "some-pack")]),
+    )
+    with caplog.at_level(logging.WARNING, logger=registry.logger.name):
+        try:
+            registry.refresh_registries()
+        finally:
+            monkeypatch.undo()
+            registry.refresh_registries()
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("tradeflow.strategies entry point 'old_pack'" in m for m in messages)
+
+
+def test_a_pack_using_the_old_import_name_is_said_once(monkeypatch, caplog):
+    import logging
+    import sys
+
+    class _AliasFinder:  # the shim's finder, recognised by name
+        pass
+
+    monkeypatch.setitem(sys.modules, "tradeflow", sys)
+    monkeypatch.setattr(sys, "meta_path", [_AliasFinder(), *sys.meta_path])
+    monkeypatch.setattr(registry, "_WARNED_OLD_IMPORT", False)
+    with caplog.at_level(logging.WARNING, logger=registry.logger.name):
+        registry._warn_if_a_pack_imports_the_old_name()
+        registry._warn_if_a_pack_imports_the_old_name()
+    said = [r for r in caplog.records if "old `tradeflow` name" in r.getMessage()]
+    assert len(said) == 1
+
+
+def test_no_old_name_message_without_the_alias(monkeypatch, caplog):
+    import logging
+    import sys
+
+    monkeypatch.delitem(sys.modules, "tradeflow", raising=False)
+    monkeypatch.setattr(registry, "_WARNED_OLD_IMPORT", False)
+    with caplog.at_level(logging.WARNING, logger=registry.logger.name):
+        registry._warn_if_a_pack_imports_the_old_name()
+    assert not caplog.records

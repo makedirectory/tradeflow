@@ -12,7 +12,7 @@ that loop, including the signal handlers. One blocking call took all of them dow
 
 import asyncio
 
-from tradeflow.utils.streaming import close_stream
+from quantred.utils.streaming import close_stream
 
 
 class _Stream:
@@ -124,7 +124,7 @@ def test_the_alpaca_provider_delegates_rather_than_calling_stop():
     this reasoning existed once, and one of them was wrong."""
     from unittest import mock
 
-    from tradeflow.brokers.alpaca.market_data import AlpacaMarketData
+    from quantred.brokers.alpaca.market_data import AlpacaMarketData
 
     provider = AlpacaMarketData(mock.Mock(), "k", "s")
     stream = _Stream()

@@ -10,16 +10,14 @@ at a specific research clock. It runs a `ScannerStrategy` over each symbol's
 recent bars and keeps those that produce an actionable scan signal.
 
 ```bash
-make scan
-# or
-uv run python main.py scan --scanner demo_volume --symbols NVDA,META,TSLA,AMD
+quantred scan --scanner demo_volume --symbols NVDA,META,TSLA,AMD
 ```
 
 Standalone scans default to wall-clock now. Pin them to a historical clock with
 `--as-of`:
 
 ```bash
-uv run python main.py scan --scanner demo_volume --symbols NVDA,META,TSLA,AMD --as-of 2024-06-01
+quantred scan --scanner demo_volume --symbols NVDA,META,TSLA,AMD --as-of 2024-06-01
 ```
 
 Example output:
@@ -47,7 +45,7 @@ moves, the book a deployment gets is not the book that was validated — and no 
 gate would notice, because the gates never see the scan twice.
 
 ```bash
-uv run python main.py scan --scanner demo_volume --drift --as-of 2026-08-22
+quantred scan --scanner demo_volume --drift --as-of 2026-08-22
 ```
 
 ```
@@ -71,8 +69,12 @@ historical clock, so drift is that seam asked several times and differenced.
 
 `backtest`, `optimize`, `walkforward`, `research`, `cache warm` and `live` all accept
 a `--scanner` option. When set, they run the scanner first and trade only the flagged
-symbols; if the scanner flags nothing, they fall back to the candidate list. Pass
-`--scanner none` to skip scanning and use the symbols as-is.
+symbols; if the scanner flags nothing, they log a warning and fall back to the candidate
+list. Pass `--scanner none` to skip scanning and use the symbols as-is.
+
+`allocate` is the exception: it does not fall back. When the scanner flags none of the
+candidates it prints that and stops, suggesting `--scanner none` to allocate across the
+candidates as given.
 
 The historical commands resolve the scanner at `--end` by default, so a validation
 window does not mix in today's universe, and `--scan-as-of` pins a different scanner
@@ -85,5 +87,11 @@ that resolved to "now", so a payload never leaves which universe it selected fro
 something to be inferred.
 
 ```bash
-uv run python main.py backtest --scanner none --symbols AAPL,MSFT --start 2024-01-02 --end 2024-04-01
+quantred backtest --scanner none --symbols AAPL,MSFT --start 2024-01-02 --end 2024-04-01
 ```
+
+## From a source checkout (contributors)
+
+The commands above are the installed `quantred` command. In a checkout, run them as
+`uv run python main.py <command> ...`. The Makefile shortcut for this page is `make scan`. Extras are installed with `uv sync --inexact --extra <name>`
+(see [optional extras](extras)).

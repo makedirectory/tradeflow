@@ -44,8 +44,7 @@ jobs:
 
       - name: Docs link check
         # Relative links and heading anchors across the docs site and top-level
-        # Markdown. Note specs/ is gitignored and so is never seen here — run
-        # `make check-links` locally to cover it.
+        # Markdown, and no tracked link into the gitignored specs/.
         run: uv run python scripts/check_links.py
 
       - name: Compose config validates

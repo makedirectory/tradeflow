@@ -12,14 +12,14 @@ from datetime import datetime
 
 import pytest
 
+from quantred.analytics.reporting import format_verdict_report
+from quantred.marketdata.client import MarketDataClient
+from quantred.marketdata.session import SessionBarCache, session_client
+from quantred.marketdata.timeframe import Timeframe
+from quantred.services import analysis, audit
+from quantred.store.trials import TrialStore, db_path_for_journal
+from quantred.utils.timeutils import NEW_YORK
 from tests.fakes import FakeMarketData
-from tradeflow.analytics.reporting import format_verdict_report
-from tradeflow.marketdata.client import MarketDataClient
-from tradeflow.marketdata.session import SessionBarCache, session_client
-from tradeflow.marketdata.timeframe import Timeframe
-from tradeflow.services import analysis, audit
-from tradeflow.store.trials import TrialStore, db_path_for_journal
-from tradeflow.utils.timeutils import NEW_YORK
 
 # Six names, not three: the default weight cap can't fund a book from three, and
 # the information sampler needs a cross-section wide enough to correlate.
@@ -148,6 +148,7 @@ def test_verdict_vocabulary_is_one_of_the_house_terms():
         "not promotable",
         "needs more data",
         "mixed",
+        "infeasible",
         "incomplete",
     }
 
@@ -224,6 +225,173 @@ def test_low_sample_reads_as_needs_more_data():
     assert gates["promotable"] is False
 
 
+# --- an unfundable book -------------------------------------------------------
+THREE = ["AAA", "BBB", "CCC"]
+
+
+def _run_three(**kwargs):
+    """Three names at the default 25% cap: three of them can carry at most 75%."""
+    client = MarketDataClient(FakeMarketData([*THREE, "SPY"], n=600, freq="1D"))
+    return analysis.run_verdict(client, "demo_trend", THREE, START, END, scanner="none", **kwargs)
+
+
+def test_an_infeasible_book_is_the_headline_not_more_data():
+    result = _run_three()
+
+    assert result["verdict"]["verdict"] == "infeasible"
+    assert result["verdict"]["promotable"] is False
+    assert "max_weight*3 < 1" in result["verdict"]["summary"]
+    assert "More dates will not change this" in result["verdict"]["summary"]
+    assert result["steps"]["information"]["status"] == "skipped"
+    assert result["portfolio"]["feasible"] is False
+    assert result["portfolio"]["binding_constraint"].startswith("max_weight*3")
+    report = format_verdict_report(result)
+    assert "VERDICT: infeasible" in report
+    assert "needs more data" not in report
+
+
+def test_the_preflight_does_not_run_the_expensive_steps(monkeypatch):
+    def boom(*args, **kwargs):
+        raise AssertionError("an unfundable book must not reach this step")
+
+    for name in ("compute_alphas", "compute_combined_alphas", "construct_portfolio", "compute_information"):
+        monkeypatch.setattr(analysis, name, boom)
+
+    result = _run_three(signals=["demo_trend", "demo_trend"])
+
+    assert result["verdict"]["verdict"] == "infeasible"
+    for step in ("alphas", "combination", "portfolio", "information"):
+        assert result["steps"][step]["status"] == "skipped"
+        assert "allocation preflight" in result["steps"][step]["reason"]
+    # Skipped is not failed: an infeasible run is a complete answer, not a partial one.
+    assert result["verdict"]["failed_steps"] == []
+
+
+def test_a_feasible_book_with_no_observations_still_needs_more_data():
+    """The boundary twin: four names at 25% can be fully invested, so a verdict that
+    measured nothing is a data problem and must still say so."""
+    names = [*THREE, "DDD"]
+    client = MarketDataClient(FakeMarketData([*names, "SPY"], n=600, freq="1D"))
+    gates = analysis._verdict_gates(
+        {
+            "steps": {"portfolio": {"status": "ok"}, "information": {"status": "ok"}},
+            "information": {"periods": 0},
+            "portfolio": {"feasible": True, "diagnostics": {"expected_active_return_net": 0.05}},
+        }
+    )
+    assert gates["verdict"] == "needs more data"
+
+    result = analysis.run_verdict(client, "demo_trend", names, START, END, scanner="none")
+    assert result["portfolio"]["feasible"] is True
+    assert result["verdict"]["verdict"] != "infeasible"
+
+
+def test_caps_are_never_relaxed():
+    result = _run_three()
+    assert result["inputs"]["max_weight"] == 0.25
+    assert result["inputs"]["max_names"] is None
+
+    wide = _run_three(max_weight=0.5, force=True)
+    assert wide["inputs"]["max_weight"] == 0.5
+    assert wide["verdict"]["verdict"] != "infeasible"
+    assert wide["portfolio"]["feasible"] is True
+
+
+def test_a_book_that_fails_after_the_preflight_is_still_infeasible(monkeypatch):
+    """Alphas can drop names, so the caps can pass the preflight and the solve fail.
+    The headline must not depend on which of the two caught it."""
+
+    def refuses(*args, **kwargs):
+        return {"feasible": False, "binding_constraint": "synthetic solver refusal", "weights": {}}
+
+    monkeypatch.setattr(analysis, "construct_portfolio", refuses)
+    monkeypatch.setattr(
+        analysis, "compute_information", lambda *a, **k: pytest.fail("information must be skipped")
+    )
+
+    result = _run()
+
+    assert result["verdict"]["verdict"] == "infeasible"
+    assert "synthetic solver refusal" in result["verdict"]["summary"]
+    assert result["steps"]["information"]["status"] == "skipped"
+
+
+def test_the_cap_check_has_one_definition():
+    """The optimizer and the verdict preflight must agree on every (n, w, k), so build
+    the verdict both ways and compare against the optimizer rather than asserting each."""
+    import numpy as np
+
+    from quantred.alphas.base import Alpha
+    from quantred.portfolio.optimizer import MeanVarianceOptimizer, long_only_cap_shortfall
+    from quantred.risk.base import RiskMatrix
+
+    for n in (1, 3, 4, 5, 8):
+        for weight in (0.1, 0.25, 0.34, 0.5, 1.0):
+            for k in (None, 1, 2, 4, 20):
+                symbols = [f"S{i}" for i in range(n)]
+                optimizer = MeanVarianceOptimizer(max_weight=weight, max_names=k)
+                alphas = [
+                    Alpha(sym, 0.01 * (i + 1), START, residual_vol=0.2, ic=0.03, raw_z=1.0)
+                    for i, sym in enumerate(symbols)
+                ]
+                risk = RiskMatrix(symbols=symbols, sigma=np.eye(n) * 0.04)
+                result = optimizer.optimize(alphas, risk, target_te=0.04)
+                shortfall = long_only_cap_shortfall(n, weight, k)
+                if shortfall is not None:
+                    assert result.feasible is False
+                    assert result.binding_constraint == shortfall
+                else:
+                    assert result.binding_constraint is None or "max_weight*" not in result.binding_constraint
+
+
+def test_the_starter_shape_is_feasible_and_measured():
+    """The documented first example: about a dozen names and no scanner. Three names
+    could not fund a book; this shape can, and it measures rebalances."""
+    names = [f"SYM{i:02d}" for i in range(12)]
+    client = MarketDataClient(FakeMarketData([*names, "SPY"], n=600, freq="1D"))
+
+    result = analysis.run_verdict(client, "demo_trend", names, START, END, scanner="none")
+
+    assert result["portfolio"]["feasible"] is True
+    assert "ic_tstat" in result["verdict"]["checks"]
+    assert result["verdict"]["verdict"] not in {"infeasible", "needs more data", "incomplete"}
+
+
+def test_a_participation_cap_is_part_of_the_runs_identity():
+    """The cap is now settable from both surfaces and prices the book's trading cost,
+    so two runs differing only in it must not be served as one memoized trial."""
+    first = _run()
+    second = _run(participation_cap=0.05)
+
+    assert second["memoized"] is False
+    assert second["inputs"]["participation_cap"] == 0.05
+    assert first["inputs"]["participation_cap"] == 0.10
+
+
+def test_a_real_infeasible_result_renders_in_every_reader():
+    """The renderers were written for a run whose sections all exist. An infeasible one
+    has no alphas and no information, and must still render rather than crash."""
+    from quantred.analytics.htmlreport import render_html
+
+    result = _run_three()
+    document = render_html(json.loads(json.dumps(result)), "verdict")
+    assert "INFEASIBLE" in document
+    assert "VERDICT: infeasible" in format_verdict_report(result)
+
+
+def test_a_run_refused_by_the_allocation_preflight_is_not_journaled(_isolated_state):
+    """Reversed on purpose. This used to assert one journaled trial, but the preflight
+    skips every step, so the run looked at nothing - the case the incomplete-run rule
+    already excludes, because counting it deflates the next real result against a test
+    nobody saw. An infeasible *solve*, after the alphas read the data, still counts."""
+    result = _run_three()
+    rows = [r for r in _journal_rows(_isolated_state) if r.get("tool", "").startswith("trial:")]
+    assert rows == []
+    assert result["verdict"]["verdict"] == "infeasible"
+    assert result["journaled"] is False
+    assert result["provenance"]["this_run_counted"] is False
+
+
 # --- journaling and memoization ---------------------------------------------
 def test_one_run_journals_exactly_one_trial(_isolated_state):
     _run()
@@ -245,6 +413,164 @@ def test_identical_rerun_is_memoized_without_touching_the_provider(_isolated_sta
 
     rows = [r for r in _journal_rows(_isolated_state) if r.get("tool", "").startswith("trial:")]
     assert len(rows) == 1  # a memoized run adds no trial
+
+
+def test_an_incomplete_run_is_not_served_back_on_the_rerun(_isolated_state, monkeypatch):
+    """A step that failed (say, a cache that was not warm yet) answered nothing, so the
+    same request after the fix has to run rather than replay the failure."""
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("synthetic information failure")
+
+    with monkeypatch.context() as broken:
+        broken.setattr(analysis, "compute_information", boom)
+        first = _run()
+    assert first["verdict"]["verdict"] == "incomplete"
+
+    second = _run()
+    assert second["memoized"] is False
+    assert second["verdict"]["verdict"] != "incomplete"
+    assert "information" not in (second["verdict"].get("failed_steps") or [])
+
+
+def test_an_incomplete_run_that_measured_nothing_is_not_counted_as_a_trial(_isolated_state, monkeypatch):
+    """An incomplete run whose skill test never ran was journaled anyway, so every
+    failed attempt (a cold cache, a dropped connection) raised the campaign's trial count
+    and deflated the next real result against a test nobody saw."""
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("synthetic information failure")
+
+    monkeypatch.setattr(analysis, "compute_information", boom)
+    result = _run()
+    assert result["verdict"]["verdict"] == "incomplete"
+    assert "trial_id" not in result
+    assert result["journaled"] is False
+    assert "information" in result["not_journaled_reason"]
+    rows = [r for r in _journal_rows(_isolated_state) if r.get("tool", "").startswith("trial:")]
+    assert rows == []
+
+    report = format_verdict_report(result)
+    assert "Not recorded as a trial" in report
+
+
+def test_an_unrecorded_run_does_not_count_itself_in_the_campaign_total(_isolated_state, monkeypatch):
+    """The provenance line printed `campaign trials N` with this run counted, then said
+    the run was not recorded: a total one higher than the store held. A recorded run
+    still counts itself, and the next unrecorded one reports exactly what is stored."""
+    first = _run()
+    assert first["journaled"] is True
+    assert first["provenance"]["n_trials"] == 1
+    assert "this_run_counted" not in first["provenance"]
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("synthetic information failure")
+
+    monkeypatch.setattr(analysis, "compute_information", boom)
+    second = _run(force=True)
+    assert second["journaled"] is False
+    assert second["provenance"]["n_trials"] == 1
+    assert "campaign trials 1 (this run not counted)" in format_verdict_report(second)
+
+
+def test_a_complete_unjournaled_run_reports_one_trial_count(_isolated_state):
+    """Found in review: lowering the count for every unjournaled run made a complete
+    `journal=False` verdict print `campaign trials 0` above a skill test deflated across 1.
+    One report, one family, one count."""
+    import re
+
+    report = format_verdict_report(_run(journal=False))
+    header = re.search(r"campaign trials (\d+)", report).group(1)
+    deflated = re.search(r"across (\d+) campaign trials", report).group(1)
+    assert header == deflated
+
+
+def test_an_unrecorded_runs_count_reads_alike_in_the_terminal_and_the_html(_isolated_state, monkeypatch):
+    """The HTML header printed a real zero as "—" and never said the run was not counted,
+    while the terminal said `0 (this run not counted)`. An unreadable store is unknown,
+    not zero."""
+    from quantred.analytics.htmlreport import render_html
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("synthetic information failure")
+
+    monkeypatch.setattr(analysis, "compute_information", boom)
+    result = _run()
+    assert "campaign trials 0 (this run not counted)" in format_verdict_report(result)
+    assert "0 (this run not counted)" in render_html(result, "verdict")
+
+    monkeypatch.setattr(analysis, "_family_count", lambda *a, **k: None)
+    unknown = _run(force=True)
+    assert unknown["provenance"]["n_trials"] is None
+    assert "campaign trials unavailable (this run not counted)" in format_verdict_report(unknown)
+
+
+def test_an_incomplete_run_that_measured_skill_is_still_a_trial(_isolated_state, monkeypatch):
+    """The other direction: a run whose skill test produced numbers was a look at the data,
+    whatever else failed, and the family count has to include it."""
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("synthetic portfolio failure")
+
+    monkeypatch.setattr(analysis, "construct_portfolio", boom)
+    result = _run()
+    assert result["verdict"]["verdict"] == "incomplete"
+    assert (result.get("information") or {}).get("periods")
+    assert result["journaled"] is True
+    rows = [r for r in _journal_rows(_isolated_state) if r.get("tool", "").startswith("trial:")]
+    assert len(rows) == 1
+
+
+def test_a_failed_step_is_reported_once_not_logged_as_a_traceback(_isolated_state, monkeypatch, caplog):
+    """A cold offline cache made every step fail, and each failure logged its full
+    traceback at WARNING above the report — about eighty lines before the one that
+    said what to do. The report already names each failed step and its error; the
+    traceback is for someone debugging, at DEBUG."""
+    import logging
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("synthetic information failure")
+
+    monkeypatch.setattr(analysis, "compute_information", boom)
+    with caplog.at_level(logging.DEBUG, logger="quantred.services.analysis"):
+        result = _run()
+    assert result["steps"]["information"]["status"] == "failed"
+    loud = [r for r in caplog.records if r.levelno >= logging.WARNING and r.exc_info]
+    assert loud == []
+    assert any(r.exc_info for r in caplog.records if "information" in r.getMessage())
+
+
+def test_an_incomplete_run_whose_combination_measured_ics_is_still_a_trial(_isolated_state, monkeypatch):
+    """Found in review: only the information step was consulted, so a two-signal run whose
+    combination measured and printed realized ICs, with the information step failing,
+    said skill was never measured under a measured IC and was not counted — every
+    signal-set tweak a look nobody paid for."""
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("synthetic information failure")
+
+    monkeypatch.setattr(analysis, "compute_information", boom)
+    result = _run(signals=["demo_trend", "demo_trend"])
+    assert result["verdict"]["verdict"] == "incomplete"
+    assert result["combination"]["n_periods"]
+    assert result["journaled"] is True
+    assert "Not recorded as a trial" not in format_verdict_report(result)
+    rows = [r for r in _journal_rows(_isolated_state) if r.get("tool", "").startswith("trial:")]
+    assert len(rows) == 1
+
+
+def test_journaled_reports_the_outcome_not_the_intent(_isolated_state, monkeypatch):
+    """Found in review: `journaled` was set before journaling ran, and journaling swallows
+    its own failure, so a run whose journal write failed said `journaled: true` with no
+    trial id for an agent to cite."""
+
+    def refuse(*args, **kwargs):
+        raise OSError("synthetic journal failure")
+
+    monkeypatch.setattr(audit, "journal_trial", refuse)
+    result = _run()
+    assert "trial_id" not in result
+    assert result["journaled"] is False
 
 
 def test_force_appends_a_second_trial(_isolated_state):
@@ -360,9 +686,9 @@ def test_report_names_the_cost_model_it_priced_with():
 
 # --- the CLI surface --------------------------------------------------------
 def _cli(monkeypatch, provider, *argv):
-    from tradeflow import cli as main
+    from quantred import cli as main
 
-    monkeypatch.setattr(main, "build_data_and_broker", lambda **kwargs: (None, MarketDataClient(provider)))
+    monkeypatch.setattr(main, "build_research_data", lambda **kwargs: MarketDataClient(provider))
     args = main.build_parser().parse_args(
         [
             "verdict",
@@ -414,11 +740,11 @@ def test_cli_exits_non_zero_when_a_step_failed(monkeypatch, capsys):
 def test_provenance_identifies_the_code_even_without_a_git_repository(monkeypatch):
     """A report that outlives its context must say what made it. An installed copy
     has no repository, and "unknown" there defeats the whole provenance block."""
-    import tradeflow
-    from tradeflow.optimization import config_store
+    import quantred
+    from quantred.optimization import config_store
 
     monkeypatch.setattr(config_store, "current_git_sha", lambda: None)
-    assert analysis.code_version() == f"tradeflow {tradeflow.__version__}"
+    assert analysis.code_version() == f"quantred {quantred.__version__}"
 
     monkeypatch.setattr(config_store, "current_git_sha", lambda: "abc1234")
     assert analysis.code_version() == "abc1234"
@@ -433,7 +759,7 @@ def test_the_provenance_line_does_not_claim_provider_access_it_cannot_vouch_for(
     none. Provenance is the one thing a reader cannot check for themselves, so
     overstating where data came from is worse than saying nothing.
     """
-    from tradeflow.analytics.reporting import _fetch_summary
+    from quantred.analytics.reporting import _fetch_summary
 
     summary = _fetch_summary({"requests": 12, "fetches": 3, "distinct": 3})
 
@@ -450,7 +776,7 @@ def test_a_passing_gate_does_not_print_the_failure_that_did_not_happen():
     produced a line that contradicted its own verdict - and a reader who trusts the
     prose over the mark reads a pass as a failure.
     """
-    from tradeflow.analytics.reporting import _verdict_banner_lines
+    from quantred.analytics.reporting import _verdict_banner_lines
 
     lines = _verdict_banner_lines(
         {
@@ -483,3 +809,97 @@ def test_a_passing_gate_does_not_print_the_failure_that_did_not_happen():
     failing = next(line for line in lines if "ic_tstat" in line)
     assert "FAIL" in failing and "not distinguishable from luck" in failing
     assert "1.78 vs 0.62" in rendered  # values still shown on a pass
+
+
+def test_too_little_history_is_a_data_problem_not_an_infeasible_book():
+    """Forty bars cannot estimate a covariance matrix: the solve reports itself
+    infeasible with no binding constraint. That is what more dates fix, so the verdict
+    must not claim they cannot, and information must still be attempted."""
+    names = [f"SYM{i:02d}" for i in range(12)]
+    client = MarketDataClient(FakeMarketData([*names, "SPY"], n=40, freq="1D"))
+
+    result = analysis.run_verdict(client, "demo_trend", names, START, END, scanner="none")
+
+    verdict = result["verdict"]
+    assert verdict["verdict"] != "infeasible"
+    assert "More dates will not change this" not in verdict["summary"]
+    assert "portfolio_feasible" not in verdict["checks"]
+    assert result["steps"]["information"]["status"] != "skipped"
+    assert "The constraints, not the data" not in format_verdict_report(result)
+
+
+def test_a_solve_with_no_named_constraint_is_not_constraint_infeasible():
+    assert analysis._book_blocked_by_constraints({"feasible": False, "note": "Insufficient data"}) is False
+    assert analysis._book_blocked_by_constraints({"feasible": False, "binding_constraint": "x"}) is True
+    assert analysis._book_blocked_by_constraints({"feasible": False, "preflight": True}) is True
+    assert analysis._book_blocked_by_constraints({"feasible": True, "binding_constraint": "x"}) is False
+    assert analysis._book_blocked_by_constraints(None) is False
+
+
+# --- offline cache misses ----------------------------------------------------
+def test_an_offline_verdict_prints_one_warm_command_that_fixes_every_step(tmp_path):
+    """Every step missed with its own window and printed its own warm command, each one
+    different; only the widest was enough, and the reader had to work out which. The
+    report now prints one command, and running it gets every step past the cache."""
+    pytest.importorskip("pyarrow")
+    import re
+
+    from quantred.store.bars import CachedMarketData
+    from quantred.utils.timeutils import parse_market_date
+
+    cache_dir = tmp_path / "bars"
+
+    def offline_run():
+        cached = CachedMarketData(_provider(), cache_dir=cache_dir, offline=True)
+        try:
+            return _run(MarketDataClient(cached), scanner="demo_volume", journal=False)
+        finally:
+            cached.close()
+
+    first = offline_run()
+    missed = [name for name, s in first["steps"].items() if s.get("cache_miss")]
+    assert len(missed) > 1
+    report = format_verdict_report(first)
+    assert report.count("cache warm") == 1
+
+    command = re.search(r"`[^`]*cache warm ([^`]*)`", report).group(1)
+    flags = dict(re.findall(r"--([\w-]+) (\S+)", command))
+    online = CachedMarketData(_provider(), cache_dir=cache_dir)
+    online.warm(
+        flags["symbols"].split(","),
+        flags["timeframe"],
+        parse_market_date(flags["start"]),
+        parse_market_date(flags["end"]),
+    )
+    online.close()
+
+    second = offline_run()
+    assert not [name for name, s in second["steps"].items() if s.get("cache_miss")]
+    assert "cache_miss" not in second
+
+
+# --- an unknown scanner is refused before anything runs ------------------------
+def test_an_unknown_scanner_is_refused_up_front_and_nothing_is_journaled(_isolated_state):
+    """The scan step failed on the unknown name and the report then added a misleading
+    `max_weight*1 < 1` infeasibility line for the universe the scan never produced."""
+    provider = _provider()
+    with pytest.raises(ValueError) as caught:
+        _run(_client(provider), scanner="demo_volum")
+    message = str(caught.value)
+    assert "unknown scanner 'demo_volum'" in message and "demo_volume" in message
+    assert provider.calls == []
+    assert _journal_rows(_isolated_state) == []
+
+
+def test_the_cli_and_the_service_refuse_an_unknown_scanner_in_the_same_words():
+    """One definition below both, so the two cannot drift into different advice."""
+    import argparse
+
+    from quantred.cli import _scanner
+
+    with pytest.raises(argparse.ArgumentTypeError) as cli_error:
+        _scanner("demo_volum")
+    with pytest.raises(ValueError) as service_error:
+        _run(scanner="demo_volum")
+    assert str(cli_error.value) == str(service_error.value)
+    assert _scanner("none") == "none" and _scanner("demo_volume") == "demo_volume"

@@ -1,4 +1,4 @@
-# Working on TradeFlow
+# Working on QuantRed
 
 Topic rules live in `.claude/rules/`; the cycle a change goes through, and the gate it
 has to pass, are in [how a change gets built here](.claude/rules/build-process.md). The
@@ -10,7 +10,7 @@ This file is only what is true in every session.
 
 **Two clocks.** The research clock (backtest, optimize, walk-forward, analytics, the
 AI agent) is slow, exploratory, and only ever *proposes*. The trade clock
-(`tradeflow/engine/live.py`, `tradeflow/execution/`) is deterministic and imports
+(`quantred/engine/live.py`, `quantred/execution/`) is deterministic and imports
 **nothing** from `services/`, `analytics/`, `optimization/`, or `research/`.
 Promotion between them is a manual human step.
 
@@ -34,7 +34,7 @@ correct in the source:
 ```bash
 uv run ruff check . && uv run ruff format --check .   # exactly what CI runs
 make test                                             # offline, no keys
-make check-links                                      # includes gitignored specs/
+make check-links                                      # tracked docs; specs/ never linked
 make release-check                                    # build + install into a clean venv
 ```
 

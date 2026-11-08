@@ -5,19 +5,46 @@ title: First run (`init`)
 
 # First run
 
+This page takes you from nothing installed to a connected MCP client, in the order
+that costs least: install, check, a keyless demo, then keys, then (optionally) an AI
+client, and only then a model for the autonomous `research` agent. Each step stands
+on its own; you can stop after any of them.
+
+## 1. Install
+
 ```bash
-make init          # or: python main.py init
+uv tool install 'quantred[mcp,viz]'
+quantred --version
 ```
 
-A guided setup that writes a valid `.env`, checks the credentials against Alpaca,
-and tells you what to run next. It exists because the alternative first run is:
-clone, discover from a stack trace that you need a `.env`, create it by hand, learn
-that a paper-trade flag exists, and only then find out whether the keys work.
+In an activated virtual environment instead: `python -m pip install 'quantred[mcp,viz]'`. The `mcp`
+extra is what step 5 needs (the client launches the server from this install) and `viz` draws
+charts in HTML reports; leave either off if you will not use it.
+The distribution and the command are both `quantred`. Capabilities such
+as charts, the MCP server and the model SDKs are opt-in extras; see
+[optional extras](extras) for which one unlocks what and how to add one later without
+losing the rest.
 
-You do **not** need this to try TradeFlow. `make demo` runs the entire pipeline on
-synthetic data with no keys and no network at all.
+## 2. See it work with no keys
 
-## What it does
+```bash
+quantred demo
+```
+
+`demo` runs the entire pipeline on synthetic data with no keys and no network, and
+ends in an honest promotion verdict. You do not need `init` to try QuantRed.
+
+## 3. `quantred init`
+
+```bash
+quantred init
+```
+
+A guided setup that writes a valid `.env` in your state directory (`~/.tradeflow`
+unless `TRADEFLOW_HOME` is set), checks the credentials against Alpaca, and tells you
+what to run next. It exists because the alternative first run is: discover from a
+stack trace that you need a `.env`, create it by hand, learn that a paper-trade flag
+exists, and only then find out whether the keys work.
 
 1. **Detects an existing `.env`** and shows what is in it, masked. If your keys are
    already set it asks before replacing them, and if they come from an exported
@@ -31,47 +58,201 @@ synthetic data with no keys and no network at all.
    ability to trade with it.
 4. **Confirms `PAPER_TRADE=true`.** Turning it off requires typing an exact phrase,
    not answering a yes/no prompt.
-5. **Offers a first cache warm** (a small universe, about a year of daily bars) so
+5. **Asks whether to set up a model provider for `research`**: `none` (the default),
+   `anthropic`, `openai` or `ollama`. Skipping is fine; only the autonomous research
+   agent uses a model, and you can redo this step any time. For a hosted provider it
+   asks for the key (hidden); for Ollama it asks for the endpoint, a response timeout,
+   an optional context length and the model name to probe (validating each; the name is
+   only used to print the probe command, since `research` takes `--model`). It never makes a request to the
+   provider on its own, and if the provider's SDK extra is missing it prints the
+   command that installs it, plus the exact `--probe-model` command (see below).
+6. **Offers a first cache warm** (a small universe, about a year of daily bars) so
    your first `verdict` or `backtest` is fast and `--offline` works immediately.
-6. **Prints the three commands to try next.**
+7. **Prints the commands to try next**, including how an MCP client attaches.
 
-## `--check` — the doctor
+## 4. Check what is ready: `init --check`
 
 ```bash
-make check         # or: python main.py init --check
+quantred init --check
 ```
 
 ```
-TradeFlow setup check
+QuantRed setup check
 
-  [ok]   env file               /path/to/.env exists
-  [ok]   APCA_API_KEY_ID        PKD2…B7Q3
-  [FAIL] APCA_API_SECRET_KEY    (placeholder) — no command that touches the market will run
-  [ok]   PAPER_TRADE            true — orders go to the paper account
-  [ok]   state directory        logs is writable
-  [FAIL] extra: viz             not installed — charts in --chart and in HTML reports: uv sync --extra viz
+  state root: ~/.tradeflow
+  (journal, trial store, bar cache, and configs all live here)
+
+  [ok]       version                quantred 2.4.0
+  [optional] env file               ~/.tradeflow/.env not found
+        -> run `init` to create it, or export the keys as environment variables
+  [blocked]  APCA_API_KEY_ID        (not set) - no command that touches the market will run
+        -> run `init` to enter it, or export it as an environment variable
+  [blocked]  APCA_API_SECRET_KEY    (not set) - no command that touches the market will run
+        -> run `init` to enter it, or export it as an environment variable
+  [ok]       PAPER_TRADE            true - orders go to the paper account
+  [ok]       state directory        ~/.tradeflow/logs is writable
+  [ok]       extra: mcp             installed - the MCP server for AI clients
+  [optional] extra: viz             not installed - charts in `--chart` and in HTML reports
+  [--]       model: ollama          default endpoint http://localhost:11434 (reachability not checked; run with --probe-model)
+  [optional] model provider         no provider is set up for `research`
+
+  ready for:  demo
+  blocked for: data (APCA_API_KEY_ID, APCA_API_SECRET_KEY)
+  blocked for: research (APCA_API_KEY_ID, APCA_API_SECRET_KEY, model provider)
+
+  Also not installed (optional): viz - what each unlocks and how to add it: https://tradeflow.mk-dir.com/usage/extras
 ```
 
-It is a doctor, not a linter: every check is evaluated and reported independently,
-because the second and third problems are exactly what you want to know about. It
-**writes nothing** and makes no network call, so it is safe to run any time.
+That is a trimmed example from a machine with no keys; your rows will differ (the
+real output also lists every extra and each provider). It is a doctor, not a linter:
+every check is evaluated and reported independently, because the second and third
+problems are exactly what you want to know about. It **writes nothing** and makes no
+network call, so it is safe to run any time.
 
-Only the essentials fail the run (exit code 1) — a missing optional extra is
-reported with the exact `uv sync --extra …` command and nothing more. The wizard
-configures; you install.
+Each row has one of five states, and the summary says what each *task* can do:
+
+| Label | Meaning |
+|-------|---------|
+| `[ok]` | verified locally |
+| `[blocked]` | a task needs it and it is missing; the row names the next action |
+| `[optional]` | an extra or provider you have not asked for |
+| `[--]` | needs the network or was not requested (Ollama reachability). A configured Ollama endpoint is listed as *unverified* for `research`, not blocking, until `--probe-model` has run; after it the row shows the probe's result |
+| `[FAIL]` | a broken state, such as a state directory you may not write to |
+
+`--for {demo,data,research,mcp}` picks the task the exit code answers for (default
+`data`), and scopes the install command: when an extra that task needs is absent (plus
+the `--provider`'s SDK extra), the report ends with **one** command that adds exactly those
+and keeps what you already have; the other absent extras are listed on one line, not
+installed for you. A backtest is not blocked by a missing model key; a missing optional extra
+never fails anything; a `[FAIL]` row fails every task. `--provider
+{anthropic,openai,ollama}` checks that provider's SDK and key for `research`:
+
+```bash
+quantred init --check --for research --provider ollama
+quantred init --check --for mcp
+```
 
 The "state directory" check is worth understanding: a session that cannot write its
 journal silently loses its own trial history, which corrupts every multiple-testing
 correction after it. Better to learn that before the first run.
 
+### Is the model actually reachable? `--probe-model`
+
+```bash
+quantred init --probe-model --provider anthropic --for research
+```
+
+`--for research` makes the exit code answer for the research task (the market-data keys
+the agent backtests with, plus a provider); without it the check defaults to `data`,
+which ignores the provider. Either way the probe itself runs first and its result is
+folded into the provider's row, so the table and the line beneath it agree. A failed
+probe always exits non-zero. If the provider's SDK extra or key is missing the probe is
+**not sent**: the output says so ("No request was sent"), nothing is billed, and the
+exit code is still non-zero.
+
+Makes **one** request of one token, with no retries, and names the outcome: `auth`,
+`quota` (an empty balance), `rate_limited`, `unavailable` (the provider is overloaded
+or failing), `entitlement`, `unreachable`, `timeout`, `model_not_found`. A hosted
+provider may bill it, so it is never part of a plain `--check`, and it is not available
+over MCP. `--model` probes a model other than the research default.
+
+`research` itself retries a transient `rate_limited`, `unavailable` or `unreachable`
+failure twice with a short wait; it never re-sends an empty balance, a bad key or a
+missing model.
+
+## 5. Connect an MCP client
+
+```bash
+claude mcp add quantred -- quantred mcp      # Claude Code
+```
+
+or, for any client that takes a JSON config:
+
+```json
+{ "mcpServers": { "quantred": { "command": "quantred", "args": ["mcp"] } } }
+```
+
+A desktop client often has a smaller `PATH` than your terminal, so a bare `quantred` may not be found. `quantred init` prints this same block with the **absolute** command for your copy, ready to paste, and `quantred mcp --self-test` runs exactly that command (and prints the block again when it passes), so what passes is what you configure.
+
+Your client **launches the server itself**, from that command. Starting `quantred mcp`
+in a terminal does not connect any chat; it only proves the server starts. Needs the
+`mcp` extra. The server starts **without** market-data keys: the catalogue and trial-history
+tools answer, and the tools that need bars need keys (`quantred init`) or a cache launched with
+`quantred mcp --offline` (see [agents](agents)). To confirm discovery works without a chat client:
+
+```bash
+quantred mcp --self-test
+quantred init --check --for mcp
+```
+
+The first lists the tools and calls the discovery tools through a real MCP client;
+the second reports whether the extra is installed (keys are reported too, but the
+server does not need them to start). See
+[agents](agents) for what the tools are.
+
+## 6. Run a real example
+
+With keys in place, `verdict` runs the whole cross-sectional pipeline once and ends
+in one consolidated verdict:
+
+```bash
+quantred verdict --strategy demo_trend --scanner none \
+    --symbols AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,JPM,XOM,UNH,COST,WMT \
+    --start 2024-01-01 --end 2024-12-31
+```
+
+This starter is shaped to be feasible with its defaults: twelve liquid, well-known
+names and no scanner, so the book can be fully invested under the 25% per-name cap
+and there are enough names to measure rebalances. It is a usability example, not a
+validated universe, and the verdict it prints says nothing about whether the signal
+works. Three names at the same cap cannot fund a book, and the verdict then says
+`infeasible` rather than asking for more data - see
+[an infeasible book](verdict#an-infeasible-book).
+
+Read the result top to bottom: the `VERDICT` line is the headline, the check lines under it
+say which gates passed or failed, and the blocks above it say which stage limited the book. [One-command verdict](verdict) walks through a
+full report line by line.
+
+## 7. Only then, autonomous research
+
+`quantred research` is the one command that calls a model. Set a provider up in
+`quantred init` (step 3), probe it with `--probe-model`, and then run it ([agents](agents#research-agent)).
+It is separate from `quantred info`, which measures information diagnostics and
+calls no model.
+
+## From a source checkout (contributors)
+
+Everything above works from a checkout too, with `uv run python main.py` in place of
+`quantred` (`make init`, `make check`, `make demo` are the Makefile shortcuts), and
+`uv sync --inexact --extra <name>` in place of an installer command. A checkout does not keep
+its own state: state lives in `~/.tradeflow` unless `TRADEFLOW_HOME` is set, and
+`quantred init --dev-local-state` prints the setting that puts it back inside the
+working tree.
+
 ## `--non-interactive`
 
 ```bash
-APCA_API_KEY_ID=... APCA_API_SECRET_KEY=... python main.py init --non-interactive
+APCA_API_KEY_ID=... APCA_API_SECRET_KEY=... quantred init --non-interactive
 ```
 
 Builds the `.env` purely from environment variables, with no prompts and no retry
-loop — for scripts, containers, and any shell where `getpass` has no TTY.
+loop — for scripts, containers, and any shell where `getpass` has no TTY. The Alpaca keys
+and `PAPER_TRADE` are copied when set.
+
+**Model settings are copied only for the provider you name with `--provider`**, and only
+that provider's variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `OLLAMA_BASE_URL` /
+`OLLAMA_TIMEOUT` / `OLLAMA_NUM_CTX`):
+
+```bash
+ANTHROPIC_API_KEY=... quantred init --non-interactive --provider anthropic
+```
+
+Without `--provider`, model variables in the environment are left alone and named in the
+output as not copied. Those keys are often exported for unrelated tools, and a billable
+key should not land in a project file because the shell happened to hold it.
+
+`--provider`, `--for` and `--model` are refused where the mode would discard them (for
+example `--provider` with the interactive wizard) rather than ignored.
 
 ## What it will not do
 
@@ -88,13 +269,18 @@ A dotenv file is shared convention and may hold keys this project does not own.
 Rewrites are careful about that:
 
 - **Nothing else changes.** Comments, blank lines, ordering, and every key outside
-  `APCA_API_KEY_ID` / `APCA_API_SECRET_KEY` / `PAPER_TRADE` survive byte for byte.
+  `APCA_API_KEY_ID` / `APCA_API_SECRET_KEY` / `PAPER_TRADE` and the model settings
+  above survive byte for byte unless you answer them.
 - **A backup is written first**, to `.env.bak`, before any modification.
+- **Both files are owner-only (`0600`).** The file can hold API keys that bill; it is
+  created private rather than tightened afterwards, and the backup is restricted too,
+  whatever mode your original had.
 - **The write is atomic** — a temp file and a rename, so an interruption leaves
   either the old file or the new one, never a torn one that would read as
   half-configured credentials.
 - **Only what you answered is written.** Filling in one missing key never rewrites
-  the other.
+  the other, and pressing Enter at the model-provider prompt never blanks a key you
+  already have.
 
 ## Secrets hygiene
 

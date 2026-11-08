@@ -4,7 +4,7 @@ sidebar_position: 1
 title: Overview
 ---
 
-# TradeFlow
+# QuantRed
 
 A layered, broker-agnostic algorithmic-trading **research engine** — and an honest
 one, which mostly means it is very good at telling you your brilliant strategy is
@@ -15,13 +15,13 @@ actually noise.
 No keys, no account, no network:
 
 ```bash
-uv tool install tradeflow-engine
-tradeflow demo
+uv tool install 'quantred[mcp,viz]'
+quantred demo
 ```
 
 That runs the entire pipeline on synthetic data: it backtests every bundled
-strategy, picks the best-looking one, walk-forward validates it — and **refuses to
-promote it**.
+strategy, walk-forward validates `demo_trend` (the bundled trend strategy, chosen up
+front rather than picked by in-sample result) — and **refuses to promote it**.
 
 The refusal is the point. The synthetic series is a seeded random walk with no edge
 in it, so a strategy that looks profitable in-sample gets called noise
@@ -32,7 +32,7 @@ free paper keys, your first verdict, and connecting Claude — six steps, and yo
 stop at any of them.
 
 No `uv`? [Install it](https://docs.astral.sh/uv/getting-started/installation/), or
-use `pipx install tradeflow-engine`.
+use `python -m pip install 'quantred[mcp,viz]'` in a virtual environment.
 
 ## What it actually does
 
@@ -41,7 +41,8 @@ cost-aware portfolio, and — the part that matters — tells you whether any of
 distinguishable from luck.
 
 ```bash
-tradeflow verdict --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-31
+quantred verdict --scanner none --symbols AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,JPM,XOM,UNH,COST,WMT \
+    --start 2024-01-01 --end 2024-12-31
 ```
 
 One command runs scan → alphas → portfolio → information analysis over one universe,
@@ -54,7 +55,7 @@ one window, and one cost model, ending in a single verdict with every gate shown
     [PASS] sample_size: 24 vs 12 — too few rebalances to measure an IC with any confidence
 ```
 
-> Beating the market is hard — embarrassingly hard. TradeFlow's real value isn't a
+> Beating the market is hard — embarrassingly hard. QuantRed's real value isn't a
 > money printer; it's a rigorous skeptic that makes it harder to mistake luck for
 > skill. If your strategy survives walk-forward and the deflated Sharpe, *maybe*
 > you've got something. If it doesn't, you just saved yourself some tuition.
@@ -82,7 +83,7 @@ one window, and one cost model, ending in a single verdict with every gate shown
   optimization, portfolio construction, the trial store, the AI agents
 - **[Engineering wiki](engineering/architecture)** — how it is built and why, and how
   to add a strategy, scanner, or broker
-- **[Using it as a library](engineering/embedding)** — `tradeflow.services.*` from
+- **[Using it as a library](engineering/embedding)** — `quantred.services.*` from
   your own code
 - **[Changelog](changelog)** — every release, and the project's history since 2023
 

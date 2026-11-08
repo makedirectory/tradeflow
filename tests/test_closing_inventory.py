@@ -9,10 +9,10 @@ position for the rest of the interval.
 
 import pytest
 
-from tradeflow.cli import _print_closing_inventory
-from tradeflow.execution.ledger import CUMULATIVE, PositionLedger
-from tradeflow.services.registry import STRATEGIES
-from tradeflow.strategies import signals
+from quantred.cli import _print_closing_inventory
+from quantred.execution.ledger import CUMULATIVE, PositionLedger
+from quantred.services.registry import STRATEGIES
+from quantred.strategies import signals
 
 
 @pytest.fixture

@@ -3,6 +3,10 @@
 .DEFAULT_GOAL := help
 
 # --- tunable defaults -------------------------------------------------------
+# Interpreter for the clean venv release-check builds: one the package supports (3.10+).
+# The system `python3` is 3.9 on some machines, where release-check failed until PYTHON=
+# was passed. Override with PYTHON=.
+PYTHON ?= $(shell uv python find '>=3.10' 2>/dev/null || echo python3)
 SYMBOLS ?= NVDA,RIVN,NFLX,META,BAC,MS,TSLA,GS,AMD,AAPL
 START   ?= 2024-01-02
 END      ?= 2024-04-01
@@ -10,7 +14,7 @@ CAPITAL ?= 100000
 PY       = uv run python main.py
 
 .PHONY: help demo demo-agent demo-agent-live init install install-optimize verdict backtest backtest-no-scan scan live \
-        allocate allocate-utility alphas risk info horizon screen causality trials-status optimize optimize-bayesian cancel-orders close-positions \
+        allocate allocate-utility alphas risk info horizon screen causality trials-status optimize optimize-bayesian \
         small-real small-real-preflight small-real-report \
         check test secret-scan check-links docs docs-build docker-build docker-run up down compose-run compose-smoke \
         build release-check clean
@@ -40,13 +44,13 @@ check:  ## Diagnose the current setup (no writes, no network)
 	$(PY) init --check
 
 install:  ## Create the uv environment and install dependencies
-	uv sync
+	uv sync --inexact
 
 install-optimize:  ## Install with the optional Bayesian-optimization extra
-	uv sync --extra optimize
+	uv sync --inexact --extra optimize
 
 install-portfolio:  ## Install with the optional OR-Tools portfolio extra
-	uv sync --extra portfolio
+	uv sync --inexact --extra portfolio
 
 # --- preconfigured trading combos ------------------------------------------
 verdict:  ## The whole pipeline in one command: scan -> alphas -> portfolio -> information
@@ -148,28 +152,27 @@ halts:  ## Show what is currently halted — read-only
 flatten:  ## EMERGENCY: halt, cancel all orders, close all positions. REASON="why"
 	$(PY) flatten --confirm --reason "$(REASON)"
 
-# --- account utilities ------------------------------------------------------
-cancel-orders:  ## Cancel all open orders
-	uv run python cancel_all_orders.py
-
-close-positions:  ## Close all open positions (also cancels orders)
-	uv run python close_all_positions.py
-
 # --- release ----------------------------------------------------------------
 build:  ## Build the wheel and sdist into dist/
 	rm -rf dist && uv build
 
-release-check: build  ## Build, validate the metadata, and install into a clean venv
+release-check: build  ## Build, validate the metadata, and install into a clean venv outside the checkout
 	uvx twine check dist/*
-	@rm -rf /tmp/tradeflow-release-check
-	@python3 -m venv /tmp/tradeflow-release-check
-	@/tmp/tradeflow-release-check/bin/pip install -q dist/*.whl
-	@TRADEFLOW_HOME=/tmp/tradeflow-release-state /tmp/tradeflow-release-check/bin/tradeflow --version
-	@echo "OK — the wheel installs and runs outside this checkout."
+	@rm -rf /tmp/quantred-release-check
+	@$(PYTHON) -m venv /tmp/quantred-release-check
+	@/tmp/quantred-release-check/bin/pip install -q dist/*.whl
+	@cd /tmp && TRADEFLOW_HOME=/tmp/quantred-release-state /tmp/quantred-release-check/bin/quantred --version | tee /tmp/quantred-release-check/banner.txt
+	@grep -q '^quantred ' /tmp/quantred-release-check/banner.txt || { echo "FAIL: the banner does not start with 'quantred '"; exit 1; }
+	@cd /tmp && /tmp/quantred-release-check/bin/python -c "import importlib.metadata as m, quantred; assert m.metadata('quantred')['Name'] == 'quantred', m.metadata('quantred')['Name']; assert m.version('quantred') == quantred.__version__, (m.version('quantred'), quantred.__version__); assert quantred.__file__.startswith('/tmp/quantred-release-check'), quantred.__file__"
+	@test ! -e /tmp/quantred-release-check/bin/tradeflow || { echo "FAIL: the wheel installs a tradeflow command; that belongs to tradeflow-engine"; exit 1; }
+	@echo "OK — the wheel installs and runs as quantred, and ships no tradeflow command, outside this checkout."
 
 # --- quality & docs ---------------------------------------------------------
-check-links:  ## Verify Markdown links + heading anchors (includes local specs/)
+check-links:  ## Verify Markdown links + heading anchors in the tracked docs
 	uv run python scripts/check_links.py
+
+check-spec-links:  ## Verify links inside the local, gitignored specs/ (not run in CI)
+	uv run python scripts/check_links.py specs
 
 test:  ## Run the offline test suite (no API keys needed)
 	uv run --extra dev pytest -q
@@ -200,10 +203,10 @@ compose-smoke:  ## Verify the compose wiring end to end (needs Docker; not run i
 	./scripts/compose_smoke.sh
 
 docker-build:  ## Build the Docker image
-	docker build -t tradeflow .
+	docker build -t quantred .
 
 docker-run:  ## Run the container (prints help; pass a verb to do anything)
-	docker run --rm -it -v $$(pwd)/.env:/state/.env:ro tradeflow
+	docker run --rm -it -v $$(pwd)/.env:/state/.env:ro quantred
 
 clean:  ## Remove caches, build output, and results
 	rm -rf .venv optimization_results.csv docs/build docs/node_modules

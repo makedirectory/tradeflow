@@ -2,17 +2,17 @@
 # survives container replacement.
 #
 # This is deliberately not an adoption path — Docker is itself a prerequisite, so
-# `uv tool install tradeflow` is the easier way to simply try this. What compose adds
+# `uv tool install quantred` is the easier way to simply try this. What compose adds
 # is volume and environment wiring (the part people get wrong by hand) and a seam a
 # database service can attach to later without changing how anyone boots the stack.
 #
-# TradeFlow is a single-process application with file-backed state, so most of what
+# QuantRed is a single-process application with file-backed state, so most of what
 # follows is volumes and named entrypoints rather than service orchestration. Saying
 # so plainly is better than dressing it up.
 #
 #   docker compose up -d                       the research-clock surfaces
 #   docker compose --profile docs up docs      the documentation site
-#   docker compose run --rm verdict --symbols NVDA,AAPL --start 2024-01-01 --end 2024-12-31
+#   docker compose run --rm verdict --scanner none --symbols AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,JPM,XOM,UNH,COST,WMT --start 2024-01-01 --end 2024-12-31
 #   docker compose run --rm demo               offline, no keys
 #
 # Live trading is NEVER started by `up`. See the `live` service at the bottom.
@@ -23,7 +23,7 @@ x-app: &app
     args:
       # `ai` is deliberately absent: the base image should need no paid credentials.
       EXTRAS: "mcp,store,viz"
-  image: tradeflow:local
+  image: quantred:local
   environment:
     # Every path the application writes resolves under this one root.
     TRADEFLOW_HOME: /state
@@ -53,7 +53,9 @@ services:
       # The setup doctor: env readable, credentials present, state writable, extras
       # importable. It makes no network call, so this reports on the container's own
       # configuration rather than on a vendor's uptime.
-      test: ["CMD", "uv", "run", "python", "main.py", "init", "--check"]
+      # `--for mcp`: the server starts and serves the catalogue without keys, so a plain
+      # `init --check` (which wants keys for data) marked a keyless server unhealthy.
+      test: ["CMD", "uv", "run", "python", "main.py", "init", "--check", "--for", "mcp"]
       interval: 60s
       timeout: 30s
       retries: 3
@@ -117,6 +119,8 @@ services:
     entrypoint: ["uv", "run", "python", "main.py", "live"]
     restart: "no"
 
+# Volume names keep their original spelling: they are the recorded trial history, and a
+# renamed volume is a new, empty one. Renaming the image does not touch them.
 volumes:
   tradeflow-logs:
   tradeflow-cache:

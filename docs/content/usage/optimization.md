@@ -16,9 +16,7 @@ a hypothesis and put it through [walk-forward validation](walk-forward) before
 believing a word of it.
 
 ```bash
-make optimize
-# or
-uv run python main.py optimize \
+quantred optimize \
     --strategy demo_trend --scanner none --symbols NVDA,META,TSLA \
     --start 2024-01-02 --end 2024-04-01 --method grid --max-evals 50
 ```
@@ -37,11 +35,10 @@ truncated. It matches `walkforward --seed`, so the same value reproduces the sea
 walk-forward ran inside each fold. Vary it to draw a genuinely second sample — without
 it every random search on a given space returned the same candidates.
 
-Bayesian needs the optional extra:
+Bayesian needs the `optimize` extra (see [optional extras](extras)); with it installed:
 
 ```bash
-make install-optimize     # or: uv sync --extra optimize
-uv run python main.py optimize --method bayesian --scanner none --symbols NVDA,META
+quantred optimize --method bayesian --scanner none --symbols NVDA,META
 ```
 
 ## Output
@@ -84,7 +81,7 @@ backtest over the same read-only bars — so a search can use the cores the mach
 already has:
 
 ```bash
-python main.py optimize --strategy demo_trend --symbols NVDA,AAPL,META \
+quantred optimize --strategy demo_trend --symbols NVDA,AAPL,META \
     --start 2024-01-01 --end 2024-12-31 --method grid --max-evals 200 --workers 4
 ```
 
@@ -141,3 +138,9 @@ notice rather than pretending the search completed.
 With Bayesian search, the surrogate proposes a **batch** per round instead of one
 point — `--workers` points, spread apart so they explore rather than cluster — then
 refits. Same evaluation budget, fewer rounds.
+
+## From a source checkout (contributors)
+
+The commands above are the installed `quantred` command. In a checkout, run them as
+`uv run python main.py <command> ...`. The Makefile shortcut for this page is `make optimize`. Extras are installed with `uv sync --inexact --extra <name>`
+(see [optional extras](extras)).

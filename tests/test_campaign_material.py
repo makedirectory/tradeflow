@@ -17,13 +17,14 @@ from datetime import datetime
 import pandas as pd
 import pytest
 
-from tradeflow.analytics.reporting import format_campaign_material
-from tradeflow.engine.backtest import ACCOUNTING_VERSION
-from tradeflow.services.analysis import walk_forward_recipe
-from tradeflow.services.audit import journal_trial
-from tradeflow.services.campaign import EVIDENCE, METADATA, RECIPE, campaign_material
-from tradeflow.services.registry import STRATEGIES
-from tradeflow.store.trials import TrialStore, db_path_for_journal
+from quantred import settings
+from quantred.analytics.reporting import format_campaign_material
+from quantred.engine.backtest import ACCOUNTING_VERSION
+from quantred.services.analysis import walk_forward_recipe
+from quantred.services.audit import journal_trial
+from quantred.services.campaign import EVIDENCE, METADATA, RECIPE, campaign_material
+from quantred.services.registry import STRATEGIES
+from quantred.store.trials import TrialStore, db_path_for_journal
 
 RECIPE_ARGS = dict(
     mode="anchored",
@@ -38,6 +39,8 @@ RECIPE_ARGS = dict(
     seed=42,
     cost_key={"commission_bps": 1.0},
     strategy_class=STRATEGIES["demo_trend"],
+    capital=100_000.0,
+    benchmark=None,
     limit_overrides={"max_positions": 8},
 )
 
@@ -246,20 +249,20 @@ def test_stored_artifacts_are_named_by_the_command_that_reads_them(tmp_path):
 
 
 def test_the_artifact_command_matches_how_this_copy_is_actually_run(tmp_path, monkeypatch):
-    """`python main.py` for a checkout, `tradeflow` for an installed copy — the same
+    """`python main.py` for a checkout, `quantred` for an installed copy — the same
     rule every other printed instruction follows, reached through the same helper."""
-    from tradeflow.services import setup
+    from quantred.services import setup
 
     journal = tmp_path / "journal.jsonl"
     trial_id = _journal_walkforward(journal)
 
-    monkeypatch.setattr("tradeflow.settings.running_from_checkout", lambda: False)
+    monkeypatch.setattr("quantred.settings.running_from_checkout", lambda: False)
     with _store(journal) as store:
         installed = campaign_material(store, trial_id, journal_path=journal)
-    assert installed[METADATA]["artifacts"][0]["read_with"].startswith("tradeflow ")
-    assert setup.invocation("trials show x") == "tradeflow trials show x"
+    assert installed[METADATA]["artifacts"][0]["read_with"].startswith(f"{settings.CLI_NAME} ")
+    assert setup.invocation("trials show x") == f"{settings.CLI_NAME} trials show x"
 
-    monkeypatch.setattr("tradeflow.settings.running_from_checkout", lambda: True)
+    monkeypatch.setattr("quantred.settings.running_from_checkout", lambda: True)
     with _store(journal) as store:
         checkout = campaign_material(store, trial_id, journal_path=journal)
     assert checkout[METADATA]["artifacts"][0]["read_with"].startswith("python main.py ")
@@ -270,7 +273,7 @@ def test_promotion_writes_the_campaign_into_the_config_s_own_provenance(tmp_path
     """Not a second artifact beside the config. `save_config` is the portability
     format, and a campaign export living somewhere else would be the second provenance
     schema this project keeps getting bitten by."""
-    from tradeflow.cli import main as cli_main
+    from quantred.cli import main as cli_main
 
     journal = tmp_path / "journal.jsonl"
     trial_id = _journal_walkforward(journal)
@@ -278,7 +281,7 @@ def test_promotion_writes_the_campaign_into_the_config_s_own_provenance(tmp_path
     monkeypatch.setattr(
         "sys.argv",
         [
-            "tradeflow",
+            settings.CLI_NAME,
             "trials",
             "promote",
             trial_id,
@@ -288,7 +291,7 @@ def test_promotion_writes_the_campaign_into_the_config_s_own_provenance(tmp_path
             str(db_path_for_journal(journal)),
         ],
     )
-    monkeypatch.setattr("tradeflow.services.audit.DEFAULT_TRIAL_JOURNAL", journal, raising=False)
+    monkeypatch.setattr("quantred.services.audit.DEFAULT_TRIAL_JOURNAL", journal, raising=False)
     cli_main()
 
     payload = json.loads(out.read_text())
@@ -304,7 +307,7 @@ def test_promotion_writes_the_campaign_into_the_config_s_own_provenance(tmp_path
 def test_a_config_written_before_campaigns_existed_still_loads(tmp_path):
     """Older configs load unchanged and read as *not materialised from a campaign*,
     which is what they are."""
-    from tradeflow.optimization.config_store import load_config
+    from quantred.optimization.config_store import load_config
 
     old = tmp_path / "old.json"
     old.write_text(
@@ -323,19 +326,20 @@ def test_a_config_written_before_campaigns_existed_still_loads(tmp_path):
     assert payload["provenance"].get("campaign", {}) == {}
 
 
-def test_the_mcp_surface_writes_the_same_provenance_schema(tmp_path):
+def test_the_mcp_surface_writes_the_same_provenance_schema(tmp_path, monkeypatch):
     """One format, both surfaces. `configs.save_config` constructs a `Provenance` from
     the dict an agent passes, so a campaign block that the dataclass does not accept
     would fail there while `trials promote` succeeded — two schemas by accident."""
-    from tradeflow.services import configs
+    from quantred.services import configs
 
+    monkeypatch.setattr("quantred.optimization.config_store.DEFAULT_CONFIG_DIR", tmp_path)
     journal = tmp_path / "journal.jsonl"
     trial_id = _journal_walkforward(journal)
     with _store(journal) as store:
         material = campaign_material(store, trial_id, journal_path=journal)
 
     saved = configs.save_config(
-        str(tmp_path / "agent.json"),
+        "agent.json",
         strategy="demo_trend",
         params={"fast_ema_period": 9},
         provenance={"objective": "sharpe_ratio", "campaign": material},
@@ -423,7 +427,7 @@ def test_a_long_universe_says_how_many_it_elided(tmp_path):
 def test_a_trial_with_no_recorded_universe_says_so_rather_than_rendering_empty(tmp_path):
     """Absent is not empty. A record that never captured its universe must not read as
     a run over no symbols."""
-    from tradeflow.analytics.reporting import _universe_lines
+    from quantred.analytics.reporting import _universe_lines
 
     (line,) = _universe_lines({})
 
@@ -489,7 +493,7 @@ def test_the_seed_renders_for_every_shape_this_field_has_had(stored, expected):
     record genuinely held, producing no line at all. That is the same false absence this
     field was changed to fix, arriving from the other direction.
     """
-    from tradeflow.analytics.reporting import _seed_cell
+    from quantred.analytics.reporting import _seed_cell
 
     assert expected in _seed_cell(stored)
 
@@ -497,7 +501,7 @@ def test_the_seed_renders_for_every_shape_this_field_has_had(stored, expected):
 def test_a_scalar_seed_is_not_silently_dropped():
     """Both directions of the case above: an old scalar must *appear*, not merely avoid
     crashing."""
-    from tradeflow.analytics.reporting import _seed_cell
+    from quantred.analytics.reporting import _seed_cell
 
     rendered = _seed_cell({"seed": 7})
 
@@ -509,8 +513,8 @@ def test_two_records_of_the_seed_that_disagree_are_both_reported(tmp_path):
     """The recipe defines the run, so it wins — but reporting only the winner would hide
     that the record is internally inconsistent, and this block exists to make provenance
     checkable. Nothing here can tell which is the mistake."""
-    from tradeflow.analytics.reporting import _seed_cell
-    from tradeflow.services.campaign import _seed
+    from quantred.analytics.reporting import _seed_cell
+    from quantred.services.campaign import _seed
 
     seed = _seed({"seed": 99}, {"dedup_params": {"seed": 42}})
 
@@ -523,7 +527,7 @@ def test_two_records_of_the_seed_that_disagree_are_both_reported(tmp_path):
 def test_the_session_record_seed_is_still_used_when_there_is_no_recipe(tmp_path):
     """The research agent populates the column and may carry no recipe. Preferring the
     recipe must not mean ignoring the only record that exists."""
-    from tradeflow.services.campaign import _seed
+    from quantred.services.campaign import _seed
 
     seed = _seed({"seed": 99}, {})
 
@@ -537,7 +541,7 @@ def test_the_session_record_seed_is_still_used_when_there_is_no_recipe(tmp_path)
 def test_the_universe_elision_counts_correctly_at_the_boundary(count, expect_elision, expected_more):
     """Boundary bugs live in polite list renderers. At exactly the sample size there is
     nothing hidden, so a `+0 more` would be a lie about a complete list."""
-    from tradeflow.analytics.reporting import _universe_lines
+    from quantred.analytics.reporting import _universe_lines
 
     (line,) = _universe_lines({"symbols": [f"S{i:02d}" for i in range(count)]})
 
@@ -617,7 +621,7 @@ def test_a_promoted_config_does_not_contradict_itself_about_the_seed(tmp_path):
     import json
     from argparse import Namespace
 
-    from tradeflow.cli import _promote_trial
+    from quantred.cli import _promote_trial
 
     out = tmp_path / "promoted.json"
     with _store(journal) as store:
@@ -631,3 +635,31 @@ def test_a_promoted_config_does_not_contradict_itself_about_the_seed(tmp_path):
     assert provenance["seed"] == RECIPE_ARGS["seed"]
     embedded = provenance["campaign"]["metadata"]["seed"]["value"]
     assert provenance["seed"] == embedded, "the file disagrees with its own campaign block"
+
+
+# --- a verdict's scanner is a recorded fact ------------------------------------------
+def test_a_verdict_trials_scanner_is_reported_as_recorded(tmp_path):
+    """A verdict keeps its scanner inside its identity (`_verdict.scanner`), not in the
+    context block, so the material reported `scanner.recorded: false` for a run whose
+    journal line names it. A kind that really has none still reads as not recorded."""
+    journal = tmp_path / "journal.jsonl"
+    verdict_params = {"fast_ema_period": 5, "_verdict": {"scanner": "demo_volume", "source": "scanner"}}
+    verdict_id = journal_trial(
+        "verdict",
+        strategy="demo_trend",
+        symbols=["AAA"],
+        start=datetime(2024, 1, 1),
+        end=datetime(2024, 4, 30),
+        params=verdict_params,
+        metrics={"ic_tstat": 1.0},
+        dedup_params=verdict_params,
+        path=journal,
+    )
+    backtest_id = _journal_backtest(journal)
+
+    with _store(journal) as store:
+        verdict = campaign_material(store, verdict_id, journal_path=journal)
+        backtest = campaign_material(store, backtest_id, journal_path=journal)
+
+    assert verdict[RECIPE]["context"]["scanner"] == {"recorded": True, "value": "demo_volume"}
+    assert backtest[RECIPE]["context"]["scanner"]["recorded"] is False

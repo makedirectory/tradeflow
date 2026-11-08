@@ -16,9 +16,9 @@ from datetime import datetime
 
 import pytest
 
-from tradeflow.engine.backtest import ACCOUNTING_VERSION
-from tradeflow.services import audit, maintenance
-from tradeflow.store.trials import TrialStore, db_path_for_journal
+from quantred.engine.backtest import ACCOUNTING_VERSION
+from quantred.services import audit, maintenance
+from quantred.store.trials import TrialStore, db_path_for_journal
 
 _SYMBOLS = ["AAA", "BBB"]
 _START, _END = datetime(2024, 1, 2), datetime(2024, 6, 28)
@@ -27,13 +27,16 @@ _START, _END = datetime(2024, 1, 2), datetime(2024, 6, 28)
 @pytest.fixture
 def journal(tmp_path, monkeypatch):
     """A journal, its sibling store, and a state root of this test's own."""
-    from tradeflow.store import trials as trials_module
+    from quantred.store import trials as trials_module
 
     path = tmp_path / "logs" / "research_journal.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
+    # The attributes first: `DEFAULT_JOURNAL_PATH` is computed on access, so patching it
+    # after the environment changed saves *this test's* path as the value to restore, and
+    # every later test then sees a journal path inside a directory that is long gone.
     monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", path)
     monkeypatch.setattr(trials_module, "DEFAULT_JOURNAL_PATH", path)
+    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
     return path
 
 
@@ -54,8 +57,8 @@ def _store(journal):
     return TrialStore(db_path_for_journal(journal), journal_path=journal)
 
 
-def _seed(journal, n=2):
-    ids = [_record(journal, params={"fast_ema_period": 5 + i}) for i in range(n)]
+def _seed(journal, n=2, kind="backtest"):
+    ids = [_record(journal, params={"fast_ema_period": 5 + i}, kind=kind) for i in range(n)]
     with _store(journal) as store:
         store.rebuild(journal)
     return ids
@@ -197,7 +200,7 @@ def test_a_quarantined_trial_still_counts_toward_the_multiple_testing_total(jour
 def test_a_quarantined_trial_is_not_ranked_and_the_exclusion_is_reported(journal):
     """Silence about what was dropped reads as "everything ran". A leaderboard that
     quietly omits rows makes its own length a claim nobody can check."""
-    _seed(journal, n=3)
+    _seed(journal, n=3, kind="walkforward")  # a kind the leaderboard ranks by default
     maintenance.mark_contaminated(reason="suspect", journal_path=journal)
 
     with _store(journal) as store:
@@ -209,7 +212,7 @@ def test_a_quarantined_trial_is_not_ranked_and_the_exclusion_is_reported(journal
 
 def test_an_unquarantined_trial_still_ranks(journal):
     """Both directions, or the exclusion is indistinguishable from a broken leaderboard."""
-    ids = _seed(journal, n=3)
+    ids = _seed(journal, n=3, kind="walkforward")
     maintenance.mark_contaminated(reason="suspect", journal_path=journal, trial_ids=ids[:2])
 
     with _store(journal) as store:
@@ -335,7 +338,7 @@ def test_a_listing_says_how_much_history_the_accounting_filter_is_hiding(journal
     disappearance."""
     from types import SimpleNamespace
 
-    from tradeflow.cli import _print_trials_list
+    from quantred.cli import _print_trials_list
 
     _seed(journal, n=2)
     args = SimpleNamespace(
@@ -366,7 +369,7 @@ def test_a_listing_that_hides_nothing_says_nothing(journal, capsys):
     """Both directions: a notice on every listing is noise, and noise gets skipped."""
     from types import SimpleNamespace
 
-    from tradeflow.cli import _print_trials_list
+    from quantred.cli import _print_trials_list
 
     _seed(journal, n=2)
     args = SimpleNamespace(
@@ -389,3 +392,30 @@ def test_a_listing_that_hides_nothing_says_nothing(journal, capsys):
         _print_trials_list(store, args)
 
     assert "further row(s)" not in capsys.readouterr().out
+
+
+def _run_archive_cli(monkeypatch, capsys, *extra):
+    from quantred.cli import main
+
+    monkeypatch.setattr("sys.argv", ["cli", "trials", "archive", "--reason", "checking", *extra])
+    main()
+    return capsys.readouterr().out
+
+
+def test_a_dry_run_with_nothing_to_archive_prints_no_destination(journal, monkeypatch, capsys):
+    """It printed a destination directory beside 'Would move: nothing', as though
+    something were about to be written there."""
+    out = _run_archive_cli(monkeypatch, capsys, "--dry-run")
+    assert "Nothing to archive" in out
+    assert "Destination" not in out and "Would move" not in out
+
+
+def test_a_dry_run_names_the_files_it_would_move(journal, monkeypatch, capsys):
+    """`moved` is always empty on a dry run, so the CLI said 'Would move: nothing' even
+    with a journal and store about to go."""
+    _seed(journal)
+    out = _run_archive_cli(monkeypatch, capsys, "--dry-run")
+    would_move = next(line for line in out.splitlines() if line.startswith("Would move"))
+    assert journal.name in would_move and db_path_for_journal(journal).name in would_move
+    assert "Destination" in out
+    assert journal.exists()
