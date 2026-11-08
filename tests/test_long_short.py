@@ -139,16 +139,16 @@ def test_gross_leverage_is_monotone_in_the_cap():
 
 
 # --- dominance ----------------------------------------------------------------------
-def test_dominance_transfer_coefficient_long_short_at_least_long_only():
-    """On identical alpha/Σ/λ, relaxing the long-only floor can only help - but
-    ``predicted_ir`` (expected active return / the BOOK'S OWN realized TE) isn't the
-    right metric to compare directly: market-neutral's wider box lets it take a
-    bigger, riskier active bet at the same λ, which can raise its *realized* TE
-    enough that the ratio doesn't move as expected. ``ir_star`` (the fully
-    unconstrained IR bound) is identical for both books since it depends only on
-    alpha/Σ, not the box/budget; ``transfer_coefficient`` (equivalently
-    ``ir_achieved = tc * ir_star``) measures how much of that SHARED bound survives
-    each book's own constraint set - the apples-to-apples dominance metric.
+def test_transfer_coefficient_identity_holds_for_both_books():
+    """``ir_achieved = tc * ir_star`` equals each book's own ``predicted_ir``, and both
+    books share one ``ir_star`` (it depends only on alpha and Sigma).
+
+    This replaces a test asserting that the long/short book's transfer coefficient is at
+    least the long-only book's. That held for the earlier correlation-based coefficient,
+    but it is not implied by anything: relaxing the floor improves the utility the
+    optimizer maximizes at a fixed lambda, not the ratio ``predicted_ir / ir_star`` - the
+    wider box can take a larger bet in a direction further from the unconstrained
+    optimum. With the risk-metric coefficient the long/short book reads lower here.
     """
     hostile = ALPHA.copy()
     hostile[3] = -0.3  # symbol D, w_B=0.1: a small-benchmark-weight name made unattractive
@@ -166,8 +166,9 @@ def test_dominance_transfer_coefficient_long_short_at_least_long_only():
     assert lo.diagnostics["ir_star"] == pytest.approx(ls.diagnostics["ir_star"])  # same λ-calibration input
     assert lo.weights.get("D", 0.0) < 1e-9  # long-only: D pinned to 0 (the floor market-neutral relaxes)
     assert ls.weights["D"] < 0  # long/short: D can be genuinely shorted instead
-    assert ls.diagnostics["transfer_coefficient"] >= lo.diagnostics["transfer_coefficient"] - 1e-9
-    assert ls.diagnostics["ir_achieved"] >= lo.diagnostics["ir_achieved"] - 1e-9
+
+    for r in (lo, ls):
+        assert r.diagnostics["ir_achieved"] == pytest.approx(r.diagnostics["predicted_ir"], abs=1e-9)
 
 
 # --- size bias ----------------------------------------------------------------------

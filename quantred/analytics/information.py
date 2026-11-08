@@ -12,10 +12,12 @@ layer. Research-clock only.
 """
 
 import math
-from typing import Dict, List, Sequence
+from typing import Dict, List, Optional, Sequence
 
 import numpy as np
 import pandas as pd
+
+from quantred.utils.numeric import is_flat
 
 #: Below this many rebalances the IC volatility - and so the t-stat - is meaningless.
 MIN_PERIODS = 12
@@ -24,7 +26,7 @@ MIN_PERIODS = 12
 def pearson_ic(forecast: pd.Series, realized: pd.Series) -> float:
     """Cross-sectional Pearson correlation between a forecast and the realized return."""
     aligned = pd.concat([forecast, realized], axis=1).dropna()
-    if len(aligned) < 2 or aligned.iloc[:, 0].std() == 0 or aligned.iloc[:, 1].std() == 0:
+    if len(aligned) < 2 or is_flat(aligned.iloc[:, 0]) or is_flat(aligned.iloc[:, 1]):
         return float("nan")
     return float(aligned.iloc[:, 0].corr(aligned.iloc[:, 1]))
 
@@ -35,7 +37,7 @@ def rank_ic(forecast: pd.Series, realized: pd.Series) -> float:
     if len(aligned) < 2:
         return float("nan")
     ranked = aligned.rank()
-    if ranked.iloc[:, 0].std() == 0 or ranked.iloc[:, 1].std() == 0:
+    if is_flat(ranked.iloc[:, 0]) or is_flat(ranked.iloc[:, 1]):
         return float("nan")
     return float(ranked.iloc[:, 0].corr(ranked.iloc[:, 1]))
 
@@ -50,7 +52,7 @@ def ic_stats(ics: Sequence[float]) -> Dict[str, float]:
     p = len(arr)
     mean = float(arr.mean()) if p else 0.0
     vol = float(arr.std(ddof=1)) if p > 1 else 0.0
-    tstat = float(mean / (vol / math.sqrt(p))) if vol > 0 and p > 1 else 0.0
+    tstat = float(mean / (vol / math.sqrt(p))) if p > 1 and not is_flat(arr) else 0.0
     return {"mean_ic": mean, "ic_vol": vol, "ic_tstat": tstat, "periods": p}
 
 
@@ -66,6 +68,73 @@ def effective_breadth(n_names: int, rebalances_per_year: float, rho_bar: float) 
     denom = 1.0 + (n_names - 1) * rho_bar
     br_eff = br_naive / denom if denom > 0 else br_naive
     return {"br_eff": float(br_eff), "br_naive": float(br_naive), "rho_bar": float(rho_bar)}
+
+
+#: Fewest overlapping bars a beta, or a pair's residual correlation, may rest on. Below it a
+#: correlation is mostly its own sampling error (a correlation of two series of ``k`` bars
+#: has a standard error near ``1/sqrt(k)``), so the pair is left out rather than counted.
+MIN_OVERLAP = 20
+
+#: Fraction of all name pairs that must have a usable correlation before the mean is trusted.
+MIN_PAIR_COVERAGE = 0.5
+
+
+def mean_residual_correlation(
+    returns: pd.DataFrame, benchmark_returns: pd.Series, *, min_overlap: int = MIN_OVERLAP
+) -> Optional[float]:
+    """Mean pairwise correlation of the names' *benchmark-residual* returns, or ``None``.
+
+    ``returns`` is (periods × names), ``benchmark_returns`` the aligned benchmark. Each
+    name's residual is ``r − β·r_benchmark`` with ``β = cov(r, r_b)/var(r_b)`` - the same
+    residual the information coefficient is measured on. Breadth must be deflated by the
+    correlation of the *bets being counted*: total-return correlations include the common
+    market move, which the residual IC has already stripped out, so using them deflates
+    breadth by a large factor (and moves with whatever risk model estimated them).
+
+    Histories are allowed to differ in length (a recent listing, a halt). Each name's β is
+    estimated over *its own* overlap with the benchmark, and each pair's correlation over
+    the bars where *both* residuals exist - never over the shortest history shared by all
+    names, which would let one two-bar listing erase everything the other names say about
+    their dependence. A name, or a pair, with fewer than ``min_overlap`` bars contributes
+    nothing; the mean is over the pairs that remain.
+
+    Returns ``None`` - not ``0.0`` - when the correlation cannot be estimated: fewer than
+    two names with enough history, a flat benchmark, or fewer than
+    :data:`MIN_PAIR_COVERAGE` of all pairs with enough shared bars. ``0.0`` would mean
+    "the bets are independent" and leave breadth undeflated, the most optimistic answer, for
+    exactly the case where nothing is known.
+    """
+    names = list(returns.columns)
+    n_total = len(names)
+    if n_total < 2:
+        return None
+    bench = benchmark_returns.astype(float)
+    floor = max(min_overlap, 3)
+    residuals = {}
+    for name in names:
+        pair = pd.concat([returns[name].astype(float), bench], axis=1, keys=["r", "b"]).dropna()
+        if len(pair) < floor:
+            continue
+        var_b = float(pair["b"].var())
+        if not var_b > 0:
+            continue
+        beta = float(pair["r"].cov(pair["b"])) / var_b
+        residuals[name] = pair["r"] - beta * pair["b"]
+
+    usable = []
+    kept = list(residuals)
+    for i, a_name in enumerate(kept):
+        for b_name in kept[i + 1 :]:
+            both = pd.concat([residuals[a_name], residuals[b_name]], axis=1, keys=["a", "b"]).dropna()
+            if len(both) < floor or is_flat(both["a"]) or is_flat(both["b"]):
+                continue
+            value = float(both["a"].corr(both["b"]))
+            if value == value:
+                usable.append(value)
+    total_pairs = n_total * (n_total - 1) / 2
+    if not usable or len(usable) < MIN_PAIR_COVERAGE * total_pairs:
+        return None
+    return float(np.mean(usable))
 
 
 def predicted_ir(mean_ic: float, br_eff: float) -> float:

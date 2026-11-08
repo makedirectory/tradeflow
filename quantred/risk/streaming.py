@@ -36,7 +36,7 @@ import pandas as pd
 
 from quantred.marketdata.client import TimeframeLike
 from quantred.risk.base import RiskMatrix
-from quantred.risk.factor import FactorRiskMatrix
+from quantred.risk.factor import FactorRiskMatrix, has_residual_degrees_of_freedom, with_intercept
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from quantred.data.store import ParquetBarStore
@@ -174,6 +174,9 @@ def streaming_factor_risk_matrix(
     names = [s for s in kept if s in exposures.index]
     if len(names) < 2:
         return None
+    exposures = with_intercept(exposures)  # the same constant factor the eager path adds
+    if not has_residual_degrees_of_freedom(len(names), exposures.shape[1]):
+        return None  # same unavailable rule as the eager estimator
     col = [kept.index(s) for s in names]  # pick the `names` columns out of each kept-ordered block
     x = exposures.loc[names].to_numpy(dtype=float)  # N×K
     proj = x @ np.linalg.pinv(x.T @ x)  # N×K; factor returns of a chunk R are R @ proj

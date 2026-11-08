@@ -121,12 +121,38 @@ def build_cost_model(args):
     research-clock entrypoint that can run a search or a validation, not just
     ``backtest``.
     """
-    from quantred.costs import ParametricCostModel
+    from quantred.costs.parametric import DEFAULT_PARTICIPATION_CAP
+    from quantred.services.analysis import build_cost_model as _build
 
-    if args.gross:
-        return None
-    return ParametricCostModel(
-        commission_bps=args.commission_bps, impact_eta=args.impact_eta, annual_borrow_bps=args.borrow_bps
+    # One definition, shared with the service: this used to construct its own and omit
+    # `participation_cap`, so a request carrying a non-default cap was priced differently
+    # here than over MCP. Commands without the flag take the model's own default.
+    return _build(
+        args.gross,
+        args.commission_bps,
+        args.impact_eta,
+        getattr(args, "participation_cap", DEFAULT_PARTICIPATION_CAP),
+        args.borrow_bps,
+    )
+
+
+def _live_cost_model(args):
+    """The cost model a live run records its estimates with: the service's one
+    construction, fed from the same flags a backtest reads.
+
+    ``getattr`` throughout, because a caller that builds args without the cost flags
+    should get the model's own defaults rather than an AttributeError on the way into
+    the order path.
+    """
+    from quantred.costs.parametric import DEFAULT_PARTICIPATION_CAP
+    from quantred.services.analysis import build_cost_model as _build
+
+    return _build(
+        False,
+        getattr(args, "commission_bps", 1.0),
+        getattr(args, "impact_eta", 0.3),
+        getattr(args, "participation_cap", DEFAULT_PARTICIPATION_CAP),
+        getattr(args, "borrow_bps", 50.0),
     )
 
 
@@ -139,19 +165,11 @@ def _cost_key(args, vintage: Optional[str] = None) -> Dict[str, Any]:
     original run). ``vintage`` is omitted whenever the data client isn't
     cache-backed (see :func:`_vintage_stamp`), so a non-cached run's dedup hash is
     byte-identical to before this existed - a non-breaking addition."""
-    key = (
-        {"gross": True}
-        if args.gross
-        else {
-            "gross": False,
-            "commission_bps": args.commission_bps,
-            "impact_eta": args.impact_eta,
-            "borrow_bps": args.borrow_bps,
-        }
-    )
-    if vintage is not None:
-        key["_vintage"] = vintage
-    return key
+    from quantred.services.analysis import _cost_key as _key
+
+    # One definition with the service: this was a second copy that did not follow it
+    # when it gained a spread branch. The CLI has no spread flag, so it keys at the default.
+    return _key(args.gross, args.commission_bps, args.impact_eta, args.borrow_bps, vintage)
 
 
 def _dedup_params(
@@ -2006,12 +2024,19 @@ def _print_walkforward(result, objective: str) -> None:
             f"CAGR {result.holdout.get('cagr', 0):.2f}%  trades {result.holdout.get('total_trades', 0)}"
         )
     if result.pbo is not None:
-        print(f"\nPBO (prob. of backtest overfitting): {format_gate_value('pbo', result.pbo)}")
+        print(
+            "\nIS-best fold OOS rank-failure rate (heuristic, not a probability of backtest "
+            f"overfitting): {format_gate_value('pbo', result.pbo)}"
+        )
     if result.monte_carlo:
         mc = result.monte_carlo
-        print(
-            f"Monte Carlo OOS Sharpe p05/p50: {mc.get('sharpe_p05', 0):.3f} / {mc.get('sharpe_p50', 0):.3f}"
-        )
+        if mc.get("samples"):
+            print(
+                f"Monte Carlo OOS annualized Sharpe p05/p50 (block-resampled daily P&L, "
+                f"{mc['periods']} days): {mc['sharpe_p05']:.3f} / {mc['sharpe_p50']:.3f}"
+            )
+        else:
+            print(f"Monte Carlo: not run - only {mc.get('periods', 0)} OOS trading days of P&L")
 
     report = result.gate_report()
     print("\n--- Promotion gates ---")
@@ -2172,7 +2197,7 @@ def _print_bootstrap_skill(report: Dict[str, Any]) -> None:
         print(f"  {report['verdict']}")
         return
     print(
-        f"  this config: IR {own['ir_observed']:+.2f}, p={own['p_value']:.3f} (own, "
+        f"  this config: Sharpe {own['ir_observed']:+.2f}, p={own['p_value']:.3f} (own, "
         f"B={own['B']}, L={own['block_length']:.1f}, SE(p)≈{own['p_se']:.3f})"
     )
     family = report["family"]
@@ -3305,13 +3330,18 @@ def _print_information_report(args, tuned, data_client) -> None:
     print(f"  measured over {r['periods']} rebalances (horizon {r['horizon_bars']} bars)")
     flag = "  ⚠ low sample" if r["low_sample"] else ""
     print(f"  IC mean {r['mean_ic']:+.4f}  t-stat {r['ic_tstat']:+.2f}  rank-IC {r['rank_ic']:+.4f}{flag}")
+    if r.get("rho_bar") is None:
+        print(f"  breadth: effective unavailable ({r['breadth_naive']:.0f} naive, {r['n_names']} names)")
+        print(f"    {r.get('breadth_note')}")
+        predicted = "unavailable"
+    else:
+        print(
+            f"  breadth: {r['breadth_effective']:.0f} effective vs {r['breadth_naive']:.0f} naive "
+            f"(ρ̄ {r['rho_bar']:.2f}, {r['n_names']} names)"
+        )
+        predicted = f"{r['predicted_ir']:+.2f}"
     print(
-        f"  breadth: {r['breadth_effective']:.0f} effective vs {r['breadth_naive']:.0f} naive "
-        f"(ρ̄ {r['rho_bar']:.2f}, {r['n_names']} names)"
-    )
-    print(
-        f"  IR: predicted {r['predicted_ir']:+.2f}  realized {r['realized_ir']:+.2f} "
-        f"± {r['ir_standard_error']:.2f} (SE)"
+        f"  IR: predicted {predicted}  realized {r['realized_ir']:+.2f} ± {r['ir_standard_error']:.2f} (SE)"
     )
     print(
         f"  guardrails: P(any |t|>2 in {r['n_trials']} trials) = {r['multiple_testing_inflation']:.2f}"
@@ -4819,7 +4849,6 @@ def _latest_signal(strategy, bars, fetch_failure=None):
 
 
 def cmd_live(args) -> None:
-    from quantred.costs.parametric import ParametricCostModel
     from quantred.engine.live import SHUTDOWN_TIMEOUT, BlindStartError, LiveEngine
     from quantred.execution.live_trader import LiveTrader
     from quantred.services.sizing import build_beta_sizer, build_portfolio_weight_sizer
@@ -4901,11 +4930,7 @@ def cmd_live(args) -> None:
             # getattr, not attribute access: a caller that builds args without the
             # cost flags gets the model's own defaults rather than an AttributeError
             # on the way into the order path.
-            cost_model=ParametricCostModel(
-                commission_bps=getattr(args, "commission_bps", 1.0),
-                impact_eta=getattr(args, "impact_eta", 0.3),
-                annual_borrow_bps=getattr(args, "borrow_bps", 50.0),
-            ),
+            cost_model=_live_cost_model(args),
         ),
         bar_filter=bar_filter,
         ledger=ledger,
@@ -4991,7 +5016,6 @@ def cmd_small_real(args) -> None:
     one rule rather than adjusted by hand, no flag here can move a cap, real money has
     to be said twice, and the preflight is unconditional.
     """
-    from quantred.costs.parametric import ParametricCostModel
     from quantred.engine.live import SHUTDOWN_TIMEOUT, BlindStartError, LiveEngine
     from quantred.execution.ledger import PositionLedger
     from quantred.execution.live_trader import LiveTrader
@@ -5141,11 +5165,7 @@ def cmd_small_real(args) -> None:
             broker,
             strategy,
             capital=capital,
-            cost_model=ParametricCostModel(
-                commission_bps=getattr(args, "commission_bps", 1.0),
-                impact_eta=getattr(args, "impact_eta", 0.3),
-                annual_borrow_bps=getattr(args, "borrow_bps", 50.0),
-            ),
+            cost_model=_live_cost_model(args),
         ),
         bar_filter=bar_filter,
         ledger=ledger,
@@ -7512,7 +7532,8 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["aim"],
         default=None,
         help="'aim' replaces the myopic jump-to-target with "
-        "Gârleanu-Pedersen partial adjustment - alpha discounted by κ/(κ+φ) (φ from "
+        "partial adjustment toward an aim portfolio - alpha discounted by "
+        "κ/(1 − e^(−φ)(1−κ)) (φ from "
         "the strategy's own measured decay), aim solved cost-free, traded κ of the "
         "gap each rebalance, banded by the optimizer's own no-trade band. Default off until "
         "validated OOS net of cost — see 'info --policy-ab'. Long-only only; "
@@ -7656,12 +7677,17 @@ def build_parser() -> argparse.ArgumentParser:
         const=None,
         help="Skip the cost stress (it re-runs the chosen config once per multiple)",
     )
-    wf.add_argument("--pbo", action="store_true", help="Estimate probability of backtest overfitting")
+    wf.add_argument(
+        "--pbo",
+        action="store_true",
+        help="Estimate the IS-best fold OOS rank-failure rate (a heuristic over folds, not a true "
+        "probability of backtest overfitting)",
+    )
     wf.add_argument(
         "--monte-carlo",
         dest="monte_carlo",
         action="store_true",
-        help="Block-bootstrap the OOS trade sequence",
+        help="Block-bootstrap the OOS daily P&L for the 5th-percentile annualized Sharpe",
     )
     wf.add_argument(
         "--param-sensitivity",

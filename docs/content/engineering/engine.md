@@ -44,9 +44,10 @@ live. Each step:
    class as the signal one above, in the admission gate rather than the signal, and just
    as invisible to a feed shift. The excursion extremes stay full-bar: they are reported,
    never consulted by a decision, and the worst and best a position saw is the point.
-2. **Exit** — stop-loss, take-profit, then signal exit, in that order. Stop/take
-   fill at their level; a signal exit fills at the next open. Exits run *before*
-   entries, so capital freed this bar is reusable this bar.
+2. **Exit at the open** — only the exits that were decided before the bar began: a
+   signal exit, which fills at this open (the signal came from the previous close, so
+   the live trader already has the close ordered when it decides the next entries).
+   Capital and the slot it frees are reusable by entries at this same open.
 3. **Rank** entry candidates across the whole universe by the strategy's own
    conviction score, descending, ties broken by symbol so a run is reproducible.
 4. **Admit** in that order while `max_positions`, `max_total_risk`,
@@ -54,7 +55,24 @@ live. Each step:
    `Strategy.calculate_position_size` as before, but against *free cash*, which is
    what makes positions actually compete. The two portfolio fractions are not the
    same measurement — see [what `max_total_risk` caps](../usage/configuration.md#what-max_total_risk-caps).
-5. **Record** portfolio equity — cash plus positions re-marked to *this bar's close*.
+5. **Stops and targets**, after admission, for every position still held (entries made
+   on this bar included - the bracket rests from the fill, and the signal that opened a
+   position cannot also close it). A level the bar *opens* beyond fills at the open: a
+   long with a stop at 97 on a bar opening at 90 exits at 90, and a target gapped
+   through fills at the better open. The open is the first print, so when it is beyond
+   one level that level fills even if the same bar's range later spans the other (a
+   long with stop 90 and target 110 on a bar opening 115 books the target at 115, not
+   the stop). A level the open was inside of and the range then touched fills at the
+   level; if one bar touches both, the stop is taken first - bars cannot say which came
+   first, and the pessimistic order is the convention. **Capital and slots freed here
+   are available from the next bar, not this open.** Freeing them for the same open
+   made admission depend on a price later than the open (with one slot, a new name was
+   admitted at the open only if the held name's low went on to break its stop). That
+   includes a stop that gaps through at the open: it fills at the open, but the entry
+   decision is made before that print exists, so the live trader still sees the slot
+   occupied; the backtest takes the conservative reading. Before accounting v7 the
+   entry bar was never checked, and before this change intra-bar exits freed the slot.
+6. **Record** portfolio equity — cash plus positions re-marked to *this bar's close*.
    Everything that transacts on the bar has happened by now, so the curve is an
    end-of-bar mark-to-market as it has always been. Only the decisions are held to the
    open, and only because they priced there.

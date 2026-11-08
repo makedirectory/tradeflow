@@ -291,7 +291,7 @@ def test_an_unreported_fee_reaches_the_ledger_as_not_reported(tmp_path):
 # --- the book gets refreshed whether or not the ledger records -------------------
 def _refresh_recorder(engine):
     refreshed = []
-    engine.live_trader.refresh_position = lambda symbol: refreshed.append(symbol)
+    engine.live_trader.refresh_position = lambda symbol, fill_price=None: refreshed.append(symbol)
     return refreshed
 
 

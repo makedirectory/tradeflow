@@ -81,8 +81,8 @@ replayed rather than re-scanned.
 | `--holdout-days N` | Final sacred window, scored once. |
 | `--method grid\|random\|bayesian` | Search method used per fold (`bayesian` needs the `optimize` extra). |
 | `--objective` | Metric to optimize in-sample (default `sharpe_ratio`). |
-| `--pbo` | Also estimate the Probability of Backtest Overfitting (slower). |
-| `--monte-carlo` | Block-bootstrap the OOS trades for a 5th-percentile Sharpe. |
+| `--pbo` | Also estimate the IS-best fold OOS rank-failure rate: a heuristic over folds, not a true probability of backtest overfitting (slower). |
+| `--monte-carlo` | Block-bootstrap the OOS daily P&L for a 5th-percentile annualized Sharpe. |
 | `--param-sensitivity` | Perturb the chosen params ±10% and re-test robustness. |
 | `--leakage-probe` | Shift the data feed forward to detect future-data leakage. |
 | `--bootstrap-skill` | Nonparametric own p-value (stationary block bootstrap) next to the FAMILY p from White's Reality Check over every OOS return series the trial store has recorded for this strategy/universe/accounting — advisory only, not a gate. See [below](#nonparametric-skill-check). |
@@ -274,7 +274,8 @@ from the run and the output says so. What the config *was* tuned on is recorded 
 
 `--bootstrap-skill` adds a second, assumption-free verdict next to the deflated
 Sharpe: an **own** p-value from a stationary block bootstrap of this run's OOS
-returns (no assumption about the return distribution's shape), always reported
+returns (no assumption about the return distribution's shape; the statistic is the
+returns' Sharpe, not an information ratio against a benchmark), always reported
 next to the **family** p-value from White's Reality Check over every other
 trial recorded for the same strategy/universe/accounting in the
 [trial store](#the-trial-store) — a great own p and a terrible family p is

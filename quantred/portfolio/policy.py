@@ -11,7 +11,8 @@ With quadratic trading costs and exponentially-decaying signals, the dynamic
 program collapses to two rules:
 
 - **The aim portfolio** - the Markowitz solve on alphas *discounted* by
-  ``κ/(κ+φ)`` per signal (``φ`` its decay rate, ``κ`` the trading rate below) -
+  ``κ/(1 − e^(−φ)(1−κ))`` per signal (:func:`discount_factor`; ``φ`` its decay
+  rate, ``κ`` the trading rate below) -
   "aim in front of the target": construct the portfolio you'll still want once you
   get there, not the one you want today.
 - **Partial adjustment** - trade a fraction ``κ ∈ (0,1]`` of the gap each period,
@@ -193,7 +194,7 @@ def build_aim_portfolio(
     holding_period_years: float = 1.0 / 12.0,
 ) -> PortfolioResult:
     """The aim-in-front-of-the-target policy: derive κ, discount the alphas by
-    ``κ/(κ+φ)``, solve the cost-free aim (the plain optimizer with the cost term
+    :func:`discount_factor` (``κ/(1 − e^(−φ)(1−κ))``), solve the cost-free aim (the plain optimizer with the cost term
     zeroed), take the κ-fraction step from ``current_weights``, and pass the
     result through the optimizer's own proximal band projection (the *same*
     box/budget/no-trade-band machinery a real cost-aware solve would apply -

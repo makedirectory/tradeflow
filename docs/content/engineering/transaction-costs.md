@@ -28,6 +28,9 @@ cost($) = commission + (s/2)·|q|·p + impact_rate·|q|·p
 
 - **Commission** — a flat per-notional broker fee (default 1 bp).
 - **Half-spread** — `(s/2)·|q|·p`, the immediate cost of crossing (default 5 bp spread).
+  `s` is the model's own `default_spread_bps` unless a trade names one; the engine names
+  none, so the configured value is the one charged, and the cost stress scales it with
+  the other turnover costs.
 - **Market impact** — the **square-root law** (Almgren et al., the robust default):
 
   ```
@@ -57,7 +60,10 @@ profitable when it isn't.
 
 - **Backtest** (`engine/backtest.py`): every fill is charged on **both legs** (entry
   and exit), using a **trailing** (as-of) ADV and volatility so a past trade's cost
-  never depends on future volume. Metrics become net; `total_cost` and the gross
+  never depends on future volume. The windows end at the *previous* bar: a fill happens at
+  a bar's open (or, for the end-of-period close, before that bar's own volume is
+  knowable), so a window that included the bar itself priced the fill with information
+  from after it. Metrics become net; `total_cost` and the gross
   final capital are reported alongside for the haircut attribution. **Net is the
   default** at the service/CLI layer; `--gross` disables the charge.
 - **Portfolio construction** ([engineering](./portfolio-construction#cost-inside-the-objective-cost-aware-by-default)):

@@ -13,7 +13,7 @@ trades shouldn't crash; it should just quietly tell you it found nothing.
 A note on annualization: the headline ratios take a
 ``periods_per_year`` so they annualize to the *sampling frequency of the series
 passed in*. The backtest equity curve is resampled to daily P&L
-(:func:`quantred.analytics.performance.build_equity_curve`), so its returns are daily
+(:func:`quantred.analytics.performance.build_equity_curve`) on trading days, so its returns are daily
 and ``TRADING_DAYS_PER_YEAR`` is the correct factor; intraday or weekly series
 pass their own factor via :meth:`quantred.marketdata.timeframe.Timeframe.periods_per_year`.
 """
@@ -23,6 +23,8 @@ from typing import Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
+
+from quantred.utils.numeric import is_flat
 
 #: US trading days per year, used to annualize daily-return ratios.
 TRADING_DAYS_PER_YEAR = 252
@@ -132,13 +134,27 @@ def annualized_volatility(returns: Numbers, periods_per_year: int = TRADING_DAYS
     return float(r.std() * np.sqrt(periods_per_year))
 
 
+def _downside_semideviation(r: pd.Series, target: float = 0.0) -> float:
+    """Per-period ``sqrt(mean(min(r - target, 0)^2))`` over *all* observations.
+
+    Positive periods count as zero shortfall rather than being dropped. Taking the
+    deviation of only the negative returns, about their own mean and over their own
+    count, discards how often losses happen and how far they are from the target: a
+    series with a single small loss would read as nearly riskless.
+    """
+    shortfall = np.minimum(r.to_numpy(dtype=float) - target, 0.0)
+    return float(np.sqrt(np.mean(shortfall**2)))
+
+
 def downside_deviation(returns: Numbers, periods_per_year: int = TRADING_DAYS_PER_YEAR) -> float:
-    """Annualized deviation of negative returns only (the Sortino denominator)."""
+    """Annualized downside deviation about a zero target (the Sortino denominator).
+
+    ``sqrt(mean(min(r, 0)^2))`` over every period, scaled to a year.
+    """
     r = _as_series(returns)
-    downside = r[r < 0]
-    if len(downside) < 2:
+    if len(r) < 2:
         return 0.0
-    return float(downside.std() * np.sqrt(periods_per_year))
+    return _downside_semideviation(r) * float(np.sqrt(periods_per_year))
 
 
 # --------------------------------------------------------------------------- #
@@ -147,20 +163,20 @@ def downside_deviation(returns: Numbers, periods_per_year: int = TRADING_DAYS_PE
 def sharpe_ratio(returns: Numbers, periods_per_year: int = TRADING_DAYS_PER_YEAR) -> float:
     """Annualized Sharpe ratio (risk-free rate assumed 0)."""
     r = _as_series(returns)
-    if len(r) < 2 or r.std() == 0:
+    if len(r) < 2 or is_flat(r):
         return 0.0
     return float(np.sqrt(periods_per_year) * r.mean() / r.std())
 
 
 def sortino_ratio(returns: Numbers, periods_per_year: int = TRADING_DAYS_PER_YEAR) -> float:
-    """Annualized Sortino ratio (downside-deviation denominator)."""
+    """Annualized Sortino ratio: mean return over the downside deviation (target 0)."""
     r = _as_series(returns)
     if len(r) < 2:
         return 0.0
-    downside = r[r < 0]
-    if downside.empty or downside.std() == 0:
+    dd = _downside_semideviation(r)
+    if dd == 0:
         return 0.0
-    return float(np.sqrt(periods_per_year) * r.mean() / downside.std())
+    return float(np.sqrt(periods_per_year) * r.mean() / dd)
 
 
 def calmar_ratio(cagr_value: float, max_drawdown_value: float) -> float:
@@ -341,7 +357,7 @@ def probabilistic_sharpe_ratio(returns: Numbers, benchmark_sr: float = 0.0) -> f
     """
     r = _as_series(returns)
     n = len(r)
-    if n < 3 or r.std() == 0:
+    if n < 3 or is_flat(r):
         return 0.0
     sr = float(r.mean() / r.std())  # per-period Sharpe estimate
     skew = skewness(r)
@@ -375,7 +391,7 @@ def deflated_sharpe_ratio(returns: Numbers, n_trials: int, var_of_trial_sr: floa
     """
     r = _as_series(returns)
     n = len(r)
-    if n < 3 or r.std() == 0 or n_trials < 1:
+    if n < 3 or is_flat(r) or n_trials < 1:
         return 0.0
     if var_of_trial_sr is None:
         var_of_trial_sr = 1.0 / (n - 1)
@@ -446,7 +462,7 @@ def kelly_criterion(pnl: Numbers) -> float:
 def system_quality_number(pnl: Numbers) -> float:
     """Van Tharp's SQN: ``sqrt(n) * mean(pnl) / std(pnl)`` (expectancy quality)."""
     p = _as_series(pnl)
-    if len(p) < 2 or p.std() == 0:
+    if len(p) < 2 or is_flat(p):
         return 0.0
     return float(np.sqrt(len(p)) * p.mean() / p.std())
 
@@ -480,7 +496,7 @@ def alpha_beta(returns: Numbers, benchmark_returns: Numbers) -> Tuple[float, flo
     if len(paired) < 3:
         return 0.0, 0.0, 0.0
     benchmark_var = paired["b"].var()
-    if benchmark_var == 0:
+    if is_flat(paired["b"]):
         return 0.0, 0.0, 0.0
     beta = float(paired["r"].cov(paired["b"]) / benchmark_var)
     alpha = float(paired["r"].mean() - beta * paired["b"].mean())
@@ -497,6 +513,6 @@ def information_ratio(
     if len(paired) < 2:
         return 0.0
     active = paired["r"] - paired["b"]
-    if active.std() == 0:
+    if is_flat(active):
         return 0.0
     return float(np.sqrt(periods_per_year) * active.mean() / active.std())

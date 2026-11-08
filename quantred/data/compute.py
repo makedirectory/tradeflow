@@ -161,13 +161,17 @@ def cross_sectional_zscore(
     """
     import polars as pl
 
+    from quantred.utils.numeric import FLAT_RTOL
+
     x = _finite(src)
     mean = x.mean().over(by)
     std = x.std(ddof=0).over(by)
     z = (
         pl.when(x.is_null())  # a missing/non-finite name stays missing (oracle: NaN)
         .then(None)
-        .when((std == 0) | std.is_null())  # no spread among finite names → no view
+        # no spread among finite names → no view; the same noise-aware tolerance as
+        # utils.numeric.is_flat, since a constant column has float-noise std, not zero
+        .when((std <= FLAT_RTOL * pl.max_horizontal(pl.lit(1.0), x.abs().mean().over(by))) | std.is_null())
         .then(pl.lit(0.0))
         .otherwise((x - mean) / std)
     )

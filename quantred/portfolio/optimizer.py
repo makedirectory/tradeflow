@@ -700,8 +700,13 @@ class MeanVarianceOptimizer:
         active_variance = float(w_a @ sig_wa)
         te = float(np.sqrt(max(active_variance, 0.0)))  # ψ, the real tracking error
         expected = float(alpha @ w_a)
-        # Transfer coefficient: corr(α, Σ-adjusted active weights) ∈ [-1, 1].
-        tc = self._corr(alpha, sig_wa)
+        # Transfer coefficient in the risk metric: αᵀw_a / (√(αᵀΣ⁻¹α)·√(w_aᵀΣw_a)),
+        # i.e. predicted IR over IR*. It is the Σ⁻¹-weighted cosine between α and the
+        # book's Σw_a, so it is exactly 1 at the unconstrained optimum and
+        # `tc · IR*` reproduces `predicted_ir`. A plain Pearson correlation of α with
+        # the weights ignores Σ and does neither, so it overstated how much of the
+        # achievable IR a constrained book kept.
+        tc = expected / (ir_star * te) if ir_star > 0 and te > 0 else 0.0
         dw = w - w0  # cost is anchored at w₀, not w_B - unchanged
         diagnostics = {
             "ir_star": ir_star,
@@ -778,9 +783,3 @@ class MeanVarianceOptimizer:
     @staticmethod
     def _vector(weights: Dict[str, float], symbols: List[str]) -> np.ndarray:
         return np.array([weights.get(s, 0.0) for s in symbols], dtype=float)
-
-    @staticmethod
-    def _corr(a: np.ndarray, b: np.ndarray) -> float:
-        if len(a) < 2 or np.std(a) == 0 or np.std(b) == 0:
-            return 0.0
-        return float(np.corrcoef(a, b)[0, 1])

@@ -21,6 +21,12 @@ from typing import Optional
 
 from quantred.costs.base import CostModel, Trade, TradeCost
 
+#: The quoted spread a trade is priced at when nothing says otherwise, and the
+#: participation above which a fill is flagged optimistic. One definition each: the
+#: model, the service builder and the cost-stress scaling all start from these.
+DEFAULT_SPREAD_BPS = 5.0
+DEFAULT_PARTICIPATION_CAP = 0.10
+
 
 class ParametricCostModel(CostModel):
     """Commission + half-spread + (square-root or linear) market impact."""
@@ -28,9 +34,9 @@ class ParametricCostModel(CostModel):
     def __init__(
         self,
         commission_bps: float = 1.0,
-        default_spread_bps: float = 5.0,
+        default_spread_bps: float = DEFAULT_SPREAD_BPS,
         impact_eta: float = 0.3,
-        participation_cap: float = 0.10,
+        participation_cap: float = DEFAULT_PARTICIPATION_CAP,
         annual_borrow_bps: float = 50.0,
         linear_impact: bool = False,
     ):

@@ -31,6 +31,7 @@ from quantred.alphas import (
 from quantred.analytics import metrics as m
 from quantred.analytics import performance, series_comparison
 from quantred.analytics.reporting import CAPACITY_SEARCH_CEILING, CAPACITY_SEARCH_FLOOR
+from quantred.costs.parametric import DEFAULT_SPREAD_BPS
 from quantred.data import (
     ClientBarSource,
     FeaturePanel,
@@ -49,6 +50,7 @@ from quantred.services.registry import resolve_strategy_class, scanner_refusal
 from quantred.settings import state_root
 from quantred.strategies.base import build_with_limits, refuse_undeclared_params, refuse_unknown_limits
 from quantred.utils.errors import RunRefused, no_bars_refusal
+from quantred.utils.numeric import is_flat
 from quantred.utils.timeutils import shift_days
 
 logger = logging.getLogger(__name__)
@@ -196,18 +198,24 @@ def _refuse_unusable_window(start: datetime, end: datetime) -> None:
         raise RunRefused(problem[0].upper() + problem[1:])
 
 
-def _build_cost_model(
+def build_cost_model(
     gross: bool,
     commission_bps: float,
     impact_eta: float,
     participation_cap: float,
     borrow_bps: float,
+    spread_bps: float = DEFAULT_SPREAD_BPS,
 ):
     """Shared cost-model construction for run_backtest/run_optimization/
     run_walk_forward - so a search or validation prices trades the same way a
     live backtest does. ``None`` (i.e. ``gross=True``) reliably favors the
     highest-turnover config, so this must reach every entrypoint that can run a
-    search or a validation, not just run_backtest."""
+    search or a validation, not just run_backtest.
+
+    The one definition the CLI's ``build_cost_model`` delegates to: the CLI used to
+    build its own and left out ``participation_cap``, so the two surfaces priced the
+    same request with different models whenever that cap was not the default.
+    """
     from quantred.costs import ParametricCostModel
 
     if gross:
@@ -217,6 +225,7 @@ def _build_cost_model(
         impact_eta=impact_eta,
         participation_cap=participation_cap,
         annual_borrow_bps=borrow_bps,
+        default_spread_bps=spread_bps,
     )
 
 
@@ -355,7 +364,12 @@ def walk_forward_recipe(
 
 
 def _cost_key(
-    gross: bool, commission_bps: float, impact_eta: float, borrow_bps: float, vintage: Optional[str] = None
+    gross: bool,
+    commission_bps: float,
+    impact_eta: float,
+    borrow_bps: float,
+    vintage: Optional[str] = None,
+    spread_bps: float = DEFAULT_SPREAD_BPS,
 ) -> Dict[str, Any]:
     """The cost-model assumptions folded into a trial's dedup key - same shape as
     the CLI's ``main._cost_key`` so a trial recorded via one surface is found by
@@ -372,6 +386,12 @@ def _cost_key(
             "borrow_bps": borrow_bps,
         }
     )
+    # Folded only when it differs from the default, so every run priced at the default
+    # spread keeps the identity it already had - and the CLI, which has no spread flag,
+    # keeps producing the same key. A stress point at a scaled spread is a different
+    # experiment and must not be answered by the unscaled one.
+    if not gross and spread_bps != DEFAULT_SPREAD_BPS:
+        key["spread_bps"] = spread_bps
     if vintage is not None:
         key["_vintage"] = vintage
     return key
@@ -585,6 +605,7 @@ def run_backtest(
     force: bool = False,
     journal: bool = True,
     record_trades: bool = False,
+    spread_bps: float = DEFAULT_SPREAD_BPS,
 ) -> Dict[str, Any]:
     """Backtest a strategy; return the full metrics dict + a path to the trades CSV.
 
@@ -616,7 +637,7 @@ def run_backtest(
     vintage = vintage_stamp(data_client, symbols, strat.config["timeframe"], start, end)
     dedup_params = {
         **_tunable_params(strat),
-        "_cost": _cost_key(gross, commission_bps, impact_eta, borrow_bps, vintage),
+        "_cost": _cost_key(gross, commission_bps, impact_eta, borrow_bps, vintage, spread_bps),
         **limits_key(strat.position_limits()),
         **backtest_run_key(capital, benchmark, beta_sizing, take_profit_margin_bps),
     }
@@ -647,7 +668,9 @@ def run_backtest(
             )
 
     sizer = build_beta_sizer(data_client, strat, symbols, benchmark, as_of=start) if beta_sizing else None
-    cost_model = _build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
+    cost_model = build_cost_model(
+        gross, commission_bps, impact_eta, participation_cap, borrow_bps, spread_bps
+    )
     result = BacktestEngine(
         strat,
         data_client,
@@ -998,7 +1021,7 @@ def run_optimization(
 
     run_id = new_run_id()
     cls = resolve_strategy_class(strategy)
-    cost_model = _build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
+    cost_model = build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
     from quantred.services.data import vintage_stamp
 
     vintage = vintage_stamp(data_client, symbols, cls.create_with_defaults().config["timeframe"], start, end)
@@ -1202,7 +1225,7 @@ def run_screen(
     run_id = new_run_id()
     cls = resolve_strategy_class(strategy)
     space = ParameterSpace(screen_ranges(cls, param_ranges), getattr(cls, "PARAM_CONSTRAINTS", ()) or ())
-    cost_model = _build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
+    cost_model = build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
 
     # Fetched once, then served from memory to every evaluation. A screen that refetched
     # per candidate would be the thing it exists to replace: a shell loop over N runs.
@@ -1422,7 +1445,7 @@ def run_causality_probes(
         start,
         end,
         capital=capital,
-        cost_model=_build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps),
+        cost_model=build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps),
         benchmark=benchmark,
         sample=sample,
         scan=scan,
@@ -1542,7 +1565,7 @@ def run_walk_forward(
 
     run_id = new_run_id()
     cls = resolve_strategy_class(strategy)
-    cost_model = _build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
+    cost_model = build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
     from quantred.services.data import vintage_stamp
 
     vintage = vintage_stamp(data_client, symbols, cls.create_with_defaults().config["timeframe"], start, end)
@@ -2018,6 +2041,10 @@ def run_cost_stress(
             impact_eta=impact_eta * scale_turnover,
             participation_cap=participation_cap,
             borrow_bps=borrow_bps * scale_borrow,
+            # The spread is a toll on turnover like commission and impact, and was the one
+            # that stayed put: at "3x" the linear cost rose by commission alone, about
+            # 1.6x the cost, so the curve understated where an edge dies.
+            spread_bps=DEFAULT_SPREAD_BPS * scale_turnover,
             journal=False,
             force=True,
         )
@@ -2122,7 +2149,7 @@ def run_draft_walk_forward(
         logger.warning("Draft strategy validation failed unexpectedly", exc_info=True)
         return _draft_rejection(run_id, "strategy", code, exc, hygiene=False)
     draft_strategy = f"draft:{cls.__name__}:{code_hash}"
-    cost_model = _build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
+    cost_model = build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
     cost_key = _cost_key(gross, commission_bps, impact_eta, borrow_bps)
     # The draft's own identity (its source) on top of the same recipe every other
     # walk-forward is keyed by - a third copy of that dict is a third place for the
@@ -2729,6 +2756,8 @@ def summarize_bars(
     start = end - timedelta(days=lookback_days)
     bars = data_client.get_bars(symbols, timeframe, start, end)
 
+    # Bars of this timeframe per trading year: a 1-hour bar is not 1/252 of a year.
+    bar_rate = int(round(Timeframe.parse(timeframe).periods_per_year()))
     out: Dict[str, Any] = {}
     for symbol in symbols:
         frame = bars.get(symbol)
@@ -2745,7 +2774,7 @@ def summarize_bars(
             "bars": int(len(frame)),
             "last_close": float(close.iloc[-1]),
             "period_return_pct": float((close.iloc[-1] / close.iloc[0] - 1) * 100),
-            "annualized_vol_pct": float(m.annualized_volatility(returns) * 100),
+            "annualized_vol_pct": float(m.annualized_volatility(returns, bar_rate) * 100),
             "trend": "up" if sma_fast >= sma_slow else "down",
             "max_drawdown_pct": float(m.max_drawdown(close) * 100),
             "avg_volume": float(volume.mean()),
@@ -3069,7 +3098,9 @@ def compute_information(
     alpha forecast known *at* ``t`` with the realized **residual** return over
     ``(t, t+horizon]`` (strict forward alignment - rewarding skill, not beta), giving
     the IC time series (Pearson + rank), its t-stat, the effective breadth ``BR_eff``
-    (deflated by the average correlation ρ̄ from Σ), and the **predicted vs realized
+    (deflated by the average pairwise correlation ρ̄ of the names' benchmark-residual
+    returns, each pair over the bars both have; reported as unavailable - never as 0 -
+    when too little history is shared), and the **predicted vs realized
     IR** reconciliation - with the research-integrity guardrails (IR standard-error
     band, multiple-testing inflation, sanity ceiling) that keep a lucky backtest
     honest. Factor-vs-specific **risk** attribution is available via the factor model
@@ -3127,7 +3158,7 @@ def compute_information(
         # Realized return of the paper alpha portfolio: standardized-alpha-weighted
         # residual return (scale cancels in the IR).
         z = aligned["alpha"] - aligned["alpha"].mean()
-        if z.std() > 0:
+        if not is_flat(z):
             w = z / z.std()
             last_weights = w  # mean-zero ⇒ already an active book
             portfolio_returns.append(float(w @ aligned["resid"]))
@@ -3143,16 +3174,31 @@ def compute_information(
     rank_stats = info.ic_stats(rank_ics)
     n_names = int(np.median(n_names_seen)) if n_names_seen else 0
 
-    # ρ̄ from the risk model over the window (correlated bets deflate breadth).
+    # Correlated bets deflate breadth, and the bets counted here are the *residual*
+    # returns the IC was measured on, so ρ̄ is the mean correlation of those - not of
+    # total returns (which carry the market move the residual already removed) and so
+    # not a function of the risk model either. The risk model still supplies Σ for the
+    # risk-bucket diagnostic below.
     matrix = _build_covariance(risk_model, universe_bars, bench, periods_per_year)
-    if matrix is not None and len(matrix.symbols) > 1:
-        corr = matrix.correlation().to_numpy()
-        rho_bar = float((corr.sum() - len(corr)) / (len(corr) * (len(corr) - 1)))
-    else:
-        rho_bar = 0.0
+    rho_bar = info.mean_residual_correlation(
+        pd.DataFrame({s: f["close"].pct_change() for s, f in universe_bars.items() if not f.empty}),
+        bench["close"].pct_change(),
+    )
 
-    breadth = info.effective_breadth(n_names, rebalances_per_year, rho_bar)
-    pred_ir = info.predicted_ir(stats["mean_ic"], breadth["br_eff"])
+    # Unavailable is not zero: rho = 0 says "independent bets" and leaves breadth undeflated,
+    # the most optimistic reading, for exactly the case where nothing could be estimated.
+    breadth_note = None
+    if rho_bar is None:
+        breadth = {"br_eff": None, "br_naive": float(rebalances_per_year * n_names), "rho_bar": None}
+        pred_ir = None
+        breadth_note = (
+            "residual correlation unavailable (too little shared history across the names): "
+            "effective breadth and the predicted IR are not reported, because the naive "
+            "breadth counts every name as an independent bet."
+        )
+    else:
+        breadth = info.effective_breadth(n_names, rebalances_per_year, rho_bar)
+        pred_ir = info.predicted_ir(stats["mean_ic"], breadth["br_eff"])
 
     # IC-uncertainty level shrink: how much of the measured-IC level survives its own
     # estimation error. T_eff deflates the rebalance count by the horizon/spacing overlap
@@ -3210,6 +3256,7 @@ def compute_information(
         "breadth_effective": breadth["br_eff"],
         "breadth_naive": breadth["br_naive"],
         "predicted_ir": pred_ir,
+        "breadth_note": breadth_note,
         "realized_ir": realized_ir,
         "ir_standard_error": info.ir_standard_error(realized_ir, years),
         "multiple_testing_inflation": info.multiple_testing_inflation(n_trials),
@@ -4119,7 +4166,7 @@ def compute_attribution(
 
         alpha = _alpha_cross_section(universe_bars, bench, scorer, periods_per_year, t, ctx)
         z = alpha - alpha.mean()
-        if z.std() == 0 or z.dropna().empty:
+        if is_flat(z) or z.dropna().empty:
             skipped["alpha cross-section had no spread (all scores equal or missing)"] += 1
             continue
         w_active = z / z.std()
@@ -4397,7 +4444,7 @@ def _signal_cross_section(bars_t: Dict[str, pd.DataFrame], scorer) -> pd.Series:
         if val is not None and val == val:
             raw[sym] = float(val)
     s = pd.Series(raw)
-    if len(s) < 2 or s.std() == 0:
+    if len(s) < 2 or is_flat(s):
         return pd.Series(dtype=float)
     return refine.zscore(refine.winsorize(s))
 
@@ -4472,7 +4519,7 @@ def run_scaling_ab(
             if len(aligned) < 5:
                 continue
             z = aligned["a"] - aligned["a"].mean()
-            if z.std() > 0:
+            if not is_flat(z):
                 returns[kind].append(float((z / z.std()) @ aligned["r"]))
 
     def _ir(r: List[float]) -> float:
@@ -4585,16 +4632,16 @@ def compute_horizon(
     for j in points:
         t = window[j]
         alpha = _alpha_cross_section(universe_bars, bench, scorer, periods_per_year, t, ctx)
-        if alpha.dropna().std() == 0 or alpha.dropna().empty:
+        if is_flat(alpha) or alpha.dropna().empty:
             continue
         for n in range(1, max_lag + 1):
             resid = _forward_residual_return(universe_bars, bench, t, window[j + n], indicators)
             pair = pd.concat([alpha, resid], axis=1).dropna()
-            if len(pair) >= 5 and pair.iloc[:, 1].std() > 0:
+            if len(pair) >= 5 and not is_flat(pair.iloc[:, 1]):
                 ic_by_lag[n].append(float(pair.iloc[:, 0].corr(pair.iloc[:, 1])))
         if prev_alpha is not None:
             joint = pd.concat([alpha, prev_alpha], axis=1).dropna()
-            if len(joint) >= 5 and joint.iloc[:, 0].std() > 0 and joint.iloc[:, 1].std() > 0:
+            if len(joint) >= 5 and not is_flat(joint.iloc[:, 0]) and not is_flat(joint.iloc[:, 1]):
                 autocorrs.append(float(joint.iloc[:, 0].corr(joint.iloc[:, 1])))
         prev_alpha = alpha
 
@@ -4636,7 +4683,7 @@ def compute_horizon(
         "blend_superseded_by": "the aim-in-front partial-adjustment policy "
         "('allocate --policy aim'): this lagged-blend recommendation is a special case "
         "of that policy's per-signal decay discount (a two-point blend vs a continuous "
-        "κ/(κ+φ) discount) - prefer --policy aim for new work; this report stays "
+        "κ/(1 − e^(−φ)(1−κ)) discount) - prefer --policy aim for new work; this report stays "
         "accurate on its own terms either way.",
         "note": "δ is the per-period IC decay (HL = half-life, with a "
         "half_life_lower/half_life_upper confidence band from the fit's own slope SE). "
@@ -4953,7 +5000,7 @@ def construct_portfolio(
     ``policy="aim"`` (default ``None`` / off until validated OOS net of cost
     against the plain myopic solve above - see ``info --policy-ab``) replaces the
     myopic "jump to this period's optimum" with an aim-in-front-of-the-target
-    partial adjustment: the alpha is discounted by ``κ/(κ+φ)`` (``φ`` the
+    partial adjustment: the alpha is discounted by ``κ/(1 − e^(−φ)(1−κ))`` (``φ`` the
     strategy's own measured decay rate, conservatively from the *upper* half-life
     confidence bound over the trailing ``decay_lookback_days``), the aim portfolio
     is the cost-aware solve on that discounted alpha with cost zeroed, and the
@@ -5986,7 +6033,7 @@ def _run_case_test(universe_bars, scorer, residual_vol: pd.Series, price_derived
             c_g = refine.case_scale_factor(g, vol)
             scale = c_g if (c_g == c_g) else float(vol.mean())
             a1, a2 = vol * z, scale * z  # IC cancels in the correlation
-            if a1.std() > 0 and a2.std() > 0:
+            if not is_flat(a1) and not is_flat(a2):
                 corr = float(a1.corr(a2))
     diag["candidate_correlation"] = corr
     diag["c_g"] = c_g

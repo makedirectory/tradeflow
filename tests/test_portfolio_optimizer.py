@@ -54,10 +54,20 @@ def test_target_te_calibration_is_exact():
 
 
 # --- transfer coefficient ----------------------------------------------------
-def test_tightening_cardinality_lowers_transfer_coefficient():
+def test_transfer_coefficient_is_bounded_by_one_and_ties_back_to_predicted_ir():
+    """TC = predicted_ir / ir_star is at most 1 (Cauchy-Schwarz in the Sigma metric) for
+    any constraint set. It is NOT monotone in how tight the constraints are: the
+    optimizer maximizes utility at a fixed risk aversion, not the IR ratio, so a
+    two-name book can score a higher TC than the four-name book that has the higher
+    utility. The earlier test asserted monotonicity, which held for the correlation-based
+    coefficient only."""
     loose = MeanVarianceOptimizer(max_weight=0.5).optimize(_alphas(), _risk(), target_te=0.05)
     tight = MeanVarianceOptimizer(max_weight=0.5, max_names=2).optimize(_alphas(), _risk(), target_te=0.05)
-    assert tight.diagnostics["transfer_coefficient"] <= loose.diagnostics["transfer_coefficient"] + 1e-9
+    for r in (loose, tight):
+        d = r.diagnostics
+        assert d["transfer_coefficient"] <= 1.0 + 1e-9
+        assert d["transfer_coefficient"] * d["ir_star"] == pytest.approx(d["predicted_ir"], abs=1e-9)
+    assert loose.diagnostics["ir_star"] == pytest.approx(tight.diagnostics["ir_star"])
 
 
 # --- no-trade band & turnover ------------------------------------------------

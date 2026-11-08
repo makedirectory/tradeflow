@@ -2145,6 +2145,8 @@ dev = [
     { name = "ruff" },
     { name = "scikit-learn", version = "1.7.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scikit-learn", version = "1.9.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
 mcp = [
     { name = "mcp" },
@@ -2194,6 +2196,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
     { name = "scikit-learn", marker = "extra == 'dev'", specifier = ">=1.4" },
     { name = "scikit-learn", marker = "extra == 'optimize'", specifier = ">=1.4" },
+    { name = "scipy", marker = "extra == 'dev'", specifier = ">=1.11" },
 ]
 provides-extras = ["ai", "dev", "mcp", "openai", "optimize", "portfolio", "store", "viz"]
 

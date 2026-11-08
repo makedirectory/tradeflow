@@ -28,6 +28,7 @@ from quantred.engine.backtest import BacktestEngine
 from quantred.marketdata.client import MarketDataClient
 from quantred.optimization.param_space import ParameterSpace
 from quantred.strategies.base import Strategy, build_with_limits
+from quantred.utils.numeric import is_flat
 
 logger = logging.getLogger(__name__)
 
@@ -417,7 +418,7 @@ class ParameterOptimizer:
     def _standardize(self, y: List[float]) -> np.ndarray:
         arr = np.array([self._finite(v) for v in y], dtype="float64")
         std = arr.std()
-        return (arr - arr.mean()) / std if std > 0 else arr - arr.mean()
+        return (arr - arr.mean()) / std if not is_flat(arr, ddof=0) else arr - arr.mean()
 
     @staticmethod
     def _make_gp():

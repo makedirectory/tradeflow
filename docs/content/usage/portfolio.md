@@ -70,9 +70,12 @@ AMD         18.0%     180,000.00       142
 ```
 
 Read it as: **IR\*** is the best information ratio achievable from these alphas and
-this Σ, before cost; the **transfer coefficient** is how much of it survives your
-constraints *and* cost (tighten `--max-names`/`--max-weight`, or trade a costlier
-book, and watch it fall); **predicted IR** ≈ `TC · IR*`. `net active return` is
+this Σ, before cost; the **transfer coefficient** is the book's predicted IR as a
+fraction of that bound (1 at the unconstrained optimum, never above it), so
+constraints such as `--max-names`/`--max-weight` show up as the part left on the
+table; **predicted IR** = `TC · IR*` exactly. A tighter constraint set is not
+guaranteed a lower TC, since the optimizer maximizes utility at a fixed risk
+aversion, not this ratio. `net active return` is
 the headline, net of a round-trip cost haircut on the held book; the one-way
 line below it is the detail — exactly what this rebalance's turnover cost, split
 into linear (commission + spread) and square-root impact. See

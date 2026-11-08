@@ -11,8 +11,8 @@ Two questions, two functions:
 
 1. **Is this one track record skill?** :func:`bootstrap_null` imposes the null
    (demean by the estimated alpha), block-resamples the residual with the
-   Politis-Romano stationary bootstrap (never i.i.d. - active returns are
-   autocorrelated), and reports the realized IR's rank in the empirical null
+   Politis-Romano stationary bootstrap (never i.i.d. - returns are
+   autocorrelated), and reports the realized Sharpe's rank in the empirical null
    distribution: an *own* p-value with no assumption about the return
    distribution's shape.
 2. **Is the best of the K configs actually tried skill?** :func:`reality_check`
@@ -33,6 +33,7 @@ from typing import Any, Dict, Optional, Sequence, Union
 import numpy as np
 
 from quantred.analytics.metrics import TRADING_DAYS_PER_YEAR
+from quantred.utils.numeric import FLAT_RTOL
 
 Numbers = Union[Sequence[float], np.ndarray]
 
@@ -53,8 +54,11 @@ def _annualized_ir(x: np.ndarray, periods_per_year: float, axis: int = -1) -> np
     0 (never inf/nan - a null distribution must stay finite to rank against)."""
     mean = x.mean(axis=axis)
     std = x.std(axis=axis, ddof=1)
+    # The vectorised form of utils.numeric.is_flat, which has to run per slice of a large
+    # resampled panel; same tolerance, same scale.
+    flat = std <= FLAT_RTOL * np.maximum(1.0, np.abs(x).mean(axis=axis))
     with np.errstate(invalid="ignore", divide="ignore"):
-        ir = np.where(std > 0, mean / std * math.sqrt(periods_per_year), 0.0)
+        ir = np.where(~flat, mean / std * math.sqrt(periods_per_year), 0.0)
     return np.asarray(ir, dtype=float)
 
 
@@ -187,7 +191,12 @@ def bootstrap_null(
     periods_per_year: float = TRADING_DAYS_PER_YEAR,
     alpha: Optional[float] = None,
 ) -> Dict[str, Any]:
-    """Zero-alpha stationary block bootstrap for one active-return track record.
+    """Zero-alpha stationary block bootstrap for one return track record.
+
+    The statistic is the annualized Sharpe (mean/std) of whatever series is passed in;
+    it is an information ratio only when the caller passes returns already net of a
+    benchmark. The walk-forward feeds raw OOS returns, so there it is a Sharpe test of
+    "is the mean return different from zero", not of skill relative to a benchmark.
 
     Demeans by the full-sample estimated alpha (Fama-French: ``r_tilde = r_a -
     alpha_hat``; ``alpha_hat`` defaults to the sample mean - pass ``alpha=`` for a

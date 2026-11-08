@@ -20,8 +20,13 @@ from typing import Dict, Mapping, Tuple
 
 import numpy as np
 
-#: horizon/half-life ratio at which signal-return correlation peaks (≈ 0.638).
-PEAK_HORIZON_RATIO = 1.2566
+#: Model: the signal's IC decays as ``e^(-phi*n)`` and a return over ``h`` periods accumulates
+#: ``h`` independent increments, so the correlation of the signal with that return is
+#: proportional to ``(1 - e^(-phi*h)) / sqrt(h)``. With ``x = phi*h`` (time in units of the decay
+#: time constant ``1/phi``) its derivative vanishes where ``e^x = 1 + 2x``, i.e. ``x* = 1.25643``.
+#: The half-life is ``ln2/phi``, so the peak horizon in half-lives is ``x*/ln 2``. (1.2564 is
+#: the peak in *time constants*, not half-lives.)
+PEAK_HORIZON_RATIO = 1.2564312086 / math.log(2)
 
 
 def fit_decay(ic_by_lag: Mapping[int, float], ci_z: float = 1.96) -> Dict[str, float]:
@@ -91,7 +96,7 @@ def fit_decay(ic_by_lag: Mapping[int, float], ci_z: float = 1.96) -> Dict[str, f
 
 
 def peak_return_horizon(half_life: float) -> float:
-    """The forward-return horizon a signal of this half-life predicts best (≈ 1.26·HL).
+    """The forward-return horizon a signal of this half-life predicts best (≈ 1.81·HL).
 
     Scoring a short-horizon signal against a long-horizon return (or vice versa) is a
     common way to understate real skill; this is the horizon to match.
@@ -100,19 +105,29 @@ def peak_return_horizon(half_life: float) -> float:
 
 
 def blend_weights(gamma: float, rho: float) -> Tuple[float, float]:
-    """IR-maximizing weights on the current vs lagged signal: ``(w_now, w_lag)``.
+    """IC-maximizing weights on the current vs lagged signal: ``(w_now, w_lag)``.
 
-    ``w_now = (1 − γ·ρ) / (1 + γ² − 2·γ·ρ)`` (decay ``γ``, current/lagged
-    autocorrelation ``ρ``); ``w_lag = 1 − w_now``. Three regimes:
+    Model: the current signal has IC ``IC``, the lagged copy ``γ·IC`` (decay ``γ``), and
+    the two are correlated ``ρ`` (their autocorrelation). A blend ``w`` has
+    ``IC(w) = wᵀc / √(wᵀΩw)`` with ``c = [1, γ]`` and ``Ω = [[1, ρ], [ρ, 1]]``, which is
+    maximized at ``w ∝ Ω⁻¹c ∝ [1 − γρ, γ − ρ]``. Normalized to sum to one::
+
+        w_now = (1 − γρ) / ((1 + γ)(1 − ρ))        w_lag = 1 − w_now
+
+    Three regimes:
 
     - ``γ > ρ`` → **diversify**: ``w_lag > 0`` (the lag carries independent info).
     - ``γ < ρ`` → **hedge**: ``w_lag < 0`` (it mostly cancels current noise).
     - ``γ = ρ`` → the latest signal alone is sufficient (``w_lag = 0``).
+
+    Only the ratio is identified; if the raw weights sum to zero (``ρ = 1``: the two
+    signals are the same, or ``γ = -1``) there is nothing to normalize and the latest
+    signal alone is returned.
     """
-    denom = 1.0 + gamma * gamma - 2.0 * gamma * rho
-    if denom == 0:
+    total = (1.0 - gamma * rho) + (gamma - rho)  # equals (1 + γ)(1 − ρ)
+    if abs(total) < 1e-12:
         return 1.0, 0.0
-    w_now = (1.0 - gamma * rho) / denom
+    w_now = (1.0 - gamma * rho) / total
     return w_now, 1.0 - w_now
 
 

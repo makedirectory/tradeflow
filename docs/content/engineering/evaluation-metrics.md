@@ -60,8 +60,11 @@ annualizes its per-bar mark-to-market returns at the merged timeline's own step 
 (`_step_periods_per_year`), the strategy's timeframe rate scaled by observed density —
 see [annualizing per-step quantities](engine.md#annualizing-per-step-quantities).
 Only `build_equity_curve`, the closed-trade curve behind a walk-forward's
-out-of-sample aggregate, resamples to calendar days; that is the case where
-`TRADING_DAYS_PER_YEAR` (252) applies. `Timeframe.periods_per_year()` exists for
+out-of-sample aggregate, resamples to trading (business) days; that is the case where
+`TRADING_DAYS_PER_YEAR` (252) applies. The curve carries no weekend rows: a calendar-day
+index would put a zero-return Saturday and Sunday in every week, shrinking the per-period
+standard deviation by about the square root of 5/7 and the annualized Sharpe with it. The
+Deflated Sharpe's trial variance is converted to per-trading-day units to match. `Timeframe.periods_per_year()` exists for
 callers that work on bar-frequency returns directly.
 
 ## Known limitation (flagged in the glossary)
@@ -99,10 +102,12 @@ Two questions, two functions:
 1. **Is this one track record skill?** `bootstrap_null` imposes the null (demean
    the return series by its own estimated alpha), then resamples the residual
    with a **stationary (Politis–Romano) block bootstrap** — never i.i.d., since
-   active returns are autocorrelated and i.i.d. resampling would understate how
-   likely a long lucky streak is. Reports the realized IR's rank in the
+   returns are autocorrelated and i.i.d. resampling would understate how
+   likely a long lucky streak is. Reports the realized Sharpe's rank in the
    empirical null distribution: an *own* p-value with no assumption about the
-   return distribution's shape.
+   return distribution's shape. The statistic is a **Sharpe**, not an information
+   ratio: the walk-forward passes raw OOS returns, so the test asks whether the
+   mean return differs from zero, not whether it beats a benchmark.
 2. **Is the best of the configs actually tried skill?** `reality_check`
    (White's Reality Check) resamples the **same block indices across every
    trial's return series at once**, so the cross-trial correlation structure is

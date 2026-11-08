@@ -42,6 +42,7 @@ from quantred.marketdata.client import MarketDataClient
 from quantred.marketdata.timeframe import Timeframe
 from quantred.optimization.optimizer import ParameterOptimizer
 from quantred.strategies.base import Strategy, build_with_limits
+from quantred.utils.numeric import is_flat
 from quantred.utils.timeutils import shift_days
 
 logger = logging.getLogger(__name__)
@@ -107,16 +108,31 @@ class FoldResult:
     oos_legs: Dict[str, Any] = field(default_factory=dict)
 
 
-def _concat_trades(frames: List[pd.DataFrame]) -> Optional[pd.DataFrame]:
-    """Every fold's OOS trades as one frame, or ``None`` when there were none.
+def _concat_trades(frames: List[Optional[pd.DataFrame]]) -> Optional[pd.DataFrame]:
+    """Every fold's OOS trades as one frame, ordered by exit time.
 
-    ``None`` rather than an empty frame: "this validation produced no trades" and
-    "no trade detail was kept" are different facts about a run.
+    Three different facts, kept apart: ``None`` when no fold kept any trade detail (no
+    frames, or every one is ``None``) - the run says nothing about its trades; an
+    *empty* frame when detail was kept and the folds genuinely made no trades; and the
+    pooled frame otherwise. Callers that only aggregate use :func:`_pooled_trades`.
     """
-    usable = [f for f in frames if f is not None and not f.empty]
-    if not usable:
+    kept = [f for f in frames if f is not None]
+    if not kept:
         return None
-    return pd.concat(usable, ignore_index=True)
+    non_empty = [f for f in kept if not f.empty]
+    if not non_empty:
+        return pd.DataFrame()
+    combined = pd.concat(non_empty, ignore_index=True)
+    if "exit_time" in combined:
+        combined = combined.sort_values("exit_time").reset_index(drop=True)
+    return combined
+
+
+def _pooled_trades(frames: List[Optional[pd.DataFrame]]) -> pd.DataFrame:
+    """:func:`_concat_trades` for aggregation, where "no detail" and "no trades" both mean
+    there is nothing to aggregate."""
+    pooled = _concat_trades(frames)
+    return pd.DataFrame() if pooled is None else pooled
 
 
 @dataclass
@@ -130,7 +146,7 @@ class WalkForwardResult:
     n_trials_total: int
     objective: str
     pbo: Optional[float] = None
-    monte_carlo: Optional[Dict[str, float]] = None
+    monte_carlo: Optional[Dict[str, Any]] = None
     diagnostics: Dict[str, Any] = field(default_factory=dict)
     #: The concatenated OOS per-period return series (dated, daily-resampled -
     #: same construction as the aggregate's realized-P&L fallback), when any OOS
@@ -340,7 +356,10 @@ _GATE_VALUE_KINDS = {
     "deflated_sharpe": "probability",
     "deflated_sharpe_ratio": "probability",
     "probabilistic_sharpe_ratio": "probability",
-    "pbo": "probability",
+    # A share of folds, not a probability of anything: the heuristic counts how often the
+    # in-sample best ranks below the out-of-sample median. Formatted as a plain fraction so
+    # it is not read (or tail-clipped as "<0.001") like a calibrated probability.
+    "pbo": "fraction",
     # Verdict gates the chart renders beside the terminal's `.4g`: an expected active
     # return of 0.0035 is a pass that two decimals print as 0.00.
     "net_of_cost_alpha": "fine",
@@ -424,6 +443,8 @@ def format_gate_value(gate_name: str, value: Any) -> str:
         return f"{number:.0f} bars"
     if kind == "hours":
         return f"{number:.2f} h"
+    if kind == "fraction":
+        return f"{number:.3f}"
     if kind == "probability":
         # Three decimals so a failing 0.496 does not print as the 0.5 gate it missed.
         # Below that, "0.000" reads as "certainly zero" and the chart once printed the
@@ -980,11 +1001,11 @@ class WalkForwardValidator:
         produced them (see :meth:`_aggregate_oos`).
         """
         # The two curve sources run on different clocks: the engine samples per bar,
-        # the realized-P&L fallback resamples to calendar days. Annualize accordingly.
+        # the realized-P&L fallback resamples to trading (business) days. Annualize accordingly.
         if equity is None:
             equity = performance.build_equity_curve(trades, self.initial_capital)
             periods_per_year = TRADING_DAYS_PER_YEAR
-            # A rebuilt curve runs on a different clock (calendar days, not bars), so a
+            # A rebuilt curve runs on a different clock (trading days, not bars), so a
             # series aligned to the engine's curve no longer lines up with it. Dropped
             # rather than misaligned: a positional pairing that silently slips is worse
             # than an absent benchmark, because it still produces a number.
@@ -1007,7 +1028,7 @@ class WalkForwardValidator:
         )
 
     def _aggregate_oos(self, oos_trade_frames, folds, n_trials_total, var_trial_sr):
-        trades = _concat_trades(oos_trade_frames)
+        trades = _pooled_trades(oos_trade_frames)
         span_start = min((f.oos_start for f in folds), default=None)
         span_end = max((f.oos_end for f in folds), default=None)
         return self._metrics_for_trades(trades, span_start, span_end, n_trials_total, var_trial_sr)
@@ -1017,7 +1038,7 @@ class WalkForwardValidator:
         construction ``_aggregate_oos`` falls back to internally (concatenated
         multi-fold trades have no single continuous simulation curve), kept here
         with its ``DatetimeIndex`` rather than reduced to a metrics dict."""
-        trades = _concat_trades(oos_trade_frames)
+        trades = _pooled_trades(oos_trade_frames)
         equity = performance.build_dated_equity_curve(trades, self.initial_capital)
         if equity.empty:
             return None
@@ -1163,37 +1184,50 @@ class WalkForwardValidator:
 
     def monte_carlo(
         self, oos_trade_frames, n_resamples: int = 1000, block: int = 20, seed: int = 0
-    ) -> Dict[str, float]:
-        """Block-bootstrap the OOS trade sequence -> distribution of outcomes.
+    ) -> Dict[str, Any]:
+        """Block-bootstrap the OOS daily P&L -> distribution of annualized Sharpe.
 
-        Reports the 5th-percentile Sharpe ("how bad is a plausibly unlucky run").
+        Resamples blocks of *trading days* (the aggregate's own clock) and reports the
+        5th-percentile and median annualized Sharpe (``sqrt(252)·mean/std`` of a
+        resample's daily P&L) - "how bad is a plausibly unlucky run". It is a real
+        Sharpe, so it does not depend on how many trades produced a day's P&L: the
+        previous form, ``sqrt(N_trades)·mean/std`` of per-trade P&L, was a t-statistic
+        that grew with trade count whatever the strategy earned per year.
         """
-        trades = _concat_trades(oos_trade_frames)
-        pnl = trades["pnl"].to_numpy() if not trades.empty else np.array([])
+        trades = _pooled_trades(oos_trade_frames)
+        equity = performance.build_dated_equity_curve(trades, self.initial_capital)
+        pnl = np.diff(equity.to_numpy()) if len(equity) > 1 else np.array([])
         if len(pnl) < block:
-            return {"samples": 0}
+            return {"samples": 0, "periods": int(len(pnl))}
         rng = np.random.default_rng(seed)
         sharpes, returns = [], []
         n_blocks = math.ceil(len(pnl) / block)
         for _ in range(n_resamples):
             starts = rng.integers(0, len(pnl) - block + 1, size=n_blocks)
             sample = np.concatenate([pnl[s : s + block] for s in starts])[: len(pnl)]
-            std = sample.std()
-            sharpes.append(math.sqrt(len(sample)) * sample.mean() / std if std > 0 else 0.0)
+            std = sample.std(ddof=1)
+            sharpes.append(
+                math.sqrt(TRADING_DAYS_PER_YEAR) * sample.mean() / std if not is_flat(sample) else 0.0
+            )
             returns.append(sample.sum())
         return {
             "samples": n_resamples,
+            "periods": int(len(pnl)),
+            "basis": "annualized Sharpe of resampled daily P&L (trading days)",
             "sharpe_p05": float(np.percentile(sharpes, 5)),
             "sharpe_p50": float(np.percentile(sharpes, 50)),
             "return_p05": float(np.percentile(returns, 5)),
         }
 
     def estimate_pbo(self, oos_trade_frames, fold_results, objective) -> Optional[float]:
-        """Probability of backtest overfitting via a simple CSCV-style estimate.
+        """Heuristic: how often the in-sample-best fold fails to beat the OOS median.
 
-        Splits folds into IS/OOS halves over all combinations; PBO is the fraction
-        of splits where the IS-best fold ranks below the OOS median. Needs >= 4
-        folds to be meaningful.
+        Splits the *folds* into halves over all combinations and reports the fraction
+        of splits where the fold with the best in-sample score ranks below the
+        out-of-sample median of the other half. Each fold has its own tuned parameters
+        and a different window, so this ranks folds, not competing configurations
+        across symmetric partitions of one return matrix - it is a rough indicator of
+        selection decay, not the probability of backtest overfitting. Needs >= 4 folds.
         """
         from itertools import combinations
 
@@ -1235,16 +1269,6 @@ def _filter_trades_from(trades: pd.DataFrame, oos_start: datetime) -> pd.DataFra
         else entry >= pd.Timestamp(oos_start)
     )
     return trades[mask.to_numpy()].reset_index(drop=True)
-
-
-def _concat_trades(frames: List[pd.DataFrame]) -> pd.DataFrame:
-    non_empty = [f for f in frames if not f.empty]
-    if not non_empty:
-        return pd.DataFrame()
-    combined = pd.concat(non_empty, ignore_index=True)
-    if "exit_time" in combined:
-        combined = combined.sort_values("exit_time").reset_index(drop=True)
-    return combined
 
 
 def _pnl_close(a: pd.DataFrame, b: pd.DataFrame, tol: float = 1e-6) -> bool:

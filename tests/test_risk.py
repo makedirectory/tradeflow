@@ -154,7 +154,7 @@ def test_factor_model_recovers_known_factor_covariance():
     m = estimate_factor_model(returns, exposures, periods_per_year=1.0)
     assert isinstance(m, FactorRiskMatrix)
     assert m.is_positive_definite()
-    assert np.allclose(np.diag(m.factor_cov), np.diag(f_true), atol=0.01)
+    assert np.allclose(np.diag(m.factor_cov)[1:], np.diag(f_true), atol=0.01)  # [0] is the constant factor
 
 
 def test_factor_and_specific_variance_sum_to_total():
@@ -178,7 +178,7 @@ def test_compute_risk_factor_model_reports_split():
     assert r["positive_definite"]
     assert "factor_risk_share" in r
     assert abs(r["factor_risk_share"] + r["specific_risk_share"] - 1.0) < 1e-9
-    assert set(r["factor_names"]) == {"market", "momentum", "volatility", "size"}
+    assert set(r["factor_names"]) == {"intercept", "market", "momentum", "volatility", "size"}
 
 
 def test_factor_exposures_subset_relaxes_history_requirement():

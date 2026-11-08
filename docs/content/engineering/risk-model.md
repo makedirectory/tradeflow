@@ -59,6 +59,17 @@ Two estimators behind one `RiskModel.estimate(returns)` interface:
 - **`factor` (structural).** `Σ = X F Xᵀ + Δ` — a small factor model. Exposures `X`
   load each name on **market** (beta), **momentum** (12-1 trailing return),
   **volatility**, and **size** (log dollar volume), cross-sectionally standardized.
+  A constant **intercept** factor (a column of ones) is prepended to those: the
+  standardized columns each sum to zero across names, so none can carry a move that
+  lifts every name together, and without the constant that move fell into the residuals,
+  whose covariance is diagonal. In a one-factor test world with 40 names the model then
+  reported a quarter of the true equal-weight volatility and a mean correlation near
+  zero; with the intercept both match the truth. The batch and streaming estimators
+  add it identically, and it appears first in `factor_names`.
+  The model needs at least two residual degrees of freedom: with the intercept and `K−1`
+  style factors, fewer than `K+2` names are fitted exactly (specific variance of float
+  dust, a book that reads as 100% factor risk), so the factor model is unavailable there
+  and the statistical estimators are the fallback.
   Factor returns are recovered each period by a cross-sectional regression of returns
   on `X`; `F` is their covariance and `Δ` the diagonal residual variance. The parameter
   count drops from `O(N²)` to `O(N·K)`, Σ is invertible by construction, and — the

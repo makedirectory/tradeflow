@@ -504,6 +504,53 @@ def test_a_supplied_benchmark_reaches_the_metrics():
     assert result.metrics["beta"] != 0.0
 
 
+def _hold_the_benchmark_run():
+    """Fully invested in the benchmark symbol itself from the first fill to the end."""
+    import numpy as np
+
+    rng = np.random.default_rng(3)
+    n = 120
+    close = 100 * np.exp(np.cumsum(rng.normal(0, 0.01, n)))
+    opens = np.r_[100, close[:-1]]
+    frame = _frame(
+        [
+            {"open": o, "high": max(o, c) * 1.001, "low": min(o, c) * 0.999, "close": c, "volume": 1e6}
+            for o, c in zip(opens, close)
+        ]
+    )
+    strategy = ScriptedStrategy(
+        ["BUY"] + ["HOLD"] * (n - 1),
+        {
+            "stop_loss": 0.95,
+            "take_profit": 50.0,
+            "risk_per_trade": 0.9,
+            "position_limits": {"max_positions": 1, "max_position_size": 1e9, "max_total_risk": 5.0},
+        },
+    )
+    engine = BacktestEngine(strategy, MarketDataClient(DictMarketData({"SPY": frame})))
+    return engine.run(["SPY"], datetime(2024, 1, 2), datetime(2024, 12, 31), 100_000, benchmark="SPY")
+
+
+def test_a_strategy_holding_the_benchmark_has_beta_near_one():
+    """The benchmark series was labelled from 0 while the strategy's returns are
+    labelled from 1, so each strategy return was regressed on the *next* bar's benchmark
+    return. A book holding the benchmark itself (about 94% invested here) reported a beta
+    near zero and an R-squared near zero instead of about 0.94 and 1.
+    """
+    result = _hold_the_benchmark_run()
+
+    assert result.metrics["beta"] == pytest.approx(0.94, abs=0.05)
+    assert result.metrics["r_squared"] > 0.99
+
+
+def test_headline_beta_agrees_with_the_leg_beta_for_a_single_leg_book():
+    """The leg betas pair by position and were right; the headline paired by label and
+    was not, so one run printed two betas that disagreed about the same book."""
+    result = _hold_the_benchmark_run()
+
+    assert result.legs["long"]["beta"] == pytest.approx(result.metrics["beta"], abs=0.06)
+
+
 def test_no_benchmark_still_says_so():
     """The other direction: the flag means something, so its absence must too."""
     result = _bench_run(None)
@@ -1207,3 +1254,112 @@ def test_a_short_target_needs_the_price_to_trade_below_it():
 
     assert "TAKE_PROFIT" in list(run(0.0).trades["exit_reason"])
     assert "TAKE_PROFIT" not in list(run(10.0).trades["exit_reason"])
+
+
+# --- stops and targets that the bar gaps through, and the entry bar itself ------
+def _gap_rows(second):
+    return [
+        {"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1},
+        {"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1},
+        second,
+    ]
+
+
+_TIGHT = {"stop_loss": 0.03, "take_profit": 0.05}
+
+
+def test_a_long_stop_gapped_through_fills_at_the_open_not_the_stop():
+    """Entry 100, stop 97, next bar opens at 90. The exit was recorded at 97 (-30 on
+    10 shares) when a resting stop fills at the first price available, the open (-100)."""
+    rows = _gap_rows({"open": 90, "high": 92, "low": 88, "close": 91, "volume": 1})
+    strategy = ScriptedStrategy([signals.BUY, signals.HOLD, signals.HOLD], _TIGHT)
+    client = MarketDataClient(DictMarketData({"AAA": _frame(rows)}))
+    result = BacktestEngine(strategy, client).run(
+        ["AAA"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000
+    )
+
+    trade = result.trades.iloc[0]
+    assert trade["exit_reason"] == "STOP_LOSS"
+    assert trade["exit_price"] == 90
+    assert trade["gross_pnl"] == pytest.approx(-100.0)
+
+
+def test_a_stop_inside_the_bar_still_fills_at_the_stop():
+    """The other direction: no gap, so the level is the price. Without it the fix is
+    indistinguishable from one that always fills at the open."""
+    rows = _gap_rows({"open": 99, "high": 99, "low": 95, "close": 96, "volume": 1})
+    strategy = ScriptedStrategy([signals.BUY, signals.HOLD, signals.HOLD], _TIGHT)
+    client = MarketDataClient(DictMarketData({"AAA": _frame(rows)}))
+    result = BacktestEngine(strategy, client).run(
+        ["AAA"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000
+    )
+
+    assert result.trades.iloc[0]["exit_price"] == pytest.approx(97.0)
+
+
+def test_a_target_gapped_through_fills_at_the_better_open():
+    rows = _gap_rows({"open": 110, "high": 112, "low": 109, "close": 111, "volume": 1})
+    strategy = ScriptedStrategy([signals.BUY, signals.HOLD, signals.HOLD], _TIGHT)
+    client = MarketDataClient(DictMarketData({"AAA": _frame(rows)}))
+    result = BacktestEngine(strategy, client).run(
+        ["AAA"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000
+    )
+
+    trade = result.trades.iloc[0]
+    assert trade["exit_reason"] == "TAKE_PROFIT"
+    assert trade["exit_price"] == 110
+
+
+def test_a_short_stop_and_target_gapped_through_fill_at_the_open():
+    stop_rows = _gap_rows({"open": 110, "high": 112, "low": 109, "close": 111, "volume": 1})
+    take_rows = _gap_rows({"open": 90, "high": 92, "low": 88, "close": 91, "volume": 1})
+    out = {}
+    for name, rows in (("stop", stop_rows), ("take", take_rows)):
+        strategy = ScriptedStrategy([signals.SELL, signals.HOLD, signals.HOLD], _TIGHT)
+        client = MarketDataClient(DictMarketData({"AAA": _frame(rows)}))
+        out[name] = (
+            BacktestEngine(strategy, client)
+            .run(["AAA"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000)
+            .trades.iloc[0]
+        )
+
+    assert (out["stop"]["exit_reason"], out["stop"]["exit_price"]) == ("STOP_LOSS", 110)
+    assert (out["take"]["exit_reason"], out["take"]["exit_price"]) == ("TAKE_PROFIT", 90)
+
+
+def test_the_bar_an_entry_fills_on_is_checked_against_its_own_stop():
+    """Entry at bar 1's open of 100 with a stop at 97, and bar 1's low is 94. The
+    bracket rests from the fill, so the position is stopped out on its own entry bar;
+    the first bar was never checked, so it carried on and closed a bar later at the
+    wrong price (here: held to the end of the data instead of stopped for -30)."""
+    rows = [
+        {"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1},
+        {"open": 100, "high": 101, "low": 94, "close": 100, "volume": 1},
+        {"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1},
+    ]
+    strategy = ScriptedStrategy([signals.BUY, signals.HOLD, signals.HOLD], _TIGHT)
+    client = MarketDataClient(DictMarketData({"AAA": _frame(rows)}))
+    result = BacktestEngine(strategy, client).run(
+        ["AAA"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000
+    )
+
+    trade = result.trades.iloc[0]
+    assert trade["exit_reason"] == "STOP_LOSS"
+    assert trade["entry_time"] == trade["exit_time"]
+    assert trade["exit_price"] == pytest.approx(97.0)
+    assert len(result.trades) == 1
+
+
+def test_an_entry_bar_that_stays_inside_its_bracket_is_not_closed():
+    rows = [
+        {"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1},
+        {"open": 100, "high": 101, "low": 98, "close": 100, "volume": 1},
+        {"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1},
+    ]
+    strategy = ScriptedStrategy([signals.BUY, signals.HOLD, signals.HOLD], _TIGHT)
+    client = MarketDataClient(DictMarketData({"AAA": _frame(rows)}))
+    result = BacktestEngine(strategy, client).run(
+        ["AAA"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000
+    )
+
+    assert result.trades.iloc[0]["exit_reason"] == "END_OF_PERIOD"

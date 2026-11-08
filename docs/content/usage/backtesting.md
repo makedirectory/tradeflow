@@ -190,6 +190,12 @@ quantred backtest --strategy demo_trend --symbols NVDA,META,TSLA \
   Edge survives to 5x its assumed cost.
 ```
 
+The figures are illustrative. What the table does promise is the shape of the `cost`
+column: every term the stress scales - commission, the quoted spread, market impact and
+borrow - is linear in the multiple, so the cost of the 3x row is three times the 1x row
+(to within the small drift from a slightly poorer book sizing off less cash). The spread
+used to stay at its default through the stress, which made "3x" cost about 1.6x.
+
 That is a different proposition from a config that reads `+0.05%` at 1x and turns
 negative at 2x — and both are "profitable at 1bp". The curve is the point: *where* an
 edge dies matters more than whether it clears at one assumed cost.

@@ -40,7 +40,12 @@ class Trade:
     price: float
     adv: float  # trailing average daily volume (shares), as-of the trade
     daily_vol: float  # trailing daily return volatility (fraction), as-of the trade
-    spread: float = 0.0005  # quoted spread (fraction, e.g. 0.0005 = 5 bps)
+    #: Quoted spread as a fraction (0.0005 = 5 bps), or ``None`` for "the model's own".
+    #: It used to default to 5 bps here, which meant the model's configured default spread
+    #: was never consulted: every caller that did not name a spread (the engine never did)
+    #: priced at 5 bps whatever the model was built with, and scaling that default in a
+    #: stress did nothing.
+    spread: Optional[float] = None
 
     @property
     def notional(self) -> float:

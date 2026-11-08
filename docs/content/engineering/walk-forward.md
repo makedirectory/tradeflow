@@ -62,8 +62,12 @@ half-open: `Fold.oos_end` is set one microsecond before the next boundary
 - **Deflated Sharpe** with `n_trials_total` (and a session-wide `n_trials_offset`
   for the research agent) so the multiple-testing correction reflects how many
   configs were tried — **within a run**. See the scope limit below.
-- Optional, behind flags: **PBO** (CSCV-style probability of backtest
-  overfitting), **Monte-Carlo** block-bootstrap (5th-percentile Sharpe),
+- Optional, behind flags: an **IS-best rank-failure rate** (a heuristic over folds:
+  how often the fold with the best in-sample score lands below the out-of-sample median
+  of the others - it ranks folds, each with its own tuned parameters, so it is *not*
+  the probability of backtest overfitting; the result key stays `pbo`),
+  **Monte-Carlo** block-bootstrap of the daily OOS P&L (5th-percentile annualized
+  Sharpe, on the same trading-day clock as the aggregate),
   **parameter sensitivity** (±10% perturbation), and a **leakage probe** (shift
   the feed forward; identical results ⇒ the strategy reads future data ⇒ fail).
 

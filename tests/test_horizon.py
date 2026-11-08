@@ -1,5 +1,6 @@
 """Tests for information horizon / alpha decay."""
 
+import math
 from datetime import datetime
 
 import numpy as np
@@ -27,7 +28,11 @@ def test_decay_is_recovered():
 
 
 def test_peak_horizon_tracks_half_life():
-    assert abs(peak_return_horizon(4.0) - 1.2566 * 4.0) < 1e-6
+    # Peak of the profile (1 - e^-x)/sqrt(x), found by brute-force grid search here (x in decay
+    # time constants); half-lives = x / ln 2.
+    xs = [i * 1e-5 for i in range(1, 400_000)]
+    x_star = max(xs, key=lambda x: (1 - math.exp(-x)) / math.sqrt(x))
+    assert abs(peak_return_horizon(4.0) - 4.0 * x_star / math.log(2)) < 1e-3
 
 
 def test_fit_decay_handles_degenerate_profile():
@@ -67,7 +72,7 @@ def test_fit_decay_ci_is_nan_below_three_points():
 def test_blend_closed_form_and_regimes():
     # Diversify (δ > ρ) → positive lag weight; hedge (δ < ρ) → negative; equal → zero.
     w_now, w_lag = blend_weights(0.8, 0.3)
-    assert abs(w_now - (1 - 0.8 * 0.3) / (1 + 0.64 - 2 * 0.8 * 0.3)) < 1e-12
+    assert abs(w_now - (1 - 0.8 * 0.3) / ((1 + 0.8) * (1 - 0.3))) < 1e-12
     assert w_lag > 0
     assert blend_weights(0.3, 0.8)[1] < 0  # hedge
     assert abs(blend_weights(0.5, 0.5)[1]) < 1e-12  # latest-only
@@ -119,3 +124,29 @@ def test_compute_horizon_independent_of_post_end_bars():
     assert a["half_life"] == b["half_life"] or (
         a["half_life"] != a["half_life"] and b["half_life"] != b["half_life"]
     )
+
+
+def _blend_ic(w_now: float, w_lag: float, gamma: float, rho: float) -> float:
+    """IC of a blend under the two-signal model, in units of the current signal's IC."""
+    var = w_now**2 + w_lag**2 + 2 * rho * w_now * w_lag
+    return (w_now + gamma * w_lag) / var**0.5
+
+
+def test_blend_weights_maximize_ic_by_brute_force():
+    """A grid search over the weight on the current signal (lag = 1 - now) agrees with
+    the closed form; the earlier formula was neither the maximizer nor close to it."""
+    import numpy as np
+
+    for gamma, rho in [(0.5, 0.8), (0.8, 0.3), (0.3, 0.8), (0.9, 0.5), (0.6, 0.1)]:
+        grid = np.linspace(-6.0, 8.0, 280001)
+        ics = [_blend_ic(w, 1 - w, gamma, rho) for w in grid[::20]]
+        best_w = grid[::20][int(np.argmax(ics))]
+        w_now, w_lag = blend_weights(gamma, rho)
+        assert abs(w_now - best_w) < 1e-3, (gamma, rho)
+        assert abs(w_now + w_lag - 1.0) < 1e-12
+
+
+def test_blend_reviewer_case():
+    w_now, w_lag = blend_weights(0.5, 0.8)
+    assert (round(w_now, 9), round(w_lag, 9)) == (2.0, -1.0)
+    assert _blend_ic(w_now, w_lag, 0.5, 0.8) > _blend_ic(1.0 / 0.75, 1 - 1.0 / 0.75, 0.5, 0.8)

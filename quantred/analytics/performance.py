@@ -10,7 +10,7 @@ and equity curve.
 Caveat: the metrics are only as good as the curve handed in. The engine's own curve
 is marked to market at each bar's close, which a backtest and each walk-forward fold
 use. ``build_equity_curve`` instead accumulates *closed-trade* P&L resampled to
-calendar-daily - the fallback when no single simulation produced the trades, such as
+business-daily - the fallback when no single simulation produced the trades, such as
 a walk-forward's aggregate across folds - and there intra-trade drawdown is not
 captured, so ``max_drawdown``/``ulcer_index``/volatility understate risk during long
 holds. The metrics glossary states which basis applies where.
@@ -531,7 +531,7 @@ def compute_backtest_metrics(
 
 
 def build_equity_curve(trades_df: pd.DataFrame, initial_capital: float) -> List[float]:
-    """Build a daily equity curve by accumulating trade P&L at exit time."""
+    """Build a trading-day equity curve by accumulating trade P&L at exit time."""
     dated = build_dated_equity_curve(trades_df, initial_capital)
     return dated.tolist() if not dated.empty else [initial_capital]
 
@@ -547,24 +547,37 @@ def build_dated_equity_curve(trades_df: pd.DataFrame, initial_capital: float) ->
     """
     if trades_df.empty or "exit_time" not in trades_df:
         return pd.Series(dtype="float64")
-    daily_pnl = trades_df.set_index("exit_time")["pnl"].resample("D").sum().fillna(0)
+    # Business days, not calendar days: the curve is annualized at TRADING_DAYS_PER_YEAR,
+    # and a calendar-day index inserts a zero-return weekend into every week, which
+    # shrinks the per-period standard deviation by about sqrt(5/7) and so understates
+    # an annualized Sharpe by the same factor. A weekend exit is booked on the Friday
+    # bin that contains it. Exchange holidays remain zero-return days (no session
+    # calendar is available from trades alone) - a small, conservative residue.
+    daily_pnl = trades_df.set_index("exit_time")["pnl"].resample("B").sum().fillna(0)
     if daily_pnl.empty:
         return pd.Series(dtype="float64")
     equity = initial_capital + daily_pnl.cumsum()
-    first_day = equity.index[0] - pd.Timedelta(days=1)
+    first_day = equity.index[0] - pd.offsets.BDay(1)
     return pd.concat([pd.Series([initial_capital], index=[first_day]), equity])
 
 
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
+#: Weekdays in a mean calendar year; the daily equity curve has one point per weekday.
+WEEKDAYS_PER_YEAR = 365.25 * 5.0 / 7.0
+
+
 def _elapsed_years(start: Optional[datetime], end: Optional[datetime], equity_curve: List[float]) -> float:
     """Elapsed calendar years for CAGR - from the window if known, else the curve."""
     if start is not None and end is not None:
         days = (end - start).days
         return days / 365.25 if days > 0 else 0.0
-    # Fall back to the daily-resampled curve length (one point per calendar day).
-    return max(len(equity_curve) - 1, 0) / 365.25
+    # Fall back to the curve length: one point per *weekday*, holidays included as flat
+    # days. A calendar year holds 365.25 * 5/7 = 260.89 weekdays, not the 252 sessions that
+    # annualisation uses for sampling-rate scaling; dividing weekdays by 252 overstated the
+    # elapsed time (and so understated CAGR) by about 3.5%.
+    return max(len(equity_curve) - 1, 0) / WEEKDAYS_PER_YEAR
 
 
 def _exposure(trades_df: pd.DataFrame, start: Optional[datetime], end: Optional[datetime]) -> float:
