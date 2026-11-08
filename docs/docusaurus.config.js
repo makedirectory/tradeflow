@@ -11,7 +11,7 @@ const config = {
   // Served as its own site at the docs subdomain. `baseUrl` stays '/' because the
   // docs own the whole (sub)domain root; it would only change if these were ever
   // hosted under a path like mk-dir.com/docs.
-  url: 'https://tradeflow.mk-dir.com',
+  url: 'https://quantred.mk-dir.com',
   baseUrl: '/',
 
   // Broken internal links and anchors fail the build — the docs CI relies on this

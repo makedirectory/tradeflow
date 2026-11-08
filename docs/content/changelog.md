@@ -36,6 +36,8 @@ index; they are tagged in the repository.
   discovery runs, and the check read that as a pack using it, printing the warning on
   every launch. It now warns only when the old name first appears while packs are
   loading.
+- **The documentation now lives at quantred.mk-dir.com.** Links in the README, the package
+  metadata and the CLI's hints follow it; the old address keeps working as a redirect.
 
 ## 2.4.0 — 2026-11-07
 

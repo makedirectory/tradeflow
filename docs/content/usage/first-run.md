@@ -100,7 +100,7 @@ QuantRed setup check
   blocked for: data (APCA_API_KEY_ID, APCA_API_SECRET_KEY)
   blocked for: research (APCA_API_KEY_ID, APCA_API_SECRET_KEY, model provider)
 
-  Also not installed (optional): viz - what each unlocks and how to add it: https://tradeflow.mk-dir.com/usage/extras
+  Also not installed (optional): viz - what each unlocks and how to add it: https://quantred.mk-dir.com/usage/extras
 ```
 
 That is a trimmed example from a machine with no keys; your rows will differ (the

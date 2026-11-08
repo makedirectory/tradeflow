@@ -102,11 +102,11 @@ quantred = "quantred.cli:main"
 # upgrade or uninstall of one delete the other's copy.
 
 [project.urls]
-Homepage = "https://tradeflow.mk-dir.com/"
-Documentation = "https://tradeflow.mk-dir.com/"
+Homepage = "https://quantred.mk-dir.com/"
+Documentation = "https://quantred.mk-dir.com/"
 Source = "https://github.com/makedirectory/quantred"
 Issues = "https://github.com/makedirectory/quantred/issues"
-Changelog = "https://tradeflow.mk-dir.com/changelog"
+Changelog = "https://quantred.mk-dir.com/changelog"
 
 [build-system]
 requires = ["hatchling"]

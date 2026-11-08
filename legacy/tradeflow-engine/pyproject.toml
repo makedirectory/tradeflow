@@ -45,7 +45,7 @@ tradeflow = "quantred.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/makedirectory/quantred"
-Documentation = "https://tradeflow.mk-dir.com/usage/migrating-to-quantred"
+Documentation = "https://quantred.mk-dir.com/usage/migrating-to-quantred"
 Source = "https://github.com/makedirectory/quantred"
 Issues = "https://github.com/makedirectory/quantred/issues"
 

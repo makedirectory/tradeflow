@@ -91,7 +91,7 @@ jobs:
           if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
             echo "::error title=Missing deploy credentials::CLOUDFLARE_API_TOKEN is not set."
             echo ""
-            echo "The docs site cannot deploy without it, so tradeflow.mk-dir.com will"
+            echo "The docs site cannot deploy without it, so quantred.mk-dir.com will"
             echo "keep serving whatever was last published by hand."
             echo ""
             echo "Add it at: Settings -> Secrets and variables -> Actions"
