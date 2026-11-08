@@ -356,7 +356,10 @@ _GATE_VALUE_KINDS = {
     "deflated_sharpe": "probability",
     "deflated_sharpe_ratio": "probability",
     "probabilistic_sharpe_ratio": "probability",
-    "pbo": "probability",
+    # A share of folds, not a probability of anything: the heuristic counts how often the
+    # in-sample best ranks below the out-of-sample median. Formatted as a plain fraction so
+    # it is not read (or tail-clipped as "<0.001") like a calibrated probability.
+    "pbo": "fraction",
     # Verdict gates the chart renders beside the terminal's `.4g`: an expected active
     # return of 0.0035 is a pass that two decimals print as 0.00.
     "net_of_cost_alpha": "fine",
@@ -440,6 +443,8 @@ def format_gate_value(gate_name: str, value: Any) -> str:
         return f"{number:.0f} bars"
     if kind == "hours":
         return f"{number:.2f} h"
+    if kind == "fraction":
+        return f"{number:.3f}"
     if kind == "probability":
         # Three decimals so a failing 0.496 does not print as the 0.5 gate it missed.
         # Below that, "0.000" reads as "certainly zero" and the chart once printed the

@@ -394,3 +394,19 @@ def test_streaming_factor_model_matches_batch_with_the_intercept_on_a_one_factor
     assert got.specific_var == pytest.approx(spec, rel=1e-8)
     # the world is built so this matters: the market factor's variance is about 252 * 1e-4
     assert f_cov[0, 0] == pytest.approx(252 * 0.01**2, rel=0.3)
+
+
+@pytest.mark.parametrize("n_names, expect_model", [(3, False), (4, False), (5, False), (6, False), (7, True)])
+def test_factor_model_is_unavailable_when_names_leave_no_residual(n_names, expect_model):
+    """With the intercept plus four style factors (K = 5), N <= 6 names leave fewer than two
+    residual degrees of freedom: the regression fits every name (specific variance of order
+    1e-31) and the book reads as 100% factor risk. Unavailable beats a confident fiction;
+    N = K + 2 is the boundary that is accepted."""
+    rng = np.random.default_rng(4)
+    names = [f"S{i}" for i in range(n_names)]
+    returns = pd.DataFrame(rng.normal(0, 0.01, (250, n_names)), columns=names)
+    exposures = pd.DataFrame(rng.normal(size=(n_names, 4)), index=names, columns=list("abcd"))
+    got = estimate_factor_model(returns, exposures, 252.0)
+    assert (got is not None) is expect_model
+    if got is not None:
+        assert float(got.specific_var.min()) > 1e-6  # genuine residual, not float dust

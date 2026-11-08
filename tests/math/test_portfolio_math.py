@@ -363,20 +363,61 @@ def test_trading_rate_limits_and_undefined_cases():
     assert policy.derive_kappa(0.0, 0.04, 1.0) is None
 
 
-def test_aim_discount_matches_the_value_iteration_of_the_signal_weight():
-    """Aim coefficient from the fixed point of the two-state recursion with a decaying
-    signal f' = delta f: policy weight on f settles at mu, discount = mu * 2 s / a-scale.
-    Verified here against the closed form kappa / (1 - delta (1 - kappa)) by iterating
-    the linear map for the weight."""
-    s, c2, phi = 0.08, 0.5, 0.35
+def _aim_discount_by_bellman(s, c2, delta):
+    """Solve the control problem by value iteration, sharing no formula with the package.
+
+    Each period choose the new position x (trade d = x - w) to maximise
+    ``f x - s x^2 - (c2/2) d^2 + V(x, delta f)`` with ``V(w, f) = -A w^2 + B w f - C f^2``.
+    A is iterated to its fixed point first (it does not depend on the signal). Then B is
+    iterated by *numerically* maximising over x at the four corners of a (w, f) square and
+    reading the w*f coefficient as a mixed second difference, so no closed form for the
+    maximiser is used. The policy's weight on f is the finite-difference d x*/d f at w = 0;
+    the aim portfolio is f/(2s) (the one-period Markowitz solve), so the discount is that
+    weight over (kappa * f/(2s)).
+    """
+    from scipy.optimize import minimize_scalar
+
+    a = 0.0
+    for _ in range(100_000):
+        ell = s + a
+        nxt = ell * (c2 / 2) / (ell + c2 / 2)
+        if abs(nxt - a) < 1e-15:
+            break
+        a = nxt
+    kappa = 2 * (s + a) / (2 * (s + a) + c2)
+
+    def best(w, f, b):
+        def neg(x):
+            return -(f * x - s * x * x - (c2 / 2) * (x - w) ** 2 - a * x * x + b * delta * x * f)
+
+        res = minimize_scalar(neg, bounds=(-60, 60), method="bounded", options={"xatol": 1e-13})
+        return res.x, -res.fun
+
+    b = 0.0
+    for _ in range(500):
+        v = {(w, f): best(w, f, b)[1] for w in (-1.0, 1.0) for f in (-1.0, 1.0)}
+        # mixed second difference of V isolates the w*f coefficient: B = (V++ - V+- - V-+ + V--)/4
+        b_new = (v[(1.0, 1.0)] - v[(1.0, -1.0)] - v[(-1.0, 1.0)] + v[(-1.0, -1.0)]) / 4
+        if abs(b_new - b) < 1e-13:
+            break
+        b = b_new
+    h = 1e-3
+    weight_on_f = (best(0.0, h, b)[0] - best(0.0, -h, b)[0]) / (2 * h)
+    return kappa, weight_on_f * 2 * s / kappa
+
+
+@pytest.mark.parametrize("s, c2, phi", [(0.08, 0.5, 0.35), (0.02, 0.3, 1.2), (0.3, 0.05, 0.05)])
+def test_aim_discount_matches_a_bellman_value_iteration(s, c2, phi):
+    """The discount on a decaying signal comes from solving the dynamic program, not from
+    restating ``kappa / (1 - delta (1 - kappa))``: the value function is iterated to its
+    fixed point and the closed form is read against the resulting policy. The common
+    small-phi shortcut kappa/(kappa+phi) is also shown to be off at large phi."""
+    kappa_ref, discount_ref = _aim_discount_by_bellman(s, c2, math.exp(-phi))
     kappa = policy.derive_kappa(1.0, s, c2)
-    delta = math.exp(-phi)
-    # The weight on the signal obeys m = kappa + (1 - kappa) delta m (partial adjustment
-    # toward an aim that itself decays); iterate to the fixed point.
-    m_ = 0.0
-    for _ in range(10_000):
-        m_ = kappa + (1 - kappa) * delta * m_
-    assert policy.discount_factor(kappa, phi) == pytest.approx(m_, rel=1e-12)
+    assert kappa == pytest.approx(kappa_ref, rel=1e-9)
+    assert policy.discount_factor(kappa, phi) == pytest.approx(discount_ref, rel=1e-6)
+    if phi >= 1.0:
+        assert abs(kappa / (kappa + phi) - discount_ref) > 0.03 * discount_ref
     assert policy.discount_factor(kappa, 0.0) == 1.0 and policy.discount_factor(0.0, phi) == 0.0
 
 

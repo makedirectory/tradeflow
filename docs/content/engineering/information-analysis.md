@@ -51,7 +51,15 @@ BR_eff ≈ (rebalances/yr) · N / (1 + (N−1)·ρ̄)
 deflates it by the average pairwise correlation `ρ̄` of the names' *residual* returns
 (`r − β·r_benchmark`, the same residuals the IC is measured on — total-return correlations
 carry the market move the IC has already removed, so they over-deflate breadth, and they
-would change with `--risk-model`; `ρ̄` no longer does): perfectly correlated bets (`ρ̄→1`) collapse to one bet per rebalance. Reporting
+would change with `--risk-model`; `ρ̄` no longer does): perfectly correlated bets (`ρ̄→1`) collapse to one bet per rebalance.
+
+Histories need not be equal: each name's `β` is estimated over its own overlap with the
+benchmark and each pair's correlation over the bars both residuals exist (at least 20), then
+averaged over the pairs that qualify. Truncating every name to the shortest history would let
+one recent listing erase what the rest say about their dependence. When fewer than half of
+all pairs qualify, `ρ̄` is **unavailable** and so are the effective breadth and the predicted
+IR - the report says so, because `ρ̄ = 0` would mean "independent bets" and undeflated
+breadth, the most optimistic answer for the case where nothing is known. Reporting
 `BR_eff` vs `BR_naive` exposes the single most common self-deception in quant —
 *thinking you have 500 bets when you have 3.*
 

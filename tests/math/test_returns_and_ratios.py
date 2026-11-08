@@ -97,11 +97,11 @@ def test_cagr_inside_the_metrics_uses_365_25_day_years():
     assert out["total_return"] == pytest.approx(21.0, rel=1e-12)
 
 
-def test_cagr_without_a_window_falls_back_to_the_curve_length_in_trading_days():
+def test_cagr_without_a_window_falls_back_to_the_curve_length_in_weekdays():
     trades = pd.DataFrame({"pnl": [21.0]})
-    curve = [100.0] * 253 + [121.0]  # 253 steps
+    curve = [100.0] * 253 + [121.0]  # 253 weekday steps = 253 / 260.89 years
     out = performance.compute_backtest_metrics(trades, curve, 100.0, 121.0, {})
-    assert out["cagr"] == pytest.approx((1.21 ** (252 / 253) - 1) * 100, rel=1e-12)
+    assert out["cagr"] == pytest.approx((1.21 ** (365.25 * 5 / 7 / 253) - 1) * 100, rel=1e-12)
 
 
 def test_calmar_and_sterling_keep_the_sign_of_the_return():
@@ -380,3 +380,20 @@ def test_scale_between_rates_is_the_square_root_of_their_ratio():
         assert m.sortino_ratio(r, fast) / m.sortino_ratio(r, slow) == pytest.approx(
             math.sqrt(fast / slow), rel=1e-12
         )
+
+
+def test_elapsed_years_fallback_counts_weekdays_per_year_not_sessions():
+    """Without a window the daily curve has one point per weekday (holidays are flat days),
+    and a mean calendar year holds 365.25 * 5 / 7 = 260.89 weekdays. Dividing by 252
+    overstated elapsed time, and so understated CAGR, by 260.89 / 252 - 1 = 3.5%."""
+    from quantred.analytics.performance import _elapsed_years
+
+    # one full year of weekdays: Monday 2024-01-01 .. Friday 2024-12-27 plus Dec 30/31 -> 261 steps
+    days = pd.bdate_range("2024-01-01", "2024-12-31")
+    curve = list(range(len(days)))
+    assert len(days) == 262
+    got = _elapsed_years(None, None, curve)
+    calendar_years = (days[-1] - days[0]).days / 365.25 + 1 / 365.25  # inclusive of the last day
+    assert got == pytest.approx(calendar_years, rel=0.01)
+    assert got == pytest.approx((len(curve) - 1) / (365.25 * 5 / 7), rel=1e-12)
+    assert abs(got - (len(curve) - 1) / 252) > 0.03  # the old divisor is distinguishable here

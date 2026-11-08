@@ -65,6 +65,19 @@ def with_intercept(exposures: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def has_residual_degrees_of_freedom(n_names: int, n_factors: int) -> bool:
+    """Whether a cross-section of ``n_names`` leaves any residual after ``n_factors`` factors.
+
+    ``n_factors`` counts the intercept. With ``N <= K`` the per-period regression fits every
+    name exactly (zero residual), and with ``N = K + 1`` it leaves one degree of freedom, so
+    the "specific variance" is a single noisy direction: the book is reported as ~100%
+    factor risk (specific variance of order 1e-31) when that is an artefact of too few names.
+    Require at least two residual degrees of freedom (``N >= K + 2``); below that the factor
+    model is unavailable and the caller falls back to a statistical estimator.
+    """
+    return n_names > n_factors + 1
+
+
 def estimate_factor_model(
     returns: pd.DataFrame, exposures: pd.DataFrame, periods_per_year: float
 ) -> Optional[FactorRiskMatrix]:
@@ -74,13 +87,16 @@ def estimate_factor_model(
     per period by cross-sectional OLS ``f_t = (XᵀX)⁻¹ Xᵀ r_t``; ``F`` is their
     covariance and ``Δ`` the residual variance per name (both annualized). A constant
     ``intercept`` factor is prepended (see :func:`with_intercept`). Returns
-    ``None`` if too few names/periods overlap.
+    ``None`` if too few names/periods overlap, or too few names to leave a residual after
+    the factors (see :func:`has_residual_degrees_of_freedom`).
     """
     names = [c for c in returns.columns if c in exposures.index]
     if len(names) < 2 or len(returns) < 2:
         return None
 
     exposures = with_intercept(exposures)
+    if not has_residual_degrees_of_freedom(len(names), exposures.shape[1]):
+        return None
     r = returns[names].to_numpy()  # T×N
     x = exposures.loc[names].to_numpy()  # N×K
     xtx_inv = np.linalg.pinv(x.T @ x)  # K×K (pinv guards a thin/collinear X)

@@ -264,3 +264,15 @@ def test_there_is_one_trade_concatenation_helper_in_the_package():
         if isinstance(node, ast.FunctionDef) and node.name == "_concat_trades"
     ]
     assert defs == ["optimization/walk_forward.py"]
+
+
+def test_pbo_heuristic_is_formatted_as_a_fraction_not_a_clipped_probability():
+    """The IS-best-fold rank-failure rate was formatted like a calibrated probability, so
+    a tiny rate printed as "<0.001" and a high one as ">0.999". It is a share of folds."""
+    from quantred.optimization.walk_forward import PROBABILITY_METRICS, format_gate_value
+
+    assert "pbo" not in PROBABILITY_METRICS
+    assert format_gate_value("pbo", 0.0001) == "0.000"
+    assert format_gate_value("pbo", 0.9999) == "1.000"
+    assert format_gate_value("pbo", 0.5) == "0.500"
+    assert format_gate_value("deflated_sharpe", 0.0001) == "<0.001"  # a real probability still clips

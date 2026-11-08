@@ -564,13 +564,20 @@ def build_dated_equity_curve(trades_df: pd.DataFrame, initial_capital: float) ->
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
+#: Weekdays in a mean calendar year; the daily equity curve has one point per weekday.
+WEEKDAYS_PER_YEAR = 365.25 * 5.0 / 7.0
+
+
 def _elapsed_years(start: Optional[datetime], end: Optional[datetime], equity_curve: List[float]) -> float:
     """Elapsed calendar years for CAGR - from the window if known, else the curve."""
     if start is not None and end is not None:
         days = (end - start).days
         return days / 365.25 if days > 0 else 0.0
-    # Fall back to the trading-day curve length (one point per business day).
-    return max(len(equity_curve) - 1, 0) / m.TRADING_DAYS_PER_YEAR
+    # Fall back to the curve length: one point per *weekday*, holidays included as flat
+    # days. A calendar year holds 365.25 * 5/7 = 260.89 weekdays, not the 252 sessions that
+    # annualisation uses for sampling-rate scaling; dividing weekdays by 252 overstated the
+    # elapsed time (and so understated CAGR) by about 3.5%.
+    return max(len(equity_curve) - 1, 0) / WEEKDAYS_PER_YEAR
 
 
 def _exposure(trades_df: pd.DataFrame, start: Optional[datetime], end: Optional[datetime]) -> float:
