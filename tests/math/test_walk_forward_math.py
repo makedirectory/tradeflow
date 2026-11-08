@@ -186,7 +186,7 @@ def test_pbo_is_lower_when_selection_persists_than_when_it_reverses_and_needs_fo
     scores = [1, 2, 3, 4, 5, 6]
     persistent = v.estimate_pbo([], _folds(scores, scores), "sharpe_ratio")
     reversed_ = v.estimate_pbo([], _folds(scores, scores[::-1]), "sharpe_ratio")
-    assert persistent == pytest.approx(0.2) and reversed_ > 0.9  # 4 of 20 splits vs nearly all
+    assert persistent == pytest.approx(0.2) and reversed_ == pytest.approx(0.8)  # 4 of 20 splits vs 16 of 20 (brute force)
     assert v.estimate_pbo([], _folds([1, 2, 3], [3, 2, 1]), "sharpe_ratio") is None
 
 
