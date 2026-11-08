@@ -44,9 +44,13 @@ live. Each step:
    class as the signal one above, in the admission gate rather than the signal, and just
    as invisible to a feed shift. The excursion extremes stay full-bar: they are reported,
    never consulted by a decision, and the worst and best a position saw is the point.
-2. **Exit** — stop-loss, take-profit, then signal exit, in that order. Stop/take
-   fill at their level; a signal exit fills at the next open. Exits run *before*
-   entries, so capital freed this bar is reusable this bar.
+2. **Exit** — stop-loss, take-profit, then signal exit, in that order. A stop or
+   target fills at its level when the bar trades through it, and at the *open* when the
+   bar opens beyond it: a long with a stop at 97 on a bar opening at 90 exits at 90, a
+   target gapped through fills at the better open (`min`/`max` against the open; the
+   live bracket's stop is a resting order and behaves the same way). A signal exit
+   fills at the next open. Exits run *before* entries, so capital freed this bar is
+   reusable this bar.
 3. **Rank** entry candidates across the whole universe by the strategy's own
    conviction score, descending, ties broken by symbol so a run is reproducible.
 4. **Admit** in that order while `max_positions`, `max_total_risk`,
@@ -54,6 +58,13 @@ live. Each step:
    `Strategy.calculate_position_size` as before, but against *free cash*, which is
    what makes positions actually compete. The two portfolio fractions are not the
    same measurement — see [what `max_total_risk` caps](../usage/configuration.md#what-max_total_risk-caps).
+   Once the whole admission pass is done, each position entered on this bar is checked
+   against the bar's range for its stop and target - the bracket rests from the fill,
+   so an entry whose own bar breaches its stop is stopped out on that bar (stop and
+   target only; the signal that opened it cannot close it). It is after the pass, not
+   inside it, because every entry fills at the same open and a slot freed intra-bar
+   was not free when the next candidate was considered. Before accounting v7 the entry
+   bar was never checked.
 5. **Record** portfolio equity — cash plus positions re-marked to *this bar's close*.
    Everything that transacts on the bar has happened by now, so the curve is an
    end-of-bar mark-to-market as it has always been. Only the decisions are held to the
