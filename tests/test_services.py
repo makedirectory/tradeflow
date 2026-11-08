@@ -1064,3 +1064,27 @@ def test_journaling_is_on_unless_a_caller_opts_out():
     import inspect
 
     assert inspect.signature(analysis.run_backtest).parameters["journal"].default is True
+
+
+def test_summarize_bars_annualises_volatility_by_the_timeframes_bar_rate():
+    """The volatility used 252 bars/year whatever the timeframe asked for, so an hourly
+    summary was understated by sqrt(1638/252)."""
+    import math
+
+    import numpy as np
+    import pandas as pd
+
+    rng = np.random.default_rng(3)
+    close = 100 * np.cumprod(1 + rng.normal(0, 0.002, 200))
+    frame = pd.DataFrame({"open": close, "high": close, "low": close, "close": close, "volume": 1000.0})
+
+    class Stub:
+        def get_bars(self, symbols, timeframe, start, end):
+            return {"AAA": frame}
+
+    per_bar = float(np.std(close[1:] / close[:-1] - 1, ddof=1))
+    for tf, rate in [("1Day", 252), ("1Hour", 1638), ("5Min", 19656)]:
+        out = analysis.summarize_bars(Stub(), ["AAA"], tf, 30)
+        assert out["symbols"]["AAA"]["annualized_vol_pct"] == pytest.approx(
+            per_bar * math.sqrt(rate) * 100, rel=1e-9
+        )

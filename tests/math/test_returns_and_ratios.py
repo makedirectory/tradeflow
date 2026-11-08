@@ -327,3 +327,56 @@ def test_zero_trade_run_reports_the_empty_metrics_without_nan():
     for key, value in out.items():
         if isinstance(value, float):
             assert math.isfinite(value), key
+
+
+# --------------------------------------------------------------------------- #
+# The annualisation argument: every ratio scales with the series' own sampling rate
+# --------------------------------------------------------------------------- #
+#: bars per year for weekly, daily, hourly (6.5 trading hours) and 5-minute bars
+RATES = [52, 252, 1638, 19656]
+
+
+def _returns_sample():
+    rng = np.random.default_rng(11)
+    return list(rng.normal(0.0004, 0.01, 400))
+
+
+@pytest.mark.parametrize("ppy", RATES)
+def test_ratios_scale_with_the_sampling_rate_passed_in(ppy):
+    """Hard-coding sqrt(252) inside Sortino was caught by no test: the metric agreed with
+    its reference at the default rate only. Every closed form is evaluated at each rate."""
+    r = _returns_sample()
+    mu, sd = _mean(r), _std(r)
+    shortfall = math.sqrt(sum(min(x, 0.0) ** 2 for x in r) / len(r))
+    bench = [x * 0.5 + 0.001 * math.sin(i) for i, x in enumerate(r)]
+    active = [a - b for a, b in zip(r, bench)]
+    assert m.sharpe_ratio(r, ppy) == pytest.approx(math.sqrt(ppy) * mu / sd, rel=1e-12)
+    assert m.sortino_ratio(r, ppy) == pytest.approx(math.sqrt(ppy) * mu / shortfall, rel=1e-12)
+    assert m.annualized_volatility(r, ppy) == pytest.approx(sd * math.sqrt(ppy), rel=1e-12)
+    assert m.downside_deviation(r, ppy) == pytest.approx(shortfall * math.sqrt(ppy), rel=1e-12)
+    assert m.information_ratio(r, bench, ppy) == pytest.approx(
+        math.sqrt(ppy) * _mean(active) / _std(active), rel=1e-12
+    )
+    # Treynor annualises the mean linearly, not by a root
+    assert m.treynor_ratio(r, 1.25, ppy) == pytest.approx(mu * ppy / 1.25, rel=1e-12)
+
+
+def test_cagr_and_calmar_follow_elapsed_years_not_the_bar_count():
+    # 100 -> 150 over 3 years: (1.5)^(1/3) - 1; Calmar divides by the magnitude of the drawdown
+    equity = [100.0, 120.0, 90.0, 150.0]
+    expected = 1.5 ** (1 / 3) - 1
+    assert m.cagr(equity, 3.0) == pytest.approx(expected, rel=1e-12)
+    # the same four points stretched over 0.25 years compound very differently
+    assert m.cagr(equity, 0.25) == pytest.approx(1.5**4 - 1, rel=1e-12)
+    assert m.calmar_ratio(expected, -0.25) == pytest.approx(expected / 0.25, rel=1e-12)
+
+
+def test_scale_between_rates_is_the_square_root_of_their_ratio():
+    r = _returns_sample()
+    for slow, fast in [(52, 252), (252, 1638), (1638, 19656)]:
+        assert m.sharpe_ratio(r, fast) / m.sharpe_ratio(r, slow) == pytest.approx(
+            math.sqrt(fast / slow), rel=1e-12
+        )
+        assert m.sortino_ratio(r, fast) / m.sortino_ratio(r, slow) == pytest.approx(
+            math.sqrt(fast / slow), rel=1e-12
+        )

@@ -1,4 +1,3 @@
-
 """Tests for information horizon / alpha decay."""
 
 import math

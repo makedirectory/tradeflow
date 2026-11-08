@@ -2756,6 +2756,8 @@ def summarize_bars(
     start = end - timedelta(days=lookback_days)
     bars = data_client.get_bars(symbols, timeframe, start, end)
 
+    # Bars of this timeframe per trading year: a 1-hour bar is not 1/252 of a year.
+    bar_rate = int(round(Timeframe.parse(timeframe).periods_per_year()))
     out: Dict[str, Any] = {}
     for symbol in symbols:
         frame = bars.get(symbol)
@@ -2772,7 +2774,7 @@ def summarize_bars(
             "bars": int(len(frame)),
             "last_close": float(close.iloc[-1]),
             "period_return_pct": float((close.iloc[-1] / close.iloc[0] - 1) * 100),
-            "annualized_vol_pct": float(m.annualized_volatility(returns) * 100),
+            "annualized_vol_pct": float(m.annualized_volatility(returns, bar_rate) * 100),
             "trend": "up" if sma_fast >= sma_slow else "down",
             "max_drawdown_pct": float(m.max_drawdown(close) * 100),
             "avg_volume": float(volume.mean()),
