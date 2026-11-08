@@ -1,0 +1,25 @@
+{
+ "provenance": {
+  "accounting_version": 7,
+  "generated_by": "QUANTRED_REGEN_GOLDEN=1 pytest tests/math -k golden (tests/math/test_golden_pins.py)",
+  "scenario": "three-entry sizing sequence on both clocks; kappa; Black-Litterman",
+  "seed": "seed 0 / closed form"
+ },
+ "values": {
+  "backtest_notionals.0": 2500.0,
+  "backtest_notionals.1": 1850.0,
+  "backtest_notionals.2": 1400.0,
+  "discount_phi_0_3": 0.6530844324996101,
+  "kappa": 0.32792156108742276,
+  "live_notionals.0": 2500.0,
+  "live_notionals.1": 1850.0,
+  "live_notionals.2": 1400.0,
+  "posterior.A": 0.014014372368639878,
+  "posterior.B": 0.0011574921004490276,
+  "posterior.C": -0.007844057174367817,
+  "tau": 0.008333333333333333,
+  "trading_half_life": 2.113759090013464,
+  "view_omega.A": 0.0017361111111111112,
+  "view_omega.C": 0.0012056327160493829
+ }
+}
