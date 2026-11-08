@@ -380,14 +380,16 @@ def test_the_previous_distribution_beside_this_one_is_not_warned_about(monkeypat
             [_FakeDistEntryPoint("demo_trend", "tradeflow.strategies", OldCopyOfDemo, "tradeflow-engine")]
         ),
     )
-    with caplog.at_level(logging.DEBUG, logger=registry.logger.name):
-        try:
+    try:
+        with caplog.at_level(logging.DEBUG, logger=registry.logger.name):
             registry.refresh_registries()
-            assert registry.STRATEGIES["demo_trend"] is DemoTrendStrategy
-        finally:
-            monkeypatch.undo()
-            registry.refresh_registries()
-    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert registry.STRATEGIES["demo_trend"] is DemoTrendStrategy
+        # Checked before the restoring refresh below, which enumerates the real
+        # environment: a broken pack installed there would warn, and that is not this.
+        assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+    finally:
+        monkeypatch.undo()
+        registry.refresh_registries()
 
 
 def test_a_pack_with_a_distribution_of_its_own_is_still_discovered(monkeypatch):
