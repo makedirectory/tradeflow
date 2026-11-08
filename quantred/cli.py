@@ -121,12 +121,18 @@ def build_cost_model(args):
     research-clock entrypoint that can run a search or a validation, not just
     ``backtest``.
     """
-    from quantred.costs import ParametricCostModel
+    from quantred.costs.parametric import DEFAULT_PARTICIPATION_CAP
+    from quantred.services.analysis import build_cost_model as _build
 
-    if args.gross:
-        return None
-    return ParametricCostModel(
-        commission_bps=args.commission_bps, impact_eta=args.impact_eta, annual_borrow_bps=args.borrow_bps
+    # One definition, shared with the service: this used to construct its own and omit
+    # `participation_cap`, so a request carrying a non-default cap was priced differently
+    # here than over MCP. Commands without the flag take the model's own default.
+    return _build(
+        args.gross,
+        args.commission_bps,
+        args.impact_eta,
+        getattr(args, "participation_cap", DEFAULT_PARTICIPATION_CAP),
+        args.borrow_bps,
     )
 
 

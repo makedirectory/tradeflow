@@ -31,6 +31,7 @@ from quantred.alphas import (
 from quantred.analytics import metrics as m
 from quantred.analytics import performance, series_comparison
 from quantred.analytics.reporting import CAPACITY_SEARCH_CEILING, CAPACITY_SEARCH_FLOOR
+from quantred.costs.parametric import DEFAULT_SPREAD_BPS
 from quantred.data import (
     ClientBarSource,
     FeaturePanel,
@@ -196,18 +197,24 @@ def _refuse_unusable_window(start: datetime, end: datetime) -> None:
         raise RunRefused(problem[0].upper() + problem[1:])
 
 
-def _build_cost_model(
+def build_cost_model(
     gross: bool,
     commission_bps: float,
     impact_eta: float,
     participation_cap: float,
     borrow_bps: float,
+    spread_bps: float = DEFAULT_SPREAD_BPS,
 ):
     """Shared cost-model construction for run_backtest/run_optimization/
     run_walk_forward - so a search or validation prices trades the same way a
     live backtest does. ``None`` (i.e. ``gross=True``) reliably favors the
     highest-turnover config, so this must reach every entrypoint that can run a
-    search or a validation, not just run_backtest."""
+    search or a validation, not just run_backtest.
+
+    The one definition the CLI's ``build_cost_model`` delegates to: the CLI used to
+    build its own and left out ``participation_cap``, so the two surfaces priced the
+    same request with different models whenever that cap was not the default.
+    """
     from quantred.costs import ParametricCostModel
 
     if gross:
@@ -217,6 +224,7 @@ def _build_cost_model(
         impact_eta=impact_eta,
         participation_cap=participation_cap,
         annual_borrow_bps=borrow_bps,
+        default_spread_bps=spread_bps,
     )
 
 
@@ -355,7 +363,12 @@ def walk_forward_recipe(
 
 
 def _cost_key(
-    gross: bool, commission_bps: float, impact_eta: float, borrow_bps: float, vintage: Optional[str] = None
+    gross: bool,
+    commission_bps: float,
+    impact_eta: float,
+    borrow_bps: float,
+    vintage: Optional[str] = None,
+    spread_bps: float = DEFAULT_SPREAD_BPS,
 ) -> Dict[str, Any]:
     """The cost-model assumptions folded into a trial's dedup key - same shape as
     the CLI's ``main._cost_key`` so a trial recorded via one surface is found by
@@ -372,6 +385,12 @@ def _cost_key(
             "borrow_bps": borrow_bps,
         }
     )
+    # Folded only when it differs from the default, so every run priced at the default
+    # spread keeps the identity it already had - and the CLI, which has no spread flag,
+    # keeps producing the same key. A stress point at a scaled spread is a different
+    # experiment and must not be answered by the unscaled one.
+    if not gross and spread_bps != DEFAULT_SPREAD_BPS:
+        key["spread_bps"] = spread_bps
     if vintage is not None:
         key["_vintage"] = vintage
     return key
@@ -585,6 +604,7 @@ def run_backtest(
     force: bool = False,
     journal: bool = True,
     record_trades: bool = False,
+    spread_bps: float = DEFAULT_SPREAD_BPS,
 ) -> Dict[str, Any]:
     """Backtest a strategy; return the full metrics dict + a path to the trades CSV.
 
@@ -616,7 +636,7 @@ def run_backtest(
     vintage = vintage_stamp(data_client, symbols, strat.config["timeframe"], start, end)
     dedup_params = {
         **_tunable_params(strat),
-        "_cost": _cost_key(gross, commission_bps, impact_eta, borrow_bps, vintage),
+        "_cost": _cost_key(gross, commission_bps, impact_eta, borrow_bps, vintage, spread_bps),
         **limits_key(strat.position_limits()),
         **backtest_run_key(capital, benchmark, beta_sizing, take_profit_margin_bps),
     }
@@ -647,7 +667,7 @@ def run_backtest(
             )
 
     sizer = build_beta_sizer(data_client, strat, symbols, benchmark, as_of=start) if beta_sizing else None
-    cost_model = _build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
+    cost_model = build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps, spread_bps)
     result = BacktestEngine(
         strat,
         data_client,
@@ -998,7 +1018,7 @@ def run_optimization(
 
     run_id = new_run_id()
     cls = resolve_strategy_class(strategy)
-    cost_model = _build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
+    cost_model = build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
     from quantred.services.data import vintage_stamp
 
     vintage = vintage_stamp(data_client, symbols, cls.create_with_defaults().config["timeframe"], start, end)
@@ -1202,7 +1222,7 @@ def run_screen(
     run_id = new_run_id()
     cls = resolve_strategy_class(strategy)
     space = ParameterSpace(screen_ranges(cls, param_ranges), getattr(cls, "PARAM_CONSTRAINTS", ()) or ())
-    cost_model = _build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
+    cost_model = build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
 
     # Fetched once, then served from memory to every evaluation. A screen that refetched
     # per candidate would be the thing it exists to replace: a shell loop over N runs.
@@ -1422,7 +1442,7 @@ def run_causality_probes(
         start,
         end,
         capital=capital,
-        cost_model=_build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps),
+        cost_model=build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps),
         benchmark=benchmark,
         sample=sample,
         scan=scan,
@@ -1542,7 +1562,7 @@ def run_walk_forward(
 
     run_id = new_run_id()
     cls = resolve_strategy_class(strategy)
-    cost_model = _build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
+    cost_model = build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
     from quantred.services.data import vintage_stamp
 
     vintage = vintage_stamp(data_client, symbols, cls.create_with_defaults().config["timeframe"], start, end)
@@ -2018,6 +2038,10 @@ def run_cost_stress(
             impact_eta=impact_eta * scale_turnover,
             participation_cap=participation_cap,
             borrow_bps=borrow_bps * scale_borrow,
+            # The spread is a toll on turnover like commission and impact, and was the one
+            # that stayed put: at "3x" the linear cost rose by commission alone, about
+            # 1.7x the cost, so the curve understated where an edge dies.
+            spread_bps=DEFAULT_SPREAD_BPS * scale_turnover,
             journal=False,
             force=True,
         )
@@ -2122,7 +2146,7 @@ def run_draft_walk_forward(
         logger.warning("Draft strategy validation failed unexpectedly", exc_info=True)
         return _draft_rejection(run_id, "strategy", code, exc, hygiene=False)
     draft_strategy = f"draft:{cls.__name__}:{code_hash}"
-    cost_model = _build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
+    cost_model = build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps)
     cost_key = _cost_key(gross, commission_bps, impact_eta, borrow_bps)
     # The draft's own identity (its source) on top of the same recipe every other
     # walk-forward is keyed by - a third copy of that dict is a third place for the

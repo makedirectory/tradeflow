@@ -143,6 +143,11 @@ DEFERRED_PARAMS = {
 #: walk-forward does expose its own ``journal``, for smoke tests that must not consume a
 #: test; that is a decision about that tool, not a precedent for this one.)
 WITHHELD_PARAMS = {
+    # Reached by the cost stress, which scales it with the other turnover costs; there is
+    # no standalone spread flag on the CLI either, so withholding it is not a miss.
+    "run_backtest": {
+        "spread_bps": "scaled only by the cost stress; no surface exposes a standalone spread",
+    },
     "run_verdict": {
         "journal": "every verdict run over this surface is recorded, so the campaign's "
         "multiple-testing count stays honest",

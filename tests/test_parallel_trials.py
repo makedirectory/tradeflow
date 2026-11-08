@@ -206,12 +206,12 @@ def test_a_request_is_picklable_with_nothing_live_inside_it():
 def test_a_cost_model_round_trips_through_its_spec():
     """Two descriptions of one cost model would drift, and the drift would show up
     as a parallel run pricing trades differently from the sequential one."""
-    from quantred.services.analysis import _build_cost_model as service_build
+    from quantred.services.analysis import build_cost_model as service_build
 
     # Built the way the service builds the sequential run's model, and compared on
     # every field a worker rebuilds from - not a hand-picked few.
     original = service_build(
-        gross=False, commission_bps=2.5, impact_eta=0.4, participation_cap=0.07, borrow_bps=75.0
+        gross=False, commission_bps=2.5, impact_eta=0.4, participation_cap=0.07, borrow_bps=75.0, spread_bps=15.0
     )
     rebuilt = parallel._build_cost_model(parallel.cost_spec(original))
 

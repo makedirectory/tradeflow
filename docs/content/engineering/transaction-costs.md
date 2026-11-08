@@ -28,6 +28,9 @@ cost($) = commission + (s/2)·|q|·p + impact_rate·|q|·p
 
 - **Commission** — a flat per-notional broker fee (default 1 bp).
 - **Half-spread** — `(s/2)·|q|·p`, the immediate cost of crossing (default 5 bp spread).
+  `s` is the model's own `default_spread_bps` unless a trade names one; the engine names
+  none, so the configured value is the one charged, and the cost stress scales it with
+  the other turnover costs.
 - **Market impact** — the **square-root law** (Almgren et al., the robust default):
 
   ```
