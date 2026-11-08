@@ -29,7 +29,13 @@ from quantred.execution import decision as decisions
 from quantred.execution.decision import Decision
 from quantred.execution.halt import HaltState
 from quantred.execution.order_id import client_order_id
-from quantred.execution.sizing import PositionSizer, RiskBasedSizer, below_min_notional
+from quantred.execution.sizing import (
+    PositionSizer,
+    RiskBasedSizer,
+    below_min_notional,
+    deployable_pool,
+    free_buying_power,
+)
 from quantred.strategies import signals
 from quantred.strategies.base import Strategy
 from quantred.utils.numeric import round_price, round_quantity
@@ -455,18 +461,36 @@ class LiveTrader:
         return is_open
 
     def _deployable(self, account: AccountSnapshot) -> AccountSnapshot:
-        """The account as this strategy may use it, capped at its configured capital.
+        """The account as this strategy may use it: capped at its capital, less what it holds.
 
-        Returns the account untouched when no capital was set, so an unconfigured run
-        behaves exactly as before. Caps rather than replaces: a $8,000 config on an
-        account holding $3,000 may deploy $3,000, never the number written in the file.
+        The ``buying_power`` it carries is what the sizer sizes against, and it is the
+        backtest's rule from the same definition (``free_buying_power``): the pool the
+        book may deploy - its capital capped at the account's equity, or the account's
+        equity when no capital was set - less the notional the strategy already holds at
+        cost, capped by what the venue will lend. It used to be ``min(venue buying power,
+        capital)``, which on a margin or paper account stays equal to the capital however
+        much is open, so every entry sized as if the book were empty - and with no
+        capital it sized on margin buying power, a multiple of the account.
+
+        The affordability check in :meth:`_handle_entry` still uses the *real* account.
+        Caps rather than replaces: a $8,000 config on an account holding $3,000 may
+        deploy $3,000, never the number written in the file.
         """
+        held = sum(abs(p["qty"]) * p["entry_price"] for p in self._strategy.positions.values())
+        pool = deployable_pool(account.equity, self._capital)
+        buying_power = free_buying_power(pool, held, account.buying_power)
         if not self._capital:
-            return account
+            return AccountSnapshot(
+                cash=account.cash,
+                equity=account.equity,
+                buying_power=buying_power,
+                portfolio_value=account.portfolio_value,
+                trading_blocked=account.trading_blocked,
+            )
         return AccountSnapshot(
             cash=min(account.cash, self._capital),
             equity=min(account.equity, self._capital),
-            buying_power=min(account.buying_power, self._capital),
+            buying_power=buying_power,
             portfolio_value=min(account.portfolio_value, self._capital),
             trading_blocked=account.trading_blocked,
         )

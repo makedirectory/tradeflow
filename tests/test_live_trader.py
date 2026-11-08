@@ -378,8 +378,13 @@ def test_the_risk_budget_is_shared_across_the_book_not_granted_per_position():
     entry can be individually within budget while the book is far past it. Five open
     positions here have spent the entire $1,000 budget; the sixth is still a legal
     size on its own, and must still be refused.
+
+    Held at 100 shares each ($50,000 deployed of $100,000): at 200 each the book would
+    have spent all the account's cash, and sizing - which deducts what is held, as the
+    backtest does - would refuse for want of cash before the budget was ever consulted.
+    The budget is $1,000 and the five stops risk $1,500.
     """
-    broker = FakeBroker(positions=_held("BBB", "CCC", "DDD", "EEE", "FFF"))
+    broker = FakeBroker(positions=_held("BBB", "CCC", "DDD", "EEE", "FFF", qty=100.0))
     trader = _trader_with_limits(broker, max_positions=10, max_total_risk=0.01)
 
     # 200 shares is what sizing asks for, and it is inside the per-position clamp:

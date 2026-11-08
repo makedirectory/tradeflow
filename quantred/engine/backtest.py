@@ -32,7 +32,7 @@ from quantred.analytics import metrics as m
 from quantred.analytics import performance
 from quantred.brokers.base import AccountSnapshot
 from quantred.costs.base import CostModel, Trade
-from quantred.execution.sizing import PositionSizer, RiskBasedSizer, below_min_notional
+from quantred.execution.sizing import PositionSizer, RiskBasedSizer, below_min_notional, free_buying_power
 from quantred.marketdata.client import MarketDataClient
 from quantred.marketdata.timeframe import Timeframe
 from quantred.strategies import signals
@@ -213,6 +213,10 @@ class _Book:
     cash: float
     positions: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     execution: _Execution = field(default_factory=_Execution)
+
+    def held_notional(self) -> float:
+        """Notional currently deployed, at entry cost - the book's reserved capital."""
+        return sum(p["notional"] for p in self.positions.values())
 
     def open_risk(self) -> float:
         """Sum of per-position risk (notional x stop distance) across the book."""
@@ -1089,10 +1093,15 @@ class BacktestEngine:
         """
         # Free cash is the buying power; equity is the whole book. Sizing against
         # cash is what makes positions actually compete for the same dollars.
+        #
+        # Through the shared rule rather than reading `cash` directly, so the live path
+        # sizes against the same quantity: the pool (cash plus capital tied up at cost)
+        # less what is held. Numerically it is `cash`, and that is the point.
+        held = book.held_notional()
         account = AccountSnapshot(
             cash=book.cash,
             equity=equity,
-            buying_power=book.cash,
+            buying_power=free_buying_power(book.cash + held, held),
             portfolio_value=equity,
         )
         # Requested before rounding, so the gap between intent and fill is measurable

@@ -42,6 +42,20 @@ validated at, and they only show up as a number if they can be grouped.
 admission paths and compares the verdicts either side of the boundary, rather than
 asserting each clock separately — the backtest's own test passed throughout.
 
+**What an entry is sized against** — *converged*. The backtest sized each entry off free
+cash (the capital less what is already deployed), while live sized off
+`min(venue buying power, capital)`, which on a margin or paper account stays equal to the
+capital however much is open - so three entries in a row came out at 2,500 / 1,850 / 1,400
+in the backtest and 2,500 / 2,500 / 2,500 live, and with no capital live sized on margin
+buying power. Now `execution.sizing.free_buying_power` (the pool less notional held at
+cost, capped by the venue, floored at zero) and `deployable_pool` (the capital capped at
+equity, or equity when no capital was set) are the one definition: the backtest's
+`_open_position` and `LiveTrader._deployable` both call them. `engine/backtest` may import
+`execution.sizing`; the trade clock imports nothing back. **Deliberate live change:** with
+no capital, sizing is now off account equity, not margin buying power.
+*Guarded by* `tests/test_sizing_parity.py`, which feeds one sequence of entries to both
+clocks and compares the notionals.
+
 **CLI ↔ service dedup identity** — `cli._cost_key` and `services.analysis._cost_key` are
 two implementations that must produce the same shape, because a trial recorded over one
 surface has to be found by the other. Both fold the bar cache's data-vintage stamp whenever the client reads the cache, through one definition, `services.data.vintage_stamp`: only the CLI did, which was harmless until `mcp --offline` let the service read the cache too - then the same run over the two surfaces could never match. *Also guarded by* `tests/test_bar_cache.py`.

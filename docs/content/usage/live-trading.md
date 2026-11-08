@@ -607,8 +607,15 @@ all properties of a book at a size.
 carries) caps what the sizer may use. It is a ceiling, never a claim: a $25,000 config
 on a $9,000 account deploys $9,000. Position limits expressed as fractions —
 `max_total_risk`, `max_gross_exposure` — are fractions of *that capital*, not of the
-account balance. Without it, sizing uses the whole account, which is the historical
-behaviour.
+account balance. Without it, sizing uses the account's *equity* - not its margin
+buying power, which is a multiple of equity and a lending limit rather than a budget.
+
+Each entry is sized against what the book has left: the capital (or equity) less the
+notional already held at entry cost, capped by the venue's buying power. This is the
+rule a backtest sizes by - every open position shrinks the next - and it comes from one
+shared definition, so a run does not deploy more per name than the book that was
+validated. With a $10,000 capital, a 1% risk and a 4% stop, three simultaneous $50
+entries size at roughly $2,500, $1,850 and $1,400 (illustrative), not $2,500 each.
 
 ### `--feed` — which market data this run reads
 

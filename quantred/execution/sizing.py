@@ -16,7 +16,7 @@ live sizing without the executor knowing anything about it.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict
+from typing import Dict, Optional
 
 from quantred.brokers.base import AccountSnapshot
 from quantred.strategies.base import Strategy
@@ -40,6 +40,38 @@ def below_min_notional(qty: float, price: float, min_notional) -> bool:
     named a minimum has no minimum rather than one of zero.
     """
     return bool(min_notional) and abs(qty) * price < min_notional
+
+
+def deployable_pool(equity: float, capital: Optional[float] = None) -> float:
+    """The pool of money a book may have deployed in total: its capital, or the account.
+
+    A configured ``capital`` caps the account's equity (a $8,000 config on an account
+    holding $3,000 may deploy $3,000, never the number in the file). With no capital the
+    pool is the account's *equity*, deliberately not its margin buying power: buying
+    power is the venue's lending limit, a multiple of equity on a margin account, and
+    the backtest validated a book that could never deploy more than its capital.
+    """
+    return equity if not capital else min(equity, capital)
+
+
+def free_buying_power(pool: float, held_notional: float, venue_buying_power: Optional[float] = None) -> float:
+    """What the next entry is sized against: the pool less what is already deployed.
+
+    One definition, reached by both clocks. The backtest sized against free cash - the
+    pool less the notional held at cost, so each open position shrinks the next - while
+    live sized against ``min(venue buying power, capital)``, which on a margin or paper
+    account stays equal to the capital however much is already held. A capital of
+    10,000 at a 1% risk and a 4% stop sized entries at 2,500 / 1,850 / 1,400 in the
+    backtest and 2,500 / 2,500 / 2,500 live, so the same book deployed more per name,
+    and more in total, than the one that had been validated.
+
+    ``held_notional`` is measured at entry cost on both clocks (live has no mark for a
+    name it is not handling). The venue's own buying power only ever lowers the answer,
+    and the result is floored at zero: an over-deployed book has nothing left, never a
+    negative amount.
+    """
+    free = max(pool - held_notional, 0.0)
+    return free if venue_buying_power is None else max(min(free, venue_buying_power), 0.0)
 
 
 class PositionSizer(ABC):
