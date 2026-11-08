@@ -8,7 +8,7 @@ name = "tradeflow-engine"
 # `--version` prints can never disagree.
 dynamic = ["version"]
 license = "MIT"
-description = "A layered, broker-agnostic algorithmic-trading research engine that is honest about how hard making money is."
+description = "Renamed to quantred - this is the last release under this name. A layered, broker-agnostic algorithmic-trading research engine that is honest about how hard making money is."
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Andrew Schwartz", email = "andrew@mk-dir.com" }]

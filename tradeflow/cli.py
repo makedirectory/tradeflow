@@ -7127,11 +7127,36 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+#: Where the move to the new distribution name is written up. Printed by the notice below.
+RENAME_GUIDE_URL = "https://tradeflow.mk-dir.com/usage/migrating-to-quantred"
+
+
+def _rename_notice() -> None:
+    """Tell a person at a terminal that this is the last release under this name.
+
+    Later releases are published as ``quantred``; the command, the import package and the
+    state root carry over, so nothing here stops working - it just stops being updated.
+    Only an interactive stderr gets the notice: a script, a CI job or an MCP client
+    reading this process may treat unexpected stderr as a failure, and the point of this
+    release is that no existing workflow breaks.
+    """
+    if not sys.stderr.isatty():
+        return
+    print(
+        "Note: tradeflow-engine is now QuantRed, and 2.3.1 is its last release under this name.\n"
+        "  Later releases ship as `quantred`; the `tradeflow` command, imports and recorded\n"
+        "  history carry over. Uninstall tradeflow-engine before installing quantred - the two\n"
+        f"  share one package directory. How to move: {RENAME_GUIDE_URL}",
+        file=sys.stderr,
+    )
+
+
 def main() -> None:
     from tradeflow.settings import SettingsError
     from tradeflow.store.bars import CacheMiss
 
     setup_logging()
+    _rename_notice()
     args = parse_cli()
     try:
         args.func(args)

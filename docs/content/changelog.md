@@ -28,6 +28,27 @@ index; they are tagged in the repository.
 
 ---
 
+## 2.3.1 — 2026-11-07
+
+The last release published as `tradeflow-engine`. The project is now **QuantRed**, and
+later releases are published as `quantred`. Nothing in this release changes behaviour:
+it exists so that anyone still installing the old name finds out where updates went.
+
+- Run at a terminal, every command prints a short note on stderr naming the new
+  distribution and linking the migration steps. A script, a CI job or an MCP client - any
+  non-interactive stderr - sees nothing, so no existing workflow changes.
+- The package page says the same.
+
+The `tradeflow` command, the `tradeflow` import package, the plugin entry-point groups and
+the state root (`~/.tradeflow`, `TRADEFLOW_HOME`) all carry over to `quantred`. Uninstall
+`tradeflow-engine` before installing `quantred`: both own the same package directory, and
+installing one beside the other leaves whichever was written last. A private pack that
+depends on `tradeflow-engine` should change that dependency to `quantred`.
+
+An empty `tradeflow-engine` that depended on `quantred` was considered and rejected: on a
+`pip install -U`, pip installs the new dependency first and then uninstalls the old
+version's files, which are the same files, leaving `quantred` with no package at all.
+
 ## 2.3.0 — 2026-09-16
 
 Research affordances, the second half of the causality defect, and two telemetry modes

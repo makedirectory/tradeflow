@@ -3,6 +3,12 @@
 [![CI](https://github.com/makedirectory/tradeflow/actions/workflows/ci.yml/badge.svg)](https://github.com/makedirectory/tradeflow/actions/workflows/ci.yml)
 [![Docs](https://img.shields.io/badge/docs-tradeflow.mk--dir.com-blue)](https://tradeflow.mk-dir.com/)
 
+> **TradeFlow is now QuantRed.** `tradeflow-engine` 2.3.1 is the last release under this
+> name; later releases are published as [`quantred`](https://pypi.org/project/quantred/).
+> The `tradeflow` command, the `tradeflow` import package and your recorded history carry
+> over. Uninstall `tradeflow-engine` before installing `quantred` - the two share one
+> package directory. [How to move](https://tradeflow.mk-dir.com/usage/migrating-to-quantred).
+
 A small, **layered**, **broker-agnostic** algorithmic-trading **research
 engine** — and an honest one, which mostly means it's very good at telling you
 your brilliant strategy is actually noise. It scans markets, tests strategies,
