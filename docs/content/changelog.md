@@ -28,7 +28,7 @@ index; they are tagged in the repository.
 
 ---
 
-## Unreleased
+## 2.4.0 — 2026-11-07
 
 TradeFlow is now **QuantRed**, and a first session works from install to a result
 without guessing. The history below keeps the old name as it was written.

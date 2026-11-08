@@ -10,6 +10,10 @@ The project was called TradeFlow and was distributed as `tradeflow-engine`. It i
 is for anyone who already has the old distribution installed. If you are installing for
 the first time, you do not need it: see [installation](installation).
 
+`tradeflow-engine` 2.3.1 is the last release under the old name. It behaves exactly as
+2.3.0 did, except that at a terminal it prints a note pointing here; QuantRed 2.4.0 is
+the first release as `quantred`.
+
 Commands below were run with local wheels standing in for the package index, in
 throwaway environments. Anything that was not run that way is labelled.
 
@@ -50,7 +54,7 @@ uv tool list --show-extras --show-with
 tradeflow init --check
 ```
 
-The old entry reads like `tradeflow-engine v2.3.0 [extras: mcp, viz]`, and `init --check`
+The old entry reads like `tradeflow-engine v2.3.1 [extras: mcp, viz]`, and `init --check`
 shows an `[ok] extra:` row for each extra that is installed. Those are the extras to
 re-add. Then swap:
 
