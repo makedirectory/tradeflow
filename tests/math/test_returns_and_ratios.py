@@ -247,7 +247,9 @@ def test_sharpe_on_the_dated_curve_is_a_trading_day_sharpe():
     curve = performance.build_dated_equity_curve(trades, 100_000.0)
     r = (curve.iloc[1:].to_numpy() / curve.iloc[:-1].to_numpy() - 1).tolist()
     assert len(r) == 400
-    assert m.sharpe_ratio(m.returns_from_equity(curve)) == pytest.approx(SQRT_252 * _mean(r) / _std(r), rel=1e-12)
+    assert m.sharpe_ratio(m.returns_from_equity(curve)) == pytest.approx(
+        SQRT_252 * _mean(r) / _std(r), rel=1e-12
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -294,7 +296,9 @@ def test_all_negative_returns_give_a_negative_sharpe_and_a_positive_downside():
     r = [-0.01, -0.02, -0.015, -0.005]
     assert m.sharpe_ratio(r) < 0
     assert m.sortino_ratio(r) < 0
-    assert m.downside_deviation(r) == pytest.approx(math.sqrt(_mean([x * x for x in r])) * SQRT_252, rel=1e-12)
+    assert m.downside_deviation(r) == pytest.approx(
+        math.sqrt(_mean([x * x for x in r])) * SQRT_252, rel=1e-12
+    )
 
 
 def test_sortino_with_no_losses_is_the_unavailable_value_not_infinity():

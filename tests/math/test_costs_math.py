@@ -41,7 +41,9 @@ def test_impact_is_convex_in_total_size_but_concave_per_share():
     small = model.cost(Trade("A", 1_000, 50.0, 100_000.0, 0.02))
     big = model.cost(Trade("A", 4_000, 50.0, 100_000.0, 0.02))
     assert big.impact_cost / small.impact_cost == pytest.approx(4**1.5, rel=1e-12)  # total ~ q^1.5
-    assert (big.impact_cost / 4_000) / (small.impact_cost / 1_000) == pytest.approx(2.0, rel=1e-12)  # per share ~ sqrt(q)
+    assert (big.impact_cost / 4_000) / (small.impact_cost / 1_000) == pytest.approx(
+        2.0, rel=1e-12
+    )  # per share ~ sqrt(q)
 
 
 def test_linear_impact_fallback_is_proportional_to_participation():

@@ -56,7 +56,9 @@ def _independent_backtest_checks(result):
     assert result.equity_curve[-1] == pytest.approx(result.final_capital, abs=1e-6)
     eq = np.array(result.equity_curve)
     r = eq[1:] / eq[:-1] - 1
-    assert result.metrics["sharpe_ratio"] == pytest.approx(math.sqrt(252) * r.mean() / r.std(ddof=1), rel=1e-9)
+    assert result.metrics["sharpe_ratio"] == pytest.approx(
+        math.sqrt(252) * r.mean() / r.std(ddof=1), rel=1e-9
+    )
     assert result.metrics["max_drawdown"] == pytest.approx(
         100 * max((np.maximum.accumulate(eq) - eq) / np.maximum.accumulate(eq)), rel=1e-9
     )
@@ -85,7 +87,12 @@ def test_golden_backtest_daily_with_costs_and_benchmark():
             "equity_tail": result.equity_curve[-5:],
         }
     )
-    pins.check("backtest_daily", "demo_trend, 3 symbols, daily, default costs, SPY benchmark", "fake bars seeds 0..3", values)
+    pins.check(
+        "backtest_daily",
+        "demo_trend, 3 symbols, daily, default costs, SPY benchmark",
+        "fake bars seeds 0..3",
+        values,
+    )
 
 
 def test_golden_backtest_holding_the_benchmark():
@@ -96,7 +103,11 @@ def test_golden_backtest_holding_the_benchmark():
         "position_limits": {"max_positions": 1, "max_position_size": 1000.0, "max_total_risk": 1.0},
     }
     result = _run(
-        {"AAA": frame, "BMK": frame.copy()}, ["BUY"] + ["HOLD"] * 39, overrides, capital=1000.0, benchmark="BMK"
+        {"AAA": frame, "BMK": frame.copy()},
+        ["BUY"] + ["HOLD"] * 39,
+        overrides,
+        capital=1000.0,
+        benchmark="BMK",
     )
     # the reference identities for this scenario, before anything is stored
     assert result.metrics["beta"] == pytest.approx(1.0, abs=1e-9)
@@ -121,9 +132,7 @@ def test_golden_walk_forward_four_folds():
     validator = WalkForwardValidator(
         STRATEGIES["demo_trend"], _client(), initial_capital=100_000.0, seed=42, benchmark="SPY"
     )
-    wf = validator.run(
-        SYMS, START, END, n_folds=4, method="grid", max_evals=4, monte_carlo=True, pbo=True
-    )
+    wf = validator.run(SYMS, START, END, n_folds=4, method="grid", max_evals=4, monte_carlo=True, pbo=True)
     assert len(wf.folds) >= 3 and wf.pbo is not None and wf.monte_carlo["samples"] > 0
     agg = wf.oos_aggregate
     pooled = wf.oos_trade_table
@@ -141,14 +150,24 @@ def test_golden_walk_forward_four_folds():
             "degradation": wf.degradation,
             "n_trials_total": wf.n_trials_total,
             "folds": [
-                {"is": f.is_metrics, "oos": f.oos_metrics, "oos_trades": f.oos_trades, "params": f.is_best_params}
+                {
+                    "is": f.is_metrics,
+                    "oos": f.oos_metrics,
+                    "oos_trades": f.oos_trades,
+                    "params": f.is_best_params,
+                }
                 for f in wf.folds
             ],
             "median_oos_sharpe": wf.median_oos("sharpe_ratio"),
             "median_efficiency": wf.median_efficiency(),
         }
     )
-    pins.check("walk_forward", "demo_trend walk-forward, 4 anchored folds, grid, MC and PBO on", "seed 42, bars 0..3", values)
+    pins.check(
+        "walk_forward",
+        "demo_trend walk-forward, 4 anchored folds, grid, MC and PBO on",
+        "seed 42, bars 0..3",
+        values,
+    )
 
 
 def test_golden_cost_stress_sweep():
@@ -169,7 +188,12 @@ def test_golden_cost_stress_sweep():
     values = pins.numeric_values(
         {"points": report["points"], "survives": report.get("survives_multiple", None)}, drop=("run_id",)
     )
-    pins.check("cost_stress", "demo_trend cost stress at 1x, 2x, 4x, impact and borrow off", "fake bars seeds 0..3", values)
+    pins.check(
+        "cost_stress",
+        "demo_trend cost stress at 1x, 2x, 4x, impact and borrow off",
+        "fake bars seeds 0..3",
+        values,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -184,7 +208,9 @@ def _risk_world():
     style = (style - style.mean(0)) / style.std(0)
     factor = rng.normal(0, 0.004, (t, 2))
     returns = market * rng.uniform(0.7, 1.3, n) + factor @ style.T + rng.normal(0, 0.008, (t, n))
-    return pd.DataFrame(returns, columns=names), pd.DataFrame(style, index=names, columns=["momentum", "size"])
+    return pd.DataFrame(returns, columns=names), pd.DataFrame(
+        style, index=names, columns=["momentum", "size"]
+    )
 
 
 def test_golden_risk_models():
@@ -201,10 +227,14 @@ def test_golden_risk_models():
 
     # identities: the factor/specific split adds up; shrinkage keeps variances; the sample
     # annualises to np.cov
-    assert factor.factor_variance(ew) + factor.specific_variance(ew) == pytest.approx(factor.variance(ew), rel=1e-10)
+    assert factor.factor_variance(ew) + factor.specific_variance(ew) == pytest.approx(
+        factor.variance(ew), rel=1e-10
+    )
     assert np.diag(lw_sigma) == pytest.approx(np.diag(sample_sigma), rel=1e-12)
     assert sample_sigma == pytest.approx(np.cov(returns.to_numpy(), rowvar=False, bias=True), rel=1e-10)
-    assert mean_corr(factor.sigma) == pytest.approx(mean_corr(sample_sigma), abs=0.08)  # one world, two estimators
+    assert mean_corr(factor.sigma) == pytest.approx(
+        mean_corr(sample_sigma), abs=0.08
+    )  # one world, two estimators
 
     bars = {c: pd.DataFrame({"close": 100 * np.cumprod(1 + returns[c].to_numpy())}) for c in returns}
     annual = build_risk_matrix(LedoitWolfCovariance(), bars, 252.0, min_obs=60)
@@ -234,7 +264,12 @@ def test_golden_risk_models():
             "ewma_variance": ewma_variance_path(returns, 0.94, 60).to_numpy(),
         }
     )
-    pins.check("risk_models", "8 names, one market + 2 style factors + noise; factor, Ledoit-Wolf, sample", "seed 2024", values)
+    pins.check(
+        "risk_models",
+        "8 names, one market + 2 style factors + noise; factor, Ledoit-Wolf, sample",
+        "seed 2024",
+        values,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -256,7 +291,9 @@ def test_golden_optimizer_runs():
     w = np.array([capped.weights.get(s, 0.0) for s in syms])
     d = capped.diagnostics
     # reference identities: the covariance-metric TC, tc * IR* = predicted IR, the cap binds
-    assert d["transfer_coefficient"] == pytest.approx(alpha @ w / (ir_star * math.sqrt(w @ sigma @ w)), rel=1e-9)
+    assert d["transfer_coefficient"] == pytest.approx(
+        alpha @ w / (ir_star * math.sqrt(w @ sigma @ w)), rel=1e-9
+    )
     assert d["transfer_coefficient"] * ir_star == pytest.approx(d["predicted_ir"], rel=1e-9)
     assert w.max() == pytest.approx(0.2, abs=1e-6) and w.sum() == pytest.approx(1.0, abs=1e-8)
 
@@ -267,7 +304,9 @@ def test_golden_optimizer_runs():
         current_weights={s: 1 / n for s in syms},
         cost_model=ParametricCostModel(),
         cost_inputs=CostInputs(
-            spread={s: 0.0006 for s in syms}, adv_dollar={s: 3e6 for s in syms}, daily_vol={s: 0.02 for s in syms}
+            spread={s: 0.0006 for s in syms},
+            adv_dollar={s: 3e6 for s in syms},
+            daily_vol={s: 0.02 for s in syms},
         ),
         capital=500_000.0,
         holding_period_years=1 / 12,
@@ -283,7 +322,11 @@ def test_golden_optimizer_runs():
     assert beta_vec @ unconstrained_active == pytest.approx(0.0, abs=1e-9)
 
     def pack(res):
-        return {"weights": res.weights, "unconstrained": res.unconstrained_weights, "diagnostics": res.diagnostics}
+        return {
+            "weights": res.weights,
+            "unconstrained": res.unconstrained_weights,
+            "diagnostics": res.diagnostics,
+        }
 
     values = pins.numeric_values(
         {"capped": pack(capped), "cost_aware": pack(cost), "benchmark": pack(bench), "ir_star": ir_star}
@@ -306,7 +349,9 @@ def test_golden_two_clock_sizing_and_closed_forms():
     backtest, live = _backtest_notionals(), _live_notionals(capital=SIZING_CAPITAL)
     assert backtest == live == [2500.0, 1850.0, 1400.0]  # worked by hand in test_sizing_math.py
     kappa = policy.derive_kappa(1.0, 0.04, 0.5)
-    risk = RiskMatrix(["A", "B", "C"], np.array([[0.09, 0.02, 0.01], [0.02, 0.04, 0.015], [0.01, 0.015, 0.0625]]))
+    risk = RiskMatrix(
+        ["A", "B", "C"], np.array([[0.09, 0.02, 0.01], [0.02, 0.04, 0.015], [0.01, 0.015, 0.0625]])
+    )
     post = black_litterman_from_ic({"A": 0.05, "C": -0.03}, risk, ic=0.06, t_eff=120.0)
     # the calibration identity holds for a single view; here two views just must be finite
     assert all(np.isfinite(v) for v in post.mu_post.values())
@@ -322,7 +367,12 @@ def test_golden_two_clock_sizing_and_closed_forms():
             "tau": post.tau,
         }
     )
-    pins.check("sizing_and_closed_forms", "three-entry sizing sequence on both clocks; kappa; Black-Litterman", "seed 0 / closed form", values)
+    pins.check(
+        "sizing_and_closed_forms",
+        "three-entry sizing sequence on both clocks; kappa; Black-Litterman",
+        "seed 0 / closed form",
+        values,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -340,7 +390,9 @@ def test_golden_information_and_series_report():
     stats_ = info.ic_stats(ics)
     # identities
     assert breadth["br_eff"] == pytest.approx(72 / (1 + 5 * rho), rel=1e-12)
-    assert stats_["ic_tstat"] == pytest.approx(stats_["mean_ic"] / (stats_["ic_vol"] / 6), rel=1e-12)  # sqrt(36)
+    assert stats_["ic_tstat"] == pytest.approx(
+        stats_["mean_ic"] / (stats_["ic_vol"] / 6), rel=1e-12
+    )  # sqrt(36)
     decay = horizon.fit_decay({n: 0.08 * 0.85**n for n in range(7)})
     assert decay["delta"] == pytest.approx(0.85, rel=1e-9)
     omega = np.array([[1, 0.4, 0.1], [0.4, 1, 0.3], [0.1, 0.3, 1]])
@@ -398,7 +450,12 @@ def test_golden_information_and_series_report():
             "attribution": period.__dict__,
         }
     )
-    pins.check("information_report", "fixed IC history, residual-correlation breadth, decay, blend, series statistics, attribution", "seed 99", values)
+    pins.check(
+        "information_report",
+        "fixed IC history, residual-correlation breadth, decay, blend, series statistics, attribution",
+        "seed 99",
+        values,
+    )
 
 
 # --------------------------------------------------------------------------- #

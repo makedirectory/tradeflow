@@ -45,7 +45,9 @@ def test_risk_based_size_is_risk_budget_over_loss_per_share():
     s = _strategy()
     assert s.calculate_position_size(100_000.0, 40.0) == pytest.approx(750.0)
     # lift the notional cap: risk budget binds -> 1,000
-    uncapped = _strategy(position_limits={"max_position_size": 1e9, "max_total_risk": 1.0, "max_positions": 5})
+    uncapped = _strategy(
+        position_limits={"max_position_size": 1e9, "max_total_risk": 1.0, "max_positions": 5}
+    )
     assert uncapped.calculate_position_size(100_000.0, 40.0) == pytest.approx(1_000.0)
     # total-risk cap: 0.5% * 100,000 / (40 * 5%) = 250 shares
     tight = _strategy(position_limits={"max_position_size": 1e9, "max_total_risk": 0.005, "max_positions": 5})
@@ -55,7 +57,9 @@ def test_risk_based_size_is_risk_budget_over_loss_per_share():
 
 def test_sizer_reads_buying_power_not_equity():
     s = _strategy(position_limits={"max_position_size": 1e9, "max_total_risk": 1.0, "max_positions": 5})
-    account = AccountSnapshot(cash=50_000.0, equity=100_000.0, buying_power=60_000.0, portfolio_value=100_000.0)
+    account = AccountSnapshot(
+        cash=50_000.0, equity=100_000.0, buying_power=60_000.0, portfolio_value=100_000.0
+    )
     # 60,000 * 2% / (40 * 5%) = 600
     assert RiskBasedSizer(s).size("A", 40.0, account) == pytest.approx(600.0)
 
@@ -95,7 +99,9 @@ def test_execution_floor_boundaries_and_undeclared_floor():
     assert below_min_notional(10, 100.0, 1_001.0) is True
     assert below_min_notional(10, 100.0, 1_000.0) is False  # exactly at the floor is admitted
     assert below_min_notional(-10, 100.0, 1_001.0) is True  # a short is measured by magnitude
-    assert below_min_notional(1, 1.0, None) is False and below_min_notional(1, 1.0, 0) is False  # absent, not zero
+    assert (
+        below_min_notional(1, 1.0, None) is False and below_min_notional(1, 1.0, 0) is False
+    )  # absent, not zero
 
 
 def _by_hand(free=CAPITAL, n=3):

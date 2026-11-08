@@ -181,7 +181,10 @@ def test_peak_return_horizon_and_effective_sample_size():
     assert horizon.peak_return_horizon(10.0) == pytest.approx(12.566)
     assert math.isinf(horizon.peak_return_horizon(math.inf))
     assert horizon.effective_sample_size(210, 21, 1) == pytest.approx(10.0)
-    assert horizon.effective_sample_size(210, 21, 21) == 210.0 and horizon.effective_sample_size(210, 5, 21) == 210.0
+    assert (
+        horizon.effective_sample_size(210, 21, 21) == 210.0
+        and horizon.effective_sample_size(210, 5, 21) == 210.0
+    )
 
 
 def _blend_ic(w_now, w_lag, gamma, rho):
@@ -191,7 +194,9 @@ def _blend_ic(w_now, w_lag, gamma, rho):
     return num / den
 
 
-@pytest.mark.parametrize("gamma, rho", [(0.8, 0.5), (0.5, 0.8), (0.9, 0.1), (0.3, 0.3), (0.6, -0.2), (0.95, 0.9)])
+@pytest.mark.parametrize(
+    "gamma, rho", [(0.8, 0.5), (0.5, 0.8), (0.9, 0.1), (0.3, 0.3), (0.6, -0.2), (0.95, 0.9)]
+)
 def test_blend_weights_maximise_the_blend_ic_over_a_grid(gamma, rho):
     w_now, w_lag = horizon.blend_weights(gamma, rho)
     assert w_now + w_lag == pytest.approx(1.0, abs=1e-12)
@@ -255,7 +260,9 @@ def test_effective_ic_and_shrink_ic_known_answers():
 def test_level_shrink_factor_anchors_and_limits():
     assert refine.level_shrink_factor(0.05, 60) == pytest.approx(0.15 / 1.15, rel=1e-12)  # ~0.13
     assert refine.level_shrink_factor(0.10, 120) == pytest.approx(1.2 / 2.2, rel=1e-12)  # ~0.55
-    assert refine.level_shrink_factor(0.0, 100) == 0.0 and refine.level_shrink_factor(0.1, float("nan")) == 0.0
+    assert (
+        refine.level_shrink_factor(0.0, 100) == 0.0 and refine.level_shrink_factor(0.1, float("nan")) == 0.0
+    )
     assert refine.level_shrink_factor(0.5, 1e6) == pytest.approx(1.0, abs=1e-5)
 
 
@@ -334,14 +341,21 @@ def test_period_attribution_recovers_a_planted_signal_return():
 def test_attribution_with_too_few_names_is_none():
     idx = ["a", "b", "c"]
     x = pd.DataFrame(np.eye(3), index=idx, columns=["x", "y", "z"])
-    assert attr.attribute_period(pd.Series(1.0, index=idx), x, pd.Series(0.01, index=idx), pd.Series(1.0, index=idx), 0.0) is None
+    assert (
+        attr.attribute_period(
+            pd.Series(1.0, index=idx), x, pd.Series(0.01, index=idx), pd.Series(1.0, index=idx), 0.0
+        )
+        is None
+    )
 
 
 def test_systematic_split_adds_back_to_beta_times_benchmark():
     rng = np.random.default_rng(8)
     beta, rb = rng.normal(0.1, 0.3, 24), rng.normal(0.01, 0.04, 24)
     out = attr.systematic_split(beta, rb, mu_b_period=0.008)
-    assert out["expected"] + out["surprise"] + out["timing"] == pytest.approx(float((beta * rb).sum()), abs=1e-14)
+    assert out["expected"] + out["surprise"] + out["timing"] == pytest.approx(
+        float((beta * rb).sum()), abs=1e-14
+    )
     assert out["expected"] == pytest.approx(beta.mean() * 0.008 * 24, rel=1e-12)
     assert attr.systematic_split([], [], 0.01)["timing"] == 0.0
 

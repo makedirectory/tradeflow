@@ -51,7 +51,9 @@ def test_norm_cdf_matches_known_values():
 
 def test_probabilistic_sharpe_matches_the_formula_with_per_period_inputs():
     assert m.probabilistic_sharpe_ratio(R) == pytest.approx(_psr_reference(R), rel=1e-9)
-    assert m.probabilistic_sharpe_ratio(R, benchmark_sr=0.03) == pytest.approx(_psr_reference(R, 0.03), rel=1e-9)
+    assert m.probabilistic_sharpe_ratio(R, benchmark_sr=0.03) == pytest.approx(
+        _psr_reference(R, 0.03), rel=1e-9
+    )
 
 
 def test_probabilistic_sharpe_on_skewed_fat_tails_uses_pearson_kurtosis():
@@ -96,7 +98,9 @@ def test_expected_max_sharpe_known_answer_for_ten_trials():
     # sqrt(var)=0.1; z1 = Phi^-1(0.9) = 1.2815515655, z2 = Phi^-1(1-1/(10e)) = Phi^-1(0.963212...) = 1.7898..
     z1 = 1.2815515655446004
     z2 = float(stats.norm.ppf(1 - 1 / (10 * math.e)))
-    assert m.expected_max_sharpe(0.01, 10) == pytest.approx(0.1 * (0.4227843350984671 * z1 + EULER * z2), rel=1e-7)
+    assert m.expected_max_sharpe(0.01, 10) == pytest.approx(
+        0.1 * (0.4227843350984671 * z1 + EULER * z2), rel=1e-7
+    )
 
 
 def test_expected_max_sharpe_grows_with_trials_and_with_variance_and_is_zero_without_either():
@@ -199,7 +203,9 @@ def test_reality_check_counts_the_whole_family():
     assert family["observed_max_ir"] == pytest.approx(
         math.sqrt(252) * panel[:, best].mean() / panel[:, best].std(ddof=1), rel=1e-12
     )
-    assert family["family_p"] >= bs.reality_check(panel[:, [best]], B=300, seed=5, block_length=5.0)["family_p"]
+    assert (
+        family["family_p"] >= bs.reality_check(panel[:, [best]], B=300, seed=5, block_length=5.0)["family_p"]
+    )
     assert family["k_trials"] == 30 and alone["k_trials"] == 1
 
 

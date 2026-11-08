@@ -63,3 +63,37 @@ paths:
   establish that two implementations agree — a parity bug looks exactly like two green
   tests. Build the same thing both ways and assert equality. See
   [parity points](parity-points.md) for the list of places this applies.
+
+## The math contract (`tests/math/`)
+
+Every formula that produces a number someone reads has a reference test, and the
+end-to-end numbers are pinned. Together they are what lets one fix land without quietly
+moving another.
+
+- **Reference tests** (`test_returns_and_ratios.py`, `test_tail_risk.py`,
+  `test_multiple_testing.py`, `test_risk_models.py`, `test_portfolio_math.py`,
+  `test_costs_math.py`, `test_information_math.py`, `test_engine_accounting.py`,
+  `test_sizing_math.py`, `test_walk_forward_math.py`) compare the code with a computation
+  written **in the test**: a hand-derived literal with its derivation in a comment, a plain
+  loop, `scipy`, or a brute-force search. A reference never calls another function of the
+  package - a fix that bends a formula would bend its own check. Existing one-mechanic
+  tests stay where they are and are named in each module's docstring.
+- **Each defect gets its input.** The docstring says which defect a test guards, and the
+  input is one a plausibly-wrong implementation fails (a gap through a stop, a book that
+  holds its own benchmark, a cap that binds). Properties and identities (`tc * IR*` is
+  the predicted IR, Σ trade P&L is the book change, a blend beats a grid) sit beside the
+  known answers. Degenerate inputs assert the documented "unavailable" value, never a
+  silent `NaN` or `inf` in a printed metric.
+- **Golden pins** (`test_golden_pins.py`, files in `tests/math/golden/`) store the full
+  numeric output of a few seeded scenarios. Each scenario is first checked against the
+  reference identities, so a pin never freezes a wrong number. Tolerance is relative
+  `1e-9` / absolute `1e-12`; a looser one (an iterative solver) is declared in the test
+  with its reason.
+- **A pin that moves is a question, not a nuisance.** The failure lists every changed key
+  as `old -> new`. Regenerate only after confirming the new value is *correct* and, if
+  engine output changed, bumping `ACCOUNTING_VERSION`:
+  `QUANTRED_REGEN_GOLDEN=1 uv run --extra dev pytest tests/math -k golden`. Each file
+  records the version it was generated under, and a mismatch fails until you regenerate
+  on purpose. Never regenerate to make a red run green; read the diff first.
+- **Known defects are `xfail(strict=True)`** with the reason, so fixing one turns the test
+  red until the marker is removed.

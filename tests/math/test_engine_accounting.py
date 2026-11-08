@@ -155,9 +155,7 @@ def _multi_run(seed, cost_model):
         {"position_limits": {"max_positions": 3, "max_position_size": 20_000.0, "max_total_risk": 1.0}},
     )
     client = MarketDataClient(DictMarketData(frames))
-    return BacktestEngine(strategy, client, cost_model=cost_model).run(
-        list(frames), START, END, 100_000.0
-    )
+    return BacktestEngine(strategy, client, cost_model=cost_model).run(list(frames), START, END, 100_000.0)
 
 
 @pytest.mark.parametrize("seed", [0, 1, 2])
@@ -219,7 +217,9 @@ def test_impact_is_priced_with_the_liquidity_known_before_the_fills_bar():
     rows = list(zip(open_, np.maximum(open_, close) + 0.1, np.minimum(open_, close) - 0.1, close, vol))
     sigs = [H] * n
     sigs[24], sigs[34] = B, CB
-    model = ParametricCostModel(commission_bps=0.0, default_spread_bps=0.0, impact_eta=0.3, annual_borrow_bps=0.0)
+    model = ParametricCostModel(
+        commission_bps=0.0, default_spread_bps=0.0, impact_eta=0.3, annual_borrow_bps=0.0
+    )
     overrides = {
         "stop_loss": 0.9,
         "take_profit": 9.0,
@@ -267,7 +267,9 @@ def test_short_borrow_accrues_pro_rata_over_the_steps_held():
     assert trades[2]["cost"] == pytest.approx(0.0252 * 1_000 * 3 / 252, rel=1e-12)
     assert trades[6]["cost"] == pytest.approx(0.0252 * 1_000 * 7 / 252, rel=1e-12)
     assert trades[6]["cost"] / trades[2]["cost"] == pytest.approx(7 / 3, rel=1e-12)
-    assert _run({"AAA": flat}, [H, B, H, H, CB] + [H] * 7, cost_model=model).total_cost == 0.0  # longs pay none
+    assert (
+        _run({"AAA": flat}, [H, B, H, H, CB] + [H] * 7, cost_model=model).total_cost == 0.0
+    )  # longs pay none
 
 
 # --------------------------------------------------------------------------- #
@@ -328,10 +330,17 @@ def test_zero_tracking_error_information_ratio_is_unavailable():
 
 def test_benchmark_buy_hold_is_compounded_over_the_measured_steps():
     frame = _hold_world(30, 6)
-    result = _run({"AAA": frame, "BMK": frame.copy()}, [B] + [H] * 29, {"stop_loss": 0.5, "take_profit": 50.0}, benchmark="BMK")
+    result = _run(
+        {"AAA": frame, "BMK": frame.copy()},
+        [B] + [H] * 29,
+        {"stop_loss": 0.5, "take_profit": 50.0},
+        benchmark="BMK",
+    )
     closes = frame["close"].to_numpy()
     # steps covered: first mark after bar 0 through bar 29 -> close[29]/close[0] - 1
-    assert result.metrics["benchmark_buy_hold_return"] == pytest.approx((closes[-1] / closes[0] - 1) * 100, rel=1e-9)
+    assert result.metrics["benchmark_buy_hold_return"] == pytest.approx(
+        (closes[-1] / closes[0] - 1) * 100, rel=1e-9
+    )
 
 
 def test_metrics_are_absent_without_a_benchmark_not_zero_alpha():

@@ -28,7 +28,12 @@ from quantred.alphas.base import Alpha
 from quantred.costs.parametric import ParametricCostModel, cost_curvature
 from quantred.portfolio import policy
 from quantred.portfolio.optimizer import CostInputs, MeanVarianceOptimizer, long_only_cap_shortfall
-from quantred.portfolio.posterior import black_litterman, black_litterman_from_ic, calibration_gap, view_variance
+from quantred.portfolio.posterior import (
+    black_litterman,
+    black_litterman_from_ic,
+    calibration_gap,
+    view_variance,
+)
 from quantred.risk.base import RiskMatrix
 
 AS_OF = datetime(2024, 6, 1)
@@ -148,7 +153,9 @@ def test_benchmark_aware_solve_neutralises_alpha_and_reports_the_beta_split():
     beta = sigma @ wb / (wb @ sigma @ wb)
     neutral = alpha - beta * (alpha @ wb)
     assert neutral @ wb == pytest.approx(0.0, abs=1e-15)
-    assert r.diagnostics["ir_star"] == pytest.approx(math.sqrt(neutral @ np.linalg.solve(sigma, neutral)), rel=1e-9)
+    assert r.diagnostics["ir_star"] == pytest.approx(
+        math.sqrt(neutral @ np.linalg.solve(sigma, neutral)), rel=1e-9
+    )
     wa = _vec(r, syms) - wb
     d = r.diagnostics
     assert d["active_beta"] == pytest.approx(beta @ wa, abs=1e-9)
@@ -172,7 +179,12 @@ def test_fully_invested_cap_feasibility_boundary():
 def test_market_neutral_book_is_dollar_neutral_and_within_the_leverage_cap():
     syms, alpha, sigma, risk = _world(8)
     r = MeanVarianceOptimizer(max_weight=0.3).optimize(
-        _alphas(syms, alpha), risk, risk_aversion=2.0, book="market_neutral", short_max_weight=0.3, gross_leverage=1.5
+        _alphas(syms, alpha),
+        risk,
+        risk_aversion=2.0,
+        book="market_neutral",
+        short_max_weight=0.3,
+        gross_leverage=1.5,
     )
     w = _vec(r, syms)
     assert w.sum() == pytest.approx(0.0, abs=1e-6)
@@ -202,7 +214,9 @@ def test_prox_step_is_a_soft_threshold_without_impact():
 
 def test_cost_coefficients_follow_the_commission_spread_and_sqrt_impact_formulas():
     model = ParametricCostModel(commission_bps=2.0, default_spread_bps=10.0, impact_eta=0.4)
-    inputs = CostInputs(spread={"A": 0.0004}, adv_dollar={"A": 5e6, "B": 2e6}, daily_vol={"A": 0.02, "B": 0.03})
+    inputs = CostInputs(
+        spread={"A": 0.0004}, adv_dollar={"A": 5e6, "B": 2e6}, daily_vol={"A": 0.02, "B": 0.03}
+    )
     h, capital = 1.0 / 12.0, 1e6
     c, k = MeanVarianceOptimizer._cost_coefficients(model, inputs, capital, h, ["A", "B"])
     # one-way linear rate = commission + spread/2, annualised by the holding period;
@@ -242,7 +256,9 @@ def test_cost_aware_diagnostics_charge_exactly_what_the_coefficients_say():
     d = r.diagnostics
     assert d["linear_cost"] == pytest.approx(c * np.abs(dw).sum(), rel=1e-9)
     assert d["impact_cost"] == pytest.approx(k * (np.abs(dw) ** 1.5).sum(), rel=1e-9)
-    assert d["round_trip_cost"] == pytest.approx(2 * (c * np.abs(w).sum() + k * (np.abs(w) ** 1.5).sum()), rel=1e-9)
+    assert d["round_trip_cost"] == pytest.approx(
+        2 * (c * np.abs(w).sum() + k * (np.abs(w) ** 1.5).sum()), rel=1e-9
+    )
     assert d["expected_active_return_net"] == pytest.approx(alpha @ w - d["round_trip_cost"], rel=1e-9)
 
 
@@ -328,7 +344,9 @@ def _kappa_by_value_iteration(s, c2):
     return 2 * ell / (2 * ell + c2)
 
 
-@pytest.mark.parametrize("risk_aversion, variance, c2", [(1.0, 0.04, 0.5), (5.0, 0.09, 0.02), (0.5, 0.01, 3.0)])
+@pytest.mark.parametrize(
+    "risk_aversion, variance, c2", [(1.0, 0.04, 0.5), (5.0, 0.09, 0.02), (0.5, 0.01, 3.0)]
+)
 def test_trading_rate_matches_value_iteration_and_the_riccati_root(risk_aversion, variance, c2):
     s = risk_aversion * variance
     kappa = policy.derive_kappa(risk_aversion, variance, c2)

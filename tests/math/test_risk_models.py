@@ -40,7 +40,9 @@ def _panel(t=120, n=4, seed=0, common=0.5):
     rng = np.random.default_rng(seed)
     market = rng.normal(0, 0.01, (t, 1))
     scale = rng.uniform(0.5, 1.5, n)
-    return pd.DataFrame(common * market + rng.normal(0, 0.01, (t, n)) * scale, columns=[f"C{i}" for i in range(n)])
+    return pd.DataFrame(
+        common * market + rng.normal(0, 0.01, (t, n)) * scale, columns=[f"C{i}" for i in range(n)]
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -51,7 +53,10 @@ def test_sample_covariance_is_the_population_covariance_by_loops():
     t, n = x.shape
     mu = [sum(x[k, i] for k in range(t)) / t for i in range(n)]
     ref = np.array(
-        [[sum((x[k, i] - mu[i]) * (x[k, j] - mu[j]) for k in range(t)) / t for j in range(n)] for i in range(n)]
+        [
+            [sum((x[k, i] - mu[i]) * (x[k, j] - mu[j]) for k in range(t)) / t for j in range(n)]
+            for i in range(n)
+        ]
     )
     sigma, shrink = SampleCovariance().estimate(pd.DataFrame(x))
     assert shrink is None
@@ -109,7 +114,8 @@ def _lw_reference(x):
         for j in range(n):
             if i != j:
                 rho_hat += (r_bar / 2) * (
-                    math.sqrt(s[j, j] / s[i, i]) * theta(i, i, j) + math.sqrt(s[i, i] / s[j, j]) * theta(j, i, j)
+                    math.sqrt(s[j, j] / s[i, i]) * theta(i, i, j)
+                    + math.sqrt(s[i, i] / s[j, j]) * theta(j, i, j)
                 )
     gamma_hat = float(((f - s) ** 2).sum())
     delta = max(0.0, min(1.0, (pi_hat - rho_hat) / gamma_hat / t))
@@ -193,9 +199,12 @@ def test_factor_and_specific_variance_add_up_to_total_variance():
     returns = pd.DataFrame(rng.normal(0, 0.01, (t, n)) + rng.normal(0, 0.01, (t, 1)), columns=x.index)
     model = estimate_factor_model(returns, x, 252.0)
     w = rng.normal(size=n)
-    assert model.factor_variance(w) + model.specific_variance(w) == pytest.approx(model.variance(w), rel=1e-10)
+    assert model.factor_variance(w) + model.specific_variance(w) == pytest.approx(
+        model.variance(w), rel=1e-10
+    )
     assert np.diag(model.sigma) == pytest.approx(
-        np.diag(model.exposures.to_numpy() @ model.factor_cov @ model.exposures.to_numpy().T) + model.specific_var,
+        np.diag(model.exposures.to_numpy() @ model.factor_cov @ model.exposures.to_numpy().T)
+        + model.specific_var,
         rel=1e-12,
     )
 

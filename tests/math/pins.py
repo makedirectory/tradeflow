@@ -111,7 +111,9 @@ def check(
             "accounting_version": ACCOUNTING_VERSION,
             "generated_by": f"{REGEN_ENV}=1 pytest tests/math -k golden (tests/math/test_golden_pins.py)",
         }
-        path.write_text(json.dumps({"provenance": header, "values": encoded}, indent=1, sort_keys=True) + "\n")
+        path.write_text(
+            json.dumps({"provenance": header, "values": encoded}, indent=1, sort_keys=True) + "\n"
+        )
         return
 
     assert path.exists(), f"no golden file {path.name}; generate it with {REGEN_ENV}=1"
@@ -136,4 +138,6 @@ def check(
         if not _same(old_values[key], encoded[key], tol_rel, tol_abs):
             changes.append(f"  {key}: {old_values[key]!r} -> {encoded[key]!r}")
     if changes:
-        pytest.fail(f"{name}: {len(changes)} pinned value(s) changed\n" + "\n".join(changes) + "\n" + CHANGED_MESSAGE)
+        pytest.fail(
+            f"{name}: {len(changes)} pinned value(s) changed\n" + "\n".join(changes) + "\n" + CHANGED_MESSAGE
+        )
