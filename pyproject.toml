@@ -97,7 +97,7 @@ demo_volume = "quantred.demo.scanners:DemoVolumeScanner"
 # have to be kept in agreement.
 quantred = "quantred.cli:main"
 # No `tradeflow` alias here. The previous command is provided by the final
-# `tradeflow-engine` release (packaging/tradeflow-engine), which depends on this
+# `tradeflow-engine` release (legacy/tradeflow-engine), which depends on this
 # distribution: two distributions that both install `bin/tradeflow` would have the
 # upgrade or uninstall of one delete the other's copy.
 
@@ -144,7 +144,7 @@ exclude = [
     "/docs/node_modules",
     "/docs/build",
     "/dist",
-    "/packaging",
+    "/legacy",
     "*.csv",
     "/.env",
 ]

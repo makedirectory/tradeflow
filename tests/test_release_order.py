@@ -16,7 +16,7 @@ import pytest
 from quantred import settings
 
 SCRIPT = settings.PROJECT_ROOT / ".github" / "scripts" / "require_published_dependency.py"
-MANIFEST = settings.PROJECT_ROOT / "packaging" / "tradeflow-engine" / "pyproject.toml"
+MANIFEST = settings.PROJECT_ROOT / "legacy" / "tradeflow-engine" / "pyproject.toml"
 WORKFLOW = settings.PROJECT_ROOT / ".github" / "workflows" / "release.yml"
 
 pytest.importorskip("packaging")
