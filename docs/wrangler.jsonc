@@ -1,6 +1,11 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "quantred",
+  // The docs domain is attached here rather than in the dashboard, so the deploy that
+  // creates this worker also claims its hostname (Cloudflare creates the DNS record).
+  // Needs the mk-dir.com zone in the deploying account and a token with Workers Routes
+  // and DNS edit on it, or the deploy fails at this step.
+  "routes": [{ "pattern": "quantred.mk-dir.com", "custom_domain": true }],
   "compatibility_date": "2026-06-20",
   "observability": {
     "enabled": true
