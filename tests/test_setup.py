@@ -641,7 +641,7 @@ def test_probe_model_needs_a_provider_and_exits_non_zero_on_a_failed_probe(monke
 
 # --- model provider setup ----------------------------------------------------
 MODEL_ENV = ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OLLAMA_BASE_URL", "OLLAMA_TIMEOUT", "OLLAMA_NUM_CTX")
-MODEL_SECRET = "sk-test-0123456789abcdefghijkl"
+MODEL_SECRET = "sk-test-0123456789abcdefghijkl"  # gitleaks:allow - a fake key the test plants to check it is never printed
 
 
 @pytest.fixture

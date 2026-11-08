@@ -15,7 +15,7 @@ from quantred.research.llm import LLMResponse, OllamaClient, OpenAIClient
 from quantred.research.provider_errors import ModelProviderError, classify_provider_error
 from quantred.services import setup
 
-FAKE_KEY = "sk-test-0123456789abcdefSECRET"
+FAKE_KEY = "sk-test-0123456789abcdefSECRET"  # gitleaks:allow - a fake key the test plants to check it is never printed
 
 
 class _StatusError(Exception):
