@@ -276,7 +276,11 @@ class LiveEngine:
             return
         try:
             async with self._order_lock:
-                await asyncio.to_thread(self.live_trader.refresh_position, update.symbol)
+                await asyncio.to_thread(
+                    self.live_trader.refresh_position,
+                    update.symbol,
+                    getattr(update, "filled_avg_price", None) or getattr(update, "price", None),
+                )
         except Exception:  # noqa: BLE001 - bookkeeping never breaks the order path
             logger.warning(
                 "Could not refresh %s after its fill; the next sweep will correct it",

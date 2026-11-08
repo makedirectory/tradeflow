@@ -112,3 +112,65 @@ def test_the_pool_is_the_capital_capped_at_equity_or_the_equity_alone():
     assert deployable_pool(30_000.0, 8_000.0) == 8_000.0
     assert deployable_pool(30_000.0, None) == 30_000.0
     assert pytest.approx(deployable_pool(30_000.0)) == 30_000.0
+
+
+# --- sizing after a realized loss ---------------------------------------------------
+def _after_a_loss_backtest():
+    """AAA enters at 50 and is stopped through its level at a 40 open; BBB enters after."""
+    from tests.math.test_engine_accounting import _bars, _PerSymbolStrategy
+
+    flat = (50, 50, 50, 50)
+    gap = (40, 40, 40, 40)
+    frames = {
+        "AAA": _bars([flat, flat, gap, gap, gap]),
+        "BBB": _bars([flat, flat, flat, flat, flat]),
+    }
+    strategy = _PerSymbolStrategy(
+        {
+            "AAA": [signals.BUY] + [signals.HOLD] * 4,
+            "BBB": [signals.HOLD, signals.HOLD, signals.HOLD, signals.BUY, signals.HOLD],
+        },
+        _CONFIG,
+    )
+    result = BacktestEngine(strategy, MarketDataClient(DictMarketData(frames))).run(
+        ["AAA", "BBB"], datetime(2024, 1, 2), datetime(2024, 1, 20), CAPITAL
+    )
+    trades = result.trades.set_index("symbol")
+    assert trades.loc["AAA", "pnl"] == pytest.approx(-500.0)  # 50 shares, 50 -> 40
+    return float(trades.loc["BBB", "size"])
+
+
+def _after_a_loss_live(equity):
+    """The same loss on the live path: a held AAA is closed at 40, the fill is seen, BBB signals."""
+    from quantred.brokers.base import Position
+
+    broker = FakeBroker()
+    broker.account = AccountSnapshot(
+        cash=equity, equity=equity, buying_power=4 * equity, portfolio_value=equity
+    )
+    broker.positions["AAA"] = Position("AAA", 50.0, "long", PRICE, 40.0, 2000.0, -500.0)
+    trader = LiveTrader(broker, ScriptedStrategy([], _CONFIG), capital=CAPITAL, respect_market_hours=False)
+    trader.sync_strategy_book()
+    assert trader.handle_signal("AAA", signals.CLOSE_BUY, price=40.0).allowed
+    assert "AAA" not in broker.positions  # the close filled at 40
+    trader.refresh_position("AAA", 40.0)
+    decision = trader.handle_signal("BBB", signals.BUY, price=PRICE)
+    assert decision.allowed, decision.reason
+    return broker.orders[-1]["qty"]
+
+
+def test_after_a_realized_loss_live_sizes_what_the_backtest_does():
+    """Defect: the backtest's pool is cash plus capital held at cost, so it falls with
+    realized losses; live used min(account equity, capital), which on an account larger
+    than the capital stayed at the full capital. After losing 500 of 10,000 the backtest
+    sizes floor(9,500 * 1% / 2) = 47 shares and live sized 50."""
+    assert _after_a_loss_backtest() == 47.0
+    for equity in (10 * CAPITAL, CAPITAL):
+        assert _after_a_loss_live(equity) == 47.0
+
+
+def test_a_realized_gain_grows_the_pool_on_both_clocks_up_to_the_account():
+    assert deployable_pool(30_000.0, 10_000.0, 700.0) == 10_700.0
+    assert deployable_pool(10_300.0, 10_000.0, 700.0) == 10_300.0  # never beyond the account
+    assert deployable_pool(30_000.0, 10_000.0, -20_000.0) == 0.0  # never negative
+    assert deployable_pool(30_000.0, None, -500.0) == 30_000.0  # no capital: the equity is already net

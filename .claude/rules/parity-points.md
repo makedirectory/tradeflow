@@ -56,6 +56,20 @@ no capital, sizing is now off account equity, not margin buying power.
 *Guarded by* `tests/test_sizing_parity.py`, which feeds one sequence of entries to both
 clocks and compares the notionals.
 
+The pool also moves with realized P&L, on both clocks: the backtest's cash plus capital
+held at cost is the capital plus what the book has realized, and live used to cap at the
+capital alone, so on an account larger than the capital it sized the next entry at full
+size after a loss. `deployable_pool(equity, capital, realized_pnl)` takes the realized
+figure and `LiveTrader` keeps it from closing fills (priced at the fill's average price
+against the entry the book recorded, including closes the book had already forgotten).
+**Residual differences, deliberately left:** it is in memory, so a restart resumes at the
+configured capital; a closing fill the stream never delivers is not counted; and the
+backtest's pool is net of modelled costs while live's is not (a paper venue reports no
+fee). All three bias nothing toward larger-than-validated sizing after a loss except the
+first two when a loss predates the restart.
+*Guarded by* `tests/test_sizing_parity.py` (a loss then an entry, both clocks),
+`tests/test_live_realized_pnl.py`.
+
 **CLI ↔ service dedup identity** — `cli._cost_key` and `services.analysis._cost_key` are
 two implementations that must produce the same shape, because a trial recorded over one
 surface has to be found by the other. Both fold the bar cache's data-vintage stamp whenever the client reads the cache, through one definition, `services.data.vintage_stamp`: only the CLI did, which was harmless until `mcp --offline` let the service read the cache too - then the same run over the two surfaces could never match. *Also guarded by* `tests/test_bar_cache.py`.

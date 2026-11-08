@@ -124,3 +124,12 @@ def test_the_two_clocks_size_the_same_sequence_to_the_hand_derived_notionals():
     assert _live_notionals(capital=CAPITAL) == expected
     # a margin account many times larger changes nothing: the book is held to its capital
     assert _live_notionals(capital=CAPITAL, equity=10 * CAPITAL, buying_power=40 * CAPITAL) == expected
+
+
+def test_a_book_that_lost_money_sizes_from_what_is_left():
+    """Hand derivation: capital 10,000, one 50-share entry at 50 closed at 40 loses 500;
+    the next entry risks 1% of 9,500 at a 4% stop on a $50 name: floor(95 / 2) = 47."""
+    from tests.test_sizing_parity import _after_a_loss_backtest, _after_a_loss_live
+
+    assert math.floor(9_500 * 0.01 / (50 * 0.04)) == 47
+    assert _after_a_loss_backtest() == 47.0 == _after_a_loss_live(10 * CAPITAL)

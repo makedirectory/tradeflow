@@ -42,7 +42,7 @@ def below_min_notional(qty: float, price: float, min_notional) -> bool:
     return bool(min_notional) and abs(qty) * price < min_notional
 
 
-def deployable_pool(equity: float, capital: Optional[float] = None) -> float:
+def deployable_pool(equity: float, capital: Optional[float] = None, realized_pnl: float = 0.0) -> float:
     """The pool of money a book may have deployed in total: its capital, or the account.
 
     A configured ``capital`` caps the account's equity (a $8,000 config on an account
@@ -50,8 +50,16 @@ def deployable_pool(equity: float, capital: Optional[float] = None) -> float:
     pool is the account's *equity*, deliberately not its margin buying power: buying
     power is the venue's lending limit, a multiple of equity on a margin account, and
     the backtest validated a book that could never deploy more than its capital.
+
+    ``realized_pnl`` is the strategy's realized net P&L since it started (zero when none
+    is known): the capital the book has left to deploy is what it began with plus what it
+    has made or lost, in the backtest and live alike.
     """
-    return equity if not capital else min(equity, capital)
+    if not capital:
+        return equity
+    # The pool moves with what the book has realized: the backtest's cash plus capital
+    # held at cost is the capital plus realized P&L, so after a loss it sizes from less.
+    return max(min(equity, capital + realized_pnl), 0.0)
 
 
 def free_buying_power(pool: float, held_notional: float, venue_buying_power: Optional[float] = None) -> float:

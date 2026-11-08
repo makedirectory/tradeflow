@@ -83,6 +83,15 @@ class LiveTrader:
         #: trades a different book from the one that was tested, which would invalidate
         #: the execution telemetry the run exists to gather.
         self._capital = capital
+        #: Net P&L this process has seen the strategy realize, from closing fills. The
+        #: backtest sizes against a pool that moves with realized P&L (cash plus capital
+        #: tied up at cost), so live must too, or after a loss it sizes larger than the
+        #: book that was validated. In memory by design: see :meth:`_deployable`.
+        self._realized_pnl = 0.0
+        #: Positions a close order was sent for and whose fill has not been seen. The
+        #: book forgets a position when the close is submitted, so without this the
+        #: fill that proves the exit would find nothing to price it against.
+        self._closing: Dict[str, Dict[str, Any]] = {}
         self._respect_market_hours = respect_market_hours
         self._market_status_cache: Optional[tuple] = None  # (monotonic_ts, is_open)
 
@@ -155,7 +164,12 @@ class LiveTrader:
             "excludes": ["impact"],
         }
 
-    def refresh_position(self, symbol: str) -> bool:
+    @property
+    def realized_pnl(self) -> float:
+        """Realized P&L of the strategy's book since this process started."""
+        return self._realized_pnl
+
+    def refresh_position(self, symbol: str, fill_price: Optional[float] = None) -> bool:
         """Re-read one symbol from the broker and update the book. Returns True if held.
 
         The book is a cache of broker state, rebuilt wholesale by
@@ -171,6 +185,7 @@ class LiveTrader:
         infers a quantity from arithmetic.
         """
         position = self._broker.get_position(symbol)
+        self._realize(symbol, position, fill_price)
         if position is None or not position.qty:
             self._strategy.positions.pop(symbol, None)
             return False
@@ -186,6 +201,37 @@ class LiveTrader:
             "take_profit": take_profit,
         }
         return True
+
+    def _realize(self, symbol: str, position, fill_price: Optional[float]) -> None:
+        """Book the P&L of the quantity a fill just removed from a position we knew about.
+
+        The reduction is read off broker truth (the position the strategy believed it held
+        against the one the broker holds now) and priced at the fill's average price and
+        at the entry price the book recorded. Nothing here infers a quantity from
+        arithmetic of its own. A fill with no price, a symbol the book never knew, or a
+        fill that grows the position contributes nothing - unknown is not zero, but a
+        guess would be worse than the gap, and the gap is documented.
+        """
+        pending = self._closing.get(symbol)
+        old = pending if pending is not None else self._strategy.positions.get(symbol)
+        if not old or not fill_price:
+            return
+        new_qty = 0.0
+        if position is not None and position.qty:
+            new_side = signals.BUY if position.is_long else signals.SELL
+            if new_side != old["side"]:
+                return  # flipped through zero: no unambiguous basis for the remainder
+            new_qty = float(position.qty)
+        closed = float(old["qty"]) - new_qty
+        if pending is not None:
+            if new_qty:
+                pending["qty"] = new_qty
+            else:
+                self._closing.pop(symbol, None)
+        if closed <= 0:
+            return
+        direction = 1.0 if old["side"] == signals.BUY else -1.0
+        self._realized_pnl += (float(fill_price) - float(old["entry_price"])) * closed * direction
 
     def handle_signal(
         self,
@@ -380,6 +426,7 @@ class LiveTrader:
         # what lets the strategy recognize its own position on the very next bar and
         # emit an exit for it; the next `sync_strategy_book` replaces this with
         # whatever the broker actually holds.
+        self._closing.pop(symbol, None)  # a stale close that never filled prices nothing now
         self._strategy.positions[symbol] = {
             "side": signal,
             "qty": qty,
@@ -428,6 +475,11 @@ class LiveTrader:
             # strategy must stay entitled to try again.
             logger.error("Could not close %s: %s (%s)", symbol, exc, type(exc).__name__)
             return decisions.decline(symbol, signal, f"broker could not close it: {exc}", tuple(guards))
+        self._closing[symbol] = {
+            "side": signals.BUY if position.is_long else signals.SELL,
+            "qty": float(position.qty),
+            "entry_price": position.avg_entry_price,
+        }
         self._strategy.positions.pop(symbol, None)
         return decisions.allow(symbol, signal, f"closed {position.side} position", tuple(guards))
 
@@ -473,11 +525,20 @@ class LiveTrader:
         capital it sized on margin buying power, a multiple of the account.
 
         The affordability check in :meth:`_handle_entry` still uses the *real* account.
+        The pool moves with the strategy's realized P&L, as the backtest's does (its cash
+        plus the capital tied up at cost *is* capital plus realized P&L). Live used to cap
+        at the capital alone, which on an account larger than the capital stayed at the
+        full figure after a loss, so every later entry sized larger than the validated
+        book would have. The realized figure is what this process saw close, from fills;
+        it is not persisted, so a restart resumes at the configured capital, and a
+        closing fill that never reaches the stream is not counted. Costs the backtest
+        charges are not deducted (a paper venue reports none).
+
         Caps rather than replaces: a $8,000 config on an account holding $3,000 may
         deploy $3,000, never the number written in the file.
         """
         held = sum(abs(p["qty"]) * p["entry_price"] for p in self._strategy.positions.values())
-        pool = deployable_pool(account.equity, self._capital)
+        pool = deployable_pool(account.equity, self._capital, self._realized_pnl)
         buying_power = free_buying_power(pool, held, account.buying_power)
         if not self._capital:
             return AccountSnapshot(
@@ -488,10 +549,10 @@ class LiveTrader:
                 trading_blocked=account.trading_blocked,
             )
         return AccountSnapshot(
-            cash=min(account.cash, self._capital),
-            equity=min(account.equity, self._capital),
+            cash=min(account.cash, pool),
+            equity=min(account.equity, pool),
             buying_power=buying_power,
-            portfolio_value=min(account.portfolio_value, self._capital),
+            portfolio_value=min(account.portfolio_value, pool),
             trading_blocked=account.trading_blocked,
         )
 
