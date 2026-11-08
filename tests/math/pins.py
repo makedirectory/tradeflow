@@ -85,6 +85,24 @@ def _same(old: Any, new: Any, rel: float, abs_: float) -> bool:
     return bool(new == pytest.approx(old, rel=rel, abs=abs_))
 
 
+def regenerate(name: str, scenario: str, seed: Any, encoded: Dict[str, Any]) -> Path:
+    """Rewrite ``golden/<name>.json``. Refuses when ``CI`` is set: a stray
+    ``QUANTRED_REGEN_GOLDEN=1`` in a pipeline would otherwise make every pin test pass
+    while overwriting the files it was meant to guard."""
+    if os.environ.get("CI"):
+        pytest.fail(f"{REGEN_ENV}=1 is refused when CI is set: pins are regenerated deliberately, locally")
+    path = GOLDEN_DIR / f"{name}.json"
+    GOLDEN_DIR.mkdir(exist_ok=True)
+    header = {
+        "scenario": scenario,
+        "seed": seed,
+        "accounting_version": ACCOUNTING_VERSION,
+        "generated_by": f"{REGEN_ENV}=1 pytest tests/math -k golden (tests/math/test_golden_pins.py)",
+    }
+    path.write_text(json.dumps({"provenance": header, "values": encoded}, indent=1, sort_keys=True) + "\n")
+    return path
+
+
 def check(
     name: str,
     scenario: str,
@@ -104,17 +122,10 @@ def check(
     path = GOLDEN_DIR / f"{name}.json"
     encoded = {k: _encode(v) for k, v in values.items()}
     if os.environ.get(REGEN_ENV) == "1":
-        GOLDEN_DIR.mkdir(exist_ok=True)
-        header = {
-            "scenario": scenario,
-            "seed": seed,
-            "accounting_version": ACCOUNTING_VERSION,
-            "generated_by": f"{REGEN_ENV}=1 pytest tests/math -k golden (tests/math/test_golden_pins.py)",
-        }
-        path.write_text(
-            json.dumps({"provenance": header, "values": encoded}, indent=1, sort_keys=True) + "\n"
-        )
-        return
+        regenerate(name, scenario, seed, encoded)
+        # A regeneration run compared nothing, so it must not report a pass: a green run
+        # that rewrote the pins looks exactly like one that verified them.
+        pytest.skip(f"regenerated {path.name}")
 
     assert path.exists(), f"no golden file {path.name}; generate it with {REGEN_ENV}=1"
     stored = json.loads(path.read_text())

@@ -528,9 +528,10 @@ def test_every_golden_file_was_generated_under_the_current_accounting_version():
 
 def test_a_changed_pin_fails_with_old_and_new_values_and_the_instruction(tmp_path, monkeypatch):
     monkeypatch.setattr(pins, "GOLDEN_DIR", tmp_path)
-    monkeypatch.setenv(pins.REGEN_ENV, "1")
-    pins.check("probe", "probe scenario", 0, {"a": 1.0, "b": 2.0, "c": True, "d": float("inf")})
-    monkeypatch.delenv(pins.REGEN_ENV)
+    monkeypatch.delenv("CI", raising=False)
+    pins.regenerate(
+        "probe", "probe scenario", 0, {"a": 1.0, "b": 2.0, "c": True, "d": nonfinite_inf_encoded()}
+    )
     pins.check("probe", "probe scenario", 0, {"a": 1.0 + 1e-12, "b": 2.0, "c": True, "d": float("inf")})
     with pytest.raises(pytest.fail.Exception) as err:
         pins.check("probe", "probe scenario", 0, {"a": 1.0, "b": 2.0001, "c": False, "e": 5})
@@ -539,6 +540,26 @@ def test_a_changed_pin_fails_with_old_and_new_values_and_the_instruction(tmp_pat
     assert "d: {'nonfinite': 'inf'} -> (missing)" in text and "e: (new) -> 5" in text
     assert "a pinned number changed: confirm the new value is correct, bump ACCOUNTING_VERSION" in text
     assert "regenerate deliberately" in text and "a:" not in text.replace("a pinned", "")
+
+
+def nonfinite_inf_encoded():
+    return pins._encode(float("inf"))
+
+
+def test_regeneration_is_refused_under_ci_and_never_reports_a_pass(tmp_path, monkeypatch):
+    """A QUANTRED_REGEN_GOLDEN=1 left in the environment made every pin test pass while it
+    rewrote the files. Under CI it now fails loudly and writes nothing; locally it ends the
+    test as skipped, never as a pass."""
+    monkeypatch.setattr(pins, "GOLDEN_DIR", tmp_path)
+    monkeypatch.setenv(pins.REGEN_ENV, "1")
+    monkeypatch.setenv("CI", "true")
+    with pytest.raises(pytest.fail.Exception, match="refused when CI is set"):
+        pins.check("probe", "s", 0, {"a": 1.0})
+    assert not list(tmp_path.glob("*.json"))
+    monkeypatch.delenv("CI")
+    with pytest.raises(pytest.skip.Exception, match="regenerated probe.json"):
+        pins.check("probe", "s", 0, {"a": 1.0})
+    assert (tmp_path / "probe.json").exists()
 
 
 def test_a_golden_file_from_another_accounting_version_is_refused(tmp_path, monkeypatch):
