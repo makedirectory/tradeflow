@@ -667,7 +667,9 @@ def run_backtest(
             )
 
     sizer = build_beta_sizer(data_client, strat, symbols, benchmark, as_of=start) if beta_sizing else None
-    cost_model = build_cost_model(gross, commission_bps, impact_eta, participation_cap, borrow_bps, spread_bps)
+    cost_model = build_cost_model(
+        gross, commission_bps, impact_eta, participation_cap, borrow_bps, spread_bps
+    )
     result = BacktestEngine(
         strat,
         data_client,

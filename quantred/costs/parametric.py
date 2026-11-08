@@ -21,7 +21,6 @@ from typing import Optional
 
 from quantred.costs.base import CostModel, Trade, TradeCost
 
-
 #: The quoted spread a trade is priced at when nothing says otherwise, and the
 #: participation above which a fill is flagged optimistic. One definition each: the
 #: model, the service builder and the cost-stress scaling all start from these.

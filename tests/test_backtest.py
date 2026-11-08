@@ -1274,7 +1274,9 @@ def test_a_long_stop_gapped_through_fills_at_the_open_not_the_stop():
     rows = _gap_rows({"open": 90, "high": 92, "low": 88, "close": 91, "volume": 1})
     strategy = ScriptedStrategy([signals.BUY, signals.HOLD, signals.HOLD], _TIGHT)
     client = MarketDataClient(DictMarketData({"AAA": _frame(rows)}))
-    result = BacktestEngine(strategy, client).run(["AAA"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000)
+    result = BacktestEngine(strategy, client).run(
+        ["AAA"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000
+    )
 
     trade = result.trades.iloc[0]
     assert trade["exit_reason"] == "STOP_LOSS"
@@ -1288,7 +1290,9 @@ def test_a_stop_inside_the_bar_still_fills_at_the_stop():
     rows = _gap_rows({"open": 99, "high": 99, "low": 95, "close": 96, "volume": 1})
     strategy = ScriptedStrategy([signals.BUY, signals.HOLD, signals.HOLD], _TIGHT)
     client = MarketDataClient(DictMarketData({"AAA": _frame(rows)}))
-    result = BacktestEngine(strategy, client).run(["AAA"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000)
+    result = BacktestEngine(strategy, client).run(
+        ["AAA"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000
+    )
 
     assert result.trades.iloc[0]["exit_price"] == pytest.approx(97.0)
 
@@ -1297,7 +1301,9 @@ def test_a_target_gapped_through_fills_at_the_better_open():
     rows = _gap_rows({"open": 110, "high": 112, "low": 109, "close": 111, "volume": 1})
     strategy = ScriptedStrategy([signals.BUY, signals.HOLD, signals.HOLD], _TIGHT)
     client = MarketDataClient(DictMarketData({"AAA": _frame(rows)}))
-    result = BacktestEngine(strategy, client).run(["AAA"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000)
+    result = BacktestEngine(strategy, client).run(
+        ["AAA"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000
+    )
 
     trade = result.trades.iloc[0]
     assert trade["exit_reason"] == "TAKE_PROFIT"
@@ -1333,7 +1339,9 @@ def test_the_bar_an_entry_fills_on_is_checked_against_its_own_stop():
     ]
     strategy = ScriptedStrategy([signals.BUY, signals.HOLD, signals.HOLD], _TIGHT)
     client = MarketDataClient(DictMarketData({"AAA": _frame(rows)}))
-    result = BacktestEngine(strategy, client).run(["AAA"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000)
+    result = BacktestEngine(strategy, client).run(
+        ["AAA"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000
+    )
 
     trade = result.trades.iloc[0]
     assert trade["exit_reason"] == "STOP_LOSS"
@@ -1350,6 +1358,8 @@ def test_an_entry_bar_that_stays_inside_its_bracket_is_not_closed():
     ]
     strategy = ScriptedStrategy([signals.BUY, signals.HOLD, signals.HOLD], _TIGHT)
     client = MarketDataClient(DictMarketData({"AAA": _frame(rows)}))
-    result = BacktestEngine(strategy, client).run(["AAA"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000)
+    result = BacktestEngine(strategy, client).run(
+        ["AAA"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000
+    )
 
     assert result.trades.iloc[0]["exit_reason"] == "END_OF_PERIOD"

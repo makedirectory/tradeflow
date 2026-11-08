@@ -25,7 +25,9 @@ def _flat_round_trip(cost_model):
     index = pd.date_range("2024-01-02", periods=5, freq="D", tz=NEW_YORK)
     rows = [{"open": 100, "high": 100, "low": 100, "close": 100, "volume": 1}] * 5
     frame = pd.DataFrame(rows, index=index)
-    strategy = ScriptedStrategy([signals.BUY, signals.HOLD, signals.CLOSE_BUY, signals.HOLD, signals.HOLD], {})
+    strategy = ScriptedStrategy(
+        [signals.BUY, signals.HOLD, signals.CLOSE_BUY, signals.HOLD, signals.HOLD], {}
+    )
     client = MarketDataClient(DictMarketData({"AAA": frame}))
     return BacktestEngine(strategy, client, cost_model=cost_model).run(
         ["AAA"], datetime(2024, 1, 2), datetime(2024, 1, 10), 100_000.0
@@ -92,9 +94,7 @@ def test_the_cli_and_the_service_build_the_same_cost_model():
     from quantred.cli import build_cost_model
     from quantred.services.analysis import build_cost_model as service_build
 
-    args = Namespace(
-        gross=False, commission_bps=2.5, impact_eta=0.4, borrow_bps=75.0, participation_cap=0.07
-    )
+    args = Namespace(gross=False, commission_bps=2.5, impact_eta=0.4, borrow_bps=75.0, participation_cap=0.07)
     cli_model = build_cost_model(args)
     service_model = service_build(False, 2.5, 0.4, 0.07, 75.0)
 

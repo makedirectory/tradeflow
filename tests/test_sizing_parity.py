@@ -41,10 +41,14 @@ _CONFIG = {
 
 def _backtest_notionals():
     index = pd.date_range("2024-01-02", periods=4, freq="D", tz=NEW_YORK)
-    frame = pd.DataFrame([{"open": PRICE, "high": PRICE, "low": PRICE, "close": PRICE, "volume": 1}] * 4, index=index)
+    frame = pd.DataFrame(
+        [{"open": PRICE, "high": PRICE, "low": PRICE, "close": PRICE, "volume": 1}] * 4, index=index
+    )
     strategy = ScriptedStrategy([signals.BUY, signals.HOLD, signals.HOLD, signals.HOLD], _CONFIG)
     client = MarketDataClient(DictMarketData({s: frame for s in SYMBOLS}))
-    result = BacktestEngine(strategy, client).run(SYMBOLS, datetime(2024, 1, 2), datetime(2024, 1, 10), CAPITAL)
+    result = BacktestEngine(strategy, client).run(
+        SYMBOLS, datetime(2024, 1, 2), datetime(2024, 1, 10), CAPITAL
+    )
     trades = result.trades.set_index("symbol")
     return [float(trades.loc[s, "size"] * trades.loc[s, "entry_price"]) for s in SYMBOLS]
 
@@ -82,7 +86,10 @@ def test_live_with_no_capital_sizes_on_equity_not_margin_buying_power():
 
 
 def test_live_on_a_larger_account_is_still_held_to_its_capital():
-    assert _live_notionals(capital=CAPITAL, equity=10 * CAPITAL, buying_power=40 * CAPITAL) == _backtest_notionals()
+    assert (
+        _live_notionals(capital=CAPITAL, equity=10 * CAPITAL, buying_power=40 * CAPITAL)
+        == _backtest_notionals()
+    )
 
 
 # --- the shared rule itself, both directions ----------------------------------------

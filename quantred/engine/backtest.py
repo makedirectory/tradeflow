@@ -83,7 +83,7 @@ logger = logging.getLogger(__name__)
 #:   systematically, unlike the mark-to-market change at v2, and rescaling a threshold
 #:   without a measured shift to justify it is gate-fitting.
 #:
-#: * **6** — the current model. Window boundaries derived by adding days to a market
+#: * **6** — window boundaries and half-open folds. Window boundaries derived by adding days to a market
 #:   date - walk-forward folds, the holdout, warmup starts, scanner and beta lookbacks,
 #:   the research agent's holdout - stay at New York midnight across daylight saving.
 #:   Through v5 the arithmetic kept the January offset, so from March to November every
@@ -99,8 +99,21 @@ logger = logging.getLogger(__name__)
 #:   default, so v5 walk-forwards chose parameters for a different book than they scored;
 #:   and a stored optimize candidate is keyed on capital and book too, so earlier ones miss.
 #:
+#: * **7** — the current model. Five things the engine computes changed, each of which
+#:   moves recorded numbers. A stop or target fills at the open when the bar opens beyond
+#:   it (a long stopped at 97 on a bar opening at 90 lost 10, not 3), and the bar an entry
+#:   fills on is checked against that position's own stop and target. Costs are priced
+#:   with the liquidity known *before* the fill's bar (the ADV and volatility windows
+#:   end at the previous bar), and the configured spread is the one charged - it was dead
+#:   in the cost model, so a "3x" cost stress cost about 1.6x. The benchmark return
+#:   series is labelled by the same step as the strategy's, so alpha, beta, R-squared and
+#:   the information ratio measure the right pairing (they were taken against the next
+#:   bar's benchmark return). Entries are sized against what the book has left - the same
+#:   rule live uses - which changes nothing the backtest deployed, but is recorded because
+#:   the live path moved to it. A v6 result is not comparable with these.
+#:
 #: Records written before this field existed carry no version; absence means 1.
-ACCOUNTING_VERSION = 6
+ACCOUNTING_VERSION = 7
 
 
 class BacktestError(RuntimeError):
