@@ -161,7 +161,9 @@ def test_streaming_peak_below_eager_on_long_history(tmp_path):
 # --------------------------------------------------------------------------- #
 # Streaming factor risk model (Σ = X F Xᵀ + Δ) vs the eager estimate_factor_model
 # --------------------------------------------------------------------------- #
-def _factor_setup(tmp_path, n=300, syms=("AAA", "BBB", "CCC", "DDD", "EEE", "FFF")):
+def _factor_setup(
+    tmp_path, n=300, syms=("AAA", "BBB", "CCC", "DDD", "EEE", "FFF", "GGG", "HHH", "III", "JJJ")
+):
     bars = {s: make_ohlcv(n=n, seed=i, freq="1D") for i, s in enumerate(syms)}
     benchmark = make_ohlcv(n=n, seed=99, freq="1D")
     store = ParquetBarStore(tmp_path)
