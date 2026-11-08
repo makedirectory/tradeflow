@@ -44,11 +44,11 @@ def test_the_declared_entry_point_matches_reality():
 
     manifest = tomllib.loads(Path("pyproject.toml").read_text())
     scripts = manifest["project"]["scripts"]
-    # The primary command and the alias are one entry point from one distribution; an
-    # alias that pointed anywhere else would be a second program.
     assert scripts[settings.CLI_NAME] == "quantred.cli:main"
+    # The old command is the transition package's. Two distributions installing the same
+    # script means one's upgrade or uninstall deletes the other's copy.
     for legacy in settings.LEGACY_CLI_NAMES:
-        assert scripts[legacy] == "quantred.cli:main"
+        assert legacy not in scripts
     assert manifest["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == ["quantred"]
 
 
@@ -133,8 +133,9 @@ def test_the_wheel_installs_both_executables(tmp_path):
             line for line in archive.read(metadata).decode().splitlines() if line.startswith("Name:")
         )
     assert name_line == f"Name: {settings.DISTRIBUTION_NAME}"
-    for command in (settings.CLI_NAME, *settings.LEGACY_CLI_NAMES):
-        assert f"{command} = quantred.cli:main" in scripts
+    assert f"{settings.CLI_NAME} = quantred.cli:main" in scripts
+    for legacy in settings.LEGACY_CLI_NAMES:
+        assert f"{legacy} =" not in scripts
 
 
 def test_the_version_has_exactly_one_source():

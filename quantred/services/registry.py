@@ -15,7 +15,12 @@ from quantred.demo.strategies import DemoTrendStrategy
 from quantred.scanners.base import ScannerStrategy
 from quantred.scanners.symbol_scanner import BUILTIN_SCANNERS as _BUILTIN_SCANNERS
 from quantred.scanners.symbol_scanner import SymbolScanner
-from quantred.settings import SCANNER_ENTRY_POINT_GROUP, STRATEGY_ENTRY_POINT_GROUP, entry_point_groups
+from quantred.settings import (
+    SCANNER_ENTRY_POINT_GROUP,
+    STRATEGY_ENTRY_POINT_GROUP,
+    entry_point_groups,
+    is_own_distribution,
+)
 from quantred.strategies.base import Strategy
 
 logger = logging.getLogger(__name__)
@@ -194,6 +199,18 @@ def _entry_point_classes(group: str, base_cls: Type) -> Dict[str, Type]:
     """
     found: Dict[str, Type] = {}
     for entry_point in _select_entry_points(group):
+        if _from_own_distribution(entry_point):
+            # The previous distribution (`tradeflow-engine` 2.3.0) can still be installed
+            # beside this one and declares the demo pair under the old groups. Those
+            # names are built in here already; loading them would import the old
+            # package's copy of the same classes and trip the override warning on every
+            # command. Anything this project owns is the built-ins by definition.
+            logger.debug(
+                "Skipping %s entry point %r: declared by the engine's own distribution",
+                group,
+                entry_point.name,
+            )
+            continue
         # Loading is all-or-nothing for one entry point: if the module will not
         # import, or hands back something that is not a set of contributions, there
         # is nothing of it to keep.
@@ -230,6 +247,17 @@ def _entry_point_classes(group: str, base_cls: Type) -> Dict[str, Type]:
                 continue
             found[name] = cls
     return found
+
+
+def _from_own_distribution(entry_point: Any) -> bool:
+    """Whether ``entry_point`` is declared by this engine's current or previous distribution.
+
+    The current one is deliberately included only for the legacy groups' benefit; its
+    own declarations are the same classes as the built-ins and are skipped harmlessly.
+    """
+    dist = getattr(entry_point, "dist", None)
+    name = getattr(dist, "name", None) or (getattr(dist, "metadata", None) or {}).get("Name")
+    return bool(name) and is_own_distribution(str(name))
 
 
 def _select_entry_points(group: str) -> List[Any]:

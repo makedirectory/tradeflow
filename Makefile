@@ -162,10 +162,10 @@ release-check: build  ## Build, validate the metadata, and install into a clean 
 	@$(PYTHON) -m venv /tmp/quantred-release-check
 	@/tmp/quantred-release-check/bin/pip install -q dist/*.whl
 	@cd /tmp && TRADEFLOW_HOME=/tmp/quantred-release-state /tmp/quantred-release-check/bin/quantred --version | tee /tmp/quantred-release-check/banner.txt
-	@cd /tmp && TRADEFLOW_HOME=/tmp/quantred-release-state /tmp/quantred-release-check/bin/tradeflow --version
 	@grep -q '^quantred ' /tmp/quantred-release-check/banner.txt || { echo "FAIL: the banner does not start with 'quantred '"; exit 1; }
 	@cd /tmp && /tmp/quantred-release-check/bin/python -c "import importlib.metadata as m, quantred; assert m.metadata('quantred')['Name'] == 'quantred', m.metadata('quantred')['Name']; assert m.version('quantred') == quantred.__version__, (m.version('quantred'), quantred.__version__); assert quantred.__file__.startswith('/tmp/quantred-release-check'), quantred.__file__"
-	@echo "OK — the wheel installs and runs, as quantred and as tradeflow, outside this checkout."
+	@test ! -e /tmp/quantred-release-check/bin/tradeflow || { echo "FAIL: the wheel installs a tradeflow command; that belongs to tradeflow-engine"; exit 1; }
+	@echo "OK — the wheel installs and runs as quantred, and ships no tradeflow command, outside this checkout."
 
 # --- quality & docs ---------------------------------------------------------
 check-links:  ## Verify Markdown links + heading anchors in the tracked docs

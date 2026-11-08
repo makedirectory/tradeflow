@@ -56,7 +56,10 @@ BRAND = "QuantRed"
 
 #: Executables that still launch this copy after :data:`CLI_NAME` changes. Never
 #: printed as an instruction; looked up only where something must *find* a script
-#: that exists on disk (an MCP client config written under an older name).
+#: that exists on disk (an MCP client config written under an older name). This
+#: distribution installs none of them: the ``tradeflow`` script comes from the final
+#: ``tradeflow-engine`` release, which depends on this one, so it exists beside the
+#: interpreter only when that package is installed.
 LEGACY_CLI_NAMES: Tuple[str, ...] = ("tradeflow",)
 
 #: The name this copy's MCP server reports to a client, and the key its client

@@ -96,9 +96,10 @@ demo_volume = "quantred.demo.scanners:DemoVolumeScanner"
 # `main`, so the two are one code path found two ways rather than two things that
 # have to be kept in agreement.
 quantred = "quantred.cli:main"
-# The previous command name, kept so existing scripts and MCP client configs keep
-# launching. Same entry point from the same distribution - an alias, not a fork.
-tradeflow = "quantred.cli:main"
+# No `tradeflow` alias here. The previous command is provided by the final
+# `tradeflow-engine` release (packaging/tradeflow-engine), which depends on this
+# distribution: two distributions that both install `bin/tradeflow` would have the
+# upgrade or uninstall of one delete the other's copy.
 
 [project.urls]
 Homepage = "https://tradeflow.mk-dir.com/"
@@ -143,6 +144,7 @@ exclude = [
     "/docs/node_modules",
     "/docs/build",
     "/dist",
+    "/packaging",
     "*.csv",
     "/.env",
 ]
@@ -167,4 +169,4 @@ ignore = ["E501"]
 [tool.ruff.lint.isort]
 # Classify the application package as first-party so import ordering is stable
 # across a local checkout and CI.
-known-first-party = ["quantred"]
+known-first-party = ["quantred", "tradeflow"]

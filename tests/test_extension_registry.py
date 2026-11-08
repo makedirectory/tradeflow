@@ -351,3 +351,61 @@ def test_a_pack_subclassing_the_demo_is_not_itself_reported_as_demo():
     """
     assert registry.is_demo(DemoTrendStrategy)
     assert not registry.is_demo(PrivateTrendStrategy)
+
+
+class _FakeDist:
+    def __init__(self, name):
+        self.name = name
+
+
+class _FakeDistEntryPoint(_FakeEntryPoint):
+    def __init__(self, name, group, value, dist_name):
+        super().__init__(name, group, value)
+        self.dist = _FakeDist(dist_name)
+
+
+def test_the_previous_distribution_beside_this_one_is_not_warned_about(monkeypatch, caplog):
+    """`tradeflow-engine` 2.3.0 may stay installed next to `quantred` and declares the demo
+    pair under the old groups, as a *different* class object (its own copy of the package).
+    That must not trip the 'built-in names cannot be overridden' warning on every command."""
+    import logging
+
+    class OldCopyOfDemo(DemoTrendStrategy):
+        """Stands in for the old package's own copy of the demo class."""
+
+    monkeypatch.setattr(
+        metadata,
+        "entry_points",
+        lambda: _FakeEntryPoints(
+            [_FakeDistEntryPoint("demo_trend", "tradeflow.strategies", OldCopyOfDemo, "tradeflow-engine")]
+        ),
+    )
+    with caplog.at_level(logging.DEBUG, logger=registry.logger.name):
+        try:
+            registry.refresh_registries()
+            assert registry.STRATEGIES["demo_trend"] is DemoTrendStrategy
+        finally:
+            monkeypatch.undo()
+            registry.refresh_registries()
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+def test_a_pack_with_a_distribution_of_its_own_is_still_discovered(monkeypatch):
+    """The skip is for this project's distributions only, not for anything with a `dist`."""
+    monkeypatch.setattr(
+        metadata,
+        "entry_points",
+        lambda: _FakeEntryPoints(
+            [
+                _FakeDistEntryPoint(
+                    "pack_trend", registry.STRATEGY_ENTRY_POINT_GROUP, PrivateTrendStrategy, "some-pack"
+                )
+            ]
+        ),
+    )
+    try:
+        registry.refresh_registries()
+        assert registry.STRATEGIES["pack_trend"] is PrivateTrendStrategy
+    finally:
+        monkeypatch.undo()
+        registry.refresh_registries()
