@@ -82,7 +82,7 @@ QuantRed setup check
   state root: ~/.tradeflow
   (journal, trial store, bar cache, and configs all live here)
 
-  [ok]       version                quantred 2.4.0
+  [ok]       version                quantred 2.5.0
   [optional] env file               ~/.tradeflow/.env not found
         -> run `init` to create it, or export the keys as environment variables
   [blocked]  APCA_API_KEY_ID        (not set) - no command that touches the market will run

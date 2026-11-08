@@ -28,6 +28,202 @@ index; they are tagged in the repository.
 
 ---
 
+## 2.5.0 — 2026-11-08
+
+The engine's numbers changed, so this release is an **accounting bump**, plus an audit of
+the formulas behind the analytics. Both came from checking the code against independent
+computations instead of against its own earlier output. Most of what follows is a number
+that was wrong in a way no test had been written to see.
+
+### Accounting v7
+
+`ACCOUNTING_VERSION` is **7**. It stamps every recorded result, and the engine now
+computes different numbers for the same inputs, so a v6 result is not comparable with a
+v7 one. The version is one stamp for every kind, so all earlier trials - including
+those the changes below barely touch - drop out of the default `trials list` (it says
+how many it hid); `trials archive` retires the era, and `--all-accounting` still spans
+versions deliberately. What moved:
+
+- **Benchmark returns were paired with the next bar's strategy return.** The engine's
+  benchmark series was labelled from 0 while the strategy's returns are labelled from 1,
+  and the metrics pair by label, so every strategy return was regressed on the following
+  bar's benchmark return. Alpha, beta, R², information ratio, Treynor and the
+  benchmark-relative promotion prerequisite were all computed on misaligned data. The
+  clearest symptom: a book holding the benchmark itself (about 94% of equity) read beta
+  -0.09 and R² near 0 against a true 0.94 and 1.00, while the per-leg beta, paired by
+  position, said 0.90 in the same run.
+- **Stops and targets fill at the open when the bar gaps through them.** A long entered
+  at 100 with a stop at 97, on a bar opening at 90, was booked as exiting at 97 (-300 on
+  100 shares); the open gives -1,000. A resting order fills at the first price available,
+  so stops and targets now fill at the worse (stop) or better (target) of the open and
+  the level. The bar an entry fills on is also checked against the new position's
+  bracket: it used to carry on even when its own bar traded through the stop.
+- **The open decides which level filled.** The stop used to be tested first whatever the
+  open. A long entered at 100 (stop 90, target 110) on a bar opening at 115 with a low
+  of 85 booked the stop at 90 (-100) although the target had already filled at the 115
+  open (+150). A level the bar opens beyond now fills at the open; only when the open is
+  inside both does the intra-bar rule apply, and there the stop is still taken first, as
+  the pessimistic convention.
+- **An intra-bar exit no longer frees cash or a slot for an entry at that bar's open.**
+  Stops and targets used to close on the bar's low or high, credit the cash and the slot
+  back, and then new entries filled at the same bar's open - so with one slot, whether
+  the next name was admitted depended on whether the bar's low reached the stop, a price
+  later than the open. Only signal exits (decided at the previous close) run before
+  admission now; stop and target exits run after it, and what they free is usable from the
+  next bar. A stop that gaps through at the open fills at the open but frees nothing until
+  the next bar either, because it is not known when the entry is decided.
+- **Cost estimates use trailing liquidity only.** The average daily volume and volatility
+  behind a fill's impact cost were windows ending at the fill's own bar, which includes
+  that bar's volume and close - unknown when an order at its open is priced. They end at
+  the previous bar now. In the regression test, changing only the fill bar's volume and
+  close moved the cost of the same two fills from 0.7189 to 0.7694; it no longer does.
+- **The configured spread is charged, and the cost stress scales it.** A trade's spread
+  defaulted to 5 bp and the engine never named one, so a cost model built with a 50 bp
+  spread charged 5 bp. A trade takes the model's own spread now. The stress also scaled
+  commission, impact and borrow but not the spread, so its "3x" point cost about 1.6x the
+  1x total (5.5 against 3.5 in a four-name run); with the spread scaled it is 3.0x,
+  within the drift from sizing off a slightly poorer book. A trial's cost identity only
+  carries a spread when it differs from the default, so existing identities keep their
+  hash. The MCP server does not expose a standalone spread, since the stress is how it
+  is reached.
+- **The walk-forward aggregate runs on one clock, trading days.** Its dated curve was
+  resampled to calendar days, which put a zero-return weekend in every week and shrank
+  the per-period standard deviation by about the square root of 5/7; the aggregate was
+  then annualised at 252 while the Deflated Sharpe's trial variance was converted per
+  trading day. In the regression example the aggregate Sharpe read 0.70 against 0.82, and
+  the deflated figure compared a calendar-day numerator with a trading-day benchmark
+  (0.22 against about 0.34). Per-fold metrics were already annualised from bar-close
+  curves at the timeframe rate, so the aggregate now matches the folds. Holidays remain
+  zero rows, since the trades alone carry no session calendar.
+
+### Live trading (paper by default)
+
+- **Entries size like the backtest.** The backtest sized each entry off free cash - the
+  capital less what is already held at cost - while live sized off the smaller of the
+  venue's buying power and the capital, which on a margin or paper account stays at the
+  capital however much is open. At a 10,000 capital, 1% risk and a 4% stop, three
+  simultaneous $50 entries sized 2,500 / 1,850 / 1,400 in the backtest and 2,500 each
+  live (illustrative figures from the regression test). With no capital set, live sized
+  on margin buying power; it now uses account equity, never buying power. A configured
+  capital still caps the pool at the account's equity, and the venue's buying power can
+  only lower the answer. Both clocks call the same two functions
+  (`free_buying_power`, `deployable_pool`).
+- **The pool moves with realized P&L.** The backtest's cash plus capital held at cost is
+  the capital plus what the book has realized; live capped at the capital alone, so after
+  a loss on an account larger than the capital the next entry still sized at full size
+  (50 shares where the backtest sized 47 after a $500 loss on a 10,000 capital). The
+  live trader now keeps a realized figure from closing fills.
+- **What is still different, deliberately.** The realized figure is in memory, so a
+  restart resumes at the configured capital; a closing fill the stream never delivers is
+  not counted; and the backtest's pool is net of its modelled costs while live's is not,
+  since a paper venue reports no fee. A fully invested book now has nothing left to size
+  against: the entry sizes to zero and is skipped as "size rounds to zero".
+
+### Risk, portfolio and analytics
+
+- **The factor risk model has an intercept factor.** Exposures are z-scored, so no factor
+  could express "every name moved together" and a common market move landed in
+  specific risk. In a simulated 40-name one-factor world with a true equal-weight
+  volatility of 17.6%, the sample estimate read 17.4%, the factor model 4.5% and the
+  model with the intercept 17.7%. The factor is named `intercept` and leads
+  `factor_names`; the batch and streaming estimators both carry it. A model without at
+  least two residual degrees of freedom (fewer than factors plus two names) is now
+  refused instead of fitting exactly with ~0 specific variance and 100% factor risk.
+  Alpha neutralisation and attribution fit their own terms and are unchanged.
+- **Downside deviation, and so Sortino, is the standard semideviation.** It was the
+  standard deviation of only the negative returns about their own mean, so a series
+  whose losses were all one size read as zero risk. It is now the root mean square of
+  `min(r, 0)` over every period, annualised. Sortino is an optimiser objective, so its
+  values move.
+- **The transfer coefficient is in the risk metric.** It was a correlation of alpha with
+  the active weights, which ignored the covariance and overstated what a capped book
+  kept (a ten-name book capped at 0.2 read 0.89 and an implied IR of 0.49 against a
+  predicted 0.12). It is now the book's predicted IR over the unconstrained bound, so
+  `TC · IR*` is the predicted IR and an unconstrained optimum scores exactly 1. The same
+  value feeds the `info` and `verdict` reports. It is not monotone in how tight the
+  constraints are, and the docs no longer say it is.
+- **Horizon blend weights maximise IC.** The current/lagged weights came from a form that
+  was not the maximiser; with a lag IC ratio of 0.5 and signal correlation 0.8 it gave a
+  current weight of 1.33 (relative IC 1.075) where the maximum is 2.0 (1.118). The
+  diversify / hedge / latest-only regimes keep their signs; identical signals return the
+  latest alone.
+- **Breadth deflates by the correlation of the residual returns the IC is measured on.**
+  It took the correlation from the risk model's total returns, which still contain the
+  market move, so effective breadth was over-deflated (about 15x in a one-factor test)
+  and predicted IR changed with `--risk-model`. Residual correlation is now estimated per
+  pair over the bars both names have, and beta per name over its own bars; a whole-frame
+  drop of missing rows used to truncate every name to the shortest history and, under
+  three rows, return 0.0 (no deflation). With thin or ragged data, where fewer than half
+  of all pairs are estimable, breadth and predicted IR are reported as **unavailable**,
+  not computed. In the test that motivated it, one added two-bar listing took effective
+  breadth from about 90 to 520 and overstated predicted IR about 2.4x without a sign.
+- **The peak-return horizon is 1.81 half-lives, not 1.26.** The peak is at 1.2564 decay
+  time constants, which is 1.2564 / ln 2 half-lives. Display only; nothing consumes it.
+- **`summarize_bars` annualises volatility at the timeframe's rate.** It used 252
+  whatever the timeframe, so hourly volatility was understated by the square root of 6.5.
+- **A constant series reports unavailable, not a huge ratio.** Twenty copies of 0.01 have
+  a sample standard deviation of about 1e-18, so Sharpe read about 1e17 and the
+  probabilistic and deflated Sharpe read about 1. One shared noise-aware test
+  (`utils.numeric.is_flat`) now guards Sharpe, PSR, DSR, SQN, alpha/beta, information
+  ratio, the IC statistics, the bootstrap and walk-forward Sharpe, z-scoring and the
+  optimiser's standardisation. A book that tracks its benchmark exactly reads an
+  information ratio of 0.0 instead of about -2.
+- The elapsed-years fallback for CAGR divided weekday-indexed points by 252 where a year
+  holds about 260.9 weekdays, overstating elapsed time by about 3.5%.
+
+### Labels that said more than they computed
+
+- **Monte Carlo is a real annualised Sharpe.** The walk-forward's "Monte Carlo OOS Sharpe"
+  p05 / p50 was the square root of the trade count times mean over standard deviation of
+  per-trade P&L - a t-statistic that grows with the number of trades. It now block-resamples
+  the daily out-of-sample P&L and reports an annualised Sharpe per resample, so splitting
+  a day's P&L over five trades leaves it unchanged. The payload gains `periods` and
+  `basis`, and a run too short to resample no longer prints 0.000 / 0.000. The keys
+  (`sharpe_p05`, `sharpe_p50`) are kept; the distribution is computed live and never read
+  back from a stored record.
+- **"PBO" says what it is.** `--pbo` ranks the walk-forward's folds, each with its own
+  tuned parameters, by in-sample score and counts how often the in-sample best ranks
+  poorly out of sample. That is a heuristic over folds, not the probability of backtest
+  overfitting across configurations, and it is now named an in-sample-best fold
+  out-of-sample rank-failure rate everywhere it prints (CLI, MCP description, docs). The
+  result key stays `pbo` because journaled records carry it.
+- **The bootstrap statistic is a Sharpe.** It is fed raw out-of-sample returns, so it is
+  labelled a Sharpe rather than an information ratio; it is compared against a family
+  panel of raw stored series, which is why the input was not changed. The `ir_observed`
+  key stays.
+
+### Correctness you can check yourself
+
+- **A math contract in `tests/math/`.** Each formula has a reference test that
+  recomputes it independently (plain loops, closed forms, `numpy` and `scipy`, never the
+  function under test): returns and ratios at 52, 252, 1,638 and 19,656 periods a year,
+  drawdown, tail risk, multiple-testing corrections, covariance and shrinkage, the
+  factor model, portfolio construction, the cost model and sizing, information and
+  breadth, and the walk-forward aggregate. On top of those, 19 seeded end-to-end
+  scenarios are pinned to stored values - daily and intraday backtests, a long-short
+  book with borrow, gap-through exits, intra-bar causality, walk-forward, the cost
+  stress, risk models, the optimiser, the verdict, attribution and conditional risk -
+  each checked against an independent computation before its numbers were stored.
+  Regenerating the pins is explicit (`QUANTRED_REGEN_GOLDEN=1`), refused under CI, and a
+  mismatch lists old and new for every key. Every fix above was deliberately re-broken to
+  confirm the suite fails; a mutation that made gapped stops fill at the stop price was
+  caught by one reference test but by no golden scenario at first, which is why the
+  gap-through scenario exists. `scipy` is declared in the `dev` extra for it.
+
+### Smaller
+
+- The CLI, the service and the live commands build their cost model through one
+  function, `services.analysis.build_cost_model`. The CLI used to build its own and omit
+  the participation cap the service passes, and its cost identity was a second copy
+  that did not follow the service; both delegate now, with a test comparing them.
+- A walk-forward's pooled trades come from one definition that keeps "no fold kept trade
+  detail" distinct from "the folds did not trade".
+- The aim policy's discount is documented as the formula the code computes,
+  `κ / (1 − e^(−φ)(1 − κ))`; the `κ/(κ+φ)` in the help text was only its small-φ limit and
+  was off by roughly a quarter at φ = 0.35.
+
+---
+
 ## 2.4.0 — 2026-11-07
 
 TradeFlow is now **QuantRed**, and a first session works from install to a result
