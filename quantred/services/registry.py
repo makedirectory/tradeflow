@@ -6,6 +6,7 @@ MCP server, and the research agent so they all see the same menu.
 
 import logging
 import re
+import sys
 from collections.abc import Mapping
 from importlib import metadata
 from typing import Any, Dict, List, Optional, Type
@@ -16,10 +17,10 @@ from quantred.scanners.base import ScannerStrategy
 from quantred.scanners.symbol_scanner import BUILTIN_SCANNERS as _BUILTIN_SCANNERS
 from quantred.scanners.symbol_scanner import SymbolScanner
 from quantred.settings import (
+    LEGACY_DISTRIBUTION_NAMES,
     SCANNER_ENTRY_POINT_GROUP,
     STRATEGY_ENTRY_POINT_GROUP,
     entry_point_groups,
-    is_own_distribution,
 )
 from quantred.strategies.base import Strategy
 
@@ -199,15 +200,18 @@ def _entry_point_classes(group: str, base_cls: Type) -> Dict[str, Type]:
     """
     found: Dict[str, Type] = {}
     for entry_point in _select_entry_points(group):
-        if _from_own_distribution(entry_point):
+        declared = getattr(entry_point, "group", None) or group
+        if _from_legacy_distribution(entry_point):
             # The previous distribution (`tradeflow-engine` 2.3.0) can still be installed
             # beside this one and declares the demo pair under the old groups. Those
             # names are built in here already; loading them would import the old
             # package's copy of the same classes and trip the override warning on every
-            # command. Anything this project owns is the built-ins by definition.
+            # command. This distribution's own declarations are *not* skipped: the demo
+            # pair goes through this path on every install, which is the point of
+            # declaring it rather than only seeding it.
             logger.debug(
-                "Skipping %s entry point %r: declared by the engine's own distribution",
-                group,
+                "Skipping %s entry point %r: declared by the previous distribution",
+                declared,
                 entry_point.name,
             )
             continue
@@ -217,7 +221,7 @@ def _entry_point_classes(group: str, base_cls: Type) -> Dict[str, Type]:
         try:
             contributions = _coerce_contributions(entry_point.name, entry_point.load())
         except Exception as exc:  # noqa: BLE001 - discovery should degrade, not brick the CLI
-            logger.warning("Ignoring %s entry point %r: %s", group, entry_point.name, exc)
+            logger.warning("Ignoring %s entry point %r: %s", declared, entry_point.name, exc)
             continue
 
         # Validation is not. One unusable class in a pack of five used to abort the
@@ -227,11 +231,11 @@ def _entry_point_classes(group: str, base_cls: Type) -> Dict[str, Type]:
         # offending class nor the ones lost behind it.
         for name, cls in contributions.items():
             try:
-                _validate_extension(name, cls, base_cls, group)
+                _validate_extension(name, cls, base_cls, declared)
             except Exception as exc:  # noqa: BLE001 - one bad class, not one bad pack
                 logger.warning(
                     "Ignoring %s contribution %r from entry point %r: %s",
-                    group,
+                    declared,
                     name,
                     entry_point.name,
                     exc,
@@ -240,24 +244,49 @@ def _entry_point_classes(group: str, base_cls: Type) -> Dict[str, Type]:
             if name in found:
                 logger.warning(
                     "Ignoring duplicate %s contribution %r from entry point %r",
-                    group,
+                    declared,
                     name,
                     entry_point.name,
                 )
                 continue
             found[name] = cls
+    _warn_if_a_pack_imports_the_old_name()
     return found
 
 
-def _from_own_distribution(entry_point: Any) -> bool:
-    """Whether ``entry_point`` is declared by this engine's current or previous distribution.
+def _from_legacy_distribution(entry_point: Any) -> bool:
+    """Whether ``entry_point`` is declared by the engine's *previous* distribution.
 
-    The current one is deliberately included only for the legacy groups' benefit; its
-    own declarations are the same classes as the built-ins and are skipped harmlessly.
+    Only the previous one: its declarations are a second copy of classes that are
+    built in here already. The current distribution's own entry points are loaded like
+    anyone's.
     """
     dist = getattr(entry_point, "dist", None)
     name = getattr(dist, "name", None) or (getattr(dist, "metadata", None) or {}).get("Name")
-    return bool(name) and is_own_distribution(str(name))
+    return bool(name) and str(name).lower().replace("_", "-") in LEGACY_DISTRIBUTION_NAMES
+
+
+_WARNED_OLD_IMPORT = False
+
+
+def _warn_if_a_pack_imports_the_old_name() -> None:
+    """Say once that something loaded through the ``tradeflow`` import alias.
+
+    The alias's ``DeprecationWarning`` is hidden by Python's default filters unless it
+    is raised from ``__main__``, so a pack loaded by entry point would use it silently
+    while the docs say it warns. Detected from the alias itself (its module and its
+    import finder are present) rather than from any one pack.
+    """
+    global _WARNED_OLD_IMPORT
+    if _WARNED_OLD_IMPORT or "tradeflow" not in sys.modules:
+        return
+    if not any(type(finder).__name__ == "_AliasFinder" for finder in sys.meta_path):
+        return
+    _WARNED_OLD_IMPORT = True
+    logger.warning(
+        "A pack imports the old `tradeflow` name; it works through tradeflow-engine 2.3.1 - "
+        "change its imports to `quantred`."
+    )
 
 
 def _select_entry_points(group: str) -> List[Any]:
