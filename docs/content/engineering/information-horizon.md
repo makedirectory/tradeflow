@@ -48,12 +48,18 @@ the holding period [transaction cost](./transaction-costs) should be amortized o
 
 ## The optimal current/lagged blend
 
-Given decay `γ` (= δ) and the signal's autocorrelation `ρ`, the IR-maximizing weight on
-the current signal is:
+Model the current signal as having IC `IC`, its lagged copy `γ·IC` (decay `γ` = δ), and
+the two as correlated by the signal's autocorrelation `ρ`. A blend `w` then has
+`IC(w) = wᵀc / √(wᵀΩw)` with `c = [1, γ]` and `Ω = [[1, ρ], [ρ, 1]]`, maximized at
+`w ∝ Ω⁻¹c ∝ [1 − γρ, γ − ρ]`. Normalized to sum to one:
 
 ```
-w_now = (1 − γ·ρ) / (1 + γ² − 2·γ·ρ)        w_lag = 1 − w_now
+w_now = (1 − γ·ρ) / ((1 + γ)(1 − ρ))        w_lag = 1 − w_now
 ```
+
+For example `γ = 0.5`, `ρ = 0.8` gives `w_now = 2`, `w_lag = −1` (IC 1.118 in units of the
+current signal's IC); the form this replaced gave `w_now = 1.33` (IC 1.075), which is not
+the maximum. If `ρ = 1` the two signals are identical and the latest alone is returned.
 
 - `δ > ρ` → **diversify**: `w_lag > 0` — the lag carries independent information.
 - `δ < ρ` → **hedge**: `w_lag < 0` — it mostly cancels current noise.

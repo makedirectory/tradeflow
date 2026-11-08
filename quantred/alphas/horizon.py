@@ -100,19 +100,29 @@ def peak_return_horizon(half_life: float) -> float:
 
 
 def blend_weights(gamma: float, rho: float) -> Tuple[float, float]:
-    """IR-maximizing weights on the current vs lagged signal: ``(w_now, w_lag)``.
+    """IC-maximizing weights on the current vs lagged signal: ``(w_now, w_lag)``.
 
-    ``w_now = (1 − γ·ρ) / (1 + γ² − 2·γ·ρ)`` (decay ``γ``, current/lagged
-    autocorrelation ``ρ``); ``w_lag = 1 − w_now``. Three regimes:
+    Model: the current signal has IC ``IC``, the lagged copy ``γ·IC`` (decay ``γ``), and
+    the two are correlated ``ρ`` (their autocorrelation). A blend ``w`` has
+    ``IC(w) = wᵀc / √(wᵀΩw)`` with ``c = [1, γ]`` and ``Ω = [[1, ρ], [ρ, 1]]``, which is
+    maximized at ``w ∝ Ω⁻¹c ∝ [1 − γρ, γ − ρ]``. Normalized to sum to one::
+
+        w_now = (1 − γρ) / ((1 + γ)(1 − ρ))        w_lag = 1 − w_now
+
+    Three regimes:
 
     - ``γ > ρ`` → **diversify**: ``w_lag > 0`` (the lag carries independent info).
     - ``γ < ρ`` → **hedge**: ``w_lag < 0`` (it mostly cancels current noise).
     - ``γ = ρ`` → the latest signal alone is sufficient (``w_lag = 0``).
+
+    Only the ratio is identified; if the raw weights sum to zero (``ρ = 1``: the two
+    signals are the same, or ``γ = -1``) there is nothing to normalize and the latest
+    signal alone is returned.
     """
-    denom = 1.0 + gamma * gamma - 2.0 * gamma * rho
-    if denom == 0:
+    total = (1.0 - gamma * rho) + (gamma - rho)  # equals (1 + γ)(1 − ρ)
+    if abs(total) < 1e-12:
         return 1.0, 0.0
-    w_now = (1.0 - gamma * rho) / denom
+    w_now = (1.0 - gamma * rho) / total
     return w_now, 1.0 - w_now
 
 
