@@ -77,6 +77,9 @@ dev = [
     # than assert something about the exclude patterns. Asserting the config is what
     # let an unanchored `configs` ship an example pack with no configs in it.
     "hatchling>=1.21",
+    # The math contract suite (tests/math) checks formulas against scipy, so it is declared
+    # rather than left to arrive transitively through scikit-learn.
+    "scipy>=1.11",
 ]
 
 # What `demo` runs on, and what `--strategy`/`--scanner` fall back to on a bare install.
