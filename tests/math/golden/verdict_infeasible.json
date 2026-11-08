@@ -1,0 +1,17 @@
+{
+ "provenance": {
+  "accounting_version": 7,
+  "generated_by": "QUANTRED_REGEN_GOLDEN=1 pytest tests/math -k golden (tests/math/test_golden_pins.py)",
+  "scenario": "demo_trend verdict with a per-name cap six names cannot fund",
+  "seed": "fake bars seeds 0..6"
+ },
+ "values": {
+  "verdict.checks.portfolio_feasible.note": "max_weight*6 < 1 (cardinality/weight cap can't fund the book)",
+  "verdict.checks.portfolio_feasible.passed": false,
+  "verdict.checks.portfolio_feasible.threshold": true,
+  "verdict.checks.portfolio_feasible.value": false,
+  "verdict.promotable": false,
+  "verdict.summary": "infeasible \u2014 no book satisfies the constraints: max_weight*6 < 1 (cardinality/weight cap can't fund the book). More dates will not change this; widen the universe or raise max_weight/max_names explicitly.",
+  "verdict.verdict": "infeasible"
+ }
+}
