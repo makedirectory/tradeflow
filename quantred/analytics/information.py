@@ -12,7 +12,7 @@ layer. Research-clock only.
 """
 
 import math
-from typing import Dict, List, Sequence
+from typing import Dict, List, Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -70,8 +70,19 @@ def effective_breadth(n_names: int, rebalances_per_year: float, rho_bar: float) 
     return {"br_eff": float(br_eff), "br_naive": float(br_naive), "rho_bar": float(rho_bar)}
 
 
-def mean_residual_correlation(returns: pd.DataFrame, benchmark_returns: pd.Series) -> float:
-    """Mean pairwise correlation of the names' *benchmark-residual* returns.
+#: Fewest overlapping bars a beta, or a pair's residual correlation, may rest on. Below it a
+#: correlation is mostly its own sampling error (a correlation of two series of ``k`` bars
+#: has a standard error near ``1/sqrt(k)``), so the pair is left out rather than counted.
+MIN_OVERLAP = 20
+
+#: Fraction of all name pairs that must have a usable correlation before the mean is trusted.
+MIN_PAIR_COVERAGE = 0.5
+
+
+def mean_residual_correlation(
+    returns: pd.DataFrame, benchmark_returns: pd.Series, *, min_overlap: int = MIN_OVERLAP
+) -> Optional[float]:
+    """Mean pairwise correlation of the names' *benchmark-residual* returns, or ``None``.
 
     ``returns`` is (periods × names), ``benchmark_returns`` the aligned benchmark. Each
     name's residual is ``r − β·r_benchmark`` with ``β = cov(r, r_b)/var(r_b)`` - the same
@@ -79,21 +90,51 @@ def mean_residual_correlation(returns: pd.DataFrame, benchmark_returns: pd.Serie
     correlation of the *bets being counted*: total-return correlations include the common
     market move, which the residual IC has already stripped out, so using them deflates
     breadth by a large factor (and moves with whatever risk model estimated them).
-    Returns 0.0 when fewer than two names or two periods overlap.
+
+    Histories are allowed to differ in length (a recent listing, a halt). Each name's β is
+    estimated over *its own* overlap with the benchmark, and each pair's correlation over
+    the bars where *both* residuals exist - never over the shortest history shared by all
+    names, which would let one two-bar listing erase everything the other names say about
+    their dependence. A name, or a pair, with fewer than ``min_overlap`` bars contributes
+    nothing; the mean is over the pairs that remain.
+
+    Returns ``None`` - not ``0.0`` - when the correlation cannot be estimated: fewer than
+    two names with enough history, a flat benchmark, or fewer than
+    :data:`MIN_PAIR_COVERAGE` of all pairs with enough shared bars. ``0.0`` would mean
+    "the bets are independent" and leave breadth undeflated, the most optimistic answer, for
+    exactly the case where nothing is known.
     """
-    frame = pd.concat([returns, benchmark_returns.rename("__bench__")], axis=1).dropna()
-    names = [c for c in frame.columns if c != "__bench__"]
-    if len(names) < 2 or len(frame) < 3:
-        return 0.0
-    bench = frame["__bench__"]
-    var_b = float(bench.var())
-    if var_b <= 0:
-        return 0.0
-    resid = pd.DataFrame({c: frame[c] - (frame[c].cov(bench) / var_b) * bench for c in names})
-    corr = resid.corr().to_numpy()
-    n = len(names)
-    off_diagonal = np.nan_to_num(corr - np.eye(n))
-    return float(off_diagonal.sum() / (n * (n - 1)))
+    names = list(returns.columns)
+    n_total = len(names)
+    if n_total < 2:
+        return None
+    bench = benchmark_returns.astype(float)
+    floor = max(min_overlap, 3)
+    residuals = {}
+    for name in names:
+        pair = pd.concat([returns[name].astype(float), bench], axis=1, keys=["r", "b"]).dropna()
+        if len(pair) < floor:
+            continue
+        var_b = float(pair["b"].var())
+        if not var_b > 0:
+            continue
+        beta = float(pair["r"].cov(pair["b"])) / var_b
+        residuals[name] = pair["r"] - beta * pair["b"]
+
+    usable = []
+    kept = list(residuals)
+    for i, a_name in enumerate(kept):
+        for b_name in kept[i + 1 :]:
+            both = pd.concat([residuals[a_name], residuals[b_name]], axis=1, keys=["a", "b"]).dropna()
+            if len(both) < floor or is_flat(both["a"]) or is_flat(both["b"]):
+                continue
+            value = float(both["a"].corr(both["b"]))
+            if value == value:
+                usable.append(value)
+    total_pairs = n_total * (n_total - 1) / 2
+    if not usable or len(usable) < MIN_PAIR_COVERAGE * total_pairs:
+        return None
+    return float(np.mean(usable))
 
 
 def predicted_ir(mean_ic: float, br_eff: float) -> float:

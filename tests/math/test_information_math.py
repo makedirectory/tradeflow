@@ -138,11 +138,82 @@ def test_breadth_deflation_follows_the_residual_not_the_total_correlation():
     assert eff == pytest.approx(72.0, rel=0.1)  # residuals are independent: almost no deflation
 
 
-def test_mean_residual_correlation_degenerate_inputs_are_zero():
+def test_mean_residual_correlation_degenerate_inputs_are_unavailable_not_zero():
+    """0.0 would read as "independent bets" and leave breadth undeflated - the most
+    optimistic answer for the case where nothing is known."""
     rets, bench, _ = _residual_world(3, t=50)
-    assert info.mean_residual_correlation(rets.iloc[:, :1], bench) == 0.0
-    assert info.mean_residual_correlation(rets.iloc[:2], bench.iloc[:2]) == 0.0
-    assert info.mean_residual_correlation(rets, bench * 0.0) == 0.0
+    assert info.mean_residual_correlation(rets.iloc[:, :1], bench) is None
+    assert info.mean_residual_correlation(rets.iloc[:2], bench.iloc[:2]) is None
+    assert info.mean_residual_correlation(rets, bench * 0.0) is None
+
+
+def _correlated_residual_world(seed=5, t=600, n=10):
+    """Residuals share a sector factor: sector and idiosyncratic variances are equal, so the
+    true pairwise residual correlation is 0.5 (and beta is 1 for every name)."""
+    rng = np.random.default_rng(seed)
+    market = rng.normal(0, 0.01, t)
+    sector = rng.normal(0, 0.01, t)
+    rets = pd.DataFrame(
+        {f"S{i}": market + sector + rng.normal(0, 0.01, t) for i in range(n)},
+    )
+    return rets, pd.Series(market)
+
+
+def _pairwise_reference(rets, bench):
+    """Independent numpy reference: beta over each name's own bars, correlation over each
+    pair's shared bars, averaged over pairs."""
+    cols = list(rets.columns)
+    b = bench.to_numpy()
+    resid = {}
+    for c in cols:
+        r = rets[c].to_numpy()
+        ok = ~np.isnan(r) & ~np.isnan(b)
+        beta = np.cov(r[ok], b[ok])[0, 1] / np.var(b[ok], ddof=1)
+        out = np.full(len(r), np.nan)
+        out[ok] = r[ok] - beta * b[ok]
+        resid[c] = out
+    vals = []
+    for i in range(len(cols)):
+        for j in range(i + 1, len(cols)):
+            x, y = resid[cols[i]], resid[cols[j]]
+            ok = ~np.isnan(x) & ~np.isnan(y)
+            if ok.sum() >= 20:
+                vals.append(np.corrcoef(x[ok], y[ok])[0, 1])
+    return float(np.mean(vals))
+
+
+def test_ragged_histories_do_not_collapse_the_correlation_to_the_shortest():
+    """A whole-frame dropna truncated every name to the shortest history: one two-bar
+    listing turned a true residual correlation near 0.5 into 0.0 and breadth of ~90
+    into ~520. Each name now uses its own history; the short one is simply left out."""
+    rets, bench = _correlated_residual_world()
+    full = info.mean_residual_correlation(rets, bench)
+    assert full == pytest.approx(0.5, abs=0.08)
+    ragged = rets.copy()
+    ragged.iloc[:-2, 3] = np.nan  # a 2-bar listing
+    ragged.iloc[:200, 7] = np.nan  # a name listed later, with ample history
+    got = info.mean_residual_correlation(ragged, bench)
+    assert got is not None
+    assert got == pytest.approx(0.5, abs=0.08)
+    # the reference keeps pair (3, x) out via the same 20-bar floor; the 2-bar name has none
+    assert got == pytest.approx(_pairwise_reference(ragged, bench), abs=1e-12)
+    # and breadth stays deflated instead of near its naive count
+    assert info.effective_breadth(10, 52, got)["br_eff"] < 0.3 * 520
+
+
+def test_too_little_shared_history_is_unavailable_never_zero():
+    rets, bench = _correlated_residual_world(t=100)
+    thin = rets.copy()
+    thin.iloc[:-5, :] = np.nan  # every name has 5 bars
+    assert info.mean_residual_correlation(thin, bench) is None
+    # most pairs involve a short name: fewer than half the pairs usable -> unavailable
+    mostly = rets.copy()
+    mostly.iloc[:-2, 1:8] = np.nan
+    assert info.mean_residual_correlation(mostly, bench) is None
+    # boundary: exactly the floor of shared bars is accepted
+    edge = rets.copy()
+    edge.iloc[:-20, :] = np.nan
+    assert info.mean_residual_correlation(edge, bench) is not None
 
 
 # --------------------------------------------------------------------------- #

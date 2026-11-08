@@ -3096,7 +3096,9 @@ def compute_information(
     alpha forecast known *at* ``t`` with the realized **residual** return over
     ``(t, t+horizon]`` (strict forward alignment - rewarding skill, not beta), giving
     the IC time series (Pearson + rank), its t-stat, the effective breadth ``BR_eff``
-    (deflated by the average correlation ρ̄ from Σ), and the **predicted vs realized
+    (deflated by the average pairwise correlation ρ̄ of the names' benchmark-residual
+    returns, each pair over the bars both have; reported as unavailable - never as 0 -
+    when too little history is shared), and the **predicted vs realized
     IR** reconciliation - with the research-integrity guardrails (IR standard-error
     band, multiple-testing inflation, sanity ceiling) that keep a lucky backtest
     honest. Factor-vs-specific **risk** attribution is available via the factor model
@@ -3181,8 +3183,20 @@ def compute_information(
         bench["close"].pct_change(),
     )
 
-    breadth = info.effective_breadth(n_names, rebalances_per_year, rho_bar)
-    pred_ir = info.predicted_ir(stats["mean_ic"], breadth["br_eff"])
+    # Unavailable is not zero: rho = 0 says "independent bets" and leaves breadth undeflated,
+    # the most optimistic reading, for exactly the case where nothing could be estimated.
+    breadth_note = None
+    if rho_bar is None:
+        breadth = {"br_eff": None, "br_naive": float(rebalances_per_year * n_names), "rho_bar": None}
+        pred_ir = None
+        breadth_note = (
+            "residual correlation unavailable (too little shared history across the names): "
+            "effective breadth and the predicted IR are not reported, because the naive "
+            "breadth counts every name as an independent bet."
+        )
+    else:
+        breadth = info.effective_breadth(n_names, rebalances_per_year, rho_bar)
+        pred_ir = info.predicted_ir(stats["mean_ic"], breadth["br_eff"])
 
     # IC-uncertainty level shrink: how much of the measured-IC level survives its own
     # estimation error. T_eff deflates the rebalance count by the horizon/spacing overlap
@@ -3240,6 +3254,7 @@ def compute_information(
         "breadth_effective": breadth["br_eff"],
         "breadth_naive": breadth["br_naive"],
         "predicted_ir": pred_ir,
+        "breadth_note": breadth_note,
         "realized_ir": realized_ir,
         "ir_standard_error": info.ir_standard_error(realized_ir, years),
         "multiple_testing_inflation": info.multiple_testing_inflation(n_trials),

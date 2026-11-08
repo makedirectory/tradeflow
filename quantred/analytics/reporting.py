@@ -695,9 +695,15 @@ def _verdict_information_lines(result: Dict[str, Any]) -> list:
         f"  Information ({inf.get('periods')} rebalances, horizon {inf.get('horizon_bars')} bars):{flag}",
         f"    IC {float(inf.get('mean_ic', 0.0)):+.4f}  t-stat {float(inf.get('ic_tstat', 0.0)):+.2f}  "
         f"rank-IC {float(inf.get('rank_ic', 0.0)):+.4f}",
-        f"    breadth {float(inf.get('breadth_effective', 0.0)):.0f} effective "
-        f"(ρ̄ {float(inf.get('rho_bar', 0.0)):.2f}, {inf.get('n_names', 0)} names)",
-        f"    IR predicted {float(inf.get('predicted_ir', 0.0)):+.2f} vs realized "
+        (
+            f"    breadth {float(inf['breadth_effective']):.0f} effective "
+            f"(ρ̄ {float(inf['rho_bar']):.2f}, {inf.get('n_names', 0)} names)"
+            if inf.get("rho_bar") is not None
+            else f"    breadth unavailable ({inf.get('n_names', 0)} names; residual correlation not estimable)"
+        ),
+        "    IR predicted "
+        + ("unavailable" if inf.get("predicted_ir") is None else format(float(inf["predicted_ir"]), "+.2f"))
+        + " vs realized "
         f"{float(inf.get('realized_ir', 0.0)):+.2f} ± {float(inf.get('ir_standard_error', 0.0)):.2f}",
         f"    P(any |t|>2 across {inf.get('n_trials', 1)} campaign trials) = "
         f"{float(inf.get('multiple_testing_inflation', 0.0)):.2f}",

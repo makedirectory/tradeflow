@@ -3330,13 +3330,18 @@ def _print_information_report(args, tuned, data_client) -> None:
     print(f"  measured over {r['periods']} rebalances (horizon {r['horizon_bars']} bars)")
     flag = "  ⚠ low sample" if r["low_sample"] else ""
     print(f"  IC mean {r['mean_ic']:+.4f}  t-stat {r['ic_tstat']:+.2f}  rank-IC {r['rank_ic']:+.4f}{flag}")
+    if r.get("rho_bar") is None:
+        print(f"  breadth: effective unavailable ({r['breadth_naive']:.0f} naive, {r['n_names']} names)")
+        print(f"    {r.get('breadth_note')}")
+        predicted = "unavailable"
+    else:
+        print(
+            f"  breadth: {r['breadth_effective']:.0f} effective vs {r['breadth_naive']:.0f} naive "
+            f"(ρ̄ {r['rho_bar']:.2f}, {r['n_names']} names)"
+        )
+        predicted = f"{r['predicted_ir']:+.2f}"
     print(
-        f"  breadth: {r['breadth_effective']:.0f} effective vs {r['breadth_naive']:.0f} naive "
-        f"(ρ̄ {r['rho_bar']:.2f}, {r['n_names']} names)"
-    )
-    print(
-        f"  IR: predicted {r['predicted_ir']:+.2f}  realized {r['realized_ir']:+.2f} "
-        f"± {r['ir_standard_error']:.2f} (SE)"
+        f"  IR: predicted {predicted}  realized {r['realized_ir']:+.2f} ± {r['ir_standard_error']:.2f} (SE)"
     )
     print(
         f"  guardrails: P(any |t|>2 in {r['n_trials']} trials) = {r['multiple_testing_inflation']:.2f}"
