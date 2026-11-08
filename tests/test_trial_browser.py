@@ -561,7 +561,7 @@ def test_the_rendered_leaderboard_names_each_row_s_kind(store):
 )
 def test_json_output_still_exits_non_zero_when_there_is_no_answer(monkeypatch, tmp_path, capsys, argv, why):
     """Review finding. All three commands returned from the `--json` branch *before*
-    the exit-code check, so `tradeflow trials analyze $ID --json || alert` saw success
+    the exit-code check, so `quantred trials analyze $ID --json || alert` saw success
     on a trial that was never recorded with --record-trades. `--json` is the form a
     script reads, so an exit code only the human-readable path sets is set for nobody.
     """

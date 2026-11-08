@@ -11,7 +11,7 @@ rationale). No rationale -> the agent rejects it unevaluated (a research-hygiene
 rule; see the research-agent guide in the engineering docs).
 
 :class:`LLMProposer` is provider-agnostic - it drives any
-:class:`~tradeflow.research.llm.LLMClient` (Claude, GPT, or a local Ollama model), so
+:class:`~quantred.research.llm.LLMClient` (Claude, GPT, or a local Ollama model), so
 the same loop runs against a hosted frontier model or one on your laptop.
 """
 
@@ -73,7 +73,7 @@ class FixedProposer(Proposer):
 
 
 class LLMProposer(Proposer):
-    """Proposer backed by any :class:`~tradeflow.research.llm.LLMClient`.
+    """Proposer backed by any :class:`~quantred.research.llm.LLMClient`.
 
     Asks the model for a JSON proposal: a hypothesis plus either param overrides
     within the supplied ``PARAM_RANGES`` (``kind="tune"``) or, when

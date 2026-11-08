@@ -13,7 +13,7 @@ Two mistakes follow if you ignore that:
 This module adds both correctives: optimal combination via the signal
 **correlation matrix**, and **Bayesian IC-uncertainty shrinkage**. The output is a
 single combined score (with its combined IC), which flows through the same
-:func:`~tradeflow.alphas.base.refine_alpha` pipeline - so the per-signal assumed IC is
+:func:`~quantred.alphas.base.refine_alpha` pipeline - so the per-signal assumed IC is
 replaced by one measured, shrunk, redundancy-aware number, never applied twice.
 
 The ICs and the correlation matrix must be **measured** (here, over a trailing

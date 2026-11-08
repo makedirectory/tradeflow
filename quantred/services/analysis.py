@@ -2823,7 +2823,7 @@ def compute_alphas(
 
     ``scaling`` picks the per-name scaling: ``"case1"`` = ``ω·IC·z`` (the default),
     ``"case2"`` = ``IC·c_g·z`` (no per-name vol multiply), or ``"auto"`` to let
-    :func:`~tradeflow.alphas.refine.case_test` decide from trailing history
+    :func:`~quantred.alphas.refine.case_test` decide from trailing history
     (``price_derived`` is the base-rate default when the test can't decide). The case
     diagnostics — chosen case, R², both candidates' cross-sectional correlation — are
     echoed under ``case`` whenever the test runs so a wrong call is visible.
@@ -4421,7 +4421,7 @@ def run_scaling_ab(
 ) -> Dict[str, Any]:
     """A/B the two scalings walk-forward: realized IR under Case 1 vs Case 2.
 
-    The regression-based :func:`~tradeflow.alphas.refine.case_test` is one cheap number; this
+    The regression-based :func:`~quantred.alphas.refine.case_test` is one cheap number; this
     is the ground-truth tiebreak. At each rebalance it builds
     the paper alpha book under **both** scalings (same z, same measured residual return;
     only the per-name vol multiply differs) and reports each book's realized information
@@ -4918,7 +4918,7 @@ def construct_portfolio(
     ``book="market_neutral"`` relaxes the long-only box to
     ``[−short_max_weight, max_weight]`` and the budget to ``Σw=0``; ``gross_leverage``
     (``‖w‖₁ ≤ L``) is then mandatory - see
-    :meth:`~tradeflow.portfolio.optimizer.MeanVarianceOptimizer.optimize`. Borrow carry on
+    :meth:`~quantred.portfolio.optimizer.MeanVarianceOptimizer.optimize`. Borrow carry on
     the short book is priced automatically from the cost model's flat default when
     ``cost_aware``; a per-name override belongs in a future ``CostInputs.borrow`` feed
     (v1 has no per-name borrow-rate source at the service layer). ``book="long_only"``

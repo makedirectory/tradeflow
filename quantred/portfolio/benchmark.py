@@ -100,7 +100,7 @@ def implied_returns(benchmark_weights: Dict[str, float], risk: RiskMatrix, mu_b:
 
     ``β = Σw_B/(w_Bᵀ Σ w_B)`` (the one canonical benchmark beta -
     :meth:`RiskMatrix.implied_beta`), ``μ = β·μ_B`` for a stated benchmark premium
-    ``μ_B``. Feeding ``μ`` back into :meth:`~tradeflow.portfolio.optimizer.MeanVarianceOptimizer.optimize`
+    ``μ_B``. Feeding ``μ`` back into :meth:`~quantred.portfolio.optimizer.MeanVarianceOptimizer.optimize`
     with this same ``w_B`` and zero cost returns ``w = w_B`` exactly - the sharpest
     integration test available, and the corollary this function exists to enable:
     our alphas are *deviations from* this consensus.

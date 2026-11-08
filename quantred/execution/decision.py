@@ -103,7 +103,7 @@ def reason_family(record: Dict[str, Any]) -> str:
 class OrderPlan:
     """What execution intended to send, recorded whether or not the venue took it.
 
-    Separate from the :class:`~tradeflow.brokers.base.OrderResult` the broker returns,
+    Separate from the :class:`~quantred.brokers.base.OrderResult` the broker returns,
     because the interesting comparison is between the two. A result alone cannot say
     what price the decision was made at, and so cannot say what the fill cost relative
     to it.

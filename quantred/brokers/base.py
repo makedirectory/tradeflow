@@ -7,7 +7,7 @@ implement :class:`Broker` (see :mod:`quantred.brokers.alpaca.broker`) and inject
 nothing else changes.
 
 **Failure is typed, not erased.** Anything that moves money or reports the account's
-actual state raises a :class:`~tradeflow.brokers.errors.BrokerError` subclass, because
+actual state raises a :class:`~quantred.brokers.errors.BrokerError` subclass, because
 the caller's correct response differs by cause: back off, stop and get a human, size
 down, or carry on. The methods that answer a genuine yes/no question still return one
 - :meth:`Broker.get_position` returning ``None`` means *flat*, which is an answer
@@ -124,7 +124,7 @@ class Broker(ABC):
     def get_account(self) -> Optional[AccountSnapshot]:
         """Return the current account snapshot.
 
-        Raises a :class:`~tradeflow.brokers.errors.BrokerError` if the account cannot
+        Raises a :class:`~quantred.brokers.errors.BrokerError` if the account cannot
         be read.
         """
 
@@ -132,7 +132,7 @@ class Broker(ABC):
     def list_positions(self) -> List[Position]:
         """Return all open positions; an empty list means the account is flat.
 
-        Raises a :class:`~tradeflow.brokers.errors.BrokerError` rather than returning
+        Raises a :class:`~quantred.brokers.errors.BrokerError` rather than returning
         an empty list when positions cannot be read - "flat" and "unknown" are
         different answers, and callers rebuild state from this one.
         """
@@ -203,7 +203,7 @@ class Broker(ABC):
     def get_market_status(self) -> Optional[MarketStatus]:
         """Return the current market clock.
 
-        Raises a :class:`~tradeflow.brokers.errors.BrokerError` if the clock cannot be
+        Raises a :class:`~quantred.brokers.errors.BrokerError` if the clock cannot be
         read, so a caller can tell "closed" apart from "could not tell".
         """
 

@@ -534,7 +534,7 @@ class Strategy(ABC):
         is worse: a missed exit leaves a real position that nothing will close.
 
         So live mode compares the direction the score implies against the position book
-        (which :class:`~tradeflow.execution.live_trader.LiveTrader` keeps synced with
+        (which :class:`~quantred.execution.live_trader.LiveTrader` keeps synced with
         broker truth) and re-states the difference. Where an edge says *change*, this
         says *what should be true now* - the loop converges on the intended book
         instead of depending on having caught one specific bar.

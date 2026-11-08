@@ -6,8 +6,8 @@ already established for the research journal:
 - :class:`BarCoverage` — a small SQLite index of *which* ``(symbol, timeframe)``
   windows have actually been fetched from upstream. Derived, safe to delete: it can
   be rebuilt (approximately) from the Parquet store it indexes.
-- :class:`CachedMarketData` — a :class:`~tradeflow.marketdata.base.MarketDataProvider` that
-  wraps an upstream provider with :class:`~tradeflow.data.store.ParquetBarStore`
+- :class:`CachedMarketData` — a :class:`~quantred.marketdata.base.MarketDataProvider` that
+  wraps an upstream provider with :class:`~quantred.data.store.ParquetBarStore`
   (the columnar substrate) and a :class:`BarCoverage`, so ``get_bars`` becomes
   *check cache, fetch only the missing sub-ranges, write back, return*. A run can pin
   to cache-only (``offline=True``) for a byte-reproducible, network-free result.
@@ -209,7 +209,7 @@ def _normalize_index_utc(frame: pd.DataFrame) -> pd.DataFrame:
 class BarCoverage:
     """A derived SQLite index of which ``(symbol, timeframe)`` windows have been
     fetched from upstream. Safe to delete: :meth:`rebuild` reconstructs it
-    (approximately) from a :class:`~tradeflow.data.store.ParquetBarStore`."""
+    (approximately) from a :class:`~quantred.data.store.ParquetBarStore`."""
 
     def __init__(self, db_path: Optional[Any] = None):
         self.db_path = Path(db_path) if db_path else DEFAULT_COVERAGE_DB

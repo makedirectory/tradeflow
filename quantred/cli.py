@@ -251,7 +251,7 @@ def _vintage_stamp(data_client, universe: List[str], timeframe: str, start: Any,
     the data client isn't cache-backed (today's behavior - no vintage guarantee).
 
     Calling this ensures ``[start, end]`` is cached for ``universe`` (see
-    :meth:`~tradeflow.store.bars.CachedMarketData.vintage_stamp`) - it warms the cache
+    :meth:`~quantred.store.bars.CachedMarketData.vintage_stamp`) - it warms the cache
     as a side effect, which is why callers compute it once, up front, and reuse
     the same value for both the memoization lookup and the eventual record: the
     two must use an identical dedup key or a matching prior trial would never be

@@ -1,6 +1,6 @@
 """Portfolio construction as mean-variance utility maximization.
 
-The OR-Tools :class:`~tradeflow.portfolio.allocator.PortfolioAllocator` maximizes a scalar
+The OR-Tools :class:`~quantred.portfolio.allocator.PortfolioAllocator` maximizes a scalar
 score subject to constraints - it has no notion of risk, so it piles weight onto the
 highest-scoring names regardless of how correlated they are. Active-management
 construction instead maximizes a **risk-adjusted utility**, trading expected residual
@@ -64,7 +64,7 @@ class CostInputs:
     daily_vol: Dict[str, float] = field(default_factory=dict)
     #: Per-name annualized borrow rate override - a locate-desk quote or a
     #: manual hard-to-borrow rate; missing names fall back to the cost model's flat
-    #: default (:meth:`~tradeflow.costs.base.CostModel.borrow_rate`). Only priced for
+    #: default (:meth:`~quantred.costs.base.CostModel.borrow_rate`). Only priced for
     #: ``book="market_neutral"`` (long-only books hold no shorts to carry).
     borrow: Dict[str, float] = field(default_factory=dict)
 

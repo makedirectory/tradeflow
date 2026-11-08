@@ -6,7 +6,7 @@ trading right now?* It scores each symbol's recent bars and emits a per-symbol
 scan signal (``SCANNER_BUY`` / ``SCANNER_SELL`` / ``SCANNER_HOLD``).
 
 Scanners operate on a single symbol's OHLCV frame at a time (the
-:class:`~tradeflow.scanners.symbol_scanner.SymbolScanner` iterates the universe), which
+:class:`~quantred.scanners.symbol_scanner.SymbolScanner` iterates the universe), which
 keeps the interface simple and avoids MultiIndex bookkeeping.
 """
 

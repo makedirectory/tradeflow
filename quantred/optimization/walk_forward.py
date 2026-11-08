@@ -1,7 +1,7 @@
 """Walk-forward / out-of-sample validation.
 
 The honest fitness function for the whole automation effort. The optimizer
-(:class:`~tradeflow.optimization.optimizer.ParameterOptimizer`) tunes parameters on an
+(:class:`~quantred.optimization.optimizer.ParameterOptimizer`) tunes parameters on an
 in-sample (IS) window; this module makes the chosen config prove itself on an
 out-of-sample (OOS) window the optimizer never saw, across rolling/anchored
 folds, with a holdout slice scored exactly once at the end.

@@ -28,7 +28,7 @@ def build_data_client(
     process that calls this cannot place orders.
 
     ``cache``/``offline`` opt into the persistent bar cache
-    (:class:`~tradeflow.store.bars.CachedMarketData`): ``cache`` wraps the Alpaca
+    (:class:`~quantred.store.bars.CachedMarketData`): ``cache`` wraps the Alpaca
     provider so repeated requests reuse previously-fetched bars; ``offline``
     additionally forbids any network call (a request touching an uncached range
     raises rather than falling through to Alpaca), and implies ``cache`` on its

@@ -55,7 +55,7 @@ def test_the_declared_entry_point_matches_reality():
 def test_the_repo_itself_is_recognized_as_a_checkout(monkeypatch):
     """The regression guard for the rename that broke detection once. It no longer
     decides where state goes — it decides which *instructions* make sense, `make demo`
-    against `tradeflow demo`. Getting it wrong now sends a contributor an install
+    against `quantred demo`. Getting it wrong now sends a contributor an install
     command instead of a Makefile target.
 
     Drops the suite's own TRADEFLOW_HOME: the override is what every other test wants
@@ -169,7 +169,7 @@ def test_version_reports_which_copy_is_running_and_where_its_state_is():
 
 
 def test_the_package_root_imports_nothing_heavy():
-    """`tradeflow --help` must not pay for pandas, the vendor SDK, or an optional
+    """`quantred --help` must not pay for pandas, the vendor SDK, or an optional
     extra it is not using."""
     source = Path("quantred/__init__.py").read_text()
     for heavy in ("import pandas", "import numpy", "from quantred.", "import alpaca"):

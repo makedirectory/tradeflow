@@ -8,7 +8,7 @@ panel is the thing that does not fit in RAM.
 
 This module is the out-of-core counterpart: it estimates the *same*
 quantities by **streaming** the return panel out of a
-:class:`~tradeflow.data.store.ParquetBarStore` in date-chunks and accumulating sufficient
+:class:`~quantred.data.store.ParquetBarStore` in date-chunks and accumulating sufficient
 statistics. It never holds the ``T×N`` panel: peak working memory is one chunk
 (``chunk_obs × N``) plus the small accumulators (``N×N`` / ``K×K`` / ``N``) plus a 1-D
 ``O(T)`` index of complete-case timestamps — so on a long, wide history it peaks well
@@ -19,7 +19,7 @@ Two estimators, both reproducing their eager oracle to machine epsilon for the
 well-sampled names:
 
 - :func:`streaming_sample_covariance` ↔ :func:`build_risk_matrix` with
-  :class:`~tradeflow.risk.sample.SampleCovariance`.
+  :class:`~quantred.risk.sample.SampleCovariance`.
 - :func:`streaming_factor_risk_matrix` ↔ :func:`quantred.risk.factor.estimate_factor_model`
   (the structural ``Σ = X F Xᵀ + Δ``). Exposures stay a small ``N×K`` leaf computed by
   :func:`quantred.risk.exposures.build_factor_exposures`.
@@ -122,7 +122,7 @@ def streaming_sample_covariance(
 ) -> Optional[RiskMatrix]:
     """Annualized sample :class:`RiskMatrix` by streaming the return panel.
 
-    Mirrors :func:`build_risk_matrix` with :class:`~tradeflow.risk.sample.SampleCovariance`
+    Mirrors :func:`build_risk_matrix` with :class:`~quantred.risk.sample.SampleCovariance`
     (population covariance), accumulating cross-products chunk-by-chunk via
     :func:`quantred.data.compute.streaming_covariance`. Returns ``None`` when no name clears
     ``min_obs`` or fewer than two complete-case rows exist; ``shrinkage`` is ``None``.

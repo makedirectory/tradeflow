@@ -10,7 +10,7 @@ Two engines, sharing Arrow so it isn't either/or:
 - **Polars ``LazyFrame``** for dataframe-style transforms — rolling-window indicators
   become window expressions ``.over("symbol", order_by="ts")``, and the
   cross-sectional z-score / winsorize / rank become ``.over("ts")`` expressions.
-  Nothing materializes until a terminal :func:`~tradeflow.data.edges.collect_streaming`.
+  Nothing materializes until a terminal :func:`~quantred.data.edges.collect_streaming`.
 - **DuckDB SQL** (:func:`sql_query`) for set-based work over the Parquet store
   (aggregations, joins) — its out-of-core engine streams the scan too.
 
@@ -243,7 +243,7 @@ def streaming_covariance(
     matches the single-pass estimate to machine epsilon regardless of how the rows are
     split (a tested invariant; not byte-identical, since float summation order varies
     with chunking). The uncentered form is *algebraically* identical to centering first,
-    and *numerically* matches :class:`~tradeflow.risk.sample.SampleCovariance` to machine
+    and *numerically* matches :class:`~quantred.risk.sample.SampleCovariance` to machine
     epsilon for the inputs it is contracted on — **return-scale, near-zero-mean** rows
     (what :func:`quantred.risk.base.build_return_panel` produces from ``pct_change``). It is
     NOT for price levels: when the mean dwarfs the spread (|mean| ≫ std), ``S₂/n`` and

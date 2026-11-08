@@ -7,7 +7,7 @@ walk-forward / analytics layers and return JSON-serializable dicts. This is the
 these - no business logic lives in any of those adapters.
 
 Nothing here can place an order: service functions take a
-:class:`~tradeflow.marketdata.client.MarketDataClient` (data only) and never a broker.
+:class:`~quantred.marketdata.client.MarketDataClient` (data only) and never a broker.
 """
 
 from quantred.services.analysis import (

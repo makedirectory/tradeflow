@@ -533,7 +533,7 @@ class BacktestEngine:
         lookback_days: int = 3650,
         trade_from: Optional[datetime] = None,
     ) -> BacktestResult:
-        """Backtest from a :class:`~tradeflow.data.scan.BarSource`, **fetching** one symbol at a time.
+        """Backtest from a :class:`~quantred.data.scan.BarSource`, **fetching** one symbol at a time.
 
         Identical to :meth:`run` on the same data; the leakage guard lives in the
         source's scan.

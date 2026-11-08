@@ -44,7 +44,7 @@ _REFUSAL = (
 class DryRunTradingAttempted(BrokerError):
     """Raised wherever a dry run reaches an order path.
 
-    A :class:`~tradeflow.brokers.errors.BrokerError` on purpose, and the choice is the
+    A :class:`~quantred.brokers.errors.BrokerError` on purpose, and the choice is the
     whole design. ``LiveTrader`` builds its :class:`OrderPlan` *before* submitting
     precisely so that a broker refusal still records what would have been sent, and
     returns a decline carrying that plan. So refusing here does not lose the intent —

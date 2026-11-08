@@ -14,9 +14,9 @@ little at this horizon and costs stability).
 
 Two backends compose with the base model's two estimators:
 
-- **Shrinkage/sample** (:class:`~tradeflow.risk.base.RiskMatrix`): condition the diagonal,
+- **Shrinkage/sample** (:class:`~quantred.risk.base.RiskMatrix`): condition the diagonal,
   keep the LW-shrunk (or raw) correlation matrix fixed — :func:`condition_risk_matrix`.
-- **Factor** (:class:`~tradeflow.risk.factor.FactorRiskMatrix`): condition *both*
+- **Factor** (:class:`~quantred.risk.factor.FactorRiskMatrix`): condition *both*
   ``factor_cov`` (via an EWMA covariance on factor returns — small, ``K×K``, PSD by
   construction) and ``specific_var`` (via the same per-name EWMA/HAR family used by
   the shrinkage path) — never one without the other (a partial conditioning would
@@ -231,7 +231,7 @@ def condition_risk_matrix(
     ``matrix`` — this function only rescales the diagonal (shrinkage/sample) or
     reassembles ``X F_t Xᵀ + Δ_t`` (factor); it never re-estimates the correlation
     structure or the exposures. Dispatches on ``matrix``'s type: a
-    :class:`~tradeflow.risk.factor.FactorRiskMatrix` conditions ``factor_cov``/``specific_var``
+    :class:`~quantred.risk.factor.FactorRiskMatrix` conditions ``factor_cov``/``specific_var``
     coherently; any other :class:`RiskMatrix` conditions the plain
     diagonal, keeping the correlation matrix fixed (``Σ_t = D_t R D_t``).
     """

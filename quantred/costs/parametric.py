@@ -123,7 +123,7 @@ def cost_curvature(k_imp: float, typical_trade: float) -> Optional[float]:
 
     Returns ``None`` (curvature undefined) when there is no impact term
     (``k_imp <= 0``, e.g. no capital/ADV so the solve is linear-only) or the trade
-    size is non-positive - the signal for :func:`~tradeflow.portfolio.policy.derive_kappa`
+    size is non-positive - the signal for :func:`~quantred.portfolio.policy.derive_kappa`
     to fall back to band-only behavior rather than divide by (near) zero.
     """
     if not (k_imp > 0) or not (typical_trade > 0):

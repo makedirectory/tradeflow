@@ -61,7 +61,7 @@ def view_variance(residual_vol: float, ic: float, t_eff: float) -> float:
     *estimated* over a finite ``T_eff``. The calibration identity (a single
     covered-name view, uninformative prior, pinned ``τ = 1/T_eff``, must reproduce
     the refinement's own level-shrunk alpha exactly — the ``g/(g+1)`` weight
-    :func:`~tradeflow.alphas.refine.level_shrink_factor` already computes, ``g =
+    :func:`~quantred.alphas.refine.level_shrink_factor` already computes, ``g =
     T_eff·IC²``) forces this closed form: the BL blend weight on a single view is
     ``τω²/(τω²+Ω)``; setting that equal to ``g/(g+1)`` with ``τ = 1/T_eff`` and
     solving for ``Ω`` gives exactly ``ω²/(T_eff²·IC²)``.
@@ -79,7 +79,7 @@ def view_variance(residual_vol: float, ic: float, t_eff: float) -> float:
 def expected_single_view_weight(ic: float, t_eff: float) -> float:
     """The blend weight a lone covered-name view must land on (the calibration identity).
 
-    Reuses :func:`~tradeflow.alphas.refine.level_shrink_factor` directly (not a second,
+    Reuses :func:`~quantred.alphas.refine.level_shrink_factor` directly (not a second,
     independently-derived formula) so the calibration test is a tautology by
     construction if :func:`view_variance` is right, and a real check if it isn't.
     """

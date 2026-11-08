@@ -85,7 +85,7 @@ class CostModel(ABC):
         The size-independent part of a trade's cost — the optimizer's L1 turnover
         coefficient (the cost-aware objective). A model with no linear cost returns 0
         (the default);
-        :class:`~tradeflow.costs.parametric.ParametricCostModel` returns commission + s/2.
+        :class:`~quantred.costs.parametric.ParametricCostModel` returns commission + s/2.
         """
         return 0.0
 
@@ -109,7 +109,7 @@ class CostModel(ABC):
         """Annualized borrow rate (fraction of notional per year) charged on a short
         holding - the portfolio optimizer's per-name short-side cost tilt,
         threaded the same way :meth:`turnover_cost_rate` threads the per-name spread.
-        ``override`` is a per-name rate from :class:`~tradeflow.portfolio.optimizer.CostInputs`
+        ``override`` is a per-name rate from :class:`~quantred.portfolio.optimizer.CostInputs`
         (a locate-desk quote or a manual hard-to-borrow override); a model with no
         borrow cost returns 0 regardless of ``override``.
         """

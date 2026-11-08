@@ -145,7 +145,7 @@ def _run_via_main(monkeypatch, tmp_path, extra):
     )
     monkeypatch.setattr(cli, "resolve_universe", lambda *a, **k: ["AAA", "BBB"])
     monkeypatch.setattr(proposer_mod, "build_proposer", lambda *a, **k: ScriptedProposer(ScriptedClient([])))
-    monkeypatch.setattr("sys.argv", ["tradeflow", *_ARGV, *extra])
+    monkeypatch.setattr("sys.argv", ["quantred", *_ARGV, *extra])
     cli.main()
 
 

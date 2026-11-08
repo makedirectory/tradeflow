@@ -29,7 +29,7 @@ def config_filename(name: Any) -> str:
     ``save_config(name="../x")`` wrote outside the configs directory (and a read of an
     absolute path returned any JSON file on the machine). A directory component of any
     kind, an absolute path, ``.`` / ``..`` and an empty stem are all refused, so every
-    config lives directly under :data:`~tradeflow.optimization.config_store.DEFAULT_CONFIG_DIR`.
+    config lives directly under :data:`~quantred.optimization.config_store.DEFAULT_CONFIG_DIR`.
     """
     text = name if isinstance(name, str) else ""
     stem = text[: -len(".json")] if text.endswith(".json") else text

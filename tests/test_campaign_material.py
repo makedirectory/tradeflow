@@ -249,7 +249,7 @@ def test_stored_artifacts_are_named_by_the_command_that_reads_them(tmp_path):
 
 
 def test_the_artifact_command_matches_how_this_copy_is_actually_run(tmp_path, monkeypatch):
-    """`python main.py` for a checkout, `tradeflow` for an installed copy — the same
+    """`python main.py` for a checkout, `quantred` for an installed copy — the same
     rule every other printed instruction follows, reached through the same helper."""
     from quantred.services import setup
 

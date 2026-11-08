@@ -180,7 +180,7 @@ def calmar_ratio(cagr_value: float, max_drawdown_value: float) -> float:
 #: resolvable from zero by the regression that produced it. Guarding only the exact
 #: ``beta == 0`` let a beta of -0.0001 through and produced a Treynor of -262 beside a
 #: beta the report rendered as "-0.00" - an unbounded number whose cause was invisible
-#: on the same screen. :class:`~tradeflow.execution.sizing.BetaSizer` already clamps
+#: on the same screen. :class:`~quantred.execution.sizing.BetaSizer` already clamps
 #: for this when it *sizes* on beta; the same blow-up applies when reporting on it, and
 #: `--beta-sizing` puts books in exactly this regime by design, so it is not exotic.
 MIN_ABS_BETA_FOR_TREYNOR = 0.05

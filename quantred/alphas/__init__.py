@@ -5,7 +5,7 @@ The central active-management move: convert a raw, arbitrary-scale signal into a
 every name - so views can be pooled, ranked, and sized by a mean-variance
 optimizer. Research-clock only: alphas forecast, they never trade.
 
-The refinement runs over a :class:`~tradeflow.data.panel.FeaturePanel`: a scorer
+The refinement runs over a :class:`~quantred.data.panel.FeaturePanel`: a scorer
 (:mod:`quantred.alphas.scorers`) fills the ``score`` column, :func:`refine_alpha` adds
 ``z`` and ``alpha`` via the identity ``alpha = sigma * IC * z``, and
 :func:`panel_to_alphas` exports the ranked :class:`Alpha` rows.

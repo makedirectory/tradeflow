@@ -12,7 +12,7 @@ name = "my-signals"
 version = "0.1.0"
 description = "An example private QuantRed pack: two strategies, one scanner, two configs."
 requires-python = ">=3.11"
-# Deliberately no dependency on `quantred` (the engine, once published as
+# Deliberately no dependency on `quantred` (the engine, formerly published as
 # tradeflow-engine - depend on neither). A pack is installed *beside* the engine, not on
 # top of it, and naming the engine from here would let a pack decide which engine its
 # owner runs; the old name would even pull a second copy of it in.

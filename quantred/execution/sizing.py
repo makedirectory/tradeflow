@@ -8,7 +8,7 @@ ship:
 * :class:`RiskBasedSizer` - the default; sizes each entry from the strategy's
   risk-per-trade / stop-loss config (position-by-position).
 * :class:`PortfolioWeightSizer` - sizes to a precomputed target weight per symbol,
-  e.g. from the OR-Tools :class:`~tradeflow.portfolio.allocator.PortfolioAllocator`
+  e.g. from the OR-Tools :class:`~quantred.portfolio.allocator.PortfolioAllocator`
   (portfolio-level).
 
 This keeps sizing policy out of `LiveTrader` and lets the portfolio manager drive

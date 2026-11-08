@@ -89,7 +89,7 @@ def mcp_launch_command(*, offline: bool = False, cache_dir: Optional[Any] = None
     everything here is absolute. A self-test that passed on a different command than the
     one a reader was told to configure would be reporting on something nobody uses.
 
-    * **Installed:** the :data:`~tradeflow.settings.CLI_NAME` script that sits next to the running interpreter
+    * **Installed:** the :data:`~quantred.settings.CLI_NAME` script that sits next to the running interpreter
       (a tool environment's own ``bin``), else ``python -m quantred.cli mcp``.
     * **Checkout:** this interpreter and the absolute ``main.py``, which needs neither
       ``uv`` on the client's PATH nor a ``cwd``.

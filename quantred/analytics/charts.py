@@ -1,8 +1,8 @@
 """Reusable chart rendering for backtest and walk-forward results.
 
 These functions operate on the engine's own result objects — a
-:class:`~tradeflow.engine.backtest.BacktestResult` or a
-:class:`~tradeflow.optimization.walk_forward.WalkForwardResult` — so *any* strategy or
+:class:`~quantred.engine.backtest.BacktestResult` or a
+:class:`~quantred.optimization.walk_forward.WalkForwardResult` — so *any* strategy or
 run can be rendered, not just the demo. The CLI exposes them via a ``--chart``
 argument on the ``backtest`` and ``walkforward`` commands; the demo composes the
 same panels into one summary image.

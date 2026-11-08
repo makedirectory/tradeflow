@@ -75,7 +75,7 @@ def attribute_period(
     ``risk_x`` = start-of-period risk-factor exposures (market/momentum/
     volatility/size, :func:`quantred.risk.exposures.build_factor_exposures`);
     ``beta_per_name`` = the canonical Σ-implied per-name beta
-    (:meth:`~tradeflow.risk.base.RiskMatrix.implied_beta`, the one canonical β
+    (:meth:`~quantred.risk.base.RiskMatrix.implied_beta`, the one canonical β
     used everywhere), known at the start of the period; ``r_raw`` = realized
     per-name raw returns over the period; ``r_bench`` = realized benchmark
     return; ``signal_x`` = optional per-name combined-signal z-scores.

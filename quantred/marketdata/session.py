@@ -15,7 +15,7 @@ silent divergence a research result cannot afford.
 
 Scope is one command, not one process: there is no eviction and no persistence.
 For durable, cross-run caching see the Parquet-backed bar cache
-(:class:`~tradeflow.store.bars.CachedMarketData`), which this composes with rather than
+(:class:`~quantred.store.bars.CachedMarketData`), which this composes with rather than
 replaces - wrapping a cache-backed client keeps the cache's own behavior (gap
 fill, vintage stamping) intact underneath.
 """

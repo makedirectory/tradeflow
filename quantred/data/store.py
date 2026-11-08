@@ -7,8 +7,8 @@ RAM: bars live in **partitioned Parquet**, and a scan reads them through Arrow w
 **predicate/projection pushdown** — the ``as_of`` filter is applied at the storage
 layer, so a point-in-time scan physically never reads rows after ``as_of``.
 
-Crucially it implements the *same* :class:`~tradeflow.data.scan.BarSource` contract as the
-in-memory :class:`~tradeflow.data.scan.ClientBarSource`, so it is a **drop-in**: the alpha,
+Crucially it implements the *same* :class:`~quantred.data.scan.BarSource` contract as the
+in-memory :class:`~quantred.data.scan.ClientBarSource`, so it is a **drop-in**: the alpha,
 risk, and portfolio layers above never learn where the data physically lives. pandas
 appears only at the edge (the returned per-symbol frames), never as the cross-layer
 currency. Requires the ``store`` extra (``pyarrow``).

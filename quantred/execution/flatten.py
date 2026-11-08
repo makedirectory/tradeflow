@@ -4,7 +4,7 @@ The most drastic thing this system can be asked to do, and the one most likely t
 asked for by someone who does not trust it any more. Two properties follow from that.
 
 **It goes through the broker, not the engine.** Nothing here asks a running
-:class:`~tradeflow.engine.live.LiveEngine` to do anything, so it works when the engine
+:class:`~quantred.engine.live.LiveEngine` to do anything, so it works when the engine
 is wedged, mid-restart, or holding state that is exactly what you no longer believe.
 
 **It halts first.** Cancelling and closing while an engine is still streaming bars is

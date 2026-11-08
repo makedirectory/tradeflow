@@ -70,7 +70,7 @@ def slice_to_as_of(frame: pd.DataFrame, as_of: datetime) -> pd.DataFrame:
 
     Being the single seam means owning the whole coercion, not half of it. A naive
     bar index is taken as UTC, the assumption
-    :func:`~tradeflow.utils.timeutils.localize_index_to_new_york` already makes about
+    :func:`~quantred.utils.timeutils.localize_index_to_new_york` already makes about
     a provider's timestamps.
     """
     if frame is None or frame.empty:

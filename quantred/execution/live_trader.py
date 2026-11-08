@@ -190,7 +190,7 @@ class LiveTrader:
     ) -> Decision:
         """Act on a single signal, and say what was decided and why.
 
-        Returns a :class:`~tradeflow.execution.decision.Decision` rather than an
+        Returns a :class:`~quantred.execution.decision.Decision` rather than an
         order: "no order" has many causes, and collapsing them all into ``None`` made
         the only question worth asking afterwards - why nothing happened on that bar -
         answerable only from logs.

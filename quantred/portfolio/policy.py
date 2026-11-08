@@ -1,6 +1,6 @@
 """Multi-period trading: aim in front of the target.
 
-The plain single-period solve (:class:`~tradeflow.portfolio.optimizer.MeanVarianceOptimizer`)
+The plain single-period solve (:class:`~quantred.portfolio.optimizer.MeanVarianceOptimizer`)
 is honestly cost-aware, but it is still **myopic**: every rebalance it pays real
 cost to reach *this period's* optimum, ignoring that (1) alphas decay, so some of
 what it trades into is gone by the time it fully arrives, and (2) today's trade
@@ -22,7 +22,7 @@ This module derives ``κ`` from the book's own risk-aversion/variance and cost
 curvature (a closed form checked against limiting cases below), applies the decay
 discount, and composes the partial-adjustment step with the optimizer's own
 no-trade band via its *existing* proximal-projection machinery - it wraps
-:class:`~tradeflow.portfolio.optimizer.MeanVarianceOptimizer`, never modifies it. A cost
+:class:`~quantred.portfolio.optimizer.MeanVarianceOptimizer`, never modifies it. A cost
 curvature that can't be estimated (no capital, or a trade too small to pin the
 √-impact term) is not an error - the policy degrades gracefully to exactly the
 plain myopic, cost-aware solve (see :func:`derive_kappa`).

@@ -983,7 +983,7 @@ def test_a_stream_failure_still_propagates():
 
 def test_a_resumed_session_writes_its_adopted_book_to_the_ledger(tmp_path):
     """The bug: the engine adopted the broker's positions into its in-memory book and
-    the durable ledger never heard of them, so `tradeflow reconcile` reported every
+    the durable ledger never heard of them, so `quantred reconcile` reported every
     resumed position as one nobody ordered."""
     strategy = STRATEGIES["demo_trend"].create_with_defaults()
     strategy.config["required_lookback_periods"] = 5

@@ -5,7 +5,7 @@ the benchmark explains), annualized and on the same scale for every name, so it 
 directly comparable across symbols and directly consumable by a mean-variance
 optimizer.
 
-The refinement runs over a :class:`~tradeflow.data.panel.FeaturePanel`: it reads the
+The refinement runs over a :class:`~quantred.data.panel.FeaturePanel`: it reads the
 cross-section's ``score`` and ``residual_vol`` columns (and ``beta`` when
 neutralizing) and writes ``z`` and ``alpha`` columns back. One implementation, one
 place - whatever produced the score (a strategy, a scanner, a combination of
@@ -73,13 +73,13 @@ class AlphaContext:
     min_universe: int = DEFAULT_MIN_UNIVERSE
     #: Per-name scaling. ``"case1"`` = the standard rule ``ω·IC·z`` (the default,
     #: correct when per-name signal vol is constant across names); ``"case2"`` =
-    #: ``IC·c_g·z`` with a constant :func:`~tradeflow.alphas.refine.case_scale_factor`, for
+    #: ``IC·c_g·z`` with a constant :func:`~quantred.alphas.refine.case_scale_factor`, for
     #: signals whose vol is ∝ the name's residual vol (multiplying by ``ω_n`` would
-    #: double-count it). :func:`~tradeflow.alphas.refine.case_test` picks the case empirically.
+    #: double-count it). :func:`~quantred.alphas.refine.case_test` picks the case empirically.
     #: See the Continuous-alphas page in the engineering docs for the Case test.
     scaling: str = "case1"
     #: IC-uncertainty **level** shrink. When set to ``(measured_ic, t_eff)`` the refined
-    #: alpha is multiplied once by :func:`~tradeflow.alphas.refine.level_shrink_factor` — the
+    #: alpha is multiplied once by :func:`~quantred.alphas.refine.level_shrink_factor` — the
     #: estimation-error haircut on the *level*. ``None`` = off (a measured IC hasn't been
     #: supplied, e.g. an assumed prior, or the level shrink is owned upstream by the
     #: multi-signal combination's per-signal Bayesian shrink).

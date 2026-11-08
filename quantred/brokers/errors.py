@@ -19,7 +19,7 @@ The distinctions that matter are the ones a caller would act on differently:
 * :class:`BrokerUnavailableError` - the venue could not be reached at all. Transient
   by nature, and the only one where carrying on optimistically is defensible.
 
-Vendor-neutral by design: these live beside the :class:`~tradeflow.brokers.base.Broker`
+Vendor-neutral by design: these live beside the :class:`~quantred.brokers.base.Broker`
 interface, so a caller that handles them handles every venue.
 """
 

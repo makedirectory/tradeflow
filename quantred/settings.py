@@ -25,7 +25,7 @@ from typing import Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-#: Repo root (this file is ``<root>/tradeflow/settings.py``). Meaningful only in a
+#: Repo root (this file is ``<root>/quantred/settings.py``). Meaningful only in a
 #: checkout — an installed copy lives in site-packages, where this points at nothing
 #: useful, which is exactly why the state root below is resolved separately.
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
