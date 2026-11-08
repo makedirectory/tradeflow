@@ -19,12 +19,12 @@ extras are the MCP server and charts in reports; the demo needs neither (`quantr
 works), and the [extras guide](extras) lists the rest.
 
 The distribution and the command are both **`quantred`**; the importable package is
-`quantred`, and a `tradeflow` command is installed alongside as an alias so
-existing scripts and client configs keep working. The project was previously
-distributed as `tradeflow-engine`: both distributions install a `tradeflow` command, so
-uninstall the old one *before* installing `quantred` (`uv tool uninstall tradeflow-engine`, or
-`python -m pip uninstall tradeflow-engine`) rather than installing both into one
-environment. The full steps, including what to do if the order was reversed, are in
+`quantred`; it installs no `tradeflow` command. The project was previously distributed
+as `tradeflow-engine`, whose final release (2.3.1) is a transition package that depends
+on `quantred` and keeps the `tradeflow` command and `import tradeflow` working, so an
+existing install can upgrade in place and move at its own pace. Under `uv tool`, though,
+upgrading the old tool gives you `tradeflow` but not `quantred`: uninstall it and install
+`quantred`. Both paths, per installer, are in
 [migrating to QuantRed](migrating-to-quantred).
 
 This gives you a `quantred` command with every verb — `quantred demo`,

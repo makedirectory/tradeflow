@@ -103,9 +103,11 @@ whole path: install → keys → your first real result → Claude connected. Si
 the first two with no keys and no network.
 
 The distribution and the command are both **`quantred`**; the importable package is
-`quantred`, and a `tradeflow` command remains as an alias. If you installed the
-older `tradeflow-engine`, uninstall it first: both install a `tradeflow` command. A private
-pack needs its imports changed from `tradeflow` to `quantred`. The steps are in
+`quantred`; no `tradeflow` command is installed with it. If you installed the older
+`tradeflow-engine`, its final release (2.3.1) is a transition package that depends on
+`quantred`, so upgrading it moves you across without breaking old scripts, MCP configs or
+packs importing `tradeflow` (with a deprecation warning). A private pack needs its imports
+changed from `tradeflow` to `quantred` before you drop it. The steps are in
 [migrating to QuantRed](https://tradeflow.mk-dir.com/usage/migrating-to-quantred).
 
 State (the research journal, trial store, bar cache, promoted configs) lives in

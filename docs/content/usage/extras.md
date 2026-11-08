@@ -11,7 +11,7 @@ command that needs a missing extra prints the exact install command, and
 `init --check --for <task>` prints it for that task's needs.
 
 Three names are easy to confuse: the **distribution** you install is
-`quantred`, the **command** you run is `quantred` (`tradeflow` also works, as an alias), and an **extra** is a
+`quantred`, the **command** you run is `quantred` (the old `tradeflow` command exists only with the `tradeflow-engine` 2.3.1 transition package), and an **extra** is a
 bracketed option on the distribution, as in `quantred[mcp]`.
 
 | Extra | Provides | Unlocks | Needed for |

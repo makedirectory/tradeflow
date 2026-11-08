@@ -143,13 +143,20 @@ backtests included, though most never touched a boundary - drop out of the defau
 - The plugin entry-point groups are `quantred.strategies` and `quantred.scanners`. The old
   `tradeflow.strategies` and `tradeflow.scanners` groups are still read, so a pack declared
   against them keeps registering (its imports must still resolve).
-- Unchanged: `TRADEFLOW_HOME` and `~/.tradeflow`, so recorded history carries over, and
-  the `tradeflow` command, which remains as an alias. An installed copy's provenance code
-  identity now reads `quantred <version>` (was `tradeflow <version>`).
-- MCP clients now see the server as `quantred`. Existing entries keep launching.
-- **Upgrading in place:** uninstall `tradeflow-engine` first, then install `quantred`;
-  both install a `tradeflow` command. A pack that still depends on `tradeflow-engine`
-  needs installing without it. Steps, symptoms and recovery are in
+- Unchanged: `TRADEFLOW_HOME` and `~/.tradeflow`, so recorded history carries over. An
+  installed copy's provenance code identity now reads `quantred <version>` (was
+  `tradeflow <version>`).
+- `quantred` installs no `tradeflow` command. `tradeflow-engine` 2.3.1, published after
+  this release, is the final release under the old name: a transition package with no
+  engine code that depends on `quantred`, provides the `tradeflow` command and a
+  `tradeflow` import shim (same objects as `quantred.*`, with a `DeprecationWarning`),
+  and keeps `python -m tradeflow.cli` working.
+- MCP clients now see the server as `quantred`. Entries that launch `tradeflow` or
+  `python -m tradeflow.cli` keep working only while `tradeflow-engine` 2.3.1 is installed.
+- **Upgrading in place is safe:** the two distributions share no file, so
+  `pip install -U tradeflow-engine` moves an existing install to `quantred`. (Under
+  `uv tool` that gives you `tradeflow` but not `quantred`; reinstall as `quantred`.)
+  Steps are in
   [migrating to QuantRed](usage/migrating-to-quantred).
 
 ### Getting started
