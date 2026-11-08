@@ -107,16 +107,31 @@ class FoldResult:
     oos_legs: Dict[str, Any] = field(default_factory=dict)
 
 
-def _concat_trades(frames: List[pd.DataFrame]) -> Optional[pd.DataFrame]:
-    """Every fold's OOS trades as one frame, or ``None`` when there were none.
+def _concat_trades(frames: List[Optional[pd.DataFrame]]) -> Optional[pd.DataFrame]:
+    """Every fold's OOS trades as one frame, ordered by exit time.
 
-    ``None`` rather than an empty frame: "this validation produced no trades" and
-    "no trade detail was kept" are different facts about a run.
+    Three different facts, kept apart: ``None`` when no fold kept any trade detail (no
+    frames, or every one is ``None``) - the run says nothing about its trades; an
+    *empty* frame when detail was kept and the folds genuinely made no trades; and the
+    pooled frame otherwise. Callers that only aggregate use :func:`_pooled_trades`.
     """
-    usable = [f for f in frames if f is not None and not f.empty]
-    if not usable:
+    kept = [f for f in frames if f is not None]
+    if not kept:
         return None
-    return pd.concat(usable, ignore_index=True)
+    non_empty = [f for f in kept if not f.empty]
+    if not non_empty:
+        return pd.DataFrame()
+    combined = pd.concat(non_empty, ignore_index=True)
+    if "exit_time" in combined:
+        combined = combined.sort_values("exit_time").reset_index(drop=True)
+    return combined
+
+
+def _pooled_trades(frames: List[Optional[pd.DataFrame]]) -> pd.DataFrame:
+    """:func:`_concat_trades` for aggregation, where "no detail" and "no trades" both mean
+    there is nothing to aggregate."""
+    pooled = _concat_trades(frames)
+    return pd.DataFrame() if pooled is None else pooled
 
 
 @dataclass
@@ -1007,7 +1022,7 @@ class WalkForwardValidator:
         )
 
     def _aggregate_oos(self, oos_trade_frames, folds, n_trials_total, var_trial_sr):
-        trades = _concat_trades(oos_trade_frames)
+        trades = _pooled_trades(oos_trade_frames)
         span_start = min((f.oos_start for f in folds), default=None)
         span_end = max((f.oos_end for f in folds), default=None)
         return self._metrics_for_trades(trades, span_start, span_end, n_trials_total, var_trial_sr)
@@ -1017,7 +1032,7 @@ class WalkForwardValidator:
         construction ``_aggregate_oos`` falls back to internally (concatenated
         multi-fold trades have no single continuous simulation curve), kept here
         with its ``DatetimeIndex`` rather than reduced to a metrics dict."""
-        trades = _concat_trades(oos_trade_frames)
+        trades = _pooled_trades(oos_trade_frames)
         equity = performance.build_dated_equity_curve(trades, self.initial_capital)
         if equity.empty:
             return None
@@ -1173,7 +1188,7 @@ class WalkForwardValidator:
         previous form, ``sqrt(N_trades)·mean/std`` of per-trade P&L, was a t-statistic
         that grew with trade count whatever the strategy earned per year.
         """
-        trades = _concat_trades(oos_trade_frames)
+        trades = _pooled_trades(oos_trade_frames)
         equity = performance.build_dated_equity_curve(trades, self.initial_capital)
         pnl = np.diff(equity.to_numpy()) if len(equity) > 1 else np.array([])
         if len(pnl) < block:
@@ -1246,16 +1261,6 @@ def _filter_trades_from(trades: pd.DataFrame, oos_start: datetime) -> pd.DataFra
         else entry >= pd.Timestamp(oos_start)
     )
     return trades[mask.to_numpy()].reset_index(drop=True)
-
-
-def _concat_trades(frames: List[pd.DataFrame]) -> pd.DataFrame:
-    non_empty = [f for f in frames if not f.empty]
-    if not non_empty:
-        return pd.DataFrame()
-    combined = pd.concat(non_empty, ignore_index=True)
-    if "exit_time" in combined:
-        combined = combined.sort_values("exit_time").reset_index(drop=True)
-    return combined
 
 
 def _pnl_close(a: pd.DataFrame, b: pd.DataFrame, tol: float = 1e-6) -> bool:
