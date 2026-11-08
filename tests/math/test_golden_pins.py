@@ -34,15 +34,18 @@ from quantred.risk.factor import estimate_factor_model
 from quantred.risk.sample import LedoitWolfCovariance, SampleCovariance
 from quantred.services import analysis
 from quantred.services.registry import STRATEGIES
-from tests.fakes import FakeMarketData
+from quantred.strategies import signals
+from tests.fakes import DictMarketData, FakeMarketData
 from tests.math import pins
-from tests.math.test_engine_accounting import _hold_world, _run
+from tests.math.test_engine_accounting import ENTRY_BAR, _bars, _hold_world, _PerSymbolStrategy, _run
 from tests.test_sizing_parity import CAPITAL as SIZING_CAPITAL
 from tests.test_sizing_parity import _backtest_notionals, _live_notionals
 
 SYMS = ["AAA", "BBB", "CCC"]
 START, END = datetime(2024, 1, 2), datetime(2025, 6, 1)
 AS_OF = datetime(2024, 6, 1)
+START_GAP, END_GAP = datetime(2024, 1, 2), datetime(2024, 1, 31)
+B, H = signals.BUY, signals.HOLD
 
 
 def _client(extra=("SPY",)):
@@ -120,6 +123,57 @@ def test_golden_backtest_holding_the_benchmark():
         "one long held to the end on the benchmark's own bars, whole capital",
         "seed 5",
         pins.numeric_values({"metrics": metrics, "final_capital": result.final_capital}),
+    )
+
+
+def test_golden_backtest_gapping_through_every_kind_of_exit():
+    """A long stop, a short stop, a long target and a short target each gap through their
+    level on a different bar. Guards the stop-fills-at-the-level defect, which a gap
+    exposes: the exit price must be the open that gapped past the level, never the level."""
+    # 10 shares entered at 100: stop and target are 10% either side (90/110 long, 110/90 short)
+    cases = {  # symbol -> (entry signal, bar index of the gap, gap bar, expected exit, reason)
+        "AAA": (B, 2, (80, 82, 78, 79), 80.0, "STOP_LOSS"),
+        "BBB": (signals.SELL, 3, (125, 126, 122, 124), 125.0, "STOP_LOSS"),
+        "CCC": (B, 4, (115, 118, 114, 116), 115.0, "TAKE_PROFIT"),
+        "DDD": (signals.SELL, 5, (85, 86, 83, 84), 85.0, "TAKE_PROFIT"),
+    }
+    n_bars = 8
+    frames, scripts = {}, {}
+    for sym, (entry, at, gap, _, _) in cases.items():
+        rows = [ENTRY_BAR] * n_bars
+        rows[at] = gap
+        frames[sym] = _bars(rows)
+        scripts[sym] = [entry] + [H] * (n_bars - 1)
+    strategy = _PerSymbolStrategy(
+        scripts,
+        {"position_limits": {"max_positions": 4, "max_position_size": 1_000.0, "max_total_risk": 1.0}},
+    )
+    client = MarketDataClient(DictMarketData(frames))
+    result = BacktestEngine(strategy, client).run(list(frames), START_GAP, END_GAP, 100_000.0)
+    _independent_backtest_checks(result)
+    # the reference answer, by arithmetic, for each of the four exits
+    trades = result.trades.set_index("symbol")
+    assert len(trades) == 4
+    for sym, (entry, _, _, price, reason) in cases.items():
+        trade = trades.loc[sym]
+        direction = 1.0 if entry == B else -1.0
+        assert trade["exit_reason"] == reason and trade["exit_price"] == pytest.approx(price)
+        assert trade["pnl"] == pytest.approx((price - 100.0) * trade["size"] * direction)
+    pins.check(
+        "backtest_gap_through",
+        "four resting exits (long/short stop, long/short target) each gapped through, scripted bars",
+        "hand-built bars, no randomness",
+        pins.numeric_values(
+            {
+                "metrics": result.metrics,
+                "final_capital": result.final_capital,
+                "trades": {
+                    sym: {k: trades.loc[sym][k] for k in ("size", "entry_price", "exit_price", "pnl")}
+                    for sym in cases
+                },
+                "equity_curve": result.equity_curve,
+            }
+        ),
     )
 
 
