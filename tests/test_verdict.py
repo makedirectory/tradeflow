@@ -715,6 +715,20 @@ def test_cli_writes_a_json_object_that_round_trips(monkeypatch, tmp_path, capsys
     assert "VERDICT:" in capsys.readouterr().out
 
 
+def test_a_bare_json_flag_prints_the_object_to_stdout_like_every_other_command(monkeypatch, tmp_path, capsys):
+    """Every other `--json` is a switch that prints JSON; verdict's took a path, so
+    `verdict --json` failed with "expected one argument". Bare, it now prints the same
+    object a path receives - and only that, so the output parses - while any HTML
+    notice goes to stderr."""
+    _cli(monkeypatch, _provider(), "--json", "--html", str(tmp_path / "r.html"))
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["schema"] == analysis.VERDICT_SCHEMA
+    assert payload["verdict"]["summary"]
+    assert "HTML report written" in captured.err
+    assert (tmp_path / "r.html").exists()
+
+
 def test_cli_writes_a_self_contained_html_report(monkeypatch, tmp_path):
     out = tmp_path / "report.html"
     _cli(monkeypatch, _provider(), "--html", str(out))

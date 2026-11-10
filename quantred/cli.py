@@ -3040,6 +3040,11 @@ def _mcp_client_block(offline: bool = False, cache_dir: Optional[Any] = None) ->
     return f"{indented}\n\n  Claude Code, instead of editing a file:\n    {claude}"
 
 
+#: What a bare ``verdict --json`` stores: print to stdout rather than write a file. Not a
+#: plausible file name, so ``--json PATH`` can never be mistaken for it.
+_JSON_TO_STDOUT = "<stdout>"
+
+
 def cmd_verdict(args) -> None:
     """Run the whole cross-sectional pipeline once and print one consolidated answer.
 
@@ -3089,20 +3094,28 @@ def cmd_verdict(args) -> None:
         journal=not args.no_journal,
     )
 
+    to_stdout = args.json == _JSON_TO_STDOUT
     if result.get("memoized"):
+        # Said either way; with a bare --json it goes to stderr so stdout stays one
+        # parseable object (which carries `memoized`, `trial_id` and `trial_ts` too).
         print(
             format_cached_notice(
                 {"id": result.get("trial_id"), "ts": result.get("trial_ts")},
                 vintage_available=False,
-            )
+            ),
+            file=sys.stderr if to_stdout else sys.stdout,
         )
-    print(format_verdict_report(result))
-
-    if args.json:
-        with open(args.json, "w") as fh:
-            json.dump(result, fh, indent=2)
-        print(f"Structured result written to {args.json}")
-    _write_html(args, result, "verdict")
+    if to_stdout:
+        print(json.dumps(result, indent=2, default=str))
+        with contextlib.redirect_stdout(sys.stderr):
+            _write_html(args, result, "verdict")
+    else:
+        print(format_verdict_report(result))
+        if args.json:
+            with open(args.json, "w") as fh:
+                json.dump(result, fh, indent=2)
+            print(f"Structured result written to {args.json}")
+        _write_html(args, result, "verdict")
 
     # Any incomplete run exits non-zero, not just one with a named step failure: a
     # run that produced no gate at all is equally not something to act on, and a
@@ -8102,8 +8115,12 @@ def build_parser() -> argparse.ArgumentParser:
     verdict.add_argument(
         "--json",
         metavar="PATH",
+        nargs="?",
+        const=_JSON_TO_STDOUT,
         default=None,
-        help="Also write the structured result object (the same one the report renders) to a JSON file",
+        help="Bare: print the structured result object (the one the report renders) as JSON "
+        "instead of the report, like every other --json. With PATH: print the report and "
+        "also write the object to that file",
     )
     add_html_flag(verdict)
     add_no_journal(verdict)

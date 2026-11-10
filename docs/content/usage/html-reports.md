@@ -18,8 +18,9 @@ quantred info        --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-3
 ```
 
 `--html` is independent of the other output flags. Of these four commands only
-`verdict` also has `--json PATH` (the structured result object), and there the two can
-both be given; `backtest`, `walkforward` and `info` have `--html` only. A memoized run
+`verdict` also has `--json [PATH]` (the structured result object, printed or written to
+`PATH`), and there the two can both be given - with a bare `--json` the HTML notice goes to
+stderr so stdout stays one JSON object; `backtest`, `walkforward` and `info` have `--html` only. A memoized run
 renders its reuse warning in the report rather than hiding it. A reused walk-forward renders
 as a reduced report - the stored out-of-sample aggregate, the original trial's id and age, and
 a list of what a reused result does not retain (per-fold detail, promotion prerequisites,
