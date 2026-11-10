@@ -13,13 +13,14 @@ on its own; you can stop after any of them.
 ## 1. Install
 
 ```bash
-uv tool install 'quantred[mcp,viz]'
+uv tool install 'quantred[mcp,store,viz]'
 quantred --version
 ```
 
-In an activated virtual environment instead: `python -m pip install 'quantred[mcp,viz]'`. The `mcp`
-extra is what step 5 needs (the client launches the server from this install) and `viz` draws
-charts in HTML reports; leave either off if you will not use it.
+In an activated virtual environment instead: `python -m pip install 'quantred[mcp,store,viz]'`. The `mcp`
+extra is what step 5 needs (the client launches the server from this install), `store` is the
+local bar cache that the setup's optional cache warm and every `--offline` run read, and `viz`
+draws charts in HTML reports; leave any of them off if you will not use it.
 The distribution and the command are both `quantred`. Capabilities such
 as charts, the MCP server and the model SDKs are opt-in extras; see
 [optional extras](extras) for which one unlocks what and how to add one later without
@@ -125,11 +126,14 @@ the `--provider`'s SDK extra), the report ends with **one** command that adds ex
 and keeps what you already have; the other absent extras are listed on one line, not
 installed for you. A backtest is not blocked by a missing model key; a missing optional extra
 never fails anything; a `[FAIL]` row fails every task. `--provider
-{anthropic,openai,ollama}` checks that provider's SDK and key for `research`:
+{anthropic,openai,ollama}` checks that provider's SDK and key for `research`. `--offline`
+checks the cache-only path instead: the `store` extra then gates `data` and `mcp`, and the
+market-data keys gate only `research`:
 
 ```bash
 quantred init --check --for research --provider ollama
 quantred init --check --for mcp
+quantred init --check --for mcp --offline
 ```
 
 The "state directory" check is worth understanding: a session that cannot write its
@@ -187,7 +191,9 @@ quantred init --check --for mcp
 
 The first lists the tools and calls the discovery tools through a real MCP client;
 the second reports whether the extra is installed (keys are reported too, but the
-server does not need them to start). See
+server does not need them to start). For a keyless server over the cache, add
+`--offline` to both: each then fails, naming the install command, when the `store`
+extra the cache needs is missing. See
 [agents](agents) for what the tools are.
 
 ## 6. Run a real example
@@ -251,7 +257,7 @@ Without `--provider`, model variables in the environment are left alone and name
 output as not copied. Those keys are often exported for unrelated tools, and a billable
 key should not land in a project file because the shell happened to hold it.
 
-`--provider`, `--for` and `--model` are refused where the mode would discard them (for
+`--provider`, `--for`, `--offline` and `--model` are refused where the mode would discard them (for
 example `--provider` with the interactive wizard) rather than ignored.
 
 ## What it will not do

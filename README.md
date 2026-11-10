@@ -80,7 +80,7 @@ Either way you'll need free Alpaca **paper-trading** API keys from the
 No clone needed — install the command and run the offline demo:
 
 ```bash
-uv tool install 'quantred[mcp,viz]'   # or: python -m pip install 'quantred[mcp,viz]'
+uv tool install 'quantred[mcp,store,viz]'   # or: python -m pip install 'quantred[mcp,store,viz]'
 quantred demo                          # full pipeline on synthetic data, no keys
 quantred init                          # your free Alpaca paper keys, and optionally a model
                                         # provider for `research` (skipping it is fine)

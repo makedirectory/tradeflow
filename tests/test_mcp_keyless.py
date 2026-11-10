@@ -123,3 +123,24 @@ def test_the_launch_command_carries_offline_and_the_self_test_and_printed_config
         *printed[settings.MCP_SERVER_NAME]["args"],
     ] == offline
     assert "--offline" in block.split("Claude Code")[1]
+
+
+def test_an_offline_self_test_without_the_store_extra_fails_naming_it(monkeypatch, capsys):
+    """`mcp --offline --self-test` passed on a copy without `store`: the server builds its
+    cache-only client lazily, so discovery worked and the first tool that read a bar
+    failed - after the reader had pasted the printed config into a client."""
+    from quantred.mcp import selftest
+    from quantred.utils import extras
+
+    real = extras.installed
+    monkeypatch.setattr(extras, "installed", lambda name: name != "store" and real(name))
+    monkeypatch.setattr(
+        selftest, "_drive", lambda *a, **k: pytest.fail("the server was launched without the store extra")
+    )
+    args = cli.parse_cli(["mcp", "--offline", "--self-test"])
+    with pytest.raises(SystemExit) as caught:
+        args.func(args)
+    out = capsys.readouterr().out
+    assert caught.value.code == 1
+    assert "self-test FAILED" in out and "'store' extra" in out
+    assert "passed" not in out

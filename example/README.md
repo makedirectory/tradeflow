@@ -27,7 +27,7 @@ Then install the copy for how you installed QuantRed:
 
 ```bash
 # uv tool: the tool environment is rebuilt, so restate your extras
-uv tool install --force 'quantred[mcp,viz]' --with-editable ./my-signals
+uv tool install --force 'quantred[mcp,store,viz]' --with-editable ./my-signals
 # virtual environment (activated)
 python -m pip install -e ./my-signals
 # a checkout of this repository

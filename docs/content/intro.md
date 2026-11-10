@@ -15,7 +15,7 @@ actually noise.
 No keys, no account, no network:
 
 ```bash
-uv tool install 'quantred[mcp,viz]'
+uv tool install 'quantred[mcp,store,viz]'
 quantred demo
 ```
 
@@ -32,7 +32,7 @@ free paper keys, your first verdict, and connecting Claude — six steps, and yo
 stop at any of them.
 
 No `uv`? [Install it](https://docs.astral.sh/uv/getting-started/installation/), or
-use `python -m pip install 'quantred[mcp,viz]'` in a virtual environment.
+use `python -m pip install 'quantred[mcp,store,viz]'` in a virtual environment.
 
 ## What it actually does
 

@@ -12,6 +12,7 @@ import pytest
 
 from quantred import settings
 from quantred.services import setup
+from tests.fakes import FakeMarketData
 
 REAL_KEY = "PKTESTKEYID0000001"
 REAL_SECRET = "abcdefghijklmnopqrstuvwxyz0123456789"
@@ -1147,3 +1148,63 @@ def test_a_ready_check_ends_on_the_next_step_for_the_task_it_checked(task, comma
     assert f"{settings.CLI_NAME} {command}" in last
     if task != "demo":
         assert "needs nothing" not in last
+
+
+# --- the offline path needs the store extra --------------------------------
+def _without_store(monkeypatch):
+    real = __import__("quantred.utils.extras", fromlist=["installed"]).installed
+    monkeypatch.setattr("quantred.utils.extras.installed", lambda name: name != "store" and real(name))
+
+
+def test_an_offline_mcp_check_without_the_store_extra_is_not_ready(monkeypatch, capsys):
+    """`init --check --for mcp` said "Ready" on a copy without `store`, and the
+    quickstart install omitted it - so the offline server it then recommended started,
+    passed its own check, and failed on the first tool that read a bar."""
+    monkeypatch.setattr(setup, "_state_checks", lambda: [])
+    _without_store(monkeypatch)
+    with pytest.raises(SystemExit) as caught:
+        _init(["--check", "--for", "mcp", "--offline"])
+    out = capsys.readouterr().out
+    assert caught.value.code == 1
+    assert "Missing extras for 'mcp' (store)" in out
+    assert "Ready for" not in out
+
+
+def test_an_offline_check_needs_no_keys_and_passes_with_the_store_extra(monkeypatch, tmp_path, capsys):
+    """The other direction: offline is the keyless path, so with the extra present a
+    copy with no keys is ready for it, and the next step is the offline self-test."""
+    monkeypatch.setattr(setup, "_state_checks", lambda: [])
+    monkeypatch.setattr(setup, "ENV_PATH", tmp_path / "absent.env")
+    for key in setup.CREDENTIAL_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr("quantred.utils.extras.installed", lambda name: True)
+    _init(["--check", "--for", "data", "--offline"])
+    assert "Ready for 'data'" in capsys.readouterr().out
+    _init(["--check", "--for", "mcp", "--offline"])
+    assert "mcp --offline --self-test" in capsys.readouterr().out.strip().splitlines()[-1]
+
+
+def test_offline_is_refused_outside_a_check(capsys):
+    with pytest.raises(SystemExit) as caught:
+        _init(["--offline"])
+    assert "--offline only applies" in str(caught.value)
+
+
+def test_the_wizard_cache_warm_prints_the_install_command_not_a_class_name(monkeypatch, capsys):
+    """The setup's optional warm printed `Cache warm skipped: MissingExtra.` - the
+    exception's name, with the install command it carried thrown away."""
+    from quantred import cli as main
+    from quantred.store.bars import CachedMarketData
+
+    _without_store(monkeypatch)
+
+    def build_data_client(**_kwargs):
+        # The real cache's own guard, reached the way the wizard reaches it.
+        return CachedMarketData(FakeMarketData([]))
+
+    monkeypatch.setattr("quantred.services.data.build_data_client", build_data_client)
+    main._warm_cache(main.build_parser().parse_args(["init"]))
+    out = capsys.readouterr().out
+    assert "MissingExtra" not in out
+    assert "'store' extra" in out
+    assert "uv " in out or "pip install" in out

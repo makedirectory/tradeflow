@@ -37,7 +37,7 @@ git clone https://github.com/makedirectory/quantred && cp -R quantred/example ./
 
 Install the copy for how you installed QuantRed. For a `uv tool` install, the tool
 environment is rebuilt, so restate your extras:
-`uv tool install --force 'quantred[mcp,viz]' --with-editable ./my-signals`. In an
+`uv tool install --force 'quantred[mcp,store,viz]' --with-editable ./my-signals`. In an
 activated virtual environment: `python -m pip install -e ./my-signals`. From a checkout
 of the repository: `uv pip install -e ./my-signals`. If a pack of yours still depends on
 the old `tradeflow-engine`, change that dependency to `quantred`. If you cannot edit it,

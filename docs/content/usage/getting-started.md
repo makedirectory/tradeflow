@@ -24,12 +24,13 @@ You need a terminal. Steps 1–2 need nothing else — no keys, no account, no n
 ## 1. Install it
 
 ```bash
-uv tool install 'quantred[mcp,viz]'
+uv tool install 'quantred[mcp,store,viz]'
 ```
 
 No `uv`? [Install it first](https://docs.astral.sh/uv/getting-started/installation/),
-or use `python -m pip install 'quantred[mcp,viz]'` in a virtual environment. The two extras
-are the MCP server (step 5) and charts in HTML reports (step 4); the demo needs neither, and
+or use `python -m pip install 'quantred[mcp,store,viz]'` in a virtual environment. The three extras
+are the MCP server (step 5), the local bar cache that `cache warm` and `--offline` use, and
+charts in HTML reports (step 4); the demo needs none of them, and
 [optional extras](extras) has the rest. This gives you a `quantred` command.
 
 ```bash

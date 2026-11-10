@@ -10,12 +10,13 @@ title: Installation
 ### Fresh install
 
 ```bash
-uv tool install 'quantred[mcp,viz]'
+uv tool install 'quantred[mcp,store,viz]'
 quantred demo
 ```
 
-In an activated virtual environment: `python -m pip install 'quantred[mcp,viz]'`. The two
-extras are the MCP server and charts in reports; the demo needs neither (`quantred` alone
+In an activated virtual environment: `python -m pip install 'quantred[mcp,store,viz]'`. The three
+extras are the MCP server, the local bar cache (`cache warm`, `--offline`) and charts in
+reports; the demo needs none of them (`quantred` alone
 works), and the [extras guide](extras) lists the rest.
 
 The distribution and the command are both **`quantred`**; the importable package is
@@ -36,7 +37,7 @@ keys, and no network for the demo. Next: [first run](first-run).
 Optional capabilities are opt-in extras. To choose them at install time:
 
 ```bash
-uv tool install 'quantred[viz,store,mcp]'
+uv tool install 'quantred[mcp,store,viz]'
 ```
 
 Adding one to an installed copy later is *not* additive with `uv tool`: it replaces

@@ -2468,6 +2468,8 @@ def _refuse_inert_init_flags(args) -> None:
         )
     if "model" in given and not (args.probe_model or args.non_interactive):
         sys.exit("--model only applies to --probe-model: it names the model the probe asks.")
+    if "offline" in given and not checking:
+        sys.exit("--offline only applies to --check / --probe-model: it checks the cache-only path.")
 
 
 def cmd_init(args) -> None:
@@ -2506,10 +2508,11 @@ def cmd_init(args) -> None:
                 result = setup.probe_model(args.provider, args.model)
         try:
             _print_doctor(
-                setup.run_checks(provider=args.provider, probe=result),
+                setup.run_checks(provider=args.provider, probe=result, offline=args.offline),
                 task=args.task,
                 probe_result=result,
                 provider=args.provider,
+                offline=args.offline,
             )
         finally:
             if args.probe_model and blocker:
@@ -2613,7 +2616,9 @@ _STATUS_LABELS = {
 }
 
 
-def _print_doctor(checks, *, task: str = "data", probe_result=None, provider: Optional[str] = None) -> None:
+def _print_doctor(
+    checks, *, task: str = "data", probe_result=None, provider: Optional[str] = None, offline: bool = False
+) -> None:
     """Every check with its status, then what each task can and cannot do.
 
     A doctor reports the whole picture rather than stopping at the first problem.
@@ -2685,7 +2690,7 @@ def _print_doctor(checks, *, task: str = "data", probe_result=None, provider: Op
     if not setup.doctor_ok(checks, task) or probe_failed:
         print(f"\nNot ready for '{task}'. Run `{_invocation('init')}` for the guided setup.")
         raise SystemExit(1)
-    print(f"\nReady for '{task}'. Next: {setup.task_next_step(task)}.")
+    print(f"\nReady for '{task}'. Next: {setup.task_next_step(task, offline=offline)}.")
 
 
 def _init_non_interactive(args, setup) -> None:
@@ -2926,7 +2931,10 @@ def _warm_cache(args) -> None:
     except KeyboardInterrupt:
         print("\n  Interrupted — the partial cache is safe and resumable (`cache warm` continues it).")
     except Exception as exc:  # noqa: BLE001
-        print(f"  Cache warm skipped: {type(exc).__name__}. Nothing else is affected.")
+        # The message, not the class name: a missing extra carries the install command,
+        # and `MissingExtra` alone told the reader nothing they could act on.
+        detail = str(exc) or type(exc).__name__
+        print(f"  Cache warm skipped (nothing else is affected): {detail}")
 
 
 def _confirm(question: str, default: bool = True) -> bool:
@@ -7813,6 +7821,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="data",
         help="The task to check readiness for; the exit code reflects it (default: data - "
         "market-data commands, which need the Alpaca keys)",
+    )
+    init.add_argument(
+        "--offline",
+        action="store_true",
+        help="With --check: check the cache-only path (`--offline` runs, `mcp --offline`) - "
+        "the 'store' extra is required there and the broker keys are not",
     )
     init.add_argument(
         "--provider",
