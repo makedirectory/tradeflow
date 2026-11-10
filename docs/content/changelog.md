@@ -99,6 +99,39 @@ As with every bump, results recorded under v7 leave the default trial listing.
 - A reused walk-forward's `holdout_record` serializes an unbounded ratio as the fresh
   payload does (the string `"inf"`), instead of a bare float.
 
+### Using it
+
+Found by installing the published package into a clean environment and following the
+docs as written.
+
+- **Credentials are read from one place**, the state root's `.env` (`~/.tradeflow/.env`,
+  or `$TRADEFLOW_HOME/.env`). The messages, `.env.example` and the docs no longer tell a
+  checkout user to create `.env` in the repository root, which nothing reads. The compose
+  file and `make docker-run` mount the host's state-root `.env` at `/state/.env`, where
+  the image reads it.
+- **The quickstart install is `quantred[mcp,store,viz]`.** The same pages promised a
+  cache warm and `--offline`, which need `store`. The setup's cache-warm step prints the
+  install command instead of `MissingExtra`, `mcp --offline --self-test` fails naming it
+  when `store` is missing, and a new `init --check --offline` checks the cache-only path.
+- **`verdict --json` with no value prints the result to stdout**, like every other
+  `--json`; `--json PATH` still writes a file.
+- **A `walkforward` whose window cannot hold one fold refuses before reading data** and
+  suggests a window that can. The 30-day default cannot, and used to end in a traceback.
+- `--start`, `--end`, `--capital`, `--commission-bps` and walkforward's search, fold and
+  holdout flags have help text stating their defaults; `--cache-dir` help names the real
+  default under the state root.
+- `execution-report` says when no ledger has been written instead of reporting zero
+  orders; `--json` gives `ledger_exists: false`.
+- A bare `quantred trials` or `quantred cache` prints its subcommands instead of an
+  error naming an internal field.
+- `make docker-run` takes `CMD="..."`, and is no longer described as paper trading (it
+  prints help).
+- The note about keeping `tradeflow-engine` installed appears only when that
+  distribution is present or the old command name was used.
+- Docs: the README demo transcript is regenerated and pinned by a test; `live --dry-run`
+  is described as needing the market-data keys; `init --example-pack` as checkout or
+  sdist only; verdict examples use enough names to fund a book; CONTRIBUTING matches CI.
+
 ---
 
 ## 2.5.0 — 2026-11-08

@@ -10,10 +10,14 @@ phrased for the copy that is running (a checkout says ``make init``, an installe
 its own command), so they are a property of the reader, not of the run. And the real
 output may carry *extra* strategy rows: the table lists every registered strategy, and a
 developer's environment can have an extension pack installed beside the bundled one.
+A longer strategy name also widens that table, so lines are compared with their column
+padding and rule lengths collapsed: the words and numbers are the run, the spacing is
+whatever names happen to be registered.
 """
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from quantred import cli, settings
@@ -21,6 +25,11 @@ from quantred import cli, settings
 README = Path(settings.PROJECT_ROOT) / "README.md"
 #: The sample's last stable line; what follows is the copy-dependent next step.
 LAST_STABLE = "is the product. Point QuantRed at real data:"
+
+
+def _shape(line: str) -> str:
+    """A line with runs of spaces, and of rule characters, collapsed to one."""
+    return re.sub(r"([-=])\1+", r"\1", re.sub(r"\s+", " ", line.strip()))
 
 
 def _readme_demo_lines() -> list:
@@ -32,7 +41,7 @@ def _readme_demo_lines() -> list:
             break
         out.append(line.rstrip())
         if line.strip() == LAST_STABLE:
-            return [line for line in out if line.strip()]
+            return [_shape(line) for line in out if line.strip()]
     raise AssertionError("the README demo sample no longer ends with the line this test anchors on")
 
 
@@ -41,7 +50,7 @@ def test_the_readme_demo_sample_matches_the_seeded_demo_output(capsys):
     args = cli.parse_cli(["demo"])
     assert args.seed == 42, "the README shows a default run; the test must run the same seed"
     args.func(args)
-    actual = [line.rstrip() for line in capsys.readouterr().out.splitlines()]
+    actual = [_shape(line) for line in capsys.readouterr().out.splitlines()]
 
     position = 0
     for line in expected:
