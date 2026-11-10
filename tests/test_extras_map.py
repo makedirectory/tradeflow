@@ -291,6 +291,7 @@ def test_without_a_receipt_the_hint_falls_back_to_naming_the_packs(monkeypatch, 
 @_needs_tomllib
 def test_a_pack_install_command_is_additive(monkeypatch, tmp_path):
     (tmp_path / "uv-receipt.toml").write_text(RECEIPT)
+    _old_distribution_installed(monkeypatch)
     monkeypatch.setattr(settings, "running_from_checkout", lambda: True)
     checkout = extras.pack_install_hint("/p")
     assert checkout.splitlines()[0] == "uv pip install -e /p"
@@ -305,6 +306,7 @@ def test_the_pack_install_fallback_says_to_keep_the_alias(monkeypatch, tmp_path)
     """A pack nobody can edit still imports `tradeflow`; without tradeflow-engine 2.3.1 there
     is no alias and the pack is dropped. Excluding it or `--no-deps` is only for a pack that
     never imports the old name, and a pin below 2.3.1 is the real hazard."""
+    _old_distribution_installed(monkeypatch)
     monkeypatch.setattr(settings, "running_from_checkout", lambda: False)
     monkeypatch.setattr(sys, "prefix", str(tmp_path))  # no receipt here
     lines = extras.pack_install_hint("/p").splitlines()
@@ -314,6 +316,55 @@ def test_the_pack_install_fallback_says_to_keep_the_alias(monkeypatch, tmp_path)
     assert "never imports `tradeflow`" in note and "other dependencies" in note
     assert "below 2.3.1" in note
     assert "change that to" not in note
+
+
+def _old_distribution_installed(monkeypatch):
+    """Make the old distribution's metadata findable, the way an upgraded install has it."""
+    import importlib.metadata as metadata
+
+    real = metadata.distribution
+
+    def distribution(name):
+        if name in settings.LEGACY_DISTRIBUTION_NAMES:
+            return object()
+        return real(name)
+
+    monkeypatch.setattr(metadata, "distribution", distribution)
+
+
+def _no_old_distribution(monkeypatch):
+    import importlib.metadata as metadata
+
+    real = metadata.distribution
+
+    def distribution(name):
+        if name in settings.LEGACY_DISTRIBUTION_NAMES:
+            raise metadata.PackageNotFoundError(name)
+        return real(name)
+
+    monkeypatch.setattr(metadata, "distribution", distribution)
+    monkeypatch.setattr(settings, "invoked_legacy_name", lambda: None)
+
+
+@pytest.mark.parametrize("checkout", [True, False])
+def test_a_new_reader_is_not_handed_the_old_distribution_note(checkout, monkeypatch, tmp_path):
+    """Scaffolding the example pack printed five lines about keeping tradeflow-engine
+    installed to a reader who never had it. With no sign of the old distribution the
+    install line stands alone."""
+    _no_old_distribution(monkeypatch)
+    monkeypatch.setattr(settings, "running_from_checkout", lambda: checkout)
+    monkeypatch.setattr(sys, "prefix", str(tmp_path))  # no receipt here
+    hint = extras.pack_install_hint("/p")
+    assert "tradeflow-engine" not in hint
+    assert hint.splitlines() == [hint.splitlines()[0]]
+
+
+def test_the_note_appears_when_the_process_was_started_under_the_old_name(monkeypatch, tmp_path):
+    """The other evidence: an install upgraded in place exposes only the old command."""
+    _no_old_distribution(monkeypatch)
+    monkeypatch.setattr(settings, "invoked_legacy_name", lambda: "tradeflow")
+    monkeypatch.setattr(settings, "running_from_checkout", lambda: True)
+    assert "Keep tradeflow-engine>=2.3.1 installed" in extras.pack_install_hint("/p")
 
 
 @_needs_tomllib
