@@ -22,14 +22,17 @@ are in the local cache (`quantred cache warm`), `--offline` reads only the cache
 needs no keys at all.
 :::
 
-Credentials live in a `.env` file, which is **gitignored** so your keys are never
-committed. Create it from the template:
+Credentials live in one `.env` file, in the state directory: `~/.tradeflow/.env`, or
+`$TRADEFLOW_HOME/.env` when that variable is set. It is the same file for an installed
+copy, a source checkout and the container; a `.env` in a checkout's own root is **not**
+read. `quantred init` writes it with hidden prompts and checks the keys. To write it by
+hand instead (a checkout carries a template, `.env.example`):
 
 ```bash
-cp .env.example .env
+mkdir -p ~/.tradeflow && cp .env.example ~/.tradeflow/.env   # from a checkout
 ```
 
-```bash title=".env"
+```bash title="~/.tradeflow/.env"
 APCA_API_KEY_ID=<your key id>
 APCA_API_SECRET_KEY=<your secret>
 
@@ -46,8 +49,8 @@ Every credential is resolved through one place (`quantred/settings.py`) in a fix
 order, so there's never any ambiguity:
 
 1. **Environment variables** — the standard, 12-factor way (`export APCA_API_KEY_ID=…`).
-2. **`.env`** in the project root — loaded automatically; real environment
-   variables already set always win.
+2. **`.env`** in the state directory (`~/.tradeflow/.env`, or `$TRADEFLOW_HOME/.env`)
+   — loaded automatically; real environment variables already set always win.
 
 The same chain resolves the optional LLM provider keys for the research agent
 (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OLLAMA_BASE_URL`) — set them in `.env`

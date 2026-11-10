@@ -98,15 +98,22 @@ are pure pandas/numpy, not TA-Lib.
 
 ```bash
 make docker-build                     # build the image
-make docker-run                       # paper live-trading; mounts your .env
+make docker-run                       # prints the CLI help; starts nothing
+make docker-run CMD="quantred demo"   # run any command in the image
 ```
 
-No local Python or uv needed. Override the command to backtest/scan, e.g.:
+No local Python or uv needed. With no command the image only prints help (turning
+the container on must not turn trading on, not even paper trading). The image reads
+credentials from `/state/.env` (it sets `TRADEFLOW_HOME=/state`), so mount your host's
+state-root `.env` there, read-only:
 
 ```bash
-docker run --rm -v $(pwd)/.env:/app/.env quantred \
-    uv run python main.py backtest --symbols NVDA,META --start 2024-01-02 --end 2024-04-01
+docker run --rm -v "$HOME/.tradeflow/.env:/state/.env:ro" quantred \
+    quantred backtest --symbols NVDA,META --start 2024-01-02 --end 2024-04-01
 ```
+
+A plain `docker run` keeps no state between runs; [Docker](docker) covers the compose
+stack, whose named volumes keep the journal and cache.
 
 ## Optional extras (checkout)
 

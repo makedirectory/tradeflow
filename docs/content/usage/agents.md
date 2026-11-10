@@ -177,7 +177,8 @@ You can provide a key **either** in `.env` **or** as the standard environment
 variable — they resolve through the same chain (`environment` → `.env`), so the
 SDK defaults keep working and you don't have to duplicate keys.
 
-`.env` (alongside your Alpaca keys — see `.env.example`):
+`~/.tradeflow/.env` (alongside your Alpaca keys; `quantred init` writes it, and
+`$TRADEFLOW_HOME/.env` is used instead when that variable is set):
 
 ```bash
 ANTHROPIC_API_KEY=sk-ant-...                # for --provider anthropic

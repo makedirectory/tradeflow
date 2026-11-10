@@ -332,6 +332,19 @@ def test_a_checkout_started_through_the_shim_keeps_make_and_main_py(started, mon
     assert "make init" in cli._next_step_hint()
 
 
+def test_the_demo_points_a_checkout_at_the_env_that_is_read(monkeypatch, tmp_path):
+    """The demo's last line said "(or see .env.example)", and a reader who copied it to
+    the repository root made a .env nothing reads: credentials come from the state root
+    only. The hint names that file instead."""
+    from quantred import cli
+
+    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", ["main.py", "demo"])
+    hint = cli._next_step_hint()
+    assert str(tmp_path / ".env") in hint
+    assert ".env.example" not in hint
+
+
 def test_messages_still_render_when_the_working_directory_is_gone(monkeypatch, tmp_path):
     """The flatten report, the halt line and the missing-credentials message all name a
     command, and naming it used to read the working directory - which raises once it

@@ -47,7 +47,8 @@ moment it is pushed. Reproduce it locally with:
 make secret-scan                # needs gitleaks installed (brew install gitleaks)
 ```
 
-Credentials belong in `.env` (gitignored); `.env.example` carries placeholders only.
+Credentials belong in the state root's `.env` (`~/.tradeflow/.env`, outside the working
+tree); `.env.example` carries placeholders only.
 
 ## Lint & format
 

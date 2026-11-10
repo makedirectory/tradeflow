@@ -196,7 +196,7 @@ up:  ## Boot the local dev stack (MCP + persistent state). Never starts live tra
 down:  ## Stop the stack (named volumes, and your trial history, survive)
 	docker compose down
 
-compose-run:  ## Run one verb in the stack, e.g. make compose-run CMD="verdict --symbols NVDA"
+compose-run:  ## Run one verb in the stack, e.g. make compose-run CMD="verdict --symbols AAPL,MSFT,NVDA,AMZN"
 	docker compose run --rm $(CMD)
 
 compose-smoke:  ## Verify the compose wiring end to end (needs Docker; not run in CI)
@@ -205,8 +205,8 @@ compose-smoke:  ## Verify the compose wiring end to end (needs Docker; not run i
 docker-build:  ## Build the Docker image
 	docker build -t quantred .
 
-docker-run:  ## Run the container (prints help; pass a verb to do anything)
-	docker run --rm -it -v $$(pwd)/.env:/state/.env:ro quantred
+docker-run:  ## Run the image: prints help, or a command, e.g. make docker-run CMD="quantred demo"
+	docker run --rm -it -v "$${TRADEFLOW_HOME:-$$HOME/.tradeflow}/.env:/state/.env:ro" quantred $(CMD)
 
 clean:  ## Remove caches, build output, and results
 	rm -rf .venv optimization_results.csv docs/build docs/node_modules

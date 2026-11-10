@@ -42,8 +42,11 @@ x-app: &app
     - tradeflow-cache:/state/cache
     - tradeflow-configs:/state/configs
     # Credentials are read-only and stay on the host. `:ro` is the point — a
-    # container should never be able to rewrite the keys it was given.
-    - ./.env:/state/.env:ro
+    # container should never be able to rewrite the keys it was given. The source is
+    # the host's state-root .env, the one file every copy reads (`quantred init` on the
+    # host writes it); a .env beside this file is read by nothing. It must exist
+    # before the first run: Docker makes a missing bind source an empty directory.
+    - ${TRADEFLOW_HOME:-~/.tradeflow}/.env:/state/.env:ro
 
 services:
   # ---------------------------------------------------------------- surfaces --

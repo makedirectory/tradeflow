@@ -125,7 +125,7 @@ make install                          # uv sync --inexact
 make demo                             # full pipeline on synthetic data + verdict
 
 # 4. Point it at real data: guided setup for your free Alpaca paper keys
-make init                             # writes .env, checks the keys, says what's next
+make init                             # writes ~/.tradeflow/.env, checks the keys, says what's next
                                       # (make check re-runs the diagnostics any time)
 
 # 5. Try it (preconfigured combos)
@@ -442,7 +442,7 @@ The proposer is **provider-agnostic** — choose with `--provider`:
 | `ollama` (local) | none | `llama3.1` | none |
 
 `quantred init --check --for research --provider anthropic` prints the exact command that
-adds the extra to your copy. Set the credential in `.env` (alongside your Alpaca keys; `quantred init`
+adds the extra to your copy. Set the credential in `~/.tradeflow/.env` (alongside your Alpaca keys; `quantred init`
 writes it) or as the standard environment variable. Ollama runs locally and needs no key.
 
 ```bash
@@ -512,8 +512,12 @@ make docs        # serve the Docusaurus site at http://localhost:3000
 
 ```bash
 make docker-build
-make docker-run            # paper live-trading; mounts your .env
+make docker-run                        # prints the CLI help; starts nothing
+make docker-run CMD="quantred demo"    # any command; mounts ~/.tradeflow/.env read-only
 ```
+
+The image starts nothing on its own: turning the container on must not turn trading on.
+`docker compose` adds persistent state volumes; see the [Docker guide](https://quantred.mk-dir.com/usage/docker).
 
 ## Tests
 

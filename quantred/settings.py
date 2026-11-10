@@ -4,8 +4,8 @@ and with a clear error when something's missing.
 Every setting is resolved in the same predictable order:
 
 1. **Process environment variables** - the standard, 12-factor way.
-2. **A ``.env`` file** in the project root, loaded into the environment on first
-   use. No dependency: a tiny built-in parser handles ``KEY=value`` lines, and
+2. **A ``.env`` file** in the state root (``~/.tradeflow/.env``, or
+   ``$TRADEFLOW_HOME/.env``), loaded into the environment on first use. No dependency: a tiny built-in parser handles ``KEY=value`` lines, and
    real environment variables already set always win (standard dotenv behavior).
 
 Alpaca credentials are required for any command that touches the market
@@ -321,9 +321,9 @@ def state_path(*parts: str) -> Path:
     return path
 
 
-#: Where credentials are read from. In a checkout this is the repo's own ``.env``,
-#: exactly as before; an installed copy reads ``~/.tradeflow/.env``, since there is
-#: no repo to put one in.
+#: Where credentials are read from: the state root's ``.env``, the same file for a
+#: checkout, an installed copy and the container. A ``.env`` in a checkout's own root
+#: is never read - one location, so a key is never in the file nobody consults.
 ENV_PATH = state_root() / ".env"
 
 #: Values that mean "not actually filled in" (the ``.env.example`` placeholders).
@@ -526,16 +526,18 @@ def _missing_credentials_message(missing: list) -> str:
     if started_from_checkout_shim():
         lines += [
             "",
-            "  make init                 guided setup (or copy .env.example to .env)",
+            f"  make init                 guided setup — writes {setup_path}",
+            "                            (or copy .env.example there and fill it in)",
             "  make demo                 no keys needed — the full pipeline on synthetic data",
         ]
     elif in_container():
-        # The compose file mounts the host's .env read-only at the state root, so `init`
-        # inside the container could not write it; the keys go in on the host.
+        # The compose file mounts the host's state-root .env read-only at the container's
+        # state root, so `init` inside the container could not write it; the keys go in
+        # on the host.
         lines += [
             "",
-            f"  Put them in the .env beside docker-compose.yml on the host; compose mounts it "
-            f"read-only at {setup_path}.",
+            "  Put them in the host's ~/.tradeflow/.env (or $TRADEFLOW_HOME/.env); compose "
+            f"mounts it read-only at {setup_path}.",
             f"  {invocation('demo'):<25} no keys needed — the full pipeline on synthetic data",
         ]
     else:

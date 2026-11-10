@@ -63,10 +63,14 @@ docker compose --profile docs up docs      # http://localhost:3000
 
 Three named volumes hold everything the application writes — the research journal
 and trial store (`/state/logs`), the bar cache (`/state/cache`), and promoted
-configs (`/state/configs`). `.env` is bind-mounted **read-only** from the host: a
-container should not be able to rewrite the keys it was given, so keys go in the `.env`
-beside `docker-compose.yml`, not through `init` inside the container (the container's
-own messages say so).
+configs (`/state/configs`). The host's state-root `.env`
+(`~/.tradeflow/.env`, or `$TRADEFLOW_HOME/.env` when set on the host) is bind-mounted
+**read-only** at `/state/.env`, which is where the image reads credentials
+(`TRADEFLOW_HOME=/state`). A container should not be able to rewrite the keys it was
+given, so keys go in that host file — `quantred init` on the host writes it — not through
+`init` inside the container (the container's own messages say so). Create it before
+the first `docker compose run`: Docker turns a missing bind-mount source into an empty
+directory.
 
 Nothing else from the checkout reaches the image: `.dockerignore` is an allowlist of
 the package, the example pack and the project metadata, so `.env`, `specs/`, `configs/`,
