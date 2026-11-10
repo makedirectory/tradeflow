@@ -154,3 +154,41 @@ def test_the_cli_cost_key_is_the_services_for_every_cost_shape(monkeypatch):
         assert cli._cost_key(args, "v1") == service_key(
             args.gross, args.commission_bps, args.impact_eta, args.borrow_bps, "v1"
         )
+
+
+def test_a_stress_curve_that_fails_and_recovers_survives_only_to_the_first_failure(monkeypatch):
+    """Survival was the largest level that passed. A harsher cost changes which entries
+    are affordable, so a curve can fail at 2x and pass again at 5x, and that read as
+    "survives 5x" - past a level the edge had already died at, and enough to clear the
+    3x promotion prerequisite."""
+    from quantred.services import analysis
+
+    sharpe_at = {1.0: 1.1, 2.0: -0.2, 3.0: 0.4, 5.0: 0.3}
+
+    def scripted(*args, commission_bps, **kwargs):
+        sharpe = sharpe_at[commission_bps]  # base commission of 1 bp: the value is the multiple
+        return {"metrics": {"sharpe_ratio": sharpe, "total_return": sharpe}, "total_cost": 0.0}
+
+    monkeypatch.setattr(analysis, "run_backtest", scripted)
+    report = analysis.run_cost_stress(
+        None,
+        "demo_trend",
+        ["AAA"],
+        datetime(2024, 1, 2),
+        datetime(2025, 3, 1),
+        commission_bps=1.0,
+        multiples=(1.0, 2.0, 3.0, 5.0),
+    )
+    assert report["survives_to_multiple"] == 1.0
+
+    sharpe_at.update({2.0: 0.6, 3.0: 0.5, 5.0: -0.1})  # and a curve that simply decays
+    report = analysis.run_cost_stress(
+        None,
+        "demo_trend",
+        ["AAA"],
+        datetime(2024, 1, 2),
+        datetime(2025, 3, 1),
+        commission_bps=1.0,
+        multiples=(1.0, 2.0, 3.0, 5.0),
+    )
+    assert report["survives_to_multiple"] == 3.0

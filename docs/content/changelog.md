@@ -28,6 +28,56 @@ index; they are tagged in the repository.
 
 ---
 
+## Unreleased
+
+A second pass over the maths, this time comparing the two clocks against each other and
+running the search and validation machinery on inputs chosen to break it.
+
+### Accounting v8
+
+`ACCOUNTING_VERSION` is **8**. Two things the engine computes changed:
+
+- **An entry larger than the free pool is capped to it, on both clocks.** Risk-based
+  size is `risk_per_trade / stop_loss` of the pool, which exceeds the whole pool once
+  the risk fraction reaches the stop distance. The backtest refused such an entry
+  outright and counted nothing, so the run reported zero trades with every execution
+  diagnostic at zero; live checked the order against the venue's buying power and sent
+  it, so a book given 10,000 on a paper account opened a 20,000 position. Both now open
+  the position at what the pool can pay (`execution.sizing.cap_to_buying_power`), the
+  backtest leaves room for the entry's own cost, and `positions_capped_to_pool` counts
+  how often it happened.
+- **A walk-forward's default embargo and warm-up hold the lookback in bars.** The
+  lookback was converted to calendar days one for one, so a 31-bar daily lookback
+  fetched 21 bars and each out-of-sample fold opened on indicators that were not yet
+  valid. The default now scales trading days to calendar days and pads for holidays.
+  Fold boundaries move with it; pass `--embargo-days` to pin them.
+
+As with every bump, results recorded under v7 leave the default trial listing.
+
+### Fixed
+
+- **Live no longer re-enters after its own stop or target.** With `reaffirm_entries`
+  on, a position closed by a bracket leg while the score still implied the direction was
+  re-opened on the next bar, and an entry the book refused was retried on every later
+  bar. The backtest does neither. An edge that was acted on is now spent until the score
+  leaves that direction. Live-only; no recorded result changes.
+- **An unbounded objective cannot win a parameter search.** A candidate with no losing
+  trade has an infinite profit factor (likewise Calmar, recovery factor, payoff, omega),
+  and it sorted first. Such candidates are still reported and still counted as trials,
+  but rank last, and a search with no bounded score names no winner.
+- **Parallel Bayesian search pairs each score with the point it was measured at.** Batch
+  results were matched to proposals by position, which slipped whenever a candidate was
+  memoized, duplicated or failed. The surrogate is also trained on the grid point that
+  was evaluated instead of the raw proposal, and a proposal that snaps outside the
+  declared constraints is dropped before it costs a trial.
+- **Cost and take-profit stress report survival up to the first failure.** The headline
+  was the largest level that passed, so a curve that failed at 2x and passed again at 5x
+  read as surviving 5x and cleared the 3x promotion prerequisite.
+- A reused walk-forward's `holdout_record` serializes an unbounded ratio as the fresh
+  payload does (the string `"inf"`), instead of a bare float.
+
+---
+
 ## 2.5.0 — 2026-11-08
 
 The engine's numbers changed, so this release is an **accounting bump**, plus an audit of

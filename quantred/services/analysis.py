@@ -1975,7 +1975,7 @@ def run_fill_stress(
             }
         )
 
-    survives = [p["margin_bps"] for p in points if p["sharpe_ratio"] > 0 and p["total_return"] > 0]
+    survives = _survives_until_first_failure(points, "margin_bps")
     return {
         "run_id": run_id,
         "strategy": strategy,
@@ -1985,6 +1985,22 @@ def run_fill_stress(
         # The widest margin the edge still clears at, or None if it dies immediately.
         "survives_to_bps": max(survives) if survives else None,
     }
+
+
+def _survives_until_first_failure(points: List[Dict[str, Any]], axis_key: str) -> List[float]:
+    """The stress levels an edge survives, walking up from the mildest and stopping at
+    the first one it does not.
+
+    A stress curve need not be monotone: a harsher assumption changes which entries are
+    affordable, so a run can fail at 2x and pass again at 5x. Taking the largest passing
+    level reported that curve as "survives 5x", past a level it had already died at.
+    """
+    survived: List[float] = []
+    for point in sorted(points, key=lambda p: p[axis_key]):
+        if not (point["sharpe_ratio"] > 0 and point["total_return"] > 0):
+            break
+        survived.append(point[axis_key])
+    return survived
 
 
 def run_cost_stress(
@@ -2059,7 +2075,7 @@ def run_cost_stress(
             }
         )
 
-    survives = [p["multiple"] for p in points if p["sharpe_ratio"] > 0 and p["total_return"] > 0]
+    survives = _survives_until_first_failure(points, "multiple")
     return {
         "run_id": run_id,
         "strategy": strategy,
@@ -2380,7 +2396,9 @@ def memoized_walk_forward_payload(
         # before the journal kept it. Listed as not retained only when it is not here.
         # Not `holdout`: a fresh payload's `holdout` is the metrics themselves, and one key
         # with two shapes is what an agent reading `holdout.sharpe_ratio` trips on.
-        "holdout_record": holdout,
+        # Through `_jsonable`, as the fresh payload's holdout is: an unbounded ratio read
+        # back from the journal is a float `inf`, and the fresh one is the string.
+        "holdout_record": _jsonable(holdout),
         "not_retained": [
             item
             for item in WALK_FORWARD_NOT_RETAINED
@@ -6118,7 +6136,7 @@ def _jsonable(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_jsonable(v) for v in value]
     if isinstance(value, (np.floating, np.integer)):
-        return value.item()
+        value = value.item()  # then the float rule below: a numpy inf is still an inf
     if isinstance(value, float):
         # JSON has no inf/nan; represent them as strings so round-trips don't crash.
         if value != value or value in (float("inf"), float("-inf")):
