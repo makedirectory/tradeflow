@@ -173,7 +173,7 @@ network — and ends in a promotion verdict. The point isn't a winning strategy;
 it's that the **refusal to promote a noise strategy is the product**:
 
 ```text
-$ make demo
+$ quantred demo
 
 ======================================================================
   QuantRed demo — synthetic data, no API keys, no network
@@ -185,35 +185,37 @@ $ make demo
 
    STRATEGY        RETURN   SHARPE  TRADES
    ---------------------------------------
-   demo_trend      14.74%     0.48      45
+   demo_trend      19.27%     0.56      44
 
 2) Walk-forward validation of 'demo_trend' (the honest scorecard)
    Optimize in-sample, score out-of-sample across folds, then gate it.
 
-   OOS Sharpe (median): -0.27   efficiency (OOS/IS): -0.19   OOS trades: 25
+   OOS Sharpe (median): 0.57   efficiency (OOS/IS): 0.26   OOS trades: 17
 
    Promotion gates:
-     [FAIL] oos_sharpe:                  -0.27  (threshold 1.20)
-     [FAIL] oos_profit_factor:            0.74  (threshold 1.30)
-     [FAIL] walk_forward_efficiency:     -0.19  (threshold 0.40)
-     [PASS] oos_drawdown_vs_is:         10.59%  (threshold 15.41%)
-     [FAIL] min_oos_trades:                 25  (threshold 100)
-     [FAIL] deflated_sharpe:            <0.001  (threshold 0.500)
+     [FAIL] oos_sharpe:                   0.57  (threshold 1.20)
+     [PASS] oos_profit_factor:            1.41  (threshold 1.30)
+     [FAIL] walk_forward_efficiency:      0.26  (threshold 0.40)
+     [FAIL] oos_drawdown_vs_is:          8.65%  (threshold 6.83%)
+     [FAIL] min_oos_trades:                 17  (threshold 100)
+     [FAIL] deflated_sharpe:             0.015  (threshold 0.500)
 
    Verdict: NOT promotable
 
    No edge in a random walk → the gates refuse to promote it. That refusal
    is the product. Point QuantRed at real data:
-     quantred init       add your free Alpaca paper keys
-     quantred verdict    then run the whole pipeline on real market data
+     quantred init        add your free Alpaca paper keys
+     quantred verdict     then run the whole pipeline on real market data
 ```
 
 That is one strategy because a bare install ships one. Anything you install
 alongside it appears in the same table, scored the same way.
 
-Notice the arc: `demo_trend` looks tradeable in-sample (+14.7%, Sharpe 0.48), but
-once it's optimized in-sample and scored **out-of-sample** the edge evaporates
-(median OOS Sharpe −0.26) and all but one promotion gate fails. That's
+Notice the arc: `demo_trend` looks tradeable in-sample (+19.3%, Sharpe 0.56), but
+once it's optimized in-sample and scored **out-of-sample** it does not clear the bar:
+a median OOS Sharpe of 0.57 on only 17 trades, a deflated Sharpe of 0.015 once the search
+is accounted for, and five of the six promotion gates fail. A random walk can still post
+a positive out-of-sample number by luck; the gates exist so that luck is not promoted. That's
 [walk-forward validation](https://quantred.mk-dir.com/engineering/walk-forward)
 doing its job.
 

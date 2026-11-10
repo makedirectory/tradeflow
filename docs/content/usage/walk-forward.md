@@ -33,10 +33,12 @@ Sharpe** that discounts your result by how many configs you tried.) Optimize and
 report on the *same* window and you've measured how well you fit that window's
 noise, not whether the strategy will work next month.
 
-`quantred demo` shows the trap in one screen: a moving-average crossover posts
-+16.8% in-sample, then collapses to a **−0.42 median Sharpe out-of-sample** and
-fails every promotion gate. Same strategy, same data — the only thing that
-changed is that it had to perform on bars it wasn't tuned on.
+`quantred demo` shows the trap in one screen, on a seeded random walk with no edge
+in it: the bundled trend strategy posts +19.3% in-sample, and walk-forward scores it
+at a **0.57 median Sharpe out-of-sample on only 17 trades**, a walk-forward efficiency
+of 0.26 and a deflated Sharpe of 0.015 — five of the six promotion gates fail. Same
+strategy, same data; the only thing that changed is that it had to perform on bars it
+wasn't tuned on, and be judged against how hard it was searched for.
 
 Walk-forward closes the gap by splitting time into three roles:
 
