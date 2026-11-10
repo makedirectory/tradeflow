@@ -629,3 +629,53 @@ def test_a_ledger_that_cannot_be_written_does_not_fail_the_flatten(tmp_path):
 
     assert report.observed == "yes"
     assert any("could not record the flatten" in f for f in report.failures)
+
+
+# --- The scope a halt is recorded under ---------------------------------------------
+
+
+def _run_cli(argv):
+    from quantred import cli
+
+    args = cli.build_parser().parse_args(argv)
+    args.func(args)
+
+
+def test_a_halt_by_the_name_every_command_uses_refuses_that_strategy_s_entry(isolated_halt_state, capsys):
+    """`halt demo_trend` printed "Halted" and blocked nothing: the scope was recorded as
+    typed, and the live trader asks about the strategy's class name. Driven through the
+    command and then the trader, because each half was right alone."""
+    from quantred.demo.strategies import DemoTrendStrategy
+
+    _run_cli(["halt", "demo_trend", "--reason", "entries look wrong"])
+    assert "resume DemoTrendStrategy" in capsys.readouterr().out
+
+    defaults = {name: spec["default"] for name, spec in DemoTrendStrategy.PARAM_RANGES.items()}
+    broker = FakeBroker()
+    trader = LiveTrader(broker, DemoTrendStrategy(defaults), respect_market_hours=False)
+    decision = trader.handle_signal("AAA", signals.BUY, 100.0)
+    assert not decision.allowed and decision.reason_code == "halted"
+    assert broker.orders == []
+
+    _run_cli(["resume", "demo_trend"])
+    assert trader.handle_signal("AAA", signals.BUY, 100.0).allowed
+
+
+def test_a_halt_naming_no_strategy_is_refused_not_recorded(isolated_halt_state):
+    from quantred.execution.halt import HaltState
+
+    with pytest.raises(SystemExit) as refusal:
+        _run_cli(["halt", "demo_trnd", "--reason", "typo"])
+    assert "demo_trend" in str(refusal.value) and "halt all" in str(refusal.value)
+    assert HaltState().list() == []
+
+
+def test_a_halt_recorded_under_any_old_scope_can_still_be_lifted(isolated_halt_state, capsys):
+    """Halts written before scopes were checked may sit under a name that resolves to
+    nothing; refusing to lift one would leave it on record with no command to remove it."""
+    from quantred.execution.halt import HaltState
+
+    HaltState().set("from an older version", actor="cli", scope="not_a_strategy")
+    _run_cli(["resume", "not_a_strategy"])
+    assert "Halt lifted" in capsys.readouterr().out
+    assert HaltState().list() == []

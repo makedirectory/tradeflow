@@ -5708,14 +5708,45 @@ def _refuse_contradictory_portfolio_cardinality(strategy, allocator_max_position
     )
 
 
+def _halt_scope(value: str) -> str:
+    """The scope a halt is recorded under: ``all``, or a strategy's class name.
+
+    The live trader asks whether its strategy's *class* is halted, while every other
+    command names a strategy by its registry name. Recording whatever was typed meant
+    ``halt demo_trend`` printed "Halted" and blocked nothing, and so did any typo. A
+    registry name is resolved to its class, a class name is accepted as it is, and
+    anything else is refused: a halt that cannot match is worse than no halt, because
+    the operator stops watching.
+    """
+    from quantred.execution.halt import ALL
+    from quantred.services.registry import STRATEGIES
+
+    if value == ALL:
+        return ALL
+    if value in STRATEGIES:
+        return STRATEGIES[value].__name__
+    if value in {cls.__name__ for cls in STRATEGIES.values()}:
+        return value
+    import difflib
+
+    known = ", ".join(sorted(STRATEGIES)) or "none registered"
+    close = difflib.get_close_matches(value, list(STRATEGIES), n=1)
+    hint = f" (did you mean {close[0]!r}?)" if close else ""
+    raise SystemExit(
+        f"No strategy {value!r}{hint}, so that halt would stop nothing. "
+        f"Strategies: {known}. To stop everything: {_invocation('halt all --reason ...')}"
+    )
+
+
 def cmd_halt(args) -> None:
     """Record a halt. Blocks new entries; never blocks an exit."""
     from quantred.execution.halt import HaltState
 
-    halt = HaltState().set(args.reason, actor="cli", scope=args.scope)
+    scope = _halt_scope(args.scope)
+    halt = HaltState().set(args.reason, actor="cli", scope=scope)
     print(f"Halted. {halt}")
     print("New entries are refused while this stands. Exits are still allowed.")
-    print(f"Lift it with:  {_invocation(f'resume {args.scope}')}")
+    print(f"Lift it with:  {_invocation(f'resume {scope}')}")
 
 
 def cmd_resume(args) -> None:
@@ -5723,12 +5754,17 @@ def cmd_resume(args) -> None:
     from quantred.execution.halt import HaltState
 
     state = HaltState()
-    lifted = state.clear(args.scope)
+    # A scope already on record is lifted as typed, whatever it is: a halt written
+    # before scopes were checked may sit under a name that resolves to nothing, and it
+    # has to stay liftable. Anything else goes through the same resolution `halt` uses.
+    recorded = {halt.scope for halt in state.list()}
+    scope = args.scope if args.scope in recorded else _halt_scope(args.scope)
+    lifted = state.clear(scope)
     remaining = state.list()
     if lifted:
-        print(f"Halt lifted for {args.scope!r}.")
+        print(f"Halt lifted for {scope!r}.")
     else:
-        print(f"No halt was in force for {args.scope!r}; nothing to lift.")
+        print(f"No halt was in force for {scope!r}; nothing to lift.")
     # Said either way: "Trading may resume" used to follow lifting one halt while others
     # still refused entries, and a no-op resume is where an operator most needs to see
     # what is in fact still standing.
@@ -7308,12 +7344,16 @@ def build_parser() -> argparse.ArgumentParser:
     halt = subparsers.add_parser(
         "halt", help="Stop opening new positions (exits still allowed) — durable until resumed"
     )
-    halt.add_argument("scope", nargs="?", default="all", help="'all', or a strategy class name")
+    halt.add_argument(
+        "scope", nargs="?", default="all", help="'all' (the default), or a strategy by name, e.g. demo_trend"
+    )
     halt.add_argument("--reason", required=True, help="Why — recorded with the halt")
     halt.set_defaults(func=cmd_halt)
 
     resume = subparsers.add_parser("resume", help="Lift a halt")
-    resume.add_argument("scope", nargs="?", default="all", help="'all', or a strategy class name")
+    resume.add_argument(
+        "scope", nargs="?", default="all", help="'all' (the default), or a strategy by name, e.g. demo_trend"
+    )
     resume.set_defaults(func=cmd_resume)
 
     halts = subparsers.add_parser("halts", help="Show what is currently halted — read-only")

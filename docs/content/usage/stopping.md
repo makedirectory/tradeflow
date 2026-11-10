@@ -19,8 +19,12 @@ Use when a strategy is behaving oddly but you have no reason to distrust the
 *positions*.
 
 ```bash
-quantred halt VolumeSpikeStrategy --reason "entries look wrong since 14:00"
+quantred halt demo_trend --reason "entries look wrong since 14:00"
 ```
+
+The scope is the strategy's name, as every other command spells it (its class name is
+accepted too). A name that matches no strategy is refused instead of recorded: a halt
+that can match nothing would print "Halted" and stop nothing.
 
 - New entries for that strategy are refused.
 - Existing positions stay open, and their broker-side bracket legs stay protective.
