@@ -563,3 +563,26 @@ def test_reconcile_json_carries_the_ledger_alongside_the_findings(capsys, tmp_pa
     assert "(small-real)" in payload["ledger"]
     # The report's own keys survive untouched beside it.
     assert "clean" in payload and "checked_at" in payload
+
+
+@pytest.mark.parametrize("as_json", [False, True])
+def test_the_execution_report_says_no_ledger_exists_rather_than_reporting_zero(
+    as_json, capsys, tmp_path, monkeypatch
+):
+    """On fresh state it printed "0 submitted ... $0.00" - a report of a session that
+    placed nothing, for a ledger that was never written. Absent is not zero."""
+    from quantred import cli
+
+    absent = tmp_path / "logs" / "position_ledger.jsonl"
+    monkeypatch.setattr("quantred.execution.ledger.default_ledger_path", lambda: absent)
+    args = cli.parse_cli(["execution-report", *(["--json"] if as_json else [])])
+    args.func(args)
+    out = capsys.readouterr().out
+    if as_json:
+        payload = json.loads(out)
+        assert payload["ledger_exists"] is False and payload["report"] is None
+        assert payload["ledger"] == str(absent)
+    else:
+        assert "No position ledger" in out and str(absent) in out
+        assert "submitted" not in out and "$0.00" not in out
+    assert not absent.exists(), "a read-only report must not create the ledger it reports missing"

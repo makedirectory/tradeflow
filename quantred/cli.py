@@ -5968,9 +5968,25 @@ def cmd_execution_report(args) -> None:
     import json
 
     from quantred.analytics.execution_quality import execution_report
+    from quantred.execution import ledger as ledger_module
     from quantred.execution.ledger import PositionLedger
 
-    ledger = PositionLedger(_execution_ledger_path(args, must_exist=True))
+    path = Path(_execution_ledger_path(args, must_exist=True) or ledger_module.default_ledger_path())
+    if not path.is_file():
+        # Absent is not zero: read as an empty ledger this printed "0 submitted ...
+        # $0.00", which describes a session that placed nothing, not one that never ran.
+        # Checked before PositionLedger, which creates the directory it would write to.
+        note = "nothing has recorded a session here yet; a live, paper or small-real run writes it"
+        if args.json:
+            print(
+                json.dumps(
+                    {"ledger": str(path), "ledger_exists": False, "report": None, "note": note}, indent=2
+                )
+            )
+        else:
+            print(f"No position ledger at {path}: {note}. There is no execution to report.")
+        return
+    ledger = PositionLedger(path)
     report = execution_report(ledger.lifecycles(), ledger.declines(), ledger.flattens())
     _print_ledger_sessions(ledger, args.json)
     if args.json:

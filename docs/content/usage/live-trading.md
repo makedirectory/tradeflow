@@ -816,7 +816,9 @@ side to buy, so their numbers cannot be recovered. Archive the file and start fr
 The ledger records enough to reconstruct the whole life of an order: what the strategy
 decided, what was submitted, and what the venue did with it. `quantred
 execution-report` rolls that up; `--orders` lists every lifecycle, `--json` emits it
-whole. Both are read-only.
+whole. Both are read-only. When no ledger has been written yet (the default one or the
+small-real one), it says so - and `--json` gives `"ledger_exists": false, "report": null` -
+rather than reporting zero orders for a session that never ran.
 
 ```
 === Execution quality ===
