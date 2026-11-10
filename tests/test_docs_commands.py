@@ -131,7 +131,12 @@ def _verdict_docs():
     """Every file that teaches a verdict command: all the docs, the READMEs (including
     the one the sdist ships inside the example pack) and the compose file."""
     files = sorted((ROOT / "docs" / "content").rglob("*.md"))
-    files += [ROOT / "README.md", ROOT / "example" / "README.md", ROOT / "docker-compose.yml", ROOT / "Makefile"]
+    files += [
+        ROOT / "README.md",
+        ROOT / "example" / "README.md",
+        ROOT / "docker-compose.yml",
+        ROOT / "Makefile",
+    ]
     return [f for f in dict.fromkeys(files) if f.is_file()]
 
 
