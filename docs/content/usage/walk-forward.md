@@ -77,11 +77,13 @@ replayed rather than re-scanned.
 
 | Flag | Meaning |
 |------|---------|
-| `--mode anchored\|rolling` | Expanding IS window (anchored) or fixed-width sliding IS (rolling). |
-| `--folds N` | Number of folds. Alternatively set `--train-days` / `--test-days`. |
+| `--start` / `--end` | The window the folds (and any holdout) are cut from. **Default: the last 30 days**, which is too short to hold even one fold for a daily strategy: the run then stops before reading any data and suggests a window that does build folds. Pass a window of a year or more. |
+| `--mode anchored\|rolling` | Expanding IS window (anchored, the default) or fixed-width sliding IS (rolling). |
+| `--folds N` | Number of folds (default 4). Alternatively set both `--train-days` and `--test-days`, which fix each fold's length in calendar days; either alone has no effect. |
 | `--embargo-days N` | IS→OOS gap, and the warm-up fetched before each OOS window. Defaults to the calendar days that hold the strategy's required lookback in bars (weekends and a holiday pad included: a 31-bar daily lookback is 49 days). |
-| `--holdout-days N` | Final sacred window, scored once. |
-| `--method grid\|random\|bayesian` | Search method used per fold (`bayesian` needs the `optimize` extra). |
+| `--holdout-days N` | Final sacred window, scored once (default 0: no holdout). |
+| `--method grid\|random\|bayesian` | Search method used per fold (default `grid`; `bayesian` needs the `optimize` extra). |
+| `--seed N` | Seed for the in-sample search's sampling (default 42); the same value as `optimize --seed` reproduces it. |
 | `--objective` | Metric to optimize in-sample (default `sharpe_ratio`). |
 | `--pbo` | Also estimate the IS-best fold OOS rank-failure rate: a heuristic over folds, not a true probability of backtest overfitting (slower). |
 | `--monte-carlo` | Block-bootstrap the OOS daily P&L for a 5th-percentile annualized Sharpe. |

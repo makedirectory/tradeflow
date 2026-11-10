@@ -1657,6 +1657,55 @@ def _print_diagnostics_for_reused_backtest(args, data_client, strategy_name, uni
         )
 
 
+def _refuse_unbuildable_folds(validator, args) -> None:
+    """Exit, before any data is read, when the window cannot hold one fold.
+
+    The date defaults are the last 30 days, which is shorter than the embargo alone for
+    a daily strategy, so a bare ``walkforward`` used to fetch its data and then die in a
+    traceback from the fold builder. The suggested window is one that was checked to
+    build folds with the same settings, not a guess.
+    """
+    fold_args = dict(
+        mode=args.mode,
+        n_folds=args.folds,
+        train_days=args.train_days,
+        test_days=args.test_days,
+        embargo_days=args.embargo_days,
+        holdout_days=args.holdout_days,
+    )
+    try:
+        validator.build_folds(args.start, args.end, **fold_args)
+        return
+    except ValueError as exc:
+        reason = str(exc)
+    suggestion = None
+    for years in (1, 2, 3, 5, 10):
+        candidate = shift_days(args.end, -365 * years)
+        try:
+            validator.build_folds(candidate, args.end, **fold_args)
+        except ValueError:
+            continue
+        suggestion = candidate
+        break
+    given = getattr(args, "flags_given", set())
+    window = f"{args.start:%Y-%m-%d}..{args.end:%Y-%m-%d} ({(args.end - args.start).days} days"
+    window += ")" if {"start", "end"} & given else "; the default is the last 30 days)"
+    embargo = args.embargo_days if args.embargo_days is not None else validator.default_embargo_days()
+    lines = [
+        f"walkforward cannot build its folds over {window}: {reason}.",
+        f"  Each fold needs in-sample days, an embargo of {embargo} calendar days (this strategy's "
+        "lookback) and out-of-sample days"
+        + (f", inside what is left after the {args.holdout_days}-day holdout." if args.holdout_days else "."),
+    ]
+    if suggestion is not None:
+        lines.append(f"  Pass a longer window, e.g. --start {suggestion:%Y-%m-%d} --end {args.end:%Y-%m-%d}.")
+    else:
+        lines.append(
+            "  Pass a longer --start/--end window, or reduce --train-days/--test-days/--embargo-days."
+        )
+    sys.exit("\n".join(lines))
+
+
 def cmd_walkforward(args) -> None:
     from quantred.analytics.reporting import format_cached_notice
     from quantred.engine.backtest import ACCOUNTING_VERSION
@@ -1677,6 +1726,7 @@ def cmd_walkforward(args) -> None:
     reader = WalkForwardValidator(
         STRATEGIES[args.strategy], data_client, benchmark=getattr(args, "benchmark", None)
     )
+    _refuse_unbuildable_folds(reader, args)
     universe = resolve_universe(
         data_client,
         args.scanner,
@@ -6624,7 +6674,13 @@ def _add_cost_flags(parser) -> None:
         action="store_true",
         help="Use GROSS returns (disable transaction cost; net is the default)",
     )
-    parser.add_argument("--commission-bps", dest="commission_bps", type=float, default=1.0)
+    parser.add_argument(
+        "--commission-bps",
+        dest="commission_bps",
+        type=float,
+        default=1.0,
+        help="Commission charged on every fill, in basis points of its notional (default: %(default)s)",
+    )
     parser.add_argument(
         "--impact-eta", dest="impact_eta", type=float, default=0.3, help="Market-impact coefficient"
     )
@@ -6684,7 +6740,10 @@ def _add_cache_flags(parser) -> None:
         "(implies --cache)",
     )
     parser.add_argument(
-        "--cache-dir", dest="cache_dir", default=None, help="Bar cache directory (default: cache/bars)"
+        "--cache-dir",
+        dest="cache_dir",
+        default=None,
+        help="Bar cache directory (default: cache/bars under the state root, ~/.tradeflow unless TRADEFLOW_HOME is set)",
     )
 
 
@@ -6935,9 +6994,21 @@ def build_parser() -> argparse.ArgumentParser:
             "--symbols", type=_symbols, default=DEFAULT_UNIVERSE, help="Comma-separated candidate symbols"
         )
         if with_dates:
-            p.add_argument("--start", type=_date, default=shift_days(_now(), -30))
-            p.add_argument("--end", type=_date, default=_now())
-            p.add_argument("--capital", type=_positive_amount, default=100_000.0)
+            p.add_argument(
+                "--start",
+                type=_date,
+                default=shift_days(_now(), -30),
+                help="Start of the window: a date or ISO datetime, read in New York time (default: 30 days before --end)",
+            )
+            p.add_argument(
+                "--end", type=_date, default=_now(), help="End of the window, same format (default: now)"
+            )
+            p.add_argument(
+                "--capital",
+                type=_positive_amount,
+                default=100_000.0,
+                help="Starting capital in dollars (default: %(default).0f)",
+            )
             p.add_argument(
                 "--scan-as-of",
                 dest="scan_as_of",
@@ -7436,7 +7507,12 @@ def build_parser() -> argparse.ArgumentParser:
     alloc = subparsers.add_parser("allocate", help="Weight a portfolio over scanned symbols")
     alloc.add_argument("--scanner", type=_scanner, default="demo_volume")
     alloc.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
-    alloc.add_argument("--capital", type=_positive_amount, default=100_000.0)
+    alloc.add_argument(
+        "--capital",
+        type=_positive_amount,
+        default=100_000.0,
+        help="Starting capital in dollars (default: %(default).0f)",
+    )
     alloc.add_argument("--max-positions", dest="max_positions", type=_positive_count, default=5)
     alloc.add_argument("--max-weight", dest="max_weight", type=float, default=0.25)
     alloc.add_argument(
@@ -7605,8 +7681,18 @@ def build_parser() -> argparse.ArgumentParser:
         "optimize", help="Tune strategy parameters via backtest (in-sample — trust nothing yet)"
     )
     add_common(opt, with_dates=True)
-    opt.add_argument("--method", choices=["grid", "random", "bayesian"], default="grid")
-    opt.add_argument("--objective", type=_objective, default="sharpe_ratio")
+    opt.add_argument(
+        "--method",
+        choices=["grid", "random", "bayesian"],
+        default="grid",
+        help="How candidates are chosen: every grid point, random samples, or a Bayesian search (default: %(default)s)",
+    )
+    opt.add_argument(
+        "--objective",
+        type=_objective,
+        default="sharpe_ratio",
+        help="Metric the search maximises, e.g. sharpe_ratio, sortino_ratio, total_return (default: %(default)s)",
+    )
     opt.add_argument("--max-evals", dest="max_evals", type=_positive_count, default=50)
     opt.add_argument(
         "--seed",
@@ -7616,7 +7702,12 @@ def build_parser() -> argparse.ArgumentParser:
         "grid too once --max-evals caps the grid (the cap is sampled, not truncated). "
         "Matches walkforward's --seed, so the same value reproduces its inner search.",
     )
-    opt.add_argument("--output", default="optimization_results.csv")
+    opt.add_argument(
+        "--output",
+        default="optimization_results.csv",
+        help="CSV of every evaluated candidate, written relative to the current directory "
+        "(default: %(default)s)",
+    )
     _add_cost_flags(opt)
     _add_cache_flags(opt)
     add_workers_flag(opt)
@@ -7629,8 +7720,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Sweep a parameter space cheaply — never journaled, reports the distribution",
     )
     add_common(screen, with_dates=True)
-    screen.add_argument("--method", choices=["grid", "random"], default="grid")
-    screen.add_argument("--objective", type=_objective, default="sharpe_ratio")
+    screen.add_argument(
+        "--method",
+        choices=["grid", "random"],
+        default="grid",
+        help="How points are chosen: the grid, or random samples (default: %(default)s)",
+    )
+    screen.add_argument(
+        "--objective",
+        type=_objective,
+        default="sharpe_ratio",
+        help="Metric whose distribution is reported, e.g. sharpe_ratio, total_return (default: %(default)s)",
+    )
     screen.add_argument(
         "--max-evals",
         dest="max_evals",
@@ -7684,12 +7785,35 @@ def build_parser() -> argparse.ArgumentParser:
         help="Out-of-sample validation: optimize IS, score OOS, across folds (the honest scorecard)",
     )
     add_common(wf, with_dates=True)
-    wf.add_argument("--mode", choices=["anchored", "rolling"], default="anchored")
     wf.add_argument(
-        "--folds", type=_positive_count, default=None, help="Number of folds (or use --train/--test-days)"
+        "--mode",
+        choices=["anchored", "rolling"],
+        default="anchored",
+        help="anchored: each fold's in-sample window starts at --start and grows; rolling: "
+        "a fixed-length in-sample window that slides forward (default: %(default)s)",
     )
-    wf.add_argument("--train-days", dest="train_days", type=int, default=None)
-    wf.add_argument("--test-days", dest="test_days", type=int, default=None)
+    wf.add_argument(
+        "--folds",
+        type=_positive_count,
+        default=None,
+        help="Number of folds (default: 4 unless --train-days and --test-days fix the geometry)",
+    )
+    wf.add_argument(
+        "--train-days",
+        dest="train_days",
+        type=int,
+        default=None,
+        help="In-sample calendar days per fold; takes effect only with --test-days (default: "
+        "derived - the window less the embargo, split into --folds + 1 equal parts)",
+    )
+    wf.add_argument(
+        "--test-days",
+        dest="test_days",
+        type=int,
+        default=None,
+        help="Out-of-sample calendar days per fold; takes effect only with --train-days "
+        "(default: derived, as for --train-days)",
+    )
     wf.add_argument(
         "--embargo-days",
         dest="embargo_days",
@@ -7697,11 +7821,34 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="IS->OOS gap; defaults to required lookback in calendar days",
     )
-    wf.add_argument("--holdout-days", dest="holdout_days", type=_non_negative_days, default=0)
-    wf.add_argument("--method", choices=["grid", "random", "bayesian"], default="grid")
-    wf.add_argument("--objective", type=_objective, default="sharpe_ratio")
+    wf.add_argument(
+        "--holdout-days",
+        dest="holdout_days",
+        type=_non_negative_days,
+        default=0,
+        help="Calendar days at the end of the window reserved as a holdout, scored once after "
+        "the folds (default: %(default)s - no holdout)",
+    )
+    wf.add_argument(
+        "--method",
+        choices=["grid", "random", "bayesian"],
+        default="grid",
+        help="How each fold's in-sample search chooses candidates (default: %(default)s)",
+    )
+    wf.add_argument(
+        "--objective",
+        type=_objective,
+        default="sharpe_ratio",
+        help="Metric the search maximises, e.g. sharpe_ratio, sortino_ratio, total_return (default: %(default)s)",
+    )
     wf.add_argument("--max-evals", dest="max_evals", type=_positive_count, default=50)
-    wf.add_argument("--seed", type=int, default=42)
+    wf.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Seed for the in-sample search's sampling; the same value as optimize --seed "
+        "reproduces it (default: %(default)s)",
+    )
     wf.add_argument(
         "--benchmark",
         default=None,
@@ -7857,7 +8004,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--env-path", dest="env_path", default=None, help="Write to this .env instead of the default"
     )
     init.add_argument(
-        "--cache-dir", dest="cache_dir", default=None, help="Bar cache directory (default: cache/bars)"
+        "--cache-dir",
+        dest="cache_dir",
+        default=None,
+        help="Bar cache directory (default: cache/bars under the state root, ~/.tradeflow unless TRADEFLOW_HOME is set)",
     )
     init.add_argument(
         "--example-pack",
@@ -7891,9 +8041,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--scanner", type=_scanner, default="demo_volume", help="Universe scanner ('none' to skip)"
     )
     verdict.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
-    verdict.add_argument("--start", type=_date, default=shift_days(_now(), -365))
-    verdict.add_argument("--end", type=_date, default=_now())
-    verdict.add_argument("--capital", type=_positive_amount, default=100_000.0)
+    verdict.add_argument(
+        "--start",
+        type=_date,
+        default=shift_days(_now(), -365),
+        help="Start of the window: a date or ISO datetime, read in New York time (default: 365 days before --end)",
+    )
+    verdict.add_argument(
+        "--end", type=_date, default=_now(), help="End of the window, same format (default: now)"
+    )
+    verdict.add_argument(
+        "--capital",
+        type=_positive_amount,
+        default=100_000.0,
+        help="Starting capital in dollars (default: %(default).0f)",
+    )
     verdict.add_argument(
         "--source", choices=["strategy", "signal", "scanner"], default="strategy", help="Alpha score origin"
     )
@@ -8018,8 +8180,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--scanner", type=_scanner, default="demo_volume", help="Scanner used when --source scanner"
     )
     info.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
-    info.add_argument("--start", type=_date, default=shift_days(_now(), -365))
-    info.add_argument("--end", type=_date, default=_now())
+    info.add_argument(
+        "--start",
+        type=_date,
+        default=shift_days(_now(), -365),
+        help="Start of the window: a date or ISO datetime, read in New York time (default: 365 days before --end)",
+    )
+    info.add_argument(
+        "--end", type=_date, default=_now(), help="End of the window, same format (default: now)"
+    )
     info.add_argument("--benchmark", default="SPY", help="Benchmark for residual returns")
     info.add_argument("--horizon", type=int, default=5, help="Forward-return horizon in bars")
     info.add_argument(
@@ -8112,8 +8281,13 @@ def build_parser() -> argparse.ArgumentParser:
     hz.add_argument("--source", choices=["strategy", "signal", "scanner"], default="strategy")
     hz.add_argument("--scanner", type=_scanner, default="demo_volume")
     hz.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
-    hz.add_argument("--start", type=_date, default=shift_days(_now(), -365))
-    hz.add_argument("--end", type=_date, default=_now())
+    hz.add_argument(
+        "--start",
+        type=_date,
+        default=shift_days(_now(), -365),
+        help="Start of the window: a date or ISO datetime, read in New York time (default: 365 days before --end)",
+    )
+    hz.add_argument("--end", type=_date, default=_now(), help="End of the window, same format (default: now)")
     hz.add_argument("--benchmark", default="SPY")
     hz.add_argument(
         "--max-lag", dest="max_lag", type=int, default=10, help="Largest lag (periods) to measure"
@@ -8170,7 +8344,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     def _add_cache_dir_flag(p) -> None:
         p.add_argument(
-            "--cache-dir", dest="cache_dir", default=None, help="Bar cache directory (default: cache/bars)"
+            "--cache-dir",
+            dest="cache_dir",
+            default=None,
+            help="Bar cache directory (default: cache/bars under the state root, ~/.tradeflow unless TRADEFLOW_HOME is set)",
         )
 
     cache = subparsers.add_parser(
@@ -8183,8 +8360,15 @@ def build_parser() -> argparse.ArgumentParser:
     c_warm.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
     c_warm.add_argument("--scanner", type=_scanner, default="none", help="Universe scanner ('none' to skip)")
     c_warm.add_argument("--timeframe", default="1Day")
-    c_warm.add_argument("--start", type=_date, default=shift_days(_now(), -365))
-    c_warm.add_argument("--end", type=_date, default=_now())
+    c_warm.add_argument(
+        "--start",
+        type=_date,
+        default=shift_days(_now(), -365),
+        help="Start of the window: a date or ISO datetime, read in New York time (default: 365 days before --end)",
+    )
+    c_warm.add_argument(
+        "--end", type=_date, default=_now(), help="End of the window, same format (default: now)"
+    )
     c_warm.add_argument(
         "--scan-as-of",
         dest="scan_as_of",
@@ -8518,7 +8702,10 @@ def build_parser() -> argparse.ArgumentParser:
         "tool needing bars says the keys are missing.",
     )
     mcp.add_argument(
-        "--cache-dir", dest="cache_dir", default=None, help="Bar cache directory (default: cache/bars)"
+        "--cache-dir",
+        dest="cache_dir",
+        default=None,
+        help="Bar cache directory (default: cache/bars under the state root, ~/.tradeflow unless TRADEFLOW_HOME is set)",
     )
     mcp.set_defaults(func=cmd_mcp)
 
@@ -8632,7 +8819,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=3,
         help="Consecutive proposals without a better candidate before stopping (at least 1)",
     )
-    dagent.add_argument("--capital", type=_positive_amount, default=100_000.0)
+    dagent.add_argument(
+        "--capital",
+        type=_positive_amount,
+        default=100_000.0,
+        help="Starting capital in dollars (default: %(default).0f)",
+    )
     dagent.add_argument(
         "--provider",
         choices=["replay", "anthropic", "openai", "ollama"],
@@ -8654,7 +8846,13 @@ def build_parser() -> argparse.ArgumentParser:
     demo = subparsers.add_parser(
         "demo", help="Run the full pipeline on synthetic data (no API keys, no network)"
     )
-    demo.add_argument("--seed", type=int, default=42)
+    demo.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Seed for the synthetic prices and the search; the documented sample output is "
+        "this default (default: %(default)s)",
+    )
     demo.add_argument(
         "--chart",
         metavar="PATH",

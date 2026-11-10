@@ -93,3 +93,81 @@ def test_scan_and_alphas_describe_their_strategy_and_symbols_flags():
         for action in parser._actions:
             if action.dest in ("symbols", "strategy"):
                 assert action.help, f"{command} {action.option_strings} has no help"
+
+
+# --- the flags every research run turns on ---------------------------------
+# `--start`, `--end`, `--capital` and `--commission-bps` appear on most commands, and a
+# default is part of a run's identity, yet `--help` showed them with no text at all - so
+# a reader could not tell that `backtest` reads 30 days and `verdict` a year, or what
+# unit a commission is in.
+
+#: Flags whose help must exist and state the default.
+CORE = {"--start", "--end", "--capital", "--commission-bps"}
+WALKFORWARD = {
+    "--holdout-days",
+    "--method",
+    "--objective",
+    "--mode",
+    "--seed",
+    "--train-days",
+    "--test-days",
+    "--folds",
+}
+
+
+def _commands():
+    parser = cli.build_parser()
+    action = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
+    return dict(action.choices)
+
+
+def _action(sub, flag):
+    return next((a for a in sub._actions if flag in a.option_strings), None)
+
+
+def _cases():
+    commands = _commands()
+    for name, sub in commands.items():
+        for flag in sorted(CORE):
+            action = _action(sub, flag)
+            # A None default ("from the config", "the cached extent") is explained in
+            # prose rather than as a value, and is covered by the commands' own tests.
+            if action is not None and action.default is not None:
+                yield name, flag
+    for flag in sorted(WALKFORWARD):
+        yield "walkforward", flag
+    yield "demo", "--seed"
+    yield "optimize", "--output"
+    yield "optimize", "--method"
+    yield "optimize", "--objective"
+
+
+@pytest.mark.parametrize("command, flag", list(_cases()))
+def test_a_core_flag_says_what_it_defaults_to(command, flag):
+    action = _action(_commands()[command], flag)
+    assert action is not None, f"{command} has no {flag}"
+    assert action.help, f"{command} {flag} has no help text"
+    assert "default" in action.help, f"{command} {flag} does not state its default"
+
+
+def test_each_command_states_its_own_date_window():
+    """Two windows exist (30 days on the search commands, a year on verdict/info/horizon),
+    so a help string copied from one to the other would state the wrong one."""
+    seen = set()
+    for name, sub in _commands().items():
+        start, end = _action(sub, "--start"), _action(sub, "--end")
+        if start is None or end is None or start.default is None or end.default is None:
+            continue
+        days = round((end.default - start.default).total_seconds() / 86400)
+        assert f"{days} days before --end" in start.help, f"{name} --start: {start.help!r}"
+        seen.add(days)
+    assert seen == {30, 365}
+
+
+def test_cache_dir_help_names_the_real_default():
+    """It said `default: cache/bars`, a relative path, while the cache lives under the
+    state root - so a reader looked for it in whatever directory they were in."""
+    for name, sub in _commands().items():
+        action = _action(sub, "--cache-dir")
+        if action is not None and action.default is None:
+            assert "state root" in action.help, f"{name} --cache-dir: {action.help!r}"
