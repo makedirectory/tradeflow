@@ -749,3 +749,22 @@ def test_a_reused_walk_forward_shows_unrecorded_metrics_as_unrecorded(capsys):
     line = capsys.readouterr().out.splitlines()[2]
     assert "OOS Sharpe —" in line and "trades —" in line
     assert "0.000" not in line and "0.00%" not in line
+
+
+@pytest.mark.parametrize("timeframe, lookback", [("1Day", 31), ("1Day", 200), ("1Hour", 60), ("15Min", 120)])
+def test_the_default_warmup_holds_the_lookback_in_bars_whenever_a_fold_starts(timeframe, lookback):
+    """The lookback is in bars and the warmup is fetched in calendar days. Read one for
+    one, a 31-bar daily lookback got 21 bars, so each out-of-sample fold opened on
+    indicators that were not yet valid. Counted over every start date of a year, on
+    weekdays only (the pad is what a real calendar's holidays use up)."""
+    from quantred.marketdata.timeframe import Timeframe
+    from quantred.optimization.walk_forward import WalkForwardValidator
+
+    validator = WalkForwardValidator.__new__(WalkForwardValidator)
+    validator.timeframe = Timeframe.parse(timeframe)
+    validator.lookback_bars = lookback
+    days = validator.default_embargo_days()
+    per_day = validator._bars_per_day()
+    for start in pd.date_range("2024-01-01", "2024-12-31", freq="D"):
+        sessions = len(pd.bdate_range(start - pd.Timedelta(days=days), start, inclusive="left"))
+        assert sessions * per_day >= lookback, (start, sessions)

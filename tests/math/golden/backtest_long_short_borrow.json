@@ -1,6 +1,6 @@
 {
  "provenance": {
-  "accounting_version": 7,
+  "accounting_version": 8,
   "generated_by": "QUANTRED_REGEN_GOLDEN=1 pytest tests/math -k golden (tests/math/test_golden_pins.py)",
   "scenario": "scripted random signals on 3 names, 120 daily bars, up to 3 positions, both sides, commission 2bp, spread 6bp, borrow 300bp, impact off",
   "seed": "world seed 0, signals seed 1"
@@ -16,6 +16,7 @@
   "execution.gross_profit": 134.09722797523295,
   "execution.max_positions": 3,
   "execution.positions_below_min_notional": 0,
+  "execution.positions_capped_to_pool": 0,
   "execution.positions_filled": 73,
   "execution.positions_rounded_to_zero": 0,
   "execution.requested_notional": 1460000.0,

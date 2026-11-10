@@ -1,6 +1,6 @@
 {
  "provenance": {
-  "accounting_version": 7,
+  "accounting_version": 8,
   "generated_by": "QUANTRED_REGEN_GOLDEN=1 pytest tests/math -k golden (tests/math/test_golden_pins.py)",
   "scenario": "8 names, 3-factor covariance; capped long-only, cost-aware at target TE, benchmark-aware",
   "seed": "seed 77"

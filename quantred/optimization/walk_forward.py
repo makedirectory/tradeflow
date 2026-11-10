@@ -314,6 +314,9 @@ _GATE_BASIS = {
 }
 
 
+#: Extra calendar days on a warmup, for sessions lost to a run of exchange holidays.
+_HOLIDAY_PAD_DAYS = 4
+
 #: How far before a boundary a half-open window ends - below any bar's resolution.
 _JUST_BEFORE = timedelta(microseconds=1)
 
@@ -627,9 +630,17 @@ class WalkForwardValidator:
         return folds, holdout
 
     def default_embargo_days(self) -> int:
-        """Lookback expressed in calendar days."""
-        bars_per_day = self._bars_per_day()
-        return max(math.ceil(self.lookback_bars / bars_per_day), 1)
+        """Calendar days that hold at least the lookback's worth of bars.
+
+        The lookback is in bars and ``_bars_per_day`` is per *trading* day, so the
+        trading days it spans are scaled up to calendar days (a year holds about 252
+        sessions) and padded for a holiday cluster. Reading the trading-day count as
+        calendar days gave a 31-bar daily lookback 21 bars of warmup, so the first bars
+        of every out-of-sample fold ran on indicators that were not yet valid.
+        """
+        trading_days = math.ceil(self.lookback_bars / self._bars_per_day())
+        calendar_days = math.ceil(trading_days * 365.25 / TRADING_DAYS_PER_YEAR) + _HOLIDAY_PAD_DAYS
+        return max(calendar_days, 1)
 
     def _make_optimizer(self, data_client: MarketDataClient) -> ParameterOptimizer:
         """A `ParameterOptimizer` for one fold/holdout's IS search, carrying this
@@ -708,7 +719,7 @@ class WalkForwardValidator:
             embargo_days=embargo,
             holdout_days=holdout_days,
         )
-        warmup_days = embargo  # warmup buffer == embargo, by construction >= lookback
+        warmup_days = embargo  # warmup buffer == embargo, which spans the lookback in bars
 
         # Prefetch the whole window once (plus warmup) and slice per fold.
         frames = self._fetch(symbols, start, end, embargo)

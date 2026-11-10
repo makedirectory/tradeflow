@@ -1,6 +1,6 @@
 {
  "provenance": {
-  "accounting_version": 7,
+  "accounting_version": 8,
   "generated_by": "QUANTRED_REGEN_GOLDEN=1 pytest tests/math -k golden (tests/math/test_golden_pins.py)",
   "scenario": "demo_trend cost stress at 1x, 2x, 4x, impact and borrow off",
   "seed": "fake bars seeds 0..3"

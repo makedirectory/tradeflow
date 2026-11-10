@@ -32,7 +32,13 @@ from quantred.analytics import metrics as m
 from quantred.analytics import performance
 from quantred.brokers.base import AccountSnapshot
 from quantred.costs.base import CostModel, Trade
-from quantred.execution.sizing import PositionSizer, RiskBasedSizer, below_min_notional, free_buying_power
+from quantred.execution.sizing import (
+    PositionSizer,
+    RiskBasedSizer,
+    below_min_notional,
+    cap_to_buying_power,
+    free_buying_power,
+)
 from quantred.marketdata.client import MarketDataClient
 from quantred.marketdata.timeframe import Timeframe
 from quantred.strategies import signals
@@ -99,7 +105,7 @@ logger = logging.getLogger(__name__)
 #:   default, so v5 walk-forwards chose parameters for a different book than they scored;
 #:   and a stored optimize candidate is keyed on capital and book too, so earlier ones miss.
 #:
-#: * **7** — the current model. Five things the engine computes changed, each of which
+#: * **7** — Five things the engine computes changed, each of which
 #:   moves recorded numbers. A stop or target fills at the open when the bar opens beyond
 #:   it (a long stopped at 97 on a bar opening at 90 lost 10, not 3), and the bar an entry
 #:   fills on is checked against that position's own stop and target. A bar that opens
@@ -116,8 +122,17 @@ logger = logging.getLogger(__name__)
 #:   rule live uses - which changes nothing the backtest deployed, but is recorded because
 #:   the live path moved to it. A v6 result is not comparable with these.
 #:
+#: * **8** — the current model. An entry the sizer asks more for than the free pool
+#:   holds is opened at what the pool can pay, cost of entry included, where it used to
+#:   be refused outright; the same cap applies live. It changes a result only where the
+#:   risk fraction approaches the stop distance (a request near or above the whole
+#:   pool), but there it turns no trade into a trade. A walk-forward's default embargo
+#:   and warmup are also longer: the lookback was converted from bars to calendar days
+#:   as though every day traded, so the warmup held about five sevenths of the bars the
+#:   indicators need, and fold boundaries move with it. A v7 result is not comparable.
+#:
 #: Records written before this field existed carry no version; absence means 1.
-ACCOUNTING_VERSION = 7
+ACCOUNTING_VERSION = 8
 
 
 class BacktestError(RuntimeError):
@@ -193,6 +208,8 @@ class _Execution:
     filled: int = 0
     rounded_to_zero: int = 0
     below_min_notional: int = 0
+    #: Opened positions the sizer asked more for than the free pool could pay.
+    capped_to_pool: int = 0
 
     def drag_pct(self) -> float:
         """Requested notional that whole-share rounding removed, as a percentage."""
@@ -219,6 +236,7 @@ class _Execution:
             "positions_filled": self.filled,
             "positions_rounded_to_zero": self.rounded_to_zero,
             "positions_below_min_notional": self.below_min_notional,
+            "positions_capped_to_pool": self.capped_to_pool,
             "unfillable_pct": self.unfillable_pct(),
         }
 
@@ -1144,12 +1162,26 @@ class BacktestEngine:
         # Requested before rounding, so the gap between intent and fill is measurable
         # rather than inferred. Whole shares: the live path floors too, and the two
         # clocks must agree about what is fillable.
-        requested = self.sizer.size(symbol, price, account)
+        asked = self.sizer.size(symbol, price, account)
+        # Held to the free pool by the rule live uses. A request above it used to be
+        # refused outright and counted nowhere, so a config whose risk fraction reached
+        # its stop distance reported zero trades with every diagnostic at zero.
+        requested = cap_to_buying_power(asked, price, account.buying_power)
+        capped = requested < asked
         size = round_quantity(requested)
         if size <= 0:
             if requested > 0:
                 book.execution.rounded_to_zero += 1
             return None
+        # Leave room for the cost of entering. Cost rises with size, so shedding the
+        # shares that cover the shortfall once is enough to fit.
+        shortfall = size * price + self._trade_cost(symbol, size, price, adv, vol, i) - book.cash
+        if shortfall > 0:
+            size = round_quantity(size - np.ceil(shortfall / price))
+            capped = True
+            if size <= 0:
+                book.execution.rounded_to_zero += 1
+                return None
         if below_min_notional(size, price, min_notional):
             # The same rule the live path applies, from the same definition — the two
             # clocks agreeing about what is fillable is the whole point of it living in
@@ -1202,6 +1234,7 @@ class BacktestEngine:
         book.execution.requested_notional += requested * price
         book.execution.filled_notional += size * price
         book.execution.filled += 1
+        book.execution.capped_to_pool += int(capped)
         return {
             "symbol": symbol,
             "side": signal,

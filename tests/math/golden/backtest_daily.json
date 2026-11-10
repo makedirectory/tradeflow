@@ -1,6 +1,6 @@
 {
  "provenance": {
-  "accounting_version": 7,
+  "accounting_version": 8,
   "generated_by": "QUANTRED_REGEN_GOLDEN=1 pytest tests/math -k golden (tests/math/test_golden_pins.py)",
   "scenario": "demo_trend, 3 symbols, daily, default costs, SPY benchmark",
   "seed": "fake bars seeds 0..3"
@@ -15,6 +15,7 @@
   "execution.gross_profit": -4550.326113259167,
   "execution.max_positions": 1,
   "execution.positions_below_min_notional": 0,
+  "execution.positions_capped_to_pool": 0,
   "execution.positions_filled": 18,
   "execution.positions_rounded_to_zero": 0,
   "execution.requested_notional": 1165045.6496691504,

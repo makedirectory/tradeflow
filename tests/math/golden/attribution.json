@@ -1,6 +1,6 @@
 {
  "provenance": {
-  "accounting_version": 7,
+  "accounting_version": 8,
   "generated_by": "QUANTRED_REGEN_GOLDEN=1 pytest tests/math -k golden (tests/math/test_golden_pins.py)",
   "scenario": "demo_trend attribution on 14 names plus SPY, 600 daily bars, 24 sampled rebalances at horizon 5",
   "seed": "fake bars seeds 0..14"

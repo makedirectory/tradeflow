@@ -174,3 +174,56 @@ def test_a_realized_gain_grows_the_pool_on_both_clocks_up_to_the_account():
     assert deployable_pool(10_300.0, 10_000.0, 700.0) == 10_300.0  # never beyond the account
     assert deployable_pool(30_000.0, 10_000.0, -20_000.0) == 0.0  # never negative
     assert deployable_pool(30_000.0, None, -500.0) == 30_000.0  # no capital: the equity is already net
+
+
+# --- A request above the whole pool ------------------------------------------------
+#
+# Risk-based size is risk / stop of the pool, which is more than the pool once the risk
+# fraction reaches the stop distance. The backtest refused such an entry outright and
+# counted nothing, so the run reported zero trades with every diagnostic at zero; live
+# checked the order against the venue's buying power and sent it, so a book given 10,000
+# opened a 20,000 position. `cap_to_buying_power` is the one rule both now call.
+
+_OVERSIZED = {**_CONFIG, "risk_per_trade": 0.02, "stop_loss": 0.01}  # asks for 2x the pool
+
+
+def _one_backtest_entry(config, cost_model=None):
+    index = pd.date_range("2024-01-02", periods=4, freq="D", tz=NEW_YORK)
+    frame = pd.DataFrame(
+        [{"open": PRICE, "high": PRICE, "low": PRICE, "close": PRICE, "volume": 1e6}] * 4, index=index
+    )
+    strategy = ScriptedStrategy([signals.BUY, signals.HOLD, signals.HOLD, signals.HOLD], config)
+    client = MarketDataClient(DictMarketData({"AAA": frame}))
+    return BacktestEngine(strategy, client, cost_model=cost_model).run(
+        ["AAA"], datetime(2024, 1, 2), datetime(2024, 1, 10), CAPITAL
+    )
+
+
+def test_a_request_above_the_pool_opens_at_the_pool_on_both_clocks():
+    result = _one_backtest_entry(_OVERSIZED)
+    backtest = [
+        float(size * price) for size, price in zip(result.trades["size"], result.trades["entry_price"])
+    ]
+
+    broker = FakeBroker()
+    broker.account = AccountSnapshot(
+        cash=CAPITAL, equity=CAPITAL, buying_power=10 * CAPITAL, portfolio_value=CAPITAL
+    )
+    trader = LiveTrader(broker, ScriptedStrategy([], _OVERSIZED), capital=CAPITAL, respect_market_hours=False)
+    assert trader.handle_signal("AAA", signals.BUY, price=PRICE).allowed
+    live = [order["qty"] * PRICE for order in broker.orders]
+
+    assert backtest == [CAPITAL]  # the whole pool, by hand: 200 shares of a 50 dollar name
+    assert live == backtest
+
+
+def test_a_capped_entry_is_counted_and_leaves_room_for_its_own_cost():
+    from quantred.costs.parametric import ParametricCostModel
+
+    result = _one_backtest_entry(_OVERSIZED, cost_model=ParametricCostModel())
+    assert len(result.trades) == 1
+    assert result.execution["positions_capped_to_pool"] == 1
+    trade = result.trades.iloc[0]
+    entry_cost = ParametricCostModel().turnover_cost_rate() * trade["size"] * trade["entry_price"]
+    assert trade["size"] * trade["entry_price"] + entry_cost <= CAPITAL
+    assert trade["size"] == 199  # one share shed: 200 would cost 10,000 plus its commission

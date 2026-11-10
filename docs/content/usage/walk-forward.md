@@ -77,7 +77,7 @@ replayed rather than re-scanned.
 |------|---------|
 | `--mode anchored\|rolling` | Expanding IS window (anchored) or fixed-width sliding IS (rolling). |
 | `--folds N` | Number of folds. Alternatively set `--train-days` / `--test-days`. |
-| `--embargo-days N` | IS→OOS gap. Defaults to the strategy's required lookback in calendar days. |
+| `--embargo-days N` | IS→OOS gap, and the warm-up fetched before each OOS window. Defaults to the calendar days that hold the strategy's required lookback in bars (weekends and a holiday pad included: a 31-bar daily lookback is 49 days). |
 | `--holdout-days N` | Final sacred window, scored once. |
 | `--method grid\|random\|bayesian` | Search method used per fold (`bayesian` needs the `optimize` extra). |
 | `--objective` | Metric to optimize in-sample (default `sharpe_ratio`). |

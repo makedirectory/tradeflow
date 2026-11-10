@@ -189,8 +189,17 @@ it.** Declining to open a position is a preference about what you trade; declini
 close one the strategy no longer wants is a stuck position, so a missed exit is always
 re-stated whatever the flag says.
 
-Backtests are unaffected either way: they derive the book from the same signals, so
-the two can never disagree there.
+**An edge that was acted on is spent.** Re-stating is for an edge the engine never
+saw. A position closed by its own stop or target leaves the book flat while the score
+still implies the direction, and so does an entry the book refused because it was full
+or over a cap. The backtest took that entry once, or declined it once, and stays out
+until the score leaves the direction and crosses again; live does the same, rather than
+buying again one bar after every take-profit. An entry stopped by something the
+backtest has no equivalent of (a halt, a closed market, a broker error) is not spent,
+and is re-stated on a later bar. The mark is held in memory: after a restart inside the
+same trend the engine no longer knows the edge was traded, and may re-enter once.
+
+Backtests are unaffected by the flag: they act on each edge exactly once.
 
 ## Why nothing happened
 

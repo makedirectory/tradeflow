@@ -82,6 +82,22 @@ def free_buying_power(pool: float, held_notional: float, venue_buying_power: Opt
     return free if venue_buying_power is None else max(min(free, venue_buying_power), 0.0)
 
 
+def cap_to_buying_power(units: float, price: float, buying_power: float) -> float:
+    """A sizer's request, held to what the free pool can pay for.
+
+    One definition, reached by both clocks. A risk-based size is ``risk / stop`` of the
+    pool, which exceeds the whole pool once the risk fraction reaches the stop distance,
+    and the two clocks answered that differently: the backtest refused the entry
+    outright (and counted nothing), while live checked the order against the venue's
+    buying power - on a paper or margin account a multiple of the capital - and sent it,
+    so a book given 10,000 opened a 20,000 position. Capping is the reading both can
+    share: the entry is as large as the pool allows and no larger.
+    """
+    if price <= 0:
+        return 0.0
+    return min(units, max(buying_power, 0.0) / price)
+
+
 class PositionSizer(ABC):
     """Decides the (pre-rounding) size of a new position."""
 
