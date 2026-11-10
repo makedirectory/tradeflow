@@ -7116,8 +7116,9 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Report what this contract WOULD do — the orders it would send, the caps "
         "that would bind, the signals it would skip — against a stated capital, with no "
-        "account and no broker able to trade. Journals nothing, and observes no fills, "
-        "slippage or fees: that is what a small-real session is for",
+        "account and no broker able to trade. It reads current bars, so it needs the Alpaca "
+        "key pair. Journals nothing, and observes no fills, slippage or fees: that is what "
+        "a small-real session is for",
     )
     live.add_argument(
         "--live-money",
