@@ -412,7 +412,7 @@ def isolated_halt_state(tmp_path, monkeypatch):
     """Point `cmd_flatten`'s *default* halt state at this test's own directory.
 
     The command builds `HaltState()` itself, so it writes to the session-wide
-    `TRADEFLOW_HOME` that conftest sets — not to the `halts` fixture. Without this the
+    `QUANTRED_HOME` that conftest sets — not to the `halts` fixture. Without this the
     halt these tests set stands for the rest of the session and every later test that
     tries to enter a position is refused, which is exactly what happened: a cascade of
     unrelated failures in `test_live_trader` and `test_min_notional_parity`, none of
@@ -425,7 +425,7 @@ def isolated_halt_state(tmp_path, monkeypatch):
     fixture is the prevention, the guard is the detection. Without it these tests error
     at teardown instead of passing.
     """
-    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("QUANTRED_HOME", str(tmp_path / "state"))
     return tmp_path
 
 

@@ -183,7 +183,7 @@ quantred reconcile                     # ledger against the broker
 ## Where your evidence goes
 
 Nowhere near here. QuantRed writes its journal, trial store, saved configs and position
-ledger under one state root — `~/.tradeflow` by default, `TRADEFLOW_HOME` to move it —
+ledger under one state root — `~/.quantred` by default, `QUANTRED_HOME` to move it —
 deliberately outside any working tree, so a private strategy's results are not sitting in
 a git repository waiting for an ignore-file mistake.
 

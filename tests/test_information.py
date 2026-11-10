@@ -147,7 +147,7 @@ def test_the_documented_info_example_writes_a_report(tmp_path, monkeypatch, caps
     tokens = shlex.split(block.replace("\\\n", " "))
     symbols = tokens[tokens.index("--symbols") + 1].split(",")
 
-    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("QUANTRED_HOME", str(tmp_path / "home"))
     # The default benchmark is part of what the command fetches.
     client = MarketDataClient(FakeMarketData([*symbols, "SPY"], n=300, freq="1D"))
     monkeypatch.setattr(cli, "build_research_data", lambda **kwargs: client)

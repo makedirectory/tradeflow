@@ -44,7 +44,7 @@ uses plain `uv sync --extra dev`, then installs the example pack as above. Befor
 
 This repository is public, so a committed key is disclosed the moment it lands —
 rotating it is the only fix. Keep credentials in the state root's `.env`
-(`~/.tradeflow/.env`, outside the working tree; `make init` writes it), never in a file
+(`~/.quantred/.env`, outside the working tree; `make init` writes it), never in a file
 inside the checkout: a `.env` in the repository root is not read, and is one ignore-file
 edit away from being committed. `.env.example` holds placeholder values only, and is the
 right place to document a new setting.

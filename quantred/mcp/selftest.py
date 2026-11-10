@@ -93,7 +93,7 @@ def run_self_test(
     pipe and nothing else, so what the child printed is the useful part.
 
     ``env`` defaults to a copy of the caller's environment - the SDK would otherwise
-    hand the child a minimal one, losing ``TRADEFLOW_HOME`` and credentials.
+    hand the child a minimal one, losing ``QUANTRED_HOME`` and credentials.
     """
     if command:
         command = list(command)

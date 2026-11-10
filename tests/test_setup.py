@@ -416,7 +416,7 @@ def test_extras_hints_are_phrased_for_the_copy_that_is_running(monkeypatch, tmp_
     from quantred import settings
     from quantred.utils import extras
 
-    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
+    monkeypatch.setenv("QUANTRED_HOME", str(tmp_path))
     monkeypatch.setattr(settings, "_looks_like_checkout", lambda _p: False)
     assert "uv sync" not in extras.install_hint("store")
     assert "uv tool install --force" in extras.install_hint("store")
@@ -556,7 +556,7 @@ def test_an_unwritable_state_root_is_a_permission_failure_not_a_credential_one(t
     assert row.status == "failed"
     assert "permission denied writing" in row.detail
     assert "credential" not in (row.detail + (row.next_action or "")).lower()
-    assert "TRADEFLOW_HOME" in row.next_action
+    assert "QUANTRED_HOME" in row.next_action
 
 
 def _run_init(monkeypatch, capsys, *argv):
@@ -932,7 +932,7 @@ def test_an_installed_launch_command_uses_the_script_beside_the_interpreter(monk
 
 
 def test_a_checkout_launch_command_names_main_py_by_absolute_path(monkeypatch):
-    monkeypatch.delenv("TRADEFLOW_HOME", raising=False)
+    monkeypatch.delenv("QUANTRED_HOME", raising=False)
     from pathlib import Path
 
     from quantred import settings

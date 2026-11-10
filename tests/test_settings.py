@@ -66,7 +66,7 @@ def test_dotenv_file_is_loaded(monkeypatch, tmp_path):
 def _missing_message(monkeypatch, tmp_path, *, checkout: bool):
     from quantred import settings
 
-    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
+    monkeypatch.setenv("QUANTRED_HOME", str(tmp_path))
     monkeypatch.setattr(settings, "_looks_like_checkout", lambda _p: checkout)
     monkeypatch.setattr(settings, "get_credential", lambda *a, **k: None)
     try:

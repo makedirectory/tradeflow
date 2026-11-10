@@ -67,7 +67,7 @@ same rule the MCP server follows.
 **State is shared, and that is the point.** Anything that runs a trial writes to the
 research journal, and the campaign's trial count is what the Deflated Sharpe deflates
 against. Embedding QuantRed in a loop that runs thousands of backtests will — 
-correctly — make every subsequent result harder to clear. Set `TRADEFLOW_HOME` to
+correctly — make every subsequent result harder to clear. Set `QUANTRED_HOME` to
 keep a project's campaign separate from your own, or pass `journal=False` /
 `no_journal` where a function offers it if a run genuinely should not count.
 

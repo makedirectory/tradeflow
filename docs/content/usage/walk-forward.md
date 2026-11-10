@@ -236,10 +236,10 @@ recorded keys win, unrecorded ones fall back to the strategy's own. So one file 
 versioned in a private repository beside the strategies it belongs to:
 
 ```bash
-quantred backtest --config ~/.tradeflow/configs/alpha.json --start 2024-01-02 --end 2024-06-01
-quantred verdict  --config ~/.tradeflow/configs/alpha.json --start 2024-01-02 --end 2024-06-01
-quantred alphas   --config ~/.tradeflow/configs/alpha.json
-quantred risk     --config ~/.tradeflow/configs/alpha.json
+quantred backtest --config ~/.quantred/configs/alpha.json --start 2024-01-02 --end 2024-06-01
+quantred verdict  --config ~/.quantred/configs/alpha.json --start 2024-01-02 --end 2024-06-01
+quantred alphas   --config ~/.quantred/configs/alpha.json
+quantred risk     --config ~/.quantred/configs/alpha.json
 ```
 
 `--config` is accepted by `backtest`, `walkforward`, `live`, `small-real`, `screen`,

@@ -36,7 +36,7 @@ def journal(tmp_path, monkeypatch):
     # every later test then sees a journal path inside a directory that is long gone.
     monkeypatch.setattr(audit, "DEFAULT_TRIAL_JOURNAL", path)
     monkeypatch.setattr(trials_module, "DEFAULT_JOURNAL_PATH", path)
-    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
+    monkeypatch.setenv("QUANTRED_HOME", str(tmp_path))
     return path
 
 

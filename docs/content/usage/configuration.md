@@ -22,17 +22,17 @@ are in the local cache (`quantred cache warm`), `--offline` reads only the cache
 needs no keys at all.
 :::
 
-Credentials live in one `.env` file, in the state directory: `~/.tradeflow/.env`, or
-`$TRADEFLOW_HOME/.env` when that variable is set. It is the same file for an installed
+Credentials live in one `.env` file, in the state directory: `~/.quantred/.env`, or
+`$QUANTRED_HOME/.env` when that variable is set. It is the same file for an installed
 copy, a source checkout and the container; a `.env` in a checkout's own root is **not**
 read. `quantred init` writes it with hidden prompts and checks the keys. To write it by
 hand instead (a checkout carries a template, `.env.example`):
 
 ```bash
-mkdir -p ~/.tradeflow && cp .env.example ~/.tradeflow/.env   # from a checkout
+mkdir -p ~/.quantred && cp .env.example ~/.quantred/.env   # from a checkout
 ```
 
-```bash title="~/.tradeflow/.env"
+```bash title="~/.quantred/.env"
 APCA_API_KEY_ID=<your key id>
 APCA_API_SECRET_KEY=<your secret>
 
@@ -49,7 +49,7 @@ Every credential is resolved through one place (`quantred/settings.py`) in a fix
 order, so there's never any ambiguity:
 
 1. **Environment variables** — the standard, 12-factor way (`export APCA_API_KEY_ID=…`).
-2. **`.env`** in the state directory (`~/.tradeflow/.env`, or `$TRADEFLOW_HOME/.env`)
+2. **`.env`** in the state directory (`~/.quantred/.env`, or `$QUANTRED_HOME/.env`)
    — loaded automatically; real environment variables already set always win.
 
 The same chain resolves the optional LLM provider keys for the research agent

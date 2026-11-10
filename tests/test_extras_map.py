@@ -481,7 +481,7 @@ def tomllib_loads(text):
 
 def _doctor_output(argv, monkeypatch, capsys, tmp_path, installed):
     _as_installed_copy(monkeypatch, installed=installed)
-    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
+    monkeypatch.setenv("QUANTRED_HOME", str(tmp_path))
     args = cli.parse_cli(argv)
     try:
         args.func(args)

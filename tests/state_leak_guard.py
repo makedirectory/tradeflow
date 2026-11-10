@@ -36,7 +36,7 @@ import os
 import pytest
 
 #: The halt file, resolved **once**, while the session's own state root is in force.
-#: Resolving it per teardown instead would read whatever ``TRADEFLOW_HOME`` happened to
+#: Resolving it per teardown instead would read whatever ``QUANTRED_HOME`` happened to
 #: say at that instant - and a test that unsets the variable would point the guard at the
 #: developer's real state root, where the next thing it does is clear a live operator
 #: halt. Pinning it means the guard can only ever touch the root this session created.
@@ -49,7 +49,7 @@ def pytest_sessionstart(session):
 
     # No root means nothing pinned this session to a throwaway directory, and the guard
     # would be operating on real state. Staying off is the only safe reading.
-    if not os.environ.get("TRADEFLOW_HOME"):
+    if not os.environ.get("QUANTRED_HOME"):
         _HALT_PATH = None
         return
 
@@ -93,7 +93,7 @@ def pytest_runtest_teardown(item):
         f"{described}\n"
         "It has been cleared so the rest of the session runs unaffected — without that, "
         "every later test that opens a position fails for a reason that has nothing to "
-        "do with it. Build HaltState(tmp_path / 'halts.json'), or point TRADEFLOW_HOME "
+        "do with it. Build HaltState(tmp_path / 'halts.json'), or point QUANTRED_HOME "
         "at this test's own directory, rather than writing to the shared root. A fixture "
         "that holds a halt across several tests needs its own path for the same reason: "
         "this guard clears the shared root between every test."

@@ -124,15 +124,19 @@ def mcp_launch_command(*, offline: bool = False, cache_dir: Optional[Any] = None
 def mcp_client_env() -> Dict[str, str]:
     """The environment a client must pass for its server to use *this* state root.
 
-    ``TRADEFLOW_HOME`` only, and only when it is set: a desktop client does not inherit
+    ``QUANTRED_HOME`` only, and only when it is set: a desktop client does not inherit
     the shell that exported it, so without this a self-test run from that shell passes
     while the client's server journals to the default root - splitting the campaign's
     journal, which deflates the multiple-testing correction against half its evidence
     with nothing erroring. Credentials are never listed: they belong in the ``.env``
     the server reads itself, not in a client config file.
     """
-    home = os.environ.get("TRADEFLOW_HOME")
-    return {"TRADEFLOW_HOME": str(Path(home).expanduser().resolve())} if home else {}
+    from quantred.settings import LEGACY_STATE_HOME_ENV, STATE_HOME_ENV
+
+    # Under the current name whichever one the shell used: the client launches this
+    # copy, which reads both, and a config written today should not carry the old name.
+    home = os.environ.get(STATE_HOME_ENV) or os.environ.get(LEGACY_STATE_HOME_ENV)
+    return {STATE_HOME_ENV: str(Path(home).expanduser().resolve())} if home else {}
 
 
 def credentials_only_in_shell(state: Optional["EnvState"] = None) -> List[str]:
@@ -804,20 +808,27 @@ def _state_checks() -> List[Check]:
     """
     from quantred.execution.ledger import default_ledger_path
     from quantred.settings import (
+        LEGACY_STATE_HOME_ENV,
+        STATE_HOME_ENV,
         git_worktree_containing,
+        legacy_state_note,
         orphaned_checkout_state,
         state_root,
         trial_journal_path,
     )
 
     root = state_root()
+    named_by = next((name for name in (STATE_HOME_ENV, LEGACY_STATE_HOME_ENV) if os.environ.get(name)), None)
     checks = [
-        Check(
-            "state root", "ready", f"{root}{' (TRADEFLOW_HOME)' if os.environ.get('TRADEFLOW_HOME') else ''}"
-        ),
+        Check("state root", "ready", f"{root}{f' ({named_by})' if named_by else ''}"),
         Check("research journal", "ready", str(trial_journal_path())),
         Check("position ledger", "ready", str(default_ledger_path())),
     ]
+    old_name = legacy_state_note()
+    if old_name is not None:
+        # Informational, as "earlier state found" is: nothing is broken, but where the
+        # state lives is not where a new reader of the docs would look for it.
+        checks.append(Check("state under an old name", "not_checked", old_name))
 
     worktree = git_worktree_containing(root)
     checks.append(
@@ -831,7 +842,7 @@ def _state_checks() -> List[Check]:
                 "recorded here is one ignore-file edit from disclosure, and `git clean "
                 "-xd` would delete it, live position ledger included"
             ),
-            None if worktree is None else "set TRADEFLOW_HOME to a directory outside the working tree",
+            None if worktree is None else "set QUANTRED_HOME to a directory outside the working tree",
         )
     )
 
@@ -848,8 +859,8 @@ def _state_checks() -> List[Check]:
                 "not_checked",
                 f"{orphaned / 'logs'} holds trials from when a checkout was its own "
                 f"state root. It is no longer being read. To keep using it: "
-                f"TRADEFLOW_HOME={orphaned}",
-                f"export TRADEFLOW_HOME={orphaned} to keep using it",
+                f"QUANTRED_HOME={orphaned}",
+                f"export QUANTRED_HOME={orphaned} to keep using it",
             )
         )
 
@@ -917,14 +928,14 @@ def _writable_check() -> Check:
             "state directory",
             "failed",
             f"permission denied writing {directory}: {exc.strerror}",
-            "point TRADEFLOW_HOME at a directory you can write to, or fix its ownership",
+            "point QUANTRED_HOME at a directory you can write to, or fix its ownership",
         )
     except OSError as exc:
         return Check(
             "state directory",
             "failed",
             f"cannot write {directory}: {exc.strerror}",
-            "point TRADEFLOW_HOME at a directory you can write to",
+            "point QUANTRED_HOME at a directory you can write to",
         )
     for made in created:  # deepest first; best effort - a failure here is not unwritability
         try:

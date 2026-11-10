@@ -29,7 +29,7 @@ def journal(tmp_path, monkeypatch):
     monkeypatch.setattr(trials_module, "DEFAULT_JOURNAL_PATH", path)
     monkeypatch.setattr(analysis, "ARTIFACT_DIR", tmp_path / "artifacts")
     monkeypatch.setattr(audit, "DEFAULT_AUDIT_PATH", tmp_path / "mcp_audit.jsonl")
-    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
+    monkeypatch.setenv("QUANTRED_HOME", str(tmp_path))
     with TrialStore(db_path_for_journal(path), journal_path=path) as store:
         for n, tid in enumerate((AA, AB, BB)):
             store.record(

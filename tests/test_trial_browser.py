@@ -713,7 +713,7 @@ def test_quarantining_an_id_that_matches_no_trial_fails_and_writes_nothing(monke
         metrics={"sharpe_ratio": 1.0},
         path=journal,
     )
-    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
+    monkeypatch.setenv("QUANTRED_HOME", str(tmp_path))
     before = journal.read_text()
 
     def run(*extra):

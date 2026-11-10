@@ -750,7 +750,7 @@ def test_a_trial_that_traded_nothing_is_not_served_to_a_backtest(tmp_path, monke
     """
     from quantred.store.trials import TrialStore
 
-    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
+    monkeypatch.setenv("QUANTRED_HOME", str(tmp_path))
     store = TrialStore(tmp_path / "trials.db")
     identity = dict(
         strategy="demo_trend",
@@ -771,7 +771,7 @@ def test_a_trial_kind_that_never_trades_is_still_served(tmp_path, monkeypatch):
     second defect wearing the first one's clothes."""
     from quantred.store.trials import TrialStore
 
-    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
+    monkeypatch.setenv("QUANTRED_HOME", str(tmp_path))
     store = TrialStore(tmp_path / "trials.db")
     identity = dict(
         strategy="demo_trend",

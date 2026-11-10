@@ -135,7 +135,7 @@ quantred trials promote 50fd06209f49 --save-config alpha.json
 ```
 
 ```
-Promoted trial 50fd06209f49 -> ~/.tradeflow/configs/alpha.json
+Promoted trial 50fd06209f49 -> ~/.quantred/configs/alpha.json
   recipe   : embargo_days=5, holdout_days=0, max_evals=50, method=grid, mode=anchored, objective=sharpe_ratio, seed=42, test_days=63, train_days=252
   evidence : accounting v8, 1 trial id(s), family has tried 50
   strategy 'demo_trend'  universe 61 symbols resolved from 85 candidates
@@ -608,7 +608,7 @@ One case it will not repair, on purpose:
 ```
 $ quantred trials rebuild
 418 recorded trial(s) are indexed here but the journal they came from
-(~/.tradeflow/logs/research_journal.jsonl) cannot be read. Rebuilding would replace
+(~/.quantred/logs/research_journal.jsonl) cannot be read. Rebuilding would replace
 them with an empty index and the journal is the only other copy. Restore the journal,
 or point --journal at the one this store indexes.
 ```

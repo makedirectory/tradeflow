@@ -41,8 +41,8 @@ ends in an honest promotion verdict. You do not need `init` to try QuantRed.
 quantred init
 ```
 
-A guided setup that writes a valid `.env` in your state directory (`~/.tradeflow`
-unless `TRADEFLOW_HOME` is set), checks the credentials against Alpaca, and tells you
+A guided setup that writes a valid `.env` in your state directory (`~/.quantred`
+unless `QUANTRED_HOME` is set), checks the credentials against Alpaca, and tells you
 what to run next. It exists because the alternative first run is: discover from a
 stack trace that you need a `.env`, create it by hand, learn that a paper-trade flag
 exists, and only then find out whether the keys work.
@@ -80,18 +80,18 @@ quantred init --check
 ```
 QuantRed setup check
 
-  state root: ~/.tradeflow
+  state root: ~/.quantred
   (journal, trial store, bar cache, and configs all live here)
 
   [ok]       version                quantred 2.5.0
-  [optional] env file               ~/.tradeflow/.env not found
+  [optional] env file               ~/.quantred/.env not found
         -> run `init` to create it, or export the keys as environment variables
   [blocked]  APCA_API_KEY_ID        (not set) - no command that touches the market will run
         -> run `init` to enter it, or export it as an environment variable
   [blocked]  APCA_API_SECRET_KEY    (not set) - no command that touches the market will run
         -> run `init` to enter it, or export it as an environment variable
   [ok]       PAPER_TRADE            true - orders go to the paper account
-  [ok]       state directory        ~/.tradeflow/logs is writable
+  [ok]       state directory        ~/.quantred/logs is writable
   [ok]       extra: mcp             installed - the MCP server for AI clients
   [optional] extra: viz             not installed - charts in `--chart` and in HTML reports
   [--]       model: ollama          default endpoint http://localhost:11434 (reachability not checked; run with --probe-model)
@@ -231,7 +231,7 @@ calls no model.
 Everything above works from a checkout too, with `uv run python main.py` in place of
 `quantred` (`make init`, `make check`, `make demo` are the Makefile shortcuts), and
 `uv sync --inexact --extra <name>` in place of an installer command. A checkout does not keep
-its own state: state lives in `~/.tradeflow` unless `TRADEFLOW_HOME` is set, and
+its own state: state lives in `~/.quantred` unless `QUANTRED_HOME` is set, and
 `quantred init --dev-local-state` prints the setting that puts it back inside the
 working tree.
 

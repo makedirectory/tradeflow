@@ -13,7 +13,7 @@ paths:
   Build fixtures from the same constant the code reads.
 - **Test the resolved environment, not the declaration.** A lockfile agreeing with
   itself is how a broken dependency shipped. Assert the version actually installed.
-- **Isolate state.** Point `ARTIFACT_DIR`, the journal, and `TRADEFLOW_HOME` at
+- **Isolate state.** Point `ARTIFACT_DIR`, the journal, and `QUANTRED_HOME` at
   `tmp_path`; a test that memoizes against the real journal depends on what someone
   ran yesterday. The state root is deliberately *one directory for the whole session*
   — module-level path constants make a per-test root unsafe — so anything written

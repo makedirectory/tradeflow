@@ -99,13 +99,35 @@ As with every bump, results recorded under v7 leave the default trial listing.
 - A reused walk-forward's `holdout_record` serializes an unbounded ratio as the fresh
   payload does (the string `"inf"`), instead of a bare float.
 
+### The state root is `~/.quantred`
+
+The last places the old name was the current one. The package, command and import were
+renamed in 2.4.0, and the state directory, its variable and the compose volumes were
+left as they were so recorded history carried over. They are renamed now, without
+leaving that history behind:
+
+- **`~/.quantred` and `QUANTRED_HOME`** are the state directory and the variable that
+  overrides it. An existing `~/.tradeflow` is still the state root while `~/.quantred`
+  does not exist, and `TRADEFLOW_HOME` is still read when `QUANTRED_HOME` is unset.
+  Either way every command says so in one line on standard error, with the command that
+  moves it, and `init --check` shows a row for it.
+- **Nothing is moved for you.** The directory holds the position ledger and any standing
+  halt, and a process still running an earlier version would carry on against a new,
+  empty root if it moved underneath it. `mv ~/.tradeflow ~/.quantred`, with nothing
+  running, is the whole migration.
+- **The compose project is `quantred`** and its volumes are `quantred-logs`,
+  `quantred-cache` and `quantred-configs`. A renamed volume is a new empty one, so a
+  machine that ran the old stack copies its volumes across once; the Docker page has the
+  command.
+- The MCP client configuration `mcp --self-test` prints carries `QUANTRED_HOME`.
+
 ### Using it
 
 Found by installing the published package into a clean environment and following the
 docs as written.
 
-- **Credentials are read from one place**, the state root's `.env` (`~/.tradeflow/.env`,
-  or `$TRADEFLOW_HOME/.env`). The messages, `.env.example` and the docs no longer tell a
+- **Credentials are read from one place**, the state root's `.env` (`~/.quantred/.env`,
+  or `$QUANTRED_HOME/.env`). The messages, `.env.example` and the docs no longer tell a
   checkout user to create `.env` in the repository root, which nothing reads. The compose
   file and `make docker-run` mount the host's state-root `.env` at `/state/.env`, where
   the image reads it.

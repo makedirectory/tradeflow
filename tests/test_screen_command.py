@@ -36,7 +36,7 @@ class _CountingFeed(FakeMarketData):
 def journal(tmp_path, monkeypatch):
     """A journal of this test's own, redirected the way the rest of the suite does it.
 
-    Setting `TRADEFLOW_HOME` alone is not enough and the reason is worth knowing: once
+    Setting `QUANTRED_HOME` alone is not enough and the reason is worth knowing: once
     any test in the session has overridden `audit.DEFAULT_TRIAL_JOURNAL`, restoring it
     binds a resolved path into the module, and a later change of root no longer
     reaches the writer. Redirecting the constant is what the suite already does, so

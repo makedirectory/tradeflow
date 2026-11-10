@@ -4,8 +4,8 @@ and with a clear error when something's missing.
 Every setting is resolved in the same predictable order:
 
 1. **Process environment variables** - the standard, 12-factor way.
-2. **A ``.env`` file** in the state root (``~/.tradeflow/.env``, or
-   ``$TRADEFLOW_HOME/.env``), loaded into the environment on first use. No dependency: a tiny built-in parser handles ``KEY=value`` lines, and
+2. **A ``.env`` file** in the state root (``~/.quantred/.env``, or
+   ``$QUANTRED_HOME/.env``), loaded into the environment on first use. No dependency: a tiny built-in parser handles ``KEY=value`` lines, and
    real environment variables already set always win (standard dotenv behavior).
 
 Alpaca credentials are required for any command that touches the market
@@ -219,14 +219,34 @@ def running_from_checkout() -> bool:
     return _looks_like_checkout(PROJECT_ROOT)
 
 
+#: The variable that names the state root and the default directory under the home
+#: directory, with the names each had before the project was renamed. One definition:
+#: every message that names either reads these.
+STATE_HOME_ENV = "QUANTRED_HOME"
+LEGACY_STATE_HOME_ENV = "TRADEFLOW_HOME"
+STATE_DIR_NAME = ".quantred"
+LEGACY_STATE_DIR_NAME = ".tradeflow"
+
+
 def state_root() -> Path:
     """Where the journal, trial store, bar cache, and configs live.
 
     Resolved most explicit first:
 
-    1. ``TRADEFLOW_HOME``, when set - the escape hatch, what a container mounts, and
+    1. ``QUANTRED_HOME``, when set - the escape hatch, what a container mounts, and
        how a contributor opts back in to checkout-local state.
-    2. ``~/.tradeflow`` otherwise. Always, including inside a checkout.
+    2. ``TRADEFLOW_HOME``, the variable's name before the project was renamed, when
+       that is set and the new one is not.
+    3. ``~/.quantred`` - unless it does not exist and ``~/.tradeflow`` does, in which
+       case the old directory is still the state root. Always, including inside a
+       checkout.
+
+    **The old names are read, never migrated.** State recorded before the rename is a
+    journal, a position ledger and possibly a standing halt, and a root that moved by
+    itself would leave any process still running the earlier version writing to a fresh,
+    empty one beside it - with no halts. So an existing root keeps being used under its
+    old name, :func:`legacy_state_note` says so on every run, and moving it is one
+    command the owner runs when nothing else is using it.
 
     **The default does not depend on how you got here, and it never writes into a
     working copy.** It used to: a checkout was its own state root, so a contributor's
@@ -249,10 +269,43 @@ def state_root() -> Path:
     a question a user has to reverse-engineer - and after this change it is a question
     every existing contributor will have.
     """
-    override = os.environ.get("TRADEFLOW_HOME")
+    override = os.environ.get(STATE_HOME_ENV) or os.environ.get(LEGACY_STATE_HOME_ENV)
     if override:
         return Path(override).expanduser()
-    return Path.home() / ".tradeflow"
+    current, legacy = Path.home() / STATE_DIR_NAME, Path.home() / LEGACY_STATE_DIR_NAME
+    if not current.exists() and legacy.is_dir():
+        return legacy
+    return current
+
+
+def legacy_state_note() -> Optional[str]:
+    """What to tell someone whose state is still found under a pre-rename name.
+
+    ``None`` when nothing old is in play. Three cases, each with the one command that
+    ends it: the old variable is what named the root; the old default directory is the
+    root because the new one does not exist; or both directories exist, so the old one
+    is no longer read and whatever it holds is missing from every answer.
+    """
+    if os.environ.get(STATE_HOME_ENV):
+        return None
+    if os.environ.get(LEGACY_STATE_HOME_ENV):
+        return (
+            f"The state root comes from {LEGACY_STATE_HOME_ENV}, the variable's old name. "
+            f"It still works; rename it to {STATE_HOME_ENV} when convenient."
+        )
+    current, legacy = Path.home() / STATE_DIR_NAME, Path.home() / LEGACY_STATE_DIR_NAME
+    if not legacy.is_dir():
+        return None
+    if not current.exists():
+        return (
+            f"State is still read from ~/{LEGACY_STATE_DIR_NAME}, the directory's old name. "
+            f"To move it, with nothing else running:  mv ~/{LEGACY_STATE_DIR_NAME} ~/{STATE_DIR_NAME}"
+        )
+    return (
+        f"~/{LEGACY_STATE_DIR_NAME} still exists and is NOT being read: the state root is "
+        f"~/{STATE_DIR_NAME}. Trials, the position ledger and any halt recorded in the old "
+        f"directory are missing from every answer until you merge it in or remove it."
+    )
 
 
 def git_worktree_containing(path: Path) -> Optional[Path]:
@@ -536,7 +589,7 @@ def _missing_credentials_message(missing: list) -> str:
         # on the host.
         lines += [
             "",
-            "  Put them in the host's ~/.tradeflow/.env (or $TRADEFLOW_HOME/.env); compose "
+            "  Put them in the host's ~/.quantred/.env (or $QUANTRED_HOME/.env); compose "
             f"mounts it read-only at {setup_path}.",
             f"  {invocation('demo'):<25} no keys needed — the full pipeline on synthetic data",
         ]

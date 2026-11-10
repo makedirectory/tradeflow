@@ -43,7 +43,7 @@ prints this same block with the **absolute** command for your copy, ready to pas
 it passes), so what passes is what you configure.
 
 **What the client does not inherit.** A desktop client launches the server without your
-shell's exports. If you set `TRADEFLOW_HOME`, the printed block carries it in an `env`
+shell's exports. If you set `QUANTRED_HOME`, the printed block carries it in an `env`
 entry (and the `claude mcp add` line in `--env`), because without it the client's server
 would journal to the default state root and split your campaign's history. Credentials are
 never printed there: put them in the `.env` the server reads (`quantred init` writes it).
@@ -177,8 +177,8 @@ You can provide a key **either** in `.env` **or** as the standard environment
 variable — they resolve through the same chain (`environment` → `.env`), so the
 SDK defaults keep working and you don't have to duplicate keys.
 
-`~/.tradeflow/.env` (alongside your Alpaca keys; `quantred init` writes it, and
-`$TRADEFLOW_HOME/.env` is used instead when that variable is set):
+`~/.quantred/.env` (alongside your Alpaca keys; `quantred init` writes it, and
+`$QUANTRED_HOME/.env` is used instead when that variable is set):
 
 ```bash
 ANTHROPIC_API_KEY=sk-ant-...                # for --provider anthropic

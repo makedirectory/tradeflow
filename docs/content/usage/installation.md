@@ -49,12 +49,12 @@ that needs an extra you lack prints it too.
 ### Where state lives
 
 State is the same wherever the software came from: the research journal, trial
-store, bar cache, and promoted configs go to `~/.tradeflow`. A source checkout does
+store, bar cache, and promoted configs go to `~/.quantred`. A source checkout does
 **not** keep its own state; it uses the same directory, so that a private strategy's
 trial evidence never sits inside a git working tree.
 
-Resolution: `TRADEFLOW_HOME` if set, otherwise `~/.tradeflow`. Contributors who want
-state inside their checkout again set `TRADEFLOW_HOME` to it explicitly;
+Resolution: `QUANTRED_HOME` if set, otherwise `~/.quantred`. Contributors who want
+state inside their checkout again set `QUANTRED_HOME` to it explicitly;
 `quantred init --dev-local-state` prints the line to use.
 
 This matters more than it looks. The multiple-testing correction rests on **one**
@@ -105,11 +105,11 @@ make docker-run CMD="quantred demo"   # run any command in the image
 
 No local Python or uv needed. With no command the image only prints help (turning
 the container on must not turn trading on, not even paper trading). The image reads
-credentials from `/state/.env` (it sets `TRADEFLOW_HOME=/state`), so mount your host's
+credentials from `/state/.env` (it sets `QUANTRED_HOME=/state`), so mount your host's
 state-root `.env` there, read-only:
 
 ```bash
-docker run --rm -v "$HOME/.tradeflow/.env:/state/.env:ro" quantred \
+docker run --rm -v "$HOME/.quantred/.env:/state/.env:ro" quantred \
     quantred backtest --symbols NVDA,META --start 2024-01-02 --end 2024-04-01
 ```
 

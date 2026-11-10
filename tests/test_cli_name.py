@@ -25,8 +25,8 @@ from quantred.services import setup
 PACKAGE = Path(settings.PROJECT_ROOT) / "quantred"
 
 # Literals allowed to spell the name, as (path relative to the package, enclosing
-# function) -> why. The import package, entry-point groups, ``TRADEFLOW_HOME`` and
-# ``~/.tradeflow`` are not the executable and never match; what is listed here is the
+# function) -> why. The import package, entry-point groups, ``QUANTRED_HOME`` and
+# ``~/.quantred`` are not the executable and never match; what is listed here is the
 # few places where the *word* is legitimately a string.
 ALLOWED = {
     ("research/sandbox.py", "_guarded_import"): (
@@ -97,7 +97,7 @@ def hard_coded_names(root: Path = PACKAGE) -> List[str]:
     verbs = "|".join(re.escape(v) for v in _verbs())
     # `tradeflow <verb>`, `tradeflow --flag`, `tradeflow \0` (an interpolated verb),
     # `tradeflow: error` (argparse's own prefix) - but not `quantred.module`,
-    # `quantred/dir`, `~/.tradeflow` or `.tradeflow/`, where a separator precedes or follows.
+    # `quantred/dir`, `~/.quantred` or `.quantred/`, where a separator precedes or follows.
     # Every spelling of the executable, the current one and the alias: a literal
     # `quantred demo` is as much a hard-coded name as a `tradeflow demo` left behind.
     names = "|".join(re.escape(n) for n in (settings.CLI_NAME, *settings.LEGACY_CLI_NAMES))
@@ -129,7 +129,7 @@ def test_the_scan_sees_a_hard_coded_instruction(tmp_path):
         'def hint(verb):\n    return f"run tradeflow {verb} now"\n\n'
         'def fixed():\n    print("tradeflow demo")\n\n'
         'def prog():\n    return "tradeflow"\n\n'
-        'def ok():\n    """Run ``tradeflow demo``."""\n    return "import quantred.cli; ~/.tradeflow"\n'
+        'def ok():\n    """Run ``tradeflow demo``."""\n    return "import quantred.cli; ~/.quantred"\n'
     )
     found = hard_coded_names(tmp_path)
     assert sorted(int(p.split(":")[1]) for p in found) == [2, 5, 8]

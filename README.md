@@ -111,8 +111,8 @@ changed from `tradeflow` to `quantred` before you drop it. The steps are in
 [migrating to QuantRed](https://quantred.mk-dir.com/usage/migrating-to-quantred).
 
 State (the research journal, trial store, bar cache, promoted configs) lives in
-`~/.tradeflow` — for an installed copy and for a checkout alike. `quantred --version`
-prints which copy is running and where its state is; override with `TRADEFLOW_HOME`.
+`~/.quantred` — for an installed copy and for a checkout alike. `quantred --version`
+prints which copy is running and where its state is; override with `QUANTRED_HOME`.
 
 ## Quickstart (from a checkout)
 
@@ -125,7 +125,7 @@ make install                          # uv sync --inexact
 make demo                             # full pipeline on synthetic data + verdict
 
 # 4. Point it at real data: guided setup for your free Alpaca paper keys
-make init                             # writes ~/.tradeflow/.env, checks the keys, says what's next
+make init                             # writes ~/.quantred/.env, checks the keys, says what's next
                                       # (make check re-runs the diagnostics any time)
 
 # 5. Try it (preconfigured combos)
@@ -432,9 +432,9 @@ absolute `main.py`:
     "args": ["/path/to/quantred/main.py", "mcp"] } } }
 ```
 
-An installed copy and a checkout share one state root, `~/.tradeflow`, unless
-`TRADEFLOW_HOME` is set, so an agent and you see the same campaign history. If you set
-`TRADEFLOW_HOME`, the config block printed by `init` carries it too; a desktop client does
+An installed copy and a checkout share one state root, `~/.quantred`, unless
+`QUANTRED_HOME` is set, so an agent and you see the same campaign history. If you set
+`QUANTRED_HOME`, the config block printed by `init` carries it too; a desktop client does
 not inherit your shell's exports.
 
 ## Research agent (optional)
@@ -453,7 +453,7 @@ The proposer is **provider-agnostic** — choose with `--provider`:
 | `ollama` (local) | none | `llama3.1` | none |
 
 `quantred init --check --for research --provider anthropic` prints the exact command that
-adds the extra to your copy. Set the credential in `~/.tradeflow/.env` (alongside your Alpaca keys; `quantred init`
+adds the extra to your copy. Set the credential in `~/.quantred/.env` (alongside your Alpaca keys; `quantred init`
 writes it) or as the standard environment variable. Ollama runs locally and needs no key.
 
 ```bash
@@ -524,7 +524,7 @@ make docs        # serve the Docusaurus site at http://localhost:3000
 ```bash
 make docker-build
 make docker-run                        # prints the CLI help; starts nothing
-make docker-run CMD="quantred demo"    # any command; mounts ~/.tradeflow/.env read-only
+make docker-run CMD="quantred demo"    # any command; mounts ~/.quantred/.env read-only
 ```
 
 The image starts nothing on its own: turning the container on must not turn trading on.

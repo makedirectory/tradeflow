@@ -39,7 +39,7 @@ COPY . .
 # containerized research session journals its trials into a filesystem that
 # evaporates on `docker compose down` — silently resetting the campaign count that
 # every multiple-testing correction depends on.
-ENV TRADEFLOW_HOME=/state
+ENV QUANTRED_HOME=/state
 
 # A non-root user, with the state directories owned by it. The uid is pinned so a
 # host user can read the same volume without sudo: mixed native/container workflows

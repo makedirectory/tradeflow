@@ -30,7 +30,7 @@ def _position(symbol="AAA"):
 @pytest.fixture
 def state(tmp_path, monkeypatch):
     """Halt state and ledgers under this test's own root, never the session-wide one."""
-    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("QUANTRED_HOME", str(tmp_path / "state"))
     return tmp_path
 
 

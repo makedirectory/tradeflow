@@ -68,7 +68,7 @@ def _frame(periods=60):
 @pytest.fixture
 def wired(monkeypatch, tmp_path):
     """The command with a fake broker and the real data client over a fake provider."""
-    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("QUANTRED_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("PAPER_TRADE", "true")
     broker = FakeBroker(buying_power=100_000.0)
     client = MarketDataClient(DictMarketData({"AAA": _frame()}))
@@ -216,7 +216,7 @@ def test_an_account_too_small_for_the_scaled_contract_refuses(monkeypatch, tmp_p
     """Sizing caps at whatever the account holds rather than failing, so this would
     otherwise trade a smaller book than the one whose proportions it claims to preserve
     — and the telemetry would look exactly like telemetry from the right contract."""
-    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("QUANTRED_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("PAPER_TRADE", "true")
     monkeypatch.setattr(
         cli,
@@ -258,7 +258,7 @@ def test_the_posture_refusals_happen_before_a_broker_is_built(tmp_path, monkeypa
     """Both are the command line and the environment disagreeing, which is answerable
     without reaching a venue — and reaching one to say so would need credentials the
     operator has no reason to have working yet."""
-    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("QUANTRED_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("PAPER_TRADE", "false")
     monkeypatch.setattr(
         cli, "build_data_and_broker", lambda **kw: pytest.fail("a broker was built before the refusal")
@@ -496,7 +496,7 @@ def test_the_preflight_warns_about_a_book_this_run_did_not_open(monkeypatch, tmp
     could be admitted at all. The operator would have seen a run that traded nothing."""
     from quantred.brokers.base import Position
 
-    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("QUANTRED_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("PAPER_TRADE", "true")
     held = [Position(f"S{i}", 10, "long", 100.0, 100.0, 1_000.0, 0.0) for i in range(12)]
     monkeypatch.setattr(
@@ -624,7 +624,7 @@ def test_an_unreadable_position_list_is_not_recorded_as_a_flat_start(monkeypatch
     from quantred.brokers.errors import BrokerError
     from quantred.execution.ledger import PositionLedger, small_real_ledger_path
 
-    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("QUANTRED_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("PAPER_TRADE", "true")
 
     class _Blind(FakeBroker):

@@ -148,7 +148,7 @@ result, and what the book was actually exposed to.
 **4. Paper, then a long look.**
 
 ```bash
-quantred live --config ~/.tradeflow/configs/breakout.json --capital 8000 --feed iex --preflight
+quantred live --config ~/.quantred/configs/breakout.json --capital 8000 --feed iex --preflight
 ```
 
 `--preflight` prints the contract and exits without starting the order path. Read
@@ -158,7 +158,7 @@ quantred live --config ~/.tradeflow/configs/breakout.json --capital 8000 --feed 
 
 Everything a run records — the research journal, the trial store, saved configs, the
 position ledger — lives under one state root, and **it is never inside this
-repository**. The default is `~/.tradeflow`; `TRADEFLOW_HOME` moves it.
+repository**. The default is `~/.quantred`; `QUANTRED_HOME` moves it.
 
 That matters most when the strategy is private. Evidence in a working tree is one
 ignore-file edit from disclosure, and `git clean -xd` deletes it outright — live

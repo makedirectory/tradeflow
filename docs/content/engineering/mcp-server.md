@@ -157,8 +157,8 @@ config, and the command says so on every run. The discovery rows are typed
 timeframe reports `timeframe: null`, not an empty string.
 
 Both reach the same `quantred.cli:main`. Note that they resolve **different state
-roots** (`~/.tradeflow` vs. the checkout), so an agent and a human should be pointed
-at the same one — or `TRADEFLOW_HOME` set explicitly — if they are meant to share a
+roots** (`~/.quantred` vs. the checkout), so an agent and a human should be pointed
+at the same one — or `QUANTRED_HOME` set explicitly — if they are meant to share a
 campaign's trial history.
 
 **Bad input is a tool error.** An unknown trial id (`get_trial`, `analyze_trial`,

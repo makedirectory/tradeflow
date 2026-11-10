@@ -482,8 +482,8 @@ and reads the same block back, and checks a pre-campaign config still loads.
 launch *command* is one definition (`services.setup.mcp_launch_command`); the
 *environment* is a second half of the same idea. The self-test child inherits the whole
 shell, a desktop client inherits none of it, so a pass could mean "works with
-`TRADEFLOW_HOME` and exported keys" while the client journals to the default root or
-cannot authenticate. `mcp_client_config` therefore carries `TRADEFLOW_HOME` whenever it
+`QUANTRED_HOME` and exported keys" while the client journals to the default root or
+cannot authenticate. `mcp_client_config` therefore carries `QUANTRED_HOME` whenever it
 is set (never a credential), and a pass that relied on shell-exported keys says so.
 The launch command also carries `--offline` and `--cache-dir` when asked
 (`mcp_launch_command(offline=..., cache_dir=...)`): a keyless, cache-only server checked

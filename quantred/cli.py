@@ -2651,12 +2651,12 @@ def _print_dev_local_state() -> None:
             "--dev-local-state is for a checkout, and this copy was installed. Its state "
             "already lives outside any repository, which is where you want it."
         )
-    print(f"\nTo keep this checkout's state inside it, export:\n\n    TRADEFLOW_HOME={PROJECT_ROOT}\n")
+    print(f"\nTo keep this checkout's state inside it, export:\n\n    QUANTRED_HOME={PROJECT_ROOT}\n")
     print(
         "  That directory is a git working tree. Everything recorded there - trials,\n"
         "  saved configs, and any private strategy's evidence - is then one ignore-file\n"
         "  edit from disclosure, and `git clean -xd` deletes it, live ledger included.\n"
-        "  Unset it and state returns to ~/.tradeflow.\n"
+        "  Unset it and state returns to ~/.quantred.\n"
     )
 
 
@@ -6786,7 +6786,7 @@ def _add_cache_flags(parser) -> None:
         "--cache-dir",
         dest="cache_dir",
         default=None,
-        help="Bar cache directory (default: cache/bars under the state root, ~/.tradeflow unless TRADEFLOW_HOME is set)",
+        help="Bar cache directory (default: cache/bars under the state root, ~/.quantred unless QUANTRED_HOME is set)",
     )
 
 
@@ -6883,7 +6883,7 @@ def _next_step_hint() -> str:
 
     if in_container():
         return (
-            "     add your free Alpaca paper keys to the host's ~/.tradeflow/.env (mounted read-only)\n"
+            "     add your free Alpaca paper keys to the host's ~/.quantred/.env (mounted read-only)\n"
             f"     {_invocation('verdict'):<20} then run the whole pipeline on real market data"
         )
     if started_from_checkout_shim():
@@ -8050,7 +8050,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--cache-dir",
         dest="cache_dir",
         default=None,
-        help="Bar cache directory (default: cache/bars under the state root, ~/.tradeflow unless TRADEFLOW_HOME is set)",
+        help="Bar cache directory (default: cache/bars under the state root, ~/.quantred unless QUANTRED_HOME is set)",
     )
     init.add_argument(
         "--example-pack",
@@ -8394,7 +8394,7 @@ def build_parser() -> argparse.ArgumentParser:
             "--cache-dir",
             dest="cache_dir",
             default=None,
-            help="Bar cache directory (default: cache/bars under the state root, ~/.tradeflow unless TRADEFLOW_HOME is set)",
+            help="Bar cache directory (default: cache/bars under the state root, ~/.quantred unless QUANTRED_HOME is set)",
         )
 
     cache = subparsers.add_parser(
@@ -8752,7 +8752,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--cache-dir",
         dest="cache_dir",
         default=None,
-        help="Bar cache directory (default: cache/bars under the state root, ~/.tradeflow unless TRADEFLOW_HOME is set)",
+        help="Bar cache directory (default: cache/bars under the state root, ~/.quantred unless QUANTRED_HOME is set)",
     )
     mcp.set_defaults(func=cmd_mcp)
 
@@ -8928,6 +8928,13 @@ def main() -> None:
 
     setup_logging()
     args = parse_cli()
+    from quantred.settings import legacy_state_note
+
+    # On stderr, so a command whose stdout is JSON stays parseable. Every run, because
+    # where the journal, the ledger and the halts are read from is not a detail.
+    note = legacy_state_note()
+    if note:
+        print(f"Note: {note}", file=sys.stderr)
     try:
         args.func(args)
     except (SettingsError, CacheMiss, AuthenticationError, RunRefused, MissingExtra) as exc:

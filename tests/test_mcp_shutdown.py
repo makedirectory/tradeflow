@@ -58,7 +58,7 @@ def server(tmp_path, monkeypatch):
     Ready means it answered ``initialize``, i.e. it is serving - not merely started, so
     a signal sent next cannot arrive before the server has installed its handlers.
     """
-    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
+    monkeypatch.setenv("QUANTRED_HOME", str(tmp_path))
     monkeypatch.setenv("APCA_API_KEY_ID", "PKDUMMYDUMMYDUMMY")
     monkeypatch.setenv("APCA_API_SECRET_KEY", "dummydummydummydummydummydummydummydummy")
     child = subprocess.Popen(
@@ -163,7 +163,7 @@ def test_closing_stdin_is_a_normal_shutdown(server):
 
 
 def test_the_startup_line_says_no_chat_is_attached(tmp_path, monkeypatch):
-    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
+    monkeypatch.setenv("QUANTRED_HOME", str(tmp_path))
     monkeypatch.setenv("APCA_API_KEY_ID", "PKDUMMYDUMMYDUMMY")
     monkeypatch.setenv("APCA_API_SECRET_KEY", "dummydummydummydummydummydummydummydummy")
     child = subprocess.Popen(
@@ -232,7 +232,7 @@ def test_a_keyless_server_starts_and_says_it_is_waiting(tmp_path, monkeypatch):
     """Missing credentials used to stop the server before it answered, so it did not claim
     to be waiting. Bars are built lazily now: a keyless server really is waiting for a
     client, serves the tools that need no market data, and ends cleanly when stdin closes."""
-    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
+    monkeypatch.setenv("QUANTRED_HOME", str(tmp_path))
     monkeypatch.setenv("APCA_API_KEY_ID", "")
     monkeypatch.setenv("APCA_API_SECRET_KEY", "")
     child = subprocess.Popen(

@@ -27,13 +27,13 @@ _PREVIOUS = {}
 
 def pytest_configure(config):
     """Point every state path at one throwaway directory, before anything imports it."""
-    _PREVIOUS["TRADEFLOW_HOME"] = os.environ.get("TRADEFLOW_HOME")
-    os.environ["TRADEFLOW_HOME"] = tempfile.mkdtemp(prefix="tradeflow-tests-")
+    _PREVIOUS["QUANTRED_HOME"] = os.environ.get("QUANTRED_HOME")
+    os.environ["QUANTRED_HOME"] = tempfile.mkdtemp(prefix="quantred-tests-")
 
 
 def pytest_unconfigure(config):
-    previous = _PREVIOUS.get("TRADEFLOW_HOME")
+    previous = _PREVIOUS.get("QUANTRED_HOME")
     if previous is None:
-        os.environ.pop("TRADEFLOW_HOME", None)
+        os.environ.pop("QUANTRED_HOME", None)
     else:
-        os.environ["TRADEFLOW_HOME"] = previous
+        os.environ["QUANTRED_HOME"] = previous

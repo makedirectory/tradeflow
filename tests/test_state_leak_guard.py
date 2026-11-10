@@ -3,7 +3,7 @@
 Most cases here run a **nested pytest session in its own process**, because the thing
 under test is a session-level hook and the assertions are about which test failed - not
 something the running session can say about itself. The nested session points
-``TRADEFLOW_HOME`` at its own directory, so a leak staged here is invisible to the suite
+``QUANTRED_HOME`` at its own directory, so a leak staged here is invisible to the suite
 that stages it.
 
 Two things this file learned the hard way, both from review:
@@ -89,7 +89,7 @@ import tempfile
 def pytest_configure(config):
     # The same one-root-per-session shape the real suite uses, so the nested run
     # reproduces the condition under test instead of a tidier version of it.
-    os.environ["TRADEFLOW_HOME"] = tempfile.mkdtemp(prefix="guard-under-test-")
+    os.environ["QUANTRED_HOME"] = tempfile.mkdtemp(prefix="guard-under-test-")
 """
 
 #: A test that writes to the shared root, followed by one that asserts the root is clean.
@@ -262,8 +262,8 @@ def test_a_guard_that_reports_without_clearing_lets_the_cascade_happen(guarded):
 
 def test_a_guard_that_resolves_the_root_at_teardown_reaches_state_it_never_pinned(guarded):
     """The guard resolves the halt path once, at session start, under the root the suite
-    pinned. Resolving it per teardown instead reads whatever `TRADEFLOW_HOME` says at
-    that instant — so a test that unsets it sends the guard at `~/.tradeflow`, where the
+    pinned. Resolving it per teardown instead reads whatever `QUANTRED_HOME` says at
+    that instant — so a test that unsets it sends the guard at `~/.quantred`, where the
     next thing it does is *clear* a real operator's halt, because clearing comes before
     reporting.
 
@@ -284,16 +284,16 @@ def test_a_guard_that_resolves_the_root_at_teardown_reaches_state_it_never_pinne
             from quantred.execution.halt import HaltState
 
             HOME = tmp_path / "home"
-            (HOME / ".tradeflow" / "logs").mkdir(parents=True)
+            (HOME / ".quantred" / "logs").mkdir(parents=True)
             os.environ["HOME"] = str(HOME)
-            os.environ.pop("TRADEFLOW_HOME", None)
+            os.environ.pop("QUANTRED_HOME", None)
 
             HaltState().set("a real operator stopped trading", actor="a-real-human")
-            assert json.loads((HOME / ".tradeflow" / "logs" / "halts.json").read_text())
+            assert json.loads((HOME / ".quantred" / "logs" / "halts.json").read_text())
 
 
         def test_the_operator_halt_is_untouched():
-            recorded = json.loads((HOME / ".tradeflow" / "logs" / "halts.json").read_text())
+            recorded = json.loads((HOME / ".quantred" / "logs" / "halts.json").read_text())
             assert recorded, "a halt was cleared in a root the guard never pinned"
         """
 

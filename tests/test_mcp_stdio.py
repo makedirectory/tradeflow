@@ -31,7 +31,7 @@ pytestmark = pytest.mark.slow
 
 @pytest.fixture
 def child_env(tmp_path, monkeypatch):
-    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
+    monkeypatch.setenv("QUANTRED_HOME", str(tmp_path))
     monkeypatch.setenv("APCA_API_KEY_ID", "PKDUMMYDUMMYDUMMY")
     monkeypatch.setenv("APCA_API_SECRET_KEY", "dummydummydummydummydummydummydummydummy")
     import os
@@ -151,7 +151,7 @@ def test_self_test_fails_when_the_builtin_demo_entries_are_missing(child_env, mo
 
 
 def test_init_tells_a_reader_to_configure_the_command_the_self_test_runs(capsys, monkeypatch):
-    monkeypatch.delenv("TRADEFLOW_HOME", raising=False)
+    monkeypatch.delenv("QUANTRED_HOME", raising=False)
     """Two definitions of "the server command" - one validated, one printed - is how a
     check passes on something no client was ever told to launch. The printed JSON and
     the Claude Code line are read back and compared with the command under test."""
@@ -194,23 +194,23 @@ def test_self_test_names_the_step_and_exits_nonzero_when_the_server_cannot_start
 def test_the_printed_client_config_carries_a_non_default_state_root_and_never_keys(
     tmp_path, monkeypatch, capsys
 ):
-    """A desktop client does not inherit the shell that exported TRADEFLOW_HOME, so a
+    """A desktop client does not inherit the shell that exported QUANTRED_HOME, so a
     config without it journals somewhere else than the root the self-test just used."""
-    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
+    monkeypatch.setenv("QUANTRED_HOME", str(tmp_path))
     monkeypatch.setenv("APCA_API_KEY_ID", "PKDUMMYDUMMYDUMMY")
     cli._print_next_steps()
     out = capsys.readouterr().out
     block = out[out.index("{") : out.rindex("}") + 1]
     server = json.loads(block)["mcpServers"][settings.MCP_SERVER_NAME]
-    assert server["env"] == {"TRADEFLOW_HOME": str(tmp_path.resolve())}
+    assert server["env"] == {"QUANTRED_HOME": str(tmp_path.resolve())}
     assert "PKDUMMY" not in out
-    assert f"--env TRADEFLOW_HOME={shlex.quote(str(tmp_path.resolve()))} {settings.MCP_SERVER_NAME} --" in out
+    assert f"--env QUANTRED_HOME={shlex.quote(str(tmp_path.resolve()))} {settings.MCP_SERVER_NAME} --" in out
 
 
 def test_a_default_state_root_adds_no_env_block(monkeypatch):
     from quantred.services import setup
 
-    monkeypatch.delenv("TRADEFLOW_HOME", raising=False)
+    monkeypatch.delenv("QUANTRED_HOME", raising=False)
     assert "env" not in setup.mcp_client_config()["mcpServers"][settings.MCP_SERVER_NAME]
 
 
@@ -233,7 +233,7 @@ def keyless_env(tmp_path, monkeypatch):
     """A child with no credentials anywhere: not in the environment, not in the .env."""
     import os
 
-    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
+    monkeypatch.setenv("QUANTRED_HOME", str(tmp_path))
     monkeypatch.delenv("APCA_API_KEY_ID", raising=False)
     monkeypatch.delenv("APCA_API_SECRET_KEY", raising=False)
     return dict(os.environ)
