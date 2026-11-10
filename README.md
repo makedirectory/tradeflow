@@ -322,8 +322,10 @@ clock's `BUY/SELL/HOLD` and the
 [continuous alpha](https://quantred.mk-dir.com/engineering/alphas) are both
 derived from it — one source of truth.
 
-`example` is a complete working pack to copy — `quantred init
---example-pack ./my-signals` writes it out. See
+`example` is a complete working pack to copy. From a checkout (or an unpacked source
+distribution), `quantred init --example-pack ./my-signals` writes it out; an installed
+copy does not carry the pack, so there that command refuses and prints the
+clone-and-copy line to use instead. See
 [Your own strategies](https://quantred.mk-dir.com/usage/private-strategies)
 and [Extending](https://quantred.mk-dir.com/engineering/extending).
 

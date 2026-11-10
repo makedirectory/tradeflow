@@ -175,7 +175,8 @@ against half the evidence, with nothing erroring.
 is just a normalized EMA gap. Read it for the shape of the interface, not for the idea.
 
 For anything past that shape, read `example` instead — it is a real
-installable pack, and `quantred init --example-pack ./my-signals` writes you a copy.
+installable pack, and from a checkout `quantred init --example-pack ./my-signals` writes
+you a copy (an installed copy clones it instead, as above).
 Its `example_reversion` is long/short, which is what the leg diagnostics and the
 directional cap exist for, and none of that is exercisable by a long-only book.
 
