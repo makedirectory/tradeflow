@@ -32,8 +32,8 @@ from quantred.utils.numeric import is_flat
 
 logger = logging.getLogger(__name__)
 
-# Stand-in for +inf objective values (e.g. profit_factor with no losses) so
-# ranking and the surrogate model stay numerically well-behaved.
+# Stand-in for an infinite objective value (e.g. profit_factor with no losses), so a
+# score handed around as a float stays finite. Such a candidate is never ranked.
 _INF_SENTINEL = 1e6
 
 
@@ -181,21 +181,29 @@ class ParameterOptimizer:
             picks = self._propose_batch(gp, min(batch, remaining), exploration, n_candidates)
             round_index += 1
 
+            # A proposal is a point in a continuous box; what gets evaluated is the grid
+            # point it snaps to. The surrogate is trained on that grid point, since that
+            # is where the score was measured, and a snap that lands outside the declared
+            # constraints is dropped before it costs a trial.
+            combos = [self.space.from_unit_vector(pick) for pick in picks]
+            combos = [combo for combo in combos if self.space.is_valid(combo)]
             if len(picks) == 1:
-                params = self.space.from_unit_vector(picks[0])
-                score, row = self._score_config(params, symbols, start, end, objective)
-                logger.info("Bayesian round %d -> %s=%.4f", round_index, objective, score)
-                if row is not None:
-                    rows.append(row)
-                    x_obs.append(picks[0])
-                    y_obs.append(score)
-            else:
-                combos = [self.space.from_unit_vector(pick) for pick in picks]
+                for params in combos:
+                    score, row = self._score_config(params, symbols, start, end, objective)
+                    logger.info("Bayesian round %d -> %s=%.4f", round_index, objective, score)
+                    if row is not None:
+                        rows.append(row)
+                        x_obs.append(self.space.to_unit_vector(params))
+                        y_obs.append(score)
+            elif combos:
                 batch_rows = self._evaluate_parallel(combos, symbols, start, end, objective)
                 logger.info("Bayesian round %d evaluated %d candidates", round_index, len(batch_rows))
-                for pick, row in zip(picks, batch_rows):
+                # Paired by the row's own searched values, never by position: memoized
+                # candidates come back first, duplicates come back once and a failed one
+                # not at all, so the rows are neither in proposal order nor one per pick.
+                for row in batch_rows:
                     rows.append(row)
-                    x_obs.append(pick)
+                    x_obs.append(self.space.to_unit_vector(row))
                     y_obs.append(self._finite(row.get(objective, float("-inf"))))
             remaining -= len(picks)
 
@@ -393,11 +401,31 @@ class ParameterOptimizer:
         # from an identical set of results. Breaking ties on the searched parameter
         # values makes the winner a property of the results, not of the schedule.
         tie_break = [k for k in self.space.searchable if k in df.columns]
-        df = df.sort_values(
-            [objective, *tie_break],
-            ascending=[False, *[True] * len(tie_break)],
-            kind="mergesort",
-        ).reset_index(drop=True)
+        # An unbounded objective is a ratio with nothing in its denominator - a profit
+        # factor with no losing trade, a Calmar with no drawdown - which is what one
+        # lucky trade produces. It is not a score, so it ranks below every finite one
+        # and cannot be the winner; sorted on the value alone it was always first.
+        scores = pd.to_numeric(df[objective], errors="coerce")
+        df = (
+            df.assign(_unranked=~np.isfinite(scores))
+            .sort_values(
+                ["_unranked", objective, *tie_break],
+                ascending=[True, False, *[True] * len(tie_break)],
+                kind="mergesort",
+            )
+            .reset_index(drop=True)
+        )
+        unranked = int(df["_unranked"].sum())
+        df = df.drop(columns="_unranked")
+        if unranked:
+            logger.warning(
+                "%d of %d candidates have an unbounded or undefined %s and were not ranked",
+                unranked,
+                len(df),
+                objective,
+            )
+        if unranked == len(df):
+            return OptimizationResult({}, float("-inf"), objective, df)
         best = df.iloc[0]
         # Layer the searched values over the full defaults: callers construct a
         # strategy straight from best_params, so dropping *pinned* params (declared
@@ -416,7 +444,12 @@ class ParameterOptimizer:
         return float(value)
 
     def _standardize(self, y: List[float]) -> np.ndarray:
-        arr = np.array([self._finite(v) for v in y], dtype="float64")
+        arr = np.array(y, dtype="float64")
+        # The sentinel stands for "unbounded", and one of them among ordinary scores
+        # flattens every real difference once the series is standardized. For the
+        # surrogate an unranked point is simply an unattractive one.
+        real = arr[np.abs(arr) < _INF_SENTINEL]
+        arr = np.where(np.abs(arr) < _INF_SENTINEL, arr, real.min() if real.size else 0.0)
         std = arr.std()
         return (arr - arr.mean()) / std if not is_flat(arr, ddof=0) else arr - arr.mean()
 

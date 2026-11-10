@@ -440,6 +440,15 @@ def _refuse_unrecognized(parser, args, extras: List[str]) -> None:
     chosen.error(message)
 
 
+def _command_group(parser, name: str):
+    """The subparser for ``name`` when it is a group of subcommands, else ``None``."""
+    commands = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
+    sub = commands.choices.get(name)
+    if sub is not None and any(isinstance(a, argparse._SubParsersAction) for a in sub._actions):
+        return sub
+    return None
+
+
 def parse_cli(argv: Optional[List[str]] = None):
     """Parse argv and record which flags were typed, for config layering."""
     argv = list(sys.argv[1:]) if argv is None else list(argv)
@@ -448,6 +457,11 @@ def parse_cli(argv: Optional[List[str]] = None):
         # The bare command is how most people first meet it; "the following arguments
         # are required: <command>" answered with an error instead of the map.
         parser.print_help()
+        sys.exit(0)
+    group = _command_group(parser, argv[0]) if len(argv) == 1 else None
+    if group is not None:
+        # The same for a bare `trials` or `cache`: their subcommands, not an error.
+        group.print_help()
         sys.exit(0)
     _refuse_sibling_command_after_research(parser, argv)
     args, extras = parser.parse_known_args(argv)
@@ -1657,6 +1671,55 @@ def _print_diagnostics_for_reused_backtest(args, data_client, strategy_name, uni
         )
 
 
+def _refuse_unbuildable_folds(validator, args) -> None:
+    """Exit, before any data is read, when the window cannot hold one fold.
+
+    The date defaults are the last 30 days, which is shorter than the embargo alone for
+    a daily strategy, so a bare ``walkforward`` used to fetch its data and then die in a
+    traceback from the fold builder. The suggested window is one that was checked to
+    build folds with the same settings, not a guess.
+    """
+    fold_args = dict(
+        mode=args.mode,
+        n_folds=args.folds,
+        train_days=args.train_days,
+        test_days=args.test_days,
+        embargo_days=args.embargo_days,
+        holdout_days=args.holdout_days,
+    )
+    try:
+        validator.build_folds(args.start, args.end, **fold_args)
+        return
+    except ValueError as exc:
+        reason = str(exc)
+    suggestion = None
+    for years in (1, 2, 3, 5, 10):
+        candidate = shift_days(args.end, -365 * years)
+        try:
+            validator.build_folds(candidate, args.end, **fold_args)
+        except ValueError:
+            continue
+        suggestion = candidate
+        break
+    given = getattr(args, "flags_given", set())
+    window = f"{args.start:%Y-%m-%d}..{args.end:%Y-%m-%d} ({(args.end - args.start).days} days"
+    window += ")" if {"start", "end"} & given else "; the default is the last 30 days)"
+    embargo = args.embargo_days if args.embargo_days is not None else validator.default_embargo_days()
+    lines = [
+        f"walkforward cannot build its folds over {window}: {reason}.",
+        f"  Each fold needs in-sample days, an embargo of {embargo} calendar days (this strategy's "
+        "lookback) and out-of-sample days"
+        + (f", inside what is left after the {args.holdout_days}-day holdout." if args.holdout_days else "."),
+    ]
+    if suggestion is not None:
+        lines.append(f"  Pass a longer window, e.g. --start {suggestion:%Y-%m-%d} --end {args.end:%Y-%m-%d}.")
+    else:
+        lines.append(
+            "  Pass a longer --start/--end window, or reduce --train-days/--test-days/--embargo-days."
+        )
+    sys.exit("\n".join(lines))
+
+
 def cmd_walkforward(args) -> None:
     from quantred.analytics.reporting import format_cached_notice
     from quantred.engine.backtest import ACCOUNTING_VERSION
@@ -1677,6 +1740,7 @@ def cmd_walkforward(args) -> None:
     reader = WalkForwardValidator(
         STRATEGIES[args.strategy], data_client, benchmark=getattr(args, "benchmark", None)
     )
+    _refuse_unbuildable_folds(reader, args)
     universe = resolve_universe(
         data_client,
         args.scanner,
@@ -2468,6 +2532,8 @@ def _refuse_inert_init_flags(args) -> None:
         )
     if "model" in given and not (args.probe_model or args.non_interactive):
         sys.exit("--model only applies to --probe-model: it names the model the probe asks.")
+    if "offline" in given and not checking:
+        sys.exit("--offline only applies to --check / --probe-model: it checks the cache-only path.")
 
 
 def cmd_init(args) -> None:
@@ -2506,10 +2572,11 @@ def cmd_init(args) -> None:
                 result = setup.probe_model(args.provider, args.model)
         try:
             _print_doctor(
-                setup.run_checks(provider=args.provider, probe=result),
+                setup.run_checks(provider=args.provider, probe=result, offline=args.offline),
                 task=args.task,
                 probe_result=result,
                 provider=args.provider,
+                offline=args.offline,
             )
         finally:
             if args.probe_model and blocker:
@@ -2584,12 +2651,12 @@ def _print_dev_local_state() -> None:
             "--dev-local-state is for a checkout, and this copy was installed. Its state "
             "already lives outside any repository, which is where you want it."
         )
-    print(f"\nTo keep this checkout's state inside it, export:\n\n    TRADEFLOW_HOME={PROJECT_ROOT}\n")
+    print(f"\nTo keep this checkout's state inside it, export:\n\n    QUANTRED_HOME={PROJECT_ROOT}\n")
     print(
         "  That directory is a git working tree. Everything recorded there - trials,\n"
         "  saved configs, and any private strategy's evidence - is then one ignore-file\n"
         "  edit from disclosure, and `git clean -xd` deletes it, live ledger included.\n"
-        "  Unset it and state returns to ~/.tradeflow.\n"
+        "  Unset it and state returns to ~/.quantred.\n"
     )
 
 
@@ -2613,7 +2680,9 @@ _STATUS_LABELS = {
 }
 
 
-def _print_doctor(checks, *, task: str = "data", probe_result=None, provider: Optional[str] = None) -> None:
+def _print_doctor(
+    checks, *, task: str = "data", probe_result=None, provider: Optional[str] = None, offline: bool = False
+) -> None:
     """Every check with its status, then what each task can and cannot do.
 
     A doctor reports the whole picture rather than stopping at the first problem.
@@ -2685,7 +2754,7 @@ def _print_doctor(checks, *, task: str = "data", probe_result=None, provider: Op
     if not setup.doctor_ok(checks, task) or probe_failed:
         print(f"\nNot ready for '{task}'. Run `{_invocation('init')}` for the guided setup.")
         raise SystemExit(1)
-    print(f"\nReady for '{task}'. Next: {setup.task_next_step(task)}.")
+    print(f"\nReady for '{task}'. Next: {setup.task_next_step(task, offline=offline)}.")
 
 
 def _init_non_interactive(args, setup) -> None:
@@ -2926,7 +2995,10 @@ def _warm_cache(args) -> None:
     except KeyboardInterrupt:
         print("\n  Interrupted — the partial cache is safe and resumable (`cache warm` continues it).")
     except Exception as exc:  # noqa: BLE001
-        print(f"  Cache warm skipped: {type(exc).__name__}. Nothing else is affected.")
+        # The message, not the class name: a missing extra carries the install command,
+        # and `MissingExtra` alone told the reader nothing they could act on.
+        detail = str(exc) or type(exc).__name__
+        print(f"  Cache warm skipped (nothing else is affected): {detail}")
 
 
 def _confirm(question: str, default: bool = True) -> bool:
@@ -2982,6 +3054,11 @@ def _mcp_client_block(offline: bool = False, cache_dir: Optional[Any] = None) ->
     return f"{indented}\n\n  Claude Code, instead of editing a file:\n    {claude}"
 
 
+#: What a bare ``verdict --json`` stores: print to stdout rather than write a file. Not a
+#: plausible file name, so ``--json PATH`` can never be mistaken for it.
+_JSON_TO_STDOUT = "<stdout>"
+
+
 def cmd_verdict(args) -> None:
     """Run the whole cross-sectional pipeline once and print one consolidated answer.
 
@@ -3031,20 +3108,28 @@ def cmd_verdict(args) -> None:
         journal=not args.no_journal,
     )
 
+    to_stdout = args.json == _JSON_TO_STDOUT
     if result.get("memoized"):
+        # Said either way; with a bare --json it goes to stderr so stdout stays one
+        # parseable object (which carries `memoized`, `trial_id` and `trial_ts` too).
         print(
             format_cached_notice(
                 {"id": result.get("trial_id"), "ts": result.get("trial_ts")},
                 vintage_available=False,
-            )
+            ),
+            file=sys.stderr if to_stdout else sys.stdout,
         )
-    print(format_verdict_report(result))
-
-    if args.json:
-        with open(args.json, "w") as fh:
-            json.dump(result, fh, indent=2)
-        print(f"Structured result written to {args.json}")
-    _write_html(args, result, "verdict")
+    if to_stdout:
+        print(json.dumps(result, indent=2, default=str))
+        with contextlib.redirect_stdout(sys.stderr):
+            _write_html(args, result, "verdict")
+    else:
+        print(format_verdict_report(result))
+        if args.json:
+            with open(args.json, "w") as fh:
+                json.dump(result, fh, indent=2)
+            print(f"Structured result written to {args.json}")
+        _write_html(args, result, "verdict")
 
     # Any incomplete run exits non-zero, not just one with a named step failure: a
     # run that produced no gate at all is equally not something to act on, and a
@@ -5708,14 +5793,45 @@ def _refuse_contradictory_portfolio_cardinality(strategy, allocator_max_position
     )
 
 
+def _halt_scope(value: str) -> str:
+    """The scope a halt is recorded under: ``all``, or a strategy's class name.
+
+    The live trader asks whether its strategy's *class* is halted, while every other
+    command names a strategy by its registry name. Recording whatever was typed meant
+    ``halt demo_trend`` printed "Halted" and blocked nothing, and so did any typo. A
+    registry name is resolved to its class, a class name is accepted as it is, and
+    anything else is refused: a halt that cannot match is worse than no halt, because
+    the operator stops watching.
+    """
+    from quantred.execution.halt import ALL
+    from quantred.services.registry import STRATEGIES
+
+    if value == ALL:
+        return ALL
+    if value in STRATEGIES:
+        return STRATEGIES[value].__name__
+    if value in {cls.__name__ for cls in STRATEGIES.values()}:
+        return value
+    import difflib
+
+    known = ", ".join(sorted(STRATEGIES)) or "none registered"
+    close = difflib.get_close_matches(value, list(STRATEGIES), n=1)
+    hint = f" (did you mean {close[0]!r}?)" if close else ""
+    raise SystemExit(
+        f"No strategy {value!r}{hint}, so that halt would stop nothing. "
+        f"Strategies: {known}. To stop everything: {_invocation('halt all --reason ...')}"
+    )
+
+
 def cmd_halt(args) -> None:
     """Record a halt. Blocks new entries; never blocks an exit."""
     from quantred.execution.halt import HaltState
 
-    halt = HaltState().set(args.reason, actor="cli", scope=args.scope)
+    scope = _halt_scope(args.scope)
+    halt = HaltState().set(args.reason, actor="cli", scope=scope)
     print(f"Halted. {halt}")
     print("New entries are refused while this stands. Exits are still allowed.")
-    print(f"Lift it with:  {_invocation(f'resume {args.scope}')}")
+    print(f"Lift it with:  {_invocation(f'resume {scope}')}")
 
 
 def cmd_resume(args) -> None:
@@ -5723,12 +5839,17 @@ def cmd_resume(args) -> None:
     from quantred.execution.halt import HaltState
 
     state = HaltState()
-    lifted = state.clear(args.scope)
+    # A scope already on record is lifted as typed, whatever it is: a halt written
+    # before scopes were checked may sit under a name that resolves to nothing, and it
+    # has to stay liftable. Anything else goes through the same resolution `halt` uses.
+    recorded = {halt.scope for halt in state.list()}
+    scope = args.scope if args.scope in recorded else _halt_scope(args.scope)
+    lifted = state.clear(scope)
     remaining = state.list()
     if lifted:
-        print(f"Halt lifted for {args.scope!r}.")
+        print(f"Halt lifted for {scope!r}.")
     else:
-        print(f"No halt was in force for {args.scope!r}; nothing to lift.")
+        print(f"No halt was in force for {scope!r}; nothing to lift.")
     # Said either way: "Trading may resume" used to follow lifting one halt while others
     # still refused entries, and a no-op resume is where an operator most needs to see
     # what is in fact still standing.
@@ -5861,9 +5982,25 @@ def cmd_execution_report(args) -> None:
     import json
 
     from quantred.analytics.execution_quality import execution_report
+    from quantred.execution import ledger as ledger_module
     from quantred.execution.ledger import PositionLedger
 
-    ledger = PositionLedger(_execution_ledger_path(args, must_exist=True))
+    path = Path(_execution_ledger_path(args, must_exist=True) or ledger_module.default_ledger_path())
+    if not path.is_file():
+        # Absent is not zero: read as an empty ledger this printed "0 submitted ...
+        # $0.00", which describes a session that placed nothing, not one that never ran.
+        # Checked before PositionLedger, which creates the directory it would write to.
+        note = "nothing has recorded a session here yet; a live, paper or small-real run writes it"
+        if args.json:
+            print(
+                json.dumps(
+                    {"ledger": str(path), "ledger_exists": False, "report": None, "note": note}, indent=2
+                )
+            )
+        else:
+            print(f"No position ledger at {path}: {note}. There is no execution to report.")
+        return
+    ledger = PositionLedger(path)
     report = execution_report(ledger.lifecycles(), ledger.declines(), ledger.flattens())
     _print_ledger_sessions(ledger, args.json)
     if args.json:
@@ -6580,7 +6717,13 @@ def _add_cost_flags(parser) -> None:
         action="store_true",
         help="Use GROSS returns (disable transaction cost; net is the default)",
     )
-    parser.add_argument("--commission-bps", dest="commission_bps", type=float, default=1.0)
+    parser.add_argument(
+        "--commission-bps",
+        dest="commission_bps",
+        type=float,
+        default=1.0,
+        help="Commission charged on every fill, in basis points of its notional (default: %(default)s)",
+    )
     parser.add_argument(
         "--impact-eta", dest="impact_eta", type=float, default=0.3, help="Market-impact coefficient"
     )
@@ -6640,7 +6783,10 @@ def _add_cache_flags(parser) -> None:
         "(implies --cache)",
     )
     parser.add_argument(
-        "--cache-dir", dest="cache_dir", default=None, help="Bar cache directory (default: cache/bars)"
+        "--cache-dir",
+        dest="cache_dir",
+        default=None,
+        help="Bar cache directory (default: cache/bars under the state root, ~/.quantred unless QUANTRED_HOME is set)",
     )
 
 
@@ -6733,16 +6879,18 @@ def _next_step_hint() -> str:
     An installed copy has no Makefile and no `.env.example` to copy, so pointing at
     either is a dead end for exactly the user this path exists to serve.
     """
-    from quantred.settings import in_container, started_from_checkout_shim
+    from quantred.settings import in_container, started_from_checkout_shim, state_root
 
     if in_container():
         return (
-            "     add your free Alpaca paper keys to the .env beside docker-compose.yml (mounted read-only)\n"
+            "     add your free Alpaca paper keys to the host's ~/.quantred/.env (mounted read-only)\n"
             f"     {_invocation('verdict'):<20} then run the whole pipeline on real market data"
         )
     if started_from_checkout_shim():
+        # Named outright: a checkout reads only the state root's .env, and one copied
+        # into the repository root is silently never read.
         return (
-            "     make init        add your free Alpaca paper keys (or see .env.example)\n"
+            f"     make init        add your free Alpaca paper keys (writes {state_root() / '.env'})\n"
             "     make backtest    then run it on real market data"
         )
     return (
@@ -6889,9 +7037,21 @@ def build_parser() -> argparse.ArgumentParser:
             "--symbols", type=_symbols, default=DEFAULT_UNIVERSE, help="Comma-separated candidate symbols"
         )
         if with_dates:
-            p.add_argument("--start", type=_date, default=shift_days(_now(), -30))
-            p.add_argument("--end", type=_date, default=_now())
-            p.add_argument("--capital", type=_positive_amount, default=100_000.0)
+            p.add_argument(
+                "--start",
+                type=_date,
+                default=shift_days(_now(), -30),
+                help="Start of the window: a date or ISO datetime, read in New York time (default: 30 days before --end)",
+            )
+            p.add_argument(
+                "--end", type=_date, default=_now(), help="End of the window, same format (default: now)"
+            )
+            p.add_argument(
+                "--capital",
+                type=_positive_amount,
+                default=100_000.0,
+                help="Starting capital in dollars (default: %(default).0f)",
+            )
             p.add_argument(
                 "--scan-as-of",
                 dest="scan_as_of",
@@ -7070,8 +7230,9 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Report what this contract WOULD do — the orders it would send, the caps "
         "that would bind, the signals it would skip — against a stated capital, with no "
-        "account and no broker able to trade. Journals nothing, and observes no fills, "
-        "slippage or fees: that is what a small-real session is for",
+        "account and no broker able to trade. It reads current bars, so it needs the Alpaca "
+        "key pair. Journals nothing, and observes no fills, slippage or fees: that is what "
+        "a small-real session is for",
     )
     live.add_argument(
         "--live-money",
@@ -7308,12 +7469,16 @@ def build_parser() -> argparse.ArgumentParser:
     halt = subparsers.add_parser(
         "halt", help="Stop opening new positions (exits still allowed) — durable until resumed"
     )
-    halt.add_argument("scope", nargs="?", default="all", help="'all', or a strategy class name")
+    halt.add_argument(
+        "scope", nargs="?", default="all", help="'all' (the default), or a strategy by name, e.g. demo_trend"
+    )
     halt.add_argument("--reason", required=True, help="Why — recorded with the halt")
     halt.set_defaults(func=cmd_halt)
 
     resume = subparsers.add_parser("resume", help="Lift a halt")
-    resume.add_argument("scope", nargs="?", default="all", help="'all', or a strategy class name")
+    resume.add_argument(
+        "scope", nargs="?", default="all", help="'all' (the default), or a strategy by name, e.g. demo_trend"
+    )
     resume.set_defaults(func=cmd_resume)
 
     halts = subparsers.add_parser("halts", help="Show what is currently halted — read-only")
@@ -7385,7 +7550,12 @@ def build_parser() -> argparse.ArgumentParser:
     alloc = subparsers.add_parser("allocate", help="Weight a portfolio over scanned symbols")
     alloc.add_argument("--scanner", type=_scanner, default="demo_volume")
     alloc.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
-    alloc.add_argument("--capital", type=_positive_amount, default=100_000.0)
+    alloc.add_argument(
+        "--capital",
+        type=_positive_amount,
+        default=100_000.0,
+        help="Starting capital in dollars (default: %(default).0f)",
+    )
     alloc.add_argument("--max-positions", dest="max_positions", type=_positive_count, default=5)
     alloc.add_argument("--max-weight", dest="max_weight", type=float, default=0.25)
     alloc.add_argument(
@@ -7554,8 +7724,18 @@ def build_parser() -> argparse.ArgumentParser:
         "optimize", help="Tune strategy parameters via backtest (in-sample — trust nothing yet)"
     )
     add_common(opt, with_dates=True)
-    opt.add_argument("--method", choices=["grid", "random", "bayesian"], default="grid")
-    opt.add_argument("--objective", type=_objective, default="sharpe_ratio")
+    opt.add_argument(
+        "--method",
+        choices=["grid", "random", "bayesian"],
+        default="grid",
+        help="How candidates are chosen: every grid point, random samples, or a Bayesian search (default: %(default)s)",
+    )
+    opt.add_argument(
+        "--objective",
+        type=_objective,
+        default="sharpe_ratio",
+        help="Metric the search maximises, e.g. sharpe_ratio, sortino_ratio, total_return (default: %(default)s)",
+    )
     opt.add_argument("--max-evals", dest="max_evals", type=_positive_count, default=50)
     opt.add_argument(
         "--seed",
@@ -7565,7 +7745,12 @@ def build_parser() -> argparse.ArgumentParser:
         "grid too once --max-evals caps the grid (the cap is sampled, not truncated). "
         "Matches walkforward's --seed, so the same value reproduces its inner search.",
     )
-    opt.add_argument("--output", default="optimization_results.csv")
+    opt.add_argument(
+        "--output",
+        default="optimization_results.csv",
+        help="CSV of every evaluated candidate, written relative to the current directory "
+        "(default: %(default)s)",
+    )
     _add_cost_flags(opt)
     _add_cache_flags(opt)
     add_workers_flag(opt)
@@ -7578,8 +7763,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Sweep a parameter space cheaply — never journaled, reports the distribution",
     )
     add_common(screen, with_dates=True)
-    screen.add_argument("--method", choices=["grid", "random"], default="grid")
-    screen.add_argument("--objective", type=_objective, default="sharpe_ratio")
+    screen.add_argument(
+        "--method",
+        choices=["grid", "random"],
+        default="grid",
+        help="How points are chosen: the grid, or random samples (default: %(default)s)",
+    )
+    screen.add_argument(
+        "--objective",
+        type=_objective,
+        default="sharpe_ratio",
+        help="Metric whose distribution is reported, e.g. sharpe_ratio, total_return (default: %(default)s)",
+    )
     screen.add_argument(
         "--max-evals",
         dest="max_evals",
@@ -7633,12 +7828,35 @@ def build_parser() -> argparse.ArgumentParser:
         help="Out-of-sample validation: optimize IS, score OOS, across folds (the honest scorecard)",
     )
     add_common(wf, with_dates=True)
-    wf.add_argument("--mode", choices=["anchored", "rolling"], default="anchored")
     wf.add_argument(
-        "--folds", type=_positive_count, default=None, help="Number of folds (or use --train/--test-days)"
+        "--mode",
+        choices=["anchored", "rolling"],
+        default="anchored",
+        help="anchored: each fold's in-sample window starts at --start and grows; rolling: "
+        "a fixed-length in-sample window that slides forward (default: %(default)s)",
     )
-    wf.add_argument("--train-days", dest="train_days", type=int, default=None)
-    wf.add_argument("--test-days", dest="test_days", type=int, default=None)
+    wf.add_argument(
+        "--folds",
+        type=_positive_count,
+        default=None,
+        help="Number of folds (default: 4 unless --train-days and --test-days fix the geometry)",
+    )
+    wf.add_argument(
+        "--train-days",
+        dest="train_days",
+        type=int,
+        default=None,
+        help="In-sample calendar days per fold; takes effect only with --test-days (default: "
+        "derived - the window less the embargo, split into --folds + 1 equal parts)",
+    )
+    wf.add_argument(
+        "--test-days",
+        dest="test_days",
+        type=int,
+        default=None,
+        help="Out-of-sample calendar days per fold; takes effect only with --train-days "
+        "(default: derived, as for --train-days)",
+    )
     wf.add_argument(
         "--embargo-days",
         dest="embargo_days",
@@ -7646,11 +7864,34 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="IS->OOS gap; defaults to required lookback in calendar days",
     )
-    wf.add_argument("--holdout-days", dest="holdout_days", type=_non_negative_days, default=0)
-    wf.add_argument("--method", choices=["grid", "random", "bayesian"], default="grid")
-    wf.add_argument("--objective", type=_objective, default="sharpe_ratio")
+    wf.add_argument(
+        "--holdout-days",
+        dest="holdout_days",
+        type=_non_negative_days,
+        default=0,
+        help="Calendar days at the end of the window reserved as a holdout, scored once after "
+        "the folds (default: %(default)s - no holdout)",
+    )
+    wf.add_argument(
+        "--method",
+        choices=["grid", "random", "bayesian"],
+        default="grid",
+        help="How each fold's in-sample search chooses candidates (default: %(default)s)",
+    )
+    wf.add_argument(
+        "--objective",
+        type=_objective,
+        default="sharpe_ratio",
+        help="Metric the search maximises, e.g. sharpe_ratio, sortino_ratio, total_return (default: %(default)s)",
+    )
     wf.add_argument("--max-evals", dest="max_evals", type=_positive_count, default=50)
-    wf.add_argument("--seed", type=int, default=42)
+    wf.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Seed for the in-sample search's sampling; the same value as optimize --seed "
+        "reproduces it (default: %(default)s)",
+    )
     wf.add_argument(
         "--benchmark",
         default=None,
@@ -7773,6 +8014,12 @@ def build_parser() -> argparse.ArgumentParser:
         "market-data commands, which need the Alpaca keys)",
     )
     init.add_argument(
+        "--offline",
+        action="store_true",
+        help="With --check: check the cache-only path (`--offline` runs, `mcp --offline`) - "
+        "the 'store' extra is required there and the broker keys are not",
+    )
+    init.add_argument(
         "--provider",
         choices=("anthropic", "openai", "ollama"),
         default=None,
@@ -7800,7 +8047,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--env-path", dest="env_path", default=None, help="Write to this .env instead of the default"
     )
     init.add_argument(
-        "--cache-dir", dest="cache_dir", default=None, help="Bar cache directory (default: cache/bars)"
+        "--cache-dir",
+        dest="cache_dir",
+        default=None,
+        help="Bar cache directory (default: cache/bars under the state root, ~/.quantred unless QUANTRED_HOME is set)",
     )
     init.add_argument(
         "--example-pack",
@@ -7834,9 +8084,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--scanner", type=_scanner, default="demo_volume", help="Universe scanner ('none' to skip)"
     )
     verdict.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
-    verdict.add_argument("--start", type=_date, default=shift_days(_now(), -365))
-    verdict.add_argument("--end", type=_date, default=_now())
-    verdict.add_argument("--capital", type=_positive_amount, default=100_000.0)
+    verdict.add_argument(
+        "--start",
+        type=_date,
+        default=shift_days(_now(), -365),
+        help="Start of the window: a date or ISO datetime, read in New York time (default: 365 days before --end)",
+    )
+    verdict.add_argument(
+        "--end", type=_date, default=_now(), help="End of the window, same format (default: now)"
+    )
+    verdict.add_argument(
+        "--capital",
+        type=_positive_amount,
+        default=100_000.0,
+        help="Starting capital in dollars (default: %(default).0f)",
+    )
     verdict.add_argument(
         "--source", choices=["strategy", "signal", "scanner"], default="strategy", help="Alpha score origin"
     )
@@ -7883,8 +8145,12 @@ def build_parser() -> argparse.ArgumentParser:
     verdict.add_argument(
         "--json",
         metavar="PATH",
+        nargs="?",
+        const=_JSON_TO_STDOUT,
         default=None,
-        help="Also write the structured result object (the same one the report renders) to a JSON file",
+        help="Bare: print the structured result object (the one the report renders) as JSON "
+        "instead of the report, like every other --json. With PATH: print the report and "
+        "also write the object to that file",
     )
     add_html_flag(verdict)
     add_no_journal(verdict)
@@ -7961,8 +8227,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--scanner", type=_scanner, default="demo_volume", help="Scanner used when --source scanner"
     )
     info.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
-    info.add_argument("--start", type=_date, default=shift_days(_now(), -365))
-    info.add_argument("--end", type=_date, default=_now())
+    info.add_argument(
+        "--start",
+        type=_date,
+        default=shift_days(_now(), -365),
+        help="Start of the window: a date or ISO datetime, read in New York time (default: 365 days before --end)",
+    )
+    info.add_argument(
+        "--end", type=_date, default=_now(), help="End of the window, same format (default: now)"
+    )
     info.add_argument("--benchmark", default="SPY", help="Benchmark for residual returns")
     info.add_argument("--horizon", type=int, default=5, help="Forward-return horizon in bars")
     info.add_argument(
@@ -8055,8 +8328,13 @@ def build_parser() -> argparse.ArgumentParser:
     hz.add_argument("--source", choices=["strategy", "signal", "scanner"], default="strategy")
     hz.add_argument("--scanner", type=_scanner, default="demo_volume")
     hz.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
-    hz.add_argument("--start", type=_date, default=shift_days(_now(), -365))
-    hz.add_argument("--end", type=_date, default=_now())
+    hz.add_argument(
+        "--start",
+        type=_date,
+        default=shift_days(_now(), -365),
+        help="Start of the window: a date or ISO datetime, read in New York time (default: 365 days before --end)",
+    )
+    hz.add_argument("--end", type=_date, default=_now(), help="End of the window, same format (default: now)")
     hz.add_argument("--benchmark", default="SPY")
     hz.add_argument(
         "--max-lag", dest="max_lag", type=int, default=10, help="Largest lag (periods) to measure"
@@ -8113,21 +8391,31 @@ def build_parser() -> argparse.ArgumentParser:
 
     def _add_cache_dir_flag(p) -> None:
         p.add_argument(
-            "--cache-dir", dest="cache_dir", default=None, help="Bar cache directory (default: cache/bars)"
+            "--cache-dir",
+            dest="cache_dir",
+            default=None,
+            help="Bar cache directory (default: cache/bars under the state root, ~/.quantred unless QUANTRED_HOME is set)",
         )
 
     cache = subparsers.add_parser(
         "cache", help="Inspect/warm the persistent bar cache behind backtest/optimize/walkforward"
     )
-    cache_sub = cache.add_subparsers(dest="cache_command", required=True)
+    cache_sub = cache.add_subparsers(dest="cache_command", required=True, metavar="<subcommand>")
 
     c_warm = cache_sub.add_parser("warm", help="Prefetch and cache bars for a universe/window")
     _add_cache_dir_flag(c_warm)
     c_warm.add_argument("--symbols", type=_symbols, default=DEFAULT_UNIVERSE)
     c_warm.add_argument("--scanner", type=_scanner, default="none", help="Universe scanner ('none' to skip)")
     c_warm.add_argument("--timeframe", default="1Day")
-    c_warm.add_argument("--start", type=_date, default=shift_days(_now(), -365))
-    c_warm.add_argument("--end", type=_date, default=_now())
+    c_warm.add_argument(
+        "--start",
+        type=_date,
+        default=shift_days(_now(), -365),
+        help="Start of the window: a date or ISO datetime, read in New York time (default: 365 days before --end)",
+    )
+    c_warm.add_argument(
+        "--end", type=_date, default=_now(), help="End of the window, same format (default: now)"
+    )
     c_warm.add_argument(
         "--scan-as-of",
         dest="scan_as_of",
@@ -8160,7 +8448,7 @@ def build_parser() -> argparse.ArgumentParser:
     trials = subparsers.add_parser(
         "trials", help="Inspect the trial store — the queryable index over the research journal"
     )
-    trials_sub = trials.add_subparsers(dest="trials_command", required=True)
+    trials_sub = trials.add_subparsers(dest="trials_command", required=True, metavar="<subcommand>")
 
     t_status = trials_sub.add_parser("status", help="Row/journal-line counts and a drift check")
     _add_db_flag(t_status)
@@ -8461,7 +8749,10 @@ def build_parser() -> argparse.ArgumentParser:
         "tool needing bars says the keys are missing.",
     )
     mcp.add_argument(
-        "--cache-dir", dest="cache_dir", default=None, help="Bar cache directory (default: cache/bars)"
+        "--cache-dir",
+        dest="cache_dir",
+        default=None,
+        help="Bar cache directory (default: cache/bars under the state root, ~/.quantred unless QUANTRED_HOME is set)",
     )
     mcp.set_defaults(func=cmd_mcp)
 
@@ -8575,7 +8866,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=3,
         help="Consecutive proposals without a better candidate before stopping (at least 1)",
     )
-    dagent.add_argument("--capital", type=_positive_amount, default=100_000.0)
+    dagent.add_argument(
+        "--capital",
+        type=_positive_amount,
+        default=100_000.0,
+        help="Starting capital in dollars (default: %(default).0f)",
+    )
     dagent.add_argument(
         "--provider",
         choices=["replay", "anthropic", "openai", "ollama"],
@@ -8597,7 +8893,13 @@ def build_parser() -> argparse.ArgumentParser:
     demo = subparsers.add_parser(
         "demo", help="Run the full pipeline on synthetic data (no API keys, no network)"
     )
-    demo.add_argument("--seed", type=int, default=42)
+    demo.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Seed for the synthetic prices and the search; the documented sample output is "
+        "this default (default: %(default)s)",
+    )
     demo.add_argument(
         "--chart",
         metavar="PATH",
@@ -8626,6 +8928,13 @@ def main() -> None:
 
     setup_logging()
     args = parse_cli()
+    from quantred.settings import legacy_state_note
+
+    # On stderr, so a command whose stdout is JSON stays parseable. Every run, because
+    # where the journal, the ledger and the halts are read from is not a detail.
+    note = legacy_state_note()
+    if note:
+        print(f"Note: {note}", file=sys.stderr)
     try:
         args.func(args)
     except (SettingsError, CacheMiss, AuthenticationError, RunRefused, MissingExtra) as exc:

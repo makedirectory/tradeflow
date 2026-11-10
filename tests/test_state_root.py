@@ -31,7 +31,7 @@ from quantred.settings import (
 @pytest.fixture(autouse=True)
 def _no_inherited_home(monkeypatch):
     # Modules bind their default state paths at first import. Importing them here,
-    # while the suite's throwaway TRADEFLOW_HOME is still set, keeps a later first
+    # while the suite's throwaway QUANTRED_HOME is still set, keeps a later first
     # import from happening with it removed and binding a module to the real home
     # for every test file that runs after this one.
     import quantred.cli  # noqa: F401
@@ -39,7 +39,7 @@ def _no_inherited_home(monkeypatch):
     import quantred.services.audit  # noqa: F401
     import quantred.services.setup  # noqa: F401
 
-    monkeypatch.delenv("TRADEFLOW_HOME", raising=False)
+    monkeypatch.delenv("QUANTRED_HOME", raising=False)
 
 
 def test_a_checkout_is_not_its_own_state_root(monkeypatch, tmp_path):
@@ -47,7 +47,7 @@ def test_a_checkout_is_not_its_own_state_root(monkeypatch, tmp_path):
     monkeypatch.chdir(PROJECT_ROOT)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
 
-    assert state_root() == tmp_path / ".tradeflow"
+    assert state_root() == tmp_path / ".quantred"
 
 
 def test_the_default_is_the_same_wherever_you_stand(monkeypatch, tmp_path):
@@ -64,7 +64,7 @@ def test_the_default_is_the_same_wherever_you_stand(monkeypatch, tmp_path):
 
 def test_the_environment_still_overrides(monkeypatch, tmp_path):
     """The escape hatch, what a container mounts, and how a contributor opts back in."""
-    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path / "elsewhere"))
+    monkeypatch.setenv("QUANTRED_HOME", str(tmp_path / "elsewhere"))
 
     assert state_root() == tmp_path / "elsewhere"
 
@@ -158,7 +158,7 @@ def test_nothing_is_reported_when_the_checkout_is_the_active_root(monkeypatch, t
     reason on any machine that has none."""
     checkout = _checkout_with(tmp_path, "research_journal.jsonl")
     monkeypatch.setattr(settings, "PROJECT_ROOT", checkout)
-    monkeypatch.setenv("TRADEFLOW_HOME", str(checkout))
+    monkeypatch.setenv("QUANTRED_HOME", str(checkout))
 
     assert settings.orphaned_checkout_state() is None
 
@@ -183,7 +183,7 @@ def test_the_setup_check_fails_when_state_sits_in_a_repository(monkeypatch, tmp_
     from quantred.services.setup import run_checks
 
     (tmp_path / ".git").mkdir()
-    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
+    monkeypatch.setenv("QUANTRED_HOME", str(tmp_path))
 
     check = next(c for c in run_checks(path=tmp_path / ".env") if c.name == "state outside version control")
 
@@ -207,7 +207,7 @@ def _import_probe(body: str, home: Path):
         capture_output=True,
         text=True,
         timeout=120,
-        env={**os.environ, "TRADEFLOW_HOME": str(home)},
+        env={**os.environ, "QUANTRED_HOME": str(home)},
     )
     assert result.returncode == 0, result.stderr[-2000:]
     return result.stdout.strip()
@@ -332,6 +332,19 @@ def test_a_checkout_started_through_the_shim_keeps_make_and_main_py(started, mon
     assert "make init" in cli._next_step_hint()
 
 
+def test_the_demo_points_a_checkout_at_the_env_that_is_read(monkeypatch, tmp_path):
+    """The demo's last line said "(or see .env.example)", and a reader who copied it to
+    the repository root made a .env nothing reads: credentials come from the state root
+    only. The hint names that file instead."""
+    from quantred import cli
+
+    monkeypatch.setenv("QUANTRED_HOME", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", ["main.py", "demo"])
+    hint = cli._next_step_hint()
+    assert str(tmp_path / ".env") in hint
+    assert ".env.example" not in hint
+
+
 def test_messages_still_render_when_the_working_directory_is_gone(monkeypatch, tmp_path):
     """The flatten report, the halt line and the missing-credentials message all name a
     command, and naming it used to read the working directory - which raises once it
@@ -343,7 +356,7 @@ def test_messages_still_render_when_the_working_directory_is_gone(monkeypatch, t
     from quantred.execution.flatten import CLOSED, FlattenReport
 
     _installed_copy(monkeypatch, tmp_path)
-    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("QUANTRED_HOME", str(tmp_path / "home"))
     doomed = tmp_path / "doomed"
     doomed.mkdir()
     monkeypatch.chdir(doomed)
@@ -415,3 +428,117 @@ def test_the_build_context_is_an_allowlist_that_keeps_secrets_out():
     allowed = {line[1:].rstrip("/") for line in ignore if line.startswith("!")}
     assert not allowed & {".env", "specs", "configs", "logs", "cache", ".git", ".venv"}
     assert {"quantred", "main.py", "pyproject.toml"} <= allowed
+
+
+# --- The state root's name, and the names it had ------------------------------------
+#
+# The directory and its variable were the last things still called by the project's old
+# name. They are renamed without moving anything: state recorded under the old names
+# holds a position ledger and possibly a standing halt, so it keeps being read where it
+# is, and the reader is told.
+
+
+@pytest.fixture
+def bare_home(tmp_path, monkeypatch):
+    """A home directory with neither variable set and no state directory in it."""
+    from quantred import settings
+
+    monkeypatch.delenv(settings.STATE_HOME_ENV, raising=False)
+    monkeypatch.delenv(settings.LEGACY_STATE_HOME_ENV, raising=False)
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    return home
+
+
+def test_a_fresh_machine_gets_the_new_directory_and_no_note(bare_home):
+    from quantred import settings
+
+    assert settings.state_root() == bare_home / ".quantred"
+    assert settings.legacy_state_note() is None
+
+
+def test_state_recorded_under_the_old_directory_is_still_the_state_root(bare_home):
+    """The failure this guards: a renamed default that walks away from the journal, the
+    ledger and any standing halt, and reports an empty history with nothing erroring."""
+    from quantred import settings
+    from quantred.execution.halt import HaltState
+
+    old = bare_home / ".tradeflow"
+    HaltState(old / "logs" / "halts.json").set("stop", actor="test")
+
+    assert settings.state_root() == old
+    assert HaltState().is_halted()  # the default halt state is the one that was recorded
+    assert not (bare_home / ".quantred").exists()  # and reading it created nothing beside it
+    note = settings.legacy_state_note()
+    assert "mv ~/.tradeflow ~/.quantred" in note
+
+
+def test_once_moved_the_new_directory_is_used_and_the_note_stops(bare_home):
+    from quantred import settings
+
+    (bare_home / ".tradeflow").mkdir()
+    (bare_home / ".tradeflow").rename(bare_home / ".quantred")
+    assert settings.state_root() == bare_home / ".quantred"
+    assert settings.legacy_state_note() is None
+
+
+def test_both_directories_present_says_the_old_one_is_not_being_read(bare_home):
+    """The quiet half: the new directory wins, and what the old one holds is missing from
+    every answer. That has to be said, not discovered."""
+    from quantred import settings
+
+    (bare_home / ".tradeflow").mkdir()
+    (bare_home / ".quantred").mkdir()
+    assert settings.state_root() == bare_home / ".quantred"
+    assert "NOT being read" in settings.legacy_state_note()
+
+
+def test_the_old_variable_still_names_the_root_and_the_new_one_wins(bare_home, tmp_path, monkeypatch):
+    from quantred import settings
+
+    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path / "old"))
+    assert settings.state_root() == tmp_path / "old"
+    assert "QUANTRED_HOME" in settings.legacy_state_note()
+
+    monkeypatch.setenv("QUANTRED_HOME", str(tmp_path / "new"))
+    assert settings.state_root() == tmp_path / "new"
+    assert settings.legacy_state_note() is None
+
+
+def test_a_client_config_written_from_the_old_variable_carries_the_new_name(bare_home, tmp_path, monkeypatch):
+    """The client launches this copy, which reads both; a config written today should not
+    plant the old name somewhere it will outlive the fallback."""
+    from quantred.services import setup
+
+    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path / "old"))
+    assert setup.mcp_client_env() == {"QUANTRED_HOME": str((tmp_path / "old").resolve())}
+
+
+def test_every_command_says_when_state_is_read_from_an_old_name(bare_home):
+    """On standard error, so a command whose output is JSON stays parseable. In a child
+    process: the command line fixes module-level paths when it starts, and running it
+    here against a throwaway home would leave them pointing there for every later test."""
+    import subprocess
+
+    (bare_home / ".tradeflow").mkdir()
+    env = {k: v for k, v in os.environ.items() if k not in ("QUANTRED_HOME", "TRADEFLOW_HOME")}
+    result = subprocess.run(
+        [sys.executable, "-m", "quantred.cli", "halts"],
+        env={**env, "HOME": str(bare_home)},
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Nothing is halted." in result.stdout
+    assert "mv ~/.tradeflow ~/.quantred" in result.stderr
+    assert "tradeflow" not in result.stdout
+
+
+def test_init_check_shows_a_row_for_state_under_an_old_name(bare_home):
+    from quantred.services import setup
+
+    (bare_home / ".tradeflow").mkdir()
+    rows = {check.name: check for check in setup._state_checks()}
+    assert "mv ~/.tradeflow ~/.quantred" in rows["state under an old name"].detail

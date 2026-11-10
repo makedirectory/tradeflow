@@ -32,12 +32,18 @@ from quantred.analytics import metrics as m
 from quantred.analytics import performance
 from quantred.brokers.base import AccountSnapshot
 from quantred.costs.base import CostModel, Trade
-from quantred.execution.sizing import PositionSizer, RiskBasedSizer, below_min_notional, free_buying_power
+from quantred.execution.sizing import (
+    PositionSizer,
+    RiskBasedSizer,
+    below_min_notional,
+    cap_to_buying_power,
+    free_buying_power,
+)
 from quantred.marketdata.client import MarketDataClient
 from quantred.marketdata.timeframe import Timeframe
 from quantred.strategies import signals
 from quantred.strategies.base import Strategy
-from quantred.utils.numeric import is_flat, round_quantity
+from quantred.utils.numeric import is_flat, round_price, round_quantity
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +105,7 @@ logger = logging.getLogger(__name__)
 #:   default, so v5 walk-forwards chose parameters for a different book than they scored;
 #:   and a stored optimize candidate is keyed on capital and book too, so earlier ones miss.
 #:
-#: * **7** — the current model. Five things the engine computes changed, each of which
+#: * **7** — Five things the engine computes changed, each of which
 #:   moves recorded numbers. A stop or target fills at the open when the bar opens beyond
 #:   it (a long stopped at 97 on a bar opening at 90 lost 10, not 3), and the bar an entry
 #:   fills on is checked against that position's own stop and target. A bar that opens
@@ -116,8 +122,24 @@ logger = logging.getLogger(__name__)
 #:   rule live uses - which changes nothing the backtest deployed, but is recorded because
 #:   the live path moved to it. A v6 result is not comparable with these.
 #:
+#: * **8** — the current model. An entry the sizer asks more for than the free pool
+#:   holds is opened at what the pool can pay, cost of entry included, where it used to
+#:   be refused outright; the same cap applies live. It changes a result only where the
+#:   risk fraction approaches the stop distance (a request near or above the whole
+#:   pool), but there it turns no trade into a trade. A walk-forward's default embargo
+#:   and warmup are also longer: the lookback was converted from bars to calendar days
+#:   as though every day traded, so the warmup held about five sevenths of the bars the
+#:   indicators need, and fold boundaries move with it. An entry's size and bracket
+#:   are computed from the close its signal came from (as live computes them) and not
+#:   from the open it fills at, and the levels are rounded to the tick. An exit at a
+#:   stop or target is costed on the level it filled at, not the bar's open; bars
+#:   without volume are charged commission and spread, where they were charged
+#:   nothing. The benchmark's first step is its first bar's open to close, where it
+#:   was left out of the benchmark's return and the regression. A v7 result is not
+#:   comparable.
+#:
 #: Records written before this field existed carry no version; absence means 1.
-ACCOUNTING_VERSION = 7
+ACCOUNTING_VERSION = 8
 
 
 class BacktestError(RuntimeError):
@@ -193,6 +215,8 @@ class _Execution:
     filled: int = 0
     rounded_to_zero: int = 0
     below_min_notional: int = 0
+    #: Opened positions the sizer asked more for than the free pool could pay.
+    capped_to_pool: int = 0
 
     def drag_pct(self) -> float:
         """Requested notional that whole-share rounding removed, as a percentage."""
@@ -219,6 +243,7 @@ class _Execution:
             "positions_filled": self.filled,
             "positions_rounded_to_zero": self.rounded_to_zero,
             "positions_below_min_notional": self.below_min_notional,
+            "positions_capped_to_pool": self.capped_to_pool,
             "unfillable_pct": self.unfillable_pct(),
         }
 
@@ -416,7 +441,7 @@ def _leg_betas(legs: Dict[str, Any], benchmark_returns) -> None:
         leg["benchmark_correlation"] = float(paired["leg"].corr(paired["bench"]))
 
 
-def _benchmark_returns(closes, equity_times) -> Optional[pd.Series]:
+def _benchmark_returns(closes, equity_times, opens=None) -> Optional[pd.Series]:
     """Benchmark returns sampled at the equity curve's own instants.
 
     Positional, not date-indexed, because that is the only alignment the metrics can
@@ -439,11 +464,22 @@ def _benchmark_returns(closes, equity_times) -> Optional[pd.Series]:
     # returns (`pct_change().dropna()`) are labelled 1..m, step j being the interval
     # ending at equity_times[j]. This series is labelled the same way, but its first
     # entry (step 1) is NaN - a benchmark return needs a prior close, and the curve's
-    # first interval starts at the initial capital, before any bar - so step 2 is the
-    # first real pairing. A
+    # first interval starts at the initial capital, before any bar. When bars precede
+    # that first step (a warmup: an out-of-sample fold), a signal from the warmup can
+    # fill at the first bar's open, so the book can earn that bar's open to close and
+    # the benchmark's return for step 1 is the same span. Left NaN there, a fold's
+    # return covered a bar its benchmark's did not. With nothing before the first step
+    # the book cannot hold through it at all (a signal fills one bar later), so the
+    # step stays NaN and step 2 is the first pairing - filling it in would regress a
+    # return the book could not have had. A
     # 0-based index here paired every strategy return with the *next* bar's benchmark
     # return, so a strategy holding the benchmark itself regressed on a series one bar
     # ahead of it and reported a near-zero beta.
+    first = stamps[0]
+    warmed_up = bool((closes.index < first).any())
+    if warmed_up and opens is not None and first in opens.index and first in closes.index:
+        if opens.loc[first] > 0:
+            returns.iloc[0] = closes.loc[first] / opens.loc[first] - 1.0
     return pd.Series(returns.to_numpy(), index=pd.RangeIndex(1, len(returns) + 1), dtype="float64")
 
 
@@ -484,6 +520,11 @@ class BacktestResult:
     #: and risking a second, disagreeing definition of it. Nothing in the metrics
     #: reads it.
     equity_times: Optional[List[Any]] = None
+    #: Steps per year of ``equity_curve`` - the rate ``metrics`` annualized at. Exposed
+    #: for the same reason as ``benchmark_returns``: a caller that recomputes metrics on
+    #: this curve must use this rate, not derive one from the timeframe, which is lower
+    #: whenever the universe's symbols do not share one bar grid.
+    periods_per_year: Optional[float] = None
 
 
 class BacktestEngine:
@@ -589,7 +630,8 @@ class BacktestEngine:
         return self._simulate(per_symbol(), start, end, initial_capital, trade_from)
 
     def _benchmark_closes(self, benchmark: Optional[str], timeframe, start, end):
-        """The benchmark's close series, or ``None`` when there is nothing usable.
+        """The benchmark's closes (and opens, when it has them), or ``None`` when there
+        is nothing usable.
 
         A benchmark that cannot be fetched degrades to no benchmark rather than
         failing the run - but it says so, because silently scoring alpha against
@@ -606,7 +648,7 @@ class BacktestEngine:
         if frame is None or frame.empty or "close" not in frame:
             logger.warning("Benchmark %s returned no bars; alpha/beta/IR will be unavailable", benchmark)
             return None
-        return frame["close"]
+        return frame[["open", "close"]] if "open" in frame else frame[["close"]]
 
     def _simulate(
         self,
@@ -630,7 +672,12 @@ class BacktestEngine:
         if not trades_df.empty:
             trades_df = trades_df.sort_values("exit_time").reset_index(drop=True)
 
-        aligned_benchmark = _benchmark_returns(benchmark_closes, equity_times)
+        if isinstance(benchmark_closes, pd.DataFrame):
+            aligned_benchmark = _benchmark_returns(
+                benchmark_closes["close"], equity_times, benchmark_closes.get("open")
+            )
+        else:
+            aligned_benchmark = _benchmark_returns(benchmark_closes, equity_times)
         _leg_betas(legs, aligned_benchmark)
         net_pnl = trades_df["pnl"].sum() if not trades_df.empty else 0.0
         total_cost = float(trades_df["cost"].sum()) if "cost" in trades_df else 0.0
@@ -675,6 +722,7 @@ class BacktestEngine:
             execution=execution,
             benchmark_returns=aligned_benchmark,
             equity_times=list(equity_times),
+            periods_per_year=self._step_periods_per_year,
             legs=legs,
             exposure=_exposure_report(exposure),
             excursion=excursion_module.portfolio_excursion(excursion),
@@ -951,6 +999,7 @@ class BacktestEngine:
                         panel.adv,
                         panel.vol,
                         i,
+                        reference_price=panel.closes[i - 1],
                     )
                     if pos is None:
                         continue
@@ -979,18 +1028,16 @@ class BacktestEngine:
                 if pos["entry_k"] == k:
                     pos["lowest"] = min(pos["lowest"], panel.lows[i])
                     pos["highest"] = max(pos["highest"], panel.highs[i])
-                exit_cost = self._trade_cost(symbol, pos["size"], panel.opens[i], panel.adv, panel.vol, i)
+                fill = self._exit_fill(pos, signals.HOLD, panel.opens[i], panel.highs[i], panel.lows[i])
+                if fill is None:
+                    continue
+                # Priced on the notional that traded: a stop or target fills at its
+                # level, not at the bar's open, which is what this used to be costed on.
+                exit_price, reason = fill
+                exit_cost = self._trade_cost(symbol, pos["size"], exit_price, panel.adv, panel.vol, i)
                 if pos["entry_k"] != k:
                     exit_cost += self._carry(pos, k)
-                closed = self._maybe_close(
-                    pos,
-                    signals.HOLD,
-                    panel.opens[i],
-                    panel.highs[i],
-                    panel.lows[i],
-                    panel.timestamps[i],
-                    exit_cost,
-                )
+                closed = self._close(pos, exit_price, panel.timestamps[i], reason, exit_cost)
                 if closed is not None:
                     trades.append(closed)
                     realized_by_side[pos["side"]] += closed["pnl"]
@@ -1085,9 +1132,19 @@ class BacktestEngine:
 
     def _trade_cost(self, symbol, shares, price, adv, vol, i) -> float:
         """Dollar cost of trading ``shares`` at bar ``i`` (0 when no cost model)."""
-        if self.cost_model is None or adv is None or shares == 0:
+        if self.cost_model is None or shares == 0:
             return 0.0
-        trade = Trade(symbol=symbol, shares=shares, price=price, adv=float(adv[i]), daily_vol=float(vol[i]))
+        # Bars without a volume column carry no liquidity context, which removes the
+        # impact term and nothing else: commission and spread do not depend on volume,
+        # and charging nothing at all made such a run gross while it was labelled net.
+        known = adv is not None
+        trade = Trade(
+            symbol=symbol,
+            shares=shares,
+            price=price,
+            adv=float(adv[i]) if known else 0.0,
+            daily_vol=float(vol[i]) if known else 0.0,
+        )
         return self.cost_model.cost(trade).total
 
     def _carry(self, position: Dict[str, Any], exit_bar: int) -> float:
@@ -1116,8 +1173,18 @@ class BacktestEngine:
         adv: Optional[np.ndarray],
         vol: Optional[np.ndarray],
         i: int,
+        reference_price: Optional[float] = None,
     ) -> Optional[Dict[str, Any]]:
         """Size and admit one candidate, or return None if the book cannot fund it.
+
+        ``reference_price`` is the close the signal came from, and it is what the size
+        and the bracket are computed from, as live computes them: a bracket order
+        carries its stop and target when it is submitted, before the fill exists, so
+        they sit a fixed distance from the decision price and not from the open the
+        order happens to fill at. Measured from the fill, a gap between the two moved
+        the backtest's stop with it while live's stayed put. The fill itself, and
+        everything that is a fact about the fill (cash, cost, risk, exposure), stays at
+        ``price``.
 
         **Shorts are fully cash-collateralized.** Opening debits the whole notional
         regardless of side, rather than crediting short proceeds against margin as a
@@ -1144,13 +1211,28 @@ class BacktestEngine:
         # Requested before rounding, so the gap between intent and fill is measurable
         # rather than inferred. Whole shares: the live path floors too, and the two
         # clocks must agree about what is fillable.
-        requested = self.sizer.size(symbol, price, account)
+        reference = price if reference_price is None else float(reference_price)
+        asked = self.sizer.size(symbol, reference, account)
+        # Held to the free pool by the rule live uses. A request above it used to be
+        # refused outright and counted nowhere, so a config whose risk fraction reached
+        # its stop distance reported zero trades with every diagnostic at zero.
+        requested = cap_to_buying_power(asked, reference, account.buying_power)
+        capped = requested < asked
         size = round_quantity(requested)
         if size <= 0:
             if requested > 0:
                 book.execution.rounded_to_zero += 1
             return None
-        if below_min_notional(size, price, min_notional):
+        # Leave room for the cost of entering. Cost rises with size, so shedding the
+        # shares that cover the shortfall once is enough to fit.
+        shortfall = size * price + self._trade_cost(symbol, size, price, adv, vol, i) - book.cash
+        if shortfall > 0:
+            size = round_quantity(size - np.ceil(shortfall / price))
+            capped = True
+            if size <= 0:
+                book.execution.rounded_to_zero += 1
+                return None
+        if below_min_notional(size, reference, min_notional):
             # The same rule the live path applies, from the same definition — the two
             # clocks agreeing about what is fillable is the whole point of it living in
             # one place.
@@ -1191,10 +1273,11 @@ class BacktestEngine:
             if abs(book.net_exposure() + signed) > equity * max_net_exposure:
                 return None
 
+        # Rounded to the tick, as the levels live sends are.
         if signal == signals.BUY:
-            stop, take = price * (1 - stop_pct), price * (1 + take_pct)
+            stop, take = round_price(reference * (1 - stop_pct)), round_price(reference * (1 + take_pct))
         else:
-            stop, take = price * (1 + stop_pct), price * (1 - take_pct)
+            stop, take = round_price(reference * (1 + stop_pct)), round_price(reference * (1 - take_pct))
 
         # Counted here rather than at the sizing call, because everything between the
         # two can still decline the entry - and a position the book refused to fund is
@@ -1202,6 +1285,7 @@ class BacktestEngine:
         book.execution.requested_notional += requested * price
         book.execution.filled_notional += size * price
         book.execution.filled += 1
+        book.execution.capped_to_pool += int(capped)
         return {
             "symbol": symbol,
             "side": signal,
@@ -1259,6 +1343,25 @@ class BacktestEngine:
     ) -> Optional[Dict[str, Any]]:
         """Return a closed-trade record if an exit triggers this bar, else None.
 
+        :meth:`_exit_fill` decides; this prices the record with a cost the caller
+        already knows, which is only possible when the fill is at the open.
+        """
+        fill = self._exit_fill(position, signal, price_open, high, low, intrabar)
+        if fill is None:
+            return None
+        return self._close(position, fill[0], timestamp, fill[1], exit_cost)
+
+    def _exit_fill(
+        self,
+        position: Dict[str, Any],
+        signal: str,
+        price_open,
+        high,
+        low,
+        intrabar: bool = True,
+    ) -> Optional[Tuple[float, str]]:
+        """The ``(price, reason)`` an exit fills at this bar, or None if none triggers.
+
         Order of events, which is the order of time:
 
         1. A level the bar *opens* beyond fills at the open. A stop or target is a
@@ -1281,29 +1384,29 @@ class BacktestEngine:
         if position["side"] == signals.BUY:
             trigger = take * (1.0 + margin)
             if price_open <= stop:
-                return self._close(position, price_open, timestamp, "STOP_LOSS", exit_cost)
+                return price_open, "STOP_LOSS"
             if price_open >= trigger:
-                return self._close(position, price_open, timestamp, "TAKE_PROFIT", exit_cost)
+                return price_open, "TAKE_PROFIT"
             if signal in (signals.SELL, signals.CLOSE_BUY):
-                return self._close(position, price_open, timestamp, "SIGNAL", exit_cost)
+                return price_open, "SIGNAL"
             if intrabar:
                 if low <= stop:
-                    return self._close(position, stop, timestamp, "STOP_LOSS", exit_cost)
+                    return stop, "STOP_LOSS"
                 if high >= trigger:
-                    return self._close(position, max(price_open, take), timestamp, "TAKE_PROFIT", exit_cost)
+                    return max(price_open, take), "TAKE_PROFIT"
         else:  # short
             trigger = take * (1.0 - margin)
             if price_open >= stop:
-                return self._close(position, price_open, timestamp, "STOP_LOSS", exit_cost)
+                return price_open, "STOP_LOSS"
             if price_open <= trigger:
-                return self._close(position, price_open, timestamp, "TAKE_PROFIT", exit_cost)
+                return price_open, "TAKE_PROFIT"
             if signal in (signals.BUY, signals.CLOSE_SELL):
-                return self._close(position, price_open, timestamp, "SIGNAL", exit_cost)
+                return price_open, "SIGNAL"
             if intrabar:
                 if high >= stop:
-                    return self._close(position, stop, timestamp, "STOP_LOSS", exit_cost)
+                    return stop, "STOP_LOSS"
                 if low <= trigger:
-                    return self._close(position, min(price_open, take), timestamp, "TAKE_PROFIT", exit_cost)
+                    return min(price_open, take), "TAKE_PROFIT"
         return None
 
     @staticmethod

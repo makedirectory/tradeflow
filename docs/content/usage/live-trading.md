@@ -189,8 +189,17 @@ it.** Declining to open a position is a preference about what you trade; declini
 close one the strategy no longer wants is a stuck position, so a missed exit is always
 re-stated whatever the flag says.
 
-Backtests are unaffected either way: they derive the book from the same signals, so
-the two can never disagree there.
+**An edge that was acted on is spent.** Re-stating is for an edge the engine never
+saw. A position closed by its own stop or target leaves the book flat while the score
+still implies the direction, and so does an entry the book refused because it was full
+or over a cap. The backtest took that entry once, or declined it once, and stays out
+until the score leaves the direction and crosses again; live does the same, rather than
+buying again one bar after every take-profit. An entry stopped by something the
+backtest has no equivalent of (a halt, a closed market, a broker error) is not spent,
+and is re-stated on a later bar. The mark is held in memory: after a restart inside the
+same trend the engine no longer knows the edge was traded, and may re-enter once.
+
+Backtests are unaffected by the flag: they act on each edge exactly once.
 
 ## Why nothing happened
 
@@ -218,8 +227,8 @@ trace.
 ## Dry run: what would this trade?
 
 ```bash
-quantred live --config ~/.tradeflow/configs/breakout.json --dry-run
-quantred live --config ~/.tradeflow/configs/breakout.json --dry-run --json
+quantred live --config ~/.quantred/configs/breakout.json --dry-run
+quantred live --config ~/.quantred/configs/breakout.json --dry-run --json
 ```
 
 > **Dry-run answers: what would this contract try to do right now?**
@@ -330,8 +339,8 @@ to serialize.
 ## Small-real: what happens when the broker tries to do it
 
 ```bash
-quantred small-real --config ~/.tradeflow/configs/candidate.json --scale 0.05 --preflight
-quantred small-real --config ~/.tradeflow/configs/candidate.json --scale 0.05
+quantred small-real --config ~/.quantred/configs/candidate.json --scale 0.05 --preflight
+quantred small-real --config ~/.quantred/configs/candidate.json --scale 0.05
 quantred execution-report --small-real
 ```
 
@@ -569,10 +578,10 @@ Every live run prints what it is about to do, before any order logic runs:
   entries               re-affirmed
   bar guards            on
   reconcile every       300s
-  ledger                ~/.tradeflow/logs/position_ledger.jsonl
-  journal               ~/.tradeflow/logs/research_journal.jsonl
-  halt state            ~/.tradeflow/logs/halts.json
-  state root            ~/.tradeflow
+  ledger                ~/.quantred/logs/position_ledger.jsonl
+  journal               ~/.quantred/logs/research_journal.jsonl
+  halt state            ~/.quantred/logs/halts.json
+  state root            ~/.quantred
 
   warm-up coverage      40 of 40 symbols have history
                         39 of 40 have the full 120-bar lookback (1 short)
@@ -807,7 +816,9 @@ side to buy, so their numbers cannot be recovered. Archive the file and start fr
 The ledger records enough to reconstruct the whole life of an order: what the strategy
 decided, what was submitted, and what the venue did with it. `quantred
 execution-report` rolls that up; `--orders` lists every lifecycle, `--json` emits it
-whole. Both are read-only.
+whole. Both are read-only. When no ledger has been written yet (the default one or the
+small-real one), it says so - and `--json` gives `"ledger_exists": false, "report": null` -
+rather than reporting zero orders for a session that never ran.
 
 ```
 === Execution quality ===

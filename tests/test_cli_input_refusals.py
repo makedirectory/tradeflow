@@ -703,3 +703,46 @@ def test_rejected_keys_point_at_the_section_for_the_configured_account(monkeypat
     assert "Live Account section" in broker._rejected_credentials(401, "")
     monkeypatch.setattr(settings, "paper_trade_mode", lambda: True)
     assert "Paper Account section" in broker._rejected_credentials(401, "")
+
+
+def test_a_bare_walkforward_over_the_default_window_says_to_widen_it(monkeypatch):
+    """`walkforward` with no dates runs over the last 30 days, which cannot hold one fold
+    for the bundled strategy: it fetched the data, then died in a ValueError traceback
+    from the fold builder. It now refuses before any read and names a window that
+    does build folds - checked here by building them."""
+    from quantred.optimization.walk_forward import WalkForwardValidator
+    from quantred.services.registry import STRATEGIES
+
+    class NoReads:
+        def __getattr__(self, name):
+            raise AssertionError(f"the window was refused after a data read ({name})")
+
+    monkeypatch.setattr(cli, "build_research_data", lambda **kw: NoReads())
+    args = cli.parse_cli(["walkforward", "--strategy", "demo_trend", "--scanner", "none", "--symbols", "AAA"])
+    with pytest.raises(SystemExit) as exited:
+        args.func(args)
+    message = str(exited.value.code)
+    assert "--start" in message and "--end" in message and "30 days" in message
+
+    suggested = message.split("--start ", 1)[1].split()[0]
+    validator = WalkForwardValidator(STRATEGIES["demo_trend"], NoReads())
+    folds, _ = validator.build_folds(cli._date(suggested), args.end)
+    assert folds, "the suggested window must itself build folds"
+
+
+def test_a_walkforward_window_that_holds_folds_is_not_refused(monkeypatch):
+    """The other direction: a window long enough passes the check and reaches the data."""
+
+    class Reached(Exception):
+        pass
+
+    def build_research_data(**kw):
+        raise Reached
+
+    monkeypatch.setattr(cli, "build_research_data", build_research_data)
+    args = cli.parse_cli(
+        ["walkforward", "--strategy", "demo_trend", "--scanner", "none", "--symbols", "AAA"]
+        + ["--start", "2023-01-02", "--end", "2024-12-31"]
+    )
+    with pytest.raises(Reached):
+        args.func(args)

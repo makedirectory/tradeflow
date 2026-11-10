@@ -58,9 +58,9 @@ def test_the_repo_itself_is_recognized_as_a_checkout(monkeypatch):
     against `quantred demo`. Getting it wrong now sends a contributor an install
     command instead of a Makefile target.
 
-    Drops the suite's own TRADEFLOW_HOME: the override is what every other test wants
+    Drops the suite's own QUANTRED_HOME: the override is what every other test wants
     and the one thing this test must not have."""
-    monkeypatch.delenv("TRADEFLOW_HOME", raising=False)
+    monkeypatch.delenv("QUANTRED_HOME", raising=False)
 
     assert settings._looks_like_checkout(Path.cwd())
     assert settings.running_from_checkout() is True
@@ -179,7 +179,7 @@ def test_the_package_root_imports_nothing_heavy():
 
 # --- the state root ---------------------------------------------------------
 def test_an_explicit_home_wins_over_everything(tmp_path, monkeypatch):
-    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path / "elsewhere"))
+    monkeypatch.setenv("QUANTRED_HOME", str(tmp_path / "elsewhere"))
     monkeypatch.chdir(tmp_path)
     assert settings.state_root() == tmp_path / "elsewhere"
 
@@ -188,28 +188,33 @@ def test_a_checkout_is_never_its_own_state_root(tmp_path, monkeypatch):
     """A checkout used to be its own root, which put a private strategy's trials,
     configs and live ledger inside a git working tree — protected by nothing but an
     ignore file, and deleted outright by `git clean -xd`. Contributors opt back in
-    explicitly with TRADEFLOW_HOME; nobody gets it by standing somewhere."""
+    explicitly with QUANTRED_HOME; nobody gets it by standing somewhere."""
     (tmp_path / "pyproject.toml").write_text(PYPROJECT)
+    monkeypatch.delenv("QUANTRED_HOME", raising=False)
     monkeypatch.delenv("TRADEFLOW_HOME", raising=False)
+    # A home with no state under the old name, or this machine's own would be found.
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.chdir(tmp_path)
 
     assert settings.state_root() != tmp_path
-    assert settings.state_root() == Path.home() / ".tradeflow"
+    assert settings.state_root() == tmp_path / "home" / ".quantred"
 
 
 def test_anywhere_else_resolves_to_one_predictable_home(tmp_path, monkeypatch):
     """An installed command must not scatter journals across the filesystem."""
+    monkeypatch.delenv("QUANTRED_HOME", raising=False)
     monkeypatch.delenv("TRADEFLOW_HOME", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(settings, "PROJECT_ROOT", tmp_path / "not-a-checkout")
-    assert settings.state_root() == Path.home() / ".tradeflow"
+    assert settings.state_root() == tmp_path / "home" / ".quantred"
 
 
 def test_someone_elses_project_is_not_mistaken_for_ours(tmp_path, monkeypatch):
     """Every Python project has a pyproject.toml; putting our journal in one of
     theirs because the filename matched would be worse than not finding a root."""
     (tmp_path / "pyproject.toml").write_text('name = "some-other-tool"\n')
-    monkeypatch.delenv("TRADEFLOW_HOME", raising=False)
+    monkeypatch.delenv("QUANTRED_HOME", raising=False)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(settings, "PROJECT_ROOT", tmp_path / "not-a-checkout")
     assert settings.state_root() != tmp_path
@@ -220,7 +225,7 @@ def test_an_unreadable_manifest_is_not_a_checkout(tmp_path, monkeypatch):
 
 
 def test_state_path_creates_its_parent(tmp_path, monkeypatch):
-    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("QUANTRED_HOME", str(tmp_path / "home"))
     path = settings.state_path("logs", "research_journal.jsonl")
     assert path.parent.is_dir()
     assert path == tmp_path / "home" / "logs" / "research_journal.jsonl"
@@ -267,7 +272,7 @@ def test_demo_runs_against_an_empty_state_root(tmp_path):
     .env, no writable repo."""
     import os
 
-    env = dict(os.environ, TRADEFLOW_HOME=str(tmp_path / "fresh"))
+    env = dict(os.environ, QUANTRED_HOME=str(tmp_path / "fresh"))
     env.pop("APCA_API_KEY_ID", None)
     env.pop("APCA_API_SECRET_KEY", None)
     result = subprocess.run(

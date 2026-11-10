@@ -10,12 +10,13 @@ title: Installation
 ### Fresh install
 
 ```bash
-uv tool install 'quantred[mcp,viz]'
+uv tool install 'quantred[mcp,store,viz]'
 quantred demo
 ```
 
-In an activated virtual environment: `python -m pip install 'quantred[mcp,viz]'`. The two
-extras are the MCP server and charts in reports; the demo needs neither (`quantred` alone
+In an activated virtual environment: `python -m pip install 'quantred[mcp,store,viz]'`. The three
+extras are the MCP server, the local bar cache (`cache warm`, `--offline`) and charts in
+reports; the demo needs none of them (`quantred` alone
 works), and the [extras guide](extras) lists the rest.
 
 The distribution and the command are both **`quantred`**; the importable package is
@@ -36,7 +37,7 @@ keys, and no network for the demo. Next: [first run](first-run).
 Optional capabilities are opt-in extras. To choose them at install time:
 
 ```bash
-uv tool install 'quantred[viz,store,mcp]'
+uv tool install 'quantred[mcp,store,viz]'
 ```
 
 Adding one to an installed copy later is *not* additive with `uv tool`: it replaces
@@ -48,12 +49,12 @@ that needs an extra you lack prints it too.
 ### Where state lives
 
 State is the same wherever the software came from: the research journal, trial
-store, bar cache, and promoted configs go to `~/.tradeflow`. A source checkout does
+store, bar cache, and promoted configs go to `~/.quantred`. A source checkout does
 **not** keep its own state; it uses the same directory, so that a private strategy's
 trial evidence never sits inside a git working tree.
 
-Resolution: `TRADEFLOW_HOME` if set, otherwise `~/.tradeflow`. Contributors who want
-state inside their checkout again set `TRADEFLOW_HOME` to it explicitly;
+Resolution: `QUANTRED_HOME` if set, otherwise `~/.quantred`. Contributors who want
+state inside their checkout again set `QUANTRED_HOME` to it explicitly;
 `quantred init --dev-local-state` prints the line to use.
 
 This matters more than it looks. The multiple-testing correction rests on **one**
@@ -98,15 +99,22 @@ are pure pandas/numpy, not TA-Lib.
 
 ```bash
 make docker-build                     # build the image
-make docker-run                       # paper live-trading; mounts your .env
+make docker-run                       # prints the CLI help; starts nothing
+make docker-run CMD="quantred demo"   # run any command in the image
 ```
 
-No local Python or uv needed. Override the command to backtest/scan, e.g.:
+No local Python or uv needed. With no command the image only prints help (turning
+the container on must not turn trading on, not even paper trading). The image reads
+credentials from `/state/.env` (it sets `QUANTRED_HOME=/state`), so mount your host's
+state-root `.env` there, read-only:
 
 ```bash
-docker run --rm -v $(pwd)/.env:/app/.env quantred \
-    uv run python main.py backtest --symbols NVDA,META --start 2024-01-02 --end 2024-04-01
+docker run --rm -v "$HOME/.quantred/.env:/state/.env:ro" quantred \
+    quantred backtest --symbols NVDA,META --start 2024-01-02 --end 2024-04-01
 ```
+
+A plain `docker run` keeps no state between runs; [Docker](docker) covers the compose
+stack, whose named volumes keep the journal and cache.
 
 ## Optional extras (checkout)
 

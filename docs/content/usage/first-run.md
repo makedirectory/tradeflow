@@ -13,13 +13,14 @@ on its own; you can stop after any of them.
 ## 1. Install
 
 ```bash
-uv tool install 'quantred[mcp,viz]'
+uv tool install 'quantred[mcp,store,viz]'
 quantred --version
 ```
 
-In an activated virtual environment instead: `python -m pip install 'quantred[mcp,viz]'`. The `mcp`
-extra is what step 5 needs (the client launches the server from this install) and `viz` draws
-charts in HTML reports; leave either off if you will not use it.
+In an activated virtual environment instead: `python -m pip install 'quantred[mcp,store,viz]'`. The `mcp`
+extra is what step 5 needs (the client launches the server from this install), `store` is the
+local bar cache that the setup's optional cache warm and every `--offline` run read, and `viz`
+draws charts in HTML reports; leave any of them off if you will not use it.
 The distribution and the command are both `quantred`. Capabilities such
 as charts, the MCP server and the model SDKs are opt-in extras; see
 [optional extras](extras) for which one unlocks what and how to add one later without
@@ -40,8 +41,8 @@ ends in an honest promotion verdict. You do not need `init` to try QuantRed.
 quantred init
 ```
 
-A guided setup that writes a valid `.env` in your state directory (`~/.tradeflow`
-unless `TRADEFLOW_HOME` is set), checks the credentials against Alpaca, and tells you
+A guided setup that writes a valid `.env` in your state directory (`~/.quantred`
+unless `QUANTRED_HOME` is set), checks the credentials against Alpaca, and tells you
 what to run next. It exists because the alternative first run is: discover from a
 stack trace that you need a `.env`, create it by hand, learn that a paper-trade flag
 exists, and only then find out whether the keys work.
@@ -79,18 +80,18 @@ quantred init --check
 ```
 QuantRed setup check
 
-  state root: ~/.tradeflow
+  state root: ~/.quantred
   (journal, trial store, bar cache, and configs all live here)
 
   [ok]       version                quantred 2.5.0
-  [optional] env file               ~/.tradeflow/.env not found
+  [optional] env file               ~/.quantred/.env not found
         -> run `init` to create it, or export the keys as environment variables
   [blocked]  APCA_API_KEY_ID        (not set) - no command that touches the market will run
         -> run `init` to enter it, or export it as an environment variable
   [blocked]  APCA_API_SECRET_KEY    (not set) - no command that touches the market will run
         -> run `init` to enter it, or export it as an environment variable
   [ok]       PAPER_TRADE            true - orders go to the paper account
-  [ok]       state directory        ~/.tradeflow/logs is writable
+  [ok]       state directory        ~/.quantred/logs is writable
   [ok]       extra: mcp             installed - the MCP server for AI clients
   [optional] extra: viz             not installed - charts in `--chart` and in HTML reports
   [--]       model: ollama          default endpoint http://localhost:11434 (reachability not checked; run with --probe-model)
@@ -100,7 +101,7 @@ QuantRed setup check
   blocked for: data (APCA_API_KEY_ID, APCA_API_SECRET_KEY)
   blocked for: research (APCA_API_KEY_ID, APCA_API_SECRET_KEY, model provider)
 
-  Also not installed (optional): viz - what each unlocks and how to add it: https://tradeflow.mk-dir.com/usage/extras
+  Also not installed (optional): viz - what each unlocks and how to add it: https://quantred.mk-dir.com/usage/extras
 ```
 
 That is a trimmed example from a machine with no keys; your rows will differ (the
@@ -125,11 +126,14 @@ the `--provider`'s SDK extra), the report ends with **one** command that adds ex
 and keeps what you already have; the other absent extras are listed on one line, not
 installed for you. A backtest is not blocked by a missing model key; a missing optional extra
 never fails anything; a `[FAIL]` row fails every task. `--provider
-{anthropic,openai,ollama}` checks that provider's SDK and key for `research`:
+{anthropic,openai,ollama}` checks that provider's SDK and key for `research`. `--offline`
+checks the cache-only path instead: the `store` extra then gates `data` and `mcp`, and the
+market-data keys gate only `research`:
 
 ```bash
 quantred init --check --for research --provider ollama
 quantred init --check --for mcp
+quantred init --check --for mcp --offline
 ```
 
 The "state directory" check is worth understanding: a session that cannot write its
@@ -187,7 +191,9 @@ quantred init --check --for mcp
 
 The first lists the tools and calls the discovery tools through a real MCP client;
 the second reports whether the extra is installed (keys are reported too, but the
-server does not need them to start). See
+server does not need them to start). For a keyless server over the cache, add
+`--offline` to both: each then fails, naming the install command, when the `store`
+extra the cache needs is missing. See
 [agents](agents) for what the tools are.
 
 ## 6. Run a real example
@@ -225,7 +231,7 @@ calls no model.
 Everything above works from a checkout too, with `uv run python main.py` in place of
 `quantred` (`make init`, `make check`, `make demo` are the Makefile shortcuts), and
 `uv sync --inexact --extra <name>` in place of an installer command. A checkout does not keep
-its own state: state lives in `~/.tradeflow` unless `TRADEFLOW_HOME` is set, and
+its own state: state lives in `~/.quantred` unless `QUANTRED_HOME` is set, and
 `quantred init --dev-local-state` prints the setting that puts it back inside the
 working tree.
 
@@ -251,7 +257,7 @@ Without `--provider`, model variables in the environment are left alone and name
 output as not copied. Those keys are often exported for unrelated tools, and a billable
 key should not land in a project file because the shell happened to hold it.
 
-`--provider`, `--for` and `--model` are refused where the mode would discard them (for
+`--provider`, `--for`, `--offline` and `--model` are refused where the mode would discard them (for
 example `--provider` with the interactive wizard) rather than ignored.
 
 ## What it will not do

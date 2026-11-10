@@ -18,12 +18,14 @@
 # Live trading is NEVER started by `up`. See the `live` service at the bottom.
 
 # The project name is pinned, not derived from the checkout directory's name. Compose
-# prefixes every volume with it, and it was `tradeflow` for everyone whose clone was
-# called that: the journal lives in `tradeflow_tradeflow-logs`. A clone now made from the
-# renamed repository lands in a `quantred/` directory, and an unpinned name would have
-# pointed it at new, empty volumes. Pinned, every checkout - old directory or new -
-# attaches to the same ones. Container and image names carry the new name; these do not.
-name: tradeflow
+# prefixes every volume with it, so an unpinned name would follow whatever the clone
+# happens to be called and point a second checkout at new, empty volumes. Pinned, every
+# checkout attaches to the same ones: the journal lives in `quantred_quantred-logs`.
+#
+# These were `tradeflow_tradeflow-*` before the project was renamed. A renamed volume is a
+# new empty one, so a machine that ran the old stack copies its three volumes across
+# once; the Docker page of the usage guide has the command.
+name: quantred
 
 x-app: &app
   build:
@@ -34,16 +36,19 @@ x-app: &app
   image: quantred:local
   environment:
     # Every path the application writes resolves under this one root.
-    TRADEFLOW_HOME: /state
+    QUANTRED_HOME: /state
   volumes:
     # Named volumes, not bind mounts: state must outlive `down`, and the container's
     # non-root user has to own it.
-    - tradeflow-logs:/state/logs
-    - tradeflow-cache:/state/cache
-    - tradeflow-configs:/state/configs
+    - quantred-logs:/state/logs
+    - quantred-cache:/state/cache
+    - quantred-configs:/state/configs
     # Credentials are read-only and stay on the host. `:ro` is the point — a
-    # container should never be able to rewrite the keys it was given.
-    - ./.env:/state/.env:ro
+    # container should never be able to rewrite the keys it was given. The source is
+    # the host's state-root .env, the one file every copy reads (`quantred init` on the
+    # host writes it); a .env beside this file is read by nothing. It must exist
+    # before the first run: Docker makes a missing bind source an empty directory.
+    - ${QUANTRED_HOME:-~/.quantred}/.env:/state/.env:ro
 
 services:
   # ---------------------------------------------------------------- surfaces --
@@ -130,6 +135,6 @@ services:
 # Volume names keep their original spelling: they are the recorded trial history, and a
 # renamed volume is a new, empty one. Renaming the image does not touch them.
 volumes:
-  tradeflow-logs:
-  tradeflow-cache:
-  tradeflow-configs:
+  quantred-logs:
+  quantred-cache:
+  quantred-configs:

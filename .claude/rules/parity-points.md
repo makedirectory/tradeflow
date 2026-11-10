@@ -70,6 +70,41 @@ first two when a loss predates the restart.
 *Guarded by* `tests/test_sizing_parity.py` (a loss then an entry, both clocks),
 `tests/test_live_realized_pnl.py`.
 
+**A request above the whole pool** — *converged*. Risk-based size is risk / stop of the
+pool, more than the pool once the risk fraction reaches the stop distance. The backtest
+refused the entry and counted nothing; live checked it against the venue's buying power,
+a multiple of the capital on a paper or margin account, and sent it at twice the pool.
+`execution.sizing.cap_to_buying_power` is the one rule both call. **Residual difference,
+deliberately left:** the backtest also sheds the shares that pay for the entry's own
+cost, and live deducts none (a paper venue reports no fee).
+*Guarded by* `tests/test_sizing_parity.py`, which sends one oversized request to both
+clocks and compares the notionals.
+
+**What an entry's size and bracket are computed from** — live submits a bracket with its
+stop and target set, before any fill exists, from the close the signal came from; the
+backtest computed them from the open the order filled at. On a gap the stops sat at
+different prices (a 10% stop under a 100 close filled at 104 was 90 live and 93.6 in the
+backtest) and the sizes differed. `BacktestEngine._open_position` now takes the signal's
+close as `reference_price` for the size, the notional floor and the bracket, and rounds
+the levels with `round_price` as `LiveTrader._stop_levels` does; the fill, cash, cost and
+risk stay at the open. Two implementations still, since the trade clock cannot share the
+engine's admission path.
+*Guarded by* `tests/test_engine_fill_details.py`, which gives both clocks one gapped
+entry and compares the stop level and the size.
+
+**An entry edge is acted on once** — signals are edge-triggered and the backtest takes,
+or declines, each entry exactly once. Live re-states an entry the book lacks, for an
+edge the process never saw, and that also fired for an edge it had already traded: live
+re-entered one bar after every stop or target while the score held, and retried a
+book-refused entry on every later bar. `Strategy._reaffirm` now treats a side as spent
+once the book has held it or `LiveTrader` has submitted or book-refused its entry
+(`mark_entry_spent`), until the score stops implying that side. Only refusals the
+backtest also makes spend an edge (`live_trader._BOOK_REFUSALS`, plus rounds-to-zero and
+the notional floor); a halt, a closed market or a broker error does not. **Residual
+difference:** the mark is in memory, so a restart inside a trend may re-enter once.
+*Guarded by* `tests/test_reaffirm_spent_edge.py`, which runs one set of bars through
+both clocks and compares the number of entries.
+
 **CLI ↔ service dedup identity** — `cli._cost_key` and `services.analysis._cost_key` are
 two implementations that must produce the same shape, because a trial recorded over one
 surface has to be found by the other. Both fold the bar cache's data-vintage stamp whenever the client reads the cache, through one definition, `services.data.vintage_stamp`: only the CLI did, which was harmless until `mcp --offline` let the service read the cache too - then the same run over the two surfaces could never match. *Also guarded by* `tests/test_bar_cache.py`.
@@ -447,8 +482,8 @@ and reads the same block back, and checks a pre-campaign config still loads.
 launch *command* is one definition (`services.setup.mcp_launch_command`); the
 *environment* is a second half of the same idea. The self-test child inherits the whole
 shell, a desktop client inherits none of it, so a pass could mean "works with
-`TRADEFLOW_HOME` and exported keys" while the client journals to the default root or
-cannot authenticate. `mcp_client_config` therefore carries `TRADEFLOW_HOME` whenever it
+`QUANTRED_HOME` and exported keys" while the client journals to the default root or
+cannot authenticate. `mcp_client_config` therefore carries `QUANTRED_HOME` whenever it
 is set (never a credential), and a pass that relied on shell-exported keys says so.
 The launch command also carries `--offline` and `--cache-dir` when asked
 (`mcp_launch_command(offline=..., cache_dir=...)`): a keyless, cache-only server checked

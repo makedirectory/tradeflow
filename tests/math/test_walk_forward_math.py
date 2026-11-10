@@ -276,3 +276,19 @@ def test_pbo_heuristic_is_formatted_as_a_fraction_not_a_clipped_probability():
     assert format_gate_value("pbo", 0.9999) == "1.000"
     assert format_gate_value("pbo", 0.5) == "0.500"
     assert format_gate_value("deflated_sharpe", 0.0001) == "<0.001"  # a real probability still clips
+
+
+def test_efficiency_is_not_a_ratio_of_two_losses():
+    """In-sample -0.5 and out-of-sample -1.0 divide to +2: a fold that lost and then lost
+    twice as much read as twice as efficient, and cleared a gate asking for 0.4. The ratio
+    is only defined against a positive in-sample score."""
+    from quantred.optimization.walk_forward import WalkForwardResult
+
+    v = _validator()
+    losing = _folds([-0.5, -0.5], [-1.0, -1.0])
+    assert v._efficiency(losing, "sharpe_ratio") == 0.0
+    result = WalkForwardResult(losing, {}, None, None, 0.0, {}, 2, "sharpe_ratio")
+    assert result.median_efficiency() == 0.0
+    # and a losing fold beside a real one no longer drags the median upward
+    mixed = WalkForwardResult(_folds([-0.5, 2.0], [-1.0, 1.0]), {}, None, None, 0.0, {}, 2, "sharpe_ratio")
+    assert mixed.median_efficiency() == pytest.approx(0.5, rel=1e-12)

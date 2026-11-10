@@ -408,7 +408,7 @@ def _run_cmd_live(monkeypatch, capsys, argv, tmp_path):
     from quantred.marketdata.client import MarketDataClient
     from tests.fakes import DictMarketData, FakeBroker
 
-    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
+    monkeypatch.setenv("QUANTRED_HOME", str(tmp_path))
     monkeypatch.setattr("quantred.settings.paper_trade_mode", lambda: True)
     monkeypatch.setattr(
         cli, "build_data_and_broker", lambda **kwargs: (FakeBroker(), MarketDataClient(DictMarketData({})))

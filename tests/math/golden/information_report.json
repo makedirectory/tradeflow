@@ -1,6 +1,6 @@
 {
  "provenance": {
-  "accounting_version": 7,
+  "accounting_version": 8,
   "generated_by": "QUANTRED_REGEN_GOLDEN=1 pytest tests/math -k golden (tests/math/test_golden_pins.py)",
   "scenario": "fixed IC history, residual-correlation breadth, decay, blend, series statistics, attribution",
   "seed": "seed 99"
@@ -21,7 +21,7 @@
   "breadth.br_eff": 72.21505236256252,
   "breadth.br_naive": 72.0,
   "breadth.predicted_ir": 0.4691506768598833,
-  "breadth.rho_bar": -0.0005955887464647371,
+  "breadth.rho_bar": -0.0005955887464647397,
   "combination_weights.0": 0.04070680628272252,
   "combination_weights.1": 0.020811518324607328,
   "combination_weights.2": 0.00968586387434555,

@@ -9,7 +9,8 @@ Use **[uv](https://docs.astral.sh/uv/getting-started/installation/)** (or
 [Docker](https://docs.docker.com/get-docker/)):
 
 ```bash
-uv sync --extra dev      # installs deps + ruff + pytest (and optimize/portfolio extras)
+uv sync --inexact --extra dev       # installs deps + ruff + pytest (and the extras the suite uses)
+uv pip install --no-deps -e example # the example pack, as CI installs it (entry-point discovery)
 ```
 
 Working on the documentation site as well? It pins its Node version in `.nvmrc`:
@@ -23,20 +24,30 @@ CI reads the same file, so a local build and a CI build are on the same major.
 
 ## Before you push
 
-These are exactly what CI runs:
+These are the checks CI runs (`.github/workflows/ci.yml`), in its order:
 
 ```bash
-uv run ruff check .            # lint
-uv run ruff format .           # format (use --check in CI)
-make test                      # offline test suite (no API keys/network)
-make secret-scan               # committed secrets (needs gitleaks locally)
+uv run ruff check .                 # lint
+uv run ruff format --check .        # format check (`uv run ruff format .` fixes it)
+make check-links                    # Markdown links and anchors; no tracked link into specs/
+docker compose config --quiet       # the compose file parses (needs Docker, not a daemon)
+make test                           # offline test suite (no API keys/network)
+make secret-scan                    # committed secrets over the whole history (needs gitleaks)
 ```
+
+`--inexact` matters locally: plain `uv sync` is exact, so it uninstalls the example pack
+and any other package installed with `uv pip install -e`. CI starts from a clean runner and
+uses plain `uv sync --extra dev`, then installs the example pack as above. Before a release,
+`make release-check` also builds the package and installs it into a clean venv.
 
 ## Keys and secrets
 
 This repository is public, so a committed key is disclosed the moment it lands —
-rotating it is the only fix. Keep credentials in `.env` (gitignored); `.env.example`
-holds placeholder values only, and is the right place to document a new setting.
+rotating it is the only fix. Keep credentials in the state root's `.env`
+(`~/.quantred/.env`, outside the working tree; `make init` writes it), never in a file
+inside the checkout: a `.env` in the repository root is not read, and is one ignore-file
+edit away from being committed. `.env.example` holds placeholder values only, and is the
+right place to document a new setting.
 
 Two checks back this up: GitHub's push protection rejects a push containing a
 recognized provider key, and CI runs [gitleaks](https://github.com/gitleaks/gitleaks)

@@ -25,7 +25,7 @@ quantred walkforward --strategy my_breakout --symbols AAPL,MSFT,NVDA \
 Saving a config never trades it. Promotion to live is a human step, deliberately.
 
 **Where the file lands.** `--save-config` with a bare filename (`breakout.json`) writes
-to `configs/` under the state root (`~/.tradeflow/configs/` by default). A path that
+to `configs/` under the state root (`~/.quantred/configs/` by default). A path that
 carries a directory (`./runs/breakout.json`, `/data/breakout.json`) is used as given,
 relative to the current directory. `--config` does no such lookup: it reads the path you
 pass, so the examples below spell out the state-root location.
@@ -64,9 +64,9 @@ different book from the one the evidence came from.
 ## Consuming one
 
 ```bash
-quantred backtest    --config ~/.tradeflow/configs/breakout.json --start 2024-01-02 --end 2025-01-02
-quantred walkforward --config ~/.tradeflow/configs/breakout.json --start 2020-01-02 --end 2025-01-02
-quantred live        --config ~/.tradeflow/configs/breakout.json --capital 8000 --preflight
+quantred backtest    --config ~/.quantred/configs/breakout.json --start 2024-01-02 --end 2025-01-02
+quantred walkforward --config ~/.quantred/configs/breakout.json --start 2020-01-02 --end 2025-01-02
+quantred live        --config ~/.quantred/configs/breakout.json --capital 8000 --preflight
 ```
 
 Each command prints what it took from the file and what it ignored, because a config
@@ -83,7 +83,7 @@ the validated book. Re-running the scanner would give you today's universe attac
 yesterday's evidence — a different book with the same provenance stamped on it.
 
 ```bash
-quantred backtest --config ~/.tradeflow/configs/breakout.json --re-resolve-universe
+quantred backtest --config ~/.quantred/configs/breakout.json --re-resolve-universe
 ```
 
 `--re-resolve-universe` opts into re-scanning from `candidate_symbols`. It is worth
@@ -109,7 +109,7 @@ under an older model is never served to a newer one. See [trials](trials.md).
 
 ## Keeping them
 
-Configs live under the state root, outside this repository — `~/.tradeflow/configs` by
+Configs live under the state root, outside this repository — `~/.quantred/configs` by
 default. For a private strategy, version them in the same private repository as the
 strategy itself: the config is a description of your work, and its `provenance` block
 records the search that produced it.

@@ -63,10 +63,14 @@ docker compose --profile docs up docs      # http://localhost:3000
 
 Three named volumes hold everything the application writes — the research journal
 and trial store (`/state/logs`), the bar cache (`/state/cache`), and promoted
-configs (`/state/configs`). `.env` is bind-mounted **read-only** from the host: a
-container should not be able to rewrite the keys it was given, so keys go in the `.env`
-beside `docker-compose.yml`, not through `init` inside the container (the container's
-own messages say so).
+configs (`/state/configs`). The host's state-root `.env`
+(`~/.quantred/.env`, or `$QUANTRED_HOME/.env` when set on the host) is bind-mounted
+**read-only** at `/state/.env`, which is where the image reads credentials
+(`QUANTRED_HOME=/state`). A container should not be able to rewrite the keys it was
+given, so keys go in that host file — `quantred init` on the host writes it — not through
+`init` inside the container (the container's own messages say so). Create it before
+the first `docker compose run`: Docker turns a missing bind-mount source into an empty
+directory.
 
 Nothing else from the checkout reaches the image: `.dockerignore` is an allowlist of
 the package, the example pack and the project metadata, so `.env`, `specs/`, `configs/`,
@@ -80,14 +84,27 @@ resetting the campaign count that every multiple-testing correction depends on �
 nothing would error. `scripts/compose_smoke.sh` tests exactly that: journal a trial (no keys needed),
 `down`, and check the trial is still there.
 
-**Names.** The volumes are still called `tradeflow-logs`, `tradeflow-cache` and
-`tradeflow-configs`, and the compose project is pinned as `tradeflow`, so Docker sees them
-as `tradeflow_tradeflow-logs` and so on. That is deliberate: they hold the recorded trial
-history, a renamed volume is a new empty one, and an unpinned project name would follow
-the checkout directory, so a fresh clone into `quantred/` would not find a journal that a
-clone into `tradeflow/` wrote. The containers and image carry the QuantRed name (the containers were renamed
-`quantred-mcp` and `quantred-docs` in 2.4.1, so anything that names `tradeflow-mcp` or
-`tradeflow-docs` needs updating); the volumes keep the old name on purpose.
+**Names.** The compose project is pinned as `quantred` and the volumes are
+`quantred-logs`, `quantred-cache` and `quantred-configs`, so Docker sees them as
+`quantred_quantred-logs` and so on. The project name is pinned because an unpinned one
+follows the checkout directory, and a second clone under another name would attach to
+new, empty volumes instead of the journal the first one wrote.
+
+**Coming from the old names.** Before the rename these were `tradeflow_tradeflow-logs`,
+`tradeflow_tradeflow-cache` and `tradeflow_tradeflow-configs`. A renamed volume is a new
+empty one and nothing copies the old ones for you, so on a machine that ran the stack
+under the old names, stop it and copy each volume across once:
+
+```bash
+docker compose down
+for v in logs cache configs; do
+  docker run --rm -v tradeflow_tradeflow-$v:/from -v quantred_quantred-$v:/to alpine cp -a /from/. /to/
+done
+```
+
+`docker volume ls` shows whether the old ones exist. Until they are copied, the stack
+starts with an empty journal: every earlier trial is missing from the campaign count,
+and the old volumes are untouched, so nothing is lost by copying late.
 
 **Ownership.** The image runs as a pinned non-root uid (1000) and creates each mount
 point *in the image* so the named volumes inherit that ownership. Docker seeds a

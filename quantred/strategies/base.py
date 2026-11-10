@@ -279,6 +279,11 @@ class Strategy(ABC):
         # symbol -> open position details, used for live signal validation.
         self.positions: Dict[str, Dict[str, Any]] = {}
 
+        # symbol -> the side whose entry has already been taken, or refused by the
+        # book, while the score has implied that side without a break. Live only; see
+        # :meth:`_reaffirm`.
+        self._entry_spent: Dict[str, str] = {}
+
         # Rolling per-symbol buffers, used only in live/real-time mode.
         self.real_time_data: Dict[str, pd.DataFrame] = {}
         self.last_processed_data: Dict[str, pd.DataFrame] = {}
@@ -540,9 +545,18 @@ class Strategy(ABC):
         instead of depending on having caught one specific bar.
 
         This is live-only. The backtest walks the same scores through
-        :meth:`generate_signals`, where its book is derived from those very signals and
-        so can never disagree - the two paths differ only in the case where the live
-        one has fallen behind.
+        :meth:`generate_signals` and acts on each edge exactly once.
+
+        **An edge that was acted on is spent.** A position closed by its own stop or
+        target leaves the book flat while the score still implies the direction, and so
+        does an entry the book refused (full, or over a cap). Neither is a missed edge:
+        the backtest took that entry once, or declined it once, and never returns to it
+        until the score leaves the direction and crosses again. Re-stating it would have
+        live buy again one bar after every take-profit, a trade no validated result
+        contains. So a side is marked spent when the book is seen holding it, and by
+        :meth:`mark_entry_spent` when the trader submits or refuses its entry, and it
+        stays spent until the score stops implying that side. The mark is in memory: a
+        restart inside the same trend forgets it and may re-enter once.
 
         A flip closes first and re-enters on the next bar, exactly as
         :meth:`_transition` does, rather than reversing in one step.
@@ -555,20 +569,36 @@ class Strategy(ABC):
         strategy no longer wants is not a preference, it is a stuck position, so the
         exit side stays unconditional whatever the flag says.
         """
-        if signal != signals.HOLD:
-            return signal
-
         desired = {1: signals.BUY, -1: signals.SELL}.get(direction)
         held = self.positions.get(symbol)
         held_side = held.get("side") if held else None
 
+        # Bookkeeping before any return, so the mark follows the score on every bar.
+        if self._entry_spent.get(symbol) != desired:
+            self._entry_spent.pop(symbol, None)  # the score left that side: a new edge is new
+        if held_side is not None and held_side == desired:
+            self._entry_spent[symbol] = held_side
+
+        if signal != signals.HOLD:
+            return signal
         if desired == held_side:  # book already matches intent (including both flat)
             return signals.HOLD
         if held_side is not None:  # holding something we should not be: close it
             return signals.CLOSE_BUY if held_side == signals.BUY else signals.CLOSE_SELL
         if not self.config.get("reaffirm_entries", REAFFIRM_ENTRIES_DEFAULT):
             return signals.HOLD
+        if self._entry_spent.get(symbol) == desired:
+            return signals.HOLD
         return desired or signals.HOLD
+
+    def mark_entry_spent(self, symbol: str, side: str) -> None:
+        """Record that ``side``'s entry for ``symbol`` was taken, or refused by the book.
+
+        Called by the live trader. Until the score stops implying ``side``,
+        :meth:`_reaffirm` will not re-state that entry - see there for why.
+        """
+        if side in signals.ENTRY_SIGNALS:
+            self._entry_spent[symbol] = side
 
     def process_bar(self, symbol: str, bar: Dict[str, float], timestamp: datetime) -> Optional[str]:
         """Fold one streamed OHLCV bar into the rolling buffer and emit a signal.

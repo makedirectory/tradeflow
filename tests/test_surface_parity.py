@@ -790,7 +790,7 @@ def _verdict_parser():
 #: counterpart. Kept to input/output plumbing: a knob a run is configured with never
 #: belongs here, because this table is the loophole in the test that reads it.
 _VERDICT_CLI_ONLY = {
-    "json": "where the CLI writes its structured result; MCP returns the object itself",
+    "json": "how the CLI emits its structured result (stdout, or a file); MCP returns the object itself",
     "html": "MCP renders through the separate render_report tool",
     "cache": "how the CLI got its bars",
     "offline": "how the CLI got its bars",

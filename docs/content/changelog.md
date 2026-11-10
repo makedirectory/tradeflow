@@ -28,6 +28,134 @@ index; they are tagged in the repository.
 
 ---
 
+## Unreleased
+
+A second pass over the maths, this time comparing the two clocks against each other and
+running the search and validation machinery on inputs chosen to break it.
+
+### Accounting v8
+
+`ACCOUNTING_VERSION` is **8**. Two things the engine computes changed:
+
+- **An entry larger than the free pool is capped to it, on both clocks.** Risk-based
+  size is `risk_per_trade / stop_loss` of the pool, which exceeds the whole pool once
+  the risk fraction reaches the stop distance. The backtest refused such an entry
+  outright and counted nothing, so the run reported zero trades with every execution
+  diagnostic at zero; live checked the order against the venue's buying power and sent
+  it, so a book given 10,000 on a paper account opened a 20,000 position. Both now open
+  the position at what the pool can pay (`execution.sizing.cap_to_buying_power`), the
+  backtest leaves room for the entry's own cost, and `positions_capped_to_pool` counts
+  how often it happened.
+- **A walk-forward's default embargo and warm-up hold the lookback in bars.** The
+  lookback was converted to calendar days one for one, so a 31-bar daily lookback
+  fetched 21 bars and each out-of-sample fold opened on indicators that were not yet
+  valid. The default now scales trading days to calendar days and pads for holidays.
+  Fold boundaries move with it; pass `--embargo-days` to pin them.
+
+- **An entry's size and bracket come from the close its signal came from.** Live
+  submits a bracket with its stop and target already set, from the signal bar's close;
+  the backtest set them from the open the order filled at, so on a gap the two stops sat
+  at different prices and the two clocks sized differently. The backtest now does what
+  live does, and rounds the levels to the tick as live does. The fill is still the open.
+- **An exit at a stop or target is costed on the level it filled at**, where it was
+  costed on the bar's open; and bars with no volume column are charged commission and
+  spread, where they were charged nothing.
+- **A fold's benchmark covers its first bar.** After a warm-up the book can fill at the
+  first bar's open, and the benchmark's return over that bar was left out of both the
+  benchmark's total and the regression. A run with no warm-up is unchanged.
+- **The holdout's first bar is no longer in the search that picks its parameters**, and
+  a walk-forward fold is annualized at the rate the engine measured it at (they differed
+  when a universe's symbols do not share one bar grid).
+
+As with every bump, results recorded under v7 leave the default trial listing.
+
+### Fixed
+
+- **Live no longer re-enters after its own stop or target.** With `reaffirm_entries`
+  on, a position closed by a bracket leg while the score still implied the direction was
+  re-opened on the next bar, and an entry the book refused was retried on every later
+  bar. The backtest does neither. An edge that was acted on is now spent until the score
+  leaves that direction. Live-only; no recorded result changes.
+- **An unbounded objective cannot win a parameter search.** A candidate with no losing
+  trade has an infinite profit factor (likewise Calmar, recovery factor, payoff, omega),
+  and it sorted first. Such candidates are still reported and still counted as trials,
+  but rank last, and a search with no bounded score names no winner.
+- **Parallel Bayesian search pairs each score with the point it was measured at.** Batch
+  results were matched to proposals by position, which slipped whenever a candidate was
+  memoized, duplicated or failed. The surrogate is also trained on the grid point that
+  was evaluated instead of the raw proposal, and a proposal that snaps outside the
+  declared constraints is dropped before it costs a trial.
+- **Cost and take-profit stress report survival up to the first failure.** The headline
+  was the largest level that passed, so a curve that failed at 2x and passed again at 5x
+  read as surviving 5x and cleared the 3x promotion prerequisite.
+- **`halt <strategy>` halts that strategy.** The trader asks whether its strategy's
+  class is halted and `halt` recorded whatever was typed, so `halt demo_trend` printed
+  "Halted" and blocked nothing, as did any typo. A strategy's name now resolves to its
+  class, and a scope that names no strategy is refused. `resume` still lifts any scope
+  already on record.
+- **Walk-forward efficiency is not a ratio of two losses.** A fold that lost in-sample
+  and lost more out-of-sample divided to a positive efficiency and cleared the gate; the
+  ratio is now taken only against a positive in-sample score.
+- A reused walk-forward's `holdout_record` serializes an unbounded ratio as the fresh
+  payload does (the string `"inf"`), instead of a bare float.
+
+### The state root is `~/.quantred`
+
+The last places the old name was the current one. The package, command and import were
+renamed in 2.4.0, and the state directory, its variable and the compose volumes were
+left as they were so recorded history carried over. They are renamed now, without
+leaving that history behind:
+
+- **`~/.quantred` and `QUANTRED_HOME`** are the state directory and the variable that
+  overrides it. An existing `~/.tradeflow` is still the state root while `~/.quantred`
+  does not exist, and `TRADEFLOW_HOME` is still read when `QUANTRED_HOME` is unset.
+  Either way every command says so in one line on standard error, with the command that
+  moves it, and `init --check` shows a row for it.
+- **Nothing is moved for you.** The directory holds the position ledger and any standing
+  halt, and a process still running an earlier version would carry on against a new,
+  empty root if it moved underneath it. `mv ~/.tradeflow ~/.quantred`, with nothing
+  running, is the whole migration.
+- **The compose project is `quantred`** and its volumes are `quantred-logs`,
+  `quantred-cache` and `quantred-configs`. A renamed volume is a new empty one, so a
+  machine that ran the old stack copies its volumes across once; the Docker page has the
+  command.
+- The MCP client configuration `mcp --self-test` prints carries `QUANTRED_HOME`.
+
+### Using it
+
+Found by installing the published package into a clean environment and following the
+docs as written.
+
+- **Credentials are read from one place**, the state root's `.env` (`~/.quantred/.env`,
+  or `$QUANTRED_HOME/.env`). The messages, `.env.example` and the docs no longer tell a
+  checkout user to create `.env` in the repository root, which nothing reads. The compose
+  file and `make docker-run` mount the host's state-root `.env` at `/state/.env`, where
+  the image reads it.
+- **The quickstart install is `quantred[mcp,store,viz]`.** The same pages promised a
+  cache warm and `--offline`, which need `store`. The setup's cache-warm step prints the
+  install command instead of `MissingExtra`, `mcp --offline --self-test` fails naming it
+  when `store` is missing, and a new `init --check --offline` checks the cache-only path.
+- **`verdict --json` with no value prints the result to stdout**, like every other
+  `--json`; `--json PATH` still writes a file.
+- **A `walkforward` whose window cannot hold one fold refuses before reading data** and
+  suggests a window that can. The 30-day default cannot, and used to end in a traceback.
+- `--start`, `--end`, `--capital`, `--commission-bps` and walkforward's search, fold and
+  holdout flags have help text stating their defaults; `--cache-dir` help names the real
+  default under the state root.
+- `execution-report` says when no ledger has been written instead of reporting zero
+  orders; `--json` gives `ledger_exists: false`.
+- A bare `quantred trials` or `quantred cache` prints its subcommands instead of an
+  error naming an internal field.
+- `make docker-run` takes `CMD="..."`, and is no longer described as paper trading (it
+  prints help).
+- The note about keeping `tradeflow-engine` installed appears only when that
+  distribution is present or the old command name was used.
+- Docs: the README demo transcript is regenerated and pinned by a test; `live --dry-run`
+  is described as needing the market-data keys; `init --example-pack` as checkout or
+  sdist only; verdict examples use enough names to fund a book; CONTRIBUTING matches CI.
+
+---
+
 ## 2.5.0 — 2026-11-08
 
 The engine's numbers changed, so this release is an **accounting bump**, plus an audit of

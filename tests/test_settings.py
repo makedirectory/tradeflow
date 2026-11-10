@@ -66,7 +66,7 @@ def test_dotenv_file_is_loaded(monkeypatch, tmp_path):
 def _missing_message(monkeypatch, tmp_path, *, checkout: bool):
     from quantred import settings
 
-    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
+    monkeypatch.setenv("QUANTRED_HOME", str(tmp_path))
     monkeypatch.setattr(settings, "_looks_like_checkout", lambda _p: checkout)
     monkeypatch.setattr(settings, "get_credential", lambda *a, **k: None)
     try:
@@ -92,6 +92,15 @@ def test_a_checkout_keeps_its_own_instructions(monkeypatch, tmp_path):
     message = _missing_message(monkeypatch, tmp_path, checkout=True)
     assert "make init" in message
     assert ".env.example" in message
+
+
+def test_a_checkout_is_told_the_env_goes_in_the_state_root(monkeypatch, tmp_path):
+    """A checkout reads credentials from the state root's .env only, but this message
+    said "copy .env.example to .env" - which a reader in the repository root does, and
+    the file it creates is never read, so the next command fails with the same error."""
+    message = _missing_message(monkeypatch, tmp_path, checkout=True)
+    assert str(tmp_path / ".env") in message
+    assert "to .env)" not in message
 
 
 def test_both_paths_name_the_keyless_demo_and_where_keys_come_from(monkeypatch, tmp_path):

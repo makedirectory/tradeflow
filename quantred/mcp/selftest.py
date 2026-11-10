@@ -93,7 +93,7 @@ def run_self_test(
     pipe and nothing else, so what the child printed is the useful part.
 
     ``env`` defaults to a copy of the caller's environment - the SDK would otherwise
-    hand the child a minimal one, losing ``TRADEFLOW_HOME`` and credentials.
+    hand the child a minimal one, losing ``QUANTRED_HOME`` and credentials.
     """
     if command:
         command = list(command)
@@ -101,8 +101,22 @@ def run_self_test(
         command = default_command(offline=offline, cache_dir=cache_dir)
     else:
         command = default_command()
-    child_env = dict(os.environ if env is None else env)
     started = time.monotonic()
+    if offline:
+        from quantred.utils.extras import installed, missing_extra_message
+
+        # Checked here because the launch cannot show it: the server builds its
+        # cache-only client on the first bar request, so discovery passes without the
+        # extra and the failure would surface only once a client is connected.
+        if not installed("store"):
+            return {
+                "ok": False,
+                "step": "store extra",
+                "error": missing_extra_message("An offline server (it reads only the bar cache)", "store"),
+                "command": command,
+                "elapsed": time.monotonic() - started,
+            }
+    child_env = dict(os.environ if env is None else env)
     report: Dict[str, Any] = {"step": "start"}
 
     async def go() -> Dict[str, Any]:

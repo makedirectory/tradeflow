@@ -33,10 +33,12 @@ Sharpe** that discounts your result by how many configs you tried.) Optimize and
 report on the *same* window and you've measured how well you fit that window's
 noise, not whether the strategy will work next month.
 
-`quantred demo` shows the trap in one screen: a moving-average crossover posts
-+16.8% in-sample, then collapses to a **−0.42 median Sharpe out-of-sample** and
-fails every promotion gate. Same strategy, same data — the only thing that
-changed is that it had to perform on bars it wasn't tuned on.
+`quantred demo` shows the trap in one screen, on a seeded random walk with no edge
+in it: the bundled trend strategy posts +18.6% in-sample, and walk-forward scores it
+at a **0.01 median Sharpe out-of-sample** on 26 trades, a walk-forward efficiency of
+0.00 and a deflated Sharpe of 0.004 — every promotion gate fails. Same
+strategy, same data; the only thing that changed is that it had to perform on bars it
+wasn't tuned on, and be judged against how hard it was searched for.
 
 Walk-forward closes the gap by splitting time into three roles:
 
@@ -75,11 +77,13 @@ replayed rather than re-scanned.
 
 | Flag | Meaning |
 |------|---------|
-| `--mode anchored\|rolling` | Expanding IS window (anchored) or fixed-width sliding IS (rolling). |
-| `--folds N` | Number of folds. Alternatively set `--train-days` / `--test-days`. |
-| `--embargo-days N` | IS→OOS gap. Defaults to the strategy's required lookback in calendar days. |
-| `--holdout-days N` | Final sacred window, scored once. |
-| `--method grid\|random\|bayesian` | Search method used per fold (`bayesian` needs the `optimize` extra). |
+| `--start` / `--end` | The window the folds (and any holdout) are cut from. **Default: the last 30 days**, which is too short to hold even one fold for a daily strategy: the run then stops before reading any data and suggests a window that does build folds. Pass a window of a year or more. |
+| `--mode anchored\|rolling` | Expanding IS window (anchored, the default) or fixed-width sliding IS (rolling). |
+| `--folds N` | Number of folds (default 4). Alternatively set both `--train-days` and `--test-days`, which fix each fold's length in calendar days; either alone has no effect. |
+| `--embargo-days N` | IS→OOS gap, and the warm-up fetched before each OOS window. Defaults to the calendar days that hold the strategy's required lookback in bars (weekends and a holiday pad included: a 31-bar daily lookback is 49 days). |
+| `--holdout-days N` | Final sacred window, scored once (default 0: no holdout). |
+| `--method grid\|random\|bayesian` | Search method used per fold (default `grid`; `bayesian` needs the `optimize` extra). |
+| `--seed N` | Seed for the in-sample search's sampling (default 42); the same value as `optimize --seed` reproduces it. |
 | `--objective` | Metric to optimize in-sample (default `sharpe_ratio`). |
 | `--pbo` | Also estimate the IS-best fold OOS rank-failure rate: a heuristic over folds, not a true probability of backtest overfitting (slower). |
 | `--monte-carlo` | Block-bootstrap the OOS daily P&L for a 5th-percentile annualized Sharpe. |
@@ -232,10 +236,10 @@ recorded keys win, unrecorded ones fall back to the strategy's own. So one file 
 versioned in a private repository beside the strategies it belongs to:
 
 ```bash
-quantred backtest --config ~/.tradeflow/configs/alpha.json --start 2024-01-02 --end 2024-06-01
-quantred verdict  --config ~/.tradeflow/configs/alpha.json --start 2024-01-02 --end 2024-06-01
-quantred alphas   --config ~/.tradeflow/configs/alpha.json
-quantred risk     --config ~/.tradeflow/configs/alpha.json
+quantred backtest --config ~/.quantred/configs/alpha.json --start 2024-01-02 --end 2024-06-01
+quantred verdict  --config ~/.quantred/configs/alpha.json --start 2024-01-02 --end 2024-06-01
+quantred alphas   --config ~/.quantred/configs/alpha.json
+quantred risk     --config ~/.quantred/configs/alpha.json
 ```
 
 `--config` is accepted by `backtest`, `walkforward`, `live`, `small-real`, `screen`,

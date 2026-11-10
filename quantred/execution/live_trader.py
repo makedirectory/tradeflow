@@ -33,6 +33,7 @@ from quantred.execution.sizing import (
     PositionSizer,
     RiskBasedSizer,
     below_min_notional,
+    cap_to_buying_power,
     deployable_pool,
     free_buying_power,
 )
@@ -44,6 +45,15 @@ logger = logging.getLogger(__name__)
 
 # Signal -> order side for new entries.
 _ENTRY_SIDE = {signals.BUY: OrderSide.BUY, signals.SELL: OrderSide.SELL}
+
+#: Refusals the backtest makes too, for the same reason: the book as configured has no
+#: room for this entry. The backtest declines such an entry once and never returns to
+#: it, so live marks its edge spent rather than retrying it on every later bar. A halt,
+#: a closed market, an unreadable account or a broker error are not here: the backtest
+#: has no such refusal, so those entries stay open to being re-stated.
+_BOOK_REFUSALS = frozenset(
+    {decisions.BOOK_FULL, decisions.RISK_BUDGET, decisions.GROSS_EXPOSURE, decisions.NET_EXPOSURE}
+)
 
 # Cache the market clock briefly so we don't query it on every streamed bar.
 _MARKET_STATUS_TTL = 30.0
@@ -325,12 +335,18 @@ class LiveTrader:
         # larger than it is.
         sizing_account = self._deployable(account)
         guards.append(decisions.SIZING)
+        # Held to the free pool, as the backtest's is: the affordability check below
+        # reads the venue's buying power, which on a paper or margin account is far
+        # more than the capital, so it cannot be what keeps a position inside the pool.
         qty = round_quantity(
-            self._sizer.size(symbol, price, sizing_account),
+            cap_to_buying_power(
+                self._sizer.size(symbol, price, sizing_account), price, sizing_account.buying_power
+            ),
             allow_fractional=self._allow_fractional,
         )
         if qty <= 0:
             logger.warning("Computed position size <= 0 for %s; skipping", symbol)
+            self._strategy.mark_entry_spent(symbol, signal)
             return decisions.decline(
                 symbol,
                 signal,
@@ -346,6 +362,7 @@ class LiveTrader:
         min_notional = (self._strategy.position_limits() or {}).get("min_notional")
         notional = qty * price
         if below_min_notional(qty, price, min_notional):
+            self._strategy.mark_entry_spent(symbol, signal)
             logger.warning(
                 "Refusing %s entry for %s: $%.2f is below the $%.2f minimum notional",
                 signal,
@@ -382,6 +399,8 @@ class LiveTrader:
         if breach is not None:
             code, detail = breach
             logger.warning("Refusing %s entry for %s: %s", signal, symbol, detail)
+            if code in _BOOK_REFUSALS:
+                self._strategy.mark_entry_spent(symbol, signal)
             return decisions.decline(symbol, signal, detail, tuple(guards), code=code)
 
         side = _ENTRY_SIDE[signal]
@@ -415,6 +434,7 @@ class LiveTrader:
             # Not a failure: the venue already holds this exact order. Resubmitting is
             # the one thing that must not happen, and the book should still reflect it.
             logger.info("Entry for %s already placed (order id %s); leaving it alone", symbol, order_id)
+            self._strategy.mark_entry_spent(symbol, signal)
             return decisions.decline(symbol, signal, "already placed at the broker", tuple(guards), plan)
         except BrokerError as exc:
             logger.error("Entry for %s refused: %s (%s)", symbol, exc, type(exc).__name__)
@@ -427,6 +447,7 @@ class LiveTrader:
         # emit an exit for it; the next `sync_strategy_book` replaces this with
         # whatever the broker actually holds.
         self._closing.pop(symbol, None)  # a stale close that never filled prices nothing now
+        self._strategy.mark_entry_spent(symbol, signal)
         self._strategy.positions[symbol] = {
             "side": signal,
             "qty": qty,

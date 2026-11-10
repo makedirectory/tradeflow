@@ -80,7 +80,7 @@ Either way you'll need free Alpaca **paper-trading** API keys from the
 No clone needed — install the command and run the offline demo:
 
 ```bash
-uv tool install 'quantred[mcp,viz]'   # or: python -m pip install 'quantred[mcp,viz]'
+uv tool install 'quantred[mcp,store,viz]'   # or: python -m pip install 'quantred[mcp,store,viz]'
 quantred demo                          # full pipeline on synthetic data, no keys
 quantred init                          # your free Alpaca paper keys, and optionally a model
                                         # provider for `research` (skipping it is fine)
@@ -111,8 +111,8 @@ changed from `tradeflow` to `quantred` before you drop it. The steps are in
 [migrating to QuantRed](https://quantred.mk-dir.com/usage/migrating-to-quantred).
 
 State (the research journal, trial store, bar cache, promoted configs) lives in
-`~/.tradeflow` — for an installed copy and for a checkout alike. `quantred --version`
-prints which copy is running and where its state is; override with `TRADEFLOW_HOME`.
+`~/.quantred` — for an installed copy and for a checkout alike. `quantred --version`
+prints which copy is running and where its state is; override with `QUANTRED_HOME`.
 
 ## Quickstart (from a checkout)
 
@@ -125,7 +125,7 @@ make install                          # uv sync --inexact
 make demo                             # full pipeline on synthetic data + verdict
 
 # 4. Point it at real data: guided setup for your free Alpaca paper keys
-make init                             # writes .env, checks the keys, says what's next
+make init                             # writes ~/.quantred/.env, checks the keys, says what's next
                                       # (make check re-runs the diagnostics any time)
 
 # 5. Try it (preconfigured combos)
@@ -173,7 +173,7 @@ network — and ends in a promotion verdict. The point isn't a winning strategy;
 it's that the **refusal to promote a noise strategy is the product**:
 
 ```text
-$ make demo
+$ quantred demo
 
 ======================================================================
   QuantRed demo — synthetic data, no API keys, no network
@@ -185,35 +185,36 @@ $ make demo
 
    STRATEGY        RETURN   SHARPE  TRADES
    ---------------------------------------
-   demo_trend      14.74%     0.48      45
+   demo_trend      18.55%     0.54      46
 
 2) Walk-forward validation of 'demo_trend' (the honest scorecard)
    Optimize in-sample, score out-of-sample across folds, then gate it.
 
-   OOS Sharpe (median): -0.27   efficiency (OOS/IS): -0.19   OOS trades: 25
+   OOS Sharpe (median): 0.01   efficiency (OOS/IS): 0.00   OOS trades: 26
 
    Promotion gates:
-     [FAIL] oos_sharpe:                  -0.27  (threshold 1.20)
-     [FAIL] oos_profit_factor:            0.74  (threshold 1.30)
-     [FAIL] walk_forward_efficiency:     -0.19  (threshold 0.40)
-     [PASS] oos_drawdown_vs_is:         10.59%  (threshold 15.41%)
-     [FAIL] min_oos_trades:                 25  (threshold 100)
-     [FAIL] deflated_sharpe:            <0.001  (threshold 0.500)
+     [FAIL] oos_sharpe:                   0.01  (threshold 1.20)
+     [FAIL] oos_profit_factor:            0.95  (threshold 1.30)
+     [FAIL] walk_forward_efficiency:      0.00  (threshold 0.40)
+     [FAIL] oos_drawdown_vs_is:         13.19%  (threshold 7.95%)
+     [FAIL] min_oos_trades:                 26  (threshold 100)
+     [FAIL] deflated_sharpe:             0.004  (threshold 0.500)
 
    Verdict: NOT promotable
 
    No edge in a random walk → the gates refuse to promote it. That refusal
    is the product. Point QuantRed at real data:
-     quantred init       add your free Alpaca paper keys
-     quantred verdict    then run the whole pipeline on real market data
+     quantred init        add your free Alpaca paper keys
+     quantred verdict     then run the whole pipeline on real market data
 ```
 
 That is one strategy because a bare install ships one. Anything you install
 alongside it appears in the same table, scored the same way.
 
-Notice the arc: `demo_trend` looks tradeable in-sample (+14.7%, Sharpe 0.48), but
-once it's optimized in-sample and scored **out-of-sample** the edge evaporates
-(median OOS Sharpe −0.26) and all but one promotion gate fails. That's
+Notice the arc: `demo_trend` looks tradeable in-sample (+18.6%, Sharpe 0.54), but
+once it's optimized in-sample and scored **out-of-sample** the edge evaporates: a median
+OOS Sharpe of 0.01 on 26 trades, a walk-forward efficiency of 0.00, a deflated Sharpe of
+0.004 once the search is accounted for, and every promotion gate fails. That's
 [walk-forward validation](https://quantred.mk-dir.com/engineering/walk-forward)
 doing its job.
 
@@ -285,7 +286,7 @@ promoted automatically — is what stays constant.
 | `verdict` | The whole cross-sectional pipeline in one command — scan → alphas → portfolio → information over one universe, one window, one cost model — ending in one gate-derived verdict (read-only) |
 | `backtest` | Scan → run a strategy over history → performance report |
 | `live` | Scan → warm up indicators → stream bars → place paper/live orders. Bar-quality guards (staleness, spikes, inconsistent OHLC, out-of-order) veto bad bars — rejecting, never repairing — and a position ledger records intent vs. observed fills |
-| `live --dry-run` | What this contract **would** try to do right now: the orders it would send, the caps that would bind, the signals it would skip. The broker has no order methods that work, so trading is a capability it does not have rather than a rule it was told. No credentials, no fills, nothing journaled |
+| `live --dry-run` | What this contract **would** try to do right now: the orders it would send, the caps that would bind, the signals it would skip. The broker has no order methods that work, so trading is a capability it does not have rather than a rule it was told. No trading client, no fills, nothing journaled; it reads current market data, so it needs the Alpaca key pair (`APCA_API_KEY_ID` / `APCA_API_SECRET_KEY`) and has no `--offline` mode |
 | `small-real` | **Places real orders.** Trades a validated config at reduced capital to measure fills, slippage and fees — the caps scaled with the book rather than shrunk by hand, since a ceiling small enough to force fills biases the sample toward low-priced names. Mandatory preflight, paper by default, telemetry to its own ledger, and no trial journaled |
 | `reconcile` | Check the position ledger against the broker's actual account state. Reports divergence; never corrects it (read-only) |
 | `halt` / `resume` / `halts` | Stop opening new positions, and say so durably — a running engine sees it on the next bar. Blocks entries, never exits, so it can't trap the book |
@@ -320,8 +321,10 @@ clock's `BUY/SELL/HOLD` and the
 [continuous alpha](https://quantred.mk-dir.com/engineering/alphas) are both
 derived from it — one source of truth.
 
-`example` is a complete working pack to copy — `quantred init
---example-pack ./my-signals` writes it out. See
+`example` is a complete working pack to copy. From a checkout (or an unpacked source
+distribution), `quantred init --example-pack ./my-signals` writes it out; an installed
+copy does not carry the pack, so there that command refuses and prints the
+clone-and-copy line to use instead. See
 [Your own strategies](https://quantred.mk-dir.com/usage/private-strategies)
 and [Extending](https://quantred.mk-dir.com/engineering/extending).
 
@@ -335,7 +338,15 @@ construction:
 from quantred.services.analysis import run_verdict
 from quantred.services.data import build_data_client
 
-result = run_verdict(build_data_client(), "demo_trend", ["NVDA", "AAPL"], start, end)
+# Six names and no scanner: a long-only book capped at 25% per name needs at least four.
+result = run_verdict(
+    build_data_client(),
+    "demo_trend",
+    ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META"],
+    start,
+    end,
+    scanner="none",
+)
 print(result["verdict"]["summary"])
 ```
 
@@ -421,9 +432,9 @@ absolute `main.py`:
     "args": ["/path/to/quantred/main.py", "mcp"] } } }
 ```
 
-An installed copy and a checkout share one state root, `~/.tradeflow`, unless
-`TRADEFLOW_HOME` is set, so an agent and you see the same campaign history. If you set
-`TRADEFLOW_HOME`, the config block printed by `init` carries it too; a desktop client does
+An installed copy and a checkout share one state root, `~/.quantred`, unless
+`QUANTRED_HOME` is set, so an agent and you see the same campaign history. If you set
+`QUANTRED_HOME`, the config block printed by `init` carries it too; a desktop client does
 not inherit your shell's exports.
 
 ## Research agent (optional)
@@ -442,7 +453,7 @@ The proposer is **provider-agnostic** — choose with `--provider`:
 | `ollama` (local) | none | `llama3.1` | none |
 
 `quantred init --check --for research --provider anthropic` prints the exact command that
-adds the extra to your copy. Set the credential in `.env` (alongside your Alpaca keys; `quantred init`
+adds the extra to your copy. Set the credential in `~/.quantred/.env` (alongside your Alpaca keys; `quantred init`
 writes it) or as the standard environment variable. Ollama runs locally and needs no key.
 
 ```bash
@@ -512,8 +523,12 @@ make docs        # serve the Docusaurus site at http://localhost:3000
 
 ```bash
 make docker-build
-make docker-run            # paper live-trading; mounts your .env
+make docker-run                        # prints the CLI help; starts nothing
+make docker-run CMD="quantred demo"    # any command; mounts ~/.quantred/.env read-only
 ```
+
+The image starts nothing on its own: turning the container on must not turn trading on.
+`docker compose` adds persistent state volumes; see the [Docker guide](https://quantred.mk-dir.com/usage/docker).
 
 ## Tests
 

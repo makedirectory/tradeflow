@@ -33,7 +33,7 @@ the summary metrics distinguishes it from one whose edge is spread across exits.
 ## Take-profit fill stress
 
 ```bash
-quantred backtest --config ~/.tradeflow/configs/breakout.json --start ... --end ... --fill-stress
+quantred backtest --config ~/.quantred/configs/breakout.json --start ... --end ... --fill-stress
 ```
 
 The engine closes a position at its target the moment a bar's high reaches it — a
@@ -120,7 +120,7 @@ session left no other trace, and "why did nothing happen" is answerable only her
 ## Cost stress
 
 ```bash
-quantred backtest --config ~/.tradeflow/configs/breakout.json --start ... --end ... --cost-stress
+quantred backtest --config ~/.quantred/configs/breakout.json --start ... --end ... --cost-stress
 ```
 
 Re-runs under progressively worse cost assumptions. An edge that clears at 1bp and
@@ -130,7 +130,7 @@ assumed cost, and a single cost assumption reports both as a pass.
 ## Portfolio excursion
 
 ```bash
-quantred backtest --config ~/.tradeflow/configs/breakout.json --start ... --end ... --excursion
+quantred backtest --config ~/.quantred/configs/breakout.json --start ... --end ... --excursion
 ```
 
 The equity curve is marked at each bar's **close**. Everything inside the bar — the
@@ -180,7 +180,7 @@ this exists to separate out. Nothing is gated on any of it, and the figures are 
 ## Causality probes
 
 ```bash
-quantred backtest --config ~/.tradeflow/configs/breakout.json --start ... --end ... --causality
+quantred backtest --config ~/.quantred/configs/breakout.json --start ... --end ... --causality
 ```
 
 Asks one question about the *mechanism* rather than about the strategy: **could each

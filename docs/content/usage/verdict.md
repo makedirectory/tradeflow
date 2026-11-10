@@ -148,7 +148,7 @@ not a validated universe.
 | `--neutralize-factors` | — | Regress the listed risk-model exposures out of the alphas |
 | `--gross` / `--commission-bps` / `--impact-eta` / `--borrow-bps` | net, `1.0` / `0.3` / `50.0` | The one cost model every step prices with |
 | `--cache` / `--offline` / `--cache-dir` | off | Serve bars from the local [bar cache](configuration) |
-| `--json PATH` | — | Also write the structured result object the report renders |
+| `--json [PATH]` | — | Bare: print the structured result object the report renders, as JSON, instead of the report (as every other `--json` does). With `PATH`: print the report and also write the object to that file |
 | `--html PATH` | — | Also write a [self-contained HTML report](html-reports) of the run |
 | `--force` / `--rerun` | off | Re-run instead of serving an identical prior run |
 | `--no-journal` | off | Do not record this run as a trial |

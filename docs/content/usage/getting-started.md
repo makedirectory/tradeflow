@@ -24,12 +24,13 @@ You need a terminal. Steps 1–2 need nothing else — no keys, no account, no n
 ## 1. Install it
 
 ```bash
-uv tool install 'quantred[mcp,viz]'
+uv tool install 'quantred[mcp,store,viz]'
 ```
 
 No `uv`? [Install it first](https://docs.astral.sh/uv/getting-started/installation/),
-or use `python -m pip install 'quantred[mcp,viz]'` in a virtual environment. The two extras
-are the MCP server (step 5) and charts in HTML reports (step 4); the demo needs neither, and
+or use `python -m pip install 'quantred[mcp,store,viz]'` in a virtual environment. The three extras
+are the MCP server (step 5), the local bar cache that `cache warm` and `--offline` use, and
+charts in HTML reports (step 4); the demo needs none of them, and
 [optional extras](extras) has the rest. This gives you a `quantred` command.
 
 ```bash
@@ -38,7 +39,7 @@ quantred --version
 
 That prints the version, which copy is running, and — worth noting now — **where its
 state lives**. An installed copy keeps its research journal, trial history, and cache
-in `~/.tradeflow`.
+in `~/.quantred`.
 
 ## 2. See it work, with no keys at all
 
@@ -75,7 +76,7 @@ quantred init
 
 The wizard prompts for both (hidden — nothing lands in your shell history), checks
 them against Alpaca with one cheap request, confirms paper trading is on, and offers
-to warm a small local data cache. It writes `~/.tradeflow/.env`.
+to warm a small local data cache. It writes `~/.quantred/.env`.
 
 It then asks whether to set up a model provider for `research` (Anthropic, OpenAI or a
 local Ollama). Skipping is fine: the demo, backtest, verdict and MCP server need no
@@ -153,7 +154,7 @@ quantred mcp --self-test
 ```
 
 It prints the exact block below with the **absolute** command for your copy (and the
-`TRADEFLOW_HOME` it needs, when you set one). Use that block rather than typing the bare
+`QUANTRED_HOME` it needs, when you set one). Use that block rather than typing the bare
 command: a desktop client often has a smaller `PATH` than your terminal.
 
 **Claude Code:**

@@ -52,11 +52,48 @@ distribution removed first for correctness.
 | Plugin entry-point groups | `tradeflow.strategies`, `tradeflow.scanners` | `quantred.strategies`, `quantred.scanners` (the old groups are still read) |
 | Provenance code identity (installed copy) | `tradeflow <version>` | `quantred <version>` |
 | MCP server name (what a client sees) | `tradeflow` | `quantred` |
+| State directory | `~/.tradeflow` | `~/.quantred` (an existing `~/.tradeflow` is still used until you move it) |
+| State-root variable | `TRADEFLOW_HOME` | `QUANTRED_HOME` (`TRADEFLOW_HOME` is still read) |
+| Compose project and volumes | `tradeflow`, `tradeflow-logs` and so on | `quantred`, `quantred-logs` and so on (copied once, by hand) |
+
+## Move your state
+
+The state directory is now `~/.quantred` and the variable that overrides it is
+`QUANTRED_HOME`. Nothing is moved for you, and nothing stops being read:
+
+- If `~/.quantred` does not exist and `~/.tradeflow` does, `~/.tradeflow` is still the
+  state root. Every command says so in one line on standard error, and `init --check`
+  shows it as a row.
+- `TRADEFLOW_HOME` is still honoured when `QUANTRED_HOME` is not set, with the same
+  note. If both are set, `QUANTRED_HOME` wins.
+
+To move, with no QuantRed process running (a live session, an MCP server, a scheduled
+job):
+
+```bash
+mv ~/.tradeflow ~/.quantred
+```
+
+and rename the variable wherever you export it, including any MCP client configuration
+that carries it (`quantred mcp --self-test` prints a current one).
+
+It is left to you because the directory holds the position ledger and any standing
+halt. A process still running an earlier version reads only the old name; were the
+directory moved underneath it, it would carry on against a new, empty one, with no
+halts in force.
+
+If both directories exist, `~/.quantred` is used and `~/.tradeflow` is ignored, and the
+note says that instead: the trials, ledger and halts in the old directory are missing
+from every answer until you merge it in or remove it.
+
+The compose volumes are renamed too, and are copied once by hand: see
+[Docker](docker.md).
 
 ## What did not change
 
-- **Your state.** `~/.tradeflow`, `TRADEFLOW_HOME`, the journal, trial store, bar cache,
-  saved configs and your `.env` are untouched, so recorded history carries over.
+- **Your recorded state.** The journal, trial store, bar cache, saved configs and your
+  `.env` are untouched and keep being read, so recorded history carries over. Only the
+  names they are found under are new: see [Move your state](#move-your-state).
 - **Old entry-point groups still register.** A pack declared against
   `tradeflow.strategies` or `tradeflow.scanners` keeps registering. Its imports are a
   separate matter: see [Update a private pack](#update-a-private-pack).

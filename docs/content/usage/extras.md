@@ -16,7 +16,7 @@ bracketed option on the distribution, as in `quantred[mcp]`.
 
 | Extra | Provides | Unlocks | Needed for |
 |-------|----------|---------|------------|
-| `store` | `pyarrow`, `polars`, `duckdb` | the bar cache (`--cache`/`--offline`, `cache warm`) and the Parquet bar store | required for any cached or offline run; without it those commands say so and print the install command. Plain online runs need nothing |
+| `store` | `pyarrow`, `polars`, `duckdb` | the bar cache (`--cache`/`--offline`, `cache warm`) and the Parquet bar store | required for any cached or offline run, including `mcp --offline`; without it those commands say so and print the install command (`init --check --offline` and `mcp --offline --self-test` check it). Plain online runs need nothing |
 | `viz` | `matplotlib` | charts in `--chart` and HTML reports (reports fall back to tables) | nothing required |
 | `mcp` | `mcp` | the MCP server for AI clients | `quantred mcp` and the MCP task in `init --check --for mcp` |
 | `optimize` | `scikit-learn` | `optimize --method bayesian` | the Bayesian method only |

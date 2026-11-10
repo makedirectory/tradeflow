@@ -135,9 +135,9 @@ quantred trials promote 50fd06209f49 --save-config alpha.json
 ```
 
 ```
-Promoted trial 50fd06209f49 -> ~/.tradeflow/configs/alpha.json
+Promoted trial 50fd06209f49 -> ~/.quantred/configs/alpha.json
   recipe   : embargo_days=5, holdout_days=0, max_evals=50, method=grid, mode=anchored, objective=sharpe_ratio, seed=42, test_days=63, train_days=252
-  evidence : accounting v7, 1 trial id(s), family has tried 50
+  evidence : accounting v8, 1 trial id(s), family has tried 50
   strategy 'demo_trend'  universe 61 symbols resolved from 85 candidates
   Saving a config never trades it - a human promotes it to live.
 ```
@@ -266,7 +266,7 @@ showing a default.
     scan_as_of      2024-06-29T00:00:00-04:00
     cache           cache=False, offline=False, workers=1
 
-  EVIDENCE — what was measured, under accounting v7. Valid only there.
+  EVIDENCE — what was measured, under accounting v8. Valid only there.
     deflated_sharpe_ratio 0.903
     max_drawdown    4.10%
     profit_factor   1.31
@@ -372,7 +372,7 @@ one recorded run — the questions that otherwise mean opening SQLite.
 
 ```
 === Trades of a1b2c3d4e5f6 (backtest) ===
-  strategy demo_trend | accounting v7 | recorded 2026-03-01T09:14:22
+  strategy demo_trend | accounting v8 | recorded 2026-03-01T09:14:22
   table    : 40 trades
 
   Overall:
@@ -563,8 +563,8 @@ bump changes what the engine computes, so every stored metric was measured with 
 different instrument; that is not a subset and no annotation fixes it.
 
 ```bash
-quantred trials archive --reason "accounting v7 invalidated v6 walk-forwards" --label pre-v7 --dry-run
-quantred trials archive --reason "accounting v7 invalidated v6 walk-forwards" --label pre-v7
+quantred trials archive --reason "accounting v8 invalidated v7 walk-forwards" --label pre-v8 --dry-run
+quantred trials archive --reason "accounting v8 invalidated v7 walk-forwards" --label pre-v8
 quantred trials archives     # what has been retired, and why
 ```
 
@@ -608,7 +608,7 @@ One case it will not repair, on purpose:
 ```
 $ quantred trials rebuild
 418 recorded trial(s) are indexed here but the journal they came from
-(~/.tradeflow/logs/research_journal.jsonl) cannot be read. Rebuilding would replace
+(~/.quantred/logs/research_journal.jsonl) cannot be read. Rebuilding would replace
 them with an empty index and the journal is the only other copy. Restore the journal,
 or point --journal at the one this store indexes.
 ```

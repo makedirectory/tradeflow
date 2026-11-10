@@ -572,7 +572,7 @@ def test_the_small_real_ledger_is_a_different_file_from_the_live_one(tmp_path, m
     run exists is that its execution is different."""
     from quantred.execution.ledger import default_ledger_path, small_real_ledger_path
 
-    monkeypatch.setenv("TRADEFLOW_HOME", str(tmp_path))
+    monkeypatch.setenv("QUANTRED_HOME", str(tmp_path))
 
     assert small_real_ledger_path() != default_ledger_path()
     # And neither is the research journal: a run that measures its own execution has

@@ -4,8 +4,8 @@ and with a clear error when something's missing.
 Every setting is resolved in the same predictable order:
 
 1. **Process environment variables** - the standard, 12-factor way.
-2. **A ``.env`` file** in the project root, loaded into the environment on first
-   use. No dependency: a tiny built-in parser handles ``KEY=value`` lines, and
+2. **A ``.env`` file** in the state root (``~/.quantred/.env``, or
+   ``$QUANTRED_HOME/.env``), loaded into the environment on first use. No dependency: a tiny built-in parser handles ``KEY=value`` lines, and
    real environment variables already set always win (standard dotenv behavior).
 
 Alpaca credentials are required for any command that touches the market
@@ -219,14 +219,34 @@ def running_from_checkout() -> bool:
     return _looks_like_checkout(PROJECT_ROOT)
 
 
+#: The variable that names the state root and the default directory under the home
+#: directory, with the names each had before the project was renamed. One definition:
+#: every message that names either reads these.
+STATE_HOME_ENV = "QUANTRED_HOME"
+LEGACY_STATE_HOME_ENV = "TRADEFLOW_HOME"
+STATE_DIR_NAME = ".quantred"
+LEGACY_STATE_DIR_NAME = ".tradeflow"
+
+
 def state_root() -> Path:
     """Where the journal, trial store, bar cache, and configs live.
 
     Resolved most explicit first:
 
-    1. ``TRADEFLOW_HOME``, when set - the escape hatch, what a container mounts, and
+    1. ``QUANTRED_HOME``, when set - the escape hatch, what a container mounts, and
        how a contributor opts back in to checkout-local state.
-    2. ``~/.tradeflow`` otherwise. Always, including inside a checkout.
+    2. ``TRADEFLOW_HOME``, the variable's name before the project was renamed, when
+       that is set and the new one is not.
+    3. ``~/.quantred`` - unless it does not exist and ``~/.tradeflow`` does, in which
+       case the old directory is still the state root. Always, including inside a
+       checkout.
+
+    **The old names are read, never migrated.** State recorded before the rename is a
+    journal, a position ledger and possibly a standing halt, and a root that moved by
+    itself would leave any process still running the earlier version writing to a fresh,
+    empty one beside it - with no halts. So an existing root keeps being used under its
+    old name, :func:`legacy_state_note` says so on every run, and moving it is one
+    command the owner runs when nothing else is using it.
 
     **The default does not depend on how you got here, and it never writes into a
     working copy.** It used to: a checkout was its own state root, so a contributor's
@@ -249,10 +269,43 @@ def state_root() -> Path:
     a question a user has to reverse-engineer - and after this change it is a question
     every existing contributor will have.
     """
-    override = os.environ.get("TRADEFLOW_HOME")
+    override = os.environ.get(STATE_HOME_ENV) or os.environ.get(LEGACY_STATE_HOME_ENV)
     if override:
         return Path(override).expanduser()
-    return Path.home() / ".tradeflow"
+    current, legacy = Path.home() / STATE_DIR_NAME, Path.home() / LEGACY_STATE_DIR_NAME
+    if not current.exists() and legacy.is_dir():
+        return legacy
+    return current
+
+
+def legacy_state_note() -> Optional[str]:
+    """What to tell someone whose state is still found under a pre-rename name.
+
+    ``None`` when nothing old is in play. Three cases, each with the one command that
+    ends it: the old variable is what named the root; the old default directory is the
+    root because the new one does not exist; or both directories exist, so the old one
+    is no longer read and whatever it holds is missing from every answer.
+    """
+    if os.environ.get(STATE_HOME_ENV):
+        return None
+    if os.environ.get(LEGACY_STATE_HOME_ENV):
+        return (
+            f"The state root comes from {LEGACY_STATE_HOME_ENV}, the variable's old name. "
+            f"It still works; rename it to {STATE_HOME_ENV} when convenient."
+        )
+    current, legacy = Path.home() / STATE_DIR_NAME, Path.home() / LEGACY_STATE_DIR_NAME
+    if not legacy.is_dir():
+        return None
+    if not current.exists():
+        return (
+            f"State is still read from ~/{LEGACY_STATE_DIR_NAME}, the directory's old name. "
+            f"To move it, with nothing else running:  mv ~/{LEGACY_STATE_DIR_NAME} ~/{STATE_DIR_NAME}"
+        )
+    return (
+        f"~/{LEGACY_STATE_DIR_NAME} still exists and is NOT being read: the state root is "
+        f"~/{STATE_DIR_NAME}. Trials, the position ledger and any halt recorded in the old "
+        f"directory are missing from every answer until you merge it in or remove it."
+    )
 
 
 def git_worktree_containing(path: Path) -> Optional[Path]:
@@ -321,9 +374,9 @@ def state_path(*parts: str) -> Path:
     return path
 
 
-#: Where credentials are read from. In a checkout this is the repo's own ``.env``,
-#: exactly as before; an installed copy reads ``~/.tradeflow/.env``, since there is
-#: no repo to put one in.
+#: Where credentials are read from: the state root's ``.env``, the same file for a
+#: checkout, an installed copy and the container. A ``.env`` in a checkout's own root
+#: is never read - one location, so a key is never in the file nobody consults.
 ENV_PATH = state_root() / ".env"
 
 #: Values that mean "not actually filled in" (the ``.env.example`` placeholders).
@@ -526,16 +579,18 @@ def _missing_credentials_message(missing: list) -> str:
     if started_from_checkout_shim():
         lines += [
             "",
-            "  make init                 guided setup (or copy .env.example to .env)",
+            f"  make init                 guided setup — writes {setup_path}",
+            "                            (or copy .env.example there and fill it in)",
             "  make demo                 no keys needed — the full pipeline on synthetic data",
         ]
     elif in_container():
-        # The compose file mounts the host's .env read-only at the state root, so `init`
-        # inside the container could not write it; the keys go in on the host.
+        # The compose file mounts the host's state-root .env read-only at the container's
+        # state root, so `init` inside the container could not write it; the keys go in
+        # on the host.
         lines += [
             "",
-            f"  Put them in the .env beside docker-compose.yml on the host; compose mounts it "
-            f"read-only at {setup_path}.",
+            "  Put them in the host's ~/.quantred/.env (or $QUANTRED_HOME/.env); compose "
+            f"mounts it read-only at {setup_path}.",
             f"  {invocation('demo'):<25} no keys needed — the full pipeline on synthetic data",
         ]
     else:

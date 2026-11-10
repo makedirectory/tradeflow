@@ -63,6 +63,10 @@ converges on the intended book instead of depending on having caught one bar.
 Entries are gated by `reaffirm_entries` (default on — a trend-follower started
 mid-trend should hold the trend). Exits never are: declining to open a position is a
 preference, declining to close one the strategy no longer wants is a stuck position.
+An entry edge that was already acted on is not re-stated: once the book has held a
+side, or the trader has submitted or book-refused its entry (`mark_entry_spent`), that
+side stays spent until the score stops implying it. Without this, live re-entered one
+bar after every stop or target while the score held, which the backtest never does.
 See [live trading](../usage/live-trading.md) for the operational side.
 
 ## The signal vocabulary

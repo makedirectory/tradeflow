@@ -37,7 +37,7 @@ git clone https://github.com/makedirectory/quantred && cp -R quantred/example ./
 
 Install the copy for how you installed QuantRed. For a `uv tool` install, the tool
 environment is rebuilt, so restate your extras:
-`uv tool install --force 'quantred[mcp,viz]' --with-editable ./my-signals`. In an
+`uv tool install --force 'quantred[mcp,store,viz]' --with-editable ./my-signals`. In an
 activated virtual environment: `python -m pip install -e ./my-signals`. From a checkout
 of the repository: `uv pip install -e ./my-signals`. If a pack of yours still depends on
 the old `tradeflow-engine`, change that dependency to `quantred`. If you cannot edit it,
@@ -148,7 +148,7 @@ result, and what the book was actually exposed to.
 **4. Paper, then a long look.**
 
 ```bash
-quantred live --config ~/.tradeflow/configs/breakout.json --capital 8000 --feed iex --preflight
+quantred live --config ~/.quantred/configs/breakout.json --capital 8000 --feed iex --preflight
 ```
 
 `--preflight` prints the contract and exits without starting the order path. Read
@@ -158,7 +158,7 @@ quantred live --config ~/.tradeflow/configs/breakout.json --capital 8000 --feed 
 
 Everything a run records — the research journal, the trial store, saved configs, the
 position ledger — lives under one state root, and **it is never inside this
-repository**. The default is `~/.tradeflow`; `TRADEFLOW_HOME` moves it.
+repository**. The default is `~/.quantred`; `QUANTRED_HOME` moves it.
 
 That matters most when the strategy is private. Evidence in a working tree is one
 ignore-file edit from disclosure, and `git clean -xd` deletes it outright — live
@@ -175,7 +175,8 @@ against half the evidence, with nothing erroring.
 is just a normalized EMA gap. Read it for the shape of the interface, not for the idea.
 
 For anything past that shape, read `example` instead — it is a real
-installable pack, and `quantred init --example-pack ./my-signals` writes you a copy.
+installable pack, and from a checkout `quantred init --example-pack ./my-signals` writes
+you a copy (an installed copy clones it instead, as above).
 Its `example_reversion` is long/short, which is what the leg diagnostics and the
 directional cap exist for, and none of that is exercisable by a long-only book.
 

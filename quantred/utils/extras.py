@@ -251,6 +251,28 @@ _OLD_ENGINE_NOTE = (
 )
 
 
+def _old_distribution_evidence() -> bool:
+    """Whether this reader plausibly has the previous distribution.
+
+    Either its metadata is installed here, or the process was started under the old
+    command name (an install upgraded in place exposes only that). Without either, the
+    note about keeping it installed is advice about a package the reader never had.
+    """
+    from importlib import metadata
+
+    from quantred.settings import LEGACY_DISTRIBUTION_NAMES, invoked_legacy_name
+
+    if invoked_legacy_name():
+        return True
+    for name in LEGACY_DISTRIBUTION_NAMES:
+        try:
+            metadata.distribution(name)
+        except metadata.PackageNotFoundError:
+            continue
+        return True
+    return False
+
+
 def pack_install_hint(path: str) -> str:
     """How to install a pack from a directory, without removing anything already there.
 
@@ -258,7 +280,8 @@ def pack_install_hint(path: str) -> str:
     to rebuild the tool environment, so the command carries everything it already had
     (including any exclusion the reader chose, created first so the line runs anywhere).
     Elsewhere it is pip. Each is followed by what to do about a pack that still depends
-    on the old distribution name.
+    on the old distribution name - only when the reader has that distribution, since a
+    new reader scaffolding the example pack has nothing to keep.
     """
     from quantred.settings import running_from_checkout
 
@@ -270,6 +293,8 @@ def pack_install_hint(path: str) -> str:
         if receipt is not None:
             return f"{command}\n{note}" if note else command
         command = f"python -m pip install -e {quoted}"
+    if not _old_distribution_evidence():
+        return command
     return f"{command}\n({_OLD_ENGINE_NOTE.format(skip='--no-deps')})"
 
 

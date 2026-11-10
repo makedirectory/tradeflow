@@ -1,6 +1,6 @@
 {
  "provenance": {
-  "accounting_version": 7,
+  "accounting_version": 8,
   "generated_by": "QUANTRED_REGEN_GOLDEN=1 pytest tests/math -k golden (tests/math/test_golden_pins.py)",
   "scenario": "one slot; an intrabar stop and a gapped stop each followed by a candidate signalled for the same open",
   "seed": "hand-built bars, no randomness"
@@ -22,6 +22,7 @@
   "execution.gross_profit": -300.0,
   "execution.max_positions": 1,
   "execution.positions_below_min_notional": 0,
+  "execution.positions_capped_to_pool": 0,
   "execution.positions_filled": 3,
   "execution.positions_rounded_to_zero": 0,
   "execution.requested_notional": 3000.0,

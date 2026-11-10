@@ -1,7 +1,8 @@
 [project]
 # The distribution name, and the import package's. The project was previously published
 # as `tradeflow-engine` with the import package `tradeflow`; the state root
-# (`~/.tradeflow`, `TRADEFLOW_HOME`) keeps that name so recorded history carries over,
+# is `~/.quantred` (`QUANTRED_HOME`), and the old names are still read so recorded
+# history carries over,
 # and the old plugin entry-point groups are still read. Because the two distributions
 # no longer share a package directory, the old one's final release can depend on this
 # one without an upgrade deleting files out from under it.

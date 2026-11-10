@@ -229,7 +229,10 @@ class WalkForwardResult:
         for fr in self.folds:
             is_obj = fr.is_metrics.get(self.objective, 0.0)
             oos_obj = fr.oos_metrics.get(self.objective, 0.0)
-            if is_obj not in (0.0, float("inf"), float("-inf")):
+            # Only against a positive in-sample score. A ratio of two negatives is
+            # positive, so a fold that lost in-sample and lost more out-of-sample read
+            # as an efficiency of 2 and cleared the gate.
+            if 0.0 < is_obj < float("inf"):
                 ratios.append(oos_obj / is_obj)
         return float(np.median(ratios)) if ratios else 0.0
 
@@ -313,6 +316,9 @@ _GATE_BASIS = {
     "deflated_sharpe": "stitched out-of-sample aggregate",
 }
 
+
+#: Extra calendar days on a warmup, for sessions lost to a run of exchange holidays.
+_HOLIDAY_PAD_DAYS = 4
 
 #: How far before a boundary a half-open window ends - below any bar's resolution.
 _JUST_BEFORE = timedelta(microseconds=1)
@@ -627,9 +633,17 @@ class WalkForwardValidator:
         return folds, holdout
 
     def default_embargo_days(self) -> int:
-        """Lookback expressed in calendar days."""
-        bars_per_day = self._bars_per_day()
-        return max(math.ceil(self.lookback_bars / bars_per_day), 1)
+        """Calendar days that hold at least the lookback's worth of bars.
+
+        The lookback is in bars and ``_bars_per_day`` is per *trading* day, so the
+        trading days it spans are scaled up to calendar days (a year holds about 252
+        sessions) and padded for a holiday cluster. Reading the trading-day count as
+        calendar days gave a 31-bar daily lookback 21 bars of warmup, so the first bars
+        of every out-of-sample fold ran on indicators that were not yet valid.
+        """
+        trading_days = math.ceil(self.lookback_bars / self._bars_per_day())
+        calendar_days = math.ceil(trading_days * 365.25 / TRADING_DAYS_PER_YEAR) + _HOLIDAY_PAD_DAYS
+        return max(calendar_days, 1)
 
     def _make_optimizer(self, data_client: MarketDataClient) -> ParameterOptimizer:
         """A `ParameterOptimizer` for one fold/holdout's IS search, carrying this
@@ -708,7 +722,7 @@ class WalkForwardValidator:
             embargo_days=embargo,
             holdout_days=holdout_days,
         )
-        warmup_days = embargo  # warmup buffer == embargo, by construction >= lookback
+        warmup_days = embargo  # warmup buffer == embargo, which spans the lookback in bars
 
         # Prefetch the whole window once (plus warmup) and slice per fold.
         frames = self._fetch(symbols, start, end, embargo)
@@ -951,6 +965,9 @@ class WalkForwardValidator:
             # The engine's own alignment, against the very curve being re-measured.
             # Deriving a second one here would be a second chance to disagree.
             benchmark_returns=result.benchmark_returns,
+            # And the engine's own rate: the merged timeline is denser than one
+            # symbol's bars whenever the universe does not share a grid.
+            periods_per_year=result.periods_per_year,
         )
         return metrics, oos_trades, result.legs
 
@@ -992,7 +1009,15 @@ class WalkForwardValidator:
         return [*symbols, self.benchmark]
 
     def _metrics_for_trades(
-        self, trades, start, end, n_trials, var_of_trial_sr, equity=None, benchmark_returns=None
+        self,
+        trades,
+        start,
+        end,
+        n_trials,
+        var_of_trial_sr,
+        equity=None,
+        benchmark_returns=None,
+        periods_per_year=None,
     ):
         """Metrics for a trade set, preferring a real portfolio curve when available.
 
@@ -1010,7 +1035,7 @@ class WalkForwardValidator:
             # rather than misaligned: a positional pairing that silently slips is worse
             # than an absent benchmark, because it still produces a number.
             benchmark_returns = None
-        else:
+        elif periods_per_year is None:
             periods_per_year = self.timeframe.periods_per_year()
         final = self.initial_capital + (trades["pnl"].sum() if not trades.empty else 0.0)
         return performance.compute_backtest_metrics(
@@ -1049,7 +1074,12 @@ class WalkForwardValidator:
         holdout_start, holdout_end = holdout
         # Optimize over everything before the holdout (the production training set).
         opt = self._make_optimizer(client)
-        final = self._optimize(opt, symbols, region_start, holdout_start, method, objective, max_evals)
+        # Ends just before the holdout begins: windows are sliced inclusive at both ends,
+        # so ending *at* it put the holdout's first bar in the search that chose the
+        # parameters the holdout then scores.
+        final = self._optimize(
+            opt, symbols, region_start, holdout_start - _JUST_BEFORE, method, objective, max_evals
+        )
         if not final.best_params:
             return None, None
         strategy = self._make(final.best_params)
@@ -1092,7 +1122,7 @@ class WalkForwardValidator:
         is_objs = [v for v in is_objs if v not in (float("inf"), float("-inf"))]
         oos_objs = [v for v in oos_objs if v not in (float("inf"), float("-inf"))]
         mean_is = np.mean(is_objs) if is_objs else 0.0
-        if mean_is == 0:
+        if not mean_is > 0:  # see median_efficiency: the ratio means nothing below zero
             return 0.0
         return float(np.mean(oos_objs) / mean_is)
 
