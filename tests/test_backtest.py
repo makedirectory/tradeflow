@@ -260,7 +260,8 @@ def test_equity_curve_marks_open_positions_to_market():
     """An open position moves the curve; it must not sit flat until the exit bar."""
     rising = [
         {"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1},
-        {"open": 100, "high": 110, "low": 100, "close": 109, "volume": 1},
+        # Short of the 110 target, so the position is still open at this bar's close.
+        {"open": 100, "high": 109.5, "low": 100, "close": 109, "volume": 1},
         {"open": 109, "high": 118, "low": 108, "close": 117, "volume": 1},
     ]
     result = _multi({"AAA": _frame(rising)}, ["BUY", "HOLD", "HOLD"])

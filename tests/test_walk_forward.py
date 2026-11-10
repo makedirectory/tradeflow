@@ -768,3 +768,57 @@ def test_the_default_warmup_holds_the_lookback_in_bars_whenever_a_fold_starts(ti
     for start in pd.date_range("2024-01-01", "2024-12-31", freq="D"):
         sessions = len(pd.bdate_range(start - pd.Timedelta(days=days), start, inclusive="left"))
         assert sessions * per_day >= lookback, (start, sessions)
+
+
+def test_a_fold_is_annualized_at_the_rate_the_engine_measured_it_at():
+    """The fold's metrics are recomputed on the engine's curve, and were annualized at
+    the timeframe's rate while the engine used the merged timeline's. Two symbols on
+    interleaved bar grids make that timeline twice as dense, so the same curve read a
+    different Sharpe depending on who computed it. Compared against the engine's own."""
+    from quantred.engine.backtest import BacktestEngine
+    from tests.fakes import DictMarketData, make_ohlcv
+
+    first = make_ohlcv(n=240, seed=1, freq="1D")
+    second = make_ohlcv(n=240, seed=2, freq="1D")
+    second.index = second.index + pd.Timedelta(hours=3)  # never shares a timestamp
+    client = MarketDataClient(DictMarketData({"AAA": first, "BBB": second}))
+    validator = _validator()
+    oos_start, oos_end = first.index[40].to_pydatetime(), first.index[-1].to_pydatetime()
+
+    metrics, _, _ = validator._oos_backtest(
+        PeriodicStrategy({"buy_every": 5}), client, SYMBOLS, oos_start, oos_end, 0, n_trials=1
+    )
+    engine = BacktestEngine(PeriodicStrategy({"buy_every": 5}), client).run(
+        SYMBOLS, oos_start, oos_end, 100_000, trade_from=oos_start
+    )
+    assert engine.periods_per_year == pytest.approx(2 * 252, rel=0.01)  # the scenario is denser
+    assert engine.metrics["sharpe_ratio"] != 0.0
+    assert metrics["sharpe_ratio"] == pytest.approx(engine.metrics["sharpe_ratio"], rel=1e-9)
+    assert metrics["annualized_volatility"] == pytest.approx(
+        engine.metrics["annualized_volatility"], rel=1e-9
+    )
+
+
+def test_the_holdout_s_first_bar_is_not_in_the_search_that_picks_its_parameters(monkeypatch):
+    """Windows are sliced inclusive at both ends, and the search ran up to the holdout's
+    start, so the holdout's first bar was in both."""
+    from types import SimpleNamespace
+
+    from quantred.optimization.walk_forward import PrefetchedProvider
+
+    validator = _validator()
+    frames = validator.data_client.get_bars(SYMBOLS, validator.timeframe, START, END)
+    holdout_start = frames["AAA"].index[400].to_pydatetime()
+    assert holdout_start in frames["AAA"].index  # a bar sits exactly on the boundary
+    seen = {}
+
+    def capture(opt, symbols, is_start, is_end, *rest):
+        seen["end"] = is_end
+        return SimpleNamespace(best_params={}, results=[])
+
+    monkeypatch.setattr(validator, "_optimize", capture)
+    validator._holdout(None, SYMBOLS, START, (holdout_start, END), 5, "grid", "sharpe_ratio", 3)
+
+    searched = PrefetchedProvider(frames).get_bars(["AAA"], validator.timeframe, START, seen["end"])["AAA"]
+    assert searched.index.max() < frames["AAA"].index[400]
+    assert searched.index.max() == frames["AAA"].index[399]  # and nothing more than that is lost

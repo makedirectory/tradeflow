@@ -143,6 +143,6 @@ def test_the_backtest_admission_path_calls_the_shared_rule():
     from quantred.engine import backtest
 
     source = pathlib.Path(backtest.__file__).read_text()
-    assert "below_min_notional(size, price, min_notional)" in source
+    assert "below_min_notional(size, reference, min_notional)" in source
     # And no second spelling of the same comparison survived.
     assert "size * price < min_notional" not in source

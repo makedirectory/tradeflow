@@ -190,8 +190,8 @@ def test_the_benchmark_probe_catches_a_series_paired_one_step_ahead(monkeypatch)
     beside — and nothing about the numbers looks wrong."""
     original = backtest_module._benchmark_returns
 
-    def shifted(closes, equity_times):
-        series = original(closes, equity_times)
+    def shifted(closes, equity_times, opens=None):
+        series = original(closes, equity_times, opens)
         return None if series is None else series.shift(-1)
 
     monkeypatch.setattr(backtest_module, "_benchmark_returns", shifted)

@@ -80,6 +80,18 @@ cost, and live deducts none (a paper venue reports no fee).
 *Guarded by* `tests/test_sizing_parity.py`, which sends one oversized request to both
 clocks and compares the notionals.
 
+**What an entry's size and bracket are computed from** — live submits a bracket with its
+stop and target set, before any fill exists, from the close the signal came from; the
+backtest computed them from the open the order filled at. On a gap the stops sat at
+different prices (a 10% stop under a 100 close filled at 104 was 90 live and 93.6 in the
+backtest) and the sizes differed. `BacktestEngine._open_position` now takes the signal's
+close as `reference_price` for the size, the notional floor and the bracket, and rounds
+the levels with `round_price` as `LiveTrader._stop_levels` does; the fill, cash, cost and
+risk stay at the open. Two implementations still, since the trade clock cannot share the
+engine's admission path.
+*Guarded by* `tests/test_engine_fill_details.py`, which gives both clocks one gapped
+entry and compares the stop level and the size.
+
 **An entry edge is acted on once** — signals are edge-triggered and the backtest takes,
 or declines, each entry exactly once. Live re-states an entry the book lacks, for an
 edge the process never saw, and that also fired for an edge it had already traded: live

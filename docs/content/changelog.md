@@ -52,6 +52,21 @@ running the search and validation machinery on inputs chosen to break it.
   valid. The default now scales trading days to calendar days and pads for holidays.
   Fold boundaries move with it; pass `--embargo-days` to pin them.
 
+- **An entry's size and bracket come from the close its signal came from.** Live
+  submits a bracket with its stop and target already set, from the signal bar's close;
+  the backtest set them from the open the order filled at, so on a gap the two stops sat
+  at different prices and the two clocks sized differently. The backtest now does what
+  live does, and rounds the levels to the tick as live does. The fill is still the open.
+- **An exit at a stop or target is costed on the level it filled at**, where it was
+  costed on the bar's open; and bars with no volume column are charged commission and
+  spread, where they were charged nothing.
+- **A fold's benchmark covers its first bar.** After a warm-up the book can fill at the
+  first bar's open, and the benchmark's return over that bar was left out of both the
+  benchmark's total and the regression. A run with no warm-up is unchanged.
+- **The holdout's first bar is no longer in the search that picks its parameters**, and
+  a walk-forward fold is annualized at the rate the engine measured it at (they differed
+  when a universe's symbols do not share one bar grid).
+
 As with every bump, results recorded under v7 leave the default trial listing.
 
 ### Fixed
@@ -73,6 +88,14 @@ As with every bump, results recorded under v7 leave the default trial listing.
 - **Cost and take-profit stress report survival up to the first failure.** The headline
   was the largest level that passed, so a curve that failed at 2x and passed again at 5x
   read as surviving 5x and cleared the 3x promotion prerequisite.
+- **`halt <strategy>` halts that strategy.** The trader asks whether its strategy's
+  class is halted and `halt` recorded whatever was typed, so `halt demo_trend` printed
+  "Halted" and blocked nothing, as did any typo. A strategy's name now resolves to its
+  class, and a scope that names no strategy is refused. `resume` still lifts any scope
+  already on record.
+- **Walk-forward efficiency is not a ratio of two losses.** A fold that lost in-sample
+  and lost more out-of-sample divided to a positive efficiency and cleared the gate; the
+  ratio is now taken only against a positive in-sample score.
 - A reused walk-forward's `holdout_record` serializes an unbounded ratio as the fresh
   payload does (the string `"inf"`), instead of a bare float.
 

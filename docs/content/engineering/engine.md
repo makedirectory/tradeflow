@@ -55,6 +55,10 @@ live. Each step:
    `Strategy.calculate_position_size` as before, but against *free cash*, which is
    what makes positions actually compete. The two portfolio fractions are not the
    same measurement — see [what `max_total_risk` caps](../usage/configuration.md#what-max_total_risk-caps).
+   A request larger than free cash is opened at what the cash can pay, entry cost
+   included, and counted (`positions_capped_to_pool`). The size and the bracket's stop
+   and target are computed from the close the signal came from, as the live order's
+   are, and the levels are rounded to the tick; the fill itself is this bar's open.
 5. **Stops and targets**, after admission, for every position still held (entries made
    on this bar included - the bracket rests from the fill, and the signal that opened a
    position cannot also close it). A level the bar *opens* beyond fills at the open: a
