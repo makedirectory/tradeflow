@@ -440,6 +440,15 @@ def _refuse_unrecognized(parser, args, extras: List[str]) -> None:
     chosen.error(message)
 
 
+def _command_group(parser, name: str):
+    """The subparser for ``name`` when it is a group of subcommands, else ``None``."""
+    commands = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
+    sub = commands.choices.get(name)
+    if sub is not None and any(isinstance(a, argparse._SubParsersAction) for a in sub._actions):
+        return sub
+    return None
+
+
 def parse_cli(argv: Optional[List[str]] = None):
     """Parse argv and record which flags were typed, for config layering."""
     argv = list(sys.argv[1:]) if argv is None else list(argv)
@@ -448,6 +457,11 @@ def parse_cli(argv: Optional[List[str]] = None):
         # The bare command is how most people first meet it; "the following arguments
         # are required: <command>" answered with an error instead of the map.
         parser.print_help()
+        sys.exit(0)
+    group = _command_group(parser, argv[0]) if len(argv) == 1 else None
+    if group is not None:
+        # The same for a bare `trials` or `cache`: their subcommands, not an error.
+        group.print_help()
         sys.exit(0)
     _refuse_sibling_command_after_research(parser, argv)
     args, extras = parser.parse_known_args(argv)
@@ -8386,7 +8400,7 @@ def build_parser() -> argparse.ArgumentParser:
     cache = subparsers.add_parser(
         "cache", help="Inspect/warm the persistent bar cache behind backtest/optimize/walkforward"
     )
-    cache_sub = cache.add_subparsers(dest="cache_command", required=True)
+    cache_sub = cache.add_subparsers(dest="cache_command", required=True, metavar="<subcommand>")
 
     c_warm = cache_sub.add_parser("warm", help="Prefetch and cache bars for a universe/window")
     _add_cache_dir_flag(c_warm)
@@ -8434,7 +8448,7 @@ def build_parser() -> argparse.ArgumentParser:
     trials = subparsers.add_parser(
         "trials", help="Inspect the trial store — the queryable index over the research journal"
     )
-    trials_sub = trials.add_subparsers(dest="trials_command", required=True)
+    trials_sub = trials.add_subparsers(dest="trials_command", required=True, metavar="<subcommand>")
 
     t_status = trials_sub.add_parser("status", help="Row/journal-line counts and a drift check")
     _add_db_flag(t_status)

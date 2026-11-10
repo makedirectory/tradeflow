@@ -171,3 +171,26 @@ def test_cache_dir_help_names_the_real_default():
         action = _action(sub, "--cache-dir")
         if action is not None and action.default is None:
             assert "state root" in action.help, f"{name} --cache-dir: {action.help!r}"
+
+
+@pytest.mark.parametrize("group", ["trials", "cache"])
+def test_a_bare_command_group_prints_its_subcommands_not_an_internal_name(group, capsys):
+    """`quantred trials` failed with "the following arguments are required:
+    trials_command" - argparse's internal destination, which names nothing a reader
+    can type. Bare, a group now prints its own help, as the bare program does."""
+    with pytest.raises(SystemExit) as exited:
+        cli.parse_cli([group])
+    assert exited.value.code == 0
+    out = capsys.readouterr().out
+    assert f"{group}_command" not in out
+    assert "status" in out  # a subcommand both groups have
+
+
+@pytest.mark.parametrize("group", ["trials", "cache"])
+def test_a_group_error_names_the_subcommand_in_words(group, capsys):
+    """With an option but no subcommand it is still an error, phrased for a reader."""
+    with pytest.raises(SystemExit) as exited:
+        cli.parse_cli([group, "--help-me"])
+    assert exited.value.code == 2
+    err = capsys.readouterr().err
+    assert f"{group}_command" not in err
