@@ -123,6 +123,7 @@ def test_primary_examples_are_installed_user_commands(page):
         return
 
 
+MAKE_VERDICT = re.compile(r'CMD="verdict\b([^"]*)"')
 DOCKER_VERDICT = re.compile(r"^\s*(?:#\s*|\$\s*)?docker compose run --rm verdict\b(.*)$")
 
 
@@ -130,7 +131,7 @@ def _verdict_docs():
     """Every file that teaches a verdict command: all the docs, the READMEs (including
     the one the sdist ships inside the example pack) and the compose file."""
     files = sorted((ROOT / "docs" / "content").rglob("*.md"))
-    files += [ROOT / "README.md", ROOT / "example" / "README.md", ROOT / "docker-compose.yml"]
+    files += [ROOT / "README.md", ROOT / "example" / "README.md", ROOT / "docker-compose.yml", ROOT / "Makefile"]
     return [f for f in dict.fromkeys(files) if f.is_file()]
 
 
@@ -140,6 +141,9 @@ def _documented_verdict_commands():
             for line in _commands(page):
                 if line.split()[1:2] == ["verdict"]:
                     yield page, line
+        # A Makefile help line passes a verdict through `CMD="verdict ..."`.
+        for match in MAKE_VERDICT.finditer(page.read_text()):
+            yield page, f"{settings.CLI_NAME} verdict{match.group(1)}"
         # The compose service is a verdict entrypoint, so its usage lines are verdict
         # commands even though they do not start with the program name.
         joined = ""
@@ -187,4 +191,60 @@ def test_documented_verdict_examples_can_fund_a_long_only_book(page, line):
 def test_the_verdict_docs_guard_found_commands():
     """Guard the guard: a scan that finds no verdict example passes forever."""
     assert len(VERDICT_CASES) >= 8
-    assert {p.name for p, _ in VERDICT_CASES} >= {"README.md", "docker-compose.yml", "verdict.md"}
+    assert {p.name for p, _ in VERDICT_CASES} >= {"README.md", "docker-compose.yml", "verdict.md", "Makefile"}
+
+
+def _library_verdict_calls():
+    """Every `run_verdict(...)` in a fenced Python block of the docs and READMEs."""
+    import ast
+    import textwrap
+
+    for page in _verdict_docs():
+        if page.suffix != ".md":
+            continue
+        block, lang = None, ""
+        for line in page.read_text().splitlines():
+            m = FENCE.match(line.strip())
+            if m and block is None:
+                block, lang = [], m.group(1)
+            elif m:
+                source = textwrap.dedent("\n".join(block))
+                if lang == "python" and "run_verdict(" in source:
+                    for node in ast.walk(ast.parse(source)):
+                        if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "run_verdict":
+                            yield page, node
+                block = None
+            elif block is not None:
+                block.append(line)
+
+
+LIBRARY_VERDICTS = list(_library_verdict_calls())
+
+
+@pytest.mark.parametrize("page,call", LIBRARY_VERDICTS, ids=[p.name for p, _ in LIBRARY_VERDICTS])
+def test_documented_library_verdicts_can_fund_a_long_only_book(page, call):
+    """The same rule for the Python examples: the README's library snippet used two
+    symbols, and the service's default scanner can keep fewer still - both `infeasible`
+    by the docs' own rule that a 25% cap needs at least four names."""
+    import ast
+    import inspect
+
+    from quantred.portfolio.optimizer import long_only_cap_shortfall
+    from quantred.services.analysis import run_verdict
+
+    defaults = {k: v.default for k, v in inspect.signature(run_verdict).parameters.items()}
+    keywords = {kw.arg: ast.literal_eval(kw.value) for kw in call.keywords}
+    symbols = ast.literal_eval(call.args[2])
+    shortfall = long_only_cap_shortfall(
+        len(symbols),
+        keywords.get("max_weight", defaults["max_weight"]),
+        keywords.get("max_names", defaults["max_names"]),
+    )
+    assert shortfall is None, f"{page.name}: run_verdict over {symbols} cannot be funded - {shortfall}"
+    assert str(keywords.get("scanner", defaults["scanner"])).lower() == "none", (
+        f"{page.name}: run_verdict filters its symbols through a scanner, which can leave too few names"
+    )
+
+
+def test_the_library_verdict_guard_found_calls():
+    assert {p.name for p, _ in LIBRARY_VERDICTS} >= {"README.md", "embedding.md"}

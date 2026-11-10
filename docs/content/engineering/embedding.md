@@ -21,9 +21,12 @@ from quantred.services.data import build_data_client
 result = run_verdict(
     build_data_client(),
     "demo_trend",
-    ["NVDA", "AAPL", "META"],
+    ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META"],
     datetime(2024, 1, 1),
     datetime(2024, 12, 31),
+    # No scanner, and at least four names: a long-only book capped at 25% per name
+    # cannot be fully invested in fewer, and the verdict would be `infeasible`.
+    scanner="none",
 )
 
 print(result["verdict"]["summary"])

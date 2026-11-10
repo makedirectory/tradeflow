@@ -339,7 +339,15 @@ construction:
 from quantred.services.analysis import run_verdict
 from quantred.services.data import build_data_client
 
-result = run_verdict(build_data_client(), "demo_trend", ["NVDA", "AAPL"], start, end)
+# Six names and no scanner: a long-only book capped at 25% per name needs at least four.
+result = run_verdict(
+    build_data_client(),
+    "demo_trend",
+    ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META"],
+    start,
+    end,
+    scanner="none",
+)
 print(result["verdict"]["summary"])
 ```
 
