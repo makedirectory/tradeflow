@@ -3694,6 +3694,24 @@ def _print_exit_concentration(result) -> None:
         print(lines)
 
 
+def _print_stress_table(headers: tuple, rows: list) -> None:
+    """Print a stress table with every column right-aligned and two spaces apart.
+
+    Cells arrive already formatted, and each column is as wide as its widest cell, so a
+    negative return or a cost in six figures widens its column rather than running into
+    its neighbour. The cost-stress rows used to be fixed-width f-strings in which the
+    return's ``%`` and the cost's ``$`` touched, printing ``10.69%$ 906``.
+    """
+    widths = [max(len(h), *(len(r[i]) for r in rows)) if rows else len(h) for i, h in enumerate(headers)]
+
+    def line(cells) -> str:
+        return "  " + "  ".join(f"{c:>{w}}" for c, w in zip(cells, widths))
+
+    print(line(headers))
+    for row in rows:
+        print(line(row))
+
+
 def _print_fill_stress(data_client, strategy_name: str, universe, args, tuned) -> None:
     """Re-run requiring the price to trade *through* each take-profit, and show the decay.
 
@@ -3717,13 +3735,18 @@ def _print_fill_stress(data_client, strategy_name: str, universe, args, tuned) -
         borrow_bps=args.borrow_bps,
     )
     print("\n=== Take-profit fill stress ===")
-    print(f"  {'through by':>12}{'Sharpe':>10}{'return':>10}{'trades':>9}")
+    rows = []
     for point in report["points"]:
         label = "touch only" if point["margin_bps"] == 0 else f"{point['margin_bps']:.0f} bps"
-        print(
-            f"  {label:>12}{point['sharpe_ratio']:>10.2f}{point['total_return']:>9.2f}%"
-            f"{'—' if point['trades'] is None else point['trades']:>9}"
+        rows.append(
+            (
+                label,
+                f"{point['sharpe_ratio']:.2f}",
+                f"{point['total_return']:.2f}%",
+                "—" if point["trades"] is None else str(point["trades"]),
+            )
         )
+    _print_stress_table(("through by", "Sharpe", "return", "trades"), rows)
     survives = report["survives_to_bps"]
     if survives:
         print(f"  Edge survives requiring {survives:.0f} bps through the target.")
@@ -3758,12 +3781,16 @@ def _print_cost_stress(data_client, strategy_name: str, universe, args, tuned) -
         axis=args.cost_stress,
     )
     print(f"\n=== Cost stress ({report['axis']} axis) ===")
-    print(f"  {'multiple':>10}{'Sharpe':>10}{'return':>10}{'cost':>14}")
-    for point in report["points"]:
-        print(
-            f"  {point['multiple']:>9.1f}x{point['sharpe_ratio']:>10.2f}"
-            f"{point['total_return']:>9.2f}%${point['total_cost']:>12,.0f}"
+    rows = [
+        (
+            f"{point['multiple']:.1f}x",
+            f"{point['sharpe_ratio']:.2f}",
+            f"{point['total_return']:.2f}%",
+            f"${point['total_cost']:,.0f}",
         )
+        for point in report["points"]
+    ]
+    _print_stress_table(("multiple", "Sharpe", "return", "cost"), rows)
     survives = report["survives_to_multiple"]
     if survives:
         print(f"  Edge survives to {survives:.0f}x its assumed cost.")
