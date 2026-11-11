@@ -49,7 +49,10 @@ they can only consume a slot without improving the objective.
 ## Driving live sizing
 
 The allocator isn't just a reporting tool — it can size live positions. Execution
-sizing is pluggable via a `PositionSizer` (`quantred/execution/sizing.py`):
+sizing is pluggable via a `PositionSizer` (`quantred/execution/sizing.py`), which also
+holds the pool and floor rules the backtest and `LiveTrader` share (`deployable_pool`,
+`free_buying_power`, `cap_to_buying_power`, `below_min_notional`; see
+[the engine](engine#what-the-pool-is-and-what-the-two-clocks-share)):
 
 - `RiskBasedSizer` (default) — sizes each entry from the strategy's
   risk-per-trade / stop-loss config.
@@ -71,5 +74,7 @@ units?" — another instance of keeping policy out of mechanism.
 This is a **preliminary** manager: long-only, single-period, score-driven. Natural
 next steps — all expressible in the same MIP/QP framing — include a covariance
 term for diversification (mean-variance), sector caps, turnover limits, or a
-Kelly-style sizing objective. OR-Tools is an optional extra (`portfolio`),
+growth-optimal sizing objective. OR-Tools is an optional extra (`portfolio`),
 imported lazily.
+
+Usage: [portfolio construction](../usage/portfolio.md).

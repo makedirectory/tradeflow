@@ -32,6 +32,8 @@ Information report: 'demo_trend' 2024-01-01..2024-12-31
   Verdict: skill is NOT distinguishable from luck (IC t-stat +0.74).
 ```
 
+*(Illustrative figures.)*
+
 Read it as: the **IC t-stat** is the honesty gate — below ~2 the mean IC is a few
 lucky periods, not skill. **Effective breadth** deflates the name count by how
 correlated the bets are (`ρ̄`); **predicted IR** = `mean_IC · √BR_eff`. The realized
@@ -50,11 +52,16 @@ below, is the full per-period version.
 | `--strategy` | `demo_trend` | The strategy whose alpha is measured. |
 | `--source` | `strategy` | Alpha score origin (`strategy` / `signal` / `scanner`). |
 | `--symbols` | demo universe | The cross-section. |
-| `--start` / `--end` | last year | Measurement window. |
+| `--start` / `--end` | 365 days before `--end` / now | Measurement window, read in New York time. |
 | `--benchmark` | `SPY` | Used to strip beta (residual returns). |
 | `--horizon` | `5` | Forward-return horizon, in bars. |
 | `--n-trials` | `1` | Configs tried, for the multiple-testing inflation. |
 | `--neutralize-factors` | off | Measure the **factor-neutral** alpha (bare flag = `market,volatility,size`) — use the same setting you deploy with, so the measured IC/IR describes the forecast you actually trade. Also on `horizon`. |
+| `--attribution` | off | Per-period, per-source attribution instead of the IC/IR report (below). |
+| `--conditional` | off | `ewma` or `har`; with `--attribution` adds a TE-by-regime table, with `--conditional-ab` it is the method compared. `--conditional-lambda` overrides the EWMA decay. |
+| `--html PATH` | off | Write the run as a self-contained HTML report (charts need the `viz` extra and degrade to tables without it). |
+| `--config` / `--re-resolve-universe` | none | Replay a saved [run config](run-configs)'s universe and settings. |
+| `--cache` / `--offline` / `--cache-dir` | off | Reuse a local bar cache; `--offline` never touches the network. |
 | `--scaling-ab` | off | Research mode: walk-forward the realized IR under **Case-1** (`σ·IC·z`) vs **Case-2** (`IC·c_g·z`) scaling and compare against the regression's pick — the ground-truth tiebreak for the [Case test](alphas#case-scaling). |
 
 ## The level shrink and the risk-bucket monitor
@@ -80,7 +87,7 @@ The report also carries two more diagnostics:
   measured IC to replace the prior used in [alpha scaling](alphas) — a human applies it;
   nothing auto-tunes the trade clock.
 
-The same report is available to agents as the read-only MCP tool `compute_information`.
+The same report is available to agents as the read-only MCP tool `compute_information` (strategy, symbols, window, source, benchmark, horizon, `n_trials`). The attribution and A/B modes, and `--neutralize-factors`, are command-line only.
 
 ## Performance attribution (`--attribution`)
 
@@ -182,6 +189,26 @@ for the family (Reality Check) half of this, which needs the
 
 Capacity analysis lives on the [portfolio construction](portfolio) report
 (`capacity_capital`), not here.
+
+## What to do next
+
+If the t-stat clears about 2, pass the measured IC back into
+[`alphas --ic`](alphas) and carry on to [`allocate --objective utility`](portfolio). If it
+does not, the honest next move is a longer window or a different idea, not a larger
+`--n-trials` discount. [`horizon`](horizon) answers the separate question of how often to
+rebalance.
+
+## Common errors
+
+- **`Missing Alpaca credentials`** - this command fetches bars, so it needs the paper key
+  pair from `quantred init`. To work with no keys, warm a cache once and add `--offline`.
+- **`--offline: no cached 1day bars for ... Run quantred cache warm ...`** - the cache has
+  nothing for that range. The message prints the exact `cache warm` command to run (it
+  needs the keys once, and the `store` extra, see [optional extras](extras)).
+- **A very wide `±` band on the realized IR** - not an error. A window of about a year
+  cannot separate most IRs from zero; extend `--start` before drawing a conclusion.
+- **Few rebalances measured** - a short window or a large `--horizon` leaves too few
+  non-overlapping points for a stable t-stat; the report states how many it used.
 
 ## From a source checkout (contributors)
 

@@ -54,6 +54,12 @@ you manage yourself with `pip`, extras are additive:
 python -m pip install 'quantred[mcp]==<installed version>'
 ```
 
+uv has no subcommand that adds a package to an installed tool, and `uv pip install`
+straight into the tool's environment
+is lost the next time the tool is rebuilt. Reinstalling with the full extras list is the
+durable form. Under pipx the equivalent is `pipx install --force '<requirement>'`, and
+packs added with `pipx inject` must be injected again.
+
 The error messages and `init --check` print these commands with the extras you
 already have filled in and the running version. For a `uv tool` install they also read
 the tool's own receipt (`uv-receipt.toml`, in the tool environment) and write out every

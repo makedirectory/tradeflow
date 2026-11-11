@@ -34,7 +34,13 @@ human-approved config and nothing else.
 - **The trade clock** (`quantred/engine/live.py` → `quantred/execution/`) is deliberately
   dumb: a live bar produces a signal produces an order. No model sits in the order
   path, so there's nothing to prompt-inject and nothing non-deterministic to debug
-  when real money is at stake.
+  when real money is at stake. It imports **nothing** from `services/`, `analytics/`,
+  `optimization/` or `research/`; a structural test asserts it. It may import the
+  leaf layers it needs (`strategies/`, `marketdata/`, `brokers/`, `costs/`, `utils/`),
+  and the sizing rules both clocks share live in `quantred/execution/sizing.py` so the
+  backtest imports them from the trade clock rather than the reverse. The price of the
+  separation is that some ideas exist twice; see
+  [separation of concerns](separation-of-concerns#the-price-of-two-clocks).
 - **Promotion is a manual human step.** Automation never flips `PAPER_TRADE` or
   routes an order. The [MCP server](mcp-server) enforces this *structurally* — it
   builds only a data client, so it physically cannot trade.
@@ -47,7 +53,8 @@ The system is a stack of single-responsibility layers. Dependencies point
 **downward only**, and nothing above the broker layer imports a vendor SDK.
 
 ```
-                 main.py  (CLI: wires everything per command)
+   quantred/cli.py  (CLI: wires everything per command; main.py is a shim)
+   quantred/mcp/ → services/  (the same services, read-only, over MCP)
                     │
         ┌───────────┼─────────────┬───────────────┐
      engine/     optimization/   portfolio/        │
@@ -78,7 +85,13 @@ strategies/  scanners/  execution/  analytics/     │
 | `engine/` | `BacktestEngine` + `LiveEngine` — orchestration only — and the live bar-quality guards |
 | `optimization/` | `ParameterSpace` + `ParameterOptimizer` |
 | `portfolio/` | `PortfolioAllocator` — OR-Tools position weighting |
-| `utils/` | logging, numeric, and timezone helpers |
+| `costs/` | `CostModel` and `ParametricCostModel` — shared by the backtest, the optimizer and the live cost *record* |
+| `risk/`, `alphas/`, `data/` | covariance estimation, alpha combination and refinement, and the research data panel |
+| `store/` | the trial journal's SQLite index and the on-disk bar cache |
+| `services/` | the JSON-returning boundary the CLI and the MCP server both call (research clock) |
+| `research/` | the optional AI research agent and its sandbox (research clock) |
+| `mcp/` | the read-only MCP server — a thin adapter over `services/` |
+| `utils/` | logging, numeric, timezone and streaming helpers |
 
 ## Guiding principles
 
@@ -91,3 +104,5 @@ strategies/  scanners/  execution/  analytics/     │
   imported lazily.
 - **Everything is testable offline.** Because the boundary is an interface, tests
   inject in-memory fakes. See [Testing](testing).
+
+For running it rather than reading how it is built, start with the [usage guide](../usage/getting-started.md) and [live trading](../usage/live-trading.md).

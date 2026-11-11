@@ -101,3 +101,5 @@ skill.
 [information-analysis](./information-analysis) forward-residual machinery), fits the
 decay, and recommends the cadence + blend. The CLI (`python main.py horizon`) and the
 read-only MCP tool `compute_horizon` route through it.
+
+Usage: [horizon](../usage/horizon.md).

@@ -217,7 +217,7 @@ pinned by tests:
   wider than the declared bounds, an unknown `scaling`, `risk_model` or trial `kind`, and a
   `gross_leverage` that disagrees with `book`.
 - **Evidence-gated features are never presented as neutral options.** Conditional
-  risk, the aim trading policy, and the Black–Litterman posterior each ship off
+  risk, the aim trading policy, and the Bayesian posterior (`--posterior bl`) each ship off
   because their own adoption gates do not clear on this repository's data; the
   descriptions of tools near them say so rather than listing a flag.
 - **The leaderboard's honesty rules live in the payload.** `best_trials` returns its
@@ -236,7 +236,7 @@ actually happens.
 The tool surface reaches everything the CLI can express **except** the evidence-gated
 construction families, which are withheld on purpose:
 
-- **Conditional risk**, the **Black–Litterman posterior**, and the **multi-period aim
+- **Conditional risk**, the **Bayesian posterior**, and the **multi-period aim
   policy** ship *off* because their own adoption gates do not clear on this
   repository's data. The command line makes a human read that before using them; an
   agent reads a description as fact and acts on it at machine speed, so offering the

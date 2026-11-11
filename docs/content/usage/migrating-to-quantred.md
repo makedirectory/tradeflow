@@ -58,6 +58,12 @@ distribution removed first for correctness.
 
 ## Move your state
 
+:::note Which release
+The state rename (`~/.quantred`, `QUANTRED_HOME`) arrived in 2.6.0. The 2.4.x and 2.5.0
+packages use `~/.tradeflow` and `TRADEFLOW_HOME`; on those releases there is nothing to
+move. Do the move below when you upgrade to 2.6.0 or later.
+:::
+
 The state directory is now `~/.quantred` and the variable that overrides it is
 `QUANTRED_HOME`. Nothing is moved for you, and nothing stops being read:
 
@@ -290,6 +296,6 @@ The pack's own imports are covered in [Update a private pack](#update-a-private-
 
 ## Availability
 
-`quantred` has to be published to the package index before `uv tool install quantred`
-works there; until then, install from a built wheel or a checkout. Publishing both
-packages is the project owner's step.
+Both packages are on PyPI: `quantred` from 2.4.0, and `tradeflow-engine` 2.3.1 as the
+transition package. A new install needs none of this page: see
+[installation](installation).

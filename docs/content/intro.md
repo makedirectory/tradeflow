@@ -32,7 +32,10 @@ free paper keys, your first verdict, and connecting Claude — six steps, and yo
 stop at any of them.
 
 No `uv`? [Install it](https://docs.astral.sh/uv/getting-started/installation/), or
-use `python -m pip install 'quantred[mcp,store,viz]'` in a virtual environment.
+use pipx or `python -m pip install 'quantred[mcp,store,viz]'` in a virtual environment
+(Python 3.10 or newer; the demo itself needs none of the extras). The
+[installation](usage/installation) page covers checking, upgrading and uninstalling.
+This is the published package on PyPI; you do not clone anything.
 
 ## What it actually does
 
@@ -46,7 +49,7 @@ quantred verdict --scanner none --symbols AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,JP
 ```
 
 One command runs scan → alphas → portfolio → information analysis over one universe,
-one window, and one cost model, ending in a single verdict with every gate shown:
+one window, and one cost model, ending in a single verdict with every gate shown (illustrative output):
 
 ```
   VERDICT: mixed — passed: sample_size, sanity_ceiling; failed: ic_tstat, net_of_cost_alpha

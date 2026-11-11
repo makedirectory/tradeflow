@@ -37,8 +37,8 @@ Any other client takes the same command in its JSON config:
 ```
 
 A desktop client often has a smaller `PATH` than your terminal, so a bare `quantred`
-may not be found. `quantred init`
-prints this same block with the **absolute** command for your copy, ready to paste, and
+may not be found. `quantred mcp --self-test` and `quantred init`
+print this same block with the **absolute** command for your copy, ready to paste, and
 `quantred mcp --self-test` runs exactly that command (and prints the block again when
 it passes), so what passes is what you configure.
 
@@ -68,12 +68,34 @@ To check that the server starts and answers, without a chat client, run
 through the real MCP client. `quantred init --check --for mcp` reports whether the
 extra is installed.
 
-The agent gets tools for discovery (`list_strategies`, `list_scanners`,
-`get_param_ranges`), analysis (`run_scan`, `run_backtest`, `run_optimization`,
-`run_walk_forward`, `summarize_bars`, `get_metrics_glossary`), and config
-persistence (`save_config`, `load_config`, `list_configs`). Every call is logged
-to `logs/mcp_audit.jsonl`. There is **no** order, live-trading, or
-`PAPER_TRADE`-toggling tool — that absence is the safety model.
+The server offers 33 tools (`quantred mcp --self-test` prints the count for your copy),
+grouped as:
+
+- **Discovery:** `list_strategies`, `list_scanners`, `get_param_ranges`,
+  `get_metrics_glossary`, `summarize_bars`.
+- **Evaluate an idea:** `run_scan`, `run_backtest`, `run_optimization`,
+  `run_walk_forward`, `run_screen`, `confirm_screen_point`, `run_causality_probes`, and the
+  draft-code checks `validate_draft_strategy_code`, `validate_draft_scanner_code` and
+  `run_draft_walk_forward`.
+- **Cross-sectional pipeline:** `compute_alphas`, `combine_alphas`, `compute_horizon`,
+  `compute_risk`, `construct_portfolio`, `compute_information`, `compute_attribution`,
+  `run_verdict`, `render_report`.
+- **What the campaign has tried:** `list_trials`, `get_trial`, `best_trials`,
+  `analyze_trial`, `compare_trials`, `get_campaign_material`.
+- **Config persistence:** `save_config`, `load_config`, `list_configs`.
+
+Every call is logged to `logs/mcp_audit.jsonl` under the state root. There is **no**
+order, live-trading, or `PAPER_TRADE`-toggling tool, and `small-real`, `trials archive`
+and `trials mark-contaminated` are deliberately command-line only: spending real money or
+changing a campaign's record is a decision for a person. That absence is the safety model.
+Knobs whose own adoption gates have not cleared (conditional risk, the posterior, the
+multi-period policy) are also not offered to an agent; a human reads their warning on the
+command line first.
+
+**If the client shows no tools:** run `quantred mcp --self-test` in a terminal first. If
+it passes, the server is fine and the client config is the problem (a bare `quantred` not
+on the client's `PATH` is the usual cause; paste the absolute-path block the self-test
+prints). If it fails, it prints the reason, typically the missing `mcp` extra.
 
 ### Stopping the server
 
@@ -150,7 +172,7 @@ The loop proposes a hypothesis → validates it with walk-forward (never on the
 holdout) → keeps it only if it's *promotable* and beats the incumbent
 out-of-sample → repeats until its trial/token budget or a "no improvement" stop →
 scores the survivors once on the sacred holdout → writes a shortlist of
-provenance-stamped configs to `configs/` for you to review. Nothing is promoted to
+provenance-stamped configs to `configs/` (under the state root) for you to review. Nothing is promoted to
 live automatically.
 
 ## Choosing an LLM provider

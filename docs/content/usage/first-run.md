@@ -17,14 +17,13 @@ uv tool install 'quantred[mcp,store,viz]'
 quantred --version
 ```
 
-In an activated virtual environment instead: `python -m pip install 'quantred[mcp,store,viz]'`. The `mcp`
-extra is what step 5 needs (the client launches the server from this install), `store` is the
-local bar cache that the setup's optional cache warm and every `--offline` run read, and `viz`
-draws charts in HTML reports; leave any of them off if you will not use it.
-The distribution and the command are both `quantred`. Capabilities such
-as charts, the MCP server and the model SDKs are opt-in extras; see
-[optional extras](extras) for which one unlocks what and how to add one later without
-losing the rest.
+[Installation](installation) has pipx, pip in a virtual environment, upgrading and
+uninstalling. The `mcp` extra is what step 5 needs (the client launches the server from
+this install), `store` is the local bar cache that the setup's optional cache warm and
+every `--offline` run read, and `viz` draws charts in HTML reports; leave any of them off
+if you will not use it. `--version` also prints the **state root**, the directory your
+journal and `.env` will live in. See [optional extras](extras) for what each extra
+unlocks and how to add one later without losing the rest.
 
 ## 2. See it work with no keys
 
@@ -80,22 +79,21 @@ quantred init --check
 ```
 QuantRed setup check
 
-  state root: ~/.quantred
+  state root: /home/you/.quantred
   (journal, trial store, bar cache, and configs all live here)
 
-  [ok]       version                quantred 2.5.0
-  [optional] env file               ~/.quantred/.env not found
+  [ok]       version                        quantred 2.6.0
+  [optional] env file                       <state root>/.env not found
         -> run `init` to create it, or export the keys as environment variables
-  [blocked]  APCA_API_KEY_ID        (not set) - no command that touches the market will run
+  [blocked]  APCA_API_KEY_ID                (not set) - no command that touches the market will run
         -> run `init` to enter it, or export it as an environment variable
-  [blocked]  APCA_API_SECRET_KEY    (not set) - no command that touches the market will run
+  [blocked]  APCA_API_SECRET_KEY            (not set) - no command that touches the market will run
         -> run `init` to enter it, or export it as an environment variable
-  [ok]       PAPER_TRADE            true - orders go to the paper account
-  [ok]       state directory        ~/.quantred/logs is writable
-  [ok]       extra: mcp             installed - the MCP server for AI clients
-  [optional] extra: viz             not installed - charts in `--chart` and in HTML reports
-  [--]       model: ollama          default endpoint http://localhost:11434 (reachability not checked; run with --probe-model)
-  [optional] model provider         no provider is set up for `research`
+  [ok]       PAPER_TRADE                    true - orders go to the paper account
+  [ok]       state directory                <state root>/logs is writable
+  [ok]       state root                     /home/you/.quantred (QUANTRED_HOME)
+  [optional] extra: viz                     not installed - charts in `--chart` and in HTML reports
+  [optional] model provider                 no provider is set up for `research`
 
   ready for:  demo
   blocked for: data (APCA_API_KEY_ID, APCA_API_SECRET_KEY)
@@ -135,6 +133,9 @@ quantred init --check --for research --provider ollama
 quantred init --check --for mcp
 quantred init --check --for mcp --offline
 ```
+
+(`init --offline` arrived in 2.6.0; on that release it is refused with a pointer to
+the commands that do take `--offline`.)
 
 The "state directory" check is worth understanding: a session that cannot write its
 journal silently loses its own trial history, which corrupts every multiple-testing
@@ -224,16 +225,8 @@ full report line by line.
 `quantred research` is the one command that calls a model. Set a provider up in
 `quantred init` (step 3), probe it with `--probe-model`, and then run it ([agents](agents#research-agent)).
 It is separate from `quantred info`, which measures information diagnostics and
-calls no model.
-
-## From a source checkout (contributors)
-
-Everything above works from a checkout too, with `uv run python main.py` in place of
-`quantred` (`make init`, `make check`, `make demo` are the Makefile shortcuts), and
-`uv sync --inexact --extra <name>` in place of an installer command. A checkout does not keep
-its own state: state lives in `~/.quantred` unless `QUANTRED_HOME` is set, and
-`quantred init --dev-local-state` prints the setting that puts it back inside the
-working tree.
+calls no model. They are sibling commands: `quantred info --strategy ... --symbols ...`,
+not `quantred research info`.
 
 ## `--non-interactive`
 
@@ -304,3 +297,19 @@ Credential validation distinguishes three outcomes, and says which one happened:
 
 That distinction matters more than it looks: sending someone to regenerate keys
 that were never the problem is a worse failure than saying nothing.
+
+## When something goes wrong
+
+| You see | Why, and what to do |
+|---|---|
+| `command not found: quantred` | The installer's bin directory is not on `PATH`. With uv: `uv tool update-shell`, then a new terminal. In a venv: activate it first. |
+| `zsh: no matches found: quantred[mcp]` | Quote the requirement: `'quantred[mcp,store,viz]'`. |
+| `... needs the 'store' extra` (or `mcp`, `ai`, ...) | An optional capability is not installed. The message ends with the exact install command; `quantred init --check --for <task>` prints one command for everything that task needs. Run it as printed, since a bare `uv tool install --force 'quantred[x]'` would drop the other extras. uv cannot add a package to an installed tool in place. |
+| `Missing Alpaca credentials` | Market data needs keys: `quantred init`. Or use `quantred demo` (no keys), or `--offline` against bars already in the cache. |
+| Alpaca rejected the credentials | Re-copy from **Paper Account**, not the live dashboard; the two differ. "Could not reach Alpaca" is a network problem, not a key problem, and the keys are saved. |
+| `PermissionError` creating `logs` | The state root is not writable (a sandboxed terminal, a read-only home). Point `QUANTRED_HOME` at a directory you can write. A session that cannot journal loses its own trial history, so this is refused rather than ignored. |
+| Trials or history seem to be missing | Check `quantred --version` for the state root. A different `QUANTRED_HOME` (or none, in a client's environment) is a different journal. An MCP client needs the variable in its own config; `quantred mcp --self-test` prints it. |
+| `quantred mcp` runs but the chat has no tools | Running it in a terminal connects nothing. The client launches the server itself from its config (step 5). Close the terminal copy, run `quantred mcp --self-test`, paste what it prints, restart the client. |
+| `verdict` says `infeasible` | The universe is too small to fund the book under the per-name cap. Use more names or a higher `--max-weight`; see [an infeasible book](verdict#an-infeasible-book). |
+| `research` fails on the first request | `quantred init --probe-model --provider <name> --for research` names the cause: `auth`, `quota`, `rate_limited`, `model_not_found` and so on. A saved key alone does not install the provider's SDK extra. |
+| `init --check` shows `[FAIL]` | Only a broken state does (for example an unwritable directory). `[blocked]` and `[optional]` rows are not failures; the summary says which tasks are ready. |

@@ -8,12 +8,12 @@ paths:
 
 # Writing rules for code and docs
 
-- **Self-contained.** Nothing committed references `specs/` — no link into it, and no
-  planning spec by number or section in code, docstrings, tests, docs or commit
-  messages. `specs/` is gitignored and not in the repository, so a reader cannot follow
-  the pointer. Link to the engineering wiki instead, or describe the behavior on its
-  own terms. `make check-links` refuses a tracked link into `specs/`. Implementation
-  notes and decision records for the work belong *in* `specs/`, which stays ignored.
+- **Self-contained.** Nothing committed points at material a reader cannot reach — no
+  link to a local-only or private file, and no planning document by number or section
+  in code, docstrings, tests, docs or commit messages. Link to the engineering wiki
+  instead, or describe the behavior on its own terms. `make check-links` refuses a
+  tracked link into a local-only directory. Implementation notes and decision records
+  for the work live outside this repository.
 - **No external-source citations.** Explain the math and the reasoning directly; do
   not name the book, paper, author, or equation number a technique came from. Cite
   the concept (`the IC-uncertainty level shrink`), not its provenance. Identifiers in

@@ -30,23 +30,33 @@ quantred verdict \
   Alphas (case1 scaling, assumed IC +0.0300): 12 names
     NVDA     alpha +0.0412
     AMD      alpha +0.0188
-    ...
+    ... +10 more (not shown)
 
-  Portfolio (proposal, not an order): 4 names, TE 3.71% (target 4.00%)
+  Portfolio (proposal, not an order): 12 names, TE 3.71% (target 4.00%)
     expected active return +1.42% gross / +0.61% net
     predicted IR +0.38 | transfer coefficient +0.71
-    ...
+    NVDA      17.7%
+    AMD       12.1%
+    ... +10 more (not shown)
 
   Information (24 rebalances, horizon 5 bars):
     IC +0.0184  t-stat +0.74  rank-IC +0.0210
     breadth 142 effective (ρ̄ 0.41, 12 names)
-    IR predicted +0.21 vs realized +0.18 ± 0.61
+    IR predicted +0.21 vs realized +0.93 ± 0.61
     P(any |t|>2 across 14 campaign trials) = 0.51
 
-  VERDICT: mixed — passed: ir_above_noise, sample_size, sanity_ceiling; failed: ic_tstat
+  VERDICT: mixed — passed: ir_above_noise, net_of_cost_alpha, sample_size, sanity_ceiling; failed: ic_tstat
     [FAIL] ic_tstat: 0.74 vs 2 — IC t-stat below 2 is not distinguishable from luck
-    ...
+    [PASS] ir_above_noise: 0.93 vs 0.61
+    [PASS] net_of_cost_alpha: 0.0061 vs 0
+    [PASS] sample_size: 24 vs 12
+    [PASS] sanity_ceiling: 0.93 vs 2
 ```
+
+(Illustrative figures; the shape is what a run prints. Every check is listed, passes
+included.) It needs bars for the universe and the benchmark: Alpaca
+keys from [`quantred init`](first-run), or `--offline` against a warmed cache. Add
+`--html verdict.html` to keep a copy you can attach.
 
 ## Why one command
 
@@ -90,6 +100,29 @@ Two results are deliberately not a pass:
   sampleable rebalances) reads as `needs more data`, never as a partial pass on the
   strength of the portfolio alone.
 
+## What to do next
+
+| Verdict | What it means | Next |
+|---|---|---|
+| `promotable` | Every check cleared on this window. It is a statistical read of a signal, not a validated strategy | Put the strategy through [`backtest`](backtesting) and [`walkforward`](walk-forward); neither is replaced by this |
+| `mixed` | Some checks passed and some did not | Read the `[FAIL]` lines. A failed `ic_tstat` means the signal is not distinguishable from luck on this universe and window; a longer window or wider universe is the honest test, not a looser threshold |
+| `needs more data` | Too few measured rebalances (`sample_size` failed), or the information step measured nothing | Widen `--start`/`--end` or the universe, and check `--lookback-days` against what the cache holds |
+| `infeasible` | The caps cannot fund a book | Widen `--symbols`, use `--scanner none`, or set `--max-weight` / `--max-names` yourself (below) |
+| `incomplete` | A step failed, so there is no verdict | Fix the step the report names (often missing bars or keys) and run again; the command exited non-zero |
+| `not promotable` | The checks ran and none passed | Treat the demo or idea as rejected on this evidence, or change the idea. Do not tune until it passes |
+
+A first run on the three-name starter universe is `infeasible`, not a failure of the tool:
+three names under a 25% cap cannot hold a fully invested book. Use at least four, as the
+twelve-name example above does.
+
+**Common errors.**
+
+| Message | What to do |
+|---|---|
+| `Missing Alpaca credentials ...` | Run `quantred init`, or add `--offline` and warm the cache first |
+| `--offline: no cached 1day bars for ...` | Run the `quantred cache warm ...` line the message prints. The benchmark (`SPY` by default) needs bars too |
+| `... before it starts` (reversed dates) | `--end` must come after `--start` |
+
 ## An infeasible book
 
 A long-only book that is fully invested needs enough names to carry the whole
@@ -102,9 +135,9 @@ dates:
   Steps:
     - scan: skipped — no scanner — candidates used as-is
     - alphas: skipped — allocation preflight: max_weight*3 < 1 (cardinality/weight cap can't fund the book)
-    - combination: skipped — one signal — nothing to combine
     - portfolio: skipped — allocation preflight: max_weight*3 < 1 (cardinality/weight cap can't fund the book)
     - information: skipped — allocation preflight: max_weight*3 < 1 (cardinality/weight cap can't fund the book)
+    - combination: skipped — one signal — nothing to combine
 
   Portfolio: NOT FEASIBLE — max_weight*3 < 1 (cardinality/weight cap can't fund the book)
 
@@ -150,6 +183,7 @@ not a validated universe.
 | `--cache` / `--offline` / `--cache-dir` | off | Serve bars from the local [bar cache](configuration) |
 | `--json [PATH]` | — | Bare: print the structured result object the report renders, as JSON, instead of the report (as every other `--json` does). With `PATH`: print the report and also write the object to that file |
 | `--html PATH` | — | Also write a [self-contained HTML report](html-reports) of the run |
+| `--config PATH` / `--re-resolve-universe` | — | Take strategy, params, universe, capital and costs from a saved [run config](run-configs); anything you type wins |
 | `--force` / `--rerun` | off | Re-run instead of serving an identical prior run |
 | `--no-journal` | off | Do not record this run as a trial |
 
@@ -188,6 +222,14 @@ a benchmark portfolio was given, and the factor-exposure vector. Trials recorded
 before that existed have no book stored, which reads as *not recorded* rather than
 as an empty one.
 
+## Related
+
+Before it: [scanning](scanning). After it: [`backtest`](backtesting), then
+[`optimize`](optimization) or [`walkforward`](walk-forward), then [trials](trials) and
+[HTML reports](html-reports). The pieces `verdict` composes have their own pages:
+[alphas](alphas), [portfolio](portfolio), [information](information). Design and
+check definitions are in the [verdict wiki page](../engineering/verdict).
+
 ## Over MCP
 
 The same composite is available to an agent as the `run_verdict` tool, returning the
@@ -199,6 +241,5 @@ keeps the service's default.
 
 ## From a source checkout (contributors)
 
-The commands above are the installed `quantred` command. In a checkout, run them as
-`uv run python main.py <command> ...`. The Makefile shortcut for this page is `make verdict`. Extras are installed with `uv sync --inexact --extra <name>`
+The commands above are the installed `quantred` command. In a checkout, `uv run quantred <command> ...` runs the same thing (`uv run python main.py <command> ...` also works). The Makefile shortcut for this page is `make verdict`. Extras are installed with `uv sync --inexact --extra <name>`
 (see [optional extras](extras)).

@@ -13,7 +13,7 @@ trading into it. It wraps
 affine step after — and never modifies the solver itself.
 
 :::note Default off
-Like [Black–Litterman](./portfolio-construction#blacklitterman---posterior-bl),
+Like [the Bayesian posterior](./portfolio-construction#blacklitterman---posterior-bl),
 this ships only if it beats the myopic policy net-of-cost, out-of-sample. See
 [Evaluation](#evaluation) below.
 :::

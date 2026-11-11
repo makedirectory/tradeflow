@@ -53,3 +53,5 @@ pandas/numpy. It reaches the registry by entry point like any pack's would.
 `evaluate_forward` computes hit rate, average return, Sharpe, and profit factor
 using the **same** `analytics.metrics` primitives the backtester uses — so
 "Sharpe" means the same thing in a scan score and a backtest report.
+
+Usage: [scanning](../usage/scanning.md).

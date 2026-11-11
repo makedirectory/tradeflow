@@ -143,3 +143,5 @@ fixed-config walk-forward (`WalkForwardValidator.evaluate_config`), counting as 
 trial toward the session's multiple-testing total. A "code" proposal (behind
 `--allow-code-gen`) loads a new strategy class through the sandbox and runs a full
 per-fold optimization over its `PARAM_RANGES`.
+
+Usage: [agents](../usage/agents.md).

@@ -13,9 +13,36 @@ quantred live --strategy demo_trend --scanner demo_volume --symbols NVDA,META,TS
 ```
 
 :::warning
-With `PAPER_TRADE = True` (the default) this trades the **paper** account. Set it
-to `False` only when you intend to trade real money.
+`PAPER_TRADE` defaults to `true`, which trades the **paper** account. Real-money
+execution is a deliberate, separate mode: it needs `PAPER_TRADE=false` in your
+environment or `.env` **and** `--live-money` on the command line (see
+[Real money must be said twice](#real-money-must-be-said-twice)). Nothing in the
+research commands, and nothing reachable over [MCP](agents), can place an order.
 :::
+
+## Before your first paper session
+
+This page is long because every guard is explained. To get a first session going, work
+down this list and read the sections it links when something surprises you.
+
+1. **Paper keys only.** `quantred init` writes a `.env` with your Alpaca paper key pair
+   (`APCA_API_KEY_ID`, `APCA_API_SECRET_KEY`) and `PAPER_TRADE=true`. Check with
+   `quantred init --check`. Every command that reaches the broker needs the keys;
+   `halt`, `halts` and `resume` do not.
+2. **Validate first.** Live runs a strategy; it does not decide whether the strategy is
+   worth running. Take a [walk-forward](walk-forward) result you believe and save it with
+   `--save-config`, then run that config rather than typing parameters.
+3. **Ask what it would do.** `quantred live --config <file> --dry-run` shows the orders,
+   binding caps and skips without a trading client. See [Dry run](#dry-run-what-would-this-trade).
+4. **Read the preflight.** `quantred live --config <file> --preflight` prints the
+   broker mode (it must say `PAPER`), the capital, the book limits and the warm-up
+   coverage, then exits. See [Preflight](#preflight-the-contract-before-the-order-path).
+5. **Pin the feed if you are on a free key.** Add `--feed iex`; see the `--feed` section below.
+6. **Know how to stop it before you start it.** `Ctrl-C` ends the process;
+   `quantred halt all --reason ...` refuses new entries; `quantred flatten --confirm
+   --reason ...` closes everything. See [Stopping trading](stopping).
+7. **Run it in market hours** and afterwards check `quantred reconcile` and
+   `quantred execution-report`.
 
 ## What happens on start
 
@@ -174,8 +201,8 @@ So the live loop compares the direction the score implies against the position b
 **One consequence worth knowing before you run it.** If you start the engine while
 the score already implies a position — a trend-follower started mid-trend, say — it
 will open that position on the first live bar rather than waiting for the next fresh
-crossing. Stops and targets are computed from the current price, not the price at the
-original crossing. This is the default, on the view that a trend-follower started
+crossing. Stops, targets and the size are computed from the close of the bar that produced the
+signal (the bracket is sent before any fill exists), not the price at the original crossing. This is the default, on the view that a trend-follower started
 mid-trend should hold the trend rather than sit flat until the next crossing.
 
 If you would rather wait for a fresh edge:
@@ -662,6 +689,12 @@ symbol and counted in a summary line, but does not stop a book that is otherwise
 and `--min-notional` set the limits the live book is held to, overriding both the strategy's declared limits and any a saved
 config carries. They map one-to-one onto the preflight lines above, so what you typed
 and what the run will enforce can be compared directly.
+
+`--min-notional` is an execution floor, enforced by the same rule on both clocks: an
+entry whose size, rounded to whole shares, is worth less than the floor is declined with a
+reason code, as is one whose size rounds to zero. An undeclared floor bounds nothing.
+Both refusals are counted in `execution-report`, so a book too small for its prices shows
+up as a number.
 
 Only a flag you actually type applies. `--max-positions` carries a default, and letting
 an untyped default overrule a frozen config would silently shrink the very book the

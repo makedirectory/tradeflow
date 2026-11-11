@@ -38,13 +38,17 @@ pass, so the examples below spell out the state-root location.
   "scanner": "my_liquidity",
   "symbols": ["AAPL", "MSFT", "NVDA"],
   "candidate_symbols": ["AAPL", "MSFT", "NVDA", "AMD", "..."],
-  "capital": 8000.0,
-  "position_limits": {"max_positions": 8, "max_position_size": 1200.0, "max_gross_exposure": 0.9},
+  "capital": 25000.0,
+  "position_limits": {"max_positions": 6, "max_position_size": 5000.0, "max_total_risk": 0.05,
+                      "max_gross_exposure": 0.8, "max_net_exposure": null, "min_notional": null},
   "cost": {"gross": false, "commission_bps": 1.0, "impact_eta": 0.3, "borrow_bps": 50.0},
   "params": {"entry_period": 40, "exit_period": 10},
-  "provenance": {"method": "grid", "seed": 27, "n_trials": 32, "git_sha": "...", "oos_metrics": {}}
+  "provenance": {"method": "grid", "objective": "sharpe_ratio", "windows": {"...": "..."},
+                 "oos_metrics": {}, "n_trials": 32, "seed": 27, "git_sha": "...", "accounting": 8}
 }
 ```
+
+(Illustrative values; `oos_metrics` is the full metric set in a real file.)
 
 Everything except `provenance` is an **input** — what to run. `provenance` is the
 opposite: a record of how those params were arrived at, and it is never read back as
@@ -66,11 +70,29 @@ different book from the one the evidence came from.
 ```bash
 quantred backtest    --config ~/.quantred/configs/breakout.json --start 2024-01-02 --end 2025-01-02
 quantred walkforward --config ~/.quantred/configs/breakout.json --start 2020-01-02 --end 2025-01-02
-quantred live        --config ~/.quantred/configs/breakout.json --capital 8000 --preflight
+quantred live        --config ~/.quantred/configs/breakout.json --capital 25000 --preflight
 ```
 
+`--config` is read by `backtest`, `walkforward`, `verdict`, `screen`, `live` and the
+other commands listed under [reusing a saved config](walk-forward#reusing-a-saved-config).
 Each command prints what it took from the file and what it ignored, because a config
-silently supplying half a run is how the validated setup and the executed one diverge.
+silently supplying half a run is how the validated setup and the executed one diverge:
+
+```
+Config ~/.quantred/configs/breakout.json: strategy='my_breakout', scanner=<config>, symbols=<config>, capital=<config>
+  window 2024-01-02..2025-01-02 (from this run, not the config)
+  candidates      3 names from the saved config
+  universe        replayed from config
+```
+
+**Common errors.**
+
+| Message | What to do |
+|---|---|
+| `Refusing to run: <path> cannot be used by this build.` | The path is mistyped, the file is not valid config JSON, or its strategy is not installed here (a private strategy needs its package installed). The message names the cause |
+| `... holds strategy 'a' and its tuned params, but --strategy 'b' was given` | Drop `--strategy`, or drop `--config` and tune `b` on its own |
+| A bare `--save-config name.json` is not where you expected | It lands in `configs/` under the state root; a path with a directory is used as given |
+| A config trades one position though the search used more | Check `position_limits`; a config written before limits were recorded falls back to the strategy's own |
 
 **The window is never stored.** A config describes *what* to run, not *when*; the dates
 always come from the command line. A stored window would make every re-run of a config
@@ -107,6 +129,11 @@ re-simulating.
 That identity is also scoped to the engine's accounting version, so a result computed
 under an older model is never served to a newer one. See [trials](trials.md).
 
+A saved config is also written by [`trials promote`](trials#promoting-a-validated-trial),
+from a recorded trial and without re-running it. Where each fits in the workflow:
+[walk-forward](walk-forward) validates and saves, [backtest](backtesting) replays on a later
+window, and [live](live-trading) runs it, with promotion always a manual step.
+
 ## Keeping them
 
 Configs live under the state root, outside this repository — `~/.quantred/configs` by
@@ -116,6 +143,5 @@ records the search that produced it.
 
 ## From a source checkout (contributors)
 
-The commands above are the installed `quantred` command. In a checkout, run them as
-`uv run python main.py <command> ...`. Extras are installed with `uv sync --inexact --extra <name>`
+The commands above are the installed `quantred` command. In a checkout, `uv run quantred <command> ...` runs the same thing (`uv run python main.py <command> ...` also works). Extras are installed with `uv sync --inexact --extra <name>`
 (see [optional extras](extras)).

@@ -45,7 +45,7 @@ leave it be and keep `tradeflow-engine>=2.3.1` installed: it provides the `trade
 import alias the pack uses. Excluding it is only for a pack that never imports the old
 name; see [migrating to QuantRed](migrating-to-quantred#if-you-write-or-use-an-extension-pack).
 
-That gives you a strategy, a scanner, a saved config, a `.gitignore`, and a
+That gives you two strategies, a scanner, two saved configs, a `.gitignore`, and a
 `pyproject.toml` with the entry points already declared — a starting point to edit
 rather than a sample to translate. Rename the entry points and the classes and it is
 your pack.
@@ -76,6 +76,21 @@ The names on the left are what you type at `--strategy` and `--scanner`. They co
 the entry points, not from the class names, and they only have to avoid colliding with a
 built-in — the engine refuses a pack rather than shadowing one if they do.
 
+What the engine checks when it loads a pack, so a skipped contribution is not a mystery:
+
+- The name starts with a letter and holds only letters, digits, `_` and `-`.
+- The class is a concrete subclass of `Strategy` (or `ScannerStrategy`) with no abstract
+  method left unimplemented, and declares a `PARAM_RANGES` dict, which is what the
+  optimizer and walk-forward search over. An empty dict is fine for a strategy with
+  nothing to tune.
+- An entry point may point at one class, at a mapping of name to class, or at a no-argument
+  function returning that mapping.
+
+A pack that fails any of these is **skipped with a warning**, not fatal: the engine keeps
+running with the built-ins and the other contributions, and the warning names the class
+and the reason. So `init --check` not listing your strategy is the cue to look at the
+warning printed above it.
+
 Install it into the same environment and it appears everywhere a built-in does — in
 `--strategy`, in the walk-forward search, over MCP, in the research agent. Sizing,
 fills, execution, limits and metrics come for free, because they only ever depended on
@@ -88,7 +103,9 @@ quantred init --check                    # confirms which packs are installed
 ```
 
 `init --check` lists them under **private packs installed**. If your strategy is not
-there, the entry point is not being found, and nothing further will work.
+there, the entry point is not being found (the pack is not installed into the
+environment `quantred` runs from, or `pyproject.toml` was edited after the install and
+the pack not reinstalled), and nothing further will work.
 
 ## What a strategy has to provide
 
@@ -179,5 +196,16 @@ installable pack, and from a checkout `quantred init --example-pack ./my-signals
 you a copy (an installed copy clones it instead, as above).
 Its `example_reversion` is long/short, which is what the leg diagnostics and the
 directional cap exist for, and none of that is exercisable by a long-only book.
+
+## Common errors
+
+- **`invalid choice: 'my_breakout'` at `--strategy`** - the pack is not installed in the
+  environment this `quantred` runs from. With `uv tool`, reinstall with
+  `--with-editable ./my-signals`; with `pip`, install into the activated environment.
+- **`Ignoring quantred.strategies contribution ... must declare PARAM_RANGES`** (or
+  `leaves abstract methods unimplemented`) - the class failed the checks above.
+- **`init --example-pack` says the pack is not part of an installed copy** - expected
+  for a `uv tool` or `pip` install; it prints the `git clone` and `cp -R` command to run
+  instead. It also refuses a destination that already exists and is not empty.
 
 Then point the machinery at something of your own.

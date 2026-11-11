@@ -157,10 +157,10 @@ session, so replay tracks per-session state as it walks the journal in order).
 
 **Return-series retention.** Early on the store recorded only summary floats
 (`oos_sharpe`, `deflated_sharpe`, ...) — enough for the Deflated Sharpe, not
-enough for White's Reality Check, which needs every trial's actual OOS return
+enough for the multiple-trial reality check, which needs every trial's actual OOS return
 *series* to jointly resample. A companion `trial_returns` table now retains the
 dated per-period return series for every trial that has one (not just the
-survivors — Reality Check over only the keepers would be survivorship bias with
+survivors — a reality check over only the keepers would be survivorship bias with
 extra steps), joinable into a common-calendar panel per
 `(strategy, universe, accounting)` family. This is exactly what powers the
 family half of [bootstrap skill
@@ -181,6 +181,38 @@ as though the change had been evaluated — a fixed bug looking already tested a
 and precisely while iterating, which is when the tree is dirty. Every step of this
 lookup fails toward a redundant run, never toward a skipped one; `--force` bypasses it
 entirely.
+
+**What a request's identity contains.** A match is only as good as the key, and the key
+is built in one place per kind so the CLI and the MCP server cannot disagree:
+
+- A backtest's run shape (capital, benchmark, beta sizing, take-profit margin) is
+  `services.analysis.backtest_run_key`. It was once missing from the key, so a run at one
+  capital answered a request at another.
+- A walk-forward's recipe is `services.analysis.walk_forward_recipe`, which resolves the
+  book itself from the strategy class (`strategies.base.resolve_book`) instead of
+  accepting one. `limits_key` folds the position limits in, so two configs differing only
+  in `max_positions` never share a result, and a class default that moves changes the
+  identity.
+- The optimizer's per-candidate memo is `ParameterOptimizer.candidate_identity()`
+  (cost model, resolved book, capital), and a walk-forward's inner search inherits it.
+- The window's text is part of the identity, so `--start`/`--end` and the MCP date
+  arguments are read by one function, `utils.timeutils.parse_market_date`, as exchange-zone
+  instants. Where the bar cache is read, its data-vintage stamp
+  (`services.data.vintage_stamp`) is folded in too, on both surfaces.
+
+Changing any of these changes the identity of earlier records, which then miss once and
+are recomputed; replay is unaffected, because a rebuild reads each journal line's own
+recorded recipe.
+
+**The index repairs itself.** On every open the store compares the file's real columns
+with a database built from the declared schema, not with a remembered list. A schema
+version that disagrees with the code, columns that disagree with the declaration, or a
+rebuild that never finished each trigger the same remedy: drop the derived tables,
+recreate them and replay the journal. That is safe only because every column of every
+table can be reconstructed from the journal, quarantine flags included; a rebuild refuses
+rather than replace real rows with an empty index when the journal cannot be read. When
+the accounting version moves, `trials list` counts what the default filter hid and says
+so, and `trials archive` retires the old era.
 
 `trials status` reports row/journal-line counts and flags drift
 (a truncated or out-of-order journal); `trials rebuild` resyncs from scratch;
@@ -251,10 +283,20 @@ provenance block records the engine's `ACCOUNTING_VERSION`:
   leakage probe could not see.
 - **5** — the book is marked at the bar's open for the decisions that transact at it
   (exposure-cap admission) and at the close for the equity curve.
-- **6** — current: window boundaries stay at New York midnight across daylight saving
+- **6** — window boundaries stay at New York midnight across daylight saving
   (via `shift_days`), and out-of-sample folds are half-open so no bar is counted in
   two folds. Because the stamp is one number for every kind of result, v5 backtests
   also leave the default listing.
+- **7** — stops and targets fill at the open when a bar opens beyond them; the bar an
+  entry fills on is checked against its own bracket; capital freed intra-bar is reusable
+  from the next bar; costs use liquidity known before the fill's bar and the configured
+  spread is actually charged; the benchmark return series is labelled by the same step as
+  the strategy's; entries size against what the book has left.
+- **8** — current: an over-large request is capped to the free pool instead of refused;
+  an entry's size and bracket come from the close its signal came from, rounded to the
+  tick; a stop or target exit is costed at the level it filled at; volume-less bars pay
+  commission and spread; the benchmark's first step is included; and a walk-forward's
+  default embargo and warmup are longer.
 
 Records written before the field existed carry no version, so absence reads as 1 —
 which is exactly what they are. `load_config` warns when a stored version differs

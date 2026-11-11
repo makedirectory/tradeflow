@@ -15,7 +15,7 @@ quantred allocate --scanner demo_volume --symbols NVDA,META,TSLA,AMD \
     --capital 100000 --max-positions 5 --max-weight 0.25
 ```
 
-Requires the `portfolio` extra (see [optional extras](extras)).
+Requires the `portfolio` extra (see [optional extras](extras)). `--capital` defaults to 100000, and `--objective` to `weights`, the scalar sizer above; `--objective utility` is the mean-variance construction below.
 
 ## What it solves
 
@@ -27,7 +27,7 @@ to **maximize the score-weighted allocation** subject to:
 - hold at most `--max-positions` names,
 - cap any single name at `--max-weight`.
 
-Example output:
+Example output (illustrative figures):
 
 ```
 SYMBOL     WEIGHT       DOLLARS    SHARES
@@ -197,6 +197,25 @@ which walks the same alpha book forward under the myopic policy and the aim
 policy and reports which one actually won net of cost — not a preference. See
 [Multi-period trading (engineering)](../engineering/multi-period-trading) for
 the derivation.
+
+## What to do next
+
+Weights are a research proposal. To carry one into a run, validate the strategy first
+([walk-forward](walk-forward)), save the result as a [run config](run-configs), and use
+`quantred live --portfolio` only after reading [live trading](live-trading), where
+`--max-weight` and `--max-positions` are reconciled against the book's limits.
+
+## Common errors
+
+- **A missing-extra message** - `allocate` needs the `portfolio` extra. Run
+  `quantred init --check`; it prints the install command for your copy, which keeps the
+  extras you already have.
+- **`Missing Alpaca credentials`** or **`--offline: no cached ... bars`** - allocation
+  fetches bars like the other research commands; see [first run](first-run) and warm the
+  cache once if you want to work offline.
+- **Fewer names funded than `--max-positions`** - the solver may fund fewer; unfunded
+  names are simply absent from the table. Raise `--max-weight` if the cap is what bound.
+
 
 ## From a source checkout (contributors)
 

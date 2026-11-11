@@ -101,7 +101,7 @@ Two questions, two functions:
 
 1. **Is this one track record skill?** `bootstrap_null` imposes the null (demean
    the return series by its own estimated alpha), then resamples the residual
-   with a **stationary (Politis–Romano) block bootstrap** — never i.i.d., since
+   with a **stationary block bootstrap** (random block lengths, so the resampled series stays stationary) — never i.i.d., since
    returns are autocorrelated and i.i.d. resampling would understate how
    likely a long lucky streak is. Reports the realized Sharpe's rank in the
    empirical null distribution: an *own* p-value with no assumption about the
@@ -109,7 +109,7 @@ Two questions, two functions:
    ratio: the walk-forward passes raw OOS returns, so the test asks whether the
    mean return differs from zero, not whether it beats a benchmark.
 2. **Is the best of the configs actually tried skill?** `reality_check`
-   (White's Reality Check) resamples the **same block indices across every
+   (the multiple-trial "reality check") resamples the **same block indices across every
    trial's return series at once**, so the cross-trial correlation structure is
    preserved by construction — DSR has to *assume* a trial-Sharpe variance to
    approximate this; this replays the actual trials recorded in the

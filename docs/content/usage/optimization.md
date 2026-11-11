@@ -21,6 +21,28 @@ quantred optimize \
     --start 2024-01-02 --end 2024-04-01 --method grid --max-evals 50
 ```
 
+Like a backtest it needs bars: Alpaca keys from [`quantred init`](first-run), or
+`--offline` against a warmed cache. It follows [`backtest`](backtesting) and
+[`verdict`](verdict) in the workflow, and is followed by [`walkforward`](walk-forward).
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--method` | `grid` | `grid`, `random` or `bayesian` ([below](#methods)) |
+| `--objective` | `sharpe_ratio` | Metric the search maximises (for example `sortino_ratio`, `total_return`) |
+| `--max-evals` | `50` | Evaluation budget; a grid larger than this is sampled, not truncated |
+| `--seed` | `42` | Seed for sampling |
+| `--output PATH` | `optimization_results.csv` | CSV of every candidate, relative to the current directory |
+| `--workers N` | `1` | Evaluate candidates in parallel ([below](#running-candidates-in-parallel---workers-n)) |
+| `--strategy`, `--scanner`, `--symbols`, `--start`, `--end`, `--capital`, `--scan-as-of` | as for [`backtest`](backtesting#options) | The universe and window |
+| `--gross`, `--commission-bps`, `--impact-eta`, `--borrow-bps` | net, `1.0`, `0.3`, `50.0` | The cost model every candidate is scored under |
+| `--cache` / `--offline` / `--cache-dir` | off | Serve bars from the local cache |
+| `--no-journal` / `--force` | off | Do not record the search; or re-run instead of serving identical candidates |
+
+`optimize` has no `--config` and no book-limit flags: every candidate runs at the book
+the strategy declares, which for the demo strategy is one position. To explore a
+parameter space against a stated book first, use [`screen`](screening), which takes
+`--max-positions` and `--range`.
+
 ## Methods
 
 | `--method` | What it does | Needs |
@@ -44,13 +66,23 @@ quantred optimize --method bayesian --scanner none --symbols NVDA,META
 ## Output
 
 The best parameters and score are printed, and every evaluated configuration is
-written to `optimization_results.csv`:
+written to `optimization_results.csv` (or `--output`) in the current directory:
 
 ```
 Best sharpe_ratio: 1.83
-Best parameters: {'rsi_period': 10, 'volume_threshold': 1.4, ...}
+Best parameters: {'fast_ema_period': 10, 'slow_ema_period': 40, ...}
 Full results written to optimization_results.csv
+
+IN-SAMPLE: the best of 50 configs scored on the data that chose it. Validate out of sample
+with `quantred walkforward`, which deflates across every trial. ...
 ```
+
+(Illustrative values.) The `IN-SAMPLE` line is part of the output on purpose. The best
+score is the maximum of the candidates, so it is flattering by construction; read it as
+"this is the most this slice of history could be made to say", never as a forecast. The CSV's
+`deflated_sharpe_ratio` column is not deflated here, since each row is one backtest.
+`optimize` does not write a config file: it is a search, not a validation, and nothing
+here is promotable.
 
 Every evaluated configuration is also recorded as one **trial** in
 `logs/research_journal.jsonl` and the queryable
@@ -69,6 +101,18 @@ luck. The journaled trial count is what lets the deflated Sharpe raise the bar
 accordingly — so `--no-journal` on a real search understates how many tickets you
 bought.
 :::
+
+### Validating a winner
+
+There are two different questions, and `walkforward` answers only one of them. It runs
+its **own** search inside each fold and scores whatever that search picks on the next
+slice, so it validates the **tuning procedure** (method, objective, budget), not the one
+set of parameters `optimize` just printed. To judge those exact parameters on dates the
+search never saw, write them to a config (a `walkforward --save-config` run, or
+[`trials promote`](trials#promoting-a-validated-trial) on a validated trial) and run
+[`backtest --config`](run-configs#consuming-one) over a later window. Count that later
+window as spent once you have looked at it: reuse it to choose again and it stops being
+out of sample.
 
 How the search avoids materializing astronomically large grids, and how the
 surrogate model works, is covered in
@@ -141,6 +185,5 @@ refits. Same evaluation budget, fewer rounds.
 
 ## From a source checkout (contributors)
 
-The commands above are the installed `quantred` command. In a checkout, run them as
-`uv run python main.py <command> ...`. The Makefile shortcut for this page is `make optimize`. Extras are installed with `uv sync --inexact --extra <name>`
+The commands above are the installed `quantred` command. In a checkout, `uv run quantred <command> ...` runs the same thing (`uv run python main.py <command> ...` also works). The Makefile shortcut for this page is `make optimize`. Extras are installed with `uv sync --inexact --extra <name>`
 (see [optional extras](extras)).

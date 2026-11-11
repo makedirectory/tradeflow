@@ -13,6 +13,29 @@ under the state root, and `flatten` talks straight to the broker — so a wedged
 engine, a hung process, or a machine you have already killed does not stand between
 you and stopping.
 
+| You want to | Run | Needs broker keys |
+| --- | --- | --- |
+| See what is halted | `quantred halts` | no |
+| Refuse new entries from one strategy | `quantred halt demo_trend --reason "..."` | no |
+| Refuse new entries from everything | `quantred halt all --reason "..."` | no |
+| Close everything | `quantred flatten --confirm --reason "..."` | yes |
+| Lift a halt | `quantred resume all` (or a strategy name) | no |
+
+A halt is a file under the state root (`logs/halts.json`) that a running engine reads
+before every entry, so it takes effect on the next signal without restarting anything.
+`flatten` without `--confirm` refuses and changes nothing, and `--reason` is required
+for both `halt` and `flatten`. `flatten` takes the same `--small-real` and `--ledger`
+options as `reconcile`, and `--json` for a machine-readable report.
+
+## Common errors
+
+- **`No strategy '<name>', so that halt would stop nothing`** - the scope is not a
+  registered strategy. The message lists the names that are; use one of them, or `all`.
+- **`Missing Alpaca credentials`** from `flatten` - it talks to the broker, so it needs
+  the key pair that `halt` does not. Run `quantred init` to set it up before you need it.
+- **Exit code non-zero from `flatten`** - not flat yet. Read the `NOT FLAT` block and
+  re-run to re-read the account; see [Submitted is not closed](#submitted-is-not-closed).
+
 ## Level 1 — halt one strategy
 
 Use when a strategy is behaving oddly but you have no reason to distrust the

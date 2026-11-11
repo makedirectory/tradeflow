@@ -29,7 +29,7 @@ These are the checks CI runs (`.github/workflows/ci.yml`), in its order:
 ```bash
 uv run ruff check .                 # lint
 uv run ruff format --check .        # format check (`uv run ruff format .` fixes it)
-make check-links                    # Markdown links and anchors; no tracked link into specs/
+make check-links                    # Markdown links and anchors
 docker compose config --quiet       # the compose file parses (needs Docker, not a daemon)
 make test                           # offline test suite (no API keys/network)
 make secret-scan                    # committed secrets over the whole history (needs gitleaks)

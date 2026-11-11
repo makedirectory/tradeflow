@@ -31,7 +31,7 @@ cost($) = commission + (s/2)·|q|·p + impact_rate·|q|·p
   `s` is the model's own `default_spread_bps` unless a trade names one; the engine names
   none, so the configured value is the one charged, and the cost stress scales it with
   the other turnover costs.
-- **Market impact** — the **square-root law** (Almgren et al., the robust default):
+- **Market impact** — the **square-root law** (impact grows with the square root of participation; the robust default):
 
   ```
   impact_rate = η · σ_daily · √(|q| / ADV)
@@ -109,3 +109,5 @@ trade clock has no ADV for a symbol at the moment it sizes one. Reporting the tw
 components as though they were the whole cost would understate it silently. The
 modelled figure is never added to the venue's own fee — one is a prediction, the other
 an observation, and a paper account reports no fee at all.
+
+Usage: [backtesting](../usage/backtesting.md) covers the cost flags.

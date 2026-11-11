@@ -28,6 +28,8 @@ AMD          31.0%          2.90%
 ...
 ```
 
+*(Illustrative figures.)*
+
 Read it as: **δ** is the Ledoit–Wolf shrinkage intensity (higher = the raw sample
 was noisier, so more was pulled toward the structured target); **condition number**
 near 1 is well-behaved and a large value means near-singular; **risk contribution**
@@ -42,6 +44,12 @@ is each name's share of the equal-weight portfolio's volatility (they sum to it)
 | `--model` | `shrinkage` | `shrinkage` = Ledoit–Wolf; `sample` = raw covariance; `factor` = structural `XFXᵀ+Δ` (adds the factor-vs-specific risk split). |
 | `--timeframe` | `1Day` | Bar timeframe for the return series. |
 | `--lookback-days` | `365` | History fetched (≤ `as_of`) for the estimate. |
+| `--benchmark` | `SPY` | Benchmark for the market factor and beta. |
+| `--conditional` | off | `ewma` or `har`: condition the volatilities (see below). |
+| `--conditional-lambda` | model default | Override the EWMA decay (RiskMetrics 0.94 daily, 0.97 weekly). |
+| `--evaluate-conditional` | off | Run the evidence gate instead of the risk report. |
+| `--config` / `--re-resolve-universe` | none | Replay a saved [run config](run-configs)'s universe and settings. |
+| `--cache` / `--offline` / `--cache-dir` | off | Reuse a local bar cache; `--offline` never touches the network. |
 
 ## Why shrinkage
 
@@ -101,6 +109,24 @@ there). See
 for why the default is off on this repo's own demo data.
 
 The same computation is available to agents as the read-only MCP tool `compute_risk`.
+It takes `symbols`, `as_of`, `model`, `timeframe` and `lookback_days`; `--conditional`
+is an evidence-gated knob and is not offered over MCP, and the benchmark is fixed.
+
+## What to do next
+
+Σ is the second input to [`allocate --objective utility`](portfolio). Compare
+`--model sample` with the default to see how much shrinkage matters for your universe size.
+
+## Common errors
+
+- **`Missing Alpaca credentials`** - this command fetches bars, so it needs the paper key
+  pair from `quantred init`. To work with no keys, warm a cache once and add `--offline`.
+- **`--offline: no cached 1day bars for ... Run quantred cache warm ...`** - the cache has
+  nothing for that range. The message prints the exact `cache warm` command to run (it
+  needs the keys once, and the `store` extra, see [optional extras](extras)).
+- **A name with a flat, median-looking volatility** - it had too little history and was
+  kept with the fallback (median variance, independent) rather than dropped. Widen
+  `--lookback-days` or drop the name.
 
 ## From a source checkout (contributors)
 

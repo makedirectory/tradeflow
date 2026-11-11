@@ -37,10 +37,10 @@ the optimizer's risk-aversion term.
 
 Two estimators behind one `RiskModel.estimate(returns)` interface:
 
-- **`shrinkage` (Ledoit–Wolf, default).** The raw sample covariance `S` over `N`
+- **`shrinkage` (default).** The raw sample covariance `S` over `N`
   names from `T` observations needs `N(N+1)/2` parameters; when `T` is not far
   greater than `N` it is noisy and often **non-invertible** — fatal, since the
-  optimizer needs `Σ⁻¹`. Ledoit–Wolf shrinks `S` toward a structured target by the
+  optimizer needs `Σ⁻¹`. Shrinkage pulls `S` toward a structured target by the
   analytically optimal intensity `δ`:
 
   ```

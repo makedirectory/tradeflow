@@ -6,10 +6,9 @@ pointing at it, and nothing complains until a reader clicks. Anchors are worse,
 because a link to a renamed heading still resolves as a file and just lands in the
 wrong place.
 
-Scope: the repository's own Markdown. ``specs/`` is gitignored and local-only, so it
-is not a default root, and a committed link *into* it is itself a problem: a reader of
-the repository cannot follow it. Check the specs on their own with ``make
-check-spec-links`` (``check_links.py specs``).
+Scope: the repository's own Markdown. A local-only directory is not a default root,
+and a committed link *into* it is itself a problem: a reader of the repository cannot
+follow it. Check local-only notes on their own by passing their directory as a root.
 
 Usage:
     python scripts/check_links.py [root ...]     # defaults to the roots below

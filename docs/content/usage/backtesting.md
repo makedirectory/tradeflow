@@ -15,15 +15,33 @@ quantred backtest \
     --symbols NVDA,META,TSLA --start 2024-01-02 --end 2024-04-01 --capital 100000
 ```
 
+A backtest reads daily bars for the symbols and a benchmark (`SPY` unless you change it),
+so it needs Alpaca keys from [`quantred init`](first-run) or a warmed cache with
+`--offline`. The minimal form is `quantred backtest --symbols AAPL,MSFT --scanner none
+--start 2024-01-02 --end 2024-12-31`. Next to try: [`verdict`](verdict) first if you
+have not asked whether the signal has any information, and [`walkforward`](walk-forward)
+after, because a backtest alone cannot tell a real edge from a fit.
+
 ## Options
 
 | Option | Default | Meaning |
 |--------|---------|---------|
-| `--strategy` | `demo_trend` | Strategy to run |
-| `--scanner` | `demo_volume` | Universe scanner (`none` to skip) |
+| `--strategy` | `demo_trend` | Strategy to run; an unknown name lists the installed ones |
+| `--scanner` | `demo_volume` | Universe scanner (`none` to skip); `--scan-as-of` pins its clock (default `--end`) |
 | `--symbols` | a 10-name list | Comma-separated candidates |
-| `--start` / `--end` | last 30 days | Backtest window (`YYYY-MM-DD`) |
+| `--start` / `--end` | last 30 days | Window: a date or ISO datetime, read in New York time |
 | `--capital` | `100000` | Starting capital |
+| `--config PATH` | — | Take strategy, params, universe, capital, costs and limits from a saved [run config](run-configs); flags you type win |
+| `--benchmark` | `SPY` | Benchmark symbol for beta and the benchmark rows |
+| `--gross`, `--commission-bps`, `--impact-eta`, `--borrow-bps` | net, `1.0`, `0.3`, `50.0` | The cost model ([below](#net-of-transaction-cost)) |
+| `--max-positions` and the other `--max-*` / `--min-notional` limits | strategy's own | The book the run is held to ([below](#stating-the-book-limits)) |
+| `--beta-sizing` | off | Scale position size inversely by each symbol's beta |
+| `--cost-stress`, `--fill-stress` | off | Re-run under harsher assumptions ([validation diagnostics](validation-diagnostics#cost-stress)) |
+| `--excursion`, `--causality` | off | Extra diagnostics; see [validation diagnostics](validation-diagnostics) |
+| `--chart PATH`, `--html PATH` | — | Write an equity-curve image (needs `viz`) or a [self-contained report](html-reports) |
+| `--record-trades` | off | Keep the trade table with the trial so `trials show` / `trials analyze` can read it |
+| `--no-journal`, `--force` / `--rerun` | off | Skip recording this run; or re-run instead of serving an identical earlier one |
+| `--cache`, `--offline`, `--cache-dir` | off | Serve bars from the local [bar cache](configuration) |
 
 ## Reading the report
 
@@ -32,6 +50,10 @@ The engine prints a metrics block, for example:
 ```
 === Backtest Results ===
 Capital                     $100,000.00 -> $103,420.00
+(!) low sample              fewer than 30 trades - treat ratios with caution
+
+--- Execution & cost (i) ---
+  ...
 --- Returns ---
 Total Return                3.42%
 CAGR                        3.42%
@@ -48,12 +70,21 @@ Profit Factor               1.61
 ...
 ```
 
-(Illustrative figures; the full report has more rows in each section.)
+(Illustrative figures; the full report has more rows in each section, and the
+`Execution & cost` block is [described below](#execution-and-cost).)
 
 - **Total Return** against the two **Buy & Hold** rows shows whether the strategy beat
   simply holding the symbols it traded (`universe`) and holding the benchmark
   (`benchmark`). The benchmark row is absent when no benchmark series was available.
 - **Sharpe / Max Drawdown / Profit Factor** describe risk-adjusted quality.
+- **`(!) low sample`** appears under 30 trades. A few trades tell you almost nothing:
+  read the ratios as anecdote, and lengthen the window or widen the universe.
+- **A single position.** The demo strategy declares a one-position book, so unless a
+  config or `--max-positions` says otherwise a many-name universe still trades one name at
+  a time. The `book_breadth` check below fails for that reason.
+- **Run the same backtest twice** and the second is served from the
+  [trial store](trials) under a `REUSED` banner, with fewer rows (a reused result keeps
+  no cost, execution or trade detail and says which). `--force` recomputes it.
 
 How fills and P&L are simulated is documented in **[The Engine](../engineering/engine)**;
 how each metric is computed is in **[Indicators & Analytics](../engineering/indicators)**.
@@ -64,15 +95,15 @@ Every backtest says where its universe came from:
 
 ```
 === Universe provenance ===
-  candidates      85 names from --symbols
+  candidates      120 names from --symbols
   scanner         demo_volume as of 2026-08-22T00:00:00-04:00
-  resolved        61 of 85 names
+  resolved        40 of 120 names
   universe        resolved this run
   survivorship    a hand-supplied list is today's names applied to history; membership
                   was not point-in-time
 ```
 
-A 61-name large-cap list is not "the market", and a report that leaves the universe in
+A 40-name large-cap list is not "the market", and a report that leaves the universe in
 the background invites it to be read as one. The `universe` line distinguishes a
 [replayed config](walk-forward.md#reusing-a-saved-config) from a fresh resolution, so
 you never have to infer which book you are looking at.
@@ -217,7 +248,8 @@ for asking how robust your strategy is.
 ## Trial journaling
 
 Each run records one **trial** — the config it evaluated, on this universe and
-window — to `logs/research_journal.jsonl`, and is dual-written into the
+window — to `logs/research_journal.jsonl` under the state root (`~/.quantred` unless
+`QUANTRED_HOME` is set), and is dual-written into the
 [trial store](../engineering/walk-forward#the-trial-store) (`logs/trials.db`) so
 `trials list` can report the real campaign-wide trial count on demand — the
 gate itself still counts only the current run (see the
@@ -233,8 +265,8 @@ meanings the [live path](live-trading.md#stating-the-book-limits-for-this-run) u
 
 They exist because asking "what would this look like under a cap I could actually
 deploy" otherwise meant editing the saved config, which is exactly where the validated
-book and the tested one drift apart. A limit far above the capital in play — a $100,000
-per-position ceiling on an $8,000 book — is not a limit; it is a default nobody chose,
+book and the tested one drift apart. A limit far above the capital in play — a $1,000,000
+per-position ceiling on a $10,000 book — is not a limit; it is a default nobody chose,
 and it will not resemble the contract a live run is given.
 
 Only a flag you type applies, and typed limits are part of a run's cache identity. They
@@ -299,13 +331,23 @@ The block under the Verdicts shows the same split for every backtest:
 which separates an exit that earns by being right often from one that earns on a few
 large winners.
 
+## Common errors
+
+| Message | What to do |
+|---|---|
+| `Missing Alpaca credentials ...` | Run `quantred init`, or use `--offline` against a warmed cache |
+| `--offline: no cached 1day bars for ...` | Run the `quantred cache warm ...` line it prints; the benchmark needs bars too |
+| `the window ends ... before it starts` | `--end` must come after `--start` |
+| `invalid choice: 'x'` for `--strategy` | The message lists the installed strategies |
+
 ## Tuning the strategy
 
 Once a backtest runs, search for better parameters with
-**[Optimization](optimization)**.
+**[Optimization](optimization)**, and validate the result with
+**[walk-forward](walk-forward)**. Recorded runs are browsed with [trials](trials). The
+engine's fill and cost model is in [The Engine](../engineering/engine).
 
 ## From a source checkout (contributors)
 
-The commands above are the installed `quantred` command. In a checkout, run them as
-`uv run python main.py <command> ...`. The Makefile shortcut for this page is `make backtest`. Extras are installed with `uv sync --inexact --extra <name>`
+The commands above are the installed `quantred` command. In a checkout, `uv run quantred <command> ...` runs the same thing (`uv run python main.py <command> ...` also works). The Makefile shortcut for this page is `make backtest`. Extras are installed with `uv sync --inexact --extra <name>`
 (see [optional extras](extras)).
