@@ -31,7 +31,8 @@ analytics.reporting.log_backtest_report(...)          # -> text
 ```
 
 Every symbol is simulated on a single merged timeline against one shared capital
-pool, so positions compete for the same dollars as they would live: exits settle
+pool, so positions compete for the same dollars as they would live (sizing, pool and
+floor rules come from `quantred/execution/sizing.py`, the same functions live calls): exits settle
 before entries within a bar, and simultaneous candidates are admitted in
 conviction order while position limits and free cash allow. Any position still
 open at the final bar is force-closed. See
@@ -54,7 +55,8 @@ LiveEngine.start(universe)
             ▼
         LiveTrader.handle_signal(symbol, signal, price, bar_timestamp)
             ├── halted? -> Decision(allowed=False)   # entries only; exits pass
-            ├── entry: PositionSizer.size(...) -> submit_bracket_order(client_order_id)
+            ├── entry: PositionSizer.size(...) -> cap to the free pool -> notional floor
+            │          -> submit_bracket_order(client_order_id)
             └── exit:  Broker.close_position
             │
             ▼ Decision(allowed, reason, guards_consulted, order)
@@ -75,3 +77,5 @@ and the `PositionSizer` is pluggable — `RiskBasedSizer` by default, or
 doesn't know whether it's being backtested or traded live. The difference is only
 *what consumes the signal*: a simulator (engine) or a broker (execution). This is
 the payoff of [separating concerns](separation-of-concerns).
+
+How to run each mode: [backtesting](../usage/backtesting.md) and [live trading](../usage/live-trading.md).

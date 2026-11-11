@@ -12,7 +12,7 @@ make down        # stop; your trial history survives
 
 **This is a local development stack, not an easier way to try QuantRed.** Docker is
 itself a prerequisite, so if you just want to run this, [installing the
-command](installation#as-a-command-no-clone) is strictly simpler:
+command](installation#install-it) is strictly simpler:
 
 ```bash
 uv tool install quantred && quantred demo
@@ -73,8 +73,8 @@ the first `docker compose run`: Docker turns a missing bind-mount source into an
 directory.
 
 Nothing else from the checkout reaches the image: `.dockerignore` is an allowlist of
-the package, the example pack and the project metadata, so `.env`, `specs/`, `configs/`,
-`logs/`, `cache/` and `.git` stay out of the build context. The image's environment is
+the package, the example pack and the project metadata, so `.env`, `configs/`, `logs/`,
+`cache/` and `.git` stay out of the build context. The image's environment is
 built once with the extras it carries and is not re-synced at start, so a container
 runs without network access.
 
@@ -134,6 +134,16 @@ extra is opt-in, because the base image should need zero paid credentials:
 ```bash
 docker compose build --build-arg EXTRAS="mcp,store,viz,ai"
 ```
+
+## When it does not start
+
+- **`unable to open database file`** on the first journaled run: the volume is root-owned.
+  See *Ownership* above; the image creates its mount points so this should not happen on
+  the supplied compose file, which makes it a sign the volumes came from another setup.
+- **Missing keys** inside the container: the `.env` bind mount source did not exist, so
+  Docker made an empty directory there. Run `quantred init` on the host, then recreate.
+- **Empty history after upgrading from the old names**: copy the old volumes once, as in
+  *Coming from the old names*.
 
 ## Verifying the wiring
 

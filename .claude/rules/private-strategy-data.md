@@ -15,8 +15,8 @@ committed here.
   set of caps — identify a candidate when printed together as one block, which is
   exactly the form sample output takes.
 
-This covers code, tests, docs, fixtures and commit messages equally. `specs/` is
-gitignored and local-only, so it may hold real numbers; nothing else may.
+This covers code, tests, docs, fixtures and commit messages equally. Notes kept outside
+the repository may hold real numbers; nothing tracked may.
 
 ## What to write instead
 

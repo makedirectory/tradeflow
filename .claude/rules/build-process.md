@@ -17,8 +17,7 @@ A step that does not apply is skipped with a one-line reason **in the PR descrip
 never silently.
 
 1. **Plan** — for anything non-trivial, name the failure modes and sketch the test plan
-   before writing code. How much you write down (a spec, a note, an issue) is your call;
-   [specs](specs.md) governs the ones that become files.
+   before writing code. How much you write down (a design note, an issue) is your call.
 2. **Implement** in the correct layer. Domain meaning lives in a strategy, scanner,
    engine or service; reusable mechanics live in `utils/` or `analytics/`. No vendor SDK
    above `quantred/brokers/`. Where behavior turns on a library, use the

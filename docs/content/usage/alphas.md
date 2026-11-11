@@ -28,6 +28,8 @@ META          -0.018    -1.06    1.12      27.8%    -0.92%
 TSLA          -0.040    -1.41    1.55      44.1%    -1.95%
 ```
 
+*(Illustrative figures.)*
+
 Read it as: `SCORE` is the strategy's continuous conviction, `Z` is the
 cross-sectional standardized score, and `ALPHA = RESID_VOL · IC · Z` is the forecast
 residual return for the year. The ranking is what a mean-variance
@@ -47,6 +49,11 @@ residual return for the year. The ranking is what a mean-variance
 | `--neutralize` | off | Make alphas beta-neutral (regress out benchmark beta). |
 | `--neutralize-factors` | off | Make alphas **factor-neutral**: regress out the risk model's exposures. Bare flag = `market,volatility,size` (momentum kept — a momentum tilt is a return bet the alpha may intend); or pass a comma-separated subset. |
 | `--lookback-days` | `180` | History fetched (≤ `as_of`) for the residual-vol estimate. |
+| `--combine` | off | Comma-separated strategies to blend into one alpha (see below). |
+| `--config` | none | A saved [run config](run-configs); supplies strategy, params, universe and costs. Flags you pass win over it. |
+| `--re-resolve-universe` | off | With `--config`, re-run the scanner instead of replaying the config's universe. |
+| `--cache` / `--offline` / `--cache-dir` | off | Reuse a local bar cache; `--offline` never touches the network (implies `--cache`). |
+| `--no-journal` | off | Do not record this run as a trial in the research journal. |
 | `--scaling` | `case1` | Per-name scaling: `case1` = `σ·IC·z`; `case2` = `IC·c_g·z` (no per-name vol multiply); `auto` = let a `Std_TS`-vs-`σ` regression decide, echoing the Case test. |
 
 ## Case scaling
@@ -104,7 +111,8 @@ exposures (momentum needs ~148 daily bars, the others 61) — the pipeline then 
 back to plain-beta neutralization rather than silently doing nothing. Unknown factor
 names are rejected at parse time. The same flag exists on `allocate --objective
 utility` (construct from factor-neutral alphas) and on `info`/`horizon` — **measure
-the same alpha you deploy**. Note: the MCP tools don't expose this parameter yet.
+the same alpha you deploy**. Over MCP, `compute_alphas`, `construct_portfolio` and
+`run_verdict` take `neutralize_factors`; `compute_information` and `compute_horizon` do not.
 
 ## Combining several signals
 
@@ -149,6 +157,25 @@ residual returns — measure on out-of-sample data for an honest combination. Se
 
 The same computation is available to agents as the read-only MCP tool
 `compute_alphas` — see [Agents & MCP](./agents.md).
+
+## What to do next
+
+The ranking is the input to [`allocate --objective utility`](portfolio), which turns alphas
+and Σ into weights. To find out whether the alpha is worth acting on at all, run
+[`info`](information) over a window first, then feed its measured IC back through `--ic`.
+
+## Common errors
+
+- **`Missing Alpaca credentials`** - this command fetches bars, so it needs the paper key
+  pair from `quantred init`. To work with no keys, warm a cache once and add `--offline`.
+- **`--offline: no cached 1day bars for ... Run quantred cache warm ...`** - the cache has
+  nothing for that range. The message prints the exact `cache warm` command to run (it
+  needs the keys once, and the `store` extra, see [optional extras](extras)).
+- **`--combine` with one strategy** - a combination needs at least two to blend, and a
+  bare engine ships one. Install a [pack](private-strategies) with more, or use plain
+  `--strategy`.
+- **`low_confidence` and no scaling** - fewer than about 10 names; rank with a wider
+  universe before trusting the magnitudes.
 
 ## From a source checkout (contributors)
 

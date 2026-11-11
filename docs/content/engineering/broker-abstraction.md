@@ -161,3 +161,5 @@ That's it — `engine/`, `execution/`, `strategies/`, `scanners/`, and the optim
 are untouched because they only ever knew the interface. The test suite proves
 this: it runs the entire stack against an in-memory `FakeBroker` /
 `FakeMarketData` with no Alpaca involved at all.
+
+Usage: [brokers](../usage/brokers.md).

@@ -211,13 +211,13 @@ small, unattractive names, even when alphas are drawn independent of size.
 `--book long-only` (the default) is the exact code path used before this
 existed, byte-identical.
 
-## Black–Litterman (`--posterior bl`)
+## Bayesian posterior (`--posterior bl`) {#blacklitterman---posterior-bl}
 
 Two problems with treating alphas as the whole story: a name with no signal reads
 as a *hard* zero-view ("this name earns exactly consensus") rather than
 ignorance, and view confidence is baked only into magnitude. `--posterior bl`
 blends the refined alphas with the reverse-optimized consensus prior via a
-precision-weighted Black–Litterman update:
+precision-weighted Bayesian update:
 
 ```
 μ_post = τΣPᵀ(PτΣPᵀ + Ω)⁻¹q
@@ -253,7 +253,7 @@ into is gone by the time it fully arrives) and that today's trade sets tomorrow'
 starting point. `--policy aim` replaces the single-period jump with a
 partial-adjustment policy — see [Multi-period trading](./multi-period-trading) for
 the full derivation. **Default off**, same evidence-gated posture as
-Black–Litterman above.
+the Bayesian posterior above.
 
 ## No taxable-account support
 

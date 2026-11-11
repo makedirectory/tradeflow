@@ -21,6 +21,29 @@ quantred screen --strategy demo_trend --symbols AAPL,MSFT,NVDA \
     --method random --max-evals 60 --max-positions 5
 ```
 
+Screening reads bars like any other run: Alpaca keys from [`quantred init`](first-run),
+or `--offline` against a warmed cache. It sits between [`backtest`](backtesting) and
+[`optimize`](optimization) in the workflow, and a point worth keeping goes on to
+[`walkforward`](walk-forward).
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--method` | `grid` | `grid` or `random` (no `bayesian`: a screen is not a search for a winner) |
+| `--max-evals` | `50` | Points to evaluate; a larger grid is sampled, not truncated, and the report says so |
+| `--objective` | `sharpe_ratio` | Metric whose distribution is reported |
+| `--seed` | `42` | Seed for sampling, as for `optimize` and `walkforward` |
+| `--range NAME=min:max:step` | declared range | Narrow one axis; repeatable ([below](#narrowing-the-search)) |
+| `--max-positions N` | strategy's own | The book each point is evaluated against ([below](#the-book-you-are-screening)) |
+| `--confirm best\|RANK` | — | Re-run exactly one point as a journaled trial ([below](#turning-a-screen-into-evidence)) |
+| `--workers N` | `1` | Evaluate points in parallel; implies the bar cache |
+| `--json` | off | Emit the report as JSON |
+| `--config`, `--strategy`, `--scanner`, `--symbols`, `--start`, `--end`, `--capital`, cost flags, cache flags | as for [`backtest`](backtesting#options) | The universe, window and costs |
+
+The report ends with a path to a CSV of every point (under `logs/artifacts/` in the
+state root) and a short universe-provenance block, so the numbers can be inspected and
+the universe is never left to inference. A run says `Reconnaissance, not evidence:
+nothing here was journaled` because that is the point of it.
+
 ## Read the distribution, not the winner
 
 The report leads with the distribution and puts the best point last, deliberately.
@@ -89,7 +112,8 @@ parameter's type or drop its default:
 quantred screen --range fast_ema_period=5:12:1 --range stop_loss=0.02:0.06:0.01
 ```
 
-A name the strategy does not declare is **refused**, not ignored: a typo that quietly
+A name the strategy does not declare is **refused**, not ignored (the run stops with
+`Cannot screen: <Strategy> declares no parameter '<name>' to narrow`): a typo that quietly
 screened the full range would report a distribution for a space you never asked about,
 and finding nothing there means nothing.
 
@@ -132,8 +156,19 @@ Three different questions, in order:
 Screening is not a cheaper optimize — it is the step before deciding whether an
 optimize is worth its statistical budget at all.
 
+## Common errors
+
+| Message | What to do |
+|---|---|
+| `Cannot screen: ... declares no parameter 'x' to narrow` | Check the name against the strategy's declared parameters; a typo is never silently screened |
+| `Missing Alpaca credentials ...` | `quantred init`, or `--offline` against a warmed cache |
+| `--offline: no cached 1day bars for ...` | Run the `quantred cache warm ...` line it prints |
+
+For the statistics behind the noise baseline, see
+[evaluation metrics](../engineering/evaluation-metrics) and the
+[optimization wiki page](../engineering/optimization).
+
 ## From a source checkout (contributors)
 
-The commands above are the installed `quantred` command. In a checkout, run them as
-`uv run python main.py <command> ...`. The Makefile shortcut for this page is `make screen`. Extras are installed with `uv sync --inexact --extra <name>`
+The commands above are the installed `quantred` command. In a checkout, `uv run quantred <command> ...` runs the same thing (`uv run python main.py <command> ...` also works). The Makefile shortcut for this page is `make screen`. Extras are installed with `uv sync --inexact --extra <name>`
 (see [optional extras](extras)).

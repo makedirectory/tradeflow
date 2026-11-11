@@ -20,6 +20,14 @@ quantred walkforward \
   --method grid --objective sharpe_ratio --max-evals 50
 ```
 
+Walk-forward needs bars: Alpaca keys from [`quantred init`](first-run), or `--offline`
+against a warmed cache. It is the validation step of the workflow: after
+[`verdict`](verdict), [`backtest`](backtesting) and [`optimize`](optimization) or
+[`screen`](screening), and before [trials](trials) and [HTML reports](html-reports) keep
+the result. Design and fold geometry are in the
+[walk-forward wiki page](../engineering/walk-forward). `quantred demo` runs one on
+synthetic data with no keys.
+
 ## Why it matters
 
 The failure mode this guards against is **overfitting** — mistaking the random
@@ -92,6 +100,16 @@ replayed rather than re-scanned.
 | `--bootstrap-skill` | Nonparametric own p-value (stationary block bootstrap) next to the FAMILY p from White's Reality Check over every OOS return series the trial store has recorded for this strategy/universe/accounting — advisory only, not a gate. See [below](#nonparametric-skill-check). |
 | `--save-config PATH` | Save the chosen config — params *and* run inputs — for a human to review. A bare filename lands in `configs/` under the state root; a path with a directory is used as given. See [Reusing a saved config](#reusing-a-saved-config). |
 | `--results-csv PATH` | Write the per-fold table to CSV. |
+| `--benchmark SYMBOL` | Score each fold against this symbol; turns on the two benchmark prerequisites ([below](#promotion-prerequisites)). |
+| `--cost-stress` / `--no-cost-stress` | The cost-stress prerequisite runs by default; `--no-cost-stress` skips it. |
+| `--train-days N` / `--test-days N` | Fix each fold's in-sample and out-of-sample length in calendar days. Both or neither. |
+| `--capital`, `--gross`, `--commission-bps`, `--impact-eta`, `--borrow-bps` | Starting capital (default `100000`) and the cost model, as for [`backtest`](backtesting#options). |
+| `--config PATH` / `--re-resolve-universe` | Start from a saved [run config](run-configs); flags you type win. |
+| `--html PATH` / `--chart PATH` | A [self-contained report](html-reports), or an image of the verdict and gate scorecard (needs `viz`). |
+| `--workers N` | Parallelize each fold's search ([below](#running-folds-faster---workers-n)). |
+| `--record-trades` | Keep the trade table with the trial so `trials analyze` can read it. |
+| `--no-journal` / `--force` | Do not record this run; or re-run instead of serving an identical earlier one. |
+| `--bootstrap-b`, `--bootstrap-block-length`, `--bootstrap-seed` | Tuning for `--bootstrap-skill` (2000 resamples by default; block length is computed and reported). |
 
 ## Reading the output
 
@@ -104,7 +122,37 @@ Sharpe, and — when requested — parameter sensitivity and the leakage probe).
 
 > Saving a config never changes live behavior. It writes a JSON file to the `configs/`
 > directory under the state root (outside any repository by default); promoting it to live trading is a manual human
-> step.
+> step. `--save-config` writes the config the search chose **whether or not the run
+> cleared its gates**; a failed run still produces a file, so read the
+> verdict printed above it before you reuse one.
+
+**A failed gate is the answer, not an error.** `Verdict: NOT promotable` with the failing
+gates named means the evidence does not support the candidate. The next step is to change
+the idea, the universe or the window, not to loosen a threshold or search harder: more
+configurations tried raises the bar the deflated Sharpe sets. A small run (few
+folds, few evaluations, a short window) fails `min_oos_trades` and `deflated_sharpe` almost
+by construction; say so in your notes rather than reading it as a verdict on the idea.
+
+**The holdout is scored once, and it is scored even when the folds fail.** If you pass
+`--holdout-days`, its result is printed whether or not the development gates passed. Once
+you have seen it, it is no longer a final test for any revision you make afterwards. Use a
+holdout only when the candidate and the evaluation plan are frozen, and treat a window you
+have looked at as spent.
+
+**What a walk-forward validates.** It runs its own search inside every fold, so it
+validates the *tuning procedure*, not one fixed set of parameters. To test a single
+winner on later dates, save it to a config and run [`backtest --config`](run-configs) over
+a window the search never touched; see
+[validating a winner](optimization#validating-a-winner).
+
+**Common errors.**
+
+| Message | What to do |
+|---|---|
+| `walkforward cannot build its folds over ... (30 days; the default is the last 30 days)` | Pass `--start`/`--end` spanning a year or more; the message suggests a window |
+| `Missing Alpaca credentials ...` | `quantred init`, or `--offline` against a warmed cache |
+| `--offline: no cached 1day bars for ...` | Run the `quantred cache warm ...` line the message prints |
+| One of `--train-days` / `--test-days` seems to do nothing | It does nothing alone, with no message; pass both, or count the folds in the table |
 
 ## Excess return by fold
 
@@ -201,9 +249,9 @@ unevaluated, so a run with no benchmark can reach at most 3 of 4 evaluated; with
 - **`benchmark_relative`** — the median per-fold information ratio against
   `--benchmark` is positive. **Per fold, then median**, because every other fold
   statistic here is a median and a second aggregation convention in one report would
-  differ from its neighbours most exactly when the folds disagree. They do: a real run
-  produced per-fold IRs of `[0.13, -1.25, 2.10]` for a median of `+0.13`, and a single
-  figure over the stitched curve would have hidden that spread entirely.
+  differ from its neighbours most exactly when the folds disagree. They can: per-fold
+  IRs of `[0.13, -1.25, 2.10]` (illustrative) give a median of `+0.13`, and a single
+  figure over the stitched curve would hide that spread entirely.
 - **`benchmark_excess`** — the median per-fold return *less the benchmark's over the
   same steps* is positive. A different question from the ratio above: a strategy can
   hold a good risk-adjusted number while losing to the benchmark outright, which is not
@@ -229,7 +277,7 @@ list), `candidate_symbols`, `capital`, `position_limits` and the cost model.
 
 **`position_limits` is written out in full**, not left to the strategy's defaults. A
 config is what a paper or live run gets frozen from, and the shipped default of
-`max_positions: 1` is exactly the kind of inheritance nobody chose — a 61-name config
+`max_positions: 1` is exactly the kind of inheritance nobody chose — a 40-name config
 that quietly holds one position. What a run risks belongs in the file rather than being
 resolved from somewhere else at start-up. A config written before this still works:
 recorded keys win, unrecorded ones fall back to the strategy's own. So one file drives any run type, and can be
@@ -263,8 +311,8 @@ quantred risk     --config ~/.quantred/configs/alpha.json
   original decision repeated. Every run says which it did:
 
   ```
-  universe=<replayed from config, 61 symbols>
-  universe=<re-resolved from 85 saved candidates>
+  universe=<replayed from config, 40 symbols>
+  universe=<re-resolved from 120 saved candidates>
   universe=<--scanner demo_volume given; saved book re-scanned>
   universe=<--symbols given; --re-resolve-universe has nothing to re-resolve>
   ```
@@ -344,6 +392,5 @@ the full contract and its costs.
 
 ## From a source checkout (contributors)
 
-The commands above are the installed `quantred` command. In a checkout, run them as
-`uv run python main.py <command> ...`. Extras are installed with `uv sync --inexact --extra <name>`
+The commands above are the installed `quantred` command. In a checkout, `uv run quantred <command> ...` runs the same thing (`uv run python main.py <command> ...` also works). Extras are installed with `uv sync --inexact --extra <name>`
 (see [optional extras](extras)).

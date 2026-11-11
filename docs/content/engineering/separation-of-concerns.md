@@ -21,7 +21,7 @@ in isolation.
 | Simulating fills (backtest) | `engine/` | metric formulas |
 | Placing real orders (live) | `execution/` | deciding *whether* to trade |
 | Performance math | `analytics/` | trading, data access |
-| Wiring it together | `engine/` + `main.py` | business logic |
+| Wiring it together | `engine/` + `cli.py` (`main.py` is a shim) | business logic |
 
 ## Why it matters here
 
@@ -59,6 +59,20 @@ formula would make that number incomparable with the backtest a candidate was ju
 It imports nothing from `services/`, `analytics/`, `optimization/` or `research/`, which
 is what keeps it on the right side of the line.
 
+## The price of two clocks
+
+The trade clock may not import the research clock, so an idea the two share cannot be
+one function reached from both sides unless it sits in a layer both may import. Where
+that works it is done — `quantred/execution/sizing.py` holds the rules the backtest and
+`LiveTrader` both call (`free_buying_power`, `deployable_pool`, `cap_to_buying_power`,
+`below_min_notional`), and the backtest imports them from there. Where it cannot, the
+idea is written twice (position limits, exit ordering, signal causality), and a defect
+on one side is a defect on the other until someone checks. Each pair is guarded by a
+test that runs one input through both clocks and compares the answers, not two tests
+that each pass. The same applies to the CLI and the MCP server: separate transports
+over one service layer, with their defaults and dedup keys compared rather than
+restated. See [the engine](engine#portfolio-accounting) for the sizing rules.
+
 ## A concrete example
 
 When a live bar arrives:
@@ -67,7 +81,8 @@ When a live bar arrives:
 2. `Strategy.process_real_time_data` updates indicators and returns a signal
    (signal concern).
 3. `LiveEngine` forwards an actionable signal (orchestration concern).
-4. `LiveTrader` sizes it via the strategy config and places a bracket order
+4. `LiveTrader` sizes it via its `PositionSizer`, applies the same pool, cap and
+   notional-floor rules as the backtest, and places a bracket order
    (execution concern).
 5. `AlpacaBroker` maps that to the SDK call (vendor concern).
 

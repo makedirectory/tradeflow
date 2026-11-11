@@ -22,6 +22,16 @@ config file, `mark-contaminated` records a quarantine and `archive` retires the 
 [Maintenance](#maintenance-quarantine-a-subset-or-retire-an-era)), and `rebuild`
 reconstructs the derived index from the journal.
 
+Nothing here needs keys or network: it reads files under the state root (`~/.quantred`
+unless `QUANTRED_HOME` is set). `logs/research_journal.jsonl` is the record and
+`logs/trials.db` the index over it; every trial-reading command takes `--db` / `--journal`
+to point at others. A fresh install has no trials until a run records one (`backtest`,
+`optimize`, `walkforward`, `verdict` and a `screen --confirm` each do, unless
+`--no-journal`). Start with `trials list`, open a row with `trials show`, and read
+`trials best` last. The runs that fill it are [backtest](backtesting),
+[optimize](optimization), [walk-forward](walk-forward) and [verdict](verdict); the
+store's design is in the [walk-forward wiki page](../engineering/walk-forward#the-trial-store).
+
 ## `trials list` — what have we tried?
 
 ```bash
@@ -33,7 +43,7 @@ ID            KIND        STRATEGY           SHARPE BASIS          DSR  PROMO  A
 a1b2c3d4e5f6  walkforward demo_trend          1.512 oos agg      0.903    yes     3  2025-03-01 09:14:22 EST
 …
 
-Showing 20 of 4318 matching trials (use --limit/--offset for more).
+Showing 20 of 412 matching trials (use --limit/--offset for more).
 3 in-sample row(s) (optimize/backtest/alpha) left out of this ranking — none was validated out of sample. Pass --include-in-sample to see them.
 ```
 
@@ -138,7 +148,7 @@ quantred trials promote 50fd06209f49 --save-config alpha.json
 Promoted trial 50fd06209f49 -> ~/.quantred/configs/alpha.json
   recipe   : embargo_days=5, holdout_days=0, max_evals=50, method=grid, mode=anchored, objective=sharpe_ratio, seed=42, test_days=63, train_days=252
   evidence : accounting v8, 1 trial id(s), family has tried 50
-  strategy 'demo_trend'  universe 61 symbols resolved from 85 candidates
+  strategy 'demo_trend'  universe 40 symbols resolved from 120 candidates
   Saving a config never trades it - a human promotes it to live.
 ```
 
@@ -213,6 +223,12 @@ worse coming from our own tooling, which lends it authority. So:
   reported (`unranked_excluded`).
 - `--rank-by sharpe` is available and prints a caveat saying, in as many words,
   that the ordering does not correct for how many configs were tried.
+
+**An empty leaderboard is normal early on.** Every row a fresh campaign has is a plain
+backtest, an optimize row or a verdict, and none of those is ranked, so `trials best`
+prints `No trials matched.` while `trials list` shows the rows: they are recorded, just not ranked. Run a
+[walk-forward](walk-forward) to put a validated row in it, or pass `--include-in-sample`
+to see the others with that stated on the screen.
 
 These rules live in the **payload**, not only in the terminal formatting: `--json`
 carries the family counts and the caveat too, so an agent reading this over MCP
@@ -353,7 +369,7 @@ existed load unchanged and read as *not materialised from a campaign*.
 Promotion also warns at promotion time, rather than only when the file is later loaded:
 
 ```
-  WARNING: this trial was measured under accounting v3 and this engine is v7. The recipe still
+  WARNING: this trial was measured under accounting v6 and this engine is v8. The recipe still
   applies; the recorded metrics do not, and must not be compared with a fresh run.
 ```
 
@@ -627,6 +643,5 @@ store's campaign count feeds.
 
 ## From a source checkout (contributors)
 
-The commands above are the installed `quantred` command. In a checkout, run them as
-`uv run python main.py <command> ...`. Extras are installed with `uv sync --inexact --extra <name>`
+The commands above are the installed `quantred` command. In a checkout, `uv run quantred <command> ...` runs the same thing (`uv run python main.py <command> ...` also works). Extras are installed with `uv sync --inexact --extra <name>`
 (see [optional extras](extras)).

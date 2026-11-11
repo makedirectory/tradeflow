@@ -12,6 +12,23 @@ gate on a result that is entirely an artefact of one fill assumption.
 These are the tools for interrogating a result you already believe. **None of them
 gates anything.** They report numbers and leave the judgement where it belongs.
 
+Each is a flag on [`backtest`](backtesting) except the execution report, so the minimal
+form is a backtest you can already run (the examples below use a saved
+[run config](run-configs); `--symbols ... --scanner none` works the same):
+
+| You want to know | Run | Journals |
+|---|---|---|
+| Is the gain one exit path's fill assumption? | printed by every backtest | — |
+| Does it survive a harder take-profit fill? | `backtest --fill-stress` | nothing |
+| Does the edge survive higher costs? | `backtest --cost-stress` | nothing |
+| How bad did the book get inside a bar? | `backtest --excursion` | nothing |
+| Could each decision have been made when it was? | `backtest --causality` | nothing |
+| How did a paper session actually fill? | `execution-report` | read-only |
+
+The statistical gates are on [walk-forward](walk-forward); recorded runs and their trades
+are browsed in [trials](trials). Reports of these blocks can be kept with
+[`--html`](html-reports).
+
 ## Where the P&L came from
 
 Printed by every backtest, no flag required.
@@ -19,14 +36,14 @@ Printed by every backtest, no flag required.
 ```
 === Where the P&L came from ===
   exit              trades   share       net P&L  win rate
-  TAKE_PROFIT         1130   57.9%      $581,923     71.2%
-  SIGNAL               787   40.3%     -$118,444     38.0%
-  STOP_LOSS             30    1.5%      -$47,112      0.0%
+  TAKE_PROFIT           30   57.7%      $11,400     73.3%
+  SIGNAL                12   23.1%         $600     41.7%
+  STOP_LOSS             10   19.2%      -$2,300      0.0%
   Nearly all of the gain comes from TAKE_PROFIT. The result is a bet on that exit's
   fill assumption - stress it before believing the headline.
 ```
 
-A headline return says nothing about where it came from. A book whose entire gain
+(Illustrative figures.) A headline return says nothing about where it came from. A book whose entire gain
 arrives through one exit path is a bet on that path's fill assumption, and nothing in
 the summary metrics distinguishes it from one whose edge is spread across exits.
 
@@ -113,6 +130,12 @@ Slippage is signed so **positive is always worse**, whichever way the trade went
 modelled cost comes from the same cost model the backtest charges, so the two are
 comparable — and it is never added to the venue's own fee, because one is a prediction
 and the other an observation.
+
+Before any live, paper or small-real session has run there is nothing to read, and the
+command says so: `No position ledger at <state root>/logs/position_ledger.jsonl: nothing
+has recorded a session here yet`. `--small-real` reads the small-real ledger instead, and
+`--ledger PATH` a specific file; they are kept apart on purpose, since a full-size book's
+fills and the same book's fills at a fraction of the size describe neither.
 
 The refusal block is the half people forget. A strategy that produced no orders all
 session left no other trace, and "why did nothing happen" is answerable only here.
@@ -266,6 +289,5 @@ permanently.
 
 ## From a source checkout (contributors)
 
-The commands above are the installed `quantred` command. In a checkout, run them as
-`uv run python main.py <command> ...`. The Makefile shortcut for this page is `make causality`. Extras are installed with `uv sync --inexact --extra <name>`
+The commands above are the installed `quantred` command. In a checkout, `uv run quantred <command> ...` runs the same thing (`uv run python main.py <command> ...` also works). The Makefile shortcut for this page is `make causality`. Extras are installed with `uv sync --inexact --extra <name>`
 (see [optional extras](extras)).

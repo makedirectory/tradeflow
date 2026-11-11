@@ -26,10 +26,11 @@ Credentials live in one `.env` file, in the state directory: `~/.quantred/.env`,
 `$QUANTRED_HOME/.env` when that variable is set. It is the same file for an installed
 copy, a source checkout and the container; a `.env` in a checkout's own root is **not**
 read. `quantred init` writes it with hidden prompts and checks the keys. To write it by
-hand instead (a checkout carries a template, `.env.example`):
+hand instead, create the file yourself (a checkout also carries a template,
+`.env.example`):
 
 ```bash
-mkdir -p ~/.quantred && cp .env.example ~/.quantred/.env   # from a checkout
+mkdir -p ~/.quantred && touch ~/.quantred/.env && chmod 600 ~/.quantred/.env
 ```
 
 ```bash title="~/.quantred/.env"
@@ -55,6 +56,21 @@ order, so there's never any ambiguity:
 The same chain resolves the optional LLM provider keys for the research agent
 (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OLLAMA_BASE_URL`) — set them in `.env`
 or export them, whichever you prefer.
+
+## Every setting it reads
+
+| Variable | Meaning | Default |
+|---|---|---|
+| `APCA_API_KEY_ID`, `APCA_API_SECRET_KEY` | Alpaca key pair; needed by anything that fetches bars or reaches the broker | unset |
+| `PAPER_TRADE` | `true`/`1`/`yes`/`on` selects the paper account; anything else is live | `true` |
+| `ALPACA_DATA_FEED` | Pin the data feed: `iex`, `sip` or `delayed_sip` | unset (the SDK's own default, deliberately) |
+| `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` | Model keys for `research` (need the `ai` / `openai` extra) | unset |
+| `OLLAMA_BASE_URL`, `OLLAMA_TIMEOUT`, `OLLAMA_NUM_CTX` | Local model endpoint, response timeout in seconds, optional context length | `http://localhost:11434`, `120`, unset |
+| `QUANTRED_HOME` | The state root (where `.env`, logs, cache and configs live) | `~/.quantred` |
+
+`quantred init --check` reports each of these independently. Releases through 2.5.0 name
+the state variable `TRADEFLOW_HOME` and the directory `~/.tradeflow`; 2.6.0 and later
+read both.
 
 ## Paper vs. live
 

@@ -28,7 +28,10 @@ uv tool install 'quantred[mcp,store,viz]'
 ```
 
 No `uv`? [Install it first](https://docs.astral.sh/uv/getting-started/installation/),
-or use `python -m pip install 'quantred[mcp,store,viz]'` in a virtual environment. The three extras
+or use pipx, or `python -m pip install 'quantred[mcp,store,viz]'` in a virtual
+environment ([installation](installation) covers all three, plus upgrading and
+uninstalling). Python 3.10 or newer; quote the requirement or zsh will reject the
+brackets. The three extras
 are the MCP server (step 5), the local bar cache that `cache warm` and `--offline` use, and
 charts in HTML reports (step 4); the demo needs none of them, and
 [optional extras](extras) has the rest. This gives you a `quantred` command.
@@ -39,7 +42,8 @@ quantred --version
 
 That prints the version, which copy is running, and — worth noting now — **where its
 state lives**. An installed copy keeps its research journal, trial history, and cache
-in `~/.quantred`.
+in `~/.quantred` (or `$QUANTRED_HOME`). Keep it the same everywhere you launch
+QuantRed, or you will be looking at a different journal.
 
 ## 2. See it work, with no keys at all
 
@@ -193,6 +197,9 @@ Worth knowing: everything Claude runs is journaled the same way your own command
 are, and counts toward the same multiple-testing total. An agent that runs fifty
 backtests has genuinely made your next result harder to believe, and the tool will
 say so.
+
+Something not working? [When something goes wrong](first-run#when-something-goes-wrong)
+lists the usual first-session snags and the fix for each.
 
 ## 6. Where to go next
 

@@ -13,6 +13,18 @@ recent bars and keeps those that produce an actionable scan signal.
 quantred scan --scanner demo_volume --symbols NVDA,META,TSLA,AMD
 ```
 
+A scan reads recent daily bars, so it needs market data: Alpaca keys from
+[`quantred init`](first-run), or a warmed local cache and `--offline` (see
+[configuration](configuration)). Nothing is traded, journaled or written.
+
+| Flag | Meaning |
+|---|---|
+| `--scanner NAME` | Which scanner to run (default `demo_volume`). An unknown name lists the ones installed |
+| `--symbols A,B,C` | Candidates to filter (default: the built-in demonstration universe) |
+| `--as-of DATE` | Resolve at this date or datetime instead of now (a date is read in New York time) |
+| `--drift` | Also resolve at nearby clocks and report how much the universe moves |
+| `--cache` / `--offline` / `--cache-dir` | Serve bars from the local cache; `--offline` never touches the network |
+
 Standalone scans default to wall-clock now. Pin them to a historical clock with
 `--as-of`:
 
@@ -27,6 +39,23 @@ SYMBOL    SIGNAL
 NVDA      SCANNER_BUY
 TSLA      SCANNER_SELL
 ```
+
+**Reading it.** Each row is a symbol the scanner flagged at that clock. `SCANNER_BUY` and
+`SCANNER_SELL` are the scanner's read of the flagged bar (for `demo_volume`, a close above
+or at-or-below the open); they select the universe and are not trade orders. A symbol that
+is not listed was not flagged. When nothing is, the command prints `No symbols flagged.`
+That is a normal answer on a quiet day, and the other commands handle it: `backtest`,
+`optimize` and `walkforward` log a warning and use your candidate list as given
+(see [below](#how-it-feeds-the-other-commands)). With `--offline` a line above the table
+says the universe was resolved from cached bars only, so it is as current as the cache.
+
+**Common errors.**
+
+| Message | What to do |
+|---|---|
+| `Missing Alpaca credentials: APCA_API_KEY_ID, APCA_API_SECRET_KEY.` | Run `quantred init`, or add `--offline` against a warmed cache |
+| `unknown scanner 'x'. Available: ...` | Use a listed name, or `none` to skip scanning |
+| `--offline: no cached 1day bars for ...` | Run the `quantred cache warm ...` command the message prints, then retry |
 
 ## The demo scanner
 
@@ -49,15 +78,15 @@ quantred scan --scanner demo_volume --drift --as-of 2026-08-22
 ```
 
 ```
-=== Scanner drift (61 flagged at 2026-08-22) ===
+=== Scanner drift (18 flagged at 2026-08-22) ===
        clock  flagged  overlap  turnover
-         -1d       59       57      6.6%
-         -2d       62       55     19.7%
-         -5d       48       40     47.5%
-  Universe turnover peaks at 47.5% across these clocks.
+         -1d       17       16     11.1%
+         -2d       19       14     22.2%
+         -5d       15        9     50.0%
+  Universe turnover peaks at 50.0% across these clocks.
 ```
 
-Turnover is measured against the baseline universe, so "47.5%" reads as *this share of
+(Illustrative figures.) Turnover is measured against the baseline universe, so "50.0%" reads as *this share of
 the universe I am comparing from is not in the other one*. A selection that turns over
 half its names across a week is a different object from one that is stable, and which
 you have decides how much a single validated run tells you.
@@ -90,8 +119,14 @@ something to be inferred.
 quantred backtest --scanner none --symbols AAPL,MSFT --start 2024-01-02 --end 2024-04-01
 ```
 
+## Next
+
+Scan, then judge the universe: [`verdict`](verdict) asks whether the signal has any
+information in it, [`backtest`](backtesting) replays it, and
+[`walkforward`](walk-forward) validates it out of sample. Scanner internals and how to
+write your own are in [Scanners](../engineering/scanners).
+
 ## From a source checkout (contributors)
 
-The commands above are the installed `quantred` command. In a checkout, run them as
-`uv run python main.py <command> ...`. The Makefile shortcut for this page is `make scan`. Extras are installed with `uv sync --inexact --extra <name>`
+The commands above are the installed `quantred` command. In a checkout, `uv run quantred <command> ...` runs the same thing (`uv run python main.py <command> ...` also works). The Makefile shortcut for this page is `make scan`. Extras are installed with `uv sync --inexact --extra <name>`
 (see [optional extras](extras)).

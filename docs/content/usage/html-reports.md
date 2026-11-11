@@ -14,8 +14,20 @@ quantred verdict     --scanner none --symbols AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVG
     --start 2024-01-01 --end 2024-12-31 --html verdict.html
 quantred backtest    --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-31 --html backtest.html
 quantred walkforward --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-31 --html wf.html
-quantred info        --symbols NVDA,AAPL,META --start 2024-01-01 --end 2024-12-31 --html info.html
+quantred info        --scanner none --symbols NVDA,AAPL,META,AMD,TSLA,GOOG,MSFT,AMZN,AVGO,JPM,XOM,UNH \
+    --start 2024-01-01 --end 2024-12-31 --html info.html
 ```
+
+Each command prints its usual report, then `HTML report written to <path>`. Open the file
+in any browser. The reports need the same data as the run itself: Alpaca keys from
+[`quantred init`](first-run), or `--offline` against a warmed cache.
+
+**No file can mean the run produced no result.** The report renders the result the command
+already computed, so a command that stops early writes nothing. `info` over too few
+names (three is too few for a cross-sectional measurement) prints a short note about how
+the IC is measured and no report; use twelve or so names. An `infeasible` verdict still
+writes a report, which shows the refusal. If the file cannot be written the command
+prints `HTML report skipped: <reason>` and the run itself is not lost.
 
 `--html` is independent of the other output flags. Of these four commands only
 `verdict` also has `--json [PATH]` (the structured result object, printed or written to
@@ -29,6 +41,10 @@ the individual gate checks, and the holdout only when the original run did not r
 report shows it in a "Holdout (from the original run)" section instead of listing it as
 missing; re-run with force for the full one. A reused backtest's header names the benchmark and timeframe as
 requested.
+
+Where the numbers come from: [verdict](verdict), [backtesting](backtesting),
+[walk-forward](walk-forward) and [information](information). Reports of past runs are found
+through [trials](trials).
 
 ## Self-contained means self-contained
 
@@ -92,9 +108,8 @@ MCP, say — shows the metrics table without the curve.
 ## Without the plotting extra
 
 Charts need matplotlib (the `viz` extra). Without it the report still renders
-completely in text and each chart slot says how to install it:
-
-Install the `viz` extra (see [optional extras](extras)).
+completely in text and each chart slot reads "Chart not rendered — the viz extra is not
+installed." Install the `viz` extra as described in [optional extras](extras) (name the extras you already use in the same command), then re-run.
 
 Charts are rendered at a deliberately modest resolution — an embedded PNG costs
 about 4/3 its own size once base64-encoded, and a report should stay well under a
@@ -102,6 +117,5 @@ few megabytes.
 
 ## From a source checkout (contributors)
 
-The commands above are the installed `quantred` command. In a checkout, run them as
-`uv run python main.py <command> ...`. Extras are installed with `uv sync --inexact --extra <name>`
+The commands above are the installed `quantred` command. In a checkout, `uv run quantred <command> ...` runs the same thing (`uv run python main.py <command> ...` also works). Extras are installed with `uv sync --inexact --extra <name>`
 (see [optional extras](extras)).

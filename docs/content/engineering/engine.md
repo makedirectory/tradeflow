@@ -40,8 +40,8 @@ live. Each step:
    whole bar. The open, because every decision below transacts at it: the exposure caps
    in step 4 are tested against `equity × cap`, so marking at the close first meant
    whether an entry was admitted could depend on where the bar finished, hours after the
-   price it filled at. That was the intra-bar look-ahead left after accounting v4, removed at v5 — the remaining intra-bar look-ahead — the same
-   class as the signal one above, in the admission gate rather than the signal, and just
+   price it filled at. That was the intra-bar look-ahead left after accounting v4,
+   removed at v5 — the same class as the signal one above, in the admission gate rather than the signal, and just
    as invisible to a feed shift. The excursion extremes stay full-bar: they are reported,
    never consulted by a decision, and the worst and best a position saw is the point.
 2. **Exit at the open** — only the exits that were decided before the bar began: a
@@ -52,11 +52,17 @@ live. Each step:
    conviction score, descending, ties broken by symbol so a run is reproducible.
 4. **Admit** in that order while `max_positions`, `max_total_risk`,
    `max_gross_exposure`, `max_net_exposure` and free cash allow. Sizing goes through
-   `Strategy.calculate_position_size` as before, but against *free cash*, which is
-   what makes positions actually compete. The two portfolio fractions are not the
+   `Strategy.calculate_position_size`, but against *free buying power* — the pool less
+   the notional already held at cost (`execution.sizing.free_buying_power`) — which is
+   what makes positions actually compete. Live calls the same definition, so three
+   entries in a row shrink on both clocks instead of only in the backtest. The two portfolio fractions are not the
    same measurement — see [what `max_total_risk` caps](../usage/configuration.md#what-max_total_risk-caps).
    A request larger than free cash is opened at what the cash can pay, entry cost
-   included, and counted (`positions_capped_to_pool`). The size and the bracket's stop
+   included, and counted (`positions_capped_to_pool`; `cap_to_buying_power` is the one
+   rule both clocks apply). An order that rounds to zero, or falls under the declared
+   `min_notional` floor (`below_min_notional`), is refused and counted separately
+   (`positions_below_min_notional`); with no floor declared there is none, not a floor
+   of zero. The size and the bracket's stop
    and target are computed from the close the signal came from, as the live order's
    are, and the levels are rounded to the tick; the fill itself is this bar's open.
 5. **Stops and targets**, after admission, for every position still held (entries made
@@ -91,6 +97,22 @@ the equivalent long, so the book can never quietly take on leverage the engine i
 modelling. The trade-off to keep in mind when reading results is that short capacity
 is understated, so a long-short configuration and a long-only one are not compared on
 exactly equal footing. Entry and exit are symmetric, so realized P&L is unaffected.
+
+### What the pool is, and what the two clocks share
+
+The pool entries are sized from is `deployable_pool(equity, capital, realized_pnl)`: the
+configured capital, capped at the account's equity, or the equity itself when no capital
+was set (never margin buying power, which is a lending limit and not a budget). It moves
+with realized P&L on both clocks, so after a loss the next entry sizes from less. Live
+keeps the realized figure in memory from closing fills, so a restart resumes at the
+configured capital. These four functions in `quantred/execution/sizing.py` are the shared
+definitions; the backtest imports them from the trade clock's package, never the reverse.
+
+Entry edges are acted on once. Signals are edge-triggered, the backtest takes or declines
+each entry exactly once, and live marks a side spent after the book has held it or the
+trader has submitted or book-refused its entry, until the score stops implying that side —
+see [edges, and what live mode adds](strategies#edges-and-what-live-mode-adds). The shared
+rules are guarded by tests that feed one input to both clocks and compare the results.
 
 ### Annualizing per-step quantities
 

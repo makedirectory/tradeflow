@@ -28,10 +28,35 @@ index; they are tagged in the repository.
 
 ---
 
-## Unreleased
+## 2.6.0 — 2026-11-11
 
 A second pass over the maths, this time comparing the two clocks against each other and
-running the search and validation machinery on inputs chosen to break it.
+running the search and validation machinery on inputs chosen to break it, and a pass over
+the documentation for the reader who installs from PyPI and never clones the repository.
+
+### Documentation
+
+- **Installation leads with PyPI.** `uv tool`, pipx and pip in a venv; extras and their
+  quoting; checking an install with `quantred init --check`; where state lives; upgrading
+  without dropping extras or packs; uninstalling. Working from a checkout is a separate,
+  clearly marked contributor section.
+- **Every usage page says what to do next.** A minimal invocation, how to read the result
+  (including what a refusal or a failed gate means), common errors, and links to the
+  neighbouring steps. First-run gains a troubleshooting table for the problems first
+  sessions actually hit.
+- **Flag tables match the commands.** Missing flags added across the research, risk and
+  live pages; defaults corrected; sample output brought to the current format and labelled
+  illustrative.
+- **Live trading opens with a checklist** for a first paper session, and its sizing,
+  execution-floor and real-money explanations now match the code. `PAPER_TRADE` defaults
+  to true; real money needs `PAPER_TRADE=false` and `--live-money`, and nothing over MCP
+  can place an order.
+- **The MCP page lists all 33 tools** and names the operator-only commands that are
+  deliberately absent from it.
+- **The engineering wiki describes the code as it is:** the shared sizing definitions
+  both clocks call, the execution floor, edge-triggered entries, dedup identity, trial-store
+  self-healing and accounting v7–v8; the full layer map in the architecture page.
+- Five usage pages that existed but were missing from the sidebar are now in it.
 
 ### Accounting v8
 
@@ -505,7 +530,7 @@ backtests included, though most never touched a boundary - drop out of the defau
 
 ### Getting started
 
-- The Docker image no longer re-syncs its environment at container start (every start needed the network, and could rebuild without the extras the image carries); a `.dockerignore` allowlist keeps `.env`, `specs/`, `configs/`, `logs/` and `.git` out of the build context; inside the container, instructions name `quantred` and the host `.env` rather than `make` targets; the compose MCP healthcheck no longer needs keys. Verified by building and running the smoke checks on a Linux amd64 host.
+- The Docker image no longer re-syncs its environment at container start (every start needed the network, and could rebuild without the extras the image carries); a `.dockerignore` allowlist keeps `.env`, `configs/`, `logs/` and `.git` out of the build context; inside the container, instructions name `quantred` and the host `.env` rather than `make` targets; the compose MCP healthcheck no longer needs keys. Verified by building and running the smoke checks on a Linux amd64 host.
 - Tested on Python 3.10, 3.11, 3.12, 3.13 and 3.14; the classifiers now list all five. A trial timestamp printed as raw UTC text on 3.10, whose ISO parser is stricter.
 - The bar cache without the `store` extra stops with the install command instead of a `pyarrow` traceback (following an offline miss's own `cache warm` hint used to crash). `mcp` without its extra says so before logging anything, and `init --check` leaves no directory behind.
 - `init --check` says what is ready for which task (demo, data, research, MCP) instead
