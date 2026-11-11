@@ -24,7 +24,7 @@ well-sampled names:
   (the structural ``Σ = X F Xᵀ + Δ``). Exposures stay a small ``N×K`` leaf computed by
   :func:`quantred.risk.exposures.build_factor_exposures`.
 
-Ledoit–Wolf shrinkage needs higher moments and stays on the eager path for now — noted,
+Covariance shrinkage needs higher moments and stays on the eager path for now — noted,
 not faked. Requires the ``store`` extra (``polars``).
 """
 

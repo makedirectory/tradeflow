@@ -10,7 +10,7 @@ to the true dynamic optimum whenever alphas are persistent.
 With quadratic trading costs and exponentially-decaying signals, the dynamic
 program collapses to two rules:
 
-- **The aim portfolio** - the Markowitz solve on alphas *discounted* by
+- **The aim portfolio** - the mean-variance solve on alphas *discounted* by
   ``κ/(1 − e^(−φ)(1−κ))`` per signal (:func:`discount_factor`; ``φ`` its decay
   rate, ``κ`` the trading rate below) -
   "aim in front of the target": construct the portfolio you'll still want once you

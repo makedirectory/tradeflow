@@ -1,4 +1,4 @@
-"""Tests for the Black-Litterman posterior.
+"""Tests for the Bayesian posterior.
 
 Offline and deterministic. Works through the checklist in order: no-views ⇒
 prior (and the optimizer round-trip through it), the calibration identity across an

@@ -30,7 +30,7 @@ AMD          31.0%          2.90%
 
 *(Illustrative figures.)*
 
-Read it as: **δ** is the Ledoit–Wolf shrinkage intensity (higher = the raw sample
+Read it as: **δ** is the constant-correlation shrinkage intensity (higher = the raw sample
 was noisier, so more was pulled toward the structured target); **condition number**
 near 1 is well-behaved and a large value means near-singular; **risk contribution**
 is each name's share of the equal-weight portfolio's volatility (they sum to it).
@@ -41,7 +41,7 @@ is each name's share of the equal-weight portfolio's volatility (they sum to it)
 |------|---------|---------|
 | `--symbols` | demo universe | Comma-separated universe. |
 | `--as-of` | today | Estimation date; only returns up to it are used. |
-| `--model` | `shrinkage` | `shrinkage` = Ledoit–Wolf; `sample` = raw covariance; `factor` = structural `XFXᵀ+Δ` (adds the factor-vs-specific risk split). |
+| `--model` | `shrinkage` | `shrinkage` = sample covariance shrunk toward constant correlation; `sample` = raw covariance; `factor` = structural `XFXᵀ+Δ` (adds the factor-vs-specific risk split). |
 | `--timeframe` | `1Day` | Bar timeframe for the return series. |
 | `--lookback-days` | `365` | History fetched (≤ `as_of`) for the estimate. |
 | `--benchmark` | `SPY` | Benchmark for the market factor and beta. |
@@ -55,7 +55,7 @@ is each name's share of the equal-weight portfolio's volatility (they sum to it)
 
 The raw sample covariance needs `N(N+1)/2` parameters and is often **non-invertible**
 when you don't have far more observations than names — which breaks the portfolio
-optimizer (it needs `Σ⁻¹`). Ledoit–Wolf shrinks it toward a constant-correlation
+optimizer (it needs `Σ⁻¹`). Shrinkage pulls it toward a constant-correlation
 target by an analytically optimal amount, guaranteeing an invertible, well-conditioned
 Σ. Use `--model sample` to see the contrast (its condition number blows up as the
 universe grows relative to the history).

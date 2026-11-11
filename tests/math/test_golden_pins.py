@@ -318,7 +318,7 @@ def test_golden_risk_models():
     )
     pins.check(
         "risk_models",
-        "8 names, one market + 2 style factors + noise; factor, Ledoit-Wolf, sample",
+        "8 names, one market + 2 style factors + noise; factor, constant-correlation shrinkage, sample",
         "seed 2024",
         values,
     )
@@ -421,7 +421,7 @@ def test_golden_two_clock_sizing_and_closed_forms():
     )
     pins.check(
         "sizing_and_closed_forms",
-        "three-entry sizing sequence on both clocks; kappa; Black-Litterman",
+        "three-entry sizing sequence on both clocks; kappa; Bayesian posterior",
         "seed 0 / closed form",
         values,
     )

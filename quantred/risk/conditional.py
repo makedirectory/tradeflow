@@ -29,7 +29,7 @@ rows at or before the panel's last timestamp, never on what comes after (verifie
 by a property test in ``tests/test_conditional_risk.py``, not just a code
 review). This mirrors the streaming accumulator shape of :mod:`quantred.risk.streaming`
 — a small O(N) / O(K²) state updated one row at a time — though, like
-Ledoit–Wolf itself, the estimator here runs eagerly over a materialized panel; wiring
+Shrinkage itself, the estimator here runs eagerly over a materialized panel; wiring
 it to stream out of the Parquet store is future work, not done here.
 
 **The alpha/risk vol seam.** :func:`quantred.data.features.add_risk_features`
@@ -346,7 +346,7 @@ def mincer_zarnowitz(realized_var: np.ndarray, forecast_var: np.ndarray) -> Dict
 
 
 def qlike_loss(realized_var: np.ndarray, forecast_var: np.ndarray) -> float:
-    """QLIKE loss (Patton 2011): ``mean(realized/forecast - log(realized/forecast) - 1)``.
+    """QLIKE loss: ``mean(realized/forecast - log(realized/forecast) - 1)``.
     A robust variance-forecast loss (lower is better; 0 for a perfect forecast).
     Non-positive forecasts/realized values are excluded (undefined ratio).
     """

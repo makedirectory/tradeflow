@@ -120,7 +120,7 @@ DEFERRED_PARAMS = {
     "conditional": "evidence-gated: the conditional-risk adoption gate does not clear",
     "conditional_lambda": "evidence-gated: configures conditional risk",
     "conditional_method": "evidence-gated: configures conditional risk",
-    "posterior": "evidence-gated: the Black-Litterman posterior gate does not clear",
+    "posterior": "evidence-gated: the Bayesian posterior gate does not clear",
     "posterior_ic": "evidence-gated: configures the posterior",
     "posterior_t_eff": "evidence-gated: configures the posterior",
     "posterior_tau": "evidence-gated: configures the posterior",
@@ -239,7 +239,7 @@ _CONFIRM_JOURNALING_NOTE = (
 #: Appended where a tool exposes an evidence-gated feature.
 _GATED_NOTE = (
     "Evidence-gated features ship OFF and are not neutral options: conditional risk, "
-    "the aim-in-front-of-the-target trading policy, and the Black-Litterman posterior "
+    "the aim-in-front-of-the-target trading policy, and the Bayesian posterior "
     "each have an adoption gate (a predictive-accuracy test or a net-of-cost A/B), and "
     "none of them clears on this repository's own demo data. Enabling one is a "
     "deliberate departure from the validated default, not a tuning choice."
@@ -1320,7 +1320,7 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
 
         Returns the shrinkage intensity δ, condition number, mean correlation, the
         equal-weight portfolio volatility, and the top risk contributors as of a date.
-        model: "shrinkage" = Ledoit–Wolf (default), "sample" = raw, "factor" =
+        model: "shrinkage" = sample covariance shrunk toward constant correlation (default), "sample" = raw, "factor" =
         structural XFXᵀ+Δ (adds the factor-vs-specific risk split). Read-only: Σ sizes
         conviction, it never places an order. Risk is not additive — correlated names
         are one bet, which is what this matrix captures.
@@ -1398,7 +1398,7 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
         turnover with.
 
         Scope note, so you do not assume more than this exposes: the evidence-gated
-        features — conditional risk, the Black-Litterman posterior, and the multi-period
+        features — conditional risk, the Bayesian posterior, and the multi-period
         aim policy — are **not** arguments here and will not become so while their own
         adoption gates do not clear. That is deliberate, not an omission: being reachable
         from an agent is not the same as being validated, and this surface must not be

@@ -24,10 +24,10 @@ deliberately separate, evidence-backed decision for later.
 
 **Return-series retention.** v1 denormalized only summary floats
 (``oos_sharpe``, ``deflated_sharpe``, ...) onto each row - enough for the DSR, not
-enough for White's Reality Check, which needs every trial's actual OOS return
+enough for the family-wise bootstrap test, which needs every trial's actual OOS return
 *series* to jointly resample. The ``trial_returns`` companion table
 (:meth:`TrialStore.record_returns`, :meth:`TrialStore.returns_panel`) closes that
-gap: every trial that has one (not just the survivors - Reality Check over only
+gap: every trial that has one (not just the survivors - the family-wise bootstrap test over only
 the keepers is survivorship bias with extra steps) gets its dated per-period
 return series retained, joinable into a common-calendar panel per
 ``(strategy, universe, accounting)`` family.
@@ -83,7 +83,7 @@ def __getattr__(name: str) -> Any:
 #: journal rather than running migration code - the journal is the source of truth,
 #: which is exactly what makes that cheap.
 #: v2 adds the ``trial_returns`` companion table - per-trial OOS
-#: return-series retention, the precondition Reality Check needs (the trial store
+#: return-series retention, the precondition the family-wise bootstrap test needs (the trial store
 #: must contain the failures, not just summary
 #: floats). Trials recorded before v2 simply have no stored series (an honest
 #: "not used" in any family panel, not a fabricated one) - rebuilding replays the
@@ -628,7 +628,7 @@ class TrialStore:
 
         A companion table, not a column on ``trials``: the hot family/dedup/gate
         queries (``family_count``, ``seen``, ``query``) scan the small ``trials``
-        row only; the (larger) series blob loads only when a Reality Check
+        row only; the (larger) series blob loads only when a family-wise bootstrap test
         actually runs. Best-effort shape validation only (mismatched/empty
         lengths are silently skipped, matching this module's house style
         elsewhere - :meth:`seen`'s "a lookup failure is not the caller's
@@ -785,7 +785,7 @@ class TrialStore:
         compared against anything, while one storing an empty series would be a claim
         that it earned no returns over no days.
 
-        :meth:`returns_panel` is the family-wide read for the Reality Check, which
+        :meth:`returns_panel` is the family-wide read for the family-wise bootstrap test, which
         inner-joins onto a common calendar. This is the per-trial one, for asking
         whether two named results are the same result.
         """
@@ -811,7 +811,7 @@ class TrialStore:
         self, strategy: str, symbols: Iterable[Any], accounting: int, *, min_overlap: int = 60
     ) -> Dict[str, Any]:
         """The T x K joint panel of stored OOS return series for a trial family,
-        on a common (inner-joined) calendar - the input White's Reality Check
+        on a common (inner-joined) calendar - the input the family-wise bootstrap test
         needs.
 
         Trials with no stored return series, or whose overlap with the reference

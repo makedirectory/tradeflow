@@ -1,5 +1,5 @@
 """Math contract: mean-variance construction, the transfer coefficient, the proximal cost
-step, the Black-Litterman posterior and the multi-period trading rate.
+step, the Bayesian posterior and the multi-period trading rate.
 
 Independent references: closed forms written out with numpy linear algebra, a
 general-purpose constrained solver (``scipy.optimize``) for the capped programme, brute
@@ -14,7 +14,7 @@ Defects this module guards:
 
 * the transfer coefficient was the plain Pearson correlation of alpha with the weights,
   which ignores the covariance, so ``tc * IR*`` did not reproduce the book's predicted IR;
-* the Black-Litterman view variance not matching the refinement's own level shrink.
+* the Bayesian-posterior view variance not matching the refinement's own level shrink.
 """
 
 import math
@@ -277,7 +277,7 @@ def test_impact_coefficient_is_zero_without_the_inputs_it_needs():
 
 
 # --------------------------------------------------------------------------- #
-# Black-Litterman posterior
+# Bayesian posterior
 # --------------------------------------------------------------------------- #
 def test_black_litterman_posterior_matches_the_matrix_formula():
     syms, _, sigma, risk = _world(10, 6)

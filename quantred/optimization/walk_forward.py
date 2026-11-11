@@ -152,7 +152,7 @@ class WalkForwardResult:
     #: same construction as the aggregate's realized-P&L fallback), when any OOS
     #: trades exist. This is the "realized active-return series" the
     #: bootstrap skill test resamples, and what gets persisted to the trial store
-    #: so a Reality Check has a real trial to join against later.
+    #: so a family-wise bootstrap test has a real trial to join against later.
     oos_returns: Optional[pd.Series] = None
     #: Every out-of-sample trade across all folds, concatenated - the per-trade
     #: detail behind the aggregate. Held only so a caller that asked to keep it
@@ -506,6 +506,32 @@ def _coerce_tz(when: datetime, index: pd.DatetimeIndex) -> pd.Timestamp:
 # --------------------------------------------------------------------------- #
 # Validator
 # --------------------------------------------------------------------------- #
+def require_fold_pair(
+    train_days: Optional[int],
+    test_days: Optional[int],
+    *,
+    names: "tuple[str, str, str]" = ("train_days", "test_days", "n_folds"),
+) -> None:
+    """Refuse exactly one of ``train_days`` / ``test_days``.
+
+    Together they fix the fold geometry; with neither, both are derived from the fold
+    count. Given one alone the other cannot be derived consistently, and the old
+    behaviour was to derive both and discard the one typed, so a ``--train-days 120``
+    run validated at a geometry nobody asked for and said nothing. This is the one
+    definition: the fold builder calls it, and the CLI and service refusals call it
+    earlier, so a bad pair stops before any data is read. ``names`` lets a surface
+    spell the arguments as its own users type them.
+    """
+    if (train_days is None) == (test_days is None):
+        return
+    train_name, test_name, folds_name = names
+    given, missing = (train_name, test_name) if test_days is None else (test_name, train_name)
+    raise ValueError(
+        f"{given} was given without {missing}: the two only work as a pair. "
+        f"Give both, or neither to derive them from the fold count ({folds_name})."
+    )
+
+
 class WalkForwardValidator:
     """Orchestrates per-fold IS optimization + leakage-safe OOS evaluation."""
 
@@ -601,6 +627,7 @@ class WalkForwardValidator:
             holdout = (holdout_start, end)
             region_end = holdout_start
 
+        require_fold_pair(train_days, test_days)
         region_days = (region_end - start).days
         if region_days <= embargo:
             raise ValueError("Walk-forward region is too short for the requested embargo/holdout")

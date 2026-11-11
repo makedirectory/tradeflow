@@ -346,7 +346,7 @@ def omega_ratio(returns: Numbers, threshold: float = 0.0) -> float:
 
 
 # --------------------------------------------------------------------------- #
-# Statistical robustness (Bailey & Lopez de Prado) - the honest-evaluation core
+# Statistical robustness - the honest-evaluation core
 # --------------------------------------------------------------------------- #
 def probabilistic_sharpe_ratio(returns: Numbers, benchmark_sr: float = 0.0) -> float:
     """P(true Sharpe > ``benchmark_sr``) given the observed per-period Sharpe.

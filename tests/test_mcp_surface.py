@@ -526,7 +526,7 @@ def test_every_service_knob_is_exposed_or_deliberately_deferred(built, tool_name
     assert not unreachable, (
         f"{tool_name} cannot set {sorted(unreachable)}.\n"
         "If the knob is ungated, expose it. If it belongs to an evidence-gated family "
-        "(conditional risk, the Black-Litterman posterior, the aim policy), it must NOT "
+        "(conditional risk, the Bayesian posterior, the aim policy), it must NOT "
         "be exposed — add it to DEFERRED_PARAMS with its reason. Exposing a gated knob "
         "makes this surface the easy way to switch on a feature nothing has validated."
     )

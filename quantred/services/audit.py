@@ -287,7 +287,7 @@ def journal_trial(
     return series (a ``pandas.Series`` with a ``DatetimeIndex``) — when given, it
     is journaled alongside the summary metrics (so ``rebuild()`` can restore it
     from the journal, the sole source of truth) and dual-written into the trial
-    store's ``trial_returns`` table, which is what lets a later Reality Check
+    store's ``trial_returns`` table, which is what lets a later family-wise bootstrap test
     resample this trial jointly with every other trial in its family. Omit it
     (the default) for trial kinds with no genuine OOS series — e.g. ``optimize``
     rows are in-sample search configs, not OOS track records, so they are never

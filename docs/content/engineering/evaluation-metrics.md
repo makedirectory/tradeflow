@@ -109,7 +109,7 @@ Two questions, two functions:
    ratio: the walk-forward passes raw OOS returns, so the test asks whether the
    mean return differs from zero, not whether it beats a benchmark.
 2. **Is the best of the configs actually tried skill?** `reality_check`
-   (the multiple-trial "reality check") resamples the **same block indices across every
+   (the multiple-trial "family-wise bootstrap test") resamples the **same block indices across every
    trial's return series at once**, so the cross-trial correlation structure is
    preserved by construction — DSR has to *assume* a trial-Sharpe variance to
    approximate this; this replays the actual trials recorded in the

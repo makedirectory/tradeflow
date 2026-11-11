@@ -28,6 +28,27 @@ index; they are tagged in the repository.
 
 ---
 
+## 2.6.1 — 2026-11-11
+
+A patch release: three fixes found by reading the output as a first-time user would.
+
+### Fixed
+
+- **`backtest --cost-stress` columns no longer run together.** The return and cost
+  columns printed as `10.69%$ 906`. Both stress tables (`--cost-stress` and
+  `--fill-stress`) now share one renderer whose columns widen to their widest cell, so
+  negative returns and costs in six figures stay separated and aligned.
+- **`walkforward --train-days` or `--test-days` alone is refused.** The two fix the fold
+  geometry only as a pair; given one, the other was derived from the fold count and the
+  typed value was silently discarded. The fold builder now raises, the CLI exits with a
+  one-line message before reading any data, and the service entry points refuse the same
+  way. Giving both, or neither, behaves as before.
+- **Help and docs name techniques, not their authors.** Argparse help, printed output,
+  MCP tool descriptions, report text and the usage docs now describe the Bayesian
+  posterior blend, covariance shrinkage, the family-wise bootstrap test and the automatic
+  block length by what they do. Identifiers, including the recorded `bl` posterior value,
+  are unchanged, so existing records and dedup identities keep their meaning.
+
 ## 2.6.0 — 2026-11-11
 
 A second pass over the maths, this time comparing the two clocks against each other and

@@ -2,7 +2,7 @@
  "provenance": {
   "accounting_version": 8,
   "generated_by": "QUANTRED_REGEN_GOLDEN=1 pytest tests/math -k golden (tests/math/test_golden_pins.py)",
-  "scenario": "8 names, intercept-only factor model and Ledoit-Wolf matrix, EWMA lambda 0.94 seeded on 60 rows",
+  "scenario": "8 names, intercept-only factor model and constant-correlation shrinkage matrix, EWMA lambda 0.94 seeded on 60 rows",
   "seed": "seed 2024"
  },
  "values": {

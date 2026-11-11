@@ -91,7 +91,7 @@ def test_streaming_covariance_degenerate_inputs():
 
 
 # --------------------------------------------------------------------------- #
-# Ledoit-Wolf constant-correlation shrinkage
+# Constant-correlation shrinkage
 # --------------------------------------------------------------------------- #
 def _lw_reference(x):
     """Constant-correlation shrinkage written out element by element."""

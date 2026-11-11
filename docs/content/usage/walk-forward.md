@@ -87,7 +87,7 @@ replayed rather than re-scanned.
 |------|---------|
 | `--start` / `--end` | The window the folds (and any holdout) are cut from. **Default: the last 30 days**, which is too short to hold even one fold for a daily strategy: the run then stops before reading any data and suggests a window that does build folds. Pass a window of a year or more. |
 | `--mode anchored\|rolling` | Expanding IS window (anchored, the default) or fixed-width sliding IS (rolling). |
-| `--folds N` | Number of folds (default 4). Alternatively set both `--train-days` and `--test-days`, which fix each fold's length in calendar days; either alone has no effect. |
+| `--folds N` | Number of folds (default 4). Alternatively set both `--train-days` and `--test-days`, which fix each fold's length in calendar days; either alone is refused. |
 | `--embargo-days N` | IS→OOS gap, and the warm-up fetched before each OOS window. Defaults to the calendar days that hold the strategy's required lookback in bars (weekends and a holiday pad included: a 31-bar daily lookback is 49 days). |
 | `--holdout-days N` | Final sacred window, scored once (default 0: no holdout). |
 | `--method grid\|random\|bayesian` | Search method used per fold (default `grid`; `bayesian` needs the `optimize` extra). |
@@ -97,12 +97,12 @@ replayed rather than re-scanned.
 | `--monte-carlo` | Block-bootstrap the OOS daily P&L for a 5th-percentile annualized Sharpe. |
 | `--param-sensitivity` | Perturb the chosen params ±10% and re-test robustness. |
 | `--leakage-probe` | Shift the data feed forward to detect future-data leakage. |
-| `--bootstrap-skill` | Nonparametric own p-value (stationary block bootstrap) next to the FAMILY p from White's Reality Check over every OOS return series the trial store has recorded for this strategy/universe/accounting — advisory only, not a gate. See [below](#nonparametric-skill-check). |
+| `--bootstrap-skill` | Nonparametric own p-value (stationary block bootstrap) next to the FAMILY p from the family-wise bootstrap test (max-statistic) over every OOS return series the trial store has recorded for this strategy/universe/accounting — advisory only, not a gate. See [below](#nonparametric-skill-check). |
 | `--save-config PATH` | Save the chosen config — params *and* run inputs — for a human to review. A bare filename lands in `configs/` under the state root; a path with a directory is used as given. See [Reusing a saved config](#reusing-a-saved-config). |
 | `--results-csv PATH` | Write the per-fold table to CSV. |
 | `--benchmark SYMBOL` | Score each fold against this symbol; turns on the two benchmark prerequisites ([below](#promotion-prerequisites)). |
 | `--cost-stress` / `--no-cost-stress` | The cost-stress prerequisite runs by default; `--no-cost-stress` skips it. |
-| `--train-days N` / `--test-days N` | Fix each fold's in-sample and out-of-sample length in calendar days. Both or neither. |
+| `--train-days N` / `--test-days N` | Fix each fold's in-sample and out-of-sample length in calendar days. Both or neither; one alone is refused before any work starts. |
 | `--capital`, `--gross`, `--commission-bps`, `--impact-eta`, `--borrow-bps` | Starting capital (default `100000`) and the cost model, as for [`backtest`](backtesting#options). |
 | `--config PATH` / `--re-resolve-universe` | Start from a saved [run config](run-configs); flags you type win. |
 | `--html PATH` / `--chart PATH` | A [self-contained report](html-reports), or an image of the verdict and gate scorecard (needs `viz`). |
@@ -152,7 +152,7 @@ a window the search never touched; see
 | `walkforward cannot build its folds over ... (30 days; the default is the last 30 days)` | Pass `--start`/`--end` spanning a year or more; the message suggests a window |
 | `Missing Alpaca credentials ...` | `quantred init`, or `--offline` against a warmed cache |
 | `--offline: no cached 1day bars for ...` | Run the `quantred cache warm ...` line the message prints |
-| One of `--train-days` / `--test-days` seems to do nothing | It does nothing alone, with no message; pass both, or count the folds in the table |
+| `--train-days` (or `--test-days`) was given without the other and the run refused | The two only work as a pair; pass both, or neither to derive them from `--folds` |
 
 ## Excess return by fold
 
@@ -328,7 +328,7 @@ from the run and the output says so. What the config *was* tuned on is recorded 
 Sharpe: an **own** p-value from a stationary block bootstrap of this run's OOS
 returns (no assumption about the return distribution's shape; the statistic is the
 returns' Sharpe, not an information ratio against a benchmark), always reported
-next to the **family** p-value from White's Reality Check over every other
+next to the **family** p-value from the family-wise bootstrap test over every other
 trial recorded for the same strategy/universe/accounting in the
 [trial store](#the-trial-store) — a great own p and a terrible family p is
 exactly the selection-luck signature this test exists to catch. Family scoring

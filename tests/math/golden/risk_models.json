@@ -2,7 +2,7 @@
  "provenance": {
   "accounting_version": 8,
   "generated_by": "QUANTRED_REGEN_GOLDEN=1 pytest tests/math -k golden (tests/math/test_golden_pins.py)",
-  "scenario": "8 names, one market + 2 style factors + noise; factor, Ledoit-Wolf, sample",
+  "scenario": "8 names, one market + 2 style factors + noise; factor, constant-correlation shrinkage, sample",
   "seed": "seed 2024"
  },
  "values": {

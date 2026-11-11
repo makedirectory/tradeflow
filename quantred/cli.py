@@ -908,7 +908,7 @@ def cmd_backtest(args) -> None:
 
         # Persist this trial's own dated return series (daily-resampled,
         # from realized trade P&L - the same construction every persisted trial
-        # kind uses) so it can later join a Reality Check family panel.
+        # kind uses) so it can later join the family panel of the multiple-trial bootstrap test.
         returns_series = backtest_returns(result.trades, args.capital)
 
         journal_trial(
@@ -1243,7 +1243,7 @@ def _allocate_utility(args, tuned=None) -> None:
     if post:
         propagated = sum(1 for row in post["per_name"] if row["source"] == "propagated")
         print(
-            f"  Black-Litterman posterior (IC {post['ic']:.3f}, T_eff {post['t_eff']:.0f}, "
+            f"  Bayesian posterior (IC {post['ic']:.3f}, T_eff {post['t_eff']:.0f}, "
             f"tau {post['tau']:.4f}): {propagated} name(s) propagated from correlated views"
         )
         for row in sorted(post["per_name"], key=lambda r: abs(r["posterior_mu"]), reverse=True)[:10]:
@@ -1671,6 +1671,21 @@ def _print_diagnostics_for_reused_backtest(args, data_client, strategy_name, uni
         )
 
 
+def _refuse_lone_fold_length(args) -> None:
+    """Exit with one line when only one of --train-days / --test-days was typed.
+
+    It was parsed and discarded: the fold count derived both lengths, so the run
+    validated at a geometry the operator did not ask for and said nothing. Runs before
+    credentials or data are touched; the rule itself is the fold builder's.
+    """
+    from quantred.optimization.walk_forward import require_fold_pair
+
+    try:
+        require_fold_pair(args.train_days, args.test_days, names=("--train-days", "--test-days", "--folds"))
+    except ValueError as exc:
+        sys.exit(f"walkforward: {exc}")
+
+
 def _refuse_unbuildable_folds(validator, args) -> None:
     """Exit, before any data is read, when the window cannot hold one fold.
 
@@ -1731,6 +1746,7 @@ def cmd_walkforward(args) -> None:
     # by expanding it back onto the command line by hand - which is exactly where a
     # universe or a cost parameter silently drifts from what was saved.
     tuned = apply_run_config(args)
+    _refuse_lone_fold_length(args)
 
     data_client = build_research_data(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
     timeframe = _strategy_from(args, tuned).config["timeframe"]
@@ -3694,6 +3710,24 @@ def _print_exit_concentration(result) -> None:
         print(lines)
 
 
+def _print_stress_table(headers: tuple, rows: list) -> None:
+    """Print a stress table with every column right-aligned and two spaces apart.
+
+    Cells arrive already formatted, and each column is as wide as its widest cell, so a
+    negative return or a cost in six figures widens its column rather than running into
+    its neighbour. The cost-stress rows used to be fixed-width f-strings in which the
+    return's ``%`` and the cost's ``$`` touched, printing ``10.69%$ 906``.
+    """
+    widths = [max(len(h), *(len(r[i]) for r in rows)) if rows else len(h) for i, h in enumerate(headers)]
+
+    def line(cells) -> str:
+        return "  " + "  ".join(f"{c:>{w}}" for c, w in zip(cells, widths))
+
+    print(line(headers))
+    for row in rows:
+        print(line(row))
+
+
 def _print_fill_stress(data_client, strategy_name: str, universe, args, tuned) -> None:
     """Re-run requiring the price to trade *through* each take-profit, and show the decay.
 
@@ -3717,13 +3751,18 @@ def _print_fill_stress(data_client, strategy_name: str, universe, args, tuned) -
         borrow_bps=args.borrow_bps,
     )
     print("\n=== Take-profit fill stress ===")
-    print(f"  {'through by':>12}{'Sharpe':>10}{'return':>10}{'trades':>9}")
+    rows = []
     for point in report["points"]:
         label = "touch only" if point["margin_bps"] == 0 else f"{point['margin_bps']:.0f} bps"
-        print(
-            f"  {label:>12}{point['sharpe_ratio']:>10.2f}{point['total_return']:>9.2f}%"
-            f"{'—' if point['trades'] is None else point['trades']:>9}"
+        rows.append(
+            (
+                label,
+                f"{point['sharpe_ratio']:.2f}",
+                f"{point['total_return']:.2f}%",
+                "—" if point["trades"] is None else str(point["trades"]),
+            )
         )
+    _print_stress_table(("through by", "Sharpe", "return", "trades"), rows)
     survives = report["survives_to_bps"]
     if survives:
         print(f"  Edge survives requiring {survives:.0f} bps through the target.")
@@ -3758,12 +3797,16 @@ def _print_cost_stress(data_client, strategy_name: str, universe, args, tuned) -
         axis=args.cost_stress,
     )
     print(f"\n=== Cost stress ({report['axis']} axis) ===")
-    print(f"  {'multiple':>10}{'Sharpe':>10}{'return':>10}{'cost':>14}")
-    for point in report["points"]:
-        print(
-            f"  {point['multiple']:>9.1f}x{point['sharpe_ratio']:>10.2f}"
-            f"{point['total_return']:>9.2f}%${point['total_cost']:>12,.0f}"
+    rows = [
+        (
+            f"{point['multiple']:.1f}x",
+            f"{point['sharpe_ratio']:.2f}",
+            f"{point['total_return']:.2f}%",
+            f"${point['total_cost']:,.0f}",
         )
+        for point in report["points"]
+    ]
+    _print_stress_table(("multiple", "Sharpe", "return", "cost"), rows)
     survives = report["survives_to_multiple"]
     if survives:
         print(f"  Edge survives to {survives:.0f}x its assumed cost.")
@@ -7669,7 +7712,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--posterior",
         choices=["bl"],
         default=None,
-        help="Black-Litterman-blend the alphas with the consensus "
+        help="`bl` — Bayesian posterior blend of the alphas with the consensus "
         "prior before the solve — uncovered names get a real, Σ-propagated posterior "
         "instead of being excluded. Default off until validated OOS. Requires "
         "--posterior-t-eff.",
@@ -7846,7 +7889,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="train_days",
         type=int,
         default=None,
-        help="In-sample calendar days per fold; takes effect only with --test-days (default: "
+        help="In-sample calendar days per fold; must be given together with --test-days (default: "
         "derived - the window less the embargo, split into --folds + 1 equal parts)",
     )
     wf.add_argument(
@@ -7854,7 +7897,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="test_days",
         type=int,
         default=None,
-        help="Out-of-sample calendar days per fold; takes effect only with --train-days "
+        help="Out-of-sample calendar days per fold; must be given together with --train-days "
         "(default: derived, as for --train-days)",
     )
     wf.add_argument(
@@ -7949,7 +7992,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="bootstrap_skill",
         action="store_true",
         help="Nonparametric skill check — this config's own zero-alpha "
-        "stationary bootstrap p, next to the FAMILY p from White's Reality Check "
+        "stationary bootstrap p, next to the FAMILY p from the family-wise bootstrap test (max-statistic) "
         "over every OOS return series the trial store has recorded for this "
         "(strategy, universe, accounting). Advisory only (not a promotion gate).",
     )
@@ -7966,7 +8009,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help="Override the stationary bootstrap's expected block length "
-        "(default: the Politis-White rule, auto-computed and reported)",
+        "(default: the automatic block-length rule, auto-computed and reported)",
     )
     wf.add_argument("--bootstrap-seed", dest="bootstrap_seed", type=int, default=0)
     wf.add_argument("--results-csv", dest="results_csv", default=None, help="Write per-fold table to CSV")
@@ -8118,7 +8161,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="risk_model",
         choices=["shrinkage", "sample", "factor"],
         default="shrinkage",
-        help="Covariance model: shrinkage (Ledoit–Wolf), sample (raw), or factor (XFXᵀ+Δ)",
+        help="Covariance model: shrinkage of the sample covariance toward constant correlation, sample (raw), or factor (XFXᵀ+Δ)",
     )
     verdict.add_argument("--target-te", dest="target_te", type=float, default=0.04)
     verdict.add_argument("--max-weight", dest="max_weight", type=float, default=0.25)
@@ -8355,7 +8398,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--model",
         choices=["shrinkage", "sample", "factor"],
         default="shrinkage",
-        help="Covariance model: shrinkage (Ledoit–Wolf), sample (raw), or factor (XFXᵀ+Δ)",
+        help="Covariance model: shrinkage of the sample covariance toward constant correlation, sample (raw), or factor (XFXᵀ+Δ)",
     )
     risk.add_argument("--benchmark", default="SPY", help="Benchmark for the market factor / beta")
     risk.add_argument("--timeframe", default="1Day", help="Bar timeframe for returns")

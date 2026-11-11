@@ -150,7 +150,7 @@ risk rather than a flat trailing-window average. **Default off** — see
 [Estimating risk — conditional risk](risk#conditional-risk) for the evidence
 gate that decides whether it's worth turning on for your data.
 
-## Black–Litterman (`--posterior bl`)
+## Bayesian posterior (`--posterior bl`)
 
 `--posterior bl` blends the refined alphas with the reverse-optimized consensus
 prior, so names outside your alpha's coverage get a real, correlation-propagated
@@ -165,7 +165,7 @@ quantred allocate --objective utility --strategy demo_trend \
 `--posterior-t-eff` is required (pass the `effective_t` a prior `info` call
 measured); `--tau` overrides the pinned τ for sensitivity. **Default off** until
 validated out-of-sample. See
-[Portfolio construction — Black–Litterman](../engineering/portfolio-construction#blacklitterman---posterior-bl).
+[Portfolio construction — Bayesian posterior](../engineering/portfolio-construction#blacklitterman---posterior-bl).
 
 ## Multi-period trading
 

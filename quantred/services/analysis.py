@@ -111,6 +111,8 @@ def refuse_unusable_run_args(
     max_evals: Optional[int] = None,
     mode: Optional[str] = None,
     n_folds: Optional[int] = None,
+    train_days: Optional[int] = None,
+    test_days: Optional[int] = None,
     holdout_days: Optional[int] = None,
     cost_stress: Optional[str] = None,
     risk_model: Optional[str] = None,
@@ -154,6 +156,12 @@ def refuse_unusable_run_args(
         problems.append(f"mode must be one of {', '.join(WALK_FORWARD_MODES)}, got {mode!r}")
     if n_folds is not None and n_folds < 1:
         problems.append(f"n_folds must be at least 1, got {n_folds}")
+    try:
+        from quantred.optimization.walk_forward import require_fold_pair
+
+        require_fold_pair(train_days, test_days)
+    except ValueError as exc:
+        problems.append(str(exc).rstrip("."))
     if holdout_days is not None and holdout_days < 0:
         problems.append(f"holdout_days cannot be negative, got {holdout_days}")
     if cost_stress is not None and cost_stress not in COST_STRESS_AXES:
@@ -827,7 +835,7 @@ def backtest_returns(trades, capital: float):
     or ``None`` when it made no trades.
 
     The one construction both the CLI and the service journal, so a backtest recorded
-    over either surface can join a correlation panel or a Reality Check family.
+    over either surface can join a correlation panel or the multiple-trial bootstrap test panel.
     """
     from quantred.analytics.metrics import returns_from_equity
     from quantred.analytics.performance import build_dated_equity_curve
@@ -1555,6 +1563,8 @@ def run_walk_forward(
         max_evals=max_evals,
         mode=mode,
         n_folds=n_folds,
+        train_days=train_days,
+        test_days=test_days,
         holdout_days=holdout_days,
         cost_stress=cost_stress,
     )
@@ -2144,6 +2154,8 @@ def run_draft_walk_forward(
         max_evals=max_evals,
         mode=mode,
         n_folds=n_folds,
+        train_days=train_days,
+        test_days=test_days,
         holdout_days=holdout_days,
     )
     _refuse_unusable_window(start, end)
@@ -2652,7 +2664,7 @@ def compute_bootstrap_skill(
     journal_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """The bootstrap-skill report: this config's OWN zero-alpha bootstrap p,
-    always shown next to the FAMILY p from White's Reality Check over every OOS
+    always shown next to the FAMILY p from the family-wise bootstrap test (max-statistic) over every OOS
     return series the trial store has recorded for
     ``(strategy, universe, accounting)`` — replacing the Deflated Sharpe's
     assumed ``E[max]``/effective-trial-count with the actual trials.
@@ -2720,7 +2732,7 @@ def compute_bootstrap_skill(
                 "n_with_returns": panel["n_with_returns"],
                 "n_used": panel["n_used"],
                 "note": "Fewer than 2 trials in this family have a usable stored return series "
-                "(need >= 2 sharing >= min_overlap common dates) — Reality Check needs a real panel.",
+                "(need >= 2 sharing >= min_overlap common dates) — the family-wise bootstrap test needs a real panel.",
             }
     except Exception:  # noqa: BLE001 - best-effort, like every other trial-store touchpoint
         logger.warning("Bootstrap-skill family check unavailable (trial store)", exc_info=True)
@@ -4105,7 +4117,7 @@ def compute_attribution(
     ``r_active_series`` under the imposed null (demeaned by its own estimated
     alpha), reported as ``bootstrap`` in the result and folded into ``verdict``.
     This is the *own* test only (a single track record, not a trial family) - the
-    family Reality Check needs the trial store's stored trials and lives on
+    the family-wise bootstrap test needs the trial store's stored trials and lives on
     ``run_walk_forward``'s ``--bootstrap-skill`` instead.
     """
     refuse_unusable_run_args(risk_model=risk_model)
@@ -4726,7 +4738,7 @@ def compute_risk(
     """Estimate the universe's covariance Σ and summarize its risk structure.
 
     Read-only research-clock flow: scans returns up to ``as_of`` (leakage-safe),
-    estimates an annualized, well-conditioned Σ (``shrinkage`` = Ledoit–Wolf,
+    estimates an annualized, well-conditioned Σ (``shrinkage`` = sample covariance shrunk toward constant correlation,
     ``factor`` = structural ``X F Xᵀ + Δ``, ``sample`` = raw), and returns a compact
     summary - shrinkage δ, condition number, mean correlation, equal-weight portfolio
     volatility, top risk contributors, and (factor model) the factor-vs-specific risk
@@ -5002,7 +5014,7 @@ def construct_portfolio(
     estimate).
 
     ``posterior="bl"`` (default ``None`` / off until validated OOS) blends the
-    refined alphas with the consensus prior via Black–Litterman before the solve:
+    refined alphas with the consensus prior via a Bayesian posterior blend before the solve:
     names with no signal get a real, Σ-propagated posterior instead of being
     excluded outright, and view confidence is tied to
     ``posterior_ic``/``posterior_t_eff`` rather than baked only into magnitude.
@@ -5888,7 +5900,7 @@ def _apply_bl_posterior(
     posterior_tau,
     scale_ic,
 ):
-    """Blend ``alphas`` with the consensus prior via Black–Litterman.
+    """Blend ``alphas`` with the consensus prior via a Bayesian posterior blend.
 
     Reads ``panel.meta["shrink_chain"]`` (populated by ``refine_alpha`` upstream,
     where ``level_shrink`` stayed off - the raw, unshrunk alpha is exactly what BL's

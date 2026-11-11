@@ -15,7 +15,8 @@ the optimizer never saw, across folds, with a holdout scored exactly once.
 
 ## Fold geometry
 
-Given `start`, `end`, and either `n_folds` or `(train_days, test_days)`:
+Given `start`, `end`, and either `n_folds` or the pair `(train_days, test_days)` (giving exactly one of the pair is refused
+by the fold builder, since the other cannot be derived consistently):
 
 ```
 anchored (expanding IS):
@@ -157,10 +158,10 @@ session, so replay tracks per-session state as it walks the journal in order).
 
 **Return-series retention.** Early on the store recorded only summary floats
 (`oos_sharpe`, `deflated_sharpe`, ...) — enough for the Deflated Sharpe, not
-enough for the multiple-trial reality check, which needs every trial's actual OOS return
+enough for the multiple-trial family-wise bootstrap test, which needs every trial's actual OOS return
 *series* to jointly resample. A companion `trial_returns` table now retains the
 dated per-period return series for every trial that has one (not just the
-survivors — a reality check over only the keepers would be survivorship bias with
+survivors — a family-wise bootstrap test over only the keepers would be survivorship bias with
 extra steps), joinable into a common-calendar panel per
 `(strategy, universe, accounting)` family. This is exactly what powers the
 family half of [bootstrap skill
