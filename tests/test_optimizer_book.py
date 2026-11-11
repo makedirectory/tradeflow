@@ -10,7 +10,6 @@ Each test captures the strategy the engine is *handed* (the effect), not whether
 was forwarded.
 """
 
-import types
 from datetime import datetime
 
 import pytest
@@ -115,7 +114,7 @@ def test_the_parallel_dispatch_carries_the_book_to_every_request(monkeypatch):
     monkeypatch.setattr(
         parallel,
         "run_pool",
-        lambda requests, workers, on_result=None: types.SimpleNamespace(
+        lambda requests, workers, on_result=None: parallel.PoolReport(
             results=[parallel.evaluate(r) for r in requests]
         ),
     )
