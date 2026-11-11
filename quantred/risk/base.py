@@ -27,7 +27,7 @@ class RiskMatrix:
 
     symbols: List[str]
     sigma: np.ndarray  # N×N annualized covariance, positive-definite
-    shrinkage: Optional[float] = None  # δ used (Ledoit–Wolf), for audit
+    shrinkage: Optional[float] = None  # δ used (constant-correlation shrinkage), for audit
     #: Set when Σ was conditioned: method, λ, per-name D_t vs the
     #: unconditional diagonal (the "sigma_regime" diagnostic). ``None`` unconditional.
     conditional_diagnostics: Optional[Dict[str, Any]] = None

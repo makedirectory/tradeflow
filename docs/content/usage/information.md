@@ -181,7 +181,7 @@ Adds a stationary block-bootstrap own p-value (no distributional assumption on
 returns) next to the parametric `SE{IR}≈1/√Y` verdict — the heavier,
 definitive check behind the report's skill-vs-luck call. See
 [Evaluation metrics — bootstrap skill inference](../engineering/evaluation-metrics#bootstrap-skill-inference)
-for the family (Reality Check) half of this, which needs the
+for the family (family-wise bootstrap test) half of this, which needs the
 [trial store](../engineering/walk-forward#the-trial-store) and lives on
 `walkforward --bootstrap-skill` instead.
 

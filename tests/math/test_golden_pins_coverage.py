@@ -670,7 +670,7 @@ def test_golden_conditional_risk_matrix():
     )
     pins.check(
         "conditional_risk",
-        "8 names, intercept-only factor model and Ledoit-Wolf matrix, EWMA lambda 0.94 seeded on 60 rows",
+        "8 names, intercept-only factor model and constant-correlation shrinkage matrix, EWMA lambda 0.94 seeded on 60 rows",
         "seed 2024",
         values,
     )

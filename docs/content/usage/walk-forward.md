@@ -97,7 +97,7 @@ replayed rather than re-scanned.
 | `--monte-carlo` | Block-bootstrap the OOS daily P&L for a 5th-percentile annualized Sharpe. |
 | `--param-sensitivity` | Perturb the chosen params ±10% and re-test robustness. |
 | `--leakage-probe` | Shift the data feed forward to detect future-data leakage. |
-| `--bootstrap-skill` | Nonparametric own p-value (stationary block bootstrap) next to the FAMILY p from White's Reality Check over every OOS return series the trial store has recorded for this strategy/universe/accounting — advisory only, not a gate. See [below](#nonparametric-skill-check). |
+| `--bootstrap-skill` | Nonparametric own p-value (stationary block bootstrap) next to the FAMILY p from the family-wise bootstrap test (max-statistic) over every OOS return series the trial store has recorded for this strategy/universe/accounting — advisory only, not a gate. See [below](#nonparametric-skill-check). |
 | `--save-config PATH` | Save the chosen config — params *and* run inputs — for a human to review. A bare filename lands in `configs/` under the state root; a path with a directory is used as given. See [Reusing a saved config](#reusing-a-saved-config). |
 | `--results-csv PATH` | Write the per-fold table to CSV. |
 | `--benchmark SYMBOL` | Score each fold against this symbol; turns on the two benchmark prerequisites ([below](#promotion-prerequisites)). |
@@ -328,7 +328,7 @@ from the run and the output says so. What the config *was* tuned on is recorded 
 Sharpe: an **own** p-value from a stationary block bootstrap of this run's OOS
 returns (no assumption about the return distribution's shape; the statistic is the
 returns' Sharpe, not an information ratio against a benchmark), always reported
-next to the **family** p-value from White's Reality Check over every other
+next to the **family** p-value from the family-wise bootstrap test over every other
 trial recorded for the same strategy/universe/accounting in the
 [trial store](#the-trial-store) — a great own p and a terrible family p is
 exactly the selection-luck signature this test exists to catch. Family scoring

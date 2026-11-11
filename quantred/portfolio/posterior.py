@@ -1,11 +1,11 @@
-"""Black–Litterman posterior: blend our views with Σ's implied propagation.
+"""Bayesian posterior: blend our views with Σ's implied propagation.
 
 The reverse-optimized consensus (``quantred/portfolio/benchmark.py``) backs out the
 expected returns for which the benchmark is itself optimal; our alphas are
 *deviations from* that consensus. Left alone, the optimizer reads a name with no
 signal as a *hard* zero-view ("this name earns exactly consensus") rather than as
 ignorance, and treats every view's confidence as baked into its magnitude alone.
-Black–Litterman fixes both: a single precision-weighted blend of the (zero, in
+The Bayesian posterior blend fixes both: a single precision-weighted blend of the (zero, in
 residual space) prior and our views, where prior precision comes from ``(τΣ)⁻¹``
 and view precision from measured IC. Names we never scored still get a real,
 nonzero posterior when they're correlated with a name we *did* score ("never zero

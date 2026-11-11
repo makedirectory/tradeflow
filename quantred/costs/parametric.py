@@ -5,7 +5,7 @@ For a trade of ``q`` shares at price ``p`` in a name with average daily volume
 
     cost($) = commission + (s/2)·|q|·p + impact_rate·|q|·p
 
-with the empirically robust **square-root law** for impact (Almgren et al.):
+with the empirically robust **square-root law** for impact (as measured on real executions):
 
     impact_rate = η · σ_daily · √(|q| / ADV)
 

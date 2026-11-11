@@ -152,7 +152,7 @@ class WalkForwardResult:
     #: same construction as the aggregate's realized-P&L fallback), when any OOS
     #: trades exist. This is the "realized active-return series" the
     #: bootstrap skill test resamples, and what gets persisted to the trial store
-    #: so a Reality Check has a real trial to join against later.
+    #: so a family-wise bootstrap test has a real trial to join against later.
     oos_returns: Optional[pd.Series] = None
     #: Every out-of-sample trade across all folds, concatenated - the per-trade
     #: detail behind the aggregate. Held only so a caller that asked to keep it

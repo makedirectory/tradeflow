@@ -35,7 +35,7 @@ KINDS = ("verdict", "backtest", "walkforward", "info")
 _DEFAULT_OFF = {
     "conditional": "conditional risk (Σ_t)",
     "policy": "the aim-in-front-of-the-target trading policy",
-    "posterior": "the Black–Litterman posterior",
+    "posterior": "the Bayesian posterior",
 }
 
 

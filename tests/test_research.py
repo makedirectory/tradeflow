@@ -333,7 +333,7 @@ def test_research_trials_are_recorded_in_the_trial_store(tmp_path):
 # --- bootstrap skill ------------------------------------------------------------
 def test_research_trials_persist_oos_return_series_in_the_store(tmp_path):
     """The trial store must contain a genuine OOS
-    return series per trial (not just summary floats) for Reality Check to
+    return series per trial (not just summary floats) for the family-wise bootstrap test to
     resample - every recorded research trial gets one."""
     agent = _agent(tmp_path, FixedProposer([_tune(3), _tune(5)]))
     agent.run(SYMBOLS, START, END)

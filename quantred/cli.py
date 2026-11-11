@@ -908,7 +908,7 @@ def cmd_backtest(args) -> None:
 
         # Persist this trial's own dated return series (daily-resampled,
         # from realized trade P&L - the same construction every persisted trial
-        # kind uses) so it can later join a Reality Check family panel.
+        # kind uses) so it can later join the family panel of the multiple-trial bootstrap test.
         returns_series = backtest_returns(result.trades, args.capital)
 
         journal_trial(
@@ -1243,7 +1243,7 @@ def _allocate_utility(args, tuned=None) -> None:
     if post:
         propagated = sum(1 for row in post["per_name"] if row["source"] == "propagated")
         print(
-            f"  Black-Litterman posterior (IC {post['ic']:.3f}, T_eff {post['t_eff']:.0f}, "
+            f"  Bayesian posterior (IC {post['ic']:.3f}, T_eff {post['t_eff']:.0f}, "
             f"tau {post['tau']:.4f}): {propagated} name(s) propagated from correlated views"
         )
         for row in sorted(post["per_name"], key=lambda r: abs(r["posterior_mu"]), reverse=True)[:10]:
@@ -7669,7 +7669,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--posterior",
         choices=["bl"],
         default=None,
-        help="Black-Litterman-blend the alphas with the consensus "
+        help="`bl` — Bayesian posterior blend of the alphas with the consensus "
         "prior before the solve — uncovered names get a real, Σ-propagated posterior "
         "instead of being excluded. Default off until validated OOS. Requires "
         "--posterior-t-eff.",
@@ -7949,7 +7949,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="bootstrap_skill",
         action="store_true",
         help="Nonparametric skill check — this config's own zero-alpha "
-        "stationary bootstrap p, next to the FAMILY p from White's Reality Check "
+        "stationary bootstrap p, next to the FAMILY p from the family-wise bootstrap test (max-statistic) "
         "over every OOS return series the trial store has recorded for this "
         "(strategy, universe, accounting). Advisory only (not a promotion gate).",
     )
@@ -7966,7 +7966,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help="Override the stationary bootstrap's expected block length "
-        "(default: the Politis-White rule, auto-computed and reported)",
+        "(default: the automatic block-length rule, auto-computed and reported)",
     )
     wf.add_argument("--bootstrap-seed", dest="bootstrap_seed", type=int, default=0)
     wf.add_argument("--results-csv", dest="results_csv", default=None, help="Write per-fold table to CSV")
@@ -8118,7 +8118,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="risk_model",
         choices=["shrinkage", "sample", "factor"],
         default="shrinkage",
-        help="Covariance model: shrinkage (Ledoit–Wolf), sample (raw), or factor (XFXᵀ+Δ)",
+        help="Covariance model: shrinkage of the sample covariance toward constant correlation, sample (raw), or factor (XFXᵀ+Δ)",
     )
     verdict.add_argument("--target-te", dest="target_te", type=float, default=0.04)
     verdict.add_argument("--max-weight", dest="max_weight", type=float, default=0.25)
@@ -8355,7 +8355,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--model",
         choices=["shrinkage", "sample", "factor"],
         default="shrinkage",
-        help="Covariance model: shrinkage (Ledoit–Wolf), sample (raw), or factor (XFXᵀ+Δ)",
+        help="Covariance model: shrinkage of the sample covariance toward constant correlation, sample (raw), or factor (XFXᵀ+Δ)",
     )
     risk.add_argument("--benchmark", default="SPY", help="Benchmark for the market factor / beta")
     risk.add_argument("--timeframe", default="1Day", help="Bar timeframe for returns")

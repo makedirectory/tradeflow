@@ -1,5 +1,5 @@
 """Math contract: the honest-evaluation core (probabilistic and deflated Sharpe, the
-stationary bootstrap and the Reality Check).
+stationary bootstrap and the family-wise bootstrap test).
 
 References use ``scipy.stats`` and plain loops. Related existing tests:
 ``tests/test_aggregate_annualisation.py`` (DSR units on the walk-forward clock),
@@ -140,7 +140,7 @@ def test_psr_and_dsr_degenerate_inputs_are_zero_not_nan():
 
 
 # --------------------------------------------------------------------------- #
-# Stationary bootstrap and Reality Check
+# Stationary bootstrap and the family-wise bootstrap test
 # --------------------------------------------------------------------------- #
 def test_stationary_bootstrap_indices_follow_the_geometric_run_recurrence():
     t, b, length = 200, 400, 10.0

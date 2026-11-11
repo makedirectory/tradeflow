@@ -1,7 +1,7 @@
 """Tests for the risk model: shrinkage covariance + the quantities built on Σ.
 
 Offline and deterministic. Covers positive-definiteness/invertibility, the
-Ledoit–Wolf shrinkage bounds, the tracking-error closed form, the as-of leakage
+constant-correlation shrinkage bounds, the tracking-error closed form, the as-of leakage
 guard, and the ragged-panel fallback.
 """
 

@@ -11,12 +11,12 @@ Two questions, two functions:
 
 1. **Is this one track record skill?** :func:`bootstrap_null` imposes the null
    (demean by the estimated alpha), block-resamples the residual with the
-   Politis-Romano stationary bootstrap (never i.i.d. - returns are
+   stationary bootstrap (never i.i.d. - returns are
    autocorrelated), and reports the realized Sharpe's rank in the empirical null
    distribution: an *own* p-value with no assumption about the return
    distribution's shape.
 2. **Is the best of the K configs actually tried skill?** :func:`reality_check`
-   (White 2000) resamples the same block indices across every trial's column at
+   resamples the same block indices across every trial's column at
    once, so the cross-trial correlation structure is preserved by construction
    (DSR has to *assume* a trial-Sharpe variance to approximate this; this replays
    the actual trials from the trial store) - the null distribution of "the best
@@ -63,15 +63,14 @@ def _annualized_ir(x: np.ndarray, periods_per_year: float, axis: int = -1) -> np
 
 
 # --------------------------------------------------------------------------- #
-# Block-length selection (Politis & White 2004 / Patton, Politis & White 2009)
+# Block-length selection (automatic, data-driven)
 # --------------------------------------------------------------------------- #
 def politis_white_block_length(returns: Numbers, *, max_lag: Optional[int] = None) -> float:
     """The automatic expected block length for the stationary bootstrap.
 
     Estimates the series' own decay time from its correlogram (a flat-top lag
     window over the sample autocorrelations), then sets the MSE-optimal average
-    block length for the stationary bootstrap (Politis & White 2004 eq. 4.1-4.2,
-    the ``D_SB = 2*Ghat**2`` variant). Too short a block leaks autocorrelation into
+    block length for the stationary bootstrap (the ``D_SB = 2*Ghat**2`` variant). Too short a block leaks autocorrelation into
     the resample and makes the p-value anti-conservative - the dangerous direction
     - so this is the *reported*, always-overridable
     default, never a silent assumption.
@@ -101,7 +100,7 @@ def politis_white_block_length(returns: Numbers, *, max_lag: Optional[int] = Non
         rho[k] = float(np.dot(r[: n - k], r[k:]) / n) / var
 
     # Bandwidth m: the first lag beyond which the correlogram is "insignificant"
-    # for K_n consecutive lags (Politis & White's own significance band, not a
+    # for K_n consecutive lags (the estimator's own significance band, not a
     # generic 95% CI).
     k_n = max(5, int(math.ceil(math.sqrt(math.log10(n)))))
     band = 2.0 * math.sqrt(math.log10(n) / n)
@@ -137,11 +136,11 @@ def politis_white_block_length(returns: Numbers, *, max_lag: Optional[int] = Non
 
 
 # --------------------------------------------------------------------------- #
-# Stationary (Politis-Romano 1994) block bootstrap
+# Stationary block bootstrap
 # --------------------------------------------------------------------------- #
 def stationary_bootstrap_indices(t: int, block_length: float, b: int, rng: np.random.Generator) -> np.ndarray:
     """``B`` rows of ``T`` circular resample indices with geometric block lengths
-    (expected length ``block_length``), Politis & Romano's (1994) stationary
+    (expected length ``block_length``), the stationary
     bootstrap.
 
     Implemented as its equivalent recurrence: at each step, "restart" to a fresh
@@ -198,7 +197,7 @@ def bootstrap_null(
     benchmark. The walk-forward feeds raw OOS returns, so there it is a Sharpe test of
     "is the mean return different from zero", not of skill relative to a benchmark.
 
-    Demeans by the full-sample estimated alpha (Fama-French: ``r_tilde = r_a -
+    Demeans by the full-sample estimated alpha (``r_tilde = r_a -
     alpha_hat``; ``alpha_hat`` defaults to the sample mean - pass ``alpha=`` for a
     regression-estimated intercept instead) to impose H0: no skill, block-resamples
     the residual ``B`` times (stationary bootstrap; never the equity curve, never
@@ -265,7 +264,7 @@ def bootstrap_null(
 
 
 # --------------------------------------------------------------------------- #
-# 2. Best-of-K: White's Reality Check
+# 2. Best-of-K: the family-wise bootstrap test
 # --------------------------------------------------------------------------- #
 def reality_check(
     trial_returns_matrix: Any,
@@ -276,7 +275,7 @@ def reality_check(
     periods_per_year: float = TRADING_DAYS_PER_YEAR,
     trial_ids: Optional[Sequence[Any]] = None,
 ) -> Dict[str, Any]:
-    """White's (2000) Reality Check over the T x K joint panel of trials' OOS
+    """The family-wise bootstrap test (max-statistic) over the T x K joint panel of trials' OOS
     return series.
 
     Every trial column is demeaned by its OWN mean (impose H0 independently per

@@ -1,17 +1,16 @@
-"""Sample-covariance estimators: raw, and Ledoit–Wolf shrinkage.
+"""Sample-covariance estimators: raw, and constant-correlation shrinkage.
 
 The raw sample covariance ``S`` over ``N`` names from ``T`` observations needs
 ``N(N+1)/2`` parameters; when ``T`` is not far greater than ``N`` it is noisy and
 often **non-invertible** - fatal, because the optimizer needs ``Σ⁻¹``.
-Ledoit–Wolf shrinks ``S`` toward a structured target ``F`` by the analytically
+Shrinkage pulls ``S`` toward a structured target ``F`` by the analytically
 optimal intensity ``δ``:
 
     Σ̂ = δ·F + (1 − δ)·S
 
 Here ``F`` is the **constant-correlation** target (every pairwise correlation = the
 average sample correlation, variances kept), which is the right structure for
-equity returns. The closed form is vendored in pure numpy (Ledoit & Wolf, 2004,
-"Honey, I Shrunk the Sample Covariance Matrix") so the risk module needs no
+equity returns. The closed form is vendored in pure numpy so the risk module needs no
 compiled or sklearn dependency.
 """
 
@@ -37,7 +36,7 @@ class SampleCovariance(RiskModel):
 
 
 class LedoitWolfCovariance(RiskModel):
-    """Ledoit–Wolf shrinkage toward a constant-correlation target (well-conditioned)."""
+    """Shrinkage toward a constant-correlation target (well-conditioned)."""
 
     def estimate(self, returns: pd.DataFrame) -> Tuple[np.ndarray, float]:
         x = returns.to_numpy(dtype=float)
