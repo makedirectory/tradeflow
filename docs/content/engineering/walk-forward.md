@@ -15,7 +15,8 @@ the optimizer never saw, across folds, with a holdout scored exactly once.
 
 ## Fold geometry
 
-Given `start`, `end`, and either `n_folds` or `(train_days, test_days)`:
+Given `start`, `end`, and either `n_folds` or the pair `(train_days, test_days)` (giving exactly one of the pair is refused
+by the fold builder, since the other cannot be derived consistently):
 
 ```
 anchored (expanding IS):

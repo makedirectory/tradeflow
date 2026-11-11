@@ -1671,6 +1671,21 @@ def _print_diagnostics_for_reused_backtest(args, data_client, strategy_name, uni
         )
 
 
+def _refuse_lone_fold_length(args) -> None:
+    """Exit with one line when only one of --train-days / --test-days was typed.
+
+    It was parsed and discarded: the fold count derived both lengths, so the run
+    validated at a geometry the operator did not ask for and said nothing. Runs before
+    credentials or data are touched; the rule itself is the fold builder's.
+    """
+    from quantred.optimization.walk_forward import require_fold_pair
+
+    try:
+        require_fold_pair(args.train_days, args.test_days, names=("--train-days", "--test-days", "--folds"))
+    except ValueError as exc:
+        sys.exit(f"walkforward: {exc}")
+
+
 def _refuse_unbuildable_folds(validator, args) -> None:
     """Exit, before any data is read, when the window cannot hold one fold.
 
@@ -1731,6 +1746,7 @@ def cmd_walkforward(args) -> None:
     # by expanding it back onto the command line by hand - which is exactly where a
     # universe or a cost parameter silently drifts from what was saved.
     tuned = apply_run_config(args)
+    _refuse_lone_fold_length(args)
 
     data_client = build_research_data(cache=args.cache, offline=args.offline, cache_dir=args.cache_dir)
     timeframe = _strategy_from(args, tuned).config["timeframe"]
@@ -7873,7 +7889,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="train_days",
         type=int,
         default=None,
-        help="In-sample calendar days per fold; takes effect only with --test-days (default: "
+        help="In-sample calendar days per fold; must be given together with --test-days (default: "
         "derived - the window less the embargo, split into --folds + 1 equal parts)",
     )
     wf.add_argument(
@@ -7881,7 +7897,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="test_days",
         type=int,
         default=None,
-        help="Out-of-sample calendar days per fold; takes effect only with --train-days "
+        help="Out-of-sample calendar days per fold; must be given together with --train-days "
         "(default: derived, as for --train-days)",
     )
     wf.add_argument(

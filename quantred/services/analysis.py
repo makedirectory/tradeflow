@@ -111,6 +111,8 @@ def refuse_unusable_run_args(
     max_evals: Optional[int] = None,
     mode: Optional[str] = None,
     n_folds: Optional[int] = None,
+    train_days: Optional[int] = None,
+    test_days: Optional[int] = None,
     holdout_days: Optional[int] = None,
     cost_stress: Optional[str] = None,
     risk_model: Optional[str] = None,
@@ -154,6 +156,12 @@ def refuse_unusable_run_args(
         problems.append(f"mode must be one of {', '.join(WALK_FORWARD_MODES)}, got {mode!r}")
     if n_folds is not None and n_folds < 1:
         problems.append(f"n_folds must be at least 1, got {n_folds}")
+    try:
+        from quantred.optimization.walk_forward import require_fold_pair
+
+        require_fold_pair(train_days, test_days)
+    except ValueError as exc:
+        problems.append(str(exc).rstrip("."))
     if holdout_days is not None and holdout_days < 0:
         problems.append(f"holdout_days cannot be negative, got {holdout_days}")
     if cost_stress is not None and cost_stress not in COST_STRESS_AXES:
@@ -1555,6 +1563,8 @@ def run_walk_forward(
         max_evals=max_evals,
         mode=mode,
         n_folds=n_folds,
+        train_days=train_days,
+        test_days=test_days,
         holdout_days=holdout_days,
         cost_stress=cost_stress,
     )
@@ -2144,6 +2154,8 @@ def run_draft_walk_forward(
         max_evals=max_evals,
         mode=mode,
         n_folds=n_folds,
+        train_days=train_days,
+        test_days=test_days,
         holdout_days=holdout_days,
     )
     _refuse_unusable_window(start, end)

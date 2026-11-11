@@ -87,7 +87,7 @@ replayed rather than re-scanned.
 |------|---------|
 | `--start` / `--end` | The window the folds (and any holdout) are cut from. **Default: the last 30 days**, which is too short to hold even one fold for a daily strategy: the run then stops before reading any data and suggests a window that does build folds. Pass a window of a year or more. |
 | `--mode anchored\|rolling` | Expanding IS window (anchored, the default) or fixed-width sliding IS (rolling). |
-| `--folds N` | Number of folds (default 4). Alternatively set both `--train-days` and `--test-days`, which fix each fold's length in calendar days; either alone has no effect. |
+| `--folds N` | Number of folds (default 4). Alternatively set both `--train-days` and `--test-days`, which fix each fold's length in calendar days; either alone is refused. |
 | `--embargo-days N` | IS→OOS gap, and the warm-up fetched before each OOS window. Defaults to the calendar days that hold the strategy's required lookback in bars (weekends and a holiday pad included: a 31-bar daily lookback is 49 days). |
 | `--holdout-days N` | Final sacred window, scored once (default 0: no holdout). |
 | `--method grid\|random\|bayesian` | Search method used per fold (default `grid`; `bayesian` needs the `optimize` extra). |
@@ -102,7 +102,7 @@ replayed rather than re-scanned.
 | `--results-csv PATH` | Write the per-fold table to CSV. |
 | `--benchmark SYMBOL` | Score each fold against this symbol; turns on the two benchmark prerequisites ([below](#promotion-prerequisites)). |
 | `--cost-stress` / `--no-cost-stress` | The cost-stress prerequisite runs by default; `--no-cost-stress` skips it. |
-| `--train-days N` / `--test-days N` | Fix each fold's in-sample and out-of-sample length in calendar days. Both or neither. |
+| `--train-days N` / `--test-days N` | Fix each fold's in-sample and out-of-sample length in calendar days. Both or neither; one alone is refused before any work starts. |
 | `--capital`, `--gross`, `--commission-bps`, `--impact-eta`, `--borrow-bps` | Starting capital (default `100000`) and the cost model, as for [`backtest`](backtesting#options). |
 | `--config PATH` / `--re-resolve-universe` | Start from a saved [run config](run-configs); flags you type win. |
 | `--html PATH` / `--chart PATH` | A [self-contained report](html-reports), or an image of the verdict and gate scorecard (needs `viz`). |
@@ -152,7 +152,7 @@ a window the search never touched; see
 | `walkforward cannot build its folds over ... (30 days; the default is the last 30 days)` | Pass `--start`/`--end` spanning a year or more; the message suggests a window |
 | `Missing Alpaca credentials ...` | `quantred init`, or `--offline` against a warmed cache |
 | `--offline: no cached 1day bars for ...` | Run the `quantred cache warm ...` line the message prints |
-| One of `--train-days` / `--test-days` seems to do nothing | It does nothing alone, with no message; pass both, or count the folds in the table |
+| `--train-days` (or `--test-days`) was given without the other and the run refused | The two only work as a pair; pass both, or neither to derive them from `--folds` |
 
 ## Excess return by fold
 
