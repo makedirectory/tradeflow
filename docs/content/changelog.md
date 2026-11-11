@@ -28,6 +28,25 @@ index; they are tagged in the repository.
 
 ---
 
+## 2.6.2 — 2026-11-11
+
+A patch release: one correctness fix in parallel search.
+
+### Fixed
+
+- **An interrupted `--workers` search no longer names a winner.** Ctrl-C during a
+  parallel optimization, screen or walk-forward in-sample search cancelled the pending
+  candidates but then ranked the ones that had finished, printed a "best" chosen from
+  part of the search, journaled those candidates as trials of a search that never
+  completed, and exited 0 (a Bayesian search also carried on into its next round). The
+  sequential path has always raised out of the search and recorded nothing; the parallel
+  path now does the same, from the one place both go through. The command exits non-zero
+  with `Interrupted - no winner named, no config saved, no trial recorded.`, and the
+  candidates that had finished are discarded, as they are sequentially. Results from
+  completed runs are unchanged, so the accounting version is not bumped.
+
+---
+
 ## 2.6.1 — 2026-11-11
 
 A patch release: three fixes found by reading the output as a first-time user would.

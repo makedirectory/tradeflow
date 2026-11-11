@@ -175,9 +175,13 @@ says so when it turns the cache on for you.
 ### When something goes wrong
 
 A worker crash fails **that candidate**, not the campaign: the failure is reported
-with its error, and the search completes. Ctrl-C cancels what has not started, keeps
-what already finished (that compute was really spent), and prints a partial-run
-notice rather than pretending the search completed.
+with its error, and the search completes. Ctrl-C ends the search the
+same way it does sequentially: candidates that have not started are cancelled, the ones
+that finished are **discarded**, and the command exits non-zero with
+`Interrupted - no winner named, no config saved, no trial recorded.` A best-of-N chosen
+from the first few candidates is not the search that was asked for, so nothing is ranked
+and nothing is journaled; re-run to get a result. (Before 2.6.2 the parallel path ranked
+the partial set, named a winner, journaled those candidates as trials and exited 0.)
 
 With Bayesian search, the surrogate proposes a **batch** per round instead of one
 point — `--workers` points, spread apart so they explore rather than cluster — then
