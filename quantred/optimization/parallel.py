@@ -257,7 +257,8 @@ def run_pool(
 
     Ctrl-C cancels what has not started, keeps what has already finished (that
     compute was really spent), and reports the run as partial rather than pretending
-    it completed.
+    it completed. The partial report is for the caller to refuse: the optimizer raises
+    on it rather than ranking a subset (see ``ParameterOptimizer._evaluate_parallel``).
     """
     unique: List[EvalRequest] = []
     seen: Dict[str, int] = {}

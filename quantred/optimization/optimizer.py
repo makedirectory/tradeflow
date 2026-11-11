@@ -58,6 +58,23 @@ class OptimizationResult:
     results: pd.DataFrame  # one row per evaluated config (searched params + metrics)
 
 
+class SearchInterrupted(KeyboardInterrupt):
+    """A search was stopped before it finished, so it has no winner.
+
+    A ``KeyboardInterrupt`` on purpose: the sequential path lets the real one propagate,
+    and every caller (and the CLI's interrupt handler) already treats that as "nothing
+    was recorded". The subclass only adds what the parallel path knows - how many
+    candidates had finished - so the message can say what was discarded.
+    """
+
+    def __init__(self, completed: int = 0) -> None:
+        self.completed = completed
+        super().__init__(
+            f"search interrupted after {completed} completed evaluation(s); no winner named, "
+            "nothing journaled"
+        )
+
+
 class ParameterOptimizer:
     """Searches a strategy's parameter space for the best backtest objective."""
 
@@ -302,6 +319,13 @@ class ParameterOptimizer:
 
         report = run_pool(requests, self.workers, on_result=_progress)
         logger.info("Parallel evaluation: %s", summarize(report))
+        if report.interrupted:
+            # The finished candidates are discarded, exactly as the sequential path
+            # discards them when Ctrl-C unwinds its loop: a ranking of the first few is
+            # not the search that was asked for, and every caller journals and names a
+            # winner only from a search that returned. Raising here also stops the
+            # Bayesian loop and the walk-forward fold loop from starting more work.
+            raise SearchInterrupted(report.completed)
         for result in report.results:
             if result.get("error"):
                 # A crashed candidate is still a configuration that was tried; it is

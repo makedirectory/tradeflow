@@ -8990,7 +8990,9 @@ def main() -> None:
         # written no config and journaled no trial, and a half-finished validation that
         # silently recorded one would corrupt the campaign's own trial count - the
         # number every deflated Sharpe deflates against.
-        sys.exit("\nInterrupted - no config saved, no trial recorded.")
+        # One message for both execution paths: a search stopped under --workers and
+        # one stopped sequentially end identically, so neither can read as finished.
+        sys.exit("\nInterrupted - no winner named, no config saved, no trial recorded.")
 
 
 if __name__ == "__main__":
