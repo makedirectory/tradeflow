@@ -155,3 +155,35 @@ def test_a_sequential_screen_needs_no_worker_data_spec(warmed_cache, monkeypatch
         _offline_client(warmed_cache), "demo_trend", SYMBOLS, START, END, method="random", max_evals=3
     )
     assert report["searched"]["evaluated"] == 3
+
+
+def test_an_offline_run_does_not_try_to_warm_a_cache_it_may_not_fetch_into(monkeypatch, caplog):
+    """``warm_for`` built a *keyed* client whatever the spec said, so every
+    ``--offline --workers`` run - screen, optimize, walkforward - logged a pre-warm
+    failure and a traceback on a machine without keys, while the run itself was fine.
+    An offline cache cannot be filled, so there is nothing to warm."""
+    import logging
+
+    from quantred.services import data
+
+    def keyed_client(**kwargs):
+        raise AssertionError(f"an offline warm built a client: {kwargs}")
+
+    monkeypatch.setattr(data, "build_data_client", keyed_client)
+    with caplog.at_level(logging.WARNING, logger="quantred.optimization.parallel"):
+        parallel.warm_for(parallel.DataSpec(kind="cache", offline=True), SYMBOLS, "1Day", START, END)
+    assert "pre-warm failed" not in caplog.text
+
+
+def test_an_online_cache_spec_is_still_warmed(monkeypatch):
+    """The other direction: the skip is for offline only."""
+    from quantred.services import data
+
+    built = []
+    monkeypatch.setattr(data, "build_data_client", lambda **kwargs: built.append(kwargs) or _NoProvider())
+    parallel.warm_for(parallel.DataSpec(kind="cache", offline=False), SYMBOLS, "1Day", START, END)
+    assert built and built[0]["cache"] is True
+
+
+class _NoProvider:
+    provider = None

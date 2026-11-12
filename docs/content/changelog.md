@@ -30,7 +30,7 @@ index; they are tagged in the repository.
 
 ## 2.6.3 — 2026-11-12
 
-A patch release: one inert flag wired, and one surface it would have inherited a defect
+A patch release: one inert flag wired, and two defects on the path it now runs through.
 from.
 
 ### Fixed
@@ -49,6 +49,11 @@ from.
   so under `quantred mcp --offline` each worker built a client needing API keys and every
   dispatched candidate failed, and under `--cache-dir` workers read the default cache
   instead. They now hand workers the same recipe the CLI does under the same cache flags.
+- **An offline parallel run no longer logs a pre-warm failure.** Warming the cache before
+  dispatch built a client that needs API keys even under `--offline`, so on a keyless
+  machine every `--offline --workers` run of `screen`, `optimize` or `walkforward` printed
+  a warning and a traceback while producing the right answer. An offline cache cannot be
+  filled, so it is no longer warmed.
 
 Results from completed runs are unchanged, so the accounting version is not bumped.
 
