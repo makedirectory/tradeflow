@@ -189,3 +189,36 @@ def test_an_interrupted_walk_forward_inner_search_ends_the_validation(monkeypatc
             symbols=SYMBOLS, start=START, end=END, n_folds=2, holdout_days=20, method="grid", max_evals=4
         )
     assert len(pools) == 1, "the validation carried on to another search after the interrupt"
+
+
+def test_an_interrupted_parallel_screen_leaves_the_same_trace_as_a_sequential_one(
+    _isolated_state, monkeypatch
+):
+    """``screen --workers`` used to run sequentially whatever was asked, so it never met
+    the parallel interrupt. Now that it dispatches, a Ctrl-C must not hand back a
+    distribution over the few points that finished - a screen's whole report is a
+    distribution, and one over a subset reads as the sweep that was asked for. Both paths
+    stop with nothing written, compared here rather than each asserted alone."""
+    traces = {}
+    dispatched = []
+    real_pool = parallel.run_pool
+
+    def recording_pool(requests, workers, **kwargs):
+        dispatched.append(workers)
+        return real_pool(requests, workers, **kwargs)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(parallel, "run_pool", recording_pool)
+        _interrupt_pool_after_first_result(patched)
+        with pytest.raises(SearchInterrupted):
+            analysis.run_screen(
+                _client(), STRATEGY, SYMBOLS, START, END, method="grid", max_evals=4, workers=2
+            )
+        traces["parallel"] = _leftovers(_isolated_state)
+    with monkeypatch.context() as patched:
+        _interrupt_sequential_after_first_result(patched)
+        with pytest.raises(KeyboardInterrupt):
+            analysis.run_screen(_client(), STRATEGY, SYMBOLS, START, END, method="grid", max_evals=4)
+        traces["sequential"] = _leftovers(_isolated_state)
+    assert dispatched == [2], "the interrupted screen never took the parallel path"
+    assert traces["parallel"] == traces["sequential"] == ([], [])
