@@ -31,7 +31,6 @@ index; they are tagged in the repository.
 ## 2.6.3 — 2026-11-12
 
 A patch release: one inert flag wired, and two defects on the path it now runs through.
-from.
 
 ### Fixed
 
