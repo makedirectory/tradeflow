@@ -418,6 +418,13 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
             held[0] = client
         return held[0]
 
+    def _worker_cache() -> Dict[str, Any]:
+        """The bar cache this server reads, for the tools whose workers build their own
+        client. Server configuration, not a tool argument: without it a server started
+        with ``--offline`` handed its workers a keyed client over the default cache, so
+        every dispatched candidate failed on credentials or read other bars."""
+        return {"offline": offline, "cache_dir": cache_dir}
+
     server = FastMCP(SERVER_NAME)
     # FastMCP takes no version, so a client would display this app as the SDK's own
     # ("quantred 1.30.0"). The low-level server's `version` is what `initialize` reports.
@@ -608,9 +615,11 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
     ) -> Dict[str, Any]:
         """Sweep a parameter space cheaply to ask whether a family holds anything at all.
 
-        The reconnaissance step *before* optimization. One process, one data fetch, N
-        evaluations, and nothing recorded — so "does any parameterisation of this idea
-        survive?" is a question you can afford to ask.
+        The reconnaissance step *before* optimization. One data fetch, N evaluations,
+        and nothing recorded — so "does any parameterisation of this idea survive?" is
+        a question you can afford to ask. `workers` (default 1) spreads the evaluations
+        across that many processes, which read the local bar cache; it changes
+        wall-clock only, and the report is the one a sequential screen gives.
 
         Read the `distribution` block, not `best_point`. `best_point` is the winning
         row flattened with its metrics; its `params` field is just the parameter values,
@@ -668,6 +677,7 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
             position_limits=position_limits,
             param_ranges=param_ranges,
             workers=workers,
+            **_worker_cache(),
         )
         return _logged("run_screen", inputs, result)
 
@@ -887,6 +897,7 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
             gross=gross,
             force=force,
             workers=workers,
+            **_worker_cache(),
         )
         return _logged("run_optimization", inputs, result)
 
@@ -1017,6 +1028,7 @@ def build_server(data_client=None, *, offline: bool = False, cache_dir=None):
             workers=workers,
             benchmark=benchmark,
             position_limits=position_limits,
+            **_worker_cache(),
             **({"record_trades": True} if record_trades else {}),
             **({"cost_stress": cost_stress} if cost_stress != "all" else {}),
         )
