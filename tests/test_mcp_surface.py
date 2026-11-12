@@ -682,6 +682,48 @@ def test_an_exposed_knob_actually_reaches_the_service(monkeypatch):
     assert seen["compute_attribution"].get("n_trials") == 12
 
 
+@pytest.mark.parametrize("tool", ["run_screen", "run_optimization", "run_walk_forward"])
+def test_workers_over_mcp_read_the_cache_the_server_reads(tool, tmp_path, monkeypatch):
+    """Every tool whose workers build their own data client hands them the server's
+    cache, so they get the recipe the CLI's workers get under the same cache flags.
+
+    It used to forward ``workers`` alone. A server started with ``--offline`` then
+    gave each worker a keyed client over the default cache: keyless, every dispatched
+    candidate failed on credentials; with ``--cache-dir``, the workers read different
+    bars from the ones the parent did. Compared with the CLI's spec, not asserted alone.
+    """
+    from argparse import Namespace
+
+    from quantred import cli
+
+    seen = {}
+    monkeypatch.setattr(analysis, tool, lambda *a, **k: seen.update(k) or {"ok": True})
+    cache_dir = tmp_path / "bars"
+    server = mcp_server.build_server(
+        data_client=MarketDataClient(FakeMarketData([*SYMBOLS, "SPY"], n=200, freq="1D")),
+        offline=True,
+        cache_dir=cache_dir,
+    )
+    asyncio.run(
+        server.call_tool(
+            tool,
+            {
+                "strategy": "demo_trend",
+                "symbols": SYMBOLS,
+                "start": "2024-01-02",
+                "end": "2024-06-01",
+                "workers": 2,
+            },
+        )
+    )
+
+    assert seen["workers"] == 2
+    over_mcp = analysis._worker_data_spec(seen["workers"], seen.get("cache_dir"), seen.get("offline", False))
+    over_cli = cli._worker_data_spec(Namespace(workers=2, cache=False, offline=True, cache_dir=cache_dir))
+    assert over_mcp == over_cli
+    assert over_mcp.offline is True and over_mcp.cache_dir == str(cache_dir)
+
+
 def test_an_omitted_knob_is_not_forwarded_at_all(monkeypatch):
     """Both directions. Omitted must mean "the service keeps its own default", not "this
     surface restates one" — a second copy of a default is a second thing to keep in

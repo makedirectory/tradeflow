@@ -516,7 +516,18 @@ CLI keeps only its line saying workers implied the cache). `parallel._build_cost
 is not a copy but the far end of a round trip - a worker rebuilds the model from
 `cost_spec` - so it is guarded by comparing every field of a service-built model with
 its rebuild.
-*Guarded by* `tests/test_surface_parity.py`, `tests/test_parallel_trials.py`.
+
+The spec has a second hazard besides being copied: a caller that never asks for it. A
+search given `workers` and no spec runs sequentially by design, so the omission is
+silent. The screen did exactly that and `screen --workers` was an inert flag until it
+called the same rule; and the MCP tools forwarded `workers` without the server's own
+`offline`/`cache_dir`, so a server started `--offline` handed its workers a keyed client
+over the default cache. Every caller that takes `workers` now builds the spec from the
+service rule with the cache it actually reads.
+*Guarded by* `tests/test_surface_parity.py`, `tests/test_parallel_trials.py`,
+`tests/test_screen_workers.py` (a CLI screen must reach the pool; one and two workers
+must give the same report), `tests/test_mcp_surface.py` (the spec a worker gets over MCP
+equals the CLI's under the same cache flags).
 
 ## Finding a new one
 

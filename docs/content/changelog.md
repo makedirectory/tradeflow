@@ -28,6 +28,36 @@ index; they are tagged in the repository.
 
 ---
 
+## 2.6.3 — 2026-11-12
+
+A patch release: one inert flag wired, and two defects on the path it now runs through.
+
+### Fixed
+
+- **`screen --workers N` now evaluates points in parallel.** The flag was accepted and
+  documented, and every screen still ran in one process: the screen never gave its search
+  a worker data spec, and without one the search falls back to the sequential path. It now
+  takes the spec from the same rule `optimize` and `walkforward` use, warms the bar cache
+  once before dispatch, and reads `--cache-dir` and `--offline` like they do. The report
+  is the same with one worker or several. (The 2.6.2 entry below lists the screen among
+  the searches an interrupt could leave half-ranked; the screen had no parallel path to
+  reach that from until now. Interrupted, a parallel screen stops with no report, as a
+  sequential one does.)
+- **MCP worker tools read the server's own bar cache.** `run_screen`, `run_optimization`
+  and `run_walk_forward` passed `workers` but not the cache the server was started with,
+  so under `quantred mcp --offline` each worker built a client needing API keys and every
+  dispatched candidate failed, and under `--cache-dir` workers read the default cache
+  instead. They now hand workers the same recipe the CLI does under the same cache flags.
+- **An offline parallel run no longer logs a pre-warm failure.** Warming the cache before
+  dispatch built a client that needs API keys even under `--offline`, so on a keyless
+  machine every `--offline --workers` run of `screen`, `optimize` or `walkforward` printed
+  a warning and a traceback while producing the right answer. An offline cache cannot be
+  filled, so it is no longer warmed.
+
+Results from completed runs are unchanged, so the accounting version is not bumped.
+
+---
+
 ## 2.6.2 — 2026-11-11
 
 A patch release: one correctness fix in parallel search.

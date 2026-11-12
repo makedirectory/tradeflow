@@ -1196,6 +1196,8 @@ def run_screen(
     position_limits: Optional[Dict[str, Any]] = None,
     param_ranges: Optional[Dict[str, Dict[str, Any]]] = None,
     workers: Optional[int] = None,
+    cache_dir: Optional[Any] = None,
+    offline: bool = False,
 ) -> Dict[str, Any]:
     """Sweep a parameter space cheaply, and report the distribution rather than a winner.
 
@@ -1205,8 +1207,11 @@ def run_screen(
     accounting)`` family permanently. Use ``confirm_screen_point`` to turn exactly one
     selected point into a recorded trial.
 
-    One process, one data fetch, N evaluations: the window is fetched once and every
-    candidate is scored against the same in-memory frames.
+    One data fetch, N evaluations: the window is fetched once and every candidate is
+    scored against the same in-memory frames. ``workers`` (default sequential) spreads
+    the evaluations across that many processes, under the same rule as
+    :func:`run_optimization`: parallel execution reads the bar cache (warmed here, once,
+    before dispatch), and the report is the same either way.
 
     The result leads with the distribution - n, median, spread, positive rate - and any
     best point is reported beside what the best of that many draws is worth under the
@@ -1238,8 +1243,19 @@ def run_screen(
     # Fetched once, then served from memory to every evaluation. A screen that refetched
     # per candidate would be the thing it exists to replace: a shell loop over N runs.
     timeframe = cls.create_with_defaults().config.get("timeframe", "1Day")
+    # The parent's fetch stays on the parallel path too: an uncached window or a refused
+    # key then fails here, before dispatch, as it does sequentially, rather than as N
+    # worker errors that leave the distribution empty.
     frames = data_client.get_bars(list(symbols), Timeframe.parse(timeframe), start, end)
     sliced = MarketDataClient(PrefetchedProvider(frames))
+    # Workers cannot be handed the in-memory frames' client, so they get the same recipe
+    # `optimize` gives them. Without one the optimizer runs sequentially, which is how
+    # `--workers` was accepted here and did nothing.
+    data_spec = _worker_data_spec(workers, cache_dir, offline)
+    if data_spec is not None:
+        from quantred.optimization.parallel import warm_for
+
+        warm_for(data_spec, symbols, timeframe, start, end)
 
     optimizer = ParameterOptimizer(
         cls,
@@ -1251,7 +1267,11 @@ def run_screen(
         # one. Memoizing against journaled evidence would make some points cheap and
         # others not, and put a "reused" caveat on a sweep that is not evidence anyway.
         trial_store=None,
+        # A worker rebuilds the strategy by its registry name; without it every
+        # dispatched point would fail to resolve.
+        strategy_name=strategy,
         workers=workers,
+        data_spec=data_spec,
         space=space,
         position_limits=position_limits,
     )

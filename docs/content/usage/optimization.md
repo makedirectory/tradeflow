@@ -131,7 +131,8 @@ quantred optimize --strategy demo_trend --symbols NVDA,AAPL,META \
 
 `--workers` also applies to [`walkforward`](walk-forward), where it parallelizes
 each fold's in-sample candidate search. Folds themselves stay sequential: the
-candidates are where the work is, and per-fold progress stays readable.
+candidates are where the work is, and per-fold progress stays readable. It applies to
+[`screen`](screening#screening-faster---workers-n) the same way, one point per worker.
 
 **It changes wall-clock and nothing else.** The same seed produces the same trials,
 the same chosen config, and the same campaign trial count as a sequential run.

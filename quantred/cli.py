@@ -1554,6 +1554,9 @@ def cmd_screen(args) -> None:
         then_reads=[(args.symbols, timeframe, args.start, args.end)],
     )
     limits = _screen_limits(args)
+    # The service builds the workers' data recipe itself; this is for the line saying
+    # the cache was implied, which is the CLI's to print.
+    _worker_data_spec(args)
     try:
         report = analysis.run_screen(
             data_client,
@@ -1573,6 +1576,8 @@ def cmd_screen(args) -> None:
             position_limits=limits,
             param_ranges=dict(args.range or []),
             workers=args.workers,
+            cache_dir=args.cache_dir,
+            offline=args.offline,
         )
     except ValueError as exc:
         sys.exit(f"Cannot screen: {exc}")

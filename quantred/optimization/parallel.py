@@ -312,7 +312,10 @@ def warm_for(data_spec: DataSpec, symbols: Sequence[str], timeframe: str, start,
     here is logged and swallowed: warming is an optimization, and a worker that has
     to fetch its own bars still produces the right answer.
     """
-    if data_spec.kind != "cache":
+    # An offline cache cannot be filled: warming one built a keyed client, which on a
+    # keyless machine logged a failure and a traceback on every offline parallel run.
+    # The caller's own read of the window is what proves an offline cache covers it.
+    if data_spec.kind != "cache" or data_spec.offline:
         return
     try:
         from quantred.services.data import build_data_client
