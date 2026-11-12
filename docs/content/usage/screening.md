@@ -6,8 +6,8 @@ title: Screening a parameter space
 # Screening a parameter space
 
 `quantred screen` sweeps a strategy's parameters cheaply to answer one question:
-**is there anything in this family at all?** It runs many configurations in one
-process against one data fetch, and it **journals nothing**.
+**is there anything in this family at all?** It runs many configurations against one
+data fetch, and it **journals nothing**.
 
 That last part is the whole feature. Every journaled trial raises the deflated-Sharpe
 bar for its `(strategy, universe, accounting)` family permanently — see
@@ -35,7 +35,7 @@ or `--offline` against a warmed cache. It sits between [`backtest`](backtesting)
 | `--range NAME=min:max:step` | declared range | Narrow one axis; repeatable ([below](#narrowing-the-search)) |
 | `--max-positions N` | strategy's own | The book each point is evaluated against ([below](#the-book-you-are-screening)) |
 | `--confirm best\|RANK` | — | Re-run exactly one point as a journaled trial ([below](#turning-a-screen-into-evidence)) |
-| `--workers N` | `1` | Evaluate points in parallel; implies the bar cache |
+| `--workers N` | `1` | Evaluate points across N processes; implies the bar cache ([below](#screening-faster---workers-n)) |
 | `--json` | off | Emit the report as JSON |
 | `--config`, `--strategy`, `--scanner`, `--symbols`, `--start`, `--end`, `--capital`, cost flags, cache flags | as for [`backtest`](backtesting#options) | The universe, window and costs |
 
@@ -126,6 +126,20 @@ Combinations a strategy declares invalid are never drawn — see
 is evaluated against. Without it, every point runs at whatever the strategy class
 declares, which is usually one position — a different strategy from the one you intend
 to deploy, reported under the same name.
+
+## Screening faster (`--workers N`)
+
+`--workers` spreads the points across worker processes, exactly as it does for
+[`optimize`](optimization#running-candidates-in-parallel---workers-n): the window is
+warmed into the bar cache once, before dispatch, and each worker reads local Parquet.
+It changes wall-clock and nothing else. The same seed draws the same points, and the
+distribution, gradients, best point and CSV are the ones a one-worker screen gives.
+
+The costs are the same as there. Memory scales with the worker count, the flag is capped
+at the machine's core count, and the command says so when it turns the cache on for you.
+`--offline` and `--cache-dir` reach the workers too, so an offline screen stays offline.
+Ctrl-C stops the screen with no report rather than a distribution over the points that
+happened to finish.
 
 ## Turning a screen into evidence
 
